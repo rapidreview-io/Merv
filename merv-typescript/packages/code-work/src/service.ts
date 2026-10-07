@@ -266,23 +266,13 @@ export class CodeService implements Code {
       );
       // Replay still checks controller ownership and the exact retained receipt.
       if (command?.status === 'succeeded') return this.commands.completeCommand(caller, input);
-      const binding = command
-        ? (JSON.parse(command.command_json) as { projectId: string; instanceId: string })
-        : null;
-      const writer =
-        binding && (await this.writerStore.row(tx, binding.projectId, binding.instanceId));
-      // Only Code's own repository admits a commit now; nothing verifies one on GitHub.
-      check(
-        !(
-          (!writer || Number(writer.generation) === 0) &&
-          'receipt' in input &&
-          input.receipt?.repositoryId.startsWith('github:')
-        ),
-        'code_upload_required',
-        'A commit to a GitHub repository succeeds only once Code admitted it',
-        409,
-      );
-      if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
+      // A receipt succeeds only for the upload Code admitted under this command.
+      if (command)
+        await this.writerStore.requireAdmitted(
+          input,
+          JSON.parse(command.command_json) as { projectId: string; instanceId: string },
+          tx,
+        );
       return this.commands.completeCommand(caller, input);
     };
     const tx = this.state.ambient;

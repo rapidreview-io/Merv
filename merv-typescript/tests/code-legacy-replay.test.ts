@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { openState } from './fixtures/state.js';
 import { CodeCommandService } from '../packages/code-work/src/commands.js';
 import { CodeService } from '../packages/code-work/src/service.js';
+import { MervError } from '../packages/contracts/src/index.js';
 
 test('completed legacy checkpoints replay exactly without reopening the retired transport', async () => {
   const state = await openState();
@@ -69,11 +70,15 @@ test('completed legacy checkpoints replay exactly without reopening the retired 
     receipt,
   };
   assert.equal((await service.completeCommand(caller, input)).status, 'succeeded');
-  // Code Work's admission around the same commands, with a writer that never admitted one.
+  // Code Work's admission around the same commands, for a unit that never admitted one.
   const host = {
     state,
     commands: service,
-    writerStore: { row: async () => ({ generation: 0 }), requireAdmitted: async () => {} },
+    writerStore: {
+      requireAdmitted: async () => {
+        throw new MervError('code_upload_required', 'Code admitted no upload', 409);
+      },
+    },
   };
   const replay = (value: unknown) =>
     CodeService.prototype.completeCommand.call(host as unknown as CodeService, caller, value);

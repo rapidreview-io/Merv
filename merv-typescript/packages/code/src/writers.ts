@@ -295,11 +295,7 @@ export class CodeWriterService {
     return result;
   }
 
-  /**
-   * A unit that writes to Code's repository has a generation; every other unit is a legacy
-   * one and is left alone. For the former a commit succeeded only once Code admitted exactly
-   * that commit under the command's own request.
-   */
+  /** A commit succeeded only once Code admitted exactly it under the command's own request. */
   async requireAdmitted(
     input: CodeCommandCompletion,
     command: { projectId: string; instanceId: string },
@@ -307,12 +303,6 @@ export class CodeWriterService {
   ) {
     if (!('receipt' in input) || !input.receipt) return;
     const instanceId = command.instanceId;
-    const unit = await tx.get<{ generation: number | string }>(
-      'SELECT generation FROM code_workspaces WHERE project_id=? AND unit_id=?',
-      command.projectId,
-      instanceId,
-    );
-    if (!unit || Number(unit.generation) < 1) return;
     const upload = await tx.get<{ status: string; result_json: string | null }>(
       "SELECT status,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=? AND kind='upload' AND unit_id=?",
       command.projectId,
