@@ -247,7 +247,7 @@ test('a format-2 context names an artifact by its ID when its title shows nothin
     expectedRevision: task.workflow.revision,
     requestId: 'work-untitled-brief',
   });
-  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@4');
+  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@5');
   assert.ok(work.prompt.includes(`\n### brief:${brief.id} — ${brief.id} (artifact ${brief.id}, `));
 });
 

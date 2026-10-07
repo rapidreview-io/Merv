@@ -259,7 +259,8 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
     Standing: [{ state: 'needs_changes' }],
     Requested: [{ ago: requested.createdAt }],
     Verdict: ['Negative inputs produce the wrong sign.'],
-    Checks: [{ count: 1, of: 2 }, ' not met'],
+    // Its two checks and the delivery report's format criterion.
+    Checks: [{ count: 1, of: 3 }, ' not met'],
     'Verdict page': [open(requested.id)],
   });
   // The way to the review stands alone, as the last row's whole value, so the shell draws it

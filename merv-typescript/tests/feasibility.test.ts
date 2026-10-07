@@ -270,8 +270,9 @@ test('a design cannot be submitted without a feasibility statement that admits i
     ],
   );
   const review = await f.app.ctx.reviews.get(f.reviewer, pending.reviewId!);
-  assert.equal(review.criteria.length, 4);
+  assert.equal(review.criteria.length, 5);
   assert.match(review.criteria[3], /feasibility statement/);
+  assert.match(review.criteria[4], /^Format: /);
   assert.deepEqual(review.requiredCriteria, [4]);
   assert.ok(review.artifactIds.includes(admitted.artifactId));
 });
@@ -288,7 +289,7 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   const planning = await f.app.ctx.workflows.assignment(f.owner, e.id);
   assert.match(planning.brief, /Attach it as role feasibility/);
   assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
-  assert.equal(planning.context!.typeVersion, 11);
+  assert.equal(planning.context!.typeVersion, 12);
   assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
   await f.attach(e, 'plan', plan);
   const marked = statement();

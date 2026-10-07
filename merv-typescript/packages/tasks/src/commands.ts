@@ -17,7 +17,11 @@ import {
   type WorkflowSnapshot,
   type WorkflowTransition,
 } from '@merv/contracts';
-import { RESERVED_CONTEXT_INPUTS } from './definitions.js';
+import {
+  DELIVERY_REPORT_CRITERION,
+  RESERVED_CONTEXT_INPUTS,
+  reportsDelivery,
+} from './definitions.js';
 import {
   composedBriefTitle,
   renderAssessment,
@@ -698,7 +702,9 @@ export async function submitDelivery(
               }
             : {}),
           artifactIds: [row.brief_id, ...deliveryIds],
-          criteria: checks,
+          criteria: reportsDelivery(row.type_name, row.type_version)
+            ? [...checks, DELIVERY_REPORT_CRITERION]
+            : checks,
           formatVersion: 2,
           requestId: childRequest(caller, 'task', 'delivery', input.requestId),
         },
