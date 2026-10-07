@@ -411,16 +411,11 @@ export class ReflectionService implements Reflections {
     caller: Caller,
     id: string,
     transaction?: Transaction,
-  ): Promise<ApprovedReflection> {
+  ): Promise<ApprovedReflection | null> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const wave = await this.row(caller, id, tx);
-      check(
-        wave.approved,
-        'reflection_not_approved',
-        'Reflection needs independent approval before consolidation',
-        409,
-      );
+      if (!wave.approved) return null;
       // Waves approved before this shape was narrowed also stored corpus, paper and
       // experimentIds, always empty for the version that remains; they are not part of it.
       const {

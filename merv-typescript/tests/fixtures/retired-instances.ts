@@ -416,6 +416,8 @@ ${reflectionLeases.slice(reflectionLeases.indexOf('CREATE TABLE reflection_lease
 DELETE FROM component_migrations WHERE (component='workflows' AND version=12)
   OR (component='tasks' AND version=10) OR (component='experiment_program' AND version=4)
   OR (component='reflections' AND version=5);`);
+    // The project.reflection retirement (tasks@11) only checks, and came later still.
+    await client.query("DELETE FROM component_migrations WHERE component='tasks' AND version=11");
     // So did threads (sessions@13): version 3's attribution guard returns.
     const agentGuard = sessionMigrations[3]!;
     await client.query(`DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;

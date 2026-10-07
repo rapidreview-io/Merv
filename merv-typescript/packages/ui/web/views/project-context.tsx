@@ -1,147 +1,33 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { useTool, type Project } from '../api';
-import { Area, EmptyState, Failure, LoadState, OpenedForm, Submit, cx } from '../components';
+import { Link } from 'react-router-dom';
+import type { PaperDocument } from '@merv/paper/models';
+import { introductionFrom } from '@merv/paper/rules';
+import { useTool } from '../api';
+import { EmptyState, LoadState } from '../components';
 import { Markdown } from '../markdown';
-import { useCommand } from '../mutations';
-import { useSession, writes } from '../session';
 import { useShell } from '../shell';
 
-/** A project nobody has introduced yet, and — for whoever may write it — the way to begin. */
-const Unwritten = ({ action }: { action?: ReactNode }) => (
-  <EmptyState kind="settings" icon="file-text" title="No introduction yet" action={action} />
-);
-
-function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: () => void }) {
-  const heading = useId();
-  type Draft = { summary: string } & (
-    | { expectedContextRevision: number; expectedSummary?: never }
-    | { expectedSummary: string; expectedContextRevision?: never }
-  );
-  const baseline = () =>
-    project.contextRevision === undefined
-      ? { expectedSummary: project.summary ?? '' }
-      : { expectedContextRevision: project.contextRevision };
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [conflict, setConflict] = useState(false);
-  const mutation = useCommand<Project>({
-    tool: 'project.context.update',
-    validate: (value) =>
-      value?.id === project.id &&
-      typeof value.summary === 'string' &&
-      Number.isInteger(value.contextRevision),
-    onSuccess: () => {
-      setDraft(null);
-      setConflict(false);
-      onSaved();
-    },
-    conflictCode: 'project_context_conflict',
-    onConflict: () => {
-      setConflict(true);
-      onSaved();
-    },
-  });
-  if (!draft) {
-    const opener = (
-      <button
-        type="button"
-        // Offered from the empty state it is the page's one control, and wears the accent.
-        className={cx('btn', !project.summary && 'btn--primary')}
-        onClick={() => setDraft({ summary: project.summary ?? '', ...baseline() })}
-      >
-        Edit introduction
-      </button>
-    );
-    // With nothing written the empty state offers the control; otherwise it follows the text.
-    return project.summary ? <div>{opener}</div> : <Unwritten action={opener} />;
-  }
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!conflict || mutation.retry) void mutation.submit(draft);
-  };
-  const cancel = () => {
-    setDraft(null);
-    setConflict(false);
-  };
-  return (
-    <OpenedForm
-      className="card stack entry-form"
-      aria-labelledby={heading}
-      onSubmit={submit}
-      onClose={cancel}
-      locked={mutation.locked}
-    >
-      <h2 id={heading}>Edit introduction</h2>
-      <fieldset disabled={mutation.locked}>
-        <Area
-          label="Introduction"
-          rows={6}
-          maxLength={16000}
-          value={draft.summary}
-          onChange={(summary) => setDraft({ ...draft, summary })}
-        />
-      </fieldset>
-      {conflict && (
-        <div className="stack" role="alert">
-          <p>The introduction changed while you were editing. Your draft is preserved.</p>
-          <button
-            type="button"
-            className="btn"
-            disabled={
-              mutation.locked ||
-              (draft.expectedContextRevision === undefined
-                ? project.summary === draft.expectedSummary
-                : project.contextRevision === draft.expectedContextRevision)
-            }
-            onClick={() => {
-              setDraft({ summary: draft.summary, ...baseline() });
-              setConflict(false);
-            }}
-          >
-            Keep my draft
-          </button>
-        </div>
-      )}
-      <Failure message={mutation.error} />
-      <div className="cluster">
-        <Submit
-          label="Save"
-          busy={mutation.busy}
-          retry={mutation.retry}
-          disabled={conflict && !mutation.retry}
-        />
-        <button type="button" className="btn" disabled={mutation.locked} onClick={cancel}>
-          Cancel
-        </button>
-      </div>
-    </OpenedForm>
-  );
-}
-
+/** The project Introduction, which Paper serves from the paper's Problem: edited there. */
 export function ProjectIntroduction() {
-  const { actor } = useSession();
-  const project = useTool<Project>('project.get', {}, { every: 8000 });
-  // While Paper is loaded it writes the introduction from the Problem and refuses an edit here.
-  const paperWrites = useShell().data?.rows.some((row) => row.view.kind === 'paper');
+  const paper = useShell().data?.rows.some((row) => row.view.kind === 'paper');
+  const problem = useTool<PaperDocument>(
+    paper ? 'paper.read' : null,
+    { kind: 'problem' },
+    { every: 8000 },
+  );
+  const text = problem.data ? introductionFrom(problem.data.current) : '';
   return (
     <section className="stack" aria-label="Project introduction">
       <p className="muted">
-        While the project paper is loaded, Merv writes this from its Problem whenever the Problem
-        changes, and an edit here is refused.
+        Merv writes this from the project paper&apos;s Problem.{' '}
+        {paper && <Link to="/paper">Change the Problem in the paper.</Link>}
       </p>
-      <LoadState {...project} />
-      {project.data && (
-        <>
-          {project.data.summary && <Markdown source={project.data.summary} />}
-          {!paperWrites && writes(actor) ? (
-            <IntroductionEditor
-              key={project.data.id}
-              project={project.data}
-              onSaved={project.reload}
-            />
-          ) : (
-            !project.data.summary && <Unwritten />
-          )}
-        </>
+      <LoadState {...problem} />
+      {text ? (
+        <Markdown source={text} />
+      ) : (
+        (!paper || problem.data) && (
+          <EmptyState kind="settings" icon="file-text" title="No introduction yet" />
+        )
       )}
     </section>
   );

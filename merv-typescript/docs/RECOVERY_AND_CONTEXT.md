@@ -21,34 +21,18 @@ Recovery changes the review from `started` to `requested`, clears its current re
 
 ## Context formulas belong to task types
 
-| Type                   | Required context                                              | Output                                       |
-| ---------------------- | ------------------------------------------------------------- | -------------------------------------------- |
-| `task.work@1`          | Authoritative task and pinned brief                           | Evidence-backed task delivery                |
-| `project.reflection@1` | Task, brief, `experiments`, `projectKnowledge`                | Reflection on the explicitly selected corpus |
-| `task.review@1`        | Task, claimed assessment, pinned evidence and task background | Independent verdict                          |
+| Type            | Required context                                              | Output                        |
+| --------------- | ------------------------------------------------------------- | ----------------------------- |
+| `task.work@1`   | Authoritative task and pinned brief                           | Evidence-backed task delivery |
+| `task.review@1` | Task, claimed assessment, pinned evidence and task background | Independent verdict           |
 
-`previousReflection` is optional for reflection. Relevant revision feedback, saved checkpoints and checkpoint evidence are optional background where included by the recipe. Review recovery cause is also retained in its required assessment record. Context Builder never guesses which experiments or papers to select.
+Relevant revision feedback, saved checkpoints and checkpoint evidence are optional background where included by the recipe. Review recovery cause is also retained in its required assessment record. Context Builder never guesses which experiments or papers to select.
 
-Create reflection work through `task.create`, supplying `type`, optional `typeVersion` (default: the newest registered version of the type), and `contextInputs`, a mapping from the named recipe sections to immutable artifact IDs. Plain tasks default to the newest `task.work`. Review context is selected by the existing task's review assignment; it is not a second manually created task.
+`task.create` takes an optional `type`, optional `typeVersion` (default: the newest registered version of the type), and `contextInputs`, a mapping from a type's custom recipe sections to immutable artifact IDs. Plain tasks default to the newest `task.work`, which has no custom sections. Review context is selected by the existing task's review assignment; it is not a second manually created task.
 
-The registered versions, `task.work@4`, `task.review@5` and `project.reflection@2`, are format 2, the item renderer. The task, its brief, revision feedback and the review criteria are always embedded; paper sections, evidence (priority 800), recovery (600), custom inputs and task background (500), saved progress (400) and its documents (300) are embedded whole, highest priority first, while they fit, and are otherwise listed by one line with the tool that retrieves them. A PDF or image is listed and never read. The paper comes from `paper.contextInput`: its sections highest priority first while their distinct text fits the recipe budget and their JSON fits 384 KiB of UTF-8, since a lease freezes those items in its receipt and a session packet holds 512 KiB; one item names the sections past that for `paper.read`, and counts any it has no room to name. Every task is reviewed with `task.review@5`. The format-less versions (`task.work@1`–`3`, `task.review@1`–`4`, `project.reflection@1`) were retired on 2026-09-28 (owner decision, when one such task was still open): their previously saved packages remain readable, but the runtime no longer maps retired recipes to successor recipes. Their rows stay in `context_recipes` as history, and a new task asking for them is refused with `task_type_unavailable`.
+The registered versions, `task.work@4` and `task.review@5`, are format 2, the item renderer. The task, its brief, revision feedback and the review criteria are always embedded; paper sections, evidence (priority 800), recovery (600), custom inputs and task background (500), saved progress (400) and its documents (300) are embedded whole, highest priority first, while they fit, and are otherwise listed by one line with the tool that retrieves them. A PDF or image is listed and never read. The paper comes from `paper.contextInput`: its sections highest priority first while their distinct text fits the recipe budget and their JSON fits 384 KiB of UTF-8, since a lease freezes those items in its receipt and a session packet holds 512 KiB; one item names the sections past that for `paper.read`, and counts any it has no room to name. Every task is reviewed with `task.review@5`. The format-less versions (`task.work@1`–`3`, `task.review@1`–`4`, `project.reflection@1`) were retired on 2026-09-28 (owner decision, when one such task was still open): their previously saved packages remain readable, but the runtime no longer maps retired recipes to successor recipes. Their rows stay in `context_recipes` as history, and a new task asking for them is refused with `task_type_unavailable`. Reflection is Reflections' lens waves, not a task: `project.reflection@2` was retired on 2026-10-07, when production held no such task, and tasks@11 refuses a release while one remains.
 
 Experiments are planned in the experiment program, not as tasks. The `experiment.plan` task type was retired with its tasks (version 1 on 2026-09-22, version 2 on 2026-09-25; see [version retirement](VERSION_RETIREMENT.md)); a new task asking for it is refused with `task_type_unavailable`. The experiment program's own recipes are format 2: `experiment.design`, `experiment.design_review` and `experiment.execute` at version 11 and `experiment.attempt_review` at version 12 (see [experiments](EXPERIMENTS.md)). Earlier versions are no longer registered and stay only as `context_recipes` rows. Every registered experiment version requires a feasibility statement and holds its review to the feasibility criterion.
-
-```json
-{
-  "title": "Reflect on the completed comparisons",
-  "goal": "State what the selected experiments support.",
-  "checks": ["Ground every conclusion in the selected evidence."],
-  "briefId": "artifact_brief",
-  "type": "project.reflection",
-  "contextInputs": {
-    "experiments": ["artifact_completed_experiments"],
-    "projectKnowledge": ["artifact_project_knowledge"]
-  },
-  "requestId": "create-reflection-1"
-}
-```
 
 The brief must still contain the goal and each Done-when check. Required recipe inputs must be present and accessible at creation. The task pins its type version and context references. Additional types register directly through `ctx.tasks.registerType(definition)`; disposal withdraws that type's recipe handle. Work recipes must require `task` and `brief` sections. There is no separate plugin per recipe.
 

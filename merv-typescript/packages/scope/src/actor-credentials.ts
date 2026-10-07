@@ -173,8 +173,6 @@ export class ActorCredentials {
         id: newId('project'),
         name: input.projectName.trim(),
         createdAt: this.time(),
-        summary: '',
-        contextRevision: 0,
       };
       await tx.run(
         'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',

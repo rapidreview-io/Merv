@@ -26,7 +26,7 @@ const brief = `# Brief 99 — a fixture
 
 **Name:** \`Fixture\` — demonstration run.
 
-**Introduction** (set with \`project.context.update\`):
+**Introduction** (written to the paper's Problem):
 
 > Fixture is a fictional company and this is a demonstration run.
 > Every measurement is made on a declared substitute corpus.

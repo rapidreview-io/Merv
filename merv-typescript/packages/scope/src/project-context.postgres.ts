@@ -1,3 +1,11 @@
+// Nothing reads or writes projects.summary, projects.context_revision or
+// project_context_commands any more: Paper serves the Introduction from the Problem. A later
+// scope migration drops them (and the two receipt guard functions) once production shows what
+// they still hold. Read-only count for that release:
+//   SELECT COUNT(*) FILTER (WHERE summary <> '') AS with_summary,
+//          COUNT(*) FILTER (WHERE context_revision > 0) AS revised,
+//          (SELECT COUNT(*) FROM project_context_commands) AS receipts
+//   FROM projects;
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   6: `

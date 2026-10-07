@@ -836,13 +836,6 @@ export function eventSource(caller: Caller): Data {
           }
         : {};
 }
-export interface ProjectContextUpdate {
-  summary: string;
-  /** Supply exactly one baseline from project.get. Whitespace is significant in text mode. */
-  expectedSummary?: string;
-  expectedContextRevision?: number;
-  requestId: string;
-}
 /** Project-bound actor credentials are distinct from human login and future worker leases. */
 export interface ActorCredential {
   id: string;
@@ -1041,14 +1034,6 @@ export interface Scope {
     tx?: Transaction,
   ): Promise<boolean>;
   project(caller: Caller, tx?: Transaction): Promise<Project>;
-  /** Set by a plugin that writes the Introduction itself, while it is loaded: why
-   * project.context.update refuses, so the Introduction has that one writer. */
-  introductionWriter?: string;
-  updateProjectContext(
-    caller: Caller,
-    input: ProjectContextUpdate,
-    tx?: Transaction,
-  ): Promise<Project>;
   actors(caller: Caller): Promise<Actor[]>;
 }
 /** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */

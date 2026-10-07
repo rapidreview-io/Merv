@@ -1,7 +1,7 @@
-import { visible } from '@merv/contracts';
+import { visible } from '@merv/contracts/text';
 
-// The Problem's rules, which Research applies before a cycle starts: pure, so it imports them
-// without depending on the Paper service.
+// The Problem's rules, which Research applies before a cycle starts and the browser renders the
+// Introduction with: pure, so either imports them without depending on the Paper service.
 
 /** The Problem's four fixed sections, in paper order. */
 export const PROBLEM_SECTIONS = ['problem', 'scope', 'goals', 'constraints'] as const;
@@ -11,6 +11,21 @@ export const problemDefined = (problem: { sections: readonly { id: string; conte
   PROBLEM_SECTIONS.every((id) =>
     problem.sections.some((section) => section.id === id && visible(section.content)),
   );
+
+/**
+ * The project Introduction, written from the Problem: its filled sections in paper order, each
+ * under its own Markdown heading. The Problem is the one source of what the project is.
+ */
+export const introductionFrom = (problem: {
+  sections: readonly { id: string; title: string; content: string }[];
+}): string =>
+  problem.sections
+    .filter(
+      (section) =>
+        (PROBLEM_SECTIONS as readonly string[]).includes(section.id) && section.content.trim(),
+    )
+    .map((section) => `## ${section.title}\n\n${section.content.trim()}`)
+    .join('\n\n');
 
 /**
  * What review.start and review.get tell a scientific reviewer about keeping the paper, said the

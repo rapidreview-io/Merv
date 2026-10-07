@@ -419,7 +419,7 @@ test('accepted code main lacks injects one consolidation task marked to publish,
   const task = await f.app.ctx.tasks.get(f.owner, taskId);
   assert.equal(task.title, 'Research loop: consolidation');
   assert.match(task.goal, /^Integrate this cycle's accepted work onto one branch\./);
-  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, record.reflectionId!))!;
   assert.ok(
     task.goal.endsWith(
       `Origin: reflection ${approved.id}, report ${approved.report.id} (${approved.report.hash}), change specification ${approved.changeSpec.id} (${approved.changeSpec.hash}).`,
@@ -672,7 +672,7 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
   record = await f.research.advance(f.owner, completing);
   assert.equal(record.workflow.state, 'complete');
   const { digest, content } = await digestOf(f, record);
-  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, record.reflectionId!))!;
   assert.deepEqual(digest.cycle, {
     id: record.id,
     name: record.name,
@@ -1227,6 +1227,7 @@ test('a wave that cannot finish is abandoned by its owner, which lifts the pause
   wave = await f.app.ctx.reflections.end(f.owner, ending);
   assert.deepEqual(await f.app.ctx.reflections.end(f.owner, ending), wave);
   assert.equal(wave.workflow.state, 'abandoned');
+  assert.equal(await f.app.ctx.reflections.approved(f.owner, wave.id), null);
   assert.deepEqual(
     wave.lenses.map((lens) => lens.workflow.state),
     ['complete', 'abandoned', 'abandoned', 'abandoned', 'abandoned'],
@@ -1425,7 +1426,7 @@ test('completing a cycle with nextWave create opens the approved plan as work an
   assert.equal(successor.previousCycleId, done.id);
   assert.equal(done.previousCycleId, null);
   const origin = successor.origin!;
-  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, record.reflectionId!))!;
   assert.deepEqual(
     { ...origin, items: origin.items.map((item) => [item.key, item.kind]) },
     {
@@ -1751,7 +1752,7 @@ test('a plan creates only managed Git work atomically and replayably', async (t)
 test('Code absence refuses managed Git work without losing approval or partial work', async (t) => {
   const f = await fixture(t);
   const { record, command } = await reflected(f, harnessPlan());
-  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, record.reflectionId!))!;
   const before = await counts(f);
   // Tasks and Experiments require Code Work, so they go with it.
   await f.code(false);
@@ -1817,7 +1818,7 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
   });
   record = await f.advance(await f.advance(record));
   await f.reflect(record, harnessPlan());
-  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, record.reflectionId!))!;
   const before = await counts(f);
   await f.code(false);
   const release = await bindAutomatic(f.research, f.app.ctx.domainEvents);

@@ -87,121 +87,24 @@ async function fixture(t: TestContext) {
   return { app, boot, operator, producer, reader, reviewer, caller, http, connect, call };
 }
 
-test('Introduction HTTP and MCP preserve exact baseline, original replay result and current write authority', async (t) => {
+test('Scope holds no Introduction: project.get carries none and no tool writes one', async (t) => {
   const f = await fixture(t),
     client = await f.connect(f.producer.token);
-  // Paper writes the Introduction from its Problem, so while it is loaded the tool refuses.
-  const written = await f.http('project.context.update', {
-    summary: 'A second writer.',
-    expectedSummary: '',
-    requestId: 'second-writer',
-  });
-  assert.equal(written.status, 409);
-  assert.equal(written.body.error.code, 'project_context_written');
-  assert.match(written.body.error.message, /paper\.patch/);
-  // Without a plugin writing it, the tool keeps its own contract.
-  f.app.ctx.scope.introductionWriter = undefined;
-  const initial = (await f.http('project.get', {}, f.reader.token)).body.result;
-  assert.equal(initial.summary, '');
-  assert.equal(initial.contextRevision, 0);
-  const input = {
-    summary: '  Compare two fixed estimators.  ',
-    expectedSummary: '',
-    requestId: 'intro',
-  };
-  const saved = await f.call(client, 'project.context.update', input);
-  assert.notEqual(saved.result.isError, true, JSON.stringify(saved.value));
-  assert.equal(saved.value.summary, 'Compare two fixed estimators.');
-  assert.equal(saved.value.contextRevision, 1);
-  const next = await f.http(
-    'project.context.update',
-    {
-      summary: 'Retain all held-out predictions.',
-      expectedSummary: saved.value.summary,
-      requestId: 'next',
-    },
-    f.boot.token,
-  );
-  assert.equal(next.status, 200);
-  assert.deepEqual((await f.http('project.context.update', input)).body.result, saved.value);
-  assert.equal((await f.http('project.get')).body.result.contextRevision, 2);
-  const stale = await f.http('project.context.update', { ...input, requestId: 'stale' });
-  assert.equal(stale.status, 409);
-  assert.equal(stale.body.error.code, 'project_context_conflict');
+  const project = (await f.http('project.get', {}, f.reader.token)).body.result;
+  assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
+  const input = { summary: 'A second writer.', expectedSummary: '', requestId: 'intro' };
+  const written = await f.http('project.context.update', input);
+  assert.equal(written.status, 404);
+  assert.equal(written.body.error.code, 'unknown_tool');
   assert.equal(
-    (await f.http('project.context.update', { ...input, summary: 'Changed payload' })).body.error
-      .code,
-    'request_conflict',
+    (await client.listTools()).tools.some((tool) => tool.name === 'project.context.update'),
+    false,
   );
-  for (const token of [f.reader.token, f.reviewer.token])
-    assert.equal((await f.http('project.context.update', input, token)).status, 403);
-  assert.equal((await f.http('project.context.update', input, null)).status, 401);
-  for (const invalid of [
-    { ...input, name: 'Cannot rename' },
-    { ...input, summary: '😀'.repeat(4001) },
-    { summary: 'Missing baseline', requestId: 'invalid' },
-  ])
-    assert.equal((await f.http('project.context.update', invalid)).status, 400);
-  const other = await f.app.ctx.scope.credentials.bootstrap({
-    projectName: 'Other',
-    actorName: 'Other owner',
-  });
-  assert.equal(
-    (await f.http('project.context.update', input, f.producer.token, other.project.id)).status,
-    403,
-  );
-  assert.equal(
-    (await f.app.ctx.scope.project({ actorId: other.actor.id, projectId: other.project.id }))
-      .summary,
-    '',
-  );
-  await f.app.ctx.scope.credentials.revokeCredential(f.operator, f.producer.credential.id);
-  assert.equal((await f.http('project.context.update', input)).status, 401);
-  assert.equal(
-    (await f.app.ctx.state.events(f.boot.project.id)).filter(
-      (event) => event.type === 'project.context.updated',
-    ).length,
-    2,
-  );
-});
-
-test('Introduction tool accepts project.get contextRevision and refuses stale revisions', async (t) => {
-  const f = await fixture(t);
-  f.app.ctx.scope.introductionWriter = undefined;
-  const observed = (await f.http('project.get')).body.result;
-  const first = await f.http('project.context.update', {
-    summary: 'Revision-based introduction.',
-    expectedContextRevision: observed.contextRevision,
-    requestId: 'revision-write',
-  });
-  assert.equal(first.status, 200);
-  assert.equal(first.body.result.contextRevision, observed.contextRevision + 1);
-  const stale = await f.http('project.context.update', {
-    summary: 'Stale draft.',
-    expectedContextRevision: observed.contextRevision,
-    requestId: 'revision-stale',
-  });
-  assert.equal(stale.status, 409);
-  assert.equal(stale.body.error.code, 'project_context_conflict');
-  for (const input of [
-    { summary: 'No baseline.', requestId: 'revision-none' },
-    {
-      summary: 'Both baselines.',
-      expectedContextRevision: first.body.result.contextRevision,
-      expectedSummary: first.body.result.summary,
-      requestId: 'revision-both',
-    },
-  ])
-    assert.equal((await f.http('project.context.update', input)).status, 400);
 });
 
 test('Knowledge transport reads complete scoped metadata, exposes unresolved states and withdraws with its provider', async (t) => {
   const f = await fixture(t);
-  const intro = await f.app.ctx.scope.updateProjectContext(f.caller, {
-    summary: 'Preserve all research inputs.',
-    expectedSummary: '',
-    requestId: 'intro',
-  });
+  const project = await f.app.ctx.scope.project(f.caller);
   await waitForManagedCode(f.app.ctx.codeWork, f.caller);
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Retain source data',
@@ -250,7 +153,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   );
   const records = await f.call(client, 'project.records');
   assert.notEqual(records.result.isError, true);
-  assert.deepEqual(records.value.project, intro);
+  assert.deepEqual(records.value.project, project);
   assert.equal(Object.hasOwn(records.value, 'archivedClaims'), false);
   assert.equal(records.value.tasks[0].workflow.state, 'failed');
   assert.equal(Object.hasOwn(records.value.tasks[0], 'guidance'), false);
@@ -306,43 +209,4 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     false,
     'restoring the Knowledge service does not restore its retired UI row',
   );
-});
-
-test('A real Task worker cannot edit project intent through HTTP or MCP, even by guessing the tool name', async (t) => {
-  const f = await fixture(t);
-  await waitForManagedCode(f.app.ctx.codeWork, f.caller);
-  const task = await f.app.ctx.tasks.create(f.caller, {
-    title: 'Check retained input',
-    goal: 'Check input.',
-    checks: ['The input is checked.'],
-    requestId: 'task',
-  });
-  await f.app.ctx.sessions.dispatch.heartbeatRunner(f.caller, {
-    runnerId: 'acceptance-runner',
-    capacity: 1,
-    capabilities: ['code.v2'],
-    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
-    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
-  });
-  const secret = 'ms_' + randomBytes(32).toString('base64url');
-  await f.app.ctx.sessions.offer(f.caller, {
-    instanceId: task.id,
-    expectedRevision: 0,
-    runnerId: 'acceptance-runner',
-    requestId: 'offer',
-    secret,
-  });
-  const client = await f.connect(secret);
-  assert.equal(
-    (await client.listTools()).tools.some((tool) => tool.name === 'project.context.update'),
-    false,
-  );
-  const input = {
-    summary: 'Worker cannot redefine the project.',
-    expectedSummary: '',
-    requestId: 'worker',
-  };
-  assert.equal((await f.call(client, 'project.context.update', input)).result.isError, true);
-  assert.equal((await f.http('project.context.update', input, secret)).status, 403);
-  assert.equal((await f.http('project.get', {}, f.reader.token)).body.result.summary, '');
 });

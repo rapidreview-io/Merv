@@ -119,6 +119,20 @@ test('The experiment.plan retirement refuses a plan task whose session a managed
   ]);
 });
 
+test('The project.reflection retirement refuses a release while such a task remains', async () => {
+  const state = await openState();
+  await migrateInputs(state);
+  const retire = (name: string) => probe(state, name, tasks[11]);
+  await retire('reflection-none');
+  await state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at,type_name,type_version,evidence_version)
+       VALUES('task-reflection','p','t','g','[]','actor','brief','2026-01-01T00:00:00.000Z','project.reflection',2,2)`,
+    );
+  });
+  await assert.rejects(retire('reflection-one'), { code: 'state_constraint' });
+});
+
 test('The retirement ledger records each retired instance once, with its reason', async () => {
   const state = await openState();
   await migrateInputs(state);

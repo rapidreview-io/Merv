@@ -279,8 +279,6 @@ export class Memberships {
         id: newId('project'),
         name,
         createdAt: this.time(),
-        summary: '',
-        contextRevision: 0,
       };
       await tx.run(
         'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',

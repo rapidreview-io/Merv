@@ -1,8 +1,7 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import { check, ROLES, type Caller } from '@merv/contracts';
+import { ROLES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
-import { projectContextUpdateSchema } from './project-context.js';
 
 const expiresAt = z
   .string()
@@ -31,16 +30,6 @@ export const scopeToolsPlugin = {
       z.object({}).strict(),
       async (c) => await ctx.scope.project(c),
       true,
-    );
-    register(
-      'project.context.update',
-      'Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Refused, saying why, while a plugin writes the Introduction itself. Reuse requestId only to retry identical input.',
-      projectContextUpdateSchema,
-      async (c, i) => {
-        const writer = ctx.scope.introductionWriter;
-        check(!writer, 'project_context_written', writer!, 409);
-        return await ctx.scope.updateProjectContext(c, i);
-      },
     );
     register(
       'actor.whoami',

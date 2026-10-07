@@ -2,42 +2,23 @@
 
 Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
 
-Scope supplies current project intent. Knowledge assembles project records from
+Paper supplies current project intent. Knowledge assembles project records from
 the existing domain services. Code resolves exact machine observations. These are
 read capabilities used by Reflection and Research. They do not themselves create
 a reflection wave or a published research baseline.
 
 ## Current intent and frozen agent context
 
-`project.get` returns Scope's project record, including `summary` (the
-Introduction) and `contextRevision`. `project.context.update` accepts
-`{summary, expectedContextRevision, requestId}`, with the revision copied from
-`project.get`. The existing text-baseline form uses `expectedSummary` instead;
-exactly one baseline is required. Ordinary operators and producers may
-edit it; worker sessions and credentialless worker actors cannot. An empty
-Introduction is allowed and creates no workflow gate.
+The Problem is the one source of what the project is, and Paper serves the
+project Introduction from it: the current Problem's filled sections under
+Markdown headings, with the Problem's revision (`Paper.introduction`). It is
+changed by changing the Problem with `paper.patch`. `project.get` returns only
+Scope's project identity (id, name, creation time); Scope holds no Introduction
+and has no tool to write one. Its old `summary`/`context_revision` columns and
+`project_context_commands` receipts stay until a later migration drops them.
 
-The Problem is the one source of what the project is. Each `paper.patch` of the
-Problem has Paper rewrite the Introduction from the new revision: its filled
-sections under Markdown headings, cut to fit with a note pointing at
-`paper.read` when longer than 16,000 bytes. The rewrite is an ordinary
-`project.context.update` in the patch's transaction, by the patching caller,
-and is skipped when the text would not change or the Problem is empty. An
-operator's edit lasts until the next Problem patch; agents are told not to
-write it.
-
-New text is trimmed and bounded to 16,000 UTF-8 bytes. Revision mode detects
-intervening edits even when the text returns to its earlier value. Text mode
-requires `expectedSummary` to match the exact stored text, including existing
-whitespace. An accepted new
-command advances `contextRevision`, even if its text is unchanged. Repeating
-identical normalized input with the same project/actor/request ID returns the
-original receipt. Changed input conflicts, and current write authority is
-required before replay. Project text, its event and immutable request receipt
-commit together.
-
-New Task and Experiment lease offers capture the project Introduction in their
-server-owned context inputs. An already offered worker keeps that input across
+New Task and Experiment lease offers capture the Problem, in the paper input,
+and the Problem revision it was served at (`contextRevision`). An already offered worker keeps that input across
 refreshes and reloads; a later edit becomes input to a later offer. Existing
 frozen packets that lack the new field remain unchanged. Published recipe
 versions and hashes remain immutable. The recipe hash identifies the registered

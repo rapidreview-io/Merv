@@ -216,14 +216,18 @@ export async function ready(
   }
   if (stage === 'reflecting') {
     check(record.reflectionId, 'research_child_missing', 'The reflection workflow is missing', 409);
-    // An abandoned wave is never approved; the engine then offers this cycle's end.
+    // The wave is this cycle's prerequisite: one that ended unapproved has failed it, and the
+    // engine then offers this cycle's end.
+    const wave = (await ctx.workflows.prerequisites(caller, [record.id], tx))
+      .get(record.id)!
+      .find((item) => item.id === record.reflectionId);
     check(
-      (await ctx.workflows.get(caller, record.reflectionId, tx)).state !== 'abandoned',
+      !wave?.failed,
       'dependency_failed',
-      `The reflection ${record.reflectionId} was abandoned. End this cycle with research.end; a cycle that follows it can reflect on the same work.`,
+      `The reflection ${record.reflectionId} ended without approval. End this cycle with research.end; a cycle that follows it can reflect on the same work.`,
       409,
     );
-    await ctx.providers.reflections.approved(caller, record.reflectionId, tx);
+    await approvedReflection(ctx, caller, record, tx);
   }
   const judged = await move(ctx, caller, record, tx, since, choice);
   const chosen = judged === 'abandon' ? 'advance' : judged;
@@ -323,6 +327,23 @@ export function asked(
   );
 }
 
+/** The cycle's approved wave; a cycle moves past reflecting only once it is approved. */
+async function approvedReflection(
+  ctx: ResearchContext,
+  caller: Caller,
+  record: ResearchRecord,
+  tx: Transaction,
+): Promise<ApprovedReflection> {
+  const approved = await ctx.providers.reflections.approved(caller, record.reflectionId!, tx);
+  check(
+    approved,
+    'reflection_not_approved',
+    'Reflection needs independent approval before consolidation',
+    409,
+  );
+  return approved;
+}
+
 /** The approved reflection, when this advance completes the cycle and its plan continues. */
 export async function continuing(
   ctx: ResearchContext,
@@ -334,7 +355,7 @@ export async function continuing(
   const completing =
     move === 'complete' || (record.workflow.state === 'consolidating' && move === 'advance');
   if (!completing || !record.reflectionId) return undefined;
-  const approved = await ctx.providers.reflections.approved(caller, record.reflectionId, tx);
+  const approved = await approvedReflection(ctx, caller, record, tx);
   return approved.plan?.next.decision === 'continue' ? (approved as Continuing) : undefined;
 }
 
@@ -494,7 +515,7 @@ export async function inject(
   requestId: string,
   tx: Transaction,
 ): Promise<string> {
-  const approved = await ctx.providers.reflections.approved(caller, record.reflectionId!, tx);
+  const approved = await approvedReflection(ctx, caller, record, tx);
   const count = record.integrations.length + 1;
   const step = count === 1 ? 'integration' : `integration:${count}`;
   const task = await ctx.providers.tasks.serviceTasks('research').create(

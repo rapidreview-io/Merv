@@ -11,6 +11,7 @@ import type {
   PaperCitation,
   PaperReview,
   PaperPublication,
+  PaperIntroduction,
 } from './models.js';
 export type * from './models.js';
 /** One section of one paper revision, whole, as a context item needs it. */
@@ -37,6 +38,8 @@ export interface PaperContextSection {
 }
 export interface Paper {
   read(caller: Caller, tx?: Transaction): Promise<PaperWorkspace>;
+  /** The project Introduction, served from the current Problem. */
+  introduction(caller: Caller, tx?: Transaction): Promise<PaperIntroduction>;
   /** Only `read`'s documents, in one query: what a context reads of the paper. */
   documents(caller: Caller, tx?: Transaction): Promise<PaperWorkspace['documents']>;
   /** Every retained revision of a document, without its section bodies; `revision` has them. */

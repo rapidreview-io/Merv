@@ -740,11 +740,14 @@ async function main(options: Options) {
       await request(path, body, method);
 
     // ---- Setup: introduction, records, cycle. All over /tools/*. ----
-    const project = await call('project.get', {});
-    if (project.summary !== brief.project.introduction)
-      await call('project.context.update', {
-        summary: brief.project.introduction,
-        expectedSummary: project.summary ?? '',
+    // Paper serves the Introduction from the Problem: the brief's goes in its problem section.
+    const problem = (await call('paper.read', { kind: 'problem' })).current;
+    const stated = problem.sections.find((section: { id: string }) => section.id === 'problem');
+    if (stated?.content !== brief.project.introduction)
+      await call('paper.patch', {
+        kind: 'problem',
+        expectedRevision: problem.revision,
+        changes: [{ id: 'problem', content: brief.project.introduction }],
         // An edited introduction is a new request, never a replay of the last one.
         requestId: `scenario:${brief.project.name}:introduction:${createHash('sha256').update(brief.project.introduction).digest('hex').slice(0, 12)}`,
       });

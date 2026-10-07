@@ -1,4 +1,5 @@
 import { managedServices } from './fixtures/managed-services.js';
+import { inputsTaskType } from './fixtures/input-task-type.js';
 import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -195,13 +196,14 @@ test('a format-2 context lists a PDF context input without reading it', async (t
     title: 'Knowledge notes',
     content: 'The adder must handle negative inputs.',
   });
+  await f.tasks.registerType(inputsTaskType);
   const task = await f.tasks.create(f.producer, {
     title: 'Adder',
     goal: 'Build an adder.',
     checks: ['Adds two numbers.', 'Handles negative inputs.'],
     briefId: f.brief.id,
     requestId: 'create-pdf-input',
-    type: 'project.reflection',
+    type: 'fixture.inputs',
     contextInputs: { experiments: [pdf.id], projectKnowledge: [notes.id] },
   });
   const read = f.artifacts.read.bind(f.artifacts);
@@ -216,7 +218,7 @@ test('a format-2 context lists a PDF context input without reading it', async (t
     expectedRevision: task.workflow.revision,
     requestId: 'work-pdf-input',
   });
-  assert.equal(`${work.type}@${work.typeVersion}`, 'project.reflection@2');
+  assert.equal(`${work.type}@${work.typeVersion}`, 'fixture.inputs@1');
   assert.ok(
     work.prompt.includes(
       `\n- experiments:${pdf.id} — Signed protocol (artifact ${pdf.id}, application/pdf, `,

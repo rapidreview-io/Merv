@@ -1,7 +1,7 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
 import { needs, permits, workerRoles } from './rules.js';
-import { visible, createService, receipted, sha256Hex, within } from '@merv/contracts';
+import { visible, createService, sha256Hex, within } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
 import { postgresMigrations as userKeys } from './user-keys.postgres.js';
@@ -12,8 +12,6 @@ import type { ToolGrant, ToolPolicy } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
-  digest,
-  eventSource,
   inTransaction,
   newId,
   ROLES,
@@ -24,7 +22,6 @@ import {
   type Permission,
   type Actor,
   type Project,
-  type ProjectContextUpdate,
   type Transaction,
   type Sql,
   type StoredEvent,
@@ -42,11 +39,7 @@ import {
 } from '@merv/contracts';
 import { identityValid, LIVE_OPERATOR, Memberships } from './memberships.js';
 import { UserKeys } from './user-keys.js';
-import {
-  parseProjectContextUpdate,
-  projectValue as project,
-  type ProjectRow,
-} from './project-context.js';
+import { projectValue as project, type ProjectRow } from './project-context.js';
 import {
   ACTOR_WITH_MEMBER,
   ActorCredentials,
@@ -98,7 +91,6 @@ class AuthoritySlot<T> {
 }
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
-  introductionWriter?: string;
   readonly members: Memberships;
   readonly userKeys: UserKeys;
   readonly credentials: ActorCredentials;
@@ -796,99 +788,6 @@ export class ProjectScope implements Scope {
     return await within(this.state, tx, async (sql) =>
       project((await sql.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!),
     );
-  }
-  async updateProjectContext(
-    caller: Caller,
-    raw: ProjectContextUpdate,
-    transaction?: Transaction,
-  ): Promise<Project> {
-    caller = structuredClone(caller);
-    const input = parseProjectContextUpdate(raw);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const authorize = async () => {
-        check(
-          !caller.session,
-          'forbidden',
-          'Worker sessions cannot edit the project Introduction',
-          403,
-        );
-        const writer = await this.require(caller, 'write', tx);
-        check(
-          !writer.sessionId,
-          'forbidden',
-          'Worker actors cannot edit the project Introduction',
-          403,
-        );
-      };
-      // Decided before the receipt lookup, so a replay needs no second decision, and again after
-      // a fresh write (the receipt's `after`), on the same transaction.
-      await authorize();
-      return await receipted(
-        tx,
-        caller,
-        input.requestId,
-        digest(input),
-        async () => {
-          const before = project(
-            (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
-          );
-          const changed =
-            input.expectedContextRevision === undefined
-              ? await tx.run(
-                  'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND summary=? AND context_revision<9007199254740991',
-                  input.summary,
-                  caller.projectId,
-                  input.expectedSummary!,
-                )
-              : await tx.run(
-                  'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND context_revision=? AND context_revision<9007199254740991',
-                  input.summary,
-                  caller.projectId,
-                  input.expectedContextRevision,
-                );
-          check(
-            changed.changes === 1,
-            'project_context_conflict',
-            'Project Introduction changed; reread project.get before retrying with its current contextRevision or exact summary',
-            409,
-          );
-          const result = project(
-            (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
-          );
-          await this.state.appendEvent(tx, {
-            projectId: caller.projectId,
-            actorId: caller.actorId,
-            type: 'project.context.updated',
-            subjectId: caller.projectId,
-            data: {
-              previousSummary: before.summary!,
-              summary: result.summary!,
-              previousContextRevision: before.contextRevision!,
-              contextRevision: result.contextRevision!,
-              ...(caller.human
-                ? {
-                    source: {
-                      kind: 'human',
-                      issuer: caller.human.issuer,
-                      subject: caller.human.subject,
-                      membershipId: caller.human.membershipId,
-                    },
-                  }
-                : caller.credentialId
-                  ? { source: { kind: 'actor', credentialId: caller.credentialId } }
-                  : eventSource(caller)),
-            },
-          });
-          return result;
-        },
-        {
-          table: 'project_context_commands',
-          result: 'result_json',
-          conflict: 'requestId already updated project context with different input',
-          after: authorize,
-        },
-      );
-    });
   }
   async actors(caller: Caller) {
     caller = structuredClone(caller);

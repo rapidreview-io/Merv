@@ -116,31 +116,6 @@ export const TASK_TYPES: ContextRecipeDefinition[] = [
       format: 2,
     },
   },
-  {
-    name: 'project.reflection',
-    version: 2,
-    kind: 'work',
-    recipe: {
-      instructions:
-        'Reflect on the explicitly selected experiment corpus. Ground conclusions in its evidence and distinguish unresolved questions from supported findings.' +
-        layout,
-      sections: [
-        task,
-        brief,
-        projectPaper,
-        section('experiments', 'Selected completed experiments'),
-        section('projectKnowledge', 'Current project knowledge'),
-        section('previousReflection', 'Previous reflection', false),
-        feedback,
-        checkpoints,
-        checkpointEvidence,
-      ],
-      maxChars: 96000,
-      outputInstructions:
-        'Produce an evidence-linked reflection describing conclusions, contradictions, limitations and proposed next work. Save it as an artifact and submit it through task.submit_delivery. Do not silently expand the selected corpus.',
-      format: 2,
-    },
-  },
 ];
 export const RESERVED_CONTEXT_INPUTS = new Set([
   'task',
