@@ -318,6 +318,56 @@ test('a session closing ends its generation at the last admitted commit, and wha
   );
 });
 
+test('a worker that ended its own visit hands over its final capture within the grace, and only that', async (t) => {
+  const f = await fixture(t, 0);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  const bundle = f.source.bundle(first, [f.root]);
+  f.end('ses_1', 'handoff');
+  await f.event('session.closed', 'ses_1', true);
+  assert.equal((await f.unit()).writerState, 'closing');
+  await assert.rejects(f.lease('ses_2'), refused('code_writer_busy'));
+  // A commit is not begun after the close, and with a grace of 0 the final is past it too.
+  await assert.rejects(
+    f.begin('checkpoint', 'ses_1', 1, f.root, bundle),
+    refused('session_closed'),
+  );
+  await assert.rejects(f.begin('final', 'ses_1', 1, f.root, bundle), refused('code_writer_closed'));
+  // The sweep ends a generation whose final never came, at the last admitted commit.
+  await f.sweep();
+  assert.deepEqual(
+    [(await f.unit()).writerState, (await f.unit()).canonicalHead],
+    ['closed', null],
+  );
+  assert.equal((await f.lease('ses_2')).generation, 2);
+
+  // Within the grace the final is taken; a visit Sessions ended for it gets no such grace.
+  const g = await fixture(t);
+  await g.lease('ses_1');
+  await g.event('session.workspace_attached', 'ses_1');
+  const work = g.source.commit({ 'a.txt': 'one\n' }, 'first');
+  g.end('ses_1', 'asked_owner');
+  await g.event('session.closed', 'ses_1', true);
+  await g.sweep();
+  assert.equal((await g.unit()).writerState, 'closing', 'the grace has not passed');
+  const final = await g.upload('final', 'ses_1', 1, g.root, g.source.bundle(work, [g.root]));
+  assert.equal(final.status, 'completed');
+  assert.deepEqual(
+    [(await g.unit()).writerState, (await g.unit()).canonicalHead],
+    ['closed', work],
+  );
+  await g.lease('ses_2');
+  await g.event('session.workspace_attached', 'ses_2');
+  const late = g.source.commit({ 'a.txt': 'two\n' }, 'late');
+  g.end('ses_2', 'session_expired');
+  await g.event('session.closed', 'ses_2');
+  await assert.rejects(
+    g.begin('final', 'ses_2', 2, work, g.source.bundle(late, [work])),
+    refused('code_writer_closed'),
+  );
+});
+
 test('an upload fully on Main when its session closed is admitted within the grace', async (t) => {
   const f = await fixture(t);
   await f.lease('ses_1');

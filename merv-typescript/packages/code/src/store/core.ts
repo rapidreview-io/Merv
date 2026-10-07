@@ -87,12 +87,14 @@ export interface CodeStoreHooks {
    */
   workspaces(projectId: string, tx: Transaction): Promise<string[]>;
   /** The writer fence, asked when an upload begins (`begin`), continues and before any ref
-   *  moves. Only a live writer begins one; one in flight may finish after its session closed. */
+   *  moves. Only a live writer begins one; one in flight may finish after its session closed,
+   *  and so may the final capture of a worker that ended its own visit (`ownEnd`). */
   fenced(
     tx: Transaction,
     fence: WriterFence,
     kind: 'checkpoint' | 'final',
     begin?: boolean,
+    ownEnd?: boolean,
   ): Promise<unknown>;
   advanced(
     tx: Transaction,

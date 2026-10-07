@@ -87,14 +87,15 @@ export async function writerFixture(
         });
         return writer;
       }),
-    /** A session event as Code's writer subscription takes it. */
-    event: async (type: string, sessionId: string) => {
+    /** A session event as Code's writer subscription takes it; `ownEnd` as session.closed says
+     *  its worker ended the visit by its own hand (a handoff or a question to its owner). */
+    event: async (type: string, sessionId: string, ownEnd = false) => {
       const change = (
         { 'session.workspace_attached': 'attached', 'session.closed': 'closed' } as const
       )[type as 'session.closed'];
       if (change)
         await f.state.transaction((tx) =>
-          f.core.writers.sessionChanged(f.admin.projectId, sessionId, change, tx),
+          f.core.writers.sessionChanged(f.admin.projectId, sessionId, change, tx, ownEnd),
         );
     },
     /** A read-only session whose checkout is exactly one referenced commit. */
@@ -124,8 +125,8 @@ export async function writerFixture(
     },
     /** The session as the machine that runs it was handed it. */
     session: (sessionId: string) => structuredClone(sessions.get(sessionId)!),
-    end: (sessionId: string) => {
-      sessions.get(sessionId)!.status = 'released';
+    end: (sessionId: string, closeReason: string | null = null) => {
+      Object.assign(sessions.get(sessionId)!, { status: 'released', closeReason });
     },
     unit: async () => await f.code.unit(f.admin, unit.id),
     /** Code's writer sweep, as the store runs it at start and on its interval. */

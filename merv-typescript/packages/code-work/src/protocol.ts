@@ -14,6 +14,7 @@ import {
   codeUploadFenceSchema,
   type CodeWorkspaceManifest,
 } from '@merv/code/store/protocol';
+import { live, ownEnd } from '@merv/sessions/rules';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
 import { parseCodeInput } from '@merv/code/input';
@@ -98,9 +99,10 @@ export class CodeWorkspaceProtocol {
     }
     if (route === 'finalize') {
       const input = parseCodeInput(codeUploadFinalizeSchema, body);
-      // Deliberately indifferent to whether the session is live: this is the one thing a
-      // machine still owes after its session closed, and it may owe it exactly once. A
-      // session that never attached has no launch to compare; its final can move nothing.
+      // Taken from a live session, or from one its worker ended by its own hand (a handoff, a
+      // question to its owner), which Sessions closes before its machine stops the process; the
+      // writer fence decides. A session that never attached has no launch to compare; its
+      // final can move nothing.
       const session = await this.controlled(caller, input, 'any');
       check(
         session.hostRef !== null || input.bundle === null,
@@ -108,7 +110,13 @@ export class CodeWorkspaceProtocol {
         'A session that never attached has nothing to hand over',
         403,
       );
-      return { operation: await this.store.beginUpload(caller, input) };
+      return {
+        operation: await this.store.beginUpload(
+          caller,
+          input,
+          !live(session) && ownEnd(session.closeReason),
+        ),
+      };
     }
     if (route === 'downloads') {
       const input = parseCodeInput(codeDownloadBeginSchema, body);

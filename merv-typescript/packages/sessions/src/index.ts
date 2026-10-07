@@ -861,6 +861,9 @@ export class LeasedSessions implements Sessions {
         outcome: session.outcome,
         ...(session.deferral ? { deferral: { ...session.deferral } } : {}),
         reason,
+        // Its worker ended it (a handoff, a question to its owner), so its machine is still
+        // running and owes the final capture of its checkout, which Code then still takes.
+        ...(ownEnd(reason) ? { ownEnd: true } : {}),
         source: session.source,
       },
     });

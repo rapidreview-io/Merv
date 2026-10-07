@@ -111,7 +111,7 @@ export class CodeService {
       {
         changed: (tx, projectId) => writers.changed(tx, projectId),
         workspaces: (projectId, tx) => port.workspaces(projectId, tx),
-        fenced: (tx, fence, kind, begin) => writers.fenced(tx, fence, kind, begin),
+        fenced: (tx, fence, kind, begin, ownEnd) => writers.fenced(tx, fence, kind, begin, ownEnd),
         advanced: (tx, fence, input) => writers.advanced(tx, fence, input),
         quarantined: (tx, fence, id) => writers.quarantined(tx, fence, id),
         maintained: () => writers.expire(),

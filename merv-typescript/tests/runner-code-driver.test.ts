@@ -794,6 +794,50 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
   await reviewer.close(other.launch('ses_q'));
 });
 
+test('a worker that asks its owner or hands off still hands over its checkout, and its resume continues from it', async (t) => {
+  // Sessions closes such a visit itself, before its machine has even stopped the process
+  // (asked_owner at once, a handoff on its next sweep), so the final capture always comes
+  // after the close. Uncommitted work must not be lost to that order.
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const m = machine(t, f);
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'wip.txt'), 'not committed yet\n');
+  f.end('ses_1', 'asked_owner');
+  await f.event('session.closed', 'ses_1', true);
+  assert.equal((await f.unit()).writerState, 'closing', 'its machine still owes its capture');
+  await assert.rejects(f.lease('ses_2'), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, 'code_writer_busy');
+    return true;
+  });
+  m.terminal.add('launch-ses_1');
+  const result = await driver.capture(m.launch('ses_1'));
+  assert.ok(result && result.headOid !== f.root);
+  assert.deepEqual(
+    [(await f.unit()).writerState, (await f.unit()).canonicalHead],
+    ['closed', result.headOid],
+  );
+  await driver.close(m.launch('ses_1'));
+
+  // The answered question resumes the same work on the same machine, from that capture.
+  await f.lease('ses_2');
+  const resumed = await driver.prepare(m.launch('ses_2'), m.session('ses_2'));
+  assert.equal(resumed.snapshot!.headOid, result.headOid);
+  assert.equal(readFileSync(join(resumed.path, 'wip.txt'), 'utf8'), 'not committed yet\n');
+
+  // A visit Sessions ended for it (an expiry here) ends at the last admitted commit at once.
+  await f.event('session.workspace_attached', 'ses_2');
+  writeFileSync(join(resumed.path, 'late.txt'), 'after the deadline\n');
+  f.end('ses_2', 'session_expired');
+  await f.event('session.closed', 'ses_2');
+  assert.equal((await f.unit()).writerState, 'closed');
+  m.terminal.add('launch-ses_2');
+  assert.equal((await driver.capture(m.launch('ses_2')))!.headOid, result.headOid);
+  assert.equal((await f.unit()).canonicalHead, result.headOid);
+});
+
 test('hosted Code checkout has independent Git metadata and its edits pass through Code capture', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_hosted');

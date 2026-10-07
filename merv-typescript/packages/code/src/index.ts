@@ -27,8 +27,9 @@ export const codePlugin = {
         new CodeService(ctx.state, ctx.scope, config, githubConfig()),
       );
       yield () => service.close();
-      // A session's attach and end open and end its writer generation. The cursor is durable,
-      // so what happened while Code was unloaded is caught up on in order.
+      // A session's attach and end open and end its writer generation (one its worker ended by
+      // its own hand first waits for its machine's final capture). The cursor is durable, so
+      // what happened while Code was unloaded is caught up on in order.
       yield await ctx.domainEvents.subscribe({
         id: 'code.writers.v1',
         types: ['session.workspace_attached', 'session.closed'],
@@ -39,6 +40,7 @@ export const codePlugin = {
             event.subjectId,
             event.type === 'session.workspace_attached' ? 'attached' : 'closed',
             tx,
+            event.data.ownEnd === true,
           ),
       });
       yield ctx.provide('code', service);

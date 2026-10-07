@@ -142,12 +142,18 @@ export class CodeWriterService {
     return row ? this.view(row) : { generation: 0, state: 'idle', blocked: null };
   }
 
-  /** Apply an owning session's attachment or end; the current generation alone may move. */
+  /**
+   * Apply an owning session's attachment or end; the current generation alone may move. A
+   * session its worker ended by its own hand (`ownEnd`: its handoff or its question to its
+   * owner) is closed by Sessions before its machine has stopped the process, so that machine
+   * still owes the final capture of its checkout: the generation waits for it in `closing`.
+   */
   async sessionChanged(
     projectId: string,
     sessionId: string,
     change: 'attached' | 'closed',
     tx: Transaction,
+    ownEnd = false,
   ): Promise<void> {
     this.assertOpen();
     this.state.assertTransaction(tx);
@@ -162,6 +168,11 @@ export class CodeWriterService {
       return;
     }
     if (row.writer_state !== 'reserved' && row.writer_state !== 'active') return;
+    if (ownEnd && row.writer_state === 'active') {
+      await this.move(tx, row, 'closing');
+      await this.changed(tx, projectId, row.unit_id);
+      return;
+    }
     // An upload already in flight may still finish within the grace; nothing else may.
     const uploads = await this.uploads(tx, row);
     if (uploads.admitted || uploads.received) {
@@ -257,8 +268,9 @@ export class CodeWriterService {
       )) {
         const uploads = await this.uploads(tx, row);
         if (uploads.admitted) continue;
-        const grace = row.writer_state === 'closing' && (row.writer_changed_at ?? '') > before;
-        if (grace && uploads.received) continue;
+        // Within the grace a closing generation waits: for what was in flight, or for the final
+        // capture a worker that ended its own visit owes.
+        if (row.writer_state === 'closing' && (row.writer_changed_at ?? '') > before) continue;
         await this.end(tx, row, row.writer_state === 'closing' ? 'session_closed' : 'stranded');
       }
     });
@@ -267,9 +279,16 @@ export class CodeWriterService {
   /**
    * The fence every upload passes, at its beginning and again before any ref moves. Every
    * upload begins under the live writer; one in flight when its session closed may go on to be
-   * admitted within the grace (`closing`), and nothing begins once the session has closed.
+   * admitted within the grace (`closing`). Once the session has closed nothing begins, except
+   * the final capture of a worker that ended its own visit (`ownEnd`), within the grace.
    */
-  async fenced(tx: Transaction, fence: WriterFence, _kind: 'checkpoint' | 'final', begin = false) {
+  async fenced(
+    tx: Transaction,
+    fence: WriterFence,
+    kind: 'checkpoint' | 'final',
+    begin = false,
+    ownEnd = false,
+  ) {
     const row = await this.row(tx, fence.projectId, fence.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
     check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
@@ -281,8 +300,12 @@ export class CodeWriterService {
       'Another writer generation owns this unit now',
       409,
     );
+    const owed =
+      ownEnd &&
+      kind === 'final' &&
+      Date.parse(row.writer_changed_at ?? '') > Date.now() - this.finalizeGraceSeconds * 1000;
     check(
-      (begin ? ['reserved', 'active'] : ['reserved', 'active', 'closing']).includes(
+      (begin && !owed ? ['reserved', 'active'] : ['reserved', 'active', 'closing']).includes(
         row.writer_state,
       ),
       'code_writer_closed',

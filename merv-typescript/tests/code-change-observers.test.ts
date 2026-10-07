@@ -246,17 +246,27 @@ test('research observers ignore generic Code records with no research workflow o
   assert.deepEqual(await f.blockers(), []);
 });
 
-test('a closing writer with nothing in flight ends on the sweep and the base refusal stays', async (t) => {
+test('a closing writer with nothing in flight ends on the sweep past the grace and the base refusal stays', async (t) => {
   const f = await fixture(t);
   await f.bind('b', 'a');
-  // Ten minutes is inside the default 900-second grace, which only an upload in flight uses.
-  await f.ctx.state.transaction((tx) =>
-    tx.run(
-      "UPDATE code_workspaces SET generation=1,writer_state='closing',writer_changed_at=? WHERE unit_id=?",
-      new Date(Date.now() - 600_000).toISOString(),
-      f.unitId,
-    ),
+  const closing = (ago: number) =>
+    f.ctx.state.transaction((tx) =>
+      tx.run(
+        "UPDATE code_workspaces SET generation=1,writer_state='closing',writer_changed_at=? WHERE unit_id=?",
+        new Date(Date.now() - ago).toISOString(),
+        f.unitId,
+      ),
+    );
+  // Ten minutes is inside the default 900-second grace: a worker that ended its own visit may
+  // still hand over its final capture.
+  await closing(600_000);
+  await f.ctx.code.writers.expire();
+  assert.equal(
+    (await f.ctx.state.read((sql) => f.ctx.code.writers.row(sql, f.caller.projectId, f.unitId)))
+      ?.writer_state,
+    'closing',
   );
+  await closing(901_000);
   await f.ctx.code.writers.expire();
   assert.equal(
     (await f.ctx.state.read((sql) => f.ctx.code.writers.row(sql, f.caller.projectId, f.unitId)))

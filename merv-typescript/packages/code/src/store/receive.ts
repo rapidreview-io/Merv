@@ -187,8 +187,13 @@ export class CodeReceiver {
    * The caller has already shown that the session is theirs and runs on the machine they
    * name. An upload that moves nothing completes here; one that carries a bundle first ends
    * every transfer of the unit that was only receiving, because nobody will complete it.
+   * `ownEnd`: the session closed by its worker's own hand, whose machine still owes its final.
    */
-  async beginUpload(caller: Caller, input: CodeUpload): Promise<CodeStoreOperation> {
+  async beginUpload(
+    caller: Caller,
+    input: CodeUpload,
+    ownEnd = false,
+  ): Promise<CodeStoreOperation> {
     this.core.assertOpen();
     caller = structuredClone(caller);
     await this.core.managedRead(caller, input.sessionId);
@@ -244,7 +249,7 @@ export class CodeReceiver {
       this.core.managedSession(caller, input.sessionId);
       const previous = await journal(tx).previous<OperationRow>(columns);
       if (previous) return previous.id;
-      await this.core.hooks.fenced(tx, fence, input.kind, true);
+      await this.core.hooks.fenced(tx, fence, input.kind, true, ownEnd);
       const open = await tx.all<OperationRow>(
         `SELECT ${columns} FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'`,
         caller.projectId,

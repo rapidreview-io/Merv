@@ -89,8 +89,8 @@ export class CodeStore {
   stats(projectId: string, base: string, head: string) {
     return this.receiver.stats(projectId, base, head);
   }
-  beginUpload(caller: Caller, input: CodeUpload) {
-    return this.receiver.beginUpload(caller, input);
+  beginUpload(caller: Caller, input: CodeUpload, ownEnd = false) {
+    return this.receiver.beginUpload(caller, input, ownEnd);
   }
   operation(caller: Caller, operationId: string) {
     return this.receiver.operation(caller, operationId);

@@ -206,7 +206,8 @@ The canonical lifecycle is:
 
 ```text
 idle → reserved → active → closed          (the session closed with nothing in flight)
-                          ↘ closing → closed (an upload in flight finishes within the grace)
+                          ↘ closing → closed (an upload in flight, or the final capture a handoff
+                                             or asked_owner close still owes, within the grace)
                           ↘ recovery_required (a quarantined capture; code.unit.fence)
 ```
 
@@ -219,7 +220,7 @@ unitId, generation, sessionId, leaseId,
 expectedHead, requestId, inputFingerprint
 ```
 
-The runner submits its one frozen final capture before it releases the session; once the session has closed nothing new begins. The finalizer cannot execute tools, change dependencies, or reopen the writer.
+The runner submits its one frozen final capture before it releases the session; once the session has closed nothing new begins, except that capture after a handoff or `asked_owner` close, which Sessions records before the process has stopped (within the grace). The finalizer cannot execute tools, change dependencies, or reopen the writer.
 
 Runner confirms process termination before capture. [sessions/index.ts:645](../packages/sessions/src/index.ts:645), [runner/index.ts:660](../packages/runner/src/index.ts:660)
 
