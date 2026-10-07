@@ -25,7 +25,6 @@ export interface NativeWorkflow {
   origin_grant_id: string | null;
   attempt_ref: string | null;
   admission_profile: string | null;
-  nodes?: Record<string, unknown>;
   [key: string]: unknown;
 }
 export interface NativeJob {
@@ -108,16 +107,14 @@ const route = (work: NativeWorkRow) => {
 
 /** Stable work binding and unfinished cleanup intents, never a second native job ledger. */
 export class NativeWorkService {
-  private publisher?: Publisher;
   private reconciling?: Promise<void>;
   constructor(
     private readonly state: State,
     private readonly connections: NativeConnections,
     private readonly workflows: Pick<Workflows, 'relations'>,
+    /** Registers an ended workflow's captures as evidence (NativeEvidence.publish). */
+    private readonly publisher: Publisher,
   ) {}
-  setEvidencePublisher(publisher: Publisher): void {
-    this.publisher = publisher;
-  }
   async connected(projectId: string, tx?: Sql): Promise<boolean> {
     const row = await this.connections.current(projectId, tx);
     if (this.connections.config.managed && !row?.billing_subject) return false;
@@ -725,13 +722,11 @@ export class NativeWorkService {
       return !!resource.origin_grant_id && !!attempt && attempt !== work.desired_attempt;
     };
     for (const workflow of resources.workflows) {
-      if (this.publisher) {
-        try {
-          await this.publisher(work, connection, workflow);
-        } catch {
-          evidencePending = true;
-        }
-      } else if (workflow.nodes && Object.keys(workflow.nodes).length) evidencePending = true;
+      try {
+        await this.publisher(work, connection, workflow);
+      } catch {
+        evidencePending = true;
+      }
       if ((work.closed_at || old(workflow)) && !workflowTerminal(workflow.state)) {
         await this.fresh(work);
         await request('/actions', 'POST', { kind: 'workflow_cancel', id: workflow.id });

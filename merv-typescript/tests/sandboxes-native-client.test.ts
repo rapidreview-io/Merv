@@ -37,7 +37,7 @@ test('native client restricts destination and refuses redirects without reading 
   let calls = 0;
   const client = new NativeSandboxClient('https://sandbox.example', (async (url, options) => {
     calls++;
-    assert.equal(options?.redirect, 'error');
+    assert.equal(options?.redirect, 'manual');
     assert.equal(new URL(String(url)).origin, 'https://sandbox.example');
     return new Response(secret, { status: 302, headers: { location: 'https://attacker.example' } });
   }) as typeof fetch);

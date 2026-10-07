@@ -240,11 +240,13 @@ test('existing cache merges native and legacy machines, routes records, and keep
             : { version: 1, rows: [] },
     );
   });
-  const service = new SandboxService({
-    urlEnv: env,
-    connections: [{ projectId: 'project_test', namespace: 'legacy', tokenEnv: token }],
-  });
-  service.bindNativeMachines(f.reader);
+  const service = new SandboxService(
+    {
+      urlEnv: env,
+      connections: [{ projectId: 'project_test', namespace: 'legacy', tokenEnv: token }],
+    },
+    { machines: f.reader },
+  );
   t.after(() => service.close());
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
   service.watch('project_test');
@@ -287,17 +289,19 @@ test('native-only Compute registers the existing collection renderer and reads o
     if (previous === undefined) delete process.env[env];
     else process.env[env] = previous;
   });
-  const service = new SandboxService({
-    urlEnv: env,
-    connections: [],
-    native: {
-      applicationId: 'test',
-      applicationSecretEnv: 'APP',
-      encryptionKeyEnv: 'KEY',
-      publicOrigin: 'https://merv.example',
+  const service = new SandboxService(
+    {
+      urlEnv: env,
+      connections: [],
+      native: {
+        applicationId: 'test',
+        applicationSecretEnv: 'APP',
+        encryptionKeyEnv: 'KEY',
+        publicOrigin: 'https://merv.example',
+      },
     },
-  });
-  service.bindNativeMachines(f.reader);
+    { machines: f.reader },
+  );
   t.after(() => service.close());
   const ctx = new Context(),
     ui = new UiRegistry();

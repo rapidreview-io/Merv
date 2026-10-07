@@ -184,7 +184,7 @@ test('sandbox transport sanitizes interrupted bodies and recovers on the next ca
   const transport = client(t, () => next());
   await assert.rejects(transport.read(connection, '/v1/sandboxes'), {
     code: 'sandbox_unavailable',
-    message: 'merv-sandboxes answered invalid JSON',
+    message: 'merv-sandboxes is unreachable',
   });
   next = () => Response.json({ recovered: true });
   assert.deepEqual(await transport.read(connection, '/v1/sandboxes'), { recovered: true });
@@ -221,7 +221,7 @@ test(
     const transport = new SandboxClient(`http://127.0.0.1:${address.port}`, 200);
     await assert.rejects(transport.read(connection, '/v1/sandboxes'), {
       code: 'sandbox_unavailable',
-      message: 'merv-sandboxes answered invalid JSON',
+      message: 'merv-sandboxes is unreachable',
     });
     assert.ok(disconnected, 'the request must reach its response body');
     await disconnected;
