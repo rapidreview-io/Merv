@@ -58,7 +58,13 @@ import { checkpoint, leasedClaim, visibleCheckpoints } from './lease.js';
 import { workflowPolicy } from './policy.js';
 import { assignmentFacts, context } from './context.js';
 import { running, runningPanel } from './running.js';
-import { createTask, markFailed, submitDelivery, submitReview } from './commands.js';
+import {
+  closeUnstarted,
+  createTask,
+  markFailed,
+  submitDelivery,
+  submitReview,
+} from './commands.js';
 
 export type {
   Task,
@@ -124,6 +130,7 @@ export class TaskService implements Tasks {
   readonly running = bound(this, running);
   readonly runningPanel = bound(this, runningPanel);
   readonly markFailed = bound(this, markFailed);
+  readonly closeUnstarted = bound(this, closeUnstarted);
   readonly submitDelivery = bound(this, submitDelivery);
   readonly submitReview = bound(this, submitReview);
   private closed = false;

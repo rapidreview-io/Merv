@@ -107,6 +107,17 @@ export interface Tasks {
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
   markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
+  /**
+   * Fails a task of this project that nobody started (still in progress, no work started), with
+   * this reason; true when it did. False, with nothing changed, for anything else.
+   */
+  closeUnstarted(
+    caller: Caller,
+    taskId: string,
+    reason: string,
+    requestId: string,
+    tx: Transaction,
+  ): Promise<boolean>;
   /** The owner capability another plugin creates service tasks with, under its own provider name. */
   serviceTasks(provider: string): ServiceTaskCreator;
   /**

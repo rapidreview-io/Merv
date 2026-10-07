@@ -30,14 +30,15 @@ export interface AutomaticRow {
 }
 /**
  * Why automatic progress waits, as Research publishes it to Workflows; null when it does not.
- * One that only the cycle's owner ends says so, with its own way on.
+ * One that only the cycle's owner ends says so, with its own way on: the owner's move while
+ * they may still write to the project, and a project admin's once they have left.
  */
 export type AutomaticBlocker = {
   code: string;
   message: string;
   status: number;
   next?: string;
-  whose?: 'owner';
+  whose?: 'owner' | 'admin';
 } | null;
 /** The provider Research's automation blockers are published as. */
 export const AUTOMATIC_PROVIDER = 'research';
@@ -55,7 +56,26 @@ export const unavailableSince = (blockerJson: string | null): number => {
   }
 };
 
-/** Research's whole opinion of a cycle, written over whatever it said before. */
+/** The cycle owner's move while they may write to the project; a project admin's once not. */
+export async function whoseMove(
+  scope: Pick<Scope, 'eligible'>,
+  researchId: string,
+  tx: Transaction,
+): Promise<'owner' | 'admin'> {
+  const row = await tx.get<{ project_id: string; record: string }>(
+    'SELECT project_id,record FROM research_cycles WHERE id=?',
+    researchId,
+  );
+  const ownerId = row && (JSON.parse(row.record) as { ownerId: string }).ownerId;
+  return ownerId && (await scope.eligible(row.project_id, ownerId, 'write', tx))
+    ? 'owner'
+    : 'admin';
+}
+
+/**
+ * Research's whole opinion of a cycle, written over whatever it said before. A blocker that is
+ * somebody's move is kept beside the cycle (`asked`), so it can go to admins when its owner leaves.
+ */
 export async function publishBlocker(
   workflows: Pick<Workflows, 'replaceBlockers'>,
   row: Pick<AutomaticRow, 'project_id' | 'research_id'>,
@@ -71,7 +91,9 @@ export async function publishBlocker(
     'UPDATE research_automation SET blocker_json=? WHERE research_id=?',
     blocker?.status === 503
       ? JSON.stringify({ unavailableSince: new Date(since || Date.now()).toISOString() })
-      : null,
+      : blocker?.whose
+        ? JSON.stringify({ asked: blocker })
+        : null,
     row.research_id,
   );
   await workflows.replaceBlockers(
@@ -85,7 +107,45 @@ export async function publishBlocker(
   );
 }
 
-const CONSUMER = 'research.automatic.v3';
+/**
+ * Whose move what each ended cycle of this project asks of its owner is, judged again: an open
+ * cycle is reconciled, and judged, by the event that calls this.
+ */
+async function rejudge(
+  scope: Pick<Scope, 'eligible'>,
+  workflows: Pick<Workflows, 'replaceBlockers'>,
+  projectId: string,
+  tx: Transaction,
+) {
+  const rows = await tx.all<{ research_id: string; blocker_json: string }>(
+    'SELECT research_id,blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
+    projectId,
+  );
+  for (const row of rows) {
+    const asked = (JSON.parse(row.blocker_json) as { asked?: AutomaticBlocker }).asked;
+    if (asked?.code !== 'research_needs_owner') continue;
+    const whose = await whoseMove(scope, row.research_id, tx);
+    if (whose !== asked.whose)
+      await publishBlocker(
+        workflows,
+        { project_id: projectId, research_id: row.research_id },
+        { ...asked, whose },
+        tx,
+      );
+  }
+}
+
+/** A refusal that only the cycle's owner, or an admin, can move past, and how. */
+const OWNERS: Record<string, string> = {
+  research_definition_changed:
+    'Accept the changed definition with research.advance, or stop the run with research.end',
+};
+/** Said of a run whose delegation no longer holds: nothing automatic moves it again. */
+const LAPSED =
+  'The delegation this automatic run acts under no longer holds: research.advance moves the cycle by hand, and research.end stops it';
+
+// v4 also hears a member leave, so what a cycle asks of its owner goes to admins.
+const CONSUMER = 'research.automatic.v4';
 /** Retries of one event while the database answers 503: about 25 seconds of backoff in all. */
 const UNAVAILABLE_RETRIES = 8;
 const TRANSIENT = ['state_timeout', 'state_busy', 'state_unavailable'];
@@ -113,8 +173,10 @@ export async function automaticResearch(
       'research.resume',
       'paper.patched',
       'actor.permissions_changed',
+      'actor.revoked',
     ],
     handle: async (event, tx) => {
+      if (event.type.startsWith('actor.')) await rejudge(scope, workflows, event.projectId, tx);
       // Startup asks for a resume, as does a retry; a later one still to come answers this.
       const later = { projectId: event.projectId, type: 'research.resume', after: event.id };
       if (event.type === 'research.resume' && (await state.findEvents(later, 1, tx)).length) return;
@@ -133,9 +195,11 @@ export async function automaticResearch(
         // The effects and the event cursor still share the outer transaction. Unexpected errors
         // retry the event; a permanent domain blocker must not strand every other cycle.
         await tx.run('SAVEPOINT research_automatic_cycle');
+        let delegated = false;
         try {
           const source = JSON.parse(row.source_json) as DelegationSource;
           await scope.requireDelegation(source, 'write', tx);
+          delegated = true;
           blocker = await reconcile(sourceCaller(source), row, tx);
           await tx.run('RELEASE SAVEPOINT research_automatic_cycle');
         } catch (error) {
@@ -153,6 +217,10 @@ export async function automaticResearch(
             if ((consumer?.attempts ?? UNAVAILABLE_RETRIES) < UNAVAILABLE_RETRIES) throw error;
           }
           blocker = automaticBlocker(error);
+          // A lapsed delegation, or a refusal only a person moves past, is somebody's move.
+          const next = delegated ? OWNERS[error.code] : error.status !== 503 && LAPSED;
+          if (next)
+            blocker = { ...blocker, next, whose: await whoseMove(scope, row.research_id, tx) };
           if (error.status === 503) unavailable(row);
         }
         await publishBlocker(workflows, row, blocker, tx);
@@ -161,7 +229,7 @@ export async function automaticResearch(
   });
 }
 
-export const automaticBlocker = (error: MervError): AutomaticBlocker => ({
+export const automaticBlocker = (error: MervError): NonNullable<AutomaticBlocker> => ({
   code: error.code,
   message: clip(error.message, 2000),
   status: error.status,
@@ -339,7 +407,9 @@ export async function reconcileAutomatic(
 export async function needsOwner(
   ctx: ResearchContext,
   caller: Caller,
-  record: Pick<ResearchRecord, 'reflectionId' | 'successorId'> & { workflow: { state: string } },
+  record: Pick<ResearchRecord, 'id' | 'reflectionId' | 'successorId'> & {
+    workflow: { state: string };
+  },
   tx: Transaction,
 ): Promise<AutomaticBlocker> {
   if (record.workflow.state !== 'complete' || record.successorId || !record.reflectionId)
@@ -351,8 +421,8 @@ export async function needsOwner(
         code: 'research_needs_owner',
         message: clip(`The approved plan stops for the owner: ${next.rationale}`, 2000),
         status: 409,
-        next: 'Decide what comes next, then start a research cycle that follows this one',
-        whose: 'owner',
+        next: 'Decide what comes next: start a research cycle that follows this one, or stop here with research.end',
+        whose: await whoseMove(ctx.scope, record.id, tx),
       }
     : null;
 }
@@ -396,7 +466,7 @@ export function soon(
 
 /**
  * A permanently failed input cannot strand never-started work in this selected wave, or the
- * work between it and that input.
+ * work between it and that input. Each owner judges what of its own was never started.
  */
 export async function closeBlockedWork(
   ctx: ResearchContext,
@@ -404,29 +474,18 @@ export async function closeBlockedWork(
   record: ResearchRecord,
   tx: Transaction,
 ) {
+  const { tasks, experiments } = ctx.providers;
   const remaining = new Set<string>();
   for (const id of record.researchDependencies)
     for (const item of await ctx.workflows.dependencyClosure(caller, id, tx)) remaining.add(item);
   for (let pass = 0, passes = remaining.size; remaining.size && pass < passes; pass++) {
     let changed = false;
     for (const id of [...remaining]) {
-      const work = await ctx.workflows.get(caller, id, tx);
-      if (
-        !['task', 'experiment'].includes(work.workflow) ||
-        !['in_progress', 'planned'].includes(work.state)
-      ) {
-        remaining.delete(id);
-        continue;
-      }
-      // Never cancel a running producer or review to close a wave.
-      if ((await ctx.workflows.workStarts(caller, id, tx)).length) {
-        remaining.delete(id);
-        continue;
-      }
       const failed = (await ctx.workflows.prerequisites(caller, [id], tx))
         .get(id)!
         .filter((item) => item.failed);
       if (!failed.length) continue;
+      remaining.delete(id);
       // Work between the selection and the failed input is not the cycle's own to reflect on.
       const after = record.researchDependencies.includes(id)
         ? `Retained for reflection in ${record.name}.`
@@ -435,26 +494,12 @@ export async function closeBlockedWork(
         `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. ${after}`,
         16000,
       );
-      const requestId = automaticRequest(record.id, work.revision, `close:${id}`);
-      if (work.workflow === 'task') {
-        await ctx.providers.tasks.markFailed(
-          caller,
-          { taskId: id, expectedRevision: work.revision, reason, requestId },
-          tx,
-        );
-      } else {
-        await ctx.providers.experiments.transition(
-          caller,
-          {
-            experimentId: id,
-            expectedRevision: work.revision,
-            transition: 'abandon',
-            evidence: { reason },
-            requestId,
-          },
-          tx,
-        );
-      }
+      const requestId = automaticRequest(record.id, record.workflow.revision, `close:${id}`);
+      if (
+        !(await tasks.closeUnstarted(caller, id, reason, requestId, tx)) &&
+        !(await experiments.closeUnstarted(caller, id, reason, requestId, tx))
+      )
+        continue;
       await ctx.event(
         caller,
         'blocked_work_closed',
@@ -467,7 +512,6 @@ export async function closeBlockedWork(
         },
         tx,
       );
-      remaining.delete(id);
       changed = true;
     }
     if (!changed) break;

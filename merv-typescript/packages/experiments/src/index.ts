@@ -47,7 +47,14 @@ import {
   TERMINAL,
 } from './program.js';
 import { handleFor, register, unregister } from './policy.js';
-import { attach, create, exhibit, submitReview, transition } from './commands.js';
+import {
+  attach,
+  closeUnstarted,
+  create,
+  exhibit,
+  submitReview,
+  transition,
+} from './commands.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -127,6 +134,7 @@ export class ExperimentService implements Experiments {
   readonly attach = bound(this, attach);
   readonly exhibit = bound(this, exhibit);
   readonly transition = bound(this, transition);
+  readonly closeUnstarted = bound(this, closeUnstarted);
   readonly submitReview = bound(this, submitReview);
   closed = false;
   sandboxes?: Pick<Sandboxes, 'captures'>;

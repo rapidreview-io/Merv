@@ -319,13 +319,10 @@ export class ResearchService implements Research {
         if (input.previousCycleId) {
           await follow(this, caller, input.previousCycleId, tx);
           // What the ended cycle asked of its owner is answered by the cycle that follows it.
-          await this.workflows.replaceBlockers(
-            {
-              projectId: caller.projectId,
-              instanceId: input.previousCycleId,
-              provider: AUTOMATIC_PROVIDER,
-              blockers: [],
-            },
+          await publishBlocker(
+            this.workflows,
+            { project_id: caller.projectId, research_id: input.previousCycleId },
+            null,
             tx,
           );
         } else if (!caller.session) {
@@ -341,13 +338,10 @@ export class ResearchService implements Research {
             (caller.actorId === ended.ownerId ||
               (await this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)))
           )
-            await this.workflows.replaceBlockers(
-              {
-                projectId: caller.projectId,
-                instanceId: ended.id,
-                provider: AUTOMATIC_PROVIDER,
-                blockers: [],
-              },
+            await publishBlocker(
+              this.workflows,
+              { project_id: caller.projectId, research_id: ended.id },
+              null,
               tx,
             );
         }
@@ -460,6 +454,23 @@ export class ResearchService implements Research {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
       return await this.command(caller, 'end', input, tx, async () => {
+        // A completed run whose plan stopped for its owner ends with their decision to stop.
+        if (record.automation?.blocker?.code === 'research_needs_owner') {
+          await publishBlocker(
+            this.workflows,
+            { project_id: caller.projectId, research_id: record.id },
+            null,
+            tx,
+          );
+          await this.event(
+            caller,
+            'stopped',
+            record.id,
+            { decision: 'stop', reason: clip(input.reason, ENDING_REASON_CHARS) },
+            tx,
+          );
+          return await this.get(caller, record.id, tx);
+        }
         const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
         const moved = await this.checked.take(
           tx,
@@ -623,6 +634,7 @@ export class ResearchService implements Research {
               this,
               caller,
               {
+                id: record.id,
                 workflow: { state: moved.state },
                 successorId: successor?.id ?? null,
                 reflectionId: record.reflectionId,
