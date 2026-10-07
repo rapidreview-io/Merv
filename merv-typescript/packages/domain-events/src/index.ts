@@ -170,11 +170,10 @@ export class DurableEvents implements DomainEvents {
   }
 
   /**
-   * Passes a consumer with nothing it subscribes to before the head. Under the writer lock every
-   * event up to the head is committed and no smaller ID can commit later.
+   * Passes a consumer with nothing it subscribes to between its cursor and `head`. Under the
+   * writer lock every event up to the head is committed and no smaller ID can commit later.
    */
-  private async toHead(tx: Transaction, consumer: EventConsumer, cursor: number) {
-    const head = await this.state.eventHead(tx);
+  private async toHead(tx: Transaction, consumer: EventConsumer, cursor: number, head: number) {
     if (head > cursor) await this.advance(tx, consumer, head);
   }
 
@@ -222,13 +221,9 @@ export class DurableEvents implements DomainEvents {
             'SELECT * FROM event_consumers WHERE id=?',
             consumer.id,
           );
-          if (
-            !row ||
-            row.retry_at > Date.now() ||
-            (await this.due(consumer, row.cursor, Number.MAX_SAFE_INTEGER, tx))
-          )
+          if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
             continue;
-          await this.toHead(tx, consumer, row.cursor);
+          await this.toHead(tx, consumer, row.cursor, head);
           passed.add(consumer.id);
         }
       });
@@ -254,7 +249,7 @@ export class DurableEvents implements DomainEvents {
             // with none left the cursor moves to the head.
             const event = await this.state.nextEvent(progress.cursor, consumer.types, tx);
             if (!event) {
-              await this.toHead(tx, consumer, progress.cursor);
+              await this.toHead(tx, consumer, progress.cursor, await this.state.eventHead(tx));
               return false;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
