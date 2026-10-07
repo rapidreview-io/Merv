@@ -36,8 +36,8 @@ export const taskUiPlugin = {
           ],
         },
         needs: { name: 'title', owner: 'producerId', reads: { in_review: 'Review this delivery' } },
-        // One record, with the gate it stands at: the process graph is derived from the
-        // same record, so the page reads both in one answer rather than two.
+        // One record, with the stage it stands at and its history, both from one graph read
+        // without running an action's check: the page polls this and draws no action.
         read: async (caller: Caller, params) => {
           const id = params?.id;
           check(
@@ -48,10 +48,8 @@ export const taskUiPlugin = {
           return JSON.parse(
             JSON.stringify({
               task: await tasks.get(caller, id),
-              process: await tasks.process(caller, id),
+              ...(await tasks.page(caller, id)),
               codeUnit: await tasks.codeUnit(caller, id),
-              // Its history as its sidebar tells it, read alone: the page polls this.
-              history: await tasks.history(caller, id),
             }),
           ) as Json;
         },

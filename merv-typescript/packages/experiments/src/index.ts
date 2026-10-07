@@ -307,10 +307,14 @@ export class ExperimentService implements Experiments {
     return experimentPanel({ ...read, graph, route });
   }
   /**
-   * Its history alone, as its sidebar tells it, for its record page to poll: the record, its
-   * reviews and its graph, and nothing else of the sidebar.
+   * What its record page polls: the record, where it stands, read without running an action's
+   * check (a submission's checks read the bytes it would submit, and the page draws no action),
+   * and its history as its sidebar tells it, from that same graph and its reviews.
    */
-  async history(caller: Caller, experimentId: string): Promise<RunningUnitEntry[]> {
+  async page(
+    caller: Caller,
+    experimentId: string,
+  ): Promise<{ experiment: Experiment; process: ProcessGraph; history: RunningUnitEntry[] }> {
     this.open();
     caller = structuredClone(caller);
     const read = await inTransaction(this.state, undefined, async (tx) => {
@@ -323,7 +327,11 @@ export class ExperimentService implements Experiments {
       return { experiment, reviews: [...reviews.values()] };
     });
     const graph = await this.workflows.process(caller, experimentId, { checks: false });
-    return experimentHistory(read.experiment, graph, read.reviews);
+    return {
+      experiment: read.experiment,
+      process: graph,
+      history: experimentHistory(read.experiment, graph, read.reviews),
+    };
   }
   private async standingRows(
     caller: Caller,
