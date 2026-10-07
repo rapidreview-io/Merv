@@ -61,6 +61,7 @@ function status(over: Record<string, unknown> = {}) {
     runners: [
       {
         id: 'runner_1',
+        runnerId: 'lab-runner',
         lastSeenAt: at(-5_000),
         live: true,
         capacity: 2,
@@ -83,6 +84,7 @@ function status(over: Record<string, unknown> = {}) {
         role: 'producer',
         status: 'active',
         runnerRef: 'runner_1',
+        runnerId: 'lab-runner',
         hostRef: null,
         platform: null,
         createdAt: at(-600_000),
@@ -252,6 +254,8 @@ test('the page states its subject without a click, in one liveness vocabulary', 
     'capacity full',
   ])
     assert.ok(shown.includes(fact), `${fact} is not on the page: ${shown.slice(0, 800)}`);
+  // A lease is named by its runner's machine, as the Runners table names it.
+  assert.equal(document.querySelector('.lease-row > span')!.textContent, 'lab-01');
   // What waits for an agent is on the Work page's map, and is not listed here a second time.
   assert.ok(!shown.includes('Ready to assign'));
   // The rail does not list this page: it is a step under Work, and says the way back.

@@ -202,6 +202,8 @@ export interface SessionSummary {
   /** The record's own name for a person, or the label where an older lease has none. */
   name: string;
   runnerRef: string | null;
+  /** The runner the lease was offered to, as it names itself (`RunnerPresence.runnerId`). */
+  runnerId: string;
   hostRef: string | null;
   platform: SessionPlatform | null;
   createdAt: string;

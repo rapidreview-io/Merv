@@ -219,10 +219,13 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   const [already, setAlready] = useState<string>();
   const status = state.data;
   const liveCount = status?.liveSessionCount ?? 0;
-  // A lease is named by the machine it runs on, as the Runners table names it.
-  const hosts = new Map(status?.runners.map((runner) => [runner.id, runner.machine.hostname]));
-  const hostOf = (session: SessionSummary) =>
-    session.runnerRef ? hosts.get(session.runnerRef) : undefined;
+  // A lease is named by the machine it runs on, as the Runners table names it; a runner that
+  // table does not name is its id, shortened.
+  const hosts = new Map(
+    status?.runners.map((runner) => [runner.runnerId, runner.machine.hostname]),
+  );
+  const hostOf = ({ runnerId: id }: SessionSummary) =>
+    hosts.get(id) ?? (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
   // The page's one clock ticks only while a lease or a runner is actually live,
   // and the read slows to match, so an idle Agents page costs nothing.
   const anyLive = liveCount > 0 || (status?.runners ?? []).some((runner) => runner.live);
@@ -398,8 +401,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     <ul className="guard-list">
                       {live.map((session) => (
                         <li key={session.id}>
-                          {session.name} · {term(session.role)} ·{' '}
-                          {hostOf(session) ?? 'no machine yet'}
+                          {session.name} · {term(session.role)} · {hostOf(session)}
                         </li>
                       ))}
                       {/* The guard names every lease under the click, including the
