@@ -513,14 +513,22 @@ test('closure pages both streams, preserves finalizers, retries evidence indepen
   assert.equal((await f.readWork())!.transition_pending, true);
   stopped = true;
   await f.work.reconcile();
-  assert.equal(
-    (await f.readWork())!.transition_pending,
-    true,
-    'evidence failures retain reconciliation intent',
+  // Evidence that fails with nothing else in flight is retried as resting work is, not on every
+  // pass: one that can never register is not polled for ever.
+  assert.equal((await f.readWork())!.last_error, 'Native evidence registration is pending');
+  const tried = published.length;
+  await f.work.reconcile();
+  assert.equal(published.length, tried, 'not retried before it is due');
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE sandbox_native_work SET evidence_checked_at=? WHERE work_id='task_work'",
+      new Date(Date.now() - 31_000).toISOString(),
+    ),
   );
   failEvidence = false;
   await f.work.reconcile();
   assert.equal((await f.readWork())!.transition_pending, false);
+  assert.equal((await f.readWork())!.last_error, null);
   const callCount = f.calls.length;
   await f.work.reconcile();
   assert.equal(f.calls.length, callCount, 'confirmed closed work no longer polls');
@@ -725,6 +733,37 @@ test('pending cleanup takes a bounded reconciliation slot ahead of ordinary evid
     ),
   );
   assert.equal((await f.readWork())!.transition_pending, false);
+});
+
+test('work that fails on every pass takes its turn by age, and never starves the rest', async (t) => {
+  const f = await fixture(t);
+  // The resting work: a live assignment, reconciled once, then due again 31 s later.
+  await f.work.launchConnections(f.leased());
+  await f.work.reconcile();
+  assert.equal((await f.readWork())!.transition_pending, false);
+  // Twenty works whose every pass fails: the native service answers them with another work's
+  // assignments.
+  await f.state.transaction(async (tx) => {
+    for (let i = 0; i < 20; i++)
+      await tx.run(
+        `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_grant_id,namespace,desired_attempt,transition_pending)
+        VALUES('project','task',?,'connection',?,'ns_work','1',TRUE)`,
+        `big_${i}`,
+        `big_grant_${i}`,
+      );
+  });
+  await f.work.reconcile();
+  const failing = await f.state.read((sql) =>
+    sql.all<NativeWorkRow>("SELECT * FROM sandbox_native_work WHERE work_id LIKE 'big_%'"),
+  );
+  assert.ok(failing.every((row) => row.transition_pending && row.last_error));
+  // The resting work comes due: it has waited longer than any failing work, so it has its turn.
+  const due = new Date(Date.now() - 31_000).toISOString();
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE sandbox_native_work SET evidence_checked_at=? WHERE work_id='task_work'", due),
+  );
+  await f.work.reconcile();
+  assert.ok(Date.parse((await f.readWork())!.evidence_checked_at!) > Date.parse(due));
 });
 
 test('any workflow gets compute: a reflection-like lease is pinned on first launch, checks, and is sent as the kind it declares', async (t) => {
