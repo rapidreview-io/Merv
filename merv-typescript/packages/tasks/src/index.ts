@@ -106,6 +106,7 @@ export type TasksContext = Pick<
   TaskService,
   | 'artifacts'
   | 'captureArtifactIds'
+  | 'computeGuidance'
   | 'checked'
   | 'code'
   | 'command'
@@ -138,7 +139,7 @@ export class TaskService implements Tasks {
     return (await this.reviews.apply(caller, input, tx)) as Task;
   }
   private closed = false;
-  private sandboxes?: Pick<Sandboxes, 'captures'>;
+  private sandboxes?: Pick<Sandboxes, 'captures' | 'guidance'>;
   private releaseReviewOwner?: () => void;
   private releaseServiceTasks?: () => void;
   private readonly registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -362,7 +363,7 @@ export class TaskService implements Tasks {
   }
 
   /** Captures, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void {
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'guidance'>): () => void {
     this.sandboxes = service;
     return () => {
       if (this.sandboxes === service) this.sandboxes = undefined;
@@ -370,6 +371,14 @@ export class TaskService implements Tasks {
   }
   async captureArtifactIds(projectId: string, workId: string, tx: Transaction): Promise<string[]> {
     return (await this.sandboxes?.captures(projectId, workId, tx)) ?? [];
+  }
+  /** Sandboxes' compute guidance for this project's assignment, or none (`Sandboxes.guidance`). */
+  async computeGuidance(
+    projectId: string,
+    profile: 'execute' | 'check',
+    tx: Transaction,
+  ): Promise<string> {
+    return (await this.sandboxes?.guidance(projectId, profile, tx)) ?? '';
   }
   async command<T>(
     tx: Transaction,

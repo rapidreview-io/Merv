@@ -1120,6 +1120,23 @@ test('a result submission may select a verified sandbox capture its worker attac
   assert.ok(review.artifactIds.includes(capture.id));
 });
 
+test('an assignment is told to use Sandboxes only where its visit gets the Sandboxes MCP', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.create('Unconnected');
+  // No Sandboxes at all, then Sandboxes with the project not connected: no connection is issued
+  // at launch, so the brief names none.
+  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
+  const native = nativeWorkFixture();
+  native.connection.connected = false;
+  t.after(f.experiments.bindSandboxes(native.service));
+  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
+  native.connection.connected = true;
+  assert.match(
+    (await f.workflows.assignment(f.producer, experiment.id)).brief,
+    /native Sandboxes MCP/,
+  );
+});
+
 test('a worker cannot attach a sandbox capture another attempt retained', async (t) => {
   const f = await fixture(t);
   const native = nativeWorkFixture();
@@ -1179,6 +1196,7 @@ test('experiments.list reads Sandboxes captures once for every experiment', asyn
   const calls = { captures: 0, evidence: 0 };
   t.after(
     f.experiments.bindSandboxes({
+      ...native.service,
       captures: (...args) => (calls.captures++, native.service.captures(...args)),
       evidence: (...args) => (calls.evidence++, native.service.evidence(...args)),
     }),

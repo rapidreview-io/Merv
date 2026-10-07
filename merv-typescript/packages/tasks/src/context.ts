@@ -20,7 +20,6 @@ import {
   type WorkflowExecutionReferences,
 } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
-import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import { renderBrief } from './evidence.js';
 import type { Task, TaskContext } from './types.js';
@@ -404,7 +403,11 @@ export async function workflowAssignment(
       `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
       (serviceOwned(task.workflow.version)
         ? ''
-        : computeGuidance(purpose === 'review' ? 'check' : 'execute')),
+        : await ctx.computeGuidance(
+            task.projectId,
+            purpose === 'review' ? 'check' : 'execute',
+            tx,
+          )),
     references: [
       { kind: 'task', id: task.id, label: task.title },
       ...task.guidance.references,

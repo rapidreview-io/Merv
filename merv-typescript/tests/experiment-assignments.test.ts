@@ -376,6 +376,8 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
+  // A connected project: its visits get the Sandboxes MCP, so its briefs say how to use it.
+  f.experiments.bindSandboxes(nativeWorkFixture().service);
   const prerequisite = await currentTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',

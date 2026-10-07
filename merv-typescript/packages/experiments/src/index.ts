@@ -136,7 +136,7 @@ export class ExperimentService implements Experiments {
     return (await this.reviews.apply(caller, input, tx)) as Experiment;
   }
   closed = false;
-  sandboxes?: Pick<Sandboxes, 'captures' | 'evidence'>;
+  sandboxes?: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'>;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   readonly contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
@@ -202,7 +202,7 @@ export class ExperimentService implements Experiments {
     }
   }
   /** Captures, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence'>): () => void {
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'>): () => void {
     this.open();
     this.sandboxes = service;
     return () => {

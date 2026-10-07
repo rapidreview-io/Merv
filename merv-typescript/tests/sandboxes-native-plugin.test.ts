@@ -225,6 +225,23 @@ test('native plugin waits for all owners and migration before publishing provide
     url: 'https://sandbox.invalid/ui',
   });
   assert.equal((await fetch(`${f.url}/sandboxes/connection/callback/finish`)).status, 404);
+  // Unconnected, a visit gets no Sandboxes MCP, so its assignment is told nothing of it.
+  const guidance = () =>
+    f.state.transaction((tx) => f.ctx.sandboxes.guidance(f.project.id, 'execute', tx));
+  assert.equal(await guidance(), '');
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at)
+      VALUES('connection',?,'root','account','member','sealed',?)`,
+      f.project.id,
+      new Date().toISOString(),
+    );
+    await tx.run(
+      "INSERT INTO sandbox_native_projects(project_id,connection_id) VALUES(?,'connection')",
+      f.project.id,
+    );
+  });
+  assert.match(await guidance(), /native Sandboxes MCP/);
   await fiber.dispose();
   assert.equal(f.launcher(), undefined);
   assert.equal(f.files.size, 0);

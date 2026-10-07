@@ -36,6 +36,7 @@ import type {
 } from './types.js';
 import { NativeConnections } from './native-connections.js';
 import { NativeEvidence } from './native-evidence.js';
+import { computeGuidance } from './compute-capability.js';
 import { NativeWorkService } from './native-work.js';
 import { nativeMigrations } from './native-schema.js';
 import { initializeComputeLedgers } from './compute-ledgers.js';
@@ -445,6 +446,13 @@ export class SandboxService implements Sandboxes {
     return work
       ? await this.nativeOperation(() => work.evidence(projectId, works, tx))
       : new Map(works.map((item) => [item.instanceId, { artifactIds: [], refused: [] }]));
+  };
+
+  guidance: Sandboxes['guidance'] = async (projectId, profile, tx) => {
+    const work = this.#nativeWork;
+    return work && (await this.nativeOperation(() => work.connected(projectId, tx)))
+      ? computeGuidance(profile)
+      : '';
   };
 
   rows(): SandboxRow[] {

@@ -222,6 +222,16 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
+test('a task visit whose project has no Sandboxes connection is not told to use Sandboxes', async (t) => {
+  const { app, offer, release, create } = await fixture(t);
+  const native = nativeWorkFixture();
+  native.connection.connected = false;
+  t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
+  const { session } = await offer(await create('native-unconnected'));
+  assert.doesNotMatch(session.assignment.brief, /Sandboxes/);
+  await release(session.id);
+});
+
 test('current native task leases leave compute to Sandboxes and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create, work, held } = await fixture(t);
   const native = nativeWorkFixture();

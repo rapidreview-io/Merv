@@ -1,4 +1,5 @@
 import type { CaptureEvidence, Sandboxes } from '@merv/sandboxes/types';
+import { computeGuidance } from '@merv/sandboxes/compute-capability';
 
 /**
  * What a unit reads from Sandboxes, as a spy: the capture IDs Sandboxes verified for an
@@ -14,8 +15,11 @@ export function nativeWorkFixture() {
     (verified.get(instanceId) ?? []).filter(
       (id) => !only || !attempts.has(id) || only.includes(attempts.get(id)!),
     );
-  const service: Pick<Sandboxes, 'captures' | 'evidence'> = {
+  /** Whether the project's connection would attach the Sandboxes MCP to a visit. */
+  const connection = { connected: true };
+  const service: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'> = {
     captures,
+    guidance: async (_project, profile) => (connection.connected ? computeGuidance(profile) : ''),
     evidence: async (project, works, tx) =>
       new Map(
         await Promise.all(
@@ -32,5 +36,5 @@ export function nativeWorkFixture() {
         ),
       ),
   };
-  return { service, verified, attempts, refused };
+  return { service, verified, attempts, refused, connection };
 }

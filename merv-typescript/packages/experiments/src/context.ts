@@ -1,4 +1,3 @@
-import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { reviewHistory } from '@merv/reviews/rules';
 import { mapAsync } from '@merv/contracts';
 import {
@@ -481,7 +480,11 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     name: experiment.name,
     brief:
       `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
-      computeGuidance(state === 'running' ? 'execute' : 'check'),
+      ((await ctx.sandboxes?.guidance(
+        experiment.projectId,
+        state === 'running' ? 'execute' : 'check',
+        context.tx,
+      )) ?? ''),
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({
