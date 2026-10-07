@@ -320,8 +320,13 @@ export interface ThreadConversation {
   threadId: string;
   visits: {
     sessionId: string;
-    /** `stream` while its live stream is kept; `transcript` once only its stored copy is. */
-    from: 'stream' | 'transcript' | 'none';
+    /**
+     * `stream` while its kept stream holds it; `transcript` once only its stored copy does; `none`
+     * when nothing was kept. A `live` visit is read from its own stream (`/events`), and an
+     * `unavailable` one could not be read just now. Events are sent newest visit first while the
+     * read has room, so an older visit's may be empty.
+     */
+    from: 'stream' | 'transcript' | 'none' | 'live' | 'unavailable';
     events: AgentStreamEvent[];
   }[];
 }
