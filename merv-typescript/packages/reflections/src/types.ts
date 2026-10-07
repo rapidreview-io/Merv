@@ -10,7 +10,7 @@ import type {
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { PaperChanges } from '@merv/paper/types';
-import type { ChangeSpec, Reflection, ReflectionLens } from './models.js';
+import type { ChangeSpec, Reflection, ReflectionLens, ReflectionSummary } from './models.js';
 export type * from './models.js';
 
 /** A reflection verdict, with the reviewer's own Methods/Results edits. */
@@ -71,6 +71,8 @@ export interface Reflections {
   create(caller: Caller, input: ReflectionCreate, tx?: Transaction): Promise<Reflection>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<Reflection>;
   list(caller: Caller, tx?: Transaction): Promise<Reflection[]>;
+  /** Every wave as Home reads it, newest first: three statements, however many waves. */
+  home(caller: Caller): Promise<ReflectionSummary[]>;
   lens(caller: Caller, id: string, tx?: Transaction): Promise<ReflectionLens>;
   submitLens(
     caller: Caller,

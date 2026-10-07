@@ -336,7 +336,14 @@ test('with no room to draw, the Work page lists the same work as rows, a reflect
         tasks: [],
         reflections: [
           {
-            ...wave(),
+            ...wave({
+              // Home reads each lens as whether it has written, not its report.
+              lenses: LENSES.map(lens).map(({ id, workflow, artifact }) => ({
+                id,
+                workflow,
+                written: !!artifact,
+              })),
+            }),
             ownerId: actor.id,
             workflow: {
               workflow: 'reflection',

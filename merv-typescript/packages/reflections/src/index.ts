@@ -38,6 +38,7 @@ import type {
   Reflection,
   ReflectionCreate,
   ReflectionLens,
+  ReflectionSummary,
   Reflections,
 } from './types.js';
 export type * from './types.js';
@@ -249,6 +250,32 @@ export class ReflectionService implements Reflections {
         ),
         async (row) => await this.get(caller, row.id, tx),
       );
+    });
+  }
+  async home(caller: Caller): Promise<ReflectionSummary[]> {
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, undefined, async (tx) => {
+      await this.read(caller, tx);
+      const waves = await tx.all<{ id: string; title: string; ownerId: string }>(
+        'SELECT id,title,owner_id AS "ownerId" FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC',
+        caller.projectId,
+      );
+      const lenses = await tx.all<{ id: string; wave: string; written: boolean }>(
+        'SELECT l.id,l.reflection_id AS wave,l.artifact IS NOT NULL AS written FROM reflection_lenses l JOIN reflections r ON r.id=l.reflection_id AND r.attempt=l.attempt WHERE r.project_id=? ORDER BY l._merv_rowid',
+        caller.projectId,
+      );
+      const flows = await this.workflows.find(
+        caller,
+        [...waves, ...lenses].map((row) => row.id),
+        tx,
+      );
+      return waves.map((wave) => ({
+        ...wave,
+        workflow: flows.get(wave.id)!,
+        lenses: lenses
+          .filter((lens) => lens.wave === wave.id)
+          .map((lens) => ({ id: lens.id, workflow: flows.get(lens.id)!, written: lens.written })),
+      }));
     });
   }
   async lens(caller: Caller, id: string, transaction?: Transaction): Promise<ReflectionLens> {

@@ -323,7 +323,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         flow: wave.workflow,
         at: wave.workflow.updatedAt,
         mine: wave.ownerId === actor.id,
-        outcome: `${wave.lenses.filter((lens) => lens.artifact).length} of ${wave.lenses.length} lenses written`,
+        outcome: `${wave.lenses.filter((lens) => lens.written).length} of ${wave.lenses.length} lenses written`,
         named: cycle?.reflectionId === wave.id,
         labels: [wave.title, nameOf(wave.ownerId)],
         owner: wave.ownerId,

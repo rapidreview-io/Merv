@@ -21,7 +21,11 @@ export const reflectionUiPlugin = {
         holds: ['reflection.lens'],
         states: WAVE_STATES,
         view: { kind: 'reflections' },
-        home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
+        // Each wave and its current lenses, read for all waves at once.
+        home: {
+          list: async (caller) => await reflections.home(caller),
+          keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'],
+        },
         // A wave names the review of it, which is asked for as work: a wave is no delivery. A
         // lens's agent may ask its owner, and the wave waits on the answer, so a lens's gate may
         // name the reader's move too, on the wave's card.
