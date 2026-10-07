@@ -1423,8 +1423,11 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
           'model',
           'phase',
           ...(scenario.upstreamHttpStatus === undefined ? [] : ['upstreamHttpStatus']),
+          // A streamed failure names the provider's code alone (here none: upstream_failed).
+          ...(scenario.name === 'SSE error frame' ? ['providerCode'] : []),
         ].sort(),
       );
+      if (scenario.name === 'SSE error frame') assert.equal(record.providerCode, 'upstream_failed');
       assert.equal(record.event, 'pi_relay_failure');
       assert.equal(record.phase, scenario.expectedPhase);
       assert.equal(

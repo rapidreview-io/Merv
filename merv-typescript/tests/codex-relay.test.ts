@@ -624,6 +624,33 @@ test('a call the relay or its provider fails mid-visit, or a Main restart, is a 
   );
 });
 
+test('a failure the provider streams of the request itself is the visit’s, not a relay fault', async (t) => {
+  // Cycle 11 review: a context overflow (routine near compaction) or an invalid prompt that the
+  // provider streamed was recorded as a relay fault, so the visit's own crash within the next
+  // 15 minutes, and a request that fails the same way every visit, closed uncounted for ever.
+  const f = await fixture(t);
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const faulted = () => f.state.read((sql) => relayFaulted(sql, grant.id, since));
+  const failed = (code: string) =>
+    `event: response.failed\ndata: ${JSON.stringify({
+      type: 'response.failed',
+      response: { status: 'failed', error: { code, message: 'no' }, usage: null },
+    })}\n\n`;
+  for (const code of ['context_length_exceeded', 'invalid_prompt']) {
+    f.respond(failed(code));
+    await (await f.call()).text();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(await faulted(), false);
+  // The provider's own outage, streamed, is still the relay's side.
+  f.respond(failed('server_error'));
+  await (await f.call()).text();
+  const deadline = Date.now() + 5000;
+  while (!(await faulted()) && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await faulted(), true);
+});
+
 test('the relay’s own interruption is a typed error frame', async (t) => {
   const f = await fixture(t);
   let release!: () => void;
