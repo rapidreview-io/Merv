@@ -524,27 +524,16 @@ export class WorkUnitRecords {
       workflow: string;
       version: number;
       baseReference?: string;
-      derivationInputs?: string[];
     },
     tx: Transaction,
   ): Promise<UnitRow> {
     this.assertOpen();
     this.state.assertTransaction(tx);
-    const { unitId, baseReference, derivationInputs } = input;
+    const { unitId, baseReference } = input;
     await this.code.declareWorkspace(caller, { unitId }, tx);
     const row = await this.row(tx, caller.projectId, unitId);
     if (!row) await this.insertUnit(tx, caller.projectId, input, now());
     if (baseReference !== undefined) {
-      check(
-        !(await tx.get(
-          'SELECT 1 FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
-          caller.projectId,
-          unitId,
-        )),
-        'code_base_conflict',
-        'A declared frontier cannot be replaced by a fixed input',
-        409,
-      );
       check(
         !caller.session && oidPattern.test(baseReference),
         'invalid_base',
@@ -568,32 +557,6 @@ export class WorkUnitRecords {
           caller.projectId,
           unitId,
           baseReference,
-        );
-    }
-    if (derivationInputs !== undefined) {
-      check(
-        baseReference === undefined,
-        'invalid_base',
-        'A unit has either fixed or derived inputs',
-      );
-      const inputs = [...new Set(derivationInputs)].sort();
-      const existing = await tx.get<{ inputs_json: string }>(
-        'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
-        caller.projectId,
-        unitId,
-      );
-      check(
-        existing ? existing.inputs_json === canonical(inputs) : !row,
-        'code_base_conflict',
-        'The declared unit frontier cannot change',
-        409,
-      );
-      if (!existing)
-        await tx.run(
-          'INSERT INTO code_unit_frontiers(project_id,unit_id,inputs_json) VALUES (?,?,?)',
-          caller.projectId,
-          unitId,
-          canonical(inputs),
         );
     }
     return (await this.row(tx, caller.projectId, unitId))!;

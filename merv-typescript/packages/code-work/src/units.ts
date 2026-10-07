@@ -7,7 +7,6 @@ import {
   canonical,
   check,
   digest,
-  mapAsync,
   MervError,
   newId,
   now,
@@ -133,24 +132,13 @@ export class CodeUnitService {
     unitId: string,
     tx: Transaction,
     baseReference?: string,
-    derivationInputs?: string[],
   ): Promise<CodeUnit> {
     this.records.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
-    derivationInputs = derivationInputs && [...derivationInputs];
     await this.scope.require(caller, 'read', tx);
     const relations = await this.workflows.relations(caller.projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
-    for (const id of derivationInputs ?? []) {
-      const input = await this.relations(tx, caller.projectId, id);
-      check(
-        id !== unitId && input.instance.settled,
-        'invalid_base',
-        'Derivation inputs must be successful units of this project',
-        409,
-      );
-    }
     await this.records.retainDeclaration(
       caller,
       {
@@ -158,7 +146,6 @@ export class CodeUnitService {
         workflow: relations.instance.workflow,
         version: relations.instance.version,
         baseReference,
-        derivationInputs,
       },
       tx,
     );
@@ -571,26 +558,6 @@ export class CodeUnitService {
   ): Promise<WorkflowRelations> {
     const relations = await this.workflows.relations(projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
-    const frontier = await tx.get<{ inputs_json: string }>(
-      'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
-      projectId,
-      unitId,
-    );
-    if (frontier) {
-      // Scheduling prerequisites still gate the owner; only the frozen frontier contributes code.
-      const inputs = await mapAsync(JSON.parse(frontier.inputs_json) as string[], async (id) => {
-        const input = await this.workflows.relations(projectId, id, tx);
-        check(input, 'code_unit_not_found', 'A declared frontier unit is missing', 409);
-        return input.instance;
-      });
-      return {
-        ...relations,
-        dependencies: [
-          ...inputs,
-          ...relations.dependencies.filter((edge) => edge.kind === 'system'),
-        ],
-      };
-    }
     return relations;
   }
 
