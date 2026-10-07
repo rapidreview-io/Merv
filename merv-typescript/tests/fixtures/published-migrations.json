@@ -549,7 +549,7 @@
       "component": "scope",
       "version": 10,
       "hash": "c32e4293237a3db2ddcf7a7e8669cb81cd480d8f720bfbdc13b83f2189b02fc3",
-      "published": false
+      "published": true
     },
     {
       "component": "session_dispatch",
@@ -627,7 +627,7 @@
       "component": "fleet_workflow",
       "version": 6,
       "hash": "2975fe64b131afc39fce3c0ebe5ec427f3e6e0b40c7b3a0dd9e1a843563a59e7",
-      "published": false
+      "published": true
     },
     {
       "component": "session_service_work",
@@ -946,7 +946,7 @@
       "component": "sandboxes-native",
       "version": 7,
       "hash": "d3b9cf1aff008d049fdf5d5e74bcd70eb7a1d8f9c8e8e30d9b3e6da2ff7dcf8d",
-      "published": false
+      "published": true
     },
     {
       "component": "code_repository_sync",
@@ -1078,13 +1078,13 @@
       "component": "workflows",
       "version": 16,
       "hash": "01b38de0993cd2972dff189c0dd8c53d6be648d1f066932046dc01a63c50b263",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
       "version": 17,
       "hash": "3c1cf973c43302d1074d89beffe0f703705a4d604c665566259a249e9c52b7f2",
-      "published": false
+      "published": true
     },
     {
       "component": "sessions",
@@ -1102,13 +1102,13 @@
       "component": "sessions",
       "version": 20,
       "hash": "d2c7b62543d3e007126e0ef58d6c7b0d99eaf55d356dc0f6c256a09c45a25907",
-      "published": false
+      "published": true
     },
     {
       "component": "sessions",
       "version": 21,
       "hash": "761375e32de02e5fc9ef662ac9b2a00742418af2dc7ce88f387d74476a319097",
-      "published": false
+      "published": true
     }
   ]
 }
