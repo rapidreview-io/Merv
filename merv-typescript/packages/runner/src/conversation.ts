@@ -13,7 +13,7 @@ import {
 import { join, relative, sep } from 'node:path';
 import { MAX_TRANSCRIPT_BYTES, MervError } from '@merv/contracts';
 import type { SessionConversationDeclaration } from '@merv/sessions/types';
-import { type Harness, harnessOf, type HarnessName, launcherOf } from './harness/index.js';
+import { type Harness, harnessOf, launcherOf } from './harness/index.js';
 import { conversationIdPattern } from './harness/shared.js';
 import type { RunnerProfile } from './profiles.js';
 import { blankPattern } from './transcript.js';
@@ -118,7 +118,7 @@ export function keepConversation(
     closeSync(fd);
   }
   return {
-    harness: profile.harness as HarnessName,
+    harness: found.harness.name,
     conversationId: id,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     size: bytes.length,

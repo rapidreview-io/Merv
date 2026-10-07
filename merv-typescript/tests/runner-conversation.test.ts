@@ -27,7 +27,8 @@ import {
   restoreConversation,
 } from '../packages/runner/src/conversation.js';
 import { launchCodexHome } from '../packages/runner/src/harness/codex.js';
-import { harnesses } from '../packages/runner/src/harness/index.js';
+import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
+import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
 import { buildLaunch, type RunnerProfile } from '../packages/runner/src/profiles.js';
 import {
   launchId,
@@ -109,17 +110,14 @@ test('a launch that may be continued keeps its conversation; a resumed one names
 
 test('the id the harness printed first; a conversation restored is found and taken out again', (t) => {
   assert.equal(
-    harnesses.claude.conversationId(
+    claudeHarness.conversationId(
       `noise\n{"type":"system","subtype":"init","session_id":"${id}"}\n`,
     ),
     id,
   );
+  assert.equal(codexHarness.conversationId(`{"type":"thread.started","thread_id":"${id}"}\n`), id);
   assert.equal(
-    harnesses.codex.conversationId(`{"type":"thread.started","thread_id":"${id}"}\n`),
-    id,
-  );
-  assert.equal(
-    harnesses.codex.conversationId('{"type":"thread.started","thread_id":"../x"}\n'),
+    codexHarness.conversationId('{"type":"thread.started","thread_id":"../x"}\n'),
     undefined,
   );
   for (const profile of [claude(), codex]) {

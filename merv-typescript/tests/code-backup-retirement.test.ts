@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { codePlugin as code } from '@merv/code';
 import { codePlugin as research } from '@merv/code-work';
-import { codeStoreFixture } from './fixtures/code-store.js';
+import { codeStoreFixture, maintainStore } from './fixtures/code-store.js';
 
 test('a retired repository backup setting is refused while the configuration is parsed', () => {
   for (const plugin of [code, research]) {
@@ -41,7 +41,7 @@ test('historical backup receipts and interrupted rows survive restart and mainte
     );
   const before = await history();
   await f.open();
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   assert.deepEqual(await history(), before);
   const status = await f.code.status(f.admin);
   assert.ok(status.store);

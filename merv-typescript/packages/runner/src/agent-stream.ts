@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import type { SessionStreamBatch } from '@merv/sessions/types';
 import { RunnerControlError } from './client.js';
-import { harnesses, type HarnessName } from './harness/index.js';
+import type { Harness } from './harness/index.js';
 import { blankPattern } from './transcript.js';
 
 /**
@@ -135,7 +135,7 @@ export class AgentStream {
   finished = false;
   constructor(
     private readonly directory: string,
-    private readonly harness: HarnessName,
+    private readonly harness: Harness,
     private readonly secrets: string[],
     private readonly post: (batch: SessionStreamBatch) => Promise<{ until: number }>,
     private readonly clock: () => number,
@@ -146,7 +146,7 @@ export class AgentStream {
   private jump(offset: number, midLine = true) {
     this.offset = offset;
     this.midLine = midLine;
-    this.lines = harnesses[this.harness].lines();
+    this.lines = this.harness.lines();
     this.scrubber = new Scrubber(this.secrets);
   }
   /** The process has ended: what the log holds now is all it will. */

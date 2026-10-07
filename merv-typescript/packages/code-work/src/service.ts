@@ -322,10 +322,6 @@ export class CodeService implements Code {
     // An acceptance journals the ref it is kept under; the journal takes it up after this.
     this.store.wake();
   }
-  /** One maintenance pass now, as the timer would make it. */
-  maintainStore = async () => void (await this.store.maintain());
-  /** One publication pass now, as the timer would make it. */
-  mirrorStep = async () => void (await this.mirrorStore.run());
   async controlBase(caller: Caller, input: unknown) {
     return this.baseStore.control(this.scope, caller, input);
   }

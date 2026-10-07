@@ -18,6 +18,7 @@ import type { AgentEvent } from '@merv/sessions/agent-stream';
 import { serveEvents } from '@merv/api/event-stream';
 import type { ApplicationConfig } from '../src/config.js';
 import { AgentStream } from '../packages/runner/src/agent-stream.js';
+import { codex } from '../packages/runner/src/harness/codex.js';
 import { createApp } from './fixtures/app.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -476,7 +477,7 @@ test('a runner restarted over 4 MiB behind what Sessions holds skips to the logâ
   let posts = 0;
   const restarted = new AgentStream(
     directory,
-    'codex',
+    codex,
     [],
     async (batch) => {
       posts++;

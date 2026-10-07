@@ -11,7 +11,10 @@ import test from 'node:test';
 import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import type { SessionStreamBatch } from '@merv/sessions/types';
 import { AgentStream, coalesce, Scrubber } from '../packages/runner/src/agent-stream.js';
-import { harnesses } from '../packages/runner/src/harness/index.js';
+import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
+import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
+
+const harnesses = { claude: claudeHarness, codex: codexHarness };
 import { RunnerControlError } from '../packages/runner/src/client.js';
 
 const line = (value: unknown) => JSON.stringify(value);
@@ -285,7 +288,7 @@ test('a launch log is sent whole lines at a time; a failed batch is sent again a
   });
   const agent = new AgentStream(
     directory,
-    'codex',
+    codexHarness,
     [],
     async (batch) => {
       sent.push(structuredClone(batch));
@@ -349,7 +352,7 @@ test('a restarted stream jumps to what Sessions holds; one far behind skips ahea
   let held = one(1).length + one(2).length;
   const agent = new AgentStream(
     directory,
-    'codex',
+    codexHarness,
     [],
     async (batch) => {
       sent.push(batch);
@@ -400,13 +403,13 @@ test('a restarted runner sends what Sessions does not hold yet, from the line it
     `${line({ type: 'item.completed', item: { id: `i${n}`, type: 'agent_message', text: `m${n}${n < 3 ? ' '.repeat(400_000) : ''}` } })}\n`;
   const server = sessions();
   writeFileSync(log, one(1) + one(2));
-  const first = new AgentStream(directory, 'codex', [], server.post, () => 0);
+  const first = new AgentStream(directory, codexHarness, [], server.post, () => 0);
   await first.flush();
   await first.flush();
   // The runner restarts while its agent prints on: the new stream reads the log from the start,
   // a batch short of what Sessions holds.
   appendFileSync(log, one(3) + one(4));
-  const restarted = new AgentStream(directory, 'codex', [], server.post, () => 0);
+  const restarted = new AgentStream(directory, codexHarness, [], server.post, () => 0);
   await restarted.flush();
   await restarted.flush();
   appendFileSync(log, one(5));
@@ -435,9 +438,9 @@ test('after a restart or a skip, a block is never continued from what was not re
   // Sessions holds msg_1 up to its first piece when the runner restarts.
   const [start, open, first, ...rest] = message('msg_1', 'Hello ', 'world');
   writeFileSync(log, lines(claude[0]!, start!, open!, first!));
-  await new AgentStream(directory, 'claude', [], server.post, () => 0).flush();
+  await new AgentStream(directory, claudeHarness, [], server.post, () => 0).flush();
   appendFileSync(log, lines(...rest, result, ...message('msg_2', 'Next'), result));
-  const restarted = new AgentStream(directory, 'claude', [], server.post, () => 0);
+  const restarted = new AgentStream(directory, claudeHarness, [], server.post, () => 0);
   await restarted.flush();
   await restarted.flush();
   // Then, inside msg_3, it falls far behind: what follows the skip belongs to no block it saw open.

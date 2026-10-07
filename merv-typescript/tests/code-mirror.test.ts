@@ -15,7 +15,7 @@ import {
   type MirrorTransport,
   type MirrorUpdate,
 } from '@merv/code/store/mirror';
-import { git } from './fixtures/code-store.js';
+import { git, mirrorStep } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 import { githubFixture } from './github-fixture.js';
 
@@ -93,7 +93,7 @@ async function mirrored(t: TestContext, config = {}) {
     open: async () => (await rows()).filter((row) => row.status === 'prepared'),
     status: async (): Promise<CodeMirrorStatus> => (await f.code.status(f.admin)).mirror!,
     warnings: async (): Promise<CodeStoreWarning[]> => (await f.code.status(f.admin)).warnings,
-    step: async () => await f.code.mirrorStep(),
+    step: async () => await mirrorStep(f.code),
   };
 }
 

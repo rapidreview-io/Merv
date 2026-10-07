@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 import { CodeWriterService } from '@merv/code/writers';
-import { faultAt, git } from './fixtures/code-store.js';
+import { faultAt, git, maintainStore } from './fixtures/code-store.js';
 
 const fixture = writerFixture;
 
@@ -96,7 +96,7 @@ test('a lease reserves the next generation only once the last one closed', async
   await assert.rejects(f.lease('ses_3'), refused('code_writer_busy'));
 
   // The grace passes: the unit says it needs an operator, and work on it is refused.
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   assert.equal((await f.unit()).writerState, 'recovery_required');
   assert.equal((await f.unit()).standing, 'held', 'Code Work says which word the unit stands at');
   const status = await f.code.status(f.admin);
@@ -332,7 +332,7 @@ test('a writer whose rented machine is gone for good ends by itself at the last 
   // A release replaced its machine mid-step: the session closed, and the grace ran out.
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   assert.equal((await f.unit()).writerState, 'recovery_required');
   // Fleet released that machine and its runtime is deleted: no final capture can ever come.
   // The unit's owner is told which unit's writer changed, as every other writer move tells it.
