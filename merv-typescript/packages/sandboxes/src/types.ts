@@ -238,6 +238,13 @@ export interface SandboxMachines {
   freshForMs: number;
 }
 
+/** What native compute captured for one instance: collections registered, and Captures refused. */
+export interface CaptureEvidence {
+  artifactIds: string[];
+  /** A Capture that can never register; node '*' is its workflow, refused as a whole. */
+  refused: { nativeWorkflowId: string; captureNode: string; error: string }[];
+}
+
 export interface Sandboxes {
   /**
    * The artifact collections native compute verified and registered for one workflow
@@ -250,6 +257,26 @@ export interface Sandboxes {
     tx: Transaction,
     attempts?: string[],
   ): Promise<string[]>;
+  /**
+   * For each instance, in one read in the caller's transaction: what `captures` answers, and the
+   * Captures native compute refused as ones that can never register, under the same epochs.
+   */
+  evidence(
+    projectId: string,
+    works: readonly { instanceId: string; attempts?: string[] }[],
+    tx: Transaction,
+  ): Promise<Map<string, CaptureEvidence>>;
+  /**
+   * The compute guidance an assignment of this project carries: `computeGuidance(profile)` where
+   * a launch would attach the native Sandboxes MCP connection (native compute configured and the
+   * project's connection funded), and nothing elsewhere, so a worker is never told to use tools
+   * its visit lacks.
+   */
+  guidance(
+    projectId: string,
+    profile: 'execute' | 'check' | 'none',
+    tx: Transaction,
+  ): Promise<string>;
   nativeMachines?: import('./native-types.js').NativeMachineReads;
   /** Rows from the last accepted manifest, already named and routed for the UI registry. */
   rows(): SandboxRow[];

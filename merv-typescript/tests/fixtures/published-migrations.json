@@ -931,6 +931,12 @@
       "published": true
     },
     {
+      "component": "sandboxes-native",
+      "version": 7,
+      "hash": "d3b9cf1aff008d049fdf5d5e74bcd70eb7a1d8f9c8e8e30d9b3e6da2ff7dcf8d",
+      "published": false
+    },
+    {
       "component": "code_repository_sync",
       "version": 1,
       "hash": "641e09699b431b85e5837e1a9a95c4a61ea1996819335aadcc04d43bcd83734d",

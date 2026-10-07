@@ -2,6 +2,7 @@ import { directsIndependently, excludedFromReview, NOT_INDEPENDENT } from '@merv
 import {
   heldLease,
   insertLease,
+  leaseRows,
   liveLease,
   reviewedLeaseHooks,
   type LeaseRow as WorkflowLeaseRow,
@@ -119,6 +120,32 @@ export async function leaseRole(
   return 'reviewer';
 }
 
+/**
+ * What earlier visits to this step made: the artifacts each released lease on the experiment at
+ * the same revision created in its own session, as its own actor. A visit cut before it attached
+ * them hands them to the visit that resumes the step; a move to another revision ends that.
+ */
+export async function resumedOutputs(
+  ctx: Pick<ExperimentsContext, 'artifacts'>,
+  caller: Caller,
+  step: { id: string; revision: number },
+  tx: Transaction,
+): Promise<string[]> {
+  if (!caller.session) return [];
+  const earlier = (
+    await leaseRows(tx, {
+      projectId: caller.projectId,
+      instanceIds: [step.id],
+      revision: step.revision,
+    })
+  ).filter((lease) => lease.released_at && lease.id !== caller.session!.id);
+  const found: string[] = [];
+  for (const lease of earlier)
+    for (const artifact of await ctx.artifacts.list(caller, { session: lease.id }, tx))
+      if (artifact.createdBy === lease.actor_id) found.push(artifact.id);
+  return found;
+}
+
 export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignmentRule['lease']> {
   return reviewedLeaseHooks({
     reviews: ctx.reviews,
@@ -132,8 +159,8 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
     // The lease of the attempt the facts name: Workflows admitted the step just before.
     lease: async (context) =>
       await leaseOf(ctx, context.caller, await facts(ctx, context), context.tx),
-    captures: async (context, lease) =>
-      (await ctx.sandboxes?.captures(
+    captures: async (context, lease) => [
+      ...((await ctx.sandboxes?.captures(
         context.caller.projectId,
         context.snapshot.id,
         context.tx,
@@ -141,7 +168,9 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
           await attemptRevisions(ctx, context.snapshot.id, lease.details.attemptIndex, context.tx),
           context.snapshot,
         ),
-      )) ?? [],
+      )) ?? []),
+      ...(await resumedOutputs(ctx, context.caller, context.snapshot, context.tx)),
+    ],
     role: async (context) => await leaseRole(ctx, context),
     acquire: async (context) => {
       await leaseRole(ctx, { ...context, caller: context.source });

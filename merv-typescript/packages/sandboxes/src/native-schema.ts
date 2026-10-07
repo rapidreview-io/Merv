@@ -129,6 +129,20 @@ ALTER TABLE sandbox_native_captures ADD COLUMN error TEXT;
 ALTER TABLE sandbox_native_captures ADD CONSTRAINT sandbox_native_captures_outcome
   CHECK ((artifact_id IS NULL) <> (error IS NULL));`,
   },
+  {
+    // Until a Capture registers or is refused, its row counts its lasting failures and when the
+    // first was, so a restart does not start the count again; such a row has neither collection
+    // nor error. Node '*' is the workflow as a whole. Read-only prod check, before (expect 0 rows
+    // without an outcome) and after (the Captures still failing):
+    //   SELECT count(*) FROM sandbox_native_captures WHERE artifact_id IS NULL AND error IS NULL;
+    //   SELECT count(*) FROM sandbox_native_captures WHERE error IS NOT NULL;
+    version: 7,
+    sql: `ALTER TABLE sandbox_native_captures ADD COLUMN failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sandbox_native_captures ADD COLUMN failing_since TEXT;
+ALTER TABLE sandbox_native_captures DROP CONSTRAINT sandbox_native_captures_outcome;
+ALTER TABLE sandbox_native_captures ADD CONSTRAINT sandbox_native_captures_outcome
+  CHECK (artifact_id IS NULL OR error IS NULL);`,
+  },
 ];
 
 export interface NativeConnectionRow {

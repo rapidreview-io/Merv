@@ -376,6 +376,8 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
+  // A connected project: its visits get the Sandboxes MCP, so its briefs say how to use it.
+  f.experiments.bindSandboxes(nativeWorkFixture().service);
   const prerequisite = await currentTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',
@@ -1929,4 +1931,53 @@ test('a fenced results review whose session admitted no commit reviews the head 
   );
   assert.equal(done.workflow.state, 'complete');
   assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, head);
+});
+
+test('a resumed visit attaches a result its cut visit made at the same revision, and no other', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.running();
+  const create = (lease: any, title: string, seed: number) =>
+    f.work.run(
+      lease,
+      'artifact.create',
+      { title, content: JSON.stringify({ seed, score: 0.6 }), mediaType: 'application/json' },
+      (caller, input) => f.artifacts.create(caller, input as any),
+    );
+  const attach = (lease: any, artifactId: string, path: string) =>
+    f.work.run(
+      lease,
+      'experiment.attach',
+      {
+        artifactId,
+        role: 'result',
+        path,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        resultFormat: 'json',
+      },
+      (caller, input) => f.experiments.attach(caller, input as unknown as ExperimentAttach),
+    );
+  // The first visit retains seed 2 and is cut before attaching it.
+  const cut = await f.work.lease(experiment);
+  const seed = await create(cut, 'seed 2', 2);
+  await f.work.release(cut);
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const resumed = await f.work.lease(experiment);
+  const attached = (await attach(resumed, seed.id, 'seeds/2.json')) as ExperimentEvidence;
+  assert.equal(attached.artifactId, seed.id);
+  await f.work.release(resumed);
+  // A visit at a later revision does not inherit what an earlier revision's visit made.
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const before = await f.work.lease(experiment);
+  const stale = await create(before, 'seed 3', 3);
+  await f.work.release(before);
+  experiment = await f.transition(
+    await f.experiments.get(f.source, experiment.id),
+    'retry_running',
+  );
+  const later = await f.work.lease(experiment);
+  await assert.rejects(attach(later, stale.id, 'seeds/3.json'), (error: { code?: string }) =>
+    ['execution_arguments_forbidden', 'invalid_evidence_author'].includes(error.code ?? ''),
+  );
+  await f.work.release(later);
 });

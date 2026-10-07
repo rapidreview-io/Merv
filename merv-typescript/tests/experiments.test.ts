@@ -1120,6 +1120,23 @@ test('a result submission may select a verified sandbox capture its worker attac
   assert.ok(review.artifactIds.includes(capture.id));
 });
 
+test('an assignment is told to use Sandboxes only where its visit gets the Sandboxes MCP', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.create('Unconnected');
+  // No Sandboxes at all, then Sandboxes with the project not connected: no connection is issued
+  // at launch, so the brief names none.
+  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
+  const native = nativeWorkFixture();
+  native.connection.connected = false;
+  t.after(f.experiments.bindSandboxes(native.service));
+  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
+  native.connection.connected = true;
+  assert.match(
+    (await f.workflows.assignment(f.producer, experiment.id)).brief,
+    /native Sandboxes MCP/,
+  );
+});
+
 test('a worker cannot attach a sandbox capture another attempt retained', async (t) => {
   const f = await fixture(t);
   const native = nativeWorkFixture();
@@ -1148,6 +1165,64 @@ test('a worker cannot attach a sandbox capture another attempt retained', async 
     }),
     code('invalid_evidence_author'),
   );
+});
+
+test('a capture Sandboxes refused is on the experiment, its card and its sidebar', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  t.after(f.experiments.bindSandboxes(native.service));
+  const experiment = await f.running();
+  assert.equal((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, undefined);
+  const refused = {
+    nativeWorkflowId: 'wf_train',
+    captureNode: 'outputs',
+    error: 'sandbox_evidence_invalid: Invalid native capture files page',
+  };
+  native.refused.set(experiment.id, [refused]);
+  // Its producer reads it in the record; the owner on the card and in its sidebar.
+  assert.deepEqual((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, [refused]);
+  const said = ['1 compute capture could not be kept as evidence'];
+  const card = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(card?.attention?.says, said);
+  const panel = await f.experiments.runningPanel(f.producer, `work:${experiment.id}`);
+  assert.ok(JSON.stringify(panel).includes(said[0]!));
+});
+
+test('experiments.list reads Sandboxes captures once for every experiment', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  const calls = { captures: 0, evidence: 0 };
+  t.after(
+    f.experiments.bindSandboxes({
+      ...native.service,
+      captures: (...args) => (calls.captures++, native.service.captures(...args)),
+      evidence: (...args) => (calls.evidence++, native.service.evidence(...args)),
+    }),
+  );
+  for (let index = 0; index < 4; index++) await f.create(`Batched-${index}`);
+  Object.assign(calls, { captures: 0, evidence: 0 });
+  assert.equal((await f.experiments.list(f.reader)).length, 4);
+  assert.deepEqual(calls, { captures: 0, evidence: 1 });
+});
+
+test('a result attach reads only the result it adds', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const bytes = t.mock.method(f.artifacts, 'bytes');
+  const reads: number[] = [];
+  for (let seed = 1; seed <= 12; seed++) {
+    const before = bytes.mock.callCount();
+    await f.attach(experiment, 'result', `{"seed":${seed},"score":0.5}`, {
+      path: `seeds/${seed}.json`,
+    });
+    reads.push(bytes.mock.callCount() - before);
+  }
+  assert.deepEqual(reads, Array(12).fill(1));
+  // The exhibit still pins every one of them.
+  const exhibit = await f.experiments.exhibit(f.producer, experiment.id);
+  assert.equal(JSON.parse(exhibit.content).resultFiles.length, 12);
 });
 
 test('an attempt refuses its 101st result file when it is attached', async (t) => {

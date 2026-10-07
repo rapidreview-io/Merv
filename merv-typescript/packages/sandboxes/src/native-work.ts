@@ -14,6 +14,7 @@ import { computeEpoch, computeProfile, type ComputeProfile } from './compute-cap
 import type { NativeMcpConnection, WorkSession } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
+import type { CaptureEvidence } from './types.js';
 
 /** The profiles a native assignment is issued with; `none` issues no assignment. */
 type NativeComputeProfile = Exclude<ComputeProfile, 'none'>;
@@ -260,19 +261,58 @@ export class NativeWorkService {
     tx: Transaction,
     attempts?: string[],
   ): Promise<string[]> {
+    return (await this.evidence(project, [{ instanceId, attempts }], tx)).get(instanceId)!
+      .artifactIds;
+  }
+  /**
+   * For each instance, in one read: what `captures` answers, and the Captures refused as ones
+   * that can never register under the same epochs (node '*' is a workflow refused as a whole;
+   * one refused before its attempt was known answers for any).
+   */
+  async evidence(
+    project: string,
+    works: readonly { instanceId: string; attempts?: string[] }[],
+    tx: Transaction,
+  ): Promise<Map<string, CaptureEvidence>> {
     this.state.assertTransaction(tx);
-    return (
-      await tx.all<{ artifact_id: string }>(
-        `SELECT DISTINCT c.artifact_id FROM sandbox_native_captures c
+    const found = new Map<string, CaptureEvidence>(
+      works.map((work) => [work.instanceId, { artifactIds: [], refused: [] }]),
+    );
+    if (!works.length) return found;
+    const rows = await tx.all<{
+      work_id: string;
+      workflow_id: string;
+      node_id: string;
+      artifact_id: string | null;
+      error: string | null;
+      attempt_ref: string | null;
+    }>(
+      `SELECT w.work_id,c.workflow_id,c.node_id,c.artifact_id,c.error,c.attempt_ref FROM sandbox_native_captures c
       JOIN sandbox_native_work w ON w.connection_id=c.connection_id AND w.namespace=c.namespace
-      WHERE c.artifact_id IS NOT NULL AND w.project_id=? AND w.work_id=? AND (CAST(? AS TEXT) IS NULL OR c.attempt_ref IS NULL
-      OR c.attempt_ref IN (SELECT jsonb_array_elements_text(CAST(? AS jsonb)))) ORDER BY c.artifact_id`,
-        project,
-        instanceId,
-        attempts ? 'some' : null,
-        JSON.stringify(attempts ?? []),
-      )
-    ).map((r) => r.artifact_id);
+      WHERE (c.artifact_id IS NOT NULL OR c.error IS NOT NULL) AND w.project_id=?
+      AND w.work_id IN (SELECT jsonb_array_elements_text(CAST(? AS jsonb)))
+      ORDER BY c.artifact_id,c.workflow_id,c.node_id`,
+      project,
+      JSON.stringify(works.map((work) => work.instanceId)),
+    );
+    for (const { instanceId, attempts } of works) {
+      const evidence = found.get(instanceId)!;
+      for (const row of rows)
+        if (
+          row.work_id === instanceId &&
+          (!attempts || row.attempt_ref === null || attempts.includes(row.attempt_ref))
+        ) {
+          if (row.artifact_id === null)
+            evidence.refused.push({
+              nativeWorkflowId: row.workflow_id,
+              captureNode: row.node_id,
+              error: row.error!,
+            });
+          else if (evidence.artifactIds.at(-1) !== row.artifact_id)
+            evidence.artifactIds.push(row.artifact_id);
+        }
+    }
+    return found;
   }
   private async ensure(
     work: NativeWorkRow,
