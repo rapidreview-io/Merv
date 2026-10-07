@@ -394,7 +394,7 @@ test('one call in flight per session, and a session that ends stops its stream',
   assert.equal(second.status, 429);
   assert.deepEqual(await second.json(), { error: 'relay_busy' });
   f.revoke();
-  // The relay reads the session again about once a second while it streams.
+  // The relay reads the session again about every 3 s while it streams.
   assert.match(await first.text(), /relay_interrupted/);
   release();
   assert.equal((await f.call()).status, 401);

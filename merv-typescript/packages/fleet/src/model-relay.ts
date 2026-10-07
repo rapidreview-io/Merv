@@ -40,6 +40,9 @@ const expired = (grant: ModelRelayGrant) => !(Date.parse(grant.expiresAt) > Date
 /** Streamed frames rely on an authority read at most this old; an authority that stops answering
  *  ends the stream. */
 const authorityStaleMs = 5_000;
+/** How long after one authority read a streaming call makes the next: each re-reads the grant
+ *  from the database, and a read may take up to the rest of `authorityStaleMs`. */
+const authorityRecheckMs = 3_000;
 /** The Responses API's `usage`, as a finished call's last frame carries it. */
 type Usage = {
   input_tokens?: unknown;
@@ -258,7 +261,7 @@ export class ModelRelay<
           throw refusal(error, 403, 'grant_forbidden');
         }
         if (expired(grant)) reject(403, 'grant_forbidden');
-        // Stamped when the read returns, so a read of d seconds leaves frames an age of 1 + d.
+        // Stamped when the read returns, so a read of d seconds leaves frames an age of 3 + d.
         validatedAt = Date.now();
       };
       await validate();
@@ -356,7 +359,7 @@ export class ModelRelay<
         );
       };
       resetIdle();
-      // One authority read in flight at a time, a second after the last; frames never wait on one.
+      // One authority read in flight at a time, 3 s after the last; frames never wait on one.
       const tick = () => {
         if (!done)
           fence = setTimeout(
@@ -366,7 +369,7 @@ export class ModelRelay<
                   ? abort(error.status, error.code)
                   : abort(403, 'grant_forbidden'),
               ),
-            1000,
+            authorityRecheckMs,
           );
       };
       tick();

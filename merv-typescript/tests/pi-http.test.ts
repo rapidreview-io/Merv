@@ -515,7 +515,8 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
   assert.equal(first.event, 'response.output_text.delta');
   assert.deepEqual(first.data, { delta: 'first' });
   revoked = true;
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  // The relay re-reads the grant 3 s after its last read.
+  await new Promise((resolve) => setTimeout(resolve, 3_100));
   try {
     upstream.enqueue(
       new TextEncoder().encode('event: response.output_text.delta\ndata: {"delta":"secret"}\n\n'),

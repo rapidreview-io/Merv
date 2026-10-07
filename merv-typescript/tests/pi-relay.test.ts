@@ -815,8 +815,8 @@ test('an authority that cannot answer while a call waits for its first frame end
       },
     },
     onFailure: (record) => void failures.push(record),
-    // The first frame comes after the fence's first read.
-    fetchImpl: ticking(1_500),
+    // The first frame comes after the fence's first read, 3 s in.
+    fetchImpl: ticking(3_500),
   });
   t.after(() => f.close());
   const response = await send(f);
@@ -1031,35 +1031,37 @@ test('a slow authority read never holds a frame, and only one is in flight', asy
         inFlight--;
       },
     },
-    fetchImpl: ticking(150, 11),
+    // The fence's first read starts 3 s in and is still out when the stream ends.
+    fetchImpl: ticking(150, 24),
   });
   t.after(() => f.close());
   const started = Date.now();
   const response = await send(f);
   const text = await response.text();
-  assert.ok(Date.now() - started < 2_500, `took ${Date.now() - started} ms`);
-  assert.equal(text.match(/"type":"delta"/g)?.length, 11);
+  assert.ok(Date.now() - started < 4_000, `took ${Date.now() - started} ms`);
+  assert.equal(text.match(/"type":"delta"/g)?.length, 24);
   assert.match(text, /response\.completed/);
   assert.equal(most, 1);
 });
 
-test('an authority slower than 2 s but under 4 s never ends a long stream', async (t) => {
+test('an authority slower than 1 s but under 2 s never ends a long stream', async (t) => {
   let validations = 0;
   const failures: PiRelayFailureRecord[] = [];
   const f = await fixture({
     authority: {
       authorize: async () => grant(),
-      // The three admission reads answer at once; every later read takes 3 s.
+      // The three admission reads answer at once; every later read takes 1.5 s, which with the
+      // 3 s between reads leaves frames 4.5 s old at most.
       validate: async () => {
-        if (++validations > 3) await new Promise((resolve) => setTimeout(resolve, 3_000));
+        if (++validations > 3) await new Promise((resolve) => setTimeout(resolve, 1_500));
       },
     },
     onFailure: (record) => void failures.push(record),
-    fetchImpl: ticking(200, 35),
+    fetchImpl: ticking(200, 45),
   });
   t.after(() => f.close());
   const text = await (await send(f)).text();
-  assert.equal(text.match(/"type":"delta"/g)?.length, 35);
+  assert.equal(text.match(/"type":"delta"/g)?.length, 45);
   assert.match(text, /response\.completed/);
   assert.deepEqual(failures, []);
   assert.ok(validations > 4, `${validations} reads`);
@@ -1120,7 +1122,7 @@ test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upst
   const reader = response.body!.getReader();
   assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
   f.revoke();
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await new Promise((resolve) => setTimeout(resolve, 3_100));
   try {
     controller.enqueue(new TextEncoder().encode('data: should-not-pass\n\n'));
   } catch {} // the fence may already have cancelled the upstream
