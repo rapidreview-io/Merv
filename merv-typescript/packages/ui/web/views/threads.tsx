@@ -381,7 +381,8 @@ const inquiryPhrase: Record<string, string> = {
   running: 'answering',
   answered: 'answered',
   unanswered: 'no answer',
-  expired: 'no machine took it',
+  // Nobody took it in time, or its visit ran out of time before answering.
+  expired: 'expired',
 };
 
 /**

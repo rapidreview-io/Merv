@@ -232,14 +232,17 @@ export class SessionStreams implements SessionStreamReads {
   /**
    * One frame of the project's feed: the live visits, and each one's events past what `held`
    * says the page holds, read in one statement for them all. A visit new to the page, or one
-   * that said more than FEED_READ since, is sent its newest events alone and starts over.
+   * that said more than FEED_READ since, is sent its newest events alone and starts over. A
+   * thread's card shows its work: an inquiry visit's lines only while no work visit is live.
    */
   async feed(projectId: string, held: Map<string, number>): Promise<LiveFeedFrame | null> {
     const live = (
       await this.state.read((sql) =>
         sql.all<{ id: string; thread_id: string }>(
-          `SELECT id,thread_id FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')
-            AND thread_id IS NOT NULL ORDER BY _merv_rowid DESC LIMIT ${FEED_VISITS}`,
+          `SELECT id,thread_id FROM worker_sessions s WHERE project_id=? AND status IN ('offered','active')
+            AND thread_id IS NOT NULL AND (kind='work' OR NOT EXISTS (SELECT 1 FROM worker_sessions w
+              WHERE w.thread_id=s.thread_id AND w.kind='work' AND w.status IN ('offered','active')))
+            ORDER BY _merv_rowid DESC LIMIT ${FEED_VISITS}`,
           projectId,
         ),
       )

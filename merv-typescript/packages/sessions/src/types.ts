@@ -137,11 +137,13 @@ export interface Session {
    */
   inquiry?: SessionInquiryRef;
 }
-/** What an inquiry visit answers: its inquiry, the question's message and who asked. */
+/** What an inquiry visit answers: its inquiry, the question's message and who asked, and the
+ *  model tokens it may spend, which its runner or Fleet's model relay holds it to. */
 export interface SessionInquiryRef {
   id: string;
   messageId: string;
   askedBy: string;
+  tokenBudget: number;
 }
 /** The conversation a session continues: the one its key's latest closed session kept. */
 export interface SessionResume {

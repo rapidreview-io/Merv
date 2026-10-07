@@ -693,6 +693,19 @@ export class MachineRunner implements Runner {
       record = await this.halt(record.id, { releaseOutcome: 'host_failed' });
       return terminalLaunch(record) && this.settle(record);
     }
+    // An inquiry visit spends its asker's budget: it stops once what its agent printed of its
+    // spend so far passes it.
+    const budget = session.inquiry?.tokenBudget;
+    if (record.status === 'running' && typeof budget === 'number') {
+      const used = this.readUsage(record, 16 << 20);
+      if (used && used.inputTokens + used.outputTokens > budget) {
+        record = await this.halt(record.id, {
+          releaseOutcome: 'host_failed',
+          releaseReason: 'inquiry_budget_spent',
+        });
+        return terminalLaunch(record) && this.settle(record);
+      }
+    }
     if (record.status === 'reserved' || record.status === 'starting') {
       if (this.stopping) return false;
       const profile = validateProfile(record.metadata.profile);
@@ -1126,7 +1139,15 @@ export class MachineRunner implements Runner {
     if (!remote || usage || this.managed()) {
       const input = remote
         ? { usage }
-        : { outcome, reason: terminalReason(record), usage, deferral: deferralOf(record) };
+        : {
+            outcome,
+            reason:
+              typeof metadata.releaseReason === 'string'
+                ? metadata.releaseReason
+                : terminalReason(record),
+            usage,
+            deferral: deferralOf(record),
+          };
       session = await this.answer(() =>
         this.client.release(record.sessionId, this.ledger.runnerId, input),
       );
@@ -1185,9 +1206,9 @@ export class MachineRunner implements Runner {
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
    * anything here, so a link, a device or a malformed report is simply not sent. Without one,
    * what the profile's harness printed of its spending at the end of the launch's redacted log:
-   * its last 1 MiB, from the first whole line, however long the log grew.
+   * its last `tailBytes` (1 MiB), from the first whole line, however long the log grew.
    */
-  private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
+  private readUsage(record: LaunchRecord, tailBytes = 1 << 20): SessionUsageReport | undefined {
     const read = (path: string, limit: number, tail = false) => {
       // Never a link, and never a wait on a FIFO swapped in before the open.
       const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -1209,7 +1230,7 @@ export class MachineRunner implements Runner {
       // No report of its own; the harness may have printed one.
     }
     try {
-      const log = read(join(record.runDirectory, 'stdout.log'), 1 << 20, true);
+      const log = read(join(record.runDirectory, 'stdout.log'), tailBytes, true);
       const profile = record.metadata.profile as RunnerProfile;
       const model = 'model' in profile ? profile.model : undefined;
       return sessionUsageReportSchema.parse(harnessOf(profile)?.usage(log, model));

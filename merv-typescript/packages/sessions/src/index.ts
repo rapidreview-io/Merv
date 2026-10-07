@@ -268,8 +268,8 @@ function closed<T extends z.ZodTypeAny>(
 /**
  * Why a session that has already ended is refusing. The reason survives the first refusal
  * because a worker whose response was lost has nothing else to go on: retrying its handoff
- * must keep telling it the handoff landed, rather than degrading to "closed" and leaving it
- * unable to tell a committed delivery from a halt.
+ * (or an inquiry visit its reply) must keep telling it that landed, rather than degrading to
+ * "closed" and leaving it unable to tell a committed delivery from a halt.
  */
 const ended = (session: Session): MervError =>
   session.closeReason === 'handoff'
@@ -278,11 +278,17 @@ const ended = (session: Session): MervError =>
         'This session’s handoff completed and the session has ended; its record moved on',
         401,
       )
-    : new MervError(
-        'session_closed',
-        session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
-        401,
-      );
+    : session.closeReason === 'inquiry_answered'
+      ? new MervError(
+          'inquiry_answered',
+          'This inquiry visit’s reply was delivered and the visit has ended; stop now',
+          401,
+        )
+      : new MervError(
+          'session_closed',
+          session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
+          401,
+        );
 /** What session.workspace_attached and session.workspace_result say. */
 const workspaceEvent = (session: Session, workspace: SessionWorkspace) => ({
   sessionId: session.id,
@@ -391,8 +397,8 @@ export class LeasedSessions implements Sessions {
           byDefault: config.dispatchByDefault,
           prepare: async (caller) => await this.prepareControl(caller),
           offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx, true),
-          inquiry: (tx, projectId, ownerHash, harness, workInstanceId) =>
-            this.inquiries.candidate(tx, projectId, ownerHash, harness, workInstanceId),
+          inquiry: (tx, projectId, ownerHash, harness, workInstanceId, skip) =>
+            this.inquiries.candidate(tx, projectId, ownerHash, harness, workInstanceId, skip),
           inquiryDemand: (tx, projectId, ownerHash, harness) =>
             this.inquiries.demand(tx, projectId, ownerHash, harness),
           inquire: async (caller, candidate, input, tx) =>
@@ -430,6 +436,7 @@ export class LeasedSessions implements Sessions {
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
       stream: (sessionId) => this.streams.snapshot(sessionId),
       ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
+      dispatching: async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
       available,
     });
     this.inquiries = new Inquiries(state, scope, this.clock, {

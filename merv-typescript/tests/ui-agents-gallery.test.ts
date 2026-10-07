@@ -408,3 +408,64 @@ test('the feed keeps each visit to its newest blocks, starts a visit over on res
   held = applyFrame(held, frame([], ['ses_b']) as never, false);
   assert.equal(held.has('ses_a'), false);
 });
+
+test('a card holding a question that ended says how, not Sent, and folds under Recent', async (t) => {
+  t.after(unmount);
+  const asked = (id: string, status: string, seq: string) =>
+    thread(id, {
+      seq,
+      message: {
+        id: `m_${id}`,
+        senderActorId: 'actor_me',
+        body: `Why ${id}?`,
+        createdAt: ago(60),
+        acknowledgedAt: null,
+        reply: null,
+        inquiry: { id: `inquiry_${id}`, status },
+      },
+    });
+  await open('operator', {
+    threads: [asked('x', 'expired', '5'), asked('n', 'unanswered', '4')],
+    next: null,
+  });
+  assert.equal(cards().length, 0, 'no question that ended wants attention');
+  const recent = [...document.querySelectorAll('button')].find((item) =>
+    item.textContent!.startsWith('Recent'),
+  )!;
+  await press(recent);
+  const said = cards().map((card) => card.querySelector('.agent-said-state')!);
+  assert.deepEqual(
+    said.map((state) => [state.textContent, state.classList.contains('agent-said--sent')]),
+    [
+      ['Expired', false],
+      ['No answer', false],
+    ],
+  );
+});
+
+test('the page polls quickly only while an agent works, and slowly while only questions wait', async (t) => {
+  t.after(unmount);
+  serve('/sessions/live', () => ({ stream: eventStream().stream }));
+  // The delays the page's reads wait between polls.
+  const delays: number[] = [];
+  const real = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: () => void, ms?: number, ...rest: unknown[]) => {
+    if ((ms ?? 0) >= 1000) delays.push(ms!);
+    return real(handler, ms, ...rest);
+  }) as typeof setTimeout;
+  t.after(() => void (globalThis.setTimeout = real));
+  const polls = () => delays.filter((ms) => ms > 2_000 && ms <= 30_000);
+  await open('operator', { threads: [asking], next: null });
+  assert.ok(polls().length > 0);
+  assert.ok(
+    polls().every((ms) => ms > 20_000),
+    `a question alone polls slowly: ${polls()}`,
+  );
+  await unmount();
+  delays.length = 0;
+  await open('operator', { threads: [asking, liveA], next: null });
+  assert.ok(
+    polls().some((ms) => ms <= 4_000),
+    `an agent at work polls quickly: ${polls()}`,
+  );
+});

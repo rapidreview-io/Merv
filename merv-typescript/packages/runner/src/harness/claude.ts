@@ -2,7 +2,9 @@ import { lstatSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { claudeEvents } from '@merv/sessions/agent-stream';
-import { entries, firstId, type Harness, spent } from './shared.js';
+import { calls, entries, firstId, type Harness, spent } from './shared.js';
+
+const cache = ['cache_creation_input_tokens', 'cache_read_input_tokens'];
 
 /**
  * Claude Code. Its `stream-json` ends with one `result` event: its `input_tokens` excludes the
@@ -13,8 +15,9 @@ import { entries, firstId, type Harness, spent } from './shared.js';
 const project = (cwd: string) => realpathSync(cwd).replace(/[^A-Za-z0-9]/g, '-');
 export const claude: Harness = {
   lines: claudeEvents,
+  // A run stopped before its `result` spent what each of its model calls printed.
   usage: (output, model) =>
-    spent(output, 'result', model, ['cache_creation_input_tokens', 'cache_read_input_tokens']),
+    spent(output, 'result', model, cache) ?? calls(output, 'assistant', model, cache),
   conversationId: (output) =>
     firstId(
       output,

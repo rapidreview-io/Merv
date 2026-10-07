@@ -68,6 +68,8 @@ const leaseSchema = z
  * its runner declares it when its process ends, within a minute's grace of the question.
  */
 export const declaredWithinMs = 10 * 60_000;
+/** How many questions one lease tries when its machine is refused one. */
+const INQUIRY_TRIES = 3;
 /** The closes that count against a target: its process failed to launch or to stay up. */
 export const failureReasons = new Set([
   'host_failed',
@@ -145,13 +147,15 @@ interface Hooks {
   byDefault: boolean;
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
-  /** The oldest question a machine of this owner and harness may take (on its work item alone). */
+  /** The oldest question a machine of this owner and harness may take (on its work item alone),
+   *  other than those `skip` names. */
   inquiry(
     tx: Transaction,
     projectId: string,
     ownerHash: string,
     harness: string,
     workInstanceId: string | null,
+    skip: readonly string[],
   ): Promise<InquiryCandidate | undefined>;
   /** The work items with such a question. */
   inquiryDemand(
@@ -565,6 +569,10 @@ export class SessionDispatch {
       asking,
     };
   }
+  /** Whether the project's own budget holds back every automatic visit, inquiries too. */
+  private async projectWithholds(caller: Caller, tx: Transaction): Promise<boolean> {
+    return (await this.budgets(caller, tx, [caller.projectId])).some(withholds);
+  }
   /** The same source-scoped candidate selection used by automatic leasing and prospective demand. */
   private async eligibleCandidates(
     caller: Caller,
@@ -665,7 +673,8 @@ export class SessionDispatch {
       // work's current revision: only where dispatch is on, as `eligibleCandidates` read it.
       if (
         (input.capabilities ?? []).includes(INQUIRY_CAPABILITY) &&
-        (await this.dispatch(caller.projectId, tx)).enabled
+        (await this.dispatch(caller.projectId, tx)).enabled &&
+        !(await this.projectWithholds(caller, tx))
       ) {
         const asked = (
           await this.hooks.inquiryDemand(tx, caller.projectId, owner, input.platform.harness)
@@ -931,39 +940,50 @@ export class SessionDispatch {
       };
       // A person waits on a question, and its visit is short: a machine that runs inquiry
       // visits takes one before new work. It holds no lease on the work, so the work's own
-      // visit, due meanwhile, is offered as ever, and resumes the conversation as it was.
-      if (capabilities.has(INQUIRY_CAPABILITY))
+      // visit, due meanwhile, is offered as ever, and resumes the conversation as it was. Its
+      // token budget is held: a hosted machine's by Fleet's model relay call by call, a machine
+      // of the owner's own by its runner, which stops the visit once Claude Code's running
+      // report passes it. Codex reports its spend only as its one turn ends, so only a hosted
+      // machine takes a Codex inquiry.
+      if (capabilities.has(INQUIRY_CAPABILITY) && (managed || platform.harness === 'claude'))
         for (const source of sources) {
+          // The project's budget holds back inquiries as it holds back work.
+          if (await this.projectWithholds(source, tx)) continue;
           const phaseOwner = await ownerOf(this.scope, source, tx);
-          const inquiry = await this.hooks.inquiry(
-            tx,
-            caller.projectId,
-            phaseOwner.hash,
-            platform.harness,
-            managed?.row.work_instance_id ?? null,
-          );
-          if (!inquiry) continue;
-          if (this.state.readScope)
-            throw new MervError('read_only_scope', 'An offer is a write', 409);
-          const session = await this.hooks.inquire(
-            source,
-            inquiry,
-            {
-              runnerId: input.runnerId,
-              requestId: input.requestId,
-              secret: input.secret,
-              hardDeadlineSeconds: Math.min(input.hardDeadlineSeconds ?? 86400, left),
-            },
-            tx,
-          );
-          // Refused before it wrote anything: the lease goes on to work.
-          if ('refused' in session) {
-            process.stderr.write(
-              `${JSON.stringify({ event: 'dispatch.inquiry_refused', inquiryId: inquiry.id, code: session.refused.code })}\n`,
+          // A refusal is of one question: a few more are tried before the lease goes on to work.
+          const refused: string[] = [];
+          while (refused.length < INQUIRY_TRIES) {
+            const inquiry = await this.hooks.inquiry(
+              tx,
+              caller.projectId,
+              phaseOwner.hash,
+              platform.harness,
+              managed?.row.work_instance_id ?? null,
+              refused,
             );
-            continue;
+            if (!inquiry) break;
+            if (this.state.readScope)
+              throw new MervError('read_only_scope', 'An offer is a write', 409);
+            const session = await this.hooks.inquire(
+              source,
+              inquiry,
+              {
+                runnerId: input.runnerId,
+                requestId: input.requestId,
+                secret: input.secret,
+                hardDeadlineSeconds: Math.min(input.hardDeadlineSeconds ?? 86400, left),
+              },
+              tx,
+            );
+            if ('refused' in session) {
+              process.stderr.write(
+                `${JSON.stringify({ event: 'dispatch.inquiry_refused', inquiryId: inquiry.id, code: session.refused.code })}\n`,
+              );
+              refused.push(inquiry.id);
+              continue;
+            }
+            return await land(session, source);
           }
-          return await land(session, source);
         }
       expiring();
       let candidate: Target | undefined;

@@ -57,22 +57,42 @@ export function firstId(output: string, marker: string, pick: (event: Line) => u
   return undefined;
 }
 
+/** A usage's counts (and `cache` counts, absent as 0) when all are whole. */
+function counted(usage: Line | undefined, cache: string[], model?: string) {
+  const [input, outputTokens, ...cached] = ['input_tokens', 'output_tokens', ...cache].map(
+    (key, index) => usage?.[key] ?? (index < 2 ? undefined : 0),
+  );
+  if (![input, outputTokens, ...cached].every((count) => Number.isSafeInteger(count) && count >= 0))
+    return undefined;
+  return {
+    inputTokens: input + cached.reduce((sum, count) => sum + count, 0),
+    outputTokens,
+    ...(model && { model }),
+  } as SessionUsageReport;
+}
 /** The last `type` event's usage whose counts (and `cache` counts, absent as 0) are all whole. */
 export function spent(output: string, type: string, model?: string, cache: string[] = []) {
   let usage: SessionUsageReport | undefined;
-  for (const event of events(output, `"${type}"`)) {
-    const [input, outputTokens, ...cached] = ['input_tokens', 'output_tokens', ...cache].map(
-      (key, index) => event.usage?.[key] ?? (index < 2 ? undefined : 0),
-    );
-    if (
-      event.type === type &&
-      [input, outputTokens, ...cached].every((count) => Number.isSafeInteger(count) && count >= 0)
-    )
-      usage = {
-        inputTokens: input + cached.reduce((sum, count) => sum + count, 0),
-        outputTokens,
-        ...(model && { model }),
-      };
-  }
+  for (const event of events(output, `"${type}"`))
+    if (event.type === type) usage = counted(event.usage, cache, model) ?? usage;
   return usage;
+}
+/**
+ * What a run spent so far by each model call's own `type` event (`message.usage`, the last one
+ * printed under each message id), summed: for a harness whose total is printed only at its end.
+ */
+export function calls(output: string, type: string, model?: string, cache: string[] = []) {
+  const each = new Map<string, SessionUsageReport>();
+  for (const event of events(output, `"${type}"`)) {
+    const usage = event.type === type ? counted(event.message?.usage, cache) : undefined;
+    if (usage && typeof event.message?.id === 'string') each.set(event.message.id, usage);
+  }
+  if (!each.size) return undefined;
+  const sum = (key: 'inputTokens' | 'outputTokens') =>
+    [...each.values()].reduce((total, usage) => total + usage[key], 0);
+  return {
+    inputTokens: sum('inputTokens'),
+    outputTokens: sum('outputTokens'),
+    ...(model && { model }),
+  } as SessionUsageReport;
 }

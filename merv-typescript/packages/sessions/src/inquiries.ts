@@ -28,6 +28,11 @@ export const INQUIRY_VISIT_SECONDS = 10 * 60;
  * holds a hosted visit to it call by call, and a runner's report counts against it after.
  */
 export const INQUIRY_TOKENS = 300_000;
+/**
+ * The model tokens one person's questions may spend in a day, wherever they ran: each counts
+ * what its runner or the relay reported, and one still waiting or running its whole budget.
+ */
+export const INQUIRY_DAILY_TOKENS = 2_000_000;
 /** What an inquiry visit's frozen execution and lease name in place of a workflow policy. */
 export const INQUIRY_POLICY = 'inquiry';
 
@@ -76,6 +81,7 @@ export interface InquiryCandidate {
   instanceId: string;
   actorId: string;
   continuityKey: string;
+  tokenBudget: number;
   resume: SessionResume;
   /** The question, which the visit's assignment carries. */
   body: string;
@@ -165,7 +171,12 @@ export function inquirySession(input: {
       receipt: {},
     },
     continuity: { key: candidate.continuityKey, resume: candidate.resume },
-    inquiry: { id: candidate.id, messageId: candidate.messageId, askedBy: candidate.askedBy },
+    inquiry: {
+      id: candidate.id,
+      messageId: candidate.messageId,
+      askedBy: candidate.askedBy,
+      tokenBudget: candidate.tokenBudget,
+    },
   };
 }
 
@@ -273,6 +284,20 @@ export class Inquiries implements SessionInquiries {
         'This agent is still on an earlier question; ask again once it has answered',
         409,
       );
+      const now = this.clock();
+      const day = await tx.get<{ spent: number | string }>(
+        `SELECT COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN GREATEST(tokens,token_budget) ELSE tokens END),0) AS spent
+          FROM session_inquiries WHERE project_id=? AND asker_actor_id=? AND asked_at>?`,
+        caller.projectId,
+        caller.actorId,
+        new Date(now - 86_400_000).toISOString(),
+      );
+      check(
+        Number(day?.spent ?? 0) + INQUIRY_TOKENS <= INQUIRY_DAILY_TOKENS,
+        'inquiry_tokens_spent',
+        'Your questions to agents have spent their model tokens for the last day; ask again later',
+        429,
+      );
       check(
         await this.host.dispatching(caller.projectId, tx),
         'dispatch_disabled',
@@ -282,7 +307,6 @@ export class Inquiries implements SessionInquiries {
       const source = await this.scope.delegationSource(caller, tx);
       const id = newId('inquiry');
       const messageId = newId('session_message');
-      const now = this.clock();
       const at = new Date(now).toISOString();
       await tx.run(
         "INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,'question')",
@@ -324,6 +348,7 @@ export class Inquiries implements SessionInquiries {
    * The oldest queued question of the project a machine of `ownerHash` may take: its thread's
    * conversation was kept by `harness` and its work visits ran under the same owner (whose
    * machines alone resume it, as continuity does), on `workInstanceId` alone for a work host.
+   * Those `skip` names, which this lease was refused, are passed over.
    */
   async candidate(
     tx: Transaction,
@@ -331,12 +356,14 @@ export class Inquiries implements SessionInquiries {
     ownerHash: string,
     harness: string,
     workInstanceId: string | null,
+    skip: readonly string[] = [],
   ): Promise<InquiryCandidate | undefined> {
     const row = await tx.get<{
       id: string;
       thread_id: string;
       message_id: string;
       asker_actor_id: string;
+      token_budget: number | string;
       instance_id: string;
       actor_id: string;
       continuity_key: string;
@@ -350,7 +377,7 @@ export class Inquiries implements SessionInquiries {
       visit_thread: string;
       visit_json: string;
     }>(
-      `SELECT i.id,i.thread_id,i.message_id,i.asker_actor_id,t.instance_id,t.actor_id,t.continuity_key,
+      `SELECT i.id,i.thread_id,i.message_id,i.asker_actor_id,i.token_budget,t.instance_id,t.actor_id,t.continuity_key,
           t.latest_session_id,t.harness,t.conversation_id,t.sha256,t.size,m.body,
           w.id AS visit_id,w.thread_id AS visit_thread,w.session_json AS visit_json
         FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
@@ -360,6 +387,7 @@ export class Inquiries implements SessionInquiries {
         WHERE i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
           AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND t.continuity_key IS NOT NULL
           AND w.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR t.instance_id=?)
+          ${skip.length ? `AND i.id NOT IN (${skip.map(() => '?').join(',')})` : ''}
         ORDER BY i._merv_rowid LIMIT 1`,
       projectId,
       isoNow(this.clock),
@@ -367,6 +395,7 @@ export class Inquiries implements SessionInquiries {
       ownerHash,
       workInstanceId,
       workInstanceId,
+      ...skip,
     );
     if (!row) return undefined;
     return {
@@ -374,6 +403,7 @@ export class Inquiries implements SessionInquiries {
       threadId: row.thread_id,
       messageId: row.message_id,
       askedBy: row.asker_actor_id,
+      tokenBudget: Number(row.token_budget),
       instanceId: row.instance_id,
       actorId: row.actor_id,
       continuityKey: row.continuity_key,

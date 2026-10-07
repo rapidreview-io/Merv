@@ -642,6 +642,8 @@ export function policy(ctx: ReflectionsContext, lens: boolean): WorkflowPolicy {
       const { wave } = record;
       return {
         label: named(record),
+        // A lens is its wave's: what its agent asks, the wave's owner answers.
+        owner: { actorId: wave.owner_id },
         gate: context.snapshot.state,
         waiting:
           context.snapshot.state === 'reflecting' && !lens

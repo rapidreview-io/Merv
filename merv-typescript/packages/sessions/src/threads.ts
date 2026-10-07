@@ -23,6 +23,7 @@ import { deliver, uploads } from './transcripts.js';
 import type {
   ContinuityProvider,
   ContinuityUnit,
+  InquiryStatus,
   ProjectThreads,
   Session,
   SessionContinuity,
@@ -72,12 +73,16 @@ type Room = { events: number; bytes: number };
 const PAGE = 50;
 /** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
 const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
+/** A question to it (an inquiry) still waiting for a machine or being answered. */
+const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running'))`;
 /**
  * A thread that wants attention: live, asking its owner, or holding a message its agent has not
- * read yet while it may still read it.
+ * read yet while it may still read it. A question to it (an inquiry) counts only until it ends:
+ * one that expired or went unanswered is never read.
  */
 const ATTENTION = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
-  OR (t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id AND m.acknowledged_at IS NULL)))`;
+  OR (t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id AND m.acknowledged_at IS NULL
+    AND (m.inquiry_role IS DISTINCT FROM 'question' OR ${INQUIRING}))))`;
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -110,6 +115,8 @@ export class SessionThreads {
       stream(sessionId: string): Promise<AgentStreamEvent[]>;
       /** Which of these work items of the project have ended. */
       ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
+      /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
+      dispatching(projectId: string, tx: Transaction): Promise<boolean>;
       /** Refuses once Sessions has closed. */
       available(): void;
     },
@@ -533,9 +540,15 @@ export class SessionThreads {
               created_at: string;
               acknowledged_at: string | null;
               reply_body: string | null;
+              inquiry_id: string | null;
+              inquiry_status: InquiryStatus | null;
             }>(
-              `SELECT DISTINCT ON (thread_id) thread_id,id,sender_actor_id,body,created_at,acknowledged_at,reply_body
-                FROM session_messages WHERE project_id=? AND thread_id IN (${marks}) ORDER BY thread_id,_merv_rowid DESC`,
+              // The context an answered inquiry left its work repeats the question and its reply.
+              `SELECT DISTINCT ON (m.thread_id) m.thread_id,m.id,m.sender_actor_id,m.body,m.created_at,m.acknowledged_at,m.reply_body,
+                  i.id AS inquiry_id,i.status AS inquiry_status
+                FROM session_messages m LEFT JOIN session_inquiries i ON i.id=m.inquiry_id AND m.inquiry_role='question'
+                WHERE m.project_id=? AND m.thread_id IN (${marks}) AND m.inquiry_role IS DISTINCT FROM 'context'
+                ORDER BY m.thread_id,m._merv_rowid DESC`,
               caller.projectId,
               ...ids,
             )
@@ -576,6 +589,10 @@ export class SessionThreads {
                 createdAt: message.created_at,
                 acknowledgedAt: message.acknowledged_at,
                 reply: message.reply_body,
+                ...(message.inquiry_id &&
+                  message.inquiry_status && {
+                    inquiry: { id: message.inquiry_id, status: message.inquiry_status },
+                  }),
               },
             }),
           };
@@ -610,7 +627,9 @@ export class SessionThreads {
   /**
    * Each thread with all of its visits, live while one of them holds its lease, and whether it
    * takes a message now: as `messaging` accepts one, while it is not retired and its work is
-   * open, or as the answer to a question it asked that is still open.
+   * open, or as the answer to a question it asked that is still open. It may be asked as
+   * `session.ask_thread` takes a question: it kept a conversation, dispatch is on, and no
+   * question to it is still waiting or being answered.
    */
   private async viewed(
     tx: Transaction,
@@ -625,11 +644,25 @@ export class SessionThreads {
           tx,
         )
       : new Set<string>();
+    const marks = ids.map(() => '?').join(',');
     const asking = new Set(
       ids.length
         ? (
             await tx.all<{ thread_id: string }>(
-              `SELECT DISTINCT thread_id FROM session_questions WHERE answered_at IS NULL AND thread_id IN (${ids.map(() => '?').join(',')})`,
+              `SELECT DISTINCT thread_id FROM session_questions WHERE answered_at IS NULL AND thread_id IN (${marks})`,
+              ...ids,
+            )
+          ).map((row) => row.thread_id)
+        : [],
+    );
+    const dispatching = threads.length
+      ? await this.host.dispatching(threads[0]!.project_id, tx)
+      : false;
+    const inquiring = new Set(
+      dispatching && ids.length
+        ? (
+            await tx.all<{ thread_id: string }>(
+              `SELECT DISTINCT thread_id FROM session_inquiries WHERE status IN ('queued','running') AND thread_id IN (${marks})`,
               ...ids,
             )
           ).map((row) => row.thread_id)
@@ -655,7 +688,10 @@ export class SessionThreads {
               : 'dormant',
         takesMessage:
           asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
-        ...(thread.sha256 !== null && thread.uploaded_at !== null && { asks: true as const }),
+        ...(thread.sha256 !== null &&
+          thread.uploaded_at !== null &&
+          dispatching &&
+          !inquiring.has(thread.id) && { asks: true as const }),
         visits: own,
       };
     });

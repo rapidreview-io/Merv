@@ -37,13 +37,17 @@ function Tail({ blocks }: { blocks: Parameters<typeof tailLines>[0] | undefined 
   );
 }
 
-/** The newest message to the thread, and whether its agent has read it, with its reply. */
+/** The newest message to the thread, and whether its agent has read it, with its reply; a
+ *  question to its agent (an inquiry), where its answer is. */
 function Said({ message }: { message: NonNullable<ProjectThread['message']> }) {
+  const open = !message.inquiry || ['queued', 'running'].includes(message.inquiry.status);
   return (
     <div className="agent-card-said">
       <p>
-        <span className={cx('agent-said-state', !message.acknowledgedAt && 'agent-said--sent')}>
-          {delivery(message)}
+        <span
+          className={cx('agent-said-state', !message.acknowledgedAt && open && 'agent-said--sent')}
+        >
+          {capital(delivery(message))}
         </span>{' '}
         {message.body}
       </p>
@@ -55,7 +59,7 @@ function Said({ message }: { message: NonNullable<ProjectThread['message']> }) {
 export function AgentsGallery() {
   const rows = useRows();
   const reads = useReadsAgents();
-  const [every, setEvery] = useState(15_000);
+  const [every, setEvery] = useState(30_000);
   const first = useTool<ProjectThreads>('/sessions/threads', {}, { every });
   const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
   const [busy, setBusy] = useState(false);
@@ -74,7 +78,8 @@ export function AgentsGallery() {
   const rest = threads.filter((item) => !item.question && !isLive(item) && item.seq !== undefined);
   const live = threads.filter(isLive).length;
   const tails = useLiveFeed(reads && threads.some(isLive));
-  useEffect(() => setEvery(live || waiting.length ? 4000 : 15_000), [live, waiting.length]);
+  // Quick while an agent works; a question waits on a person, who answers here.
+  useEffect(() => setEvery(live ? 4000 : 30_000), [live]);
   // The rail's badge counts the same agents: it is told when they change.
   const counted = useRef<string>();
   const counts = first.data ? `${live}:${waiting.length}` : undefined;

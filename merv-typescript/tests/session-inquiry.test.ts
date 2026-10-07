@@ -11,11 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, WorkflowPolicy } from '@merv/contracts';
+import { MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { codexModelRelay, hostedGrant } from '../packages/fleet/src/codex-relay.js';
 import { dormantMs } from '../packages/sessions/src/threads.js';
-import { INQUIRY_TOKENS, INQUIRY_VISIT_SECONDS } from '../packages/sessions/src/inquiries.js';
+import {
+  INQUIRY_DAILY_TOKENS,
+  INQUIRY_TOKENS,
+  INQUIRY_VISIT_SECONDS,
+} from '../packages/sessions/src/inquiries.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import type {
   Session,
@@ -162,10 +166,11 @@ async function fixture(t: TestContext) {
     session: Session,
     control: { runnerId: string; hostRef: string },
     text = `{"type":"user","text":"${randomUUID()}"}\n`,
+    harness: 'claude' | 'codex' = 'claude',
   ) => {
     const bytes = Buffer.from(text);
     const facts = {
-      harness: 'claude',
+      harness,
       conversationId: CONVERSATION,
       sha256: createHash('sha256').update(bytes).digest('hex'),
       size: bytes.length,
@@ -186,11 +191,11 @@ async function fixture(t: TestContext) {
   const start = async () =>
     await handle.start(owner, { workflow: 'inquiry-test', requestId: randomUUID() });
   /** A thread whose producer visit kept and delivered its conversation, then closed. */
-  const worked = async (runnerId = 'runner-hand') => {
+  const worked = async (runnerId = 'runner-hand', harness: 'claude' | 'codex' = 'claude') => {
     const unit = await start();
     const first = await offer(unit.id, runnerId);
     await release(first.session);
-    const kept = await keep(first.session, first.control);
+    const kept = await keep(first.session, first.control, undefined, harness);
     return { unit, first, ...kept, threadId: first.session.threadId };
   };
   const threadRow = async (id: string) =>
@@ -281,11 +286,14 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
   await f.sessions.sweep();
   const before = await f.threadRow(threadId);
   assert.equal(before.status, 'retired');
-  // It takes no message, since no visit will read one, but it may still be asked.
+  // It takes no message, since no visit will read one, but it may still be asked, once dispatch
+  // is on to launch the visit that answers.
   const [listed] = await f.sessions.threads.list(f.owner, unit.id);
-  assert.deepEqual([listed!.takesMessage, listed!.asks], [false, true]);
-
+  assert.deepEqual([listed!.takesMessage, listed!.asks], [false, undefined]);
   await f.dispatch();
+  const [askable] = await f.sessions.threads.list(f.owner, unit.id);
+  assert.deepEqual([askable!.takesMessage, askable!.asks], [false, true]);
+
   const question = 'Which seed did you settle on, and why?';
   const asked = await f.ask(threadId, question, 'ask-1');
   assert.deepEqual(
@@ -619,6 +627,140 @@ test('an inquiry visit spends a budget of its own, charged to its asker through 
   assert.match(budget[0]!, new RegExp(`^reserve ${visit.id} \\d+$`));
 });
 
+test('a question holds its thread among those that want attention only while it is open, and the card says how it ended', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { threadId } = await f.worked();
+  const listed = async () =>
+    (await f.sessions.threads.project(f.owner)).threads.find((item) => item.id === threadId)!;
+  assert.equal((await listed()).asks, true);
+  const asked = await f.ask(threadId, 'Anyone there?');
+  // Waiting for a machine: listed first, with no cursor, and asked no second question.
+  const waiting = await listed();
+  assert.equal(waiting.seq, undefined);
+  assert.deepEqual(waiting.message?.inquiry, { id: asked.id, status: 'queued' });
+  assert.equal(waiting.asks, undefined);
+  // Nobody took it in time: its thread goes back among the rest, saying the question expired.
+  const past = new Date(Date.now() - 1000).toISOString();
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE session_inquiries DISABLE TRIGGER session_inquiries_immutable');
+    await tx.run(`UPDATE session_inquiries SET wait_until='${past}' WHERE id='${asked.id}'`);
+    await tx.run('ALTER TABLE session_inquiries ENABLE TRIGGER session_inquiries_immutable');
+  });
+  await f.sessions.sweep();
+  const ended = await listed();
+  assert.notEqual(ended.seq, undefined);
+  assert.deepEqual(
+    [ended.message?.id, ended.message?.acknowledgedAt, ended.message?.inquiry?.status],
+    [asked.messageId, null, 'expired'],
+  );
+  assert.equal(ended.asks, true);
+  // With dispatch off no machine would take a question, so none is offered.
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
+  assert.equal((await listed()).asks, undefined);
+});
+
+test('a person’s questions spend at most a day’s tokens, and the project’s budget holds them back as it holds work', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const a = await f.worked();
+  const b = await f.worked();
+  const asked = await f.ask(a.threadId, 'What did that cost?');
+  await f.present('runner-q');
+  const visit = (await f.lease('runner-q')).session!;
+  assert.equal(visit.inquiry?.id, asked.id);
+  assert.equal(visit.inquiry?.tokenBudget, INQUIRY_TOKENS);
+  // A machine of the owner's reports what the visit spent once it ends.
+  await f.release(visit, { usage: { inputTokens: INQUIRY_DAILY_TOKENS - 1000, outputTokens: 0 } });
+  const spent = await f.http('POST', `/sessions/threads/${b.threadId}/ask`, f.token, {
+    body: 'And this one?',
+    requestId: randomUUID(),
+  });
+  assert.deepEqual([spent.status, spent.body.error.code], [429, 'inquiry_tokens_spent']);
+
+  // A day later the person may ask again; a project budget that withholds work withholds it too.
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE session_inquiries DISABLE TRIGGER session_inquiries_immutable');
+    await tx.run(
+      `UPDATE session_inquiries SET asked_at='${new Date(Date.now() - 86_400_001).toISOString()}' WHERE id='${asked.id}'`,
+    );
+    await tx.run('ALTER TABLE session_inquiries ENABLE TRIGGER session_inquiries_immutable');
+  });
+  const second = await f.ask(b.threadId, 'And this one?');
+  const work = await f.offer((await f.start()).id);
+  await f.sessions.authenticate(work.input.secret);
+  await f.release(work.session, { usage: { inputTokens: 5, outputTokens: 5 } });
+  await f.sessions.dispatch.setBudget(f.owner, { maxTokens: 1 });
+  assert.equal((await f.lease('runner-q')).session, null);
+  assert.equal((await f.inquiry(second.id)).status, 'queued');
+  await f.sessions.dispatch.setBudget(f.owner, { maxTokens: null });
+  assert.equal((await f.lease('runner-q')).session?.inquiry?.id, second.id);
+});
+
+test('a machine of the owner’s that runs Codex is offered no question: only Fleet’s relay holds its budget', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { threadId } = await f.worked('runner-hand', 'codex');
+  const asked = await f.ask(threadId, 'Which seed?');
+  await f.present('runner-codex', ['inquiry.1', 'runner.2'], 'codex');
+  assert.equal((await f.lease('runner-codex', 'codex')).session?.inquiry, undefined);
+  assert.equal((await f.inquiry(asked.id)).status, 'queued');
+});
+
+test('a refused question holds up no other, and a retried reply is told that it landed', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const a = await f.worked();
+  const b = await f.worked();
+  const first = await f.ask(a.threadId, 'First?');
+  const second = await f.ask(b.threadId, 'Second?');
+  // This machine is refused the oldest question (as it would be by a check on that one alone).
+  const leased = f.sessions as unknown as {
+    inquireTransaction(...args: unknown[]): Promise<unknown>;
+  };
+  const inquire = leased.inquireTransaction.bind(leased);
+  leased.inquireTransaction = async (...args: unknown[]) =>
+    (args[1] as { id: string }).id === first.id
+      ? { refused: new MervError('inquiry_refused', 'Refused for the test', 409) }
+      : await inquire(...args);
+  t.after(() => void (leased.inquireTransaction = inquire));
+  await f.present('runner-q');
+  const visit = await f.lease('runner-q');
+  assert.equal(visit.session?.inquiry?.id, second.id);
+  assert.equal((await f.inquiry(first.id)).status, 'queued');
+
+  // Its reply ends the visit; the same reply again, its response lost, is told that it landed.
+  const worker = await f.sessions.authenticate(visit.input.secret);
+  const ack = { messageId: second.messageId, reply: 'Because.', requestId: 'reply' };
+  await f.app.ctx.tools.invoke('session.message.ack', worker, ack);
+  await assert.rejects(f.app.ctx.tools.invoke('session.message.ack', worker, ack), {
+    code: 'inquiry_answered',
+  });
+});
+
+test('the live feed shows a thread’s work, and its inquiry visit only while no work visit is live', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { threadId } = await f.worked();
+  await f.ask(threadId, 'What is left?');
+  await f.present('runner-q');
+  const inquiry = (await f.lease('runner-q')).session!;
+  const live = async () =>
+    (await f.sessions.streams.feed(f.owner.projectId, new Map()))!.live.filter(
+      (visit) => visit.threadId === threadId,
+    );
+  assert.deepEqual(
+    (await live()).map((visit) => visit.sessionId),
+    [inquiry.id],
+  );
+  const work = (await f.lease('runner-q')).session!;
+  assert.equal(work.inquiry, undefined);
+  assert.deepEqual(
+    (await live()).map((visit) => visit.sessionId),
+    [work.id],
+  );
+});
+
 /** A stand-in Claude Code that answers an inquiry over Merv's MCP, as a resumed agent would. */
 const inquiryAgent = (root: string) => {
   const path = join(root, 'inquiry-agent');
@@ -630,8 +772,8 @@ const inquiryAgent = (root: string) => {
   return path;
 };
 
-test('real runners: a machine resumes a retired thread’s conversation read-only, answers, and keeps nothing', async (t) => {
-  const f = await fixture(t);
+/** A machine of the owner's whose Claude Code is the stand-in, ticked until a question ends. */
+async function machine(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
   const root = await mkdtemp(join(tmpdir(), 'merv-inquiry-runner-'));
   const claudeHome = join(root, 'claude');
   mkdirSync(claudeHome);
@@ -667,6 +809,28 @@ test('real runners: a machine resumes a retired thread’s conversation read-onl
     delete process.env[credentialEnv];
     await rm(root, { recursive: true, force: true });
   });
+  const settled = async (inquiryId: string) => {
+    for (let end = Date.now() + 30_000; ;) {
+      await runner.tick();
+      const snapshot = runner.snapshot();
+      const { status } = await f.inquiry(inquiryId);
+      if (
+        status !== 'running' &&
+        status !== 'queued' &&
+        snapshot.launches.length &&
+        snapshot.launches.every((launch) => !launch.releasePending)
+      )
+        return;
+      assert.ok(Date.now() < end, JSON.stringify(snapshot));
+      await delay(50);
+    }
+  };
+  return { runner, claudeHome, settled };
+}
+
+test('real runners: a machine resumes a retired thread’s conversation read-only, answers, and keeps nothing', async (t) => {
+  const f = await fixture(t);
+  const { runner, claudeHome, settled } = await machine(t, f);
   const text = `{"type":"user","message":"the work so far ${randomUUID()}"}\n`;
   const unit = await f.start();
   const first = await f.offer(unit.id, 'runner-hand');
@@ -683,19 +847,7 @@ test('real runners: a machine resumes a retired thread’s conversation read-onl
   const asked = await f.ask(threadId, 'What did you conclude?');
 
   await runner.start();
-  for (let end = Date.now() + 30_000; ;) {
-    await runner.tick();
-    const snapshot = runner.snapshot();
-    if (
-      (await f.inquiry(asked.id)).status !== 'running' &&
-      (await f.inquiry(asked.id)).status !== 'queued' &&
-      snapshot.launches.length &&
-      snapshot.launches.every((launch) => !launch.releasePending)
-    )
-      break;
-    assert.ok(Date.now() < end, JSON.stringify(snapshot));
-    await delay(50);
-  }
+  await settled(asked.id);
   const row = await f.inquiry(asked.id);
   assert.equal(row.status, 'answered');
   // What the agent saw: a resumed conversation, the bytes the thread kept, read-only tools and
@@ -719,4 +871,23 @@ test('real runners: a machine resumes a retired thread’s conversation read-onl
   assert.equal(Number(row.tokens), 4321);
   const record = runner.snapshot().launches[0]!;
   assert.equal(record.sessionId, row.session_id);
+});
+
+test('real runners: a machine stops an inquiry visit once what its agent printed of its spend passes the budget', async (t) => {
+  const f = await fixture(t);
+  const { runner, settled } = await machine(t, f);
+  // Its work has ended, so the machine is offered nothing but the question.
+  const { unit, threadId } = await f.worked();
+  await f.move(unit.id, 'submit');
+  await f.move(unit.id, 'approve');
+  await f.dispatch();
+  const asked = await f.ask(threadId, 'Spend as much as you like: why?');
+  await runner.start();
+  await settled(asked.id);
+  const row = await f.inquiry(asked.id);
+  assert.equal(row.status, 'unanswered');
+  // What it spent so far, each model call's once, is reported to its asker's budget.
+  assert.equal(Number(row.tokens), 401_050);
+  const visit = await f.sessions.get(f.owner, row.session_id!);
+  assert.deepEqual([visit.status, visit.closeReason], ['released', 'inquiry_budget_spent']);
 });

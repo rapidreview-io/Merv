@@ -1103,6 +1103,7 @@ async function converse(
       readable: async () => assert.fail(),
       stream: async (id) => (streamed.push(id), streams[id] ?? []),
       ended: async () => new Set<string>(),
+      dispatching: async () => true,
       available: () => {},
     },
   );

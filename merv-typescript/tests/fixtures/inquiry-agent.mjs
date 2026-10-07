@@ -54,6 +54,21 @@ const call = async (name, input) => {
 };
 const inbox = await call('session.messages', {});
 const question = Array.isArray(inbox) ? inbox[0] : undefined;
+// Asked to spend: one model call past the visit's budget, printed as Claude Code prints it, and
+// no answer: it runs on until its runner stops it.
+if (/spend/i.test(question?.body ?? '')) {
+  const usage = { input_tokens: 1000, cache_read_input_tokens: 400000, output_tokens: 50 };
+  const message = { id: 'msg_spend', role: 'assistant', usage };
+  for (const text of ['Reading', 'everything'])
+    console.log(
+      JSON.stringify({
+        type: 'assistant',
+        message: { ...message, content: [{ type: 'text', text }] },
+      }),
+    );
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 const write = await call('session.message', {
   threadId: question?.threadId ?? 'thr_x',
   body: 'A write the inquiry must not make',

@@ -825,3 +825,62 @@ test('a lens agent’s question reaches Needs you once, and its link opens the w
   });
   assert.deepEqual(await lines(), []);
 });
+
+test('a wave’s owner who is no operator sees its lens agent’s question', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-lens-owner-'));
+  const { plugins } = JSON.parse(
+    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
+  ) as { plugins: { id: string; config?: unknown }[] };
+  const app = await createApp({
+    directory: join(directory, 'data'),
+    config: {
+      plugins: plugins.map((entry) =>
+        entry.id === 'api'
+          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
+          : entry.id === 'ui'
+            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
+            : entry,
+      ) as never,
+    },
+  });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'Q', actorName: 'Owner' });
+  const operator: Caller = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  await waitForManagedCode(app.ctx.codeWork, operator);
+  const made = (await app.ctx.tools.call('actor.create', operator, {
+    name: 'Pat',
+    role: 'producer',
+  })) as { token: string };
+  const who = await app.ctx.scope.authenticate(made.token);
+  const producer: Caller = {
+    projectId: boot.project.id,
+    actorId: who.id,
+    credentialId: who.credential!.id,
+  };
+  const wave = await app.ctx.reflections.create(producer, { requestId: 'wave' });
+  assert.equal(wave.ownerId, producer.actorId);
+  const lens = wave.lenses[0]!;
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  await app.ctx.sessions.offer(operator, {
+    instanceId: lens.id,
+    expectedRevision: lens.workflow.revision,
+    runnerId: 'external',
+    requestId: `assign-${lens.id}`,
+    secret,
+  });
+  const worker = await app.ctx.sessions.authenticate(secret);
+  await app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort counts?' });
+  const shell = (await app.ctx.tools.call('ui.shell', producer, {})) as { rows: never[] };
+  const home = (await app.ctx.tools.call('ui.home', producer, {})) as never;
+  assert.deepEqual(
+    needsYou(shell.rows, home, { id: producer.actorId }, () => undefined).map((line) => line.id),
+    [lens.id],
+  );
+});

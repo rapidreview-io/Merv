@@ -263,8 +263,9 @@ export interface ThreadView {
    * answers a question it asked that is still open.
    */
   takesMessage: boolean;
-  /** It kept a conversation, so its agent may be asked now (`session.ask_thread`), whatever its
-   *  status: a read-only inquiry visit resumes it and answers. */
+  /** Its agent may be asked now (`session.ask_thread`), whatever its status: it kept a
+   *  conversation, dispatch is on and no question to it is still open. A read-only inquiry visit
+   *  resumes the conversation and answers. */
   asks?: true;
   /** Oldest first. */
   visits: VisitView[];
@@ -305,10 +306,13 @@ export interface ProjectThread extends ThreadView {
   seq?: string;
   /** The question its agent asked that is still open, for a reader of its work. */
   question?: { id: string; question: string; askedAt: string };
-  /** The newest message to it, and whether its agent has read it yet, for a reader of its work. */
+  /**
+   * The newest message to it, and whether its agent has read it yet, for a reader of its work;
+   * a question to its agent (an inquiry) with where that inquiry stands.
+   */
   message?: Pick<
     SessionMessage,
-    'id' | 'senderActorId' | 'body' | 'createdAt' | 'acknowledgedAt' | 'reply'
+    'id' | 'senderActorId' | 'body' | 'createdAt' | 'acknowledgedAt' | 'reply' | 'inquiry'
   >;
 }
 /**
