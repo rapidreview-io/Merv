@@ -199,7 +199,7 @@ export class CodeWorkspaceProtocol {
         ? workspace.base.slice('reference:'.length)
         : '';
       // An inquiry visit has no workspace, so names no commit.
-      const head = session.kind === 'work' ? session.execution.references[name] : undefined;
+      const head = session.kind !== 'inquiry' ? session.execution.references[name] : undefined;
       check(
         typeof head === 'string' && oidPattern.test(head),
         'code_workspace_required',
