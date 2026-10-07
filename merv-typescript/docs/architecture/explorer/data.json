@@ -1192,7 +1192,7 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read every project task and experiment, including terminal work, as whole records in one unpaged result: each experiment with all its attempts, evidence associations and submissions. Its tasks array is the same record list returned by task.list. Includes the current project Introduction. Does not read artifact bytes or advance workflows. For one record use task.get or experiment.get_state; to resolve ids to labels and states use project.references. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read every project task and experiment, including terminal work, as whole records in one unpaged result: each experiment with all its attempts, evidence associations and submissions. Its tasks array is the same record list returned by task.list. Includes the project id and name; the project Introduction is the Problem of the paper, which paper.read returns. Does not read artifact bytes or advance workflows. For one record use task.get or experiment.get_state; to resolve ids to labels and states use project.references. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
@@ -1222,7 +1222,7 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read every project task and experiment, including terminal work, as whole records in one unpaged result: each experiment with all its attempts, evidence associations and submissions. Its tasks array is the same record list returned by task.list. Includes the current project Introduction. Does not read artifact bytes or advance workflows. For one record use task.get or experiment.get_state; to resolve ids to labels and states use project.references. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read every project task and experiment, including terminal work, as whole records in one unpaged result: each experiment with all its attempts, evidence associations and submissions. Its tasks array is the same record list returned by task.list. Includes the project id and name; the project Introduction is the Problem of the paper, which paper.read returns. Does not read artifact bytes or advance workflows. For one record use task.get or experiment.get_state; to resolve ids to labels and states use project.references. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
@@ -2357,7 +2357,7 @@
         },
         {
           "name": "session.find",
-          "description": "Find the current and latest worker session for one workflow instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.",
+          "description": "Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.",
           "readOnly": true
         },
         {
@@ -2367,7 +2367,7 @@
         },
         {
           "name": "session.message",
-          "description": "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "description": "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A sessionId is still taken for now and addresses that session's thread. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
           "readOnly": false
         },
         {
@@ -2471,7 +2471,7 @@
         },
         {
           "name": "session.find",
-          "description": "Find the current and latest worker session for one workflow instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.",
+          "description": "Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.",
           "readOnly": true
         },
         {
@@ -2481,7 +2481,7 @@
         },
         {
           "name": "session.message",
-          "description": "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "description": "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A sessionId is still taken for now and addresses that session's thread. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
           "readOnly": false
         },
         {
