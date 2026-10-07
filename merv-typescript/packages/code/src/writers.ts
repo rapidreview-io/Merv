@@ -141,8 +141,9 @@ export class CodeWriterService {
    * The machine a session ran on is gone for good (Fleet released it and its runtime is
    * deleted), so the final capture it owed can never come: if that session is the current
    * writer, its generation ends here, at the last commit Code admitted, as an operator's fence
-   * would end it, and the next lease continues from there. A quarantined capture, or an admitted
-   * upload not yet finished, still waits for an operator; a machine of the owner's own never
+   * would end it, and the next lease continues from there. A quarantined capture, an admitted
+   * upload not yet finished, or one whose bytes all arrived (Main admits it without the machine;
+   * a final one closes the generation itself), still waits; a machine of the owner's own never
    * says it is gone, so its generation waits for it as before.
    */
   async machineGone(projectId: string, sessionId: string, tx: Transaction): Promise<void> {
@@ -160,12 +161,21 @@ export class CodeWriterService {
       row.blocked_by
     )
       return;
+    // An upload whose every byte is on Main can still be admitted without its machine (one that
+    // was being admitted stays 'receiving' until it is), so it is never failed here.
+    const open = await tx.all<{ phase: string; payload_json: string; progress_json: string }>(
+      "SELECT phase,payload_json,progress_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
+      projectId,
+      row.unit_id,
+    );
     if (
-      await tx.get(
-        "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
-        projectId,
-        row.unit_id,
-      )
+      open.some((op) => {
+        if (op.phase !== 'receiving') return true;
+        const bytes = (JSON.parse(op.payload_json) as { bundle?: { bytes?: number } }).bundle
+          ?.bytes;
+        const received = (JSON.parse(op.progress_json ?? '{}') as { received?: number }).received;
+        return typeof bytes === 'number' && (received ?? 0) >= bytes;
+      })
     )
       return;
     const at = now();

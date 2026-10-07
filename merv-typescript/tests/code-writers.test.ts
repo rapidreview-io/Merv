@@ -377,3 +377,31 @@ test('a quarantined capture still waits for an operator when its machine is gone
   assert.deepEqual(unit.quarantine, { operationId: final.id });
   await assert.rejects(f.lease('ses_2'), refused('code_capture_quarantined'));
 });
+
+test('a final capture that fully arrived before its machine was gone is admitted, never dropped', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  // The machine sent every byte of its final capture, which waits for its admission on Main,
+  // and then its allocation ran out: Fleet deleted it.
+  const last = f.source.commit({ 'a.txt': 'two\n' }, 'merv: capture');
+  const bundle = f.source.bundle(last, [first]);
+  const final = await f.begin('final', 'ses_1', 1, first, bundle);
+  await f.code.v2!.putPart(f.admin, final.id, 0, bundle.content);
+  await f.event('session.machine_gone', 'ses_1');
+  assert.equal((await f.unit()).writerState, 'closing', 'whole bytes on Main are not abandoned');
+  assert.equal((await f.operationRow(final.id)).status, 'prepared');
+  const admitted = (
+    (await f.code.v2!.call(f.admin, `uploads/${final.id}/complete`, {})) as {
+      operation: { status: string };
+    }
+  ).operation;
+  assert.equal(admitted.status, 'completed');
+  const unit = await f.unit();
+  assert.equal(unit.writerState, 'closed');
+  assert.equal(unit.canonicalHead, last);
+});
