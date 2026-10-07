@@ -31,35 +31,51 @@ const maxOutputTokens = 65_536;
 /** A tool Codex runs on the machine. Hosted tools, which run and bill at the provider where
  *  Merv cannot see them, never pass; neither does a web search. */
 const tool = z.object({ type: z.enum(['function', 'custom', 'local_shell']) }).passthrough();
+const tools = z.array(
+  z.union([
+    tool,
+    // Codex groups each MCP server's tools under one namespace.
+    z
+      .object({
+        type: z.literal('namespace'),
+        name: z.string(),
+        description: z.string().optional(),
+        tools: z.array(tool),
+      })
+      .strict(),
+  ]),
+);
+/** Responses Lite, which Codex uses for a model its catalog marks so (gpt-6.1-sol from 0.160):
+ *  the tools travel as the first input item instead of top-level `tools`, and are held to the
+ *  same rule. */
+const additionalTools = z
+  .object({
+    type: z.literal('additional_tools'),
+    id: z.string().optional(),
+    role: z.literal('developer'),
+    tools,
+  })
+  .strict();
 /** Exactly the keys Codex sends through a custom provider (linux-workflow-gate.py records them):
  *  no background, stored or chained response, service tier or output cap of its own. */
 const codexRequest = z
   .object({
     model: z.string(),
     instructions: z.string().optional(),
-    input: z.array(z.record(z.unknown())),
-    tools: z
-      .array(
-        z.union([
-          tool,
-          // Codex groups each MCP server's tools under one namespace.
-          z
-            .object({
-              type: z.literal('namespace'),
-              name: z.string(),
-              description: z.string().optional(),
-              tools: z.array(tool),
-            })
-            .strict(),
-        ]),
-      )
-      .optional(),
+    input: z.array(
+      z.union([
+        additionalTools,
+        z.record(z.unknown()).refine((item) => item.type !== 'additional_tools'),
+      ]),
+    ),
+    tools: tools.optional(),
     tool_choice: z.enum(['auto', 'none', 'required']).optional(),
     parallel_tool_calls: z.boolean().optional(),
     reasoning: z
       .object({
         effort: z.string().optional(),
         summary: z.enum(['auto', 'concise', 'detailed']).optional(),
+        context: z.literal('all_turns').optional(),
       })
       .strict()
       .optional(),
@@ -222,6 +238,11 @@ export function codexModelRelay(
     },
     grant: (raw) => raw as ManagedModelGrant,
     payload: codexPayload,
+    // What Codex itself sends with a Responses Lite body.
+    headers: (body): Record<string, string> =>
+      (body.input as { type?: unknown }[]).some((item) => item.type === 'additional_tools')
+        ? { 'x-openai-internal-codex-responses-lite': 'true' }
+        : {},
     lane: (grant) => grant.id,
     maxRequestBytes,
     totalTimeoutMs: 15 * 60_000,

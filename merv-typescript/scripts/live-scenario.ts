@@ -1230,6 +1230,8 @@ async function main(options: Options) {
           'in_app_local_automation',
         ].flatMap((feature) => ['-c', `features.${feature}=false`]),
         '-c',
+        'agents.enabled=false',
+        '-c',
         'features.skip_host_skill_discovery=true',
         '-c',
         'features.shell_tool=true',

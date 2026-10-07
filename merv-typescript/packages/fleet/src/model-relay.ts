@@ -319,7 +319,11 @@ export class ModelRelay<
           method: 'POST',
           redirect: 'error',
           signal,
-          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+          headers: {
+            ...this.config.headers?.(body),
+            authorization: `Bearer ${key}`,
+            'content-type': 'application/json',
+          },
           body: JSON.stringify(body),
         }),
         signal,

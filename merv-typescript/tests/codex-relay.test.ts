@@ -28,8 +28,8 @@ const grant: ManagedModelGrant = {
   effort: 'medium',
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 };
-/** The body Codex 0.155.0-alpha.2 sent through the hosted provider, trimmed: its MCP server's
- *  tools arrive as one namespace. */
+/** The body Codex sends through the hosted provider for a model it runs on plain Responses,
+ *  trimmed: its MCP server's tools arrive as one namespace. */
 const codex = {
   model: 'gpt-6-luna',
   instructions: 'You are Codex.',
@@ -52,6 +52,50 @@ const codex = {
   prompt_cache_key: 'thread_1',
   client_metadata: { thread_id: 'thread_1' },
 };
+/** The body Codex 0.160.1 sends for a model its catalog runs on Responses Lite (gpt-6.1-sol),
+ *  trimmed: the tools travel as the first input item, code mode's `exec` among them. */
+const lite = {
+  model: 'gpt-6-luna',
+  input: [
+    {
+      type: 'additional_tools',
+      id: 'at_1',
+      role: 'developer',
+      tools: [
+        {
+          type: 'namespace',
+          name: 'functions',
+          description: '',
+          tools: [
+            {
+              type: 'custom',
+              name: 'exec',
+              description: 'Run JavaScript code to orchestrate/compose tool calls',
+              format: { type: 'grammar', syntax: 'lark', definition: 'start: /[\\s\\S]+/' },
+            },
+            { type: 'function', name: 'wait', parameters: { type: 'object' } },
+          ],
+        },
+      ],
+    },
+    {
+      type: 'message',
+      id: 'msg_1',
+      role: 'developer',
+      content: [{ type: 'input_text', text: 'You are Codex.' }],
+    },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'id -u' }] },
+  ],
+  tool_choice: 'auto',
+  parallel_tool_calls: false,
+  reasoning: { effort: 'low', context: 'all_turns' },
+  store: false,
+  stream: true,
+  include: ['reasoning.encrypted_content'],
+  prompt_cache_key: 'thread_1',
+  text: { verbosity: 'low' },
+  client_metadata: { thread_id: 'thread_1' },
+};
 const completed = (input: number, output: number) =>
   `event: response.completed\ndata: ${JSON.stringify({
     type: 'response.completed',
@@ -66,7 +110,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   let live = true;
   let down = false;
   let upstreamStatus = 200;
-  const upstream: { body: Record<string, any>; authorization: string }[] = [];
+  const upstream: { body: Record<string, any>; authorization: string; lite: string | null }[] = [];
   let hold: Promise<void> | undefined;
   let afterCompleted: Promise<void> | undefined;
   let terminalFrame = completed(80, 30);
@@ -88,6 +132,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
           upstream.push({
             body: JSON.parse(String(init!.body)),
             authorization: new Headers(init!.headers).get('authorization')!,
+            lite: new Headers(init!.headers).get('x-openai-internal-codex-responses-lite'),
           });
           if (upstreamStatus !== 200) return new Response('{}', { status: upstreamStatus });
           const held = hold;
@@ -172,6 +217,44 @@ test('what Codex sends passes with the binding’s model and effort and the rela
     f.logs.join(''),
     /"event":"codex_relay_terminal","model":"gpt-6-luna","status":"completed","incompleteReason":null/,
   );
+});
+
+test('a Responses Lite call passes with Codex’s lite header, its tools held to the same rule', async (t) => {
+  const f = await fixture(t);
+  const response = await f.call(lite);
+  assert.equal(response.status, 200);
+  await response.text();
+  assert.deepEqual(f.upstream[0].body, {
+    ...lite,
+    reasoning: { effort: 'medium', context: 'all_turns' },
+    max_output_tokens: 65_536,
+  });
+  assert.equal(f.upstream[0].lite, 'true');
+  // A plain Responses call carries no lite header.
+  await (await f.call()).text();
+  assert.equal(f.upstream[1].lite, null);
+  const [carrier, ...rest] = lite.input;
+  for (const body of [
+    { ...lite, input: [{ ...carrier, tools: [{ type: 'web_search' }] }, ...rest] },
+    {
+      ...lite,
+      input: [
+        {
+          ...carrier,
+          tools: [{ type: 'namespace', name: 'x', tools: [{ type: 'image_generation' }] }],
+        },
+        ...rest,
+      ],
+    },
+    { ...lite, input: [{ ...carrier, role: 'user' }, ...rest] },
+    { ...lite, input: [{ type: 'additional_tools', tools: 'web_search' }, ...rest] },
+    { ...lite, reasoning: { effort: 'low', context: 'current_turn_and_more' } },
+  ]) {
+    const refused = await f.call(body);
+    assert.equal(refused.status, 400, JSON.stringify(body).slice(0, 200));
+    assert.deepEqual(await refused.json(), { error: 'invalid_payload' });
+  }
+  assert.equal(f.upstream.length, 2);
 });
 
 test('an incomplete terminal is forwarded and logged with only a safe reason', async (t) => {
