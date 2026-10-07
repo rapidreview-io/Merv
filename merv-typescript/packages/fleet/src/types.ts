@@ -153,9 +153,8 @@ export interface ModelRelayConfig<
   name: N;
   route: string;
   token: RegExp;
-  enabled?: boolean;
   providerKey: () => string | Promise<string>;
-  authority?: {
+  authority: {
     authorize(token: string): Promise<unknown>;
     validate(grant: G): Promise<void>;
   };
@@ -174,11 +173,11 @@ export interface ModelRelayConfig<
   /** Charges a call just before its last authority read and the upstream send, and returns the
    *  charge as the feature reads it back; throwing refuses the call with the error's `code`, or
    *  with 503 relay_unavailable when the error's `status` is 500 or more. A call refused after the
-   *  charge, or never taken by the provider, is refunded through `onUsage`; the charge stands for
-   *  a call the provider may have run that never finishes. */
+   *  charge, never taken by the provider, or failed by it with no usage, is refunded through
+   *  `onUsage`; the charge stands for a call the provider may have run that never finishes. */
   reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
-  /** A finished call's usage, or a refund of a call refused before it was sent or answered with
-   *  an error status, with what `reserve` returned for it. */
+  /** A finished call's usage, or a refund of a call refused before it was sent, answered with an
+   *  error status or failed with no usage, with what `reserve` returned for it. */
   onUsage?: (
     record: ModelRelayUsage<`${N}_relay_usage`>,
     grant: G,

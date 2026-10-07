@@ -237,7 +237,6 @@ export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url:
     },
   });
   const pi = app.ctx.plugin(piPlugin, {
-    enabled: true,
     baseUrl: url,
     idleTimeoutSeconds: Number(process.env.MERV_DEMO_AGENT_IDLE ?? 600),
     host: { projectId: host.project.id, credentialEnv: 'MERV_DEMO_AGENT_HOST_KEY' },

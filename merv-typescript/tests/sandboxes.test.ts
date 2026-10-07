@@ -728,7 +728,16 @@ test('a deployment composes the sandboxes plugins only when the service is named
   );
   assert.deepEqual(fleetConfig.parse(config('@merv/fleet')).projectLimits, { project_host: 50 });
   const pi = piConfig.parse(config('@merv/pi'));
-  assert.throws(() => piConfig.parse({ ...pi, host: undefined }), /host project/);
+  assert.throws(() => piConfig.parse({ ...pi, host: undefined }), /"host"/);
+  // Loading Pi or Fleet is the switch: a configuration rendered before still carries `enabled`.
+  assert.deepEqual(piConfig.parse({ ...(config('@merv/pi') as object), enabled: true }), {
+    ...pi,
+    enabled: true,
+  });
+  assert.equal(
+    fleetConfig.parse({ ...(config('@merv/fleet') as object), enabled: true }).globalLimit,
+    50,
+  );
   assert.deepEqual(pi.host, { projectId: 'project_host', credentialEnv: 'MERV_PI_HOST_KEY' });
   assert.deepEqual(
     pi.machines.map((machine) => [machine.key, machine.slots, machine.agent]),

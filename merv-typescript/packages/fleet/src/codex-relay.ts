@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import { dailyTokens } from './model-ledger.js';
+import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
 import type { ManagedModelGrant, ModelRelayConfig } from './types.js';
@@ -72,12 +73,12 @@ const codexRequest = z
       ]),
     ),
     tools: tools.optional(),
-    tool_choice: z.enum(['auto', 'none', 'required']).optional(),
+    tool_choice: toolChoice.optional(),
     parallel_tool_calls: z.boolean().optional(),
     reasoning: z
       .object({
         effort: z.string().optional(),
-        summary: z.enum(['auto', 'concise', 'detailed']).optional(),
+        summary: reasoningSummary.optional(),
         context: z.literal('all_turns').optional(),
       })
       .strict()
@@ -97,29 +98,13 @@ const codexRequest = z
   })
   .strict();
 
-/** Whether anything in the request would have the provider fetch or look up content of its own:
- *  a file by id or URL, a remote image, a stored item, or a schema reference outside the tool. */
-const fetches = (value: unknown, depth = 0): boolean => {
-  if (depth > 32) return true;
-  if (Array.isArray(value)) return value.some((entry) => fetches(entry, depth + 1));
-  if (value === null || typeof value !== 'object') return false;
-  return Object.entries(value).some(
-    ([key, entry]) =>
-      ['file_id', 'file_url'].includes(key) ||
-      (key === 'image_url' && !(typeof entry === 'string' && entry.startsWith('data:'))) ||
-      (key === 'type' && ['input_file', 'item_reference'].includes(entry as string)) ||
-      (['$ref', '$dynamicRef'].includes(key) && !String(entry).startsWith('#')) ||
-      fetches(entry, depth + 1),
-  );
-};
-
 /** The upstream body for a hosted Codex call, or null: the binding's model and the relay's own
  *  output cap. When the worker sends `reasoning`, its effort becomes the binding's, or none (the
  *  provider's default) when the binding sets none; a call without `reasoning` is sent without
  *  one, whatever the binding sets. */
 export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   const parsed = codexRequest.safeParse(raw);
-  if (!parsed.success || parsed.data.model !== grant.model || fetches(raw)) return null;
+  if (!parsed.success || parsed.data.model !== grant.model || fetchesContent(raw)) return null;
   const { reasoning, ...rest } = parsed.data;
   return {
     ...rest,
@@ -189,8 +174,8 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
  * provider key. Each session has one call in flight. A call is charged to its person's day before
  * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
- * when it finishes; one refused before it is sent, or answered with an error status, is refunded,
- * and one cut off keeps its charge. The day's total, kept in the database across restarts,
+ * when it finishes; one refused before it is sent, answered with an error status, or failed with
+ * no usage, is refunded, and one cut off keeps its charge. The day's total, kept in the database across restarts,
  * refuses any call that would pass the ceiling. Its tables are made by `modelMigrations`, which
  * the workflow adapter runs when it starts.
  */
@@ -208,7 +193,6 @@ export function codexModelRelay(
     name: 'codex',
     route: '/codex-model/responses',
     token: sessionSecretPattern,
-    enabled: true,
     providerKey: options.providerKey,
     authority: {
       authorize: options.authorize,

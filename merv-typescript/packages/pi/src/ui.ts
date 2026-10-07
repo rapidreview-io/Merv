@@ -6,7 +6,6 @@ export const piUiPlugin = {
   name: 'merv-pi-ui',
   inject: ['pi', 'ui'],
   apply(ctx: Context) {
-    if (!ctx.pi.config.enabled) return;
     ctx.effect(() =>
       ctx.ui.register({
         id: 'pi',

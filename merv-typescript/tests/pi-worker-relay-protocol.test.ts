@@ -144,7 +144,6 @@ for (const upstreamStatus of [
     const grantExpiresAt = expiresAt();
     let toolInvocations = 0;
     const relay = piRelay({
-      enabled: true,
       models: [{ id: 'gpt-6-luna', effort: 'none' }],
       providerKey: () => 'synthetic-provider-key',
       authority: {
@@ -424,7 +423,6 @@ test('a conversation moved from Astra to Luna replays Astra’s reasoning to Ast
   const grantEnds = expiresAt();
   let turn = { commandId: 'cmd_astra', model: 'gpt-6-astra' };
   const relay = piRelay({
-    enabled: true,
     models: [
       { id: 'gpt-6-luna', effort: 'none' },
       { id: 'gpt-6-astra', effort: 'low' },

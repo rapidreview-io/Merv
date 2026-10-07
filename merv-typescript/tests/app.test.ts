@@ -13,6 +13,7 @@ import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { fit } from '../packages/pi/src/fit.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
+import { fetchesContent } from '../packages/fleet/src/model-requests.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
 import { researchGuide } from '../packages/research/src/guide.js';
@@ -404,6 +405,20 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     assert.deepEqual(
       offered
         .filter((tool) => !piTool(describeTool(tool), tool.conversation))
+        .map(({ name }) => name),
+      [],
+    );
+    // Hosted Codex sees each MCP tool's schema whole, its dialect included, under the same rule.
+    const native = (await app.ctx.tools.list()).filter(
+      (tool): tool is ToolDefinition => !isRemoteTool(tool),
+    );
+    assert.deepEqual(
+      native
+        .filter((tool) =>
+          fetchesContent({
+            tools: [{ type: 'function', parameters: describeTool(tool).inputSchema }],
+          }),
+        )
         .map(({ name }) => name),
       [],
     );

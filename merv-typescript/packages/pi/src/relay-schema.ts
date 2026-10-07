@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolDescription } from '@merv/api/types';
 import type { Data } from '@merv/contracts';
+import { fetchesContent, reasoningSummary, toolChoice } from '@merv/fleet/model-requests';
 import { piModelToolName } from './tool-names.js';
 import type { PiWork } from './types.js';
 
@@ -90,7 +91,7 @@ export const piResponsesSchema = z
     reasoning: z
       .object({
         effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']),
-        summary: z.enum(['auto', 'concise', 'detailed']).optional(),
+        summary: reasoningSummary.optional(),
       })
       .strict()
       .optional(),
@@ -109,7 +110,7 @@ export const piResponsesSchema = z
       )
       .max(128)
       .optional(),
-    tool_choice: z.enum(['auto', 'none', 'required']).optional(),
+    tool_choice: toolChoice.optional(),
   })
   .strict();
 
@@ -122,28 +123,7 @@ export function validPiPayload(
   if (new Set(payload.tools?.map((tool) => tool.name)).size !== (payload.tools?.length ?? 0))
     return false;
   if (payload.tool_choice === 'required' && !payload.tools?.length) return false;
-  // A key directly under `properties` names an input field (paper.cite's url), not a keyword.
-  const safeSchema = (value: unknown, depth = 0, names = false): boolean => {
-    if (depth > 24) return false;
-    if (typeof value === 'string') return !/\b(?:https?:\/\/|data:|file:|ftp:\/\/)/i.test(value);
-    if (Array.isArray(value)) return value.every((entry) => safeSchema(entry, depth + 1));
-    if (value !== null && typeof value === 'object')
-      return Object.entries(value).every(
-        ([key, entry]) =>
-          (names ||
-            ((key !== '$ref' ||
-              (typeof entry === 'string' &&
-                /^#\/(?:\$defs|definitions)\/[a-zA-Z0-9_/-]+$/.test(entry))) &&
-              !['$dynamicRef', 'contentMediaType', 'contentEncoding', 'url', 'uri'].includes(
-                key,
-              ))) &&
-          safeSchema(entry, depth + 1, !names && key === 'properties'),
-      );
-    return true;
-  };
-  if (
-    payload.tools?.some((tool) => tool.parameters.type !== 'object' || !safeSchema(tool.parameters))
-  )
+  if (payload.tools?.some((tool) => tool.parameters.type !== 'object') || fetchesContent(payload))
     return false;
   return !payload.input.some(
     (item) =>

@@ -13,14 +13,11 @@ import type { ModelRelayHandle } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
 import {
   createInput,
-  hostMigration,
   machineInput,
-  migration,
   modelInput,
+  piMigrations,
   runInput,
   sendInput,
-  usageMigration,
-  toldMigration,
   warmInput,
 } from './schema.js';
 import { piModelRelay } from './relay.js';
@@ -122,8 +119,7 @@ export class PiService implements Pi {
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
   async initialize(): Promise<void> {
     await this.core.credentials.initialize();
-    await this.core.state.migrate('pi', [migration, hostMigration, usageMigration, toldMigration]);
-    if (!this.core.config.enabled) return;
+    await this.core.state.migrate('pi', piMigrations);
     this.disposers.push(this.core.fleet.registerOwner('pi-host', this.hosts));
     // Pi issues conversation callers: Scope asks it whether one is current, and the tool registry
     // refuses every one until its rules are registered.
@@ -168,7 +164,7 @@ export class PiService implements Pi {
       403,
     );
     check(
-      caller.projectId !== this.core.config.host?.projectId,
+      caller.projectId !== this.core.config.host.projectId,
       'pi_forbidden',
       'Agent conversations are not available in the Pi host project',
       403,
@@ -723,7 +719,6 @@ export class PiService implements Pi {
     const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
     return this.core.fleet.modelRelay(
       piModelRelay({
-        enabled: this.core.config.enabled,
         models: this.core.config.models,
         providerKey: () => process.env[this.core.config.modelApiKeyEnv] ?? '',
         authority: {
@@ -826,21 +821,19 @@ export class PiService implements Pi {
     await this.hosts.pending?.catch(() => undefined);
     // A restart releases every machine; the next send starts one where the person left off. A
     // turn that has shown nothing waits: the next process starts it on a fresh machine.
-    if (this.core.config.enabled) {
-      await this.core.state.transaction(async (tx) => {
-        const hosts = await tx.all<{ data_json: string }>(
-          "SELECT data_json FROM pi_hosts WHERE status='live'",
+    await this.core.state.transaction(async (tx) => {
+      const hosts = await tx.all<{ data_json: string }>(
+        "SELECT data_json FROM pi_hosts WHERE status='live'",
+      );
+      for (const row of hosts)
+        await this.hosts.end(
+          tx,
+          decode<PiHostRecord>(row),
+          'restart',
+          'service_unavailable',
+          (turn) => this.hosts.again(turn, false),
         );
-        for (const row of hosts)
-          await this.hosts.end(
-            tx,
-            decode<PiHostRecord>(row),
-            'restart',
-            'service_unavailable',
-            (turn) => this.hosts.again(turn, false),
-          );
-      });
-    }
+    });
     for (const dispose of this.disposers.reverse()) dispose();
     this.core.streams.close();
   }

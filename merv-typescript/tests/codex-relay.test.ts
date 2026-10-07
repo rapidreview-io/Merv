@@ -375,13 +375,37 @@ test('only Codex-shaped calls pass: no stored, background or chained response, a
         },
       ],
     },
+    // Fleet's one rule, as Pi's relay refuses it: no URL, URI or data string in a schema.
+    ...[
+      { type: 'object', properties: { a: { type: 'string', default: 'https://attacker.test' } } },
+      { type: 'object', properties: { a: { type: 'string', description: 'see data:x' } } },
+      { type: 'object', properties: { a: { type: 'string', contentMediaType: 'image/png' } } },
+      { type: 'object', uri: 'x' },
+    ].map((parameters) => ({
+      ...codex,
+      tools: [
+        {
+          type: 'namespace',
+          name: 'mcp__merv',
+          tools: [{ type: 'function', name: 'task_get', parameters }],
+        },
+      ],
+    })),
   ]) {
     const response = await f.call(body);
     assert.equal(response.status, 400, JSON.stringify(body).slice(0, 200));
     assert.deepEqual(await response.json(), { error: 'invalid_payload' });
   }
   assert.equal((await f.call(withoutInclude)).status, 200);
-  assert.equal(f.upstream.length, 1);
+  // An MCP tool's schema names its dialect, and may have a field called url.
+  const merv = {
+    type: 'object',
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    properties: { url: { type: 'string' }, projectId: { type: 'string' } },
+  };
+  const named = { ...codex, tools: [{ type: 'function', name: 'paper_cite', parameters: merv }] };
+  assert.equal((await f.call(named)).status, 200);
+  assert.equal(f.upstream.length, 2);
 });
 
 test('one call in flight per session, and a session that ends stops its stream', async (t) => {
@@ -509,6 +533,75 @@ test('five calls the provider answers with 500 cost nothing, and an outage answe
   f.down(false);
   f.revoke();
   assert.equal((await f.call()).status, 401);
+});
+
+test('a call the provider fails reaches Codex as the provider’s own frame and is refunded', async (t) => {
+  // Audit 11: a context overflow reached Codex as an untyped relay frame, so Codex retried five
+  // more times and never compacted, and each attempt kept about 315K tokens of the day.
+  const f = await fixture(t);
+  const failed = `event: response.failed\ndata: ${JSON.stringify({
+    type: 'response.failed',
+    response: {
+      status: 'failed',
+      error: { code: 'context_length_exceeded', message: 'Your input exceeds the context window.' },
+      usage: null,
+    },
+  })}\n\n`;
+  f.respond(failed);
+  // About 1 MB of history, as a session near Codex's compaction threshold sends.
+  const long = {
+    ...codex,
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(1e6) }] },
+    ],
+  };
+  const response = await f.call(long);
+  assert.equal(response.status, 200);
+  // Codex reads the failure's code (ContextWindowExceeded), so it compacts instead of retrying;
+  // the provider's own words stay with the relay.
+  assert.equal(
+    await response.text(),
+    `event: response.created\ndata: {}\n\nevent: response.failed\ndata: ${JSON.stringify({
+      type: 'response.failed',
+      response: {
+        status: 'failed',
+        error: { code: 'context_length_exceeded', message: 'The model provider failed this call' },
+      },
+    })}\n\n`,
+  );
+  const deadline = Date.now() + 5000;
+  while (!f.logs.some((line) => line.includes('"refund":true')) && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await f.spent(), 0);
+  assert.equal(f.upstream.length, 1);
+  assert.match(
+    f.logs.join(''),
+    /"event":"codex_relay_terminal","model":"gpt-6-luna","status":"failed"/,
+  );
+  // A failed call that reports its usage is settled to it instead.
+  f.respond(failed.replace('"usage":null', '"usage":{"input_tokens":70,"output_tokens":5}'));
+  await (await f.call()).text();
+  const settled = Date.now() + 5000;
+  while ((await f.spent()) !== 75 && Date.now() < settled)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await f.spent(), 75);
+});
+
+test('the relay’s own interruption is a typed error frame', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  f.hold(new Promise<void>((resolve) => (release = resolve)));
+  const response = await f.call();
+  f.revoke();
+  const text = await response.text();
+  release();
+  const frame = text.split('\n\n').filter(Boolean).at(-1)!;
+  assert.match(frame, /^event: error\ndata: /);
+  assert.deepEqual(JSON.parse(frame.slice(frame.indexOf('data: ') + 6)), {
+    type: 'error',
+    code: 'relay_interrupted',
+    message: 'The model relay ended this call',
+  });
 });
 
 test('a successful reservation clears the last refusal, and yesterday’s refusal does not block today', async (t) => {

@@ -253,6 +253,7 @@ const pureRules = new Set([
   '@merv/reflections/names',
   '@merv/workflows/execution',
   '@merv/fleet/model-ledger',
+  '@merv/fleet/model-requests',
   '@merv/fleet/hosted-codex',
   '@merv/workflows/dependency-rows',
   '@merv/workflows/lease-rows',
@@ -1025,12 +1026,16 @@ test('each service boots with only its declared dependency closure and without A
   const sandboxUrlEnv = 'MERV_BOUNDARY_SANDBOX_URL';
   const webKeyEnv = 'MERV_BOUNDARY_WEB_KEY';
   const nisaKeyEnv = 'MERV_BOUNDARY_NISA_KEY';
+  const piSecretEnv = 'MERV_BOUNDARY_PI_SECRET';
+  const piModelKeyEnv = 'MERV_BOUNDARY_PI_MODEL_KEY';
   const previousCredential = process.env[credentialEnv];
   const previousSandboxUrl = process.env[sandboxUrlEnv];
   process.env[credentialEnv] = 'synthetic-boundary-source';
   process.env[sandboxUrlEnv] = 'http://127.0.0.1:1';
   process.env[webKeyEnv] = 'tvly-synthetic';
   process.env[nisaKeyEnv] = 'rr_sk_synthetic';
+  process.env[piSecretEnv] = 'synthetic-boundary-pi-signing-secret';
+  process.env[piModelKeyEnv] = 'synthetic-model-key';
   t.after(() => {
     if (previousCredential === undefined) delete process.env[credentialEnv];
     else process.env[credentialEnv] = previousCredential;
@@ -1038,6 +1043,8 @@ test('each service boots with only its declared dependency closure and without A
     else process.env[sandboxUrlEnv] = previousSandboxUrl;
     delete process.env[webKeyEnv];
     delete process.env[nisaKeyEnv];
+    delete process.env[piSecretEnv];
+    delete process.env[piModelKeyEnv];
   });
   const plugins: Record<string, { plugin: any; config?: any }> = {
     domainEvents: { plugin: domainEventsPlugin },
@@ -1073,7 +1080,16 @@ test('each service boots with only its declared dependency closure and without A
     },
     tools: { plugin: toolsPlugin },
     fleet: { plugin: fleetPlugin, config: {} },
-    pi: { plugin: piPlugin, config: {} },
+    // Loading Pi is its switch, so it boots with its host and credentials.
+    pi: {
+      plugin: piPlugin,
+      config: {
+        baseUrl: 'http://127.0.0.1:1/',
+        secretEnv: piSecretEnv,
+        modelApiKeyEnv: piModelKeyEnv,
+        host: { projectId: 'synthetic', credentialEnv },
+      },
+    },
     web: { plugin: webPlugin, config: { keyEnv: webKeyEnv, origin: 'http://127.0.0.1:1' } },
     nisa: { plugin: nisaPlugin, config: { keyEnv: nisaKeyEnv, origin: 'http://127.0.0.1:1' } },
     sessions: { plugin: sessionsPlugin },

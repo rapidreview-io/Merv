@@ -182,7 +182,6 @@ test(
     process.env[credentialEnv] = host.token;
     const pi = await createService(
       new PiService(state, scope, fleet, app.ctx.tools, app.ctx.blobs, {
-        enabled: true,
         baseUrl: app.ctx.api.url!,
         secretEnv,
         pollIntervalMs: 30_000,

@@ -12,7 +12,7 @@ import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
 import { computeLedgers } from '../packages/sandboxes/src/compute-ledgers.js';
-import { PiService } from '../packages/pi/src/index.js';
+import { piMigrations } from '../packages/pi/src/schema.js';
 
 interface Row {
   component: string;
@@ -64,8 +64,6 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   const recorder = {
     async migrate(component: string, migrations: Parameters<State['migrate']>[1]) {
       record(component, migrations);
-      // Pi initializes the shared credential ledger before its own migrations.
-      if (component === 'identity-credentials') return;
       throw abandon;
     },
   } as unknown as State;
@@ -82,7 +80,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
         () =>
           recorder.migrate(component, migrations),
     ),
-    () => new PiService(recorder, {} as never, {} as never, {} as never, {} as never).initialize(),
+    // Pi's own tables; the shared credential ledger is the identity plugin's.
+    () => recorder.migrate('pi', piMigrations),
     () => initializeLegacyHistory(recorder),
   ]) {
     try {
