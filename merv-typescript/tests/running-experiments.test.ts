@@ -219,7 +219,7 @@ test('an open experiment is a work card that says where it stands and what it wa
     return await f.board(token);
   };
   // The spies see what Experiments calls: its record page's ladder reads through them.
-  await f.app.ctx.experiments.process(f.operator, idle.id);
+  await f.app.ctx.workflows.process(f.operator, idle.id);
   assert.equal(graphs.mock.callCount(), 1);
 
   let board = await quiet();
@@ -529,7 +529,7 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
   const reads = t.mock.method(f.app.ctx.artifacts, 'bytes');
   const graphs = t.mock.method(f.app.ctx.workflows, 'process');
   // The record page's own read runs the submission's checks, which read the plan's bytes.
-  await f.app.ctx.experiments.process(f.operator, experiment.id);
+  await f.app.ctx.workflows.process(f.operator, experiment.id);
   assert.ok(reads.mock.callCount() > 0);
 
   reads.mock.resetCalls();

@@ -677,8 +677,9 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     const before = await durable();
     for (const returnTo of ['in_progress', 'done', null]) {
       const invalid = { ...input, returnTo } as ReviewApplication;
+      // A verdict goes through Reviews.apply, which refuses a route that is no identifier first.
       await assert.rejects(async () => await app.ctx.tasks.submitReview(reviewer, invalid), {
-        code: 'invalid_review_return',
+        code: returnTo === null ? 'invalid_return_to' : 'invalid_review_return',
       });
       const decision = await app.ctx.workflows.evaluate(reviewer, task.id, {
         action: 'submit_review',
@@ -700,8 +701,9 @@ test('Tasks reject supplied routes before command replay and agree with workflow
         throw new Error('Task route accessor was evaluated');
       },
     });
+    // Reviews.apply refuses an accessor or an odd prototype before reading any route.
     await assert.rejects(async () => await app.ctx.tasks.submitReview(reviewer, accessor), {
-      code: 'invalid_review_return',
+      code: 'invalid_return_to',
     });
     const proxyPrototype = new Proxy(
       {},
@@ -714,9 +716,14 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     );
     const inherited = Object.create(proxyPrototype, Object.getOwnPropertyDescriptors(input));
     await assert.rejects(async () => await app.ctx.tasks.submitReview(reviewer, inherited), {
-      code: 'invalid_review_return',
+      code: 'invalid_return_to',
     });
     assert.equal(routeReads, 0);
+    // A verdict through Tasks is one through Reviews.apply: a field no review takes is refused.
+    await assert.rejects(
+      async () => await app.ctx.tasks.submitReview(reviewer, { ...input, surprise: 1 } as never),
+      { code: 'invalid_review_input' },
+    );
     assert.deepEqual(await durable(), before);
     const result = await work.run(reviewLease, 'review.submit', input as never, (caller, bound) =>
       app.ctx.reviews.apply(caller, bound as never),
@@ -734,12 +741,6 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     await assert.rejects(
       app.ctx.reviews.apply(reviewer, Object.assign(Object.create(null), input)),
       { code: 'session_completed' },
-    );
-    await assert.rejects(
-      async () => await app.ctx.tasks.submitReview(reviewer, { ...input, returnTo: 'done' }),
-      {
-        code: 'invalid_review_return',
-      },
     );
     await assert.rejects(
       async () => await app.ctx.reviews.apply(operator, { ...input, returnTo: 'done' }),

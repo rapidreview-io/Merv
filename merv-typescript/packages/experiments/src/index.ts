@@ -37,7 +37,13 @@ import {
   experimentPanel,
   type ExperimentStanding,
 } from './running.js';
-import type { Experiment, ExperimentEvidence, ExperimentOccupancy, Experiments } from './types.js';
+import type {
+  Experiment,
+  ExperimentEvidence,
+  ExperimentOccupancy,
+  ExperimentReview,
+  Experiments,
+} from './types.js';
 import { experimentGetSchema, parseExperimentInput } from './input.js';
 import {
   type ActiveState,
@@ -119,7 +125,14 @@ export class ExperimentService implements Experiments {
   readonly exhibit = bound(this, exhibit);
   readonly transition = bound(this, transition);
   readonly closeUnstarted = bound(this, closeUnstarted);
-  readonly submitReview = bound(this, submitReview);
+  /** A verdict on this experiment's review, through Reviews.apply and every check it makes first. */
+  async submitReview(
+    caller: Caller,
+    input: ExperimentReview,
+    tx?: Transaction,
+  ): Promise<Experiment> {
+    return (await this.reviews.apply(caller, input, tx)) as Experiment;
+  }
   closed = false;
   sandboxes?: Pick<Sandboxes, 'captures'>;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -155,7 +168,7 @@ export class ExperimentService implements Experiments {
           const workflow = await this.workflows.get(caller, review.subjectId, tx);
           handleFor(this, workflow.version);
         },
-        submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        submit: async (caller, input, tx) => await submitReview(this, caller, input, tx),
         returns: async (review, tx) => {
           const row = await tx.get<{ stage: string }>(
             'SELECT stage FROM experiment_submissions WHERE review_id=?',
@@ -196,11 +209,6 @@ export class ExperimentService implements Experiments {
   }
   open(): void {
     check(!this.closed, 'experiments_unavailable', 'Experiments is unavailable', 503);
-  }
-  async process(caller: Caller, id: string): Promise<ProcessGraph> {
-    this.open();
-    caller = structuredClone(caller);
-    return await this.workflows.process(caller, id);
   }
   /**
    * The Running page's cards: every experiment on its way to a result, and any other one a key

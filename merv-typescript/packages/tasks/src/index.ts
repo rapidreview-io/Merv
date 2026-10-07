@@ -43,6 +43,7 @@ import type {
   TaskDeliveryCode,
   TaskFailure,
   TaskRecord,
+  TaskReview,
   Tasks,
 } from './types.js';
 import type { CodeUnit } from '@merv/code-work/models';
@@ -63,7 +64,7 @@ import {
   createTask,
   markFailed,
   submitDelivery,
-  submitReview,
+  submitReview as verdict,
 } from './commands.js';
 
 export type {
@@ -111,7 +112,6 @@ export type TasksContext = Pick<
   | 'hydrate'
   | 'limits'
   | 'paper'
-  | 'process'
   | 'projectRecord'
   | 'registration'
   | 'reviews'
@@ -133,7 +133,10 @@ export class TaskService implements Tasks {
   readonly markFailed = bound(this, markFailed);
   readonly closeUnstarted = bound(this, closeUnstarted);
   readonly submitDelivery = bound(this, submitDelivery);
-  readonly submitReview = bound(this, submitReview);
+  /** A verdict on this task's review, through Reviews.apply and every check it makes first. */
+  async submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task> {
+    return (await this.reviews.apply(caller, input, tx)) as Task;
+  }
   private closed = false;
   private sandboxes?: Pick<Sandboxes, 'captures'>;
   private releaseReviewOwner?: () => void;
@@ -179,7 +182,7 @@ export class TaskService implements Tasks {
             review.subjectId,
             review.projectId,
           )),
-        submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        submit: async (caller, input, tx) => await verdict(this, caller, input, tx),
         guidance:
           'Task reviews reject returnTo and paperChanges: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. task.context and review checkpoints take the claimId.',
         // Only the task's own current review has a pool of leased reviewers to shut out, and
@@ -491,10 +494,6 @@ export class TaskService implements Tasks {
       check(found, 'not_found', 'Your context lists no checkpoint with that ID', 404);
       return found;
     });
-  }
-  async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
-    caller = structuredClone(caller);
-    return await this.workflows.process(caller, taskId);
   }
   async record(caller: Caller, taskId: string, transaction?: Transaction): Promise<TaskRecord> {
     caller = structuredClone(caller);

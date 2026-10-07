@@ -59,8 +59,6 @@ export interface Experiments {
     tx: Transaction,
   ): Promise<boolean>;
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;
-  /** The derived process graph, so a record page reads its gate with the record. */
-  process(caller: Caller, experimentId: string): Promise<ProcessGraph>;
   /**
    * The Running page's cards: open experiments and any `work:<id>` key in `include`. No gate
    * is evaluated.
@@ -75,6 +73,7 @@ export interface Experiments {
   ): Promise<{ experiment: Experiment; process: ProcessGraph; history: RunningUnitEntry[] }>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
+  /** A verdict on this experiment's review, through Reviews.apply and every check it makes first. */
   submitReview(caller: Caller, input: ExperimentReview, tx?: Transaction): Promise<Experiment>;
   /** Withdraw generic review routing before the provider's dependent consumers drain. */
   withdrawReviewOwner(): void;
