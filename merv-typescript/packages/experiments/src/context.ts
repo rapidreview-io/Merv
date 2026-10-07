@@ -22,7 +22,9 @@ import {
   rolesFor,
   currentEvidence,
   approvedSubmission,
+  designCheckout,
 } from './program.js';
+import { readsOnly } from './execution-policy.js';
 import {
   recipeNames,
   instructions,
@@ -286,7 +288,12 @@ export async function references(
   return {
     // The native Sandboxes work kind an experiment binds compute under.
     computeKind: 'experiment',
-    ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),
+    // Execution works on its pinned base; from experiment@41 the design and its review read it.
+    ...(context.snapshot.state === 'running' ||
+    (['planned', 'design_review'].includes(context.snapshot.state) &&
+      designCheckout(context.snapshot.version))
+      ? await pinnedBase(ctx, context)
+      : {}),
     ...(context.snapshot.state === 'experiment_review'
       ? {
           code: (await reviewCapture(ctx, context.caller, experiment, context.tx))!.workspace!
@@ -442,7 +449,9 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
       : state === 'experiment_review'
         ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
-        : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.';
+        : designCheckout(context.snapshot.version)
+          ? '\nThe read-only checkout holds this experiment’s pinned base: project main with the accepted code of the tasks it depends on, the code execution will start from. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution runs in a configured private Git workspace on the same base.'
+          : '\nThis experiment will execute in a configured private Git workspace on its pinned base; planning and design review have no checkout. Read the accepted code’s delivery evidence (task.get, artifact.read) instead, design against what it reports, and leave verifying the code itself to execution, which starts from that base.';
   const needsClaim = review?.status === 'requested';
   const instruction = needsClaim
     ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
@@ -492,7 +501,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
           : ['review.submit']
         : ['experiment.attach', 'experiment.transition'],
     },
-    execution: { readOnly: reviewing(state), tools: [] },
+    execution: { readOnly: readsOnly(state, context.snapshot.version), tools: [] },
     context: preview,
   };
 }

@@ -1026,7 +1026,7 @@ test('native experiments fence compute by attempt and state and retain service c
   const native = nativeWorkFixture();
   t.after(f.experiments.bindSandboxes(native.service));
   let experiment = await f.create('Native');
-  assert.equal(experiment.workflow.version, 40);
+  assert.equal(experiment.workflow.version, 41);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
   assert.match(planning.brief, /native Sandboxes MCP/);

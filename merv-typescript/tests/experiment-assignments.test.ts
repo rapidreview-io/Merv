@@ -7,7 +7,7 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
@@ -25,6 +25,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
 import { captureEpochs } from '@merv/experiments/program';
+import { execution } from '../packages/experiments/src/execution-policy.js';
 import { CodeService } from '@merv/code-work/service';
 import type {
   Experiment,
@@ -420,7 +421,7 @@ test('all four real assignments use distinct recipes; planning and execution wai
   await f.work.release(taskReviewer);
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
-  assert.equal(planned.execution.readOnly, false);
+  assert.equal(planned.execution.readOnly, true);
   assert.match(planned.brief, /native Sandboxes MCP/);
   assert.match(planned.brief, /brief verification only/);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
@@ -454,6 +455,113 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(packet.execution.readOnly, true);
   assert.match(packet.context!.prompt, /returnTo planned.*running/s);
   assert.match(packet.context!.prompt, /same held-out examples/);
+});
+
+test('a design and its review read the accepted code they depend on in a read-only checkout of the pinned base', async (t) => {
+  const f = await fixture(t);
+  const prerequisite = await currentTask(f, f.source, {
+    title: 'Preparation',
+    goal: 'Prepare the evaluation code.',
+    checks: ['Code is present.'],
+    requestId: f.request(),
+  });
+  const experiment = await f.create([prerequisite.id]);
+  assert.equal(experiment.workflow.version, 41);
+  const preparation = await f.work.lease(prerequisite);
+  const proof = await f.artifacts.create(preparation.worker, {
+    title: 'Preparation receipt',
+    content: 'Code is present.',
+  });
+  const commandId = await f.work.commit(preparation, { 'prepare.py': 'print("prepared")\n' });
+  const delivery = await f.work.run(
+    preparation,
+    'task.submit_delivery',
+    confirmedDelivery({ artifactIds: [proof.id], commandId, requestId: f.request() }),
+    (caller, input) => f.tasks.submitDelivery(caller, input as unknown as TaskDelivery),
+  );
+  await f.work.release(preparation);
+  const taskReviewer = await f.work.lease(delivery, await f.issue('operator'));
+  await f.work.run(
+    taskReviewer,
+    'review.submit',
+    {
+      ...reviewedFindings(await f.reviews.get(taskReviewer.worker, delivery.reviewId!)),
+      verdict: 'pass',
+      notes: 'Verified the retained preparation.',
+      requestId: f.request(),
+    },
+    (caller, input) => f.tasks.submitReview(caller, input as unknown as ReviewApplication),
+  );
+  await f.work.release(taskReviewer);
+  const accepted = (await f.code.unit(f.source, prerequisite.id)).acceptance!.reference;
+
+  // The planner (prod, 2026-10-07: "this planning scratch directory has no Git checkout").
+  const planner = await f.work.lease(experiment);
+  const { policy, references } = planner.session.execution;
+  assert.equal(policy.readOnly, true);
+  assert.deepEqual(policy.workspace, {
+    mode: 'ephemeral',
+    namespace: 'experiment-designs',
+    base: 'reference:base',
+    retain: false,
+    driver: 'code.v2',
+  });
+  assert.equal(references.base, accepted);
+  assert.equal(planner.workspace.snapshot!.headOid, accepted);
+  assert.equal(
+    readFileSync(join(planner.workspace.path, 'prepare.py'), 'utf8'),
+    'print("prepared")\n',
+  );
+  assert.equal(planner.session.assignment.execution.readOnly, true);
+  assert.match(
+    planner.session.assignment.brief,
+    /read-only checkout holds this experiment’s pinned base/,
+  );
+  // It still writes and submits its design; the checkout keeps nothing.
+  for (const [role, content, mediaType] of [
+    ['feasibility', feasibilityStatement(), 'application/json'],
+    ['plan', plan, 'text/markdown'],
+  ] as const) {
+    const artifact = await f.work.run(
+      planner,
+      'artifact.create',
+      { title: role, content, mediaType },
+      (caller, input) => f.artifacts.create(caller, input as never),
+    );
+    await f.work.run(
+      planner,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: role === 'plan' ? 'plan.md' : 'feasibility.json',
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  const pending = await f.work.run(
+    planner,
+    'experiment.transition',
+    { transition: 'submit_design', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  await f.work.release(planner);
+  assert.equal(pending.workflow.state, 'design_review');
+
+  // The design reviewer reads the same base.
+  const reviewer = await f.work.lease(pending, await f.issue('operator'));
+  assert.equal(reviewer.session.execution.references.base, accepted);
+  assert.equal(reviewer.workspace.snapshot!.headOid, accepted);
+  assert.ok(readFileSync(join(reviewer.workspace.path, 'prepare.py'), 'utf8'));
+  await f.work.release(reviewer);
+
+  // experiment@40 keeps its published policy: a design without a checkout, told to read the
+  // delivery evidence and leave verifying the code to execution.
+  assert.equal(execution('planned', 40).readOnly, false);
+  assert.deepEqual(execution('planned', 40).workspace, { mode: 'none' });
+  assert.deepEqual(execution('design_review', 40).workspace, { mode: 'none' });
 });
 
 test('an experiment assignment refuses a reader and the other role', async (t) => {
@@ -1328,7 +1436,8 @@ test('historical observations stay project-scoped and pure after source revocati
   const f = await fixture(t);
   const ordinary = await f.offer(await f.create());
   const ref = { kind: 'session-final' as const, sessionId: ordinary.session.id };
-  assert.equal((await f.code.capture(f.source, ref)).status, 'none');
+  // A design's read-only checkout, offered and not yet attached.
+  assert.equal((await f.code.capture(f.source, ref)).status, 'pending');
   const other = await f.scope.credentials.bootstrap({
     projectName: 'Unrelated project',
     actorName: 'Other operator',
@@ -1466,7 +1575,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 40);
+  assert.equal(created.workflow.version, 41);
   assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 

@@ -14,6 +14,7 @@ const current = {
   'task@11': 'c01c239aec645fcff44e7727737c332a8086ecd2ea022df5e5c8d6b1680e5d60',
   'task@43': 'c1f2f37f67bc6ee96c86d7345419b6708d6938fd4f535c55f29720a84d22779b',
   'experiment@40': '183e98516c3c980d63cbf45603684978a2a8338afdff451674700b59693d5e07',
+  'experiment@41': '1080217cb2d00079cd00a259cb1b929abec7c69a8d9705af118efd2cf437a5a7',
 };
 
 test('only current work contracts register, with unchanged permissions across restart', async (t) => {
@@ -37,7 +38,7 @@ test('only current work contracts register, with unchanged permissions across re
     }
     for (const [name, last] of [
       ['task', 43],
-      ['experiment', 40],
+      ['experiment', 41],
     ] as const) {
       for (let version = 1; version <= last; version++) {
         if (`${name}@${version}` in current) continue;
