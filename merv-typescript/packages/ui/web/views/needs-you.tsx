@@ -176,6 +176,7 @@ export function needsYou(
       const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
       // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
       const thread = blocker.related?.find((each) => each.kind === 'thread');
+      const settings = blocker.related?.find((each) => each.kind === 'settings');
       // Any other blocker with no move of its own here, such as a held launch, is acted on from
       // the work's card on the Work map, where its owner draws its marks; the record page is not.
       const work = (thread || !move) && pathOf(rows, 'work');
@@ -193,6 +194,10 @@ export function needsYou(
           (text, index, all) => !!text && all.indexOf(text) === index && text !== sentence,
         ),
         ...(move?.control ? { desk: { label: move.control.label, to: move.control.to } } : {}),
+        // A blocker that names a room of Settings is moved there, as a person's own limit is.
+        ...(settings && !move?.control
+          ? { desk: { label: settings.label, to: `/settings/${encodeURIComponent(settings.id)}` } }
+          : {}),
       });
       continue;
     }

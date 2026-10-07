@@ -48,6 +48,18 @@ type Row = {
 };
 const terminal = (status: Row['status']) =>
   status === 'succeeded' || status === 'failed' || status === 'cancelled';
+/**
+ * A runner's next-command control, which may ask for a periodic checkpoint: when the session has
+ * nothing outstanding, one commit of its checkout at `expectedHead`, made as the agent's own
+ * code.commit would be. A writer generation ends with its session, so this bounds what losing
+ * the machine costs.
+ */
+const nextInputSchema = codeCommandControlSchema
+  .extend({
+    checkpoint: codeCommitInputSchema.pick({ expectedHead: true, requestId: true }).optional(),
+  })
+  .strict();
+const CHECKPOINT_MESSAGE = 'merv: checkpoint';
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
 
@@ -316,13 +328,14 @@ export class CodeCommandService implements CodeCommands {
   }
   async nextCommand(caller: Caller, value: unknown): Promise<CodeCommitCommand | null> {
     caller = structuredClone(caller);
-    const input = parse(codeCommandControlSchema, value);
+    const { checkpoint, ...input } = parse(nextInputSchema, value);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, input);
-      const row = await tx.get<Row>(
-        "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
-        session.id,
-      );
+      const row =
+        (await tx.get<Row>(
+          "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
+          session.id,
+        )) ?? (checkpoint ? await this.checkpoint(tx, session, checkpoint) : undefined);
       if (!row) return null;
       const { command } = this.decode(row);
       // A session no longer offered or active holds no lease.
@@ -346,6 +359,69 @@ export class CodeCommandService implements CodeCommands {
       }
       return command;
     });
+  }
+  /**
+   * The periodic checkpoint a runner asked for, queued for it, or none: the session is no longer
+   * active and writable, or is planned to merge first, or the request was answered before.
+   */
+  private async checkpoint(
+    tx: Transaction,
+    session: Session,
+    input: { expectedHead: string; requestId: string },
+  ): Promise<Row | undefined> {
+    if (
+      session.status !== 'active' ||
+      session.execution.policy.readOnly ||
+      !session.hostRef ||
+      !session.workspace ||
+      session.workspace.result !== null ||
+      session.workspace.attachment.pendingMerge ||
+      !session.execution.policy.tools.some((tool) => tool.name === 'code.commit') ||
+      input.expectedHead.length !== session.workspace.attachment.baseOid.length
+    )
+      return undefined;
+    const hash = digest({ ...input, message: CHECKPOINT_MESSAGE });
+    const prior = await tx.get<Row>(
+      'SELECT * FROM code_commands WHERE session_id=? AND request_id=?',
+      session.id,
+      input.requestId,
+    );
+    if (prior) {
+      check(
+        prior.input_hash === hash,
+        'code_request_conflict',
+        'The request ID already identifies a different checkpoint',
+        409,
+      );
+      return undefined;
+    }
+    const command: CodeCommitCommand = {
+      id: newId('codecmd'),
+      projectId: session.projectId,
+      sessionId: session.id,
+      actorId: session.actorId,
+      instanceId: session.instanceId,
+      expectedRevision: session.expectedRevision,
+      runnerId: session.runnerId,
+      hostRef: session.hostRef,
+      workspace: session.workspace.attachment,
+      expectedHead: input.expectedHead,
+      message: CHECKPOINT_MESSAGE,
+      createdAt: now(),
+    };
+    await tx.run(
+      `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
+       VALUES (?,?,?,?,?,?,?,'queued')`,
+      command.id,
+      command.projectId,
+      command.sessionId,
+      command.actorId,
+      input.requestId,
+      hash,
+      canonical(command),
+    );
+    await this.event(tx, command, 'queued');
+    return await this.row(tx, command.id);
   }
   async completeCommand(caller: Caller, value: unknown): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);

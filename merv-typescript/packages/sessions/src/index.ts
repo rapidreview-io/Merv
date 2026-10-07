@@ -312,9 +312,6 @@ const permission = (role: Session['role']): Permission =>
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
-/** The same row without its workspace capture, for a check that never reads it. */
-const BARE =
-  'SELECT id,project_id,thread_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
 /** The same row without its assignment, execution and lease: the control fields a runner polls. */
 const CONTROL =
   "SELECT id,project_id,thread_id,owner_hash,(session_json::jsonb-'assignment'-'execution'-'lease')::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions";
@@ -443,12 +440,13 @@ export class LeasedSessions implements Sessions {
         this.controlled(caller, id, runnerId, tx),
       ),
     );
+    // An append runs once a runner tick while its agent prints, and reads 4 control fields.
     this.streams = await createService(
       new SessionStreams(
         state,
         scope,
         this.clock,
-        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, BARE),
+        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, CONTROL),
         available,
       ),
     );
@@ -795,6 +793,13 @@ export class LeasedSessions implements Sessions {
         ? await this.managed.sessionModelWait(session.id, tx)
         : null;
     if (budget) outcome = 'budget_exhausted';
+    // One the relay or its provider failed (an outage, Main's release) is nobody's either: it is
+    // offered again after the backoff, and never held.
+    else if (
+      (outcome === 'host_failed' || outcome === 'crash_loop') &&
+      (await this.managed.relayFault(session, tx))
+    )
+      outcome = 'model_interrupted';
     session.status = status;
     session.closedAt = isoNow(this.clock);
     session.closeReason = reason;
@@ -828,12 +833,15 @@ export class LeasedSessions implements Sessions {
       ? session.outcome
       : reason === 'session_expired' && session.activatedAt === null
         ? 'offer_expired'
-        : undefined;
+        : reason === 'session_expired' && (await this.threads.overran(session, tx))
+          ? 'review_unfinished'
+          : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
     if (budget)
       await this.dispatch.reportModelWait(
         session.projectId,
         session.instanceId,
+        budget,
         session.expectedRevision,
         tx,
       );
@@ -1009,6 +1017,7 @@ export class LeasedSessions implements Sessions {
         instanceId: unit.id,
         workflow: unit.workflow,
         state: unit.state,
+        revision: unit.revision,
         data: unit.data,
         role,
       },

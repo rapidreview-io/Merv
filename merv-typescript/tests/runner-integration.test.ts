@@ -405,7 +405,8 @@ test(
             : url.pathname.endsWith('/release')
               ? 'release'
               : undefined;
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      // A bundle's bytes are no JSON: the final capture is sent before the release now.
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
       const response = await fetch(input, init);
       if (operation === 'lease' && response.ok) {
         const value = (await response.clone().json()) as { session: Session | null };

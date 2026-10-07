@@ -1276,22 +1276,16 @@ export class CodeUnitService {
     const owner = await this.workflows.relations(projectId, unitId, tx);
     if (!owner) return;
     const row = owner.instance.terminal ? undefined : await this.writers.row(tx, projectId, unitId);
-    const code = row?.quarantine_operation_id
-      ? 'code_capture_quarantined'
-      : row?.writer_state === 'recovery_required'
-        ? 'code_recovery_required'
-        : null;
-    if (code)
+    // A writer generation ends with its session; only a quarantined capture waits for anyone.
+    if (row?.quarantine_operation_id)
       blockers = [
         ...blockers,
         {
-          key: row!.quarantine_operation_id ? 'capture' : 'writer',
-          code,
+          key: 'capture',
+          code: 'code_capture_quarantined',
           status: 409,
-          message: row!.quarantine_operation_id
-            ? 'The final capture was refused; the last admitted commit is retained'
-            : 'The last writer never handed over its final capture',
-          next: 'Resume that runner, or have a project administrator inspect code.status and run code.unit.fence to retain the last admitted commit.',
+          message: 'The final capture was refused; the last admitted commit is retained',
+          next: 'Have a project administrator inspect code.status and run code.unit.fence to retain the last admitted commit.',
           related: [],
         },
       ];

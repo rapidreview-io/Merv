@@ -98,8 +98,8 @@ test('a writer is given exactly the canonical head and a reviewer exactly the re
   const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
   await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
   const wip = f.source.commit({ 'a.txt': 'wip\n' }, 'merv: capture ses_1');
-  await f.event('session.closed', 'ses_1');
   await f.upload('final', 'ses_1', 1, first, f.source.bundle(wip, [first]));
+  await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   await assert.rejects(manifest(f, 'ses_1'), refused('session_closed'));
 
@@ -155,13 +155,13 @@ test('a quarantined capture is never part of what a successor is given, and an e
   const f = await writerFixture(t);
   await f.lease('ses_1');
   await f.event('session.workspace_attached', 'ses_1');
-  await f.event('session.closed', 'ses_1');
   const secret = f.source.commit(
     { 'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n' },
     'merv: capture',
   );
   const final = await f.upload('final', 'ses_1', 1, f.root, f.source.bundle(secret, [f.root]));
   assert.equal(final.error, 'code_capture_quarantined');
+  await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   await f.code.fenceUnit(await f.human(), { unitId: f.unitId, requestId: 'fence' });
   await f.lease('ses_2');

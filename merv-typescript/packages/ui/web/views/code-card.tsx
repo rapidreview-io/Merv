@@ -487,16 +487,17 @@ export function CodeCard({
       {!!unit && (
         <>
           <UnitCode unit={unit} named={named} open={open} />
-          {/* The one verb a stuck writer needs, where the writer is read. Its tool is the
-              one here that asks for a person rather than an administrator: a key and a
-              bearer actor are refused by the server, so neither is offered it. */}
-          {signedIn && unit.writerState === 'recovery_required' && (
+          {/* The one verb a quarantined capture needs, where the writer is read: every other
+              writer generation ends with its session. Its tool is the one here that asks for a
+              person rather than an administrator: a key and a bearer actor are refused by the
+              server, so neither is offered it. */}
+          {signedIn && !!unit.quarantine && (
             <Verb
               tool="code.unit.fence"
               input={{ unitId: unit.unitId }}
               label="Fence the writer"
               title="End this writer generation?"
-              says="The unit closes at the last commit Code admitted. Whatever the machine was still sending is kept on the server and never admitted, and the next lease continues from that commit."
+              says="The unit closes at the last commit Code admitted. The quarantined capture is kept on the server and never admitted, and the next lease continues from that commit."
               onDone={onDone}
             />
           )}

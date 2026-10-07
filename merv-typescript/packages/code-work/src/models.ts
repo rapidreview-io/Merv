@@ -244,7 +244,7 @@ export interface CodeUnit {
 }
 /**
  * A unit that is not accepted reads what keeps it from being: quarantine first, because
- * nothing it holds may be reused; `held` is a writer an operator must fence.
+ * nothing it holds may be reused.
  */
 export type CodeUnitStanding =
   | 'quarantined'
@@ -254,7 +254,6 @@ export type CodeUnitStanding =
   | 'blocked'
   | 'waiting'
   | 'ready'
-  | 'held'
   | 'working';
 /** Which of four things a blocker holds work up for; any other is work waiting on the server. */
 export type CodeBlockerGroup = 'conflict' | 'quarantine' | 'publication' | 'waiting';

@@ -351,9 +351,6 @@ export class FleetService implements Fleet {
           phase: a.phase,
           intent: a.intent,
           owner: a.owner,
-          // Released with its runtime deleted: the machine is gone for good, and nothing it
-          // owed (a final capture, a handover) can ever come from it.
-          ...(a.phase === 'released' && a.runtime?.deleted === true ? { machineGone: true } : {}),
           ...(caller ? eventSource(caller) : {}),
         },
       });

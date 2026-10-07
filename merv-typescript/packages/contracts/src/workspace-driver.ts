@@ -46,6 +46,8 @@ export interface WorkspaceDriver {
   pendingCommits?(launchId: string): CodeCommitCommand[];
   commitOutcome?(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
   acknowledgeCommit?(commandId: string): void;
+  /** Where a periodic checkpoint of a live checkout commits, or null with nothing to commit. */
+  checkpointHead?(launchId: string): Promise<string | null>;
 }
 /** What a runner lends a driver: its ledger's place on disk and what it knows of a launch. */
 export interface WorkspaceDriverHost {

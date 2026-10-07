@@ -290,23 +290,20 @@ export abstract class DriverCheckout extends DriverCore {
       : previous?.head_oid;
     if (sourceHead && !(await this.has(cache, sourceHead)))
       throw new WorkspaceError('workspace_transfer_lost');
-    const tracked = sourceHead
-      ? new Set(
-          (
-            await this.git.ok([
-              '--git-dir',
-              cache,
-              'ls-tree',
-              '-r',
-              '-z',
-              '--name-only',
-              sourceHead,
-            ])
-          )
-            .split('\0')
-            .filter(Boolean),
+    // The checkout starts at Code's admitted head: whatever the last session left that Code did
+    // not admit (its own commits and its edits, which its final capture carried) is not carried
+    // over either. Only what Git ignores, the machine's data, is.
+    const unadmitted =
+      previous && this.priorCaptureRefused(previous) ? this.finalTarget(previous) : null;
+    const tracked = new Set<string>();
+    for (const commit of [sourceHead, unadmitted])
+      if (commit && (await this.has(cache, commit)))
+        for (const name of (
+          await this.git.ok(['--git-dir', cache, 'ls-tree', '-r', '-z', '--name-only', commit])
         )
-      : new Set<string>();
+          .split('\0')
+          .filter(Boolean))
+          tracked.add(name);
     const copied: string[] = [];
     cpSync(preserved, row.path, {
       recursive: true,

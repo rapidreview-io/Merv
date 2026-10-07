@@ -170,7 +170,8 @@ export interface ModelRelayConfig<
   maxRequestBytes: number;
   totalTimeoutMs: number;
   maxRequestsPerGrant?: number;
-  onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
+  /** A call that failed once admitted, with the grant it ran under. */
+  onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>, grant: G) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
   /** Charges a call just before its last authority read and the upstream send, and returns the
    *  charge as the feature reads it back; throwing refuses the call with the error's `code`, or

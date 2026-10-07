@@ -242,8 +242,10 @@ test('work that comes back resumes its producer: same agent actor, new session, 
 
   await f.move(unit.id, 'submit');
   const review = await f.offer(unit.id, 'runner-a');
-  // A reviewer reads each round with fresh eyes: no key, never the producer's conversation or agent.
-  assert.equal(review.session.continuity, undefined);
+  // A reviewer reads each round with fresh eyes: its round's own key, never the producer's
+  // conversation or agent.
+  assert.equal(review.session.continuity?.resume, undefined);
+  assert.notEqual(review.session.continuity?.key, first.session.continuity!.key);
   assert.notEqual(review.session.actorId, first.session.actorId);
   await f.release(review.session);
   await f.move(unit.id, 'revise');
@@ -302,6 +304,114 @@ test('work that comes back resumes its producer: same agent actor, new session, 
     ...facts,
   });
   assert.deepEqual([stale.status, stale.body.error.code], [409, 'conversation_superseded']);
+});
+
+test('a conversation declared and never delivered leaves the last delivered one to resume', async (t) => {
+  // Audit 15: a runner that abandons its upload (ten PUTs) had already overwritten the delivered
+  // conversation, so the next visit's download failed and its agent started from nothing.
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.release(first.session);
+  const kept = await f.keep(first.session, first.control);
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.continuity?.resume?.sha256, kept.facts.sha256);
+  await f.release(second.session);
+  // The second visit declares its own conversation; its upload never arrives.
+  const bytes = Buffer.from('{"type":"user","text":"never delivered"}\n');
+  await f.ok('POST', `/sessions/${second.session.id}/conversation`, f.token, {
+    ...second.control,
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555777',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  });
+  const third = await f.offer(unit.id);
+  assert.equal(third.session.threadId, first.session.threadId);
+  assert.deepEqual(third.session.continuity?.resume, {
+    sessionId: first.session.id,
+    ...kept.facts,
+  });
+  const { download } = await f.ok('POST', `/sessions/${third.session.id}/resume`, f.token, {
+    ...third.control,
+  });
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), kept.bytes);
+  // Once a newer one is delivered, it is the one resumed.
+  await f.release(third.session);
+  const newer = await f.keep(third.session, third.control);
+  const fourth = await f.offer(unit.id);
+  assert.deepEqual(fourth.session.continuity?.resume, {
+    sessionId: third.session.id,
+    ...newer.facts,
+  });
+});
+
+test('a cut reviewer resumes its own conversation within its round; a new round starts fresh', async (t) => {
+  // Audit 15: a results review cut by its step limit, a lost host or a release came back as a new
+  // agent with no notes, and a review needing more than one visit could start over for ever.
+  const f = await fixture(t);
+  const unit = await f.start();
+  const producer = await f.offer(unit.id);
+  await f.release(producer.session);
+  await f.move(unit.id, 'submit');
+  const { revision } = await f.app.ctx.workflows.get(f.owner, unit.id);
+  const first = await f.offer(unit.id, 'runner-a');
+  assert.equal(
+    first.session.continuity?.key,
+    JSON.stringify([unit.id, 'review', 'reviewer', revision]),
+  );
+  // Cut before its verdict: the next visit of the round continues it.
+  await f.release(first.session);
+  const kept = await f.keep(first.session, first.control);
+  const second = await f.offer(unit.id, 'runner-b');
+  assert.deepEqual(
+    [second.session.threadId, second.session.actorId, second.session.continuity?.resume],
+    [first.session.threadId, first.session.actorId, { sessionId: first.session.id, ...kept.facts }],
+  );
+  await f.release(second.session);
+  // The next round is read with fresh eyes, and the earlier round's reviewer retires.
+  await f.move(unit.id, 'revise');
+  const again = await f.offer(unit.id);
+  await f.release(again.session);
+  await f.move(unit.id, 'submit');
+  const fresh = await f.offer(unit.id, 'runner-a');
+  assert.notEqual(fresh.session.threadId, first.session.threadId);
+  assert.notEqual(fresh.session.actorId, first.session.actorId);
+  assert.equal(fresh.session.continuity?.resume, undefined);
+  assert.equal((await f.agent(first.session.threadId!)).status, 'retired');
+});
+
+test('a review round whose reviewer its step limit keeps cutting is counted, so it holds', async (t) => {
+  const f = await fixture(t);
+  const sessions = f.sessions as unknown as {
+    closeSession(session: Session, reason: string, tx: unknown): Promise<Session>;
+    get(caller: unknown, id: string): Promise<Session>;
+  };
+  const unit = await f.start();
+  const producer = await f.offer(unit.id);
+  await f.release(producer.session);
+  await f.move(unit.id, 'submit');
+  const attempts = async () =>
+    Number(
+      (
+        await f.app.ctx.state.read((sql) =>
+          sql.get<{ attempts: number | string }>(
+            'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+            unit.id,
+          ),
+        )
+      )?.attempts ?? 0,
+    );
+  const counted: number[] = [];
+  for (let visit = 1; visit <= 6; visit++) {
+    const review = await f.offer(unit.id);
+    await f.sessions.authenticate(review.input.secret);
+    const active = await sessions.get(f.owner, review.session.id);
+    await f.app.ctx.state.transaction((tx) => sessions.closeSession(active, 'session_expired', tx));
+    counted.push(await attempts());
+  }
+  // Four visits of one round are resumed uncounted; each further cut counts toward the hold.
+  assert.deepEqual(counted, [0, 0, 0, 0, 1, 2]);
 });
 
 test('a key without a delivered conversation offers a new agent; the one it replaced is retired', async (t) => {
@@ -550,25 +660,34 @@ test('research keys: a lens by wave and perspective across restarts, an experime
       instanceId,
       workflow: 'reflection.lens',
       state: 'reflecting',
+      revision: 3,
       data: { reflectionId: 'wave', attempt, perspective },
       role: role as 'producer',
     });
   // A restart makes new lens instances; each perspective's author continues its own.
   assert.equal(lens('lens-1', 1, 'theory'), lens('lens-6', 2, 'theory'));
   assert.notEqual(lens('lens-1', 1, 'theory'), lens('lens-2', 1, 'methods'));
-  assert.equal(lens('lens-1', 1, 'theory', 'reviewer'), null);
+  // A reviewer continues only within its round: the record's revision, whatever the provider says.
+  assert.equal(
+    lens('lens-1', 1, 'theory', 'reviewer'),
+    JSON.stringify(['lens-1', 'reflecting', 'reviewer', 3]),
+  );
   // A design revision starts a new attempt of the same experiment: the planner continues.
   const experiment = (attempt: number, state: string, role: 'producer' | 'reviewer') =>
     threads.key({
       instanceId: 'experiment',
       workflow: 'experiment',
       state,
+      revision: attempt,
       data: { attempt },
       role,
     });
   assert.equal(experiment(1, 'planned', 'producer'), experiment(2, 'planned', 'producer'));
   assert.notEqual(experiment(1, 'running', 'producer'), experiment(1, 'planned', 'producer'));
-  assert.equal(experiment(1, 'design_review', 'reviewer'), null);
+  assert.notEqual(
+    experiment(1, 'design_review', 'reviewer'),
+    experiment(2, 'design_review', 'reviewer'),
+  );
 });
 
 /** A stand-in Claude Code: resumes the named conversation or starts one; or, by a marker, fails. */
@@ -760,7 +879,8 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
     threads.map((thread: ThreadView) => [thread.id, thread.state, thread.role, thread.status]),
     [
       [first.session.threadId, 'working', 'producer', 'live'],
-      [review.session.threadId, 'review', 'reviewer', 'retired'],
+      // Cut before its verdict, the round's reviewer waits to be continued.
+      [review.session.threadId, 'review', 'reviewer', 'dormant'],
     ],
   );
   const visits: VisitView[] = threads[0].visits;
@@ -996,13 +1116,14 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     requestId: 'missing',
   });
   assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
+  // A visit whose workflow keeps no conversation cannot ask.
+  f.sessions.threads.register('continuity-test', () => null);
   const other = await f.start();
-  await f.move(other.id, 'submit');
-  const review = await f.offer(other.id, 'runner-c');
+  const unkept = await f.offer(other.id, 'runner-c');
   await assert.rejects(
     f.app.ctx.tools.invoke(
       'session.ask_owner',
-      await f.sessions.authenticate(review.input.secret),
+      await f.sessions.authenticate(unkept.input.secret),
       {
         question,
       },
@@ -1501,9 +1622,13 @@ test('only a visit that keeps a conversation is offered session.ask_owner, in it
   assert.deepEqual(producer.offered, [true, true]);
   await f.release(producer.session);
   await f.move(unit.id, 'submit');
+  // A reviewer keeps its round's conversation, so it may wait for an answer too.
   const reviewer = await attach(unit.id, 'runner-b');
-  assert.equal(reviewer.session.continuity, undefined);
-  assert.deepEqual(reviewer.offered, [false, false]);
+  assert.deepEqual(reviewer.offered, [true, true]);
+  f.sessions.threads.register('continuity-test', () => null);
+  const unkept = await attach((await f.start()).id, 'runner-c');
+  assert.equal(unkept.session.continuity, undefined);
+  assert.deepEqual(unkept.offered, [false, false]);
 });
 
 test('a visit’s message check reads only its own project’s pending messages and its key’s threads', async (t) => {

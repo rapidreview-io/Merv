@@ -27,7 +27,9 @@ import {
   budgetIn,
   codexModelRelay,
   hostedGrant,
+  markRelayStart,
   modelBudgetStatus,
+  relayFaulted,
   setDailyTokens,
 } from './codex-relay.js';
 import { modelMigrations } from './schema.js';
@@ -169,6 +171,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async start(): Promise<void> {
     await this.state.migrate('fleet_workflow', modelMigrations);
+    // Main, and the relay with it, starts: the visits it cut by stopping are told so.
+    await markRelayStart(this.state);
     check(
       !this.closed && !this.timer,
       'fleet_workflow_started',
@@ -192,18 +196,31 @@ export class FleetWorkflowAdapter implements FleetOwner {
           huggingFace: (binding) => canonical(binding.platform) === canonical(hostedCodexPlatform),
           // The person a machine is rented for pays its model calls: while they have no tokens
           // left today, it takes no new work, and a visit the relay cut off waits too.
+          // Said to the person whose limit it is, the one who raises it, in Settings.
           modelBudget: async (binding, tx) => {
-            let person: string | undefined;
+            let a: FleetAllocation;
             try {
-              person = (await this.fleet.inspectOwned(this, binding.allocationId, tx)).person;
+              a = await this.fleet.inspectOwned(this, binding.allocationId, tx);
             } catch (error) {
               if (error instanceof MervError && [403, 404].includes(error.status)) return null;
               throw error;
             }
-            if (!person) return null;
-            const budget = await budgetIn(tx, person, this.config.dailyTokensPerPerson);
-            return budget.blocked ? { resetsAt: budget.resetsAt } : null;
+            if (!a.person) return null;
+            const budget = await budgetIn(tx, a.person, this.config.dailyTokensPerPerson);
+            if (!budget.blocked) return null;
+            const payer = a.source.kind === 'service' ? a.source.vouchedBy : a.source;
+            const reset = `${budget.resetsAt.slice(0, 10)} ${budget.resetsAt.slice(11, 16)} UTC`;
+            return {
+              resetsAt: budget.resetsAt,
+              message: `Your daily Fleet model tokens are used up; this work resumes at ${reset}`,
+              next: `Raise your Fleet daily token limit in Settings, or wait until ${reset}`,
+              whose: `actor:${payer.actorId}` as const,
+              related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
+            };
           },
+          // A visit whose calls the relay or its provider failed, or that Main's restart cut.
+          relayFault: async (_binding, visit, tx) =>
+            await relayFaulted(tx, visit.sessionId, visit.since),
         }),
       );
       // Fleet's sections of system.status: the project's, and a leased worker's own budget.
@@ -824,18 +841,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
 }
 
-/**
- * Fleet's word that a work machine is gone for good (fleet.changed with machineGone), passed on
- * to Sessions for the sessions that ran on it: neither knows the other's records.
- */
-export const machineGone =
-  (sessions: Pick<Sessions, 'managed'>) =>
-  async (event: { subjectId: string; data: unknown }, tx: Transaction) => {
-    const data = event.data as { machineGone?: boolean; owner?: { kind?: string } };
-    if (data.machineGone === true && data.owner?.kind === ownerKind)
-      await sessions.managed.machineGone(event.subjectId, tx);
-  };
-
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
@@ -850,17 +855,6 @@ export const fleetWorkflowPlugin = {
     );
     await adapter.start();
     ctx.effect(() => () => adapter.close());
-    // Where events are delivered, a work machine gone for good is passed on to Sessions.
-    ctx.inject(['domainEvents'], (ctx) => {
-      ctx.effect(async function* () {
-        yield await ctx.domainEvents.subscribe({
-          id: 'fleet.workflow.machine-gone.v1',
-          types: ['fleet.changed'],
-          from: 'now',
-          handle: machineGone(ctx.sessions),
-        });
-      });
-    });
     // The provider key stays on Main: hosted Codex calls the model through this relay.
     const relay = codexModelRelay(ctx.state, {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',

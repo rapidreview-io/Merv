@@ -109,7 +109,6 @@ function standingOf(unit: Omit<CodeUnit, 'standing'>): CodeUnitStanding {
   if (unit.acceptance) return unit.acceptance.reference ? 'accepted' : 'artifacts only';
   if (!base) return 'ended';
   if (base.status !== 'pinned') return base.status;
-  if (unit.writerState === 'recovery_required') return 'held';
   return unit.generation > 0 ? 'working' : 'ready';
 }
 

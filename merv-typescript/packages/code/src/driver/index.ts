@@ -15,7 +15,7 @@ import {
 } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { codeWorkspaceManifestSchema } from '../store/protocol.js';
-import { hash, pathStat, WorkspaceError } from './git.js';
+import { hash, oid, pathStat, WorkspaceError } from './git.js';
 import { UploadRefused, terminal, deferral } from './core.js';
 import { DriverTransfer } from './transfer.js';
 
@@ -202,6 +202,29 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
         }
         throw error;
       }
+    });
+  }
+
+  /**
+   * The head a periodic checkpoint commits on: Code's head, while the live checkout holds changes
+   * on it that Code has not admitted; else null (nothing changed, or the agent moved HEAD on its
+   * own, which only its own code.commit may hand over). Read without taking Git's locks, so the
+   * agent's own Git is never kept waiting.
+   */
+  checkpointHead(launchId: string): Promise<string | null> {
+    return this.run(this.workKey ?? launchId, async () => {
+      const row = this.row(launchId);
+      if (!row || row.read_only || row.status !== 'ready' || !row.attachment_json) return null;
+      const env = { GIT_OPTIONAL_LOCKS: '0' };
+      const head = oid(
+        await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path, env }),
+      );
+      if (head !== row.head_oid) return null;
+      const changes = await this.git.ok(['status', '--porcelain', '--untracked-files=all'], {
+        cwd: row.path,
+        env,
+      });
+      return changes.toString().trim() ? head : null;
     });
   }
 

@@ -212,6 +212,12 @@ type Kind = (typeof kinds)[number];
  * Ten PUTs at most, a minute apart after a failure; one at a time, off the tick. The delivery
  * after the tenth only confirms it.
  */
+/**
+ * How often a live writer's checkout is committed to Code, as the agent's own code.commit would
+ * be, when it holds changes Code has not admitted. A session's close ends its writer generation
+ * at what Code admitted, so losing a machine costs at most about this much work.
+ */
+const checkpointMs = 5 * 60_000;
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
 /** A declaration's facts: what its route is sent. */
@@ -850,7 +856,12 @@ export class MachineRunner implements Runner {
       !session.execution.policy.tools.some((tool) => tool.name === 'code.commit')
     )
       return;
-    const command = await this.answer(() => this.client.nextCodeCommand(session, record.id));
+    const checkpoint = await this.checkpointDue(record, workspaces);
+    const command = await this.answer(() =>
+      this.client.nextCodeCommand(session, record.id, checkpoint),
+    );
+    // Answered: the checkpoint asked for was made, or will never be; the next is a new one.
+    if (checkpoint) this.save(record.id, { checkpoint: null });
     if (!command) return;
     // A lost next-command response may have left only a server-side dispatch.
     // Terminal launches recover its descriptor after capture has revoked the
@@ -858,9 +869,33 @@ export class MachineRunner implements Runner {
     await perform(command);
   }
   /**
-   * What an ended launch owes, in order: its transcript's declaration and its release, capture,
-   * owed Code receipts, workspace result, closed checkout and last the transcript itself; true
-   * once nothing is. One whose driver is gone waits for it.
+   * The periodic checkpoint a running writer asks Code for, every `checkpointMs`, when its
+   * checkout holds changes on Code's head; else none. Each is asked under its own request id, so
+   * a lost reply asks for the same one again.
+   */
+  private async checkpointDue(
+    record: LaunchRecord,
+    workspaces: Required<WorkspaceDriver>,
+  ): Promise<{ expectedHead: string; requestId: string } | undefined> {
+    if (record.status !== 'running' || !workspaces.checkpointHead) return undefined;
+    const pending = record.metadata.checkpoint as
+      { expectedHead: string; requestId: string } | null | undefined;
+    if (pending) return pending;
+    const last = Number(record.metadata.checkpointedAt ?? record.createdAt);
+    if (this.clock() - last < checkpointMs) return undefined;
+    record = this.save(record.id, { checkpointedAt: this.clock() });
+    const expectedHead = await workspaces.checkpointHead(record.id);
+    if (!expectedHead) return undefined;
+    const count = Number(record.metadata.checkpoints ?? 0) + 1;
+    const checkpoint = { expectedHead, requestId: `checkpoint-${count}` };
+    this.save(record.id, { checkpoints: count, checkpoint });
+    return checkpoint;
+  }
+  /**
+   * What an ended launch owes, in order: its transcript's declaration, its capture (before the
+   * release: a session's close ends its writer generation, and Code admits nothing begun after
+   * it), its release, owed Code receipts, workspace result, closed checkout and last the
+   * transcript itself; true once nothing is. One whose driver is gone is released and waits.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
     // First, before the hosted reset wipes the harness's home: the conversation it wrote.
@@ -872,17 +907,20 @@ export class MachineRunner implements Runner {
       await this.resetAssignment();
       record = this.save(record.id, { assignmentStopped: true });
     }
+    const driver = this.driverOf(record);
+    const workspace = driver?.get(record.id);
+    const open = !!workspace && workspace.status !== 'closed';
     if (record.metadata.usageReported !== true) {
       record = await this.declare(record);
+      // What the session left is captured while its writer generation is still live.
+      if (open) await driver!.capture(record);
       record = await this.release(record);
     }
-    const driver = this.driverOf(record);
     if (!driver) {
       this.lastError = 'workspace_driver_missing';
       return false;
     }
-    const workspace = driver.get(record.id);
-    if (!workspace || workspace.status === 'closed') return await this.finishAssignment(record);
+    if (!open) return await this.finishAssignment(record);
     const result = await driver.capture(record);
     // Work the capture moved aside or rescued is reported, never passed over in silence.
     const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;

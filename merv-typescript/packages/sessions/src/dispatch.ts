@@ -43,7 +43,7 @@ import {
   targetKey,
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
-import type { ManagedBindingRow } from './managed-types.js';
+import type { ManagedBindingRow, ManagedModelWait } from './managed-types.js';
 import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
 import { INQUIRY_VISIT_SECONDS, type Inquiries } from './inquiries.js';
 import { withholds } from './budgets.js';
@@ -341,8 +341,8 @@ export class SessionDispatch {
   }
   /**
    * The model budget's wait on a rented machine's work, said on the work so it reaches Needs you
-   * (an operator's move: only a person signed in raises their own limit), and withdrawn once the
-   * budget lets the machine take it. It names the revision that waits, so moving on withdraws it.
+   * in the budget owner's words and to whom they address it, and withdrawn once the budget lets
+   * the machine take it. It names the revision that waits, so moving on withdraws it.
    */
   private async modelWaits(row: ManagedBindingRow, tx: Transaction): Promise<boolean> {
     const wait = await this.hooks.managed.modelWait(row, tx);
@@ -351,13 +351,14 @@ export class SessionDispatch {
     const revision = wait
       ? (await this.workflows.revisions(row.project_id, [instanceId], tx)).get(instanceId)?.revision
       : undefined;
-    await this.reportModelWait(row.project_id, instanceId, wait && revision, tx);
+    await this.reportModelWait(row.project_id, instanceId, wait, revision, tx);
     return !!wait;
   }
   /** The model budget's wait on `instanceId` at `revision`, or none: see `modelWaits`. */
   async reportModelWait(
     projectId: string,
     instanceId: string,
+    wait: ManagedModelWait | null,
     revision: number | null | undefined,
     tx: Transaction,
   ): Promise<void> {
@@ -367,16 +368,17 @@ export class SessionDispatch {
         instanceId,
         provider: MODEL_BUDGET_PROVIDER,
         blockers:
-          typeof revision === 'number'
+          wait && typeof revision === 'number'
             ? [
                 {
                   key: 'model_budget',
                   code: 'model_budget_exhausted',
                   cause: 'model_budget',
                   status: 429,
-                  message: 'Daily model tokens used up; resumes at 00:00 UTC or raise your limit',
-                  next: 'Wait for the daily reset at 00:00 UTC, or raise your daily model token limit',
-                  whose: 'operator',
+                  message: wait.message,
+                  next: wait.next,
+                  ...(wait.whose && { whose: wait.whose }),
+                  ...(wait.related && { related: wait.related }),
                   revision,
                 },
               ]

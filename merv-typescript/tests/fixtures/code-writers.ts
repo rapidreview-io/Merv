@@ -87,13 +87,8 @@ export async function writerFixture(
         });
         return writer;
       }),
-    /** A session event as Code's writer subscriptions take it: these two, and Code Work's
-     *  session.machine_gone. */
+    /** A session event as Code's writer subscription takes it. */
     event: async (type: string, sessionId: string) => {
-      if (type === 'session.machine_gone')
-        return await f.state.transaction((tx) =>
-          f.code.machineGone(f.admin.projectId, sessionId, tx),
-        );
       const change = (
         { 'session.workspace_attached': 'attached', 'session.closed': 'closed' } as const
       )[type as 'session.closed'];
@@ -133,6 +128,8 @@ export async function writerFixture(
       sessions.get(sessionId)!.status = 'released';
     },
     unit: async () => await f.code.unit(f.admin, unit.id),
+    /** Code's writer sweep, as the store runs it at start and on its interval. */
+    sweep: async () => await f.core.writers.expire(),
     /** A commit command the session was handed, as Code's command table records it. */
     async dispatched(sessionId: string, commandId: string) {
       await f.state.transaction(async (tx) => {

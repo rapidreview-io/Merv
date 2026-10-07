@@ -210,7 +210,7 @@ function machine(
 }
 
 test(
-  'a default task without GitHub crosses machines, resumes retained changes, passes independent review and integrates into managed main',
+  'a default task without GitHub crosses machines, resumes from the admitted head, passes independent review and integrates into managed main',
   { timeout: 3 * waitMs },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'merv-v2-'));
@@ -250,21 +250,9 @@ test(
 
     await state.transaction((tx) => code.publishOnAcceptance(owner, { unitId: task.id }, tx));
 
-    let finalizes = 0;
-    let dropped = false;
     const issue = async (name: string) =>
       (await app.ctx.scope.credentials.issueActor(owner, { name, role: 'operator' })).token;
-    const a = machine(t, app, root, 'a', await issue('Machine A'), owner, async (input, init) => {
-      const response = await fetch(input, init);
-      if (String(input).endsWith('/code/v2/finalize') && response.ok) {
-        finalizes++;
-        if (!dropped) {
-          dropped = true;
-          throw new TypeError('Lost the reply to a final capture Code admitted');
-        }
-      }
-      return response;
-    });
+    const a = machine(t, app, root, 'a', await issue('Machine A'), owner);
     const b = machine(t, app, root, 'b', await issue('Machine B'), owner);
     await a.runner.start();
     await b.runner.start();
@@ -337,19 +325,16 @@ test(
     await first.write('notes.txt', 'left uncommitted by machine A\n');
     await deliver(first, delivered.command.id, 'delivery-1');
     await a.settled();
-    assert.ok(dropped && finalizes >= 2, 'the lost reply to the final capture was replayed');
+    // The handoff closed the session, and its generation with it, at the last admitted commit:
+    // what it left uncommitted is never admitted.
     const afterFirst = await unit();
     assert.equal(afterFirst.writerState, 'closed');
-    assert.notEqual(afterFirst.canonicalHead, delivered.receipt.headOid);
+    assert.equal(afterFirst.canonicalHead, delivered.receipt.headOid);
     const repository = new CodeRepositories({
       root: join(root, 'server', 'code'),
       quotaBytes: 0,
       reservedFreeBytes: 0,
     }).paths(owner.projectId).repository;
-    assert.equal(
-      git(repository, ['rev-parse', `${afterFirst.canonicalHead}~1`]),
-      delivered.receipt.headOid,
-    );
 
     // Machine B reviews exactly the delivered commit: none of the trailing work is there.
     await b.accepting(true);
@@ -361,13 +346,13 @@ test(
     await verdict(reviewer, 'needs_changes');
     await b.settled();
 
-    // Machine B resumes as generation 2, from the head that includes what machine A left.
+    // Machine B resumes as generation 2, from the admitted head: nothing machine A left after it.
     await b.accepting(true);
     const second = await b.worker();
     await b.accepting(false);
     assert.equal((await unit()).generation, 2);
     assert.equal(await second.git('rev-parse', 'HEAD'), afterFirst.canonicalHead);
-    assert.equal(await second.read('notes.txt'), 'left uncommitted by machine A\n');
+    assert.equal(await second.read('notes.txt'), null);
     await second.write('harness.txt', 'two\n');
     const revised = await commit(second, 'second');
     assert.equal(revised.receipt.parentOid, afterFirst.canonicalHead);
@@ -416,16 +401,16 @@ test(
     assert.equal(publication.destination, 'local');
     assert.equal(publication.verified, true);
     assert.equal((await code.github.status(owner)).repository, null);
-    const finals = await state.read(
+    const ended = await state.read(
       async (sql) =>
         await sql.all<{ data_json: string }>(
-          "SELECT data_json FROM events WHERE type='code.capture_admitted' ORDER BY id",
+          "SELECT data_json FROM events WHERE type='code.writer_ended' ORDER BY id",
         ),
     );
-    assert.equal(
-      finals.filter((row) => (JSON.parse(row.data_json) as { final: boolean }).final).length,
-      2,
-      'one final capture for each writer generation, however often it was sent',
+    assert.deepEqual(
+      ended.map((row) => (JSON.parse(row.data_json) as { reason: string }).reason),
+      ['session_closed', 'session_closed'],
+      'each writer generation ended with its session',
     );
   },
 );

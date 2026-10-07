@@ -96,6 +96,7 @@ export type {
 export type {
   ManagedBoundSession,
   ManagedEnrollmentInput,
+  ManagedModelWait,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
@@ -186,6 +187,8 @@ export interface ContinuityUnit {
   instanceId: string;
   workflow: string;
   state: string;
+  /** The record's revision the visit is offered at: one review round. */
+  revision: number;
   data: Data;
   role: SessionRole;
 }
@@ -549,12 +552,6 @@ export interface ManagedRunners {
   /** Server-only: the session a managed runner holds, live or handed off, by bearer or session
    *  id, from which Fleet grants hosted Codex the model. */
   boundSession(tokenOrSessionId: string): Promise<ManagedBoundSession>;
-  /**
-   * Server-only, from Fleet's owner: this allocation's machine is gone for good (Fleet released
-   * it and its runtime is deleted). Each session that ran on it is told so with
-   * session.machine_gone, so whatever waits on a handover from that machine stops waiting.
-   */
-  machineGone(allocationId: string, tx: Transaction): Promise<void>;
   /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
   inspect(
     allocationId: string,

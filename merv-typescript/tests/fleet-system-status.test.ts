@@ -86,7 +86,7 @@ async function status(t: TestContext) {
       pollIntervalMs: 60_000,
     },
     Date.now,
-    { migrate: async () => undefined } as unknown as State,
+    { migrate: async () => undefined, transaction: async () => undefined } as unknown as State,
   );
   t.after(() => adapter.close());
   await adapter.start();

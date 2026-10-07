@@ -618,6 +618,12 @@
       "published": true
     },
     {
+      "component": "fleet_workflow",
+      "version": 6,
+      "hash": "2975fe64b131afc39fce3c0ebe5ec427f3e6e0b40c7b3a0dd9e1a843563a59e7",
+      "published": false
+    },
+    {
       "component": "session_service_work",
       "version": 1,
       "hash": "3926794066e21646b403382a4a7e5da3e3745208cb6615f643c475c2d2a4f6e2",
@@ -1064,6 +1070,12 @@
     },
     {
       "component": "workflows",
+      "version": 16,
+      "hash": "01b38de0993cd2972dff189c0dd8c53d6be648d1f066932046dc01a63c50b263",
+      "published": false
+    },
+    {
+      "component": "workflows",
       "version": 17,
       "hash": "3c1cf973c43302d1074d89beffe0f703705a4d604c665566259a249e9c52b7f2",
       "published": false
@@ -1079,6 +1091,12 @@
       "version": 19,
       "hash": "d1f550d19a608d446fc9307bb978492dfc012d0127df6628483a383a8f72ca9d",
       "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 20,
+      "hash": "d2c7b62543d3e007126e0ef58d6c7b0d99eaf55d356dc0f6c256a09c45a25907",
+      "published": false
     },
     {
       "component": "sessions",

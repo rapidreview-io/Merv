@@ -395,15 +395,17 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 }
 
 /**
- * sessions@18 (inquiry visits), @19 (their usage rows) and @21 (every inquiry row names its kind,
- * data only) undone, back to the release before them: no inquiries, no session or usage kinds
- * (the live indexes and the usage guard as they were), and messages guarded as sessions@14 left
- * them.
+ * sessions@18 (inquiry visits), @19 (their usage rows), @20 (a thread's delivered conversation)
+ * and @21 (every inquiry row names its kind, data only) undone, back to the release before them:
+ * no inquiries, no session or usage kinds (the live indexes and the usage guard as they were),
+ * and messages guarded as sessions@14 left them.
  */
 export function rewindInquiries(): string {
   const threads = sessionMigrations[14]!;
   const usage = sessionMigrations[4]!;
   return `DELETE FROM component_migrations WHERE component='sessions' AND version=21;
+ALTER TABLE session_threads DROP COLUMN delivered_json;
+DELETE FROM component_migrations WHERE component='sessions' AND version=20;
 ALTER TABLE session_usage DROP COLUMN kind;
 ${usage.slice(usage.indexOf('CREATE OR REPLACE FUNCTION session_usage_write_once_guard'), usage.indexOf('CREATE TRIGGER session_usage_write_once'))}
 DELETE FROM component_migrations WHERE component='sessions' AND version=19;
@@ -436,6 +438,11 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     // workflows@17 (when each lease's worker took it up) came last of all.
     await client.query(`ALTER TABLE wf_leases DROP COLUMN started_at;
 DELETE FROM component_migrations WHERE component='workflows' AND version=17;`);
+    // workflows@16 (a blocker addressed to one actor) came before it; its wider check goes with
+    // the whose column below.
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='workflows' AND version=16",
+    );
     // sessions@18 (inquiry visits) came before it.
     await client.query(rewindInquiries());
     // sessions@17 (a thread may move to the work item that resumed it) came before it; its

@@ -67,6 +67,19 @@ async function fixture(t: TestContext) {
       },
     }),
   );
+  // As Code's plugin does: a session's attach and close open and end its writer generation.
+  await events.subscribe({
+    id: 'code.writers.v1',
+    types: ['session.workspace_attached', 'session.closed'],
+    from: 'now',
+    handle: async (event, tx) =>
+      await core.writers.sessionChanged(
+        event.projectId,
+        event.subjectId,
+        event.type === 'session.workspace_attached' ? 'attached' : 'closed',
+        tx,
+      ),
+  });
   const code = await createService(
     new CodeService(state, scope, sessions, workflows, reviews, core),
   );
@@ -1708,7 +1721,7 @@ test('a context embeds only the newest interruptions, each clipped, and counts t
   assert.ok(!prompt.includes('Interruption 5.'), 'older notes stay with experiment.get_state');
 });
 
-test('a results review whose final capture never landed takes the last admitted commit once its writer is fenced', async (t) => {
+test('a results review whose final capture never landed takes the last admitted commit once its session closed', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();
   const lease = await f.work.lease(experiment);
@@ -1746,18 +1759,9 @@ test('a results review whose final capture never landed takes the last admitted 
   // The machine dies after the submission: it never hands over its final capture.
   t.mock.method(lease.driver, 'capture', async () => null);
   t.mock.method(lease.driver, 'close', async () => {});
+  // Its session's close ended the writer generation at the last admitted commit: no operator.
   await f.work.release(lease);
-  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
-    code: 'experiment_capture_pending',
-  });
-  const principal = await f.scope.members.acceptVerifiedIdentity({
-    issuer: 'https://issuer.example.test',
-    subject: 'operator',
-    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-  });
-  await f.scope.members.adoptProject(principal, f.source.projectId);
-  const human = await f.scope.caller(principal, f.source.projectId);
-  await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
+  await f.events.drain();
   const unit = await f.code.unit(f.source, pending.id);
   assert.equal(unit.writerState, 'closed');
   assert.ok(unit.canonicalHead);
@@ -1858,7 +1862,7 @@ test("a final capture Code admitted is the review's, though the machine died bef
   assert.equal(offered.session.execution.references.code, unit.canonicalHead);
 });
 
-test('a fenced results review whose session admitted no commit reviews the head the fence kept', async (t) => {
+test('a results review whose session admitted no commit reviews the head its branch started from', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();
   const lease = await f.work.lease(experiment);
@@ -1895,21 +1899,12 @@ test('a fenced results review whose session admitted no commit reviews the head 
   // The machine dies after the submission: it never hands over its final capture.
   t.mock.method(lease.driver, 'capture', async () => null);
   t.mock.method(lease.driver, 'close', async () => {});
+  // Its session's close ended the writer generation at the last admitted commit: no operator.
   await f.work.release(lease);
-  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
-    code: 'experiment_capture_pending',
-  });
-  const principal = await f.scope.members.acceptVerifiedIdentity({
-    issuer: 'https://issuer.example.test',
-    subject: 'operator',
-    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-  });
-  await f.scope.members.adoptProject(principal, f.source.projectId);
-  const human = await f.scope.caller(principal, f.source.projectId);
-  await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
+  await f.events.drain();
   const unit = await f.code.unit(f.source, pending.id);
   assert.equal(unit.writerState, 'closed');
-  // Nothing was admitted, so the fence kept the base the unit's branch started from.
+  // Nothing was admitted, so the generation ended at the base the unit's branch started from.
   assert.equal(unit.canonicalHead, null);
   const head = unit.base!.reference;
   const offered = await f.offer(pending, await f.issue('operator'));

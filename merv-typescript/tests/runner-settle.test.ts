@@ -327,6 +327,78 @@ test('a failed writer is released first, then its result is reported and its che
   assert.deepEqual(open(f), []);
 });
 
+test('a writer’s checkout is captured while its session is live, before the release', async (t) => {
+  // A session's close ends its writer generation, and Code admits nothing begun after it.
+  const work = offer('captured', { workspace: checkout });
+  const fake = server(once(work));
+  const f = machine(t, [node('a', 'process.exit(0)')], fake.fetch);
+  const stub = driver(f.root);
+  let releasedAtCapture: number | undefined;
+  const factory: WorkspaceDriverFactory = {
+    name: 'code.v2',
+    create: (host, transport) => {
+      const inner = stub.factory.create(host, transport);
+      return {
+        ...inner,
+        capture: async (launch) => {
+          releasedAtCapture ??= fake.releases(work.id).length;
+          return await inner.capture(launch);
+        },
+      };
+    },
+  };
+  const runner = f.make([factory]);
+  await runner.start();
+  await until(runner, () => fake.releases(work.id).length === 1, 'the release');
+  assert.equal(releasedAtCapture, 0, 'captured before the release');
+  await until(runner, () => open(f).length === 0, 'the settled launch');
+});
+
+test('a running writer asks Code for a checkpoint every few minutes while its checkout holds changes', async (t) => {
+  let now = Date.now();
+  const work = offer('periodic', { workspace: { ...checkout, mode: 'persistent' } });
+  work.execution.policy.tools = [{ name: 'code.commit' }];
+  const fake = server(once(work), undefined, undefined, () => now);
+  const f = machine(t, [node('a', live)], fake.fetch, { clock: () => now });
+  const stub = driver(f.root);
+  let dirty: string | null = null;
+  const factory: WorkspaceDriverFactory = {
+    name: 'code.v2',
+    create: (host, transport) => ({
+      ...stub.factory.create(host, transport),
+      checkpointCommit: async () => assert.fail('the stand-in queues nothing'),
+      pendingCommits: () => [],
+      commitOutcome: () => null,
+      acknowledgeCommit: () => {},
+      checkpointHead: async () => dirty,
+    }),
+  };
+  const runner = f.make([factory]);
+  await runner.start();
+  await running(runner);
+  fake.sessions.get(work.id)!.status = 'active';
+  const asked = () =>
+    fake.calls
+      .filter((call) => call.path === '/code/commands/next' && call.body?.checkpoint)
+      .map((call) => call.body!.checkpoint);
+  await runner.tick();
+  dirty = '2'.repeat(40);
+  await runner.tick();
+  assert.deepEqual(asked(), [], 'not before its interval');
+  now += 5 * 60_000;
+  dirty = null;
+  await runner.tick();
+  assert.deepEqual(asked(), [], 'a clean checkout is not committed');
+  now += 5 * 60_000;
+  dirty = '2'.repeat(40);
+  await runner.tick();
+  await runner.tick();
+  assert.deepEqual(asked(), [{ expectedHead: '2'.repeat(40), requestId: 'checkpoint-1' }]);
+  now += 5 * 60_000;
+  await runner.tick();
+  assert.deepEqual(asked().at(-1), { expectedHead: '2'.repeat(40), requestId: 'checkpoint-2' });
+});
+
 test('a workspace result refused for good is recorded once and the checkout still closes', async (t) => {
   const work = offer('conflict', { workspace: checkout });
   const fake = server(once(work), undefined, (path) =>

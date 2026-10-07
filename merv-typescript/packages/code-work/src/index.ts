@@ -36,14 +36,6 @@ export const codePlugin = {
         from: 'now',
         handle: async (event, tx) => await service.transitioned(event, tx),
       });
-      // A rented machine that is gone for good ends the writer generation it owed a capture.
-      yield await ctx.domainEvents.subscribe({
-        id: 'code.writers.machine-gone.v1',
-        types: ['session.machine_gone'],
-        from: 'now',
-        handle: async (event, tx) =>
-          await service.machineGone(event.projectId, event.subjectId, tx),
-      });
       await service.reconcileAll();
       yield ctx.provide('codeWork', service);
     });

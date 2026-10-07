@@ -26,6 +26,7 @@ import type {
   ManagedBoundSession,
   ManagedRunnerInspection,
   ManagedBindingRow,
+  ManagedModelWait,
 } from './managed-types.js';
 import {
   capabilitiesSchema as capabilities,
@@ -73,8 +74,10 @@ const enrollment = z
 
 /** A hosted machine, a work host's reuse included, waits this long for a transcript its runner
  *  declared before its release, capture and upload included: a runner that gives up on one
- *  cannot say so. */
-const transcriptGraceMs = 30 * 60_000;
+ *  cannot say so. A closed visit's workspace capture is waited for as long, from the close: a
+ *  runner that died on a live machine sends none, and its host is then let go (Fleet stops it
+ *  and rents another) instead of covering its work until its day is out. */
+const captureGraceMs = 30 * 60_000;
 
 /** A managed runner supervises its bound execution through its own routes: it uses no tool. */
 export const managedRunnerRules: CallerRules = {
@@ -363,27 +366,6 @@ export class ManagedRunnerBindings {
       await this.current(row, tx);
       return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
     });
-  }
-  /** This allocation's machine is gone for good: each session that ran on it is told so
-   *  (session.machine_gone), so whatever waits on a handover from that machine stops waiting. */
-  async machineGone(allocationId: string, tx: Transaction): Promise<void> {
-    this.available();
-    this.state.assertTransaction(tx);
-    for (const row of await tx.all<{ id: string; project_id: string }>(
-      `SELECT id,project_id FROM worker_sessions WHERE id IN (
-         SELECT bound_session_id FROM session_managed_runners WHERE allocation_id=? AND bound_session_id IS NOT NULL
-         UNION SELECT session_id FROM session_managed_assignments WHERE allocation_id=?)
-       ORDER BY id`,
-      allocationId,
-      allocationId,
-    ))
-      await this.state.appendEvent(tx, {
-        projectId: row.project_id,
-        actorId: 'system:sessions',
-        type: 'session.machine_gone',
-        subjectId: row.id,
-        data: { sessionId: row.id, allocationId },
-      });
   }
   /** The session a managed runner holds, by its bearer or, when a relay checks again, its id:
    *  live, or closed by its own handoff, which says when so Fleet may honour a closing turn.
@@ -727,14 +709,26 @@ export class ManagedRunnerBindings {
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
     return await this.validator.retired(this.identity(row), tx);
   }
-  /** When the machine's person has no model tokens left today, the moment that ends; else null. */
-  async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<{ resetsAt: string } | null> {
+  /** When the machine's person has no model tokens left today, the validator's wait; else null. */
+  async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<ManagedModelWait | null> {
     return (await this.validator?.modelBudget?.(this.identity(row), tx)) ?? null;
   }
   /** The same, of the machine a session ran on; null for a session no machine of Fleet's ran. */
-  async sessionModelWait(sessionId: string, tx: Transaction): Promise<{ resetsAt: string } | null> {
+  async sessionModelWait(sessionId: string, tx: Transaction): Promise<ManagedModelWait | null> {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     return row ? await this.modelWait(row, tx) : null;
+  }
+  /** Whether the relay failed the calls of a visit a machine of the validator's ran. */
+  async relayFault(session: Session, tx: Transaction): Promise<boolean> {
+    const row = await tx.get<ManagedBindingRow>(boundTo, session.id, session.id);
+    return (
+      !!row &&
+      !!(await this.validator?.relayFault?.(
+        this.identity(row),
+        { sessionId: session.id, since: session.createdAt },
+        tx,
+      ))
+    );
   }
   async inspect(
     allocationId: string,
@@ -799,8 +793,11 @@ export class ManagedRunnerBindings {
           outcome: session.outcome ?? null,
           releaseAcknowledged: row.runner_released_at !== null,
           capturePending:
-            (!!workspace && workspace.result_json === null && !disposableReview) ||
-            (!!owed && this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs),
+            (!!workspace &&
+              workspace.result_json === null &&
+              !disposableReview &&
+              !(this.clock() - Date.parse(session.closedAt ?? '') >= captureGraceMs)) ||
+            (!!owed && this.clock() - Date.parse(owed.declared_at) < captureGraceMs),
         },
       };
     };

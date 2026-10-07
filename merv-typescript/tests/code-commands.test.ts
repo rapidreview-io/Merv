@@ -336,6 +336,45 @@ test('requests and dispatch are durable, detached, single outstanding and replay
   assert.equal(f.builds, beforeBuilds);
 });
 
+test('a runner asks for a periodic checkpoint: one command at the head it names, never beside an outstanding one', async (t) => {
+  // A writer generation ends with its session, so what a visit has not had admitted is lost
+  // with its machine: the runner commits the checkout every few minutes, as the agent would.
+  const f = await fixture(t),
+    worker = await f.ready();
+  const asked = (requestId: string, expectedHead = oid('a')) =>
+    f.code.nextCommand(f.source, { ...worker.control, checkpoint: { expectedHead, requestId } });
+  const checkpoint = (await asked('checkpoint-1'))!;
+  assert.deepEqual(
+    [checkpoint.actorId, checkpoint.expectedHead, checkpoint.message],
+    [worker.caller.actorId, oid('a'), 'merv: checkpoint'],
+  );
+  // A lost reply asks again: the same command, already dispatched.
+  assert.deepEqual(await asked('checkpoint-1'), checkpoint);
+  // While it is outstanding the agent's own commit waits, and no second checkpoint is made.
+  await assert.rejects(async () => await f.code.commit(worker.caller, input()), {
+    code: 'code_command_pending',
+  });
+  assert.deepEqual(await asked('checkpoint-2'), checkpoint);
+  await f.code.completeCommand(f.source, {
+    ...worker.control,
+    commandId: checkpoint.id,
+    receipt: receipt(checkpoint),
+  });
+  // A request already answered is not made again; the next one is.
+  assert.equal(await asked('checkpoint-1'), null);
+  assert.equal((await asked('checkpoint-3', oid('b')))!.expectedHead, oid('b'));
+  // An agent's own commit outstanding: the runner performs that instead.
+  const scratch = await f.ready();
+  const own = await f.code.commit(scratch.caller, input());
+  assert.deepEqual(
+    await f.code.nextCommand(f.source, {
+      ...scratch.control,
+      checkpoint: { expectedHead: oid('a'), requestId: 'checkpoint-1' },
+    }),
+    { ...own.command },
+  );
+});
+
 test('commit enforces active attached writable fixed authority, including direct service bindings', async (t) => {
   for (const [options, code] of [
     [{ readOnly: true }, 'code_read_only'],

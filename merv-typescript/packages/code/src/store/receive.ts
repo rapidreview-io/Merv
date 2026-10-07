@@ -244,7 +244,7 @@ export class CodeReceiver {
       this.core.managedSession(caller, input.sessionId);
       const previous = await journal(tx).previous<OperationRow>(columns);
       if (previous) return previous.id;
-      await this.core.hooks.fenced(tx, fence, input.kind);
+      await this.core.hooks.fenced(tx, fence, input.kind, true);
       const open = await tx.all<OperationRow>(
         `SELECT ${columns} FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'`,
         caller.projectId,

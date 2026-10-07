@@ -447,12 +447,15 @@ const answers = (
   whose: WorkflowProvidedBlocker['whose'],
   owner: boolean,
   reader: { admin?: boolean; person?: boolean },
+  actorId: string,
 ) =>
-  whose === 'owner'
-    ? owner || !!reader.admin
-    : whose === 'admin'
-      ? !!reader.admin
-      : whose === 'operator' && !!reader.admin && !!reader.person;
+  whose?.startsWith('actor:')
+    ? whose === `actor:${actorId}`
+    : whose === 'owner'
+      ? owner || !!reader.admin
+      : whose === 'admin'
+        ? !!reader.admin
+        : whose === 'operator' && !!reader.admin && !!reader.person;
 
 /**
  * Whether a record is the reading caller's own move. A blocker another plugin published that
@@ -488,7 +491,7 @@ export function yoursOf(
 ): WorkflowDecision['yours'] {
   // A blocker another plugin published says whose move ending it is, even on ended work.
   const published = decision.providerBlockers.find((blocker) =>
-    answers(blocker.whose, !!owner && owner.actorId === actorId, reader),
+    answers(blocker.whose, !!owner && owner.actorId === actorId, reader, actorId),
   );
   if (published)
     return {

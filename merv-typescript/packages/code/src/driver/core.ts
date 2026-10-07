@@ -330,6 +330,14 @@ export abstract class DriverCore {
     );
   }
 
+  /** The commit a launch's final capture built, whether or not Code admitted it. */
+  protected finalTarget(row: WorkspaceRow): string | null {
+    const transfer = this.db
+      .prepare("SELECT target_oid FROM code_v2_transfers WHERE launch_id=? AND kind='final'")
+      .get(row.launch_id) as { target_oid: string | null } | undefined;
+    return transfer?.target_oid ?? null;
+  }
+
   protected priorCaptureRefused(row: WorkspaceRow): boolean {
     const transfer = this.db
       .prepare(

@@ -4,7 +4,7 @@ import { dailyTokens, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
-import type { ManagedModelGrant, ModelRelayConfig } from './types.js';
+import type { ManagedModelGrant, ModelRelayConfig, ModelRelayFailure } from './types.js';
 
 /** Hosted Codex's grant of the model for a session its runner holds: while the session is live,
  *  or within Codex's grace after its own handoff, charged to `person`. Sessions held the machine
@@ -184,6 +184,50 @@ export async function setDailyTokens(state: State, person: string, tokens: numbe
 }
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
 
+/** How long after a relay fault a visit's failed close is put down to it. Codex gives up on a
+ *  call after about 6 s of retries, and its runner releases the visit once Main answers. */
+const relayFaultMs = 15 * 60_000;
+/** A call's end that is the relay's or its provider's, not the visit's: an outage or a stream
+ *  cut short, the relay unable to judge or busy, or Main shutting down. A provider's refusal of
+ *  the request itself (any other 4xx) is the visit's. */
+const relayFault = (record: ModelRelayFailure) =>
+  ['upstream_failed', 'relay_unavailable', 'relay_timeout', 'relay_busy'].includes(record.code) &&
+  !(
+    record.upstreamHttpStatus !== undefined &&
+    record.upstreamHttpStatus >= 400 &&
+    record.upstreamHttpStatus < 500 &&
+    ![408, 429].includes(record.upstreamHttpStatus)
+  );
+const fault = (sql: Sql, subject: string, code: string, at: string) =>
+  sql.run(
+    'INSERT INTO fleet_relay_faults(subject,code,at) VALUES(?,?,?) ON CONFLICT(subject) DO UPDATE SET code=excluded.code,at=excluded.at',
+    subject,
+    code,
+    at,
+  );
+/** Main (and its relay) started: every visit live before now lost its calls in flight. Faults
+ *  past their window are let go here. */
+export async function markRelayStart(state: State): Promise<void> {
+  const at = new Date().toISOString();
+  await state.transaction(async (tx) => {
+    await tx.run(
+      'DELETE FROM fleet_relay_faults WHERE at<?',
+      new Date(Date.now() - relayFaultMs).toISOString(),
+    );
+    await fault(tx, '*', 'main_restarted', at);
+  });
+}
+/** Whether the relay failed a visit that started at `since` lately: one of its calls, or Main
+ *  restarting while it was live. */
+export async function relayFaulted(sql: Sql, sessionId: string, since: string, now = Date.now()) {
+  return !!(await sql.get(
+    "SELECT 1 FROM fleet_relay_faults WHERE subject IN (?,'*') AND at>=? AND at>?",
+    sessionId,
+    since,
+    new Date(now - relayFaultMs).toISOString(),
+  ));
+}
+
 /**
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
  * provider key. Each session has one call in flight. A call is charged to its person's day before
@@ -219,19 +263,16 @@ export function codexModelRelay(
       const refused = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         if (!(await ledger.charge(tx, grant.person, today, most, limit))) {
+          // The day's largest refusal stands until the reset or a raised limit funds it: a
+          // smaller call that still passes leaves the refused visit waiting.
           await tx.run(
-            'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=excluded.required_tokens',
+            'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=GREATEST(fleet_model_blockers.required_tokens,excluded.required_tokens)',
             grant.person,
             today,
             most,
           );
           return 'ceiling';
         }
-        await tx.run(
-          'DELETE FROM fleet_model_blockers WHERE person=? AND day=?',
-          grant.person,
-          today,
-        );
         if (
           grant.tokenBudget !== undefined &&
           !(await grantLedger.charge(tx, [grant.id], most, grant.tokenBudget))
@@ -268,7 +309,12 @@ export function codexModelRelay(
     totalTimeoutMs: 15 * 60_000,
     // A second, in-memory bound: a step's calls, far beyond what one takes.
     maxRequestsPerGrant: 1000,
-    onFailure: log,
+    // The relay's own fault is said of the visit, so Sessions does not count its close.
+    onFailure: async (record, grant) => {
+      log(record);
+      if (relayFault(record))
+        await state.transaction((tx) => fault(tx, grant.id, record.code, new Date().toISOString()));
+    },
     onTerminal: log,
     // Settles the day the call was charged to, even past midnight.
     onUsage: async (record, grant, reserved) => {

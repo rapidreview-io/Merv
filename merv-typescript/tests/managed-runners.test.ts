@@ -14,6 +14,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import type { ManagedModelWait } from '@merv/sessions/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -248,7 +249,8 @@ async function fixture(
     admits = true,
     retired = false,
     huggingFace = true,
-    modelBudget: { resetsAt: string } | null = null;
+    relayFault = false,
+    modelBudget: ManagedModelWait | null = null;
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
@@ -256,6 +258,7 @@ async function fixture(
     retired: async () => retired,
     huggingFace: () => huggingFace,
     modelBudget: async () => modelBudget,
+    relayFault: async () => relayFault,
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -332,8 +335,12 @@ async function fixture(
     huggingFace: (value: boolean) => {
       huggingFace = value;
     },
+    /** Whether Fleet's relay failed the visit's model calls (an outage, a Main restart). */
+    relayFault: (value: boolean) => {
+      relayFault = value;
+    },
     /** The person's model budget as Fleet reports it: when it resets while spent, else null. */
-    modelBudget: (value: { resetsAt: string } | null) => {
+    modelBudget: (value: ManagedModelWait | null) => {
       modelBudget = value;
     },
     workflows,
@@ -731,6 +738,14 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const resetsAt = '2099-01-02T00:00:00.000Z';
+  // Fleet's words, to the person whose limit it is: Sessions says the wait, and words none of it.
+  const wait = {
+    resetsAt,
+    message: 'Your daily Fleet model tokens are used up; this work resumes at 2099-01-02 00:00 UTC',
+    next: 'Raise your Fleet daily token limit in Settings, or wait until 2099-01-02 00:00 UTC',
+    whose: `actor:${f.source.actorId}` as const,
+    related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
+  };
   const blockers = () => f.workflows.blockers(f.owner, f.workTarget.id);
   // Codex exits 1 the moment the relay refuses its call (403 fleet_model_ceiling): more often
   // than the launches a hold allows, and none of them is the work's failure.
@@ -738,7 +753,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     f.modelBudget(null);
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
     assert.ok(bound, `visit ${visit} is offered`);
-    f.modelBudget({ resetsAt });
+    f.modelBudget(wait);
     await f.sessions.release(f.caller, {
       sessionId: bound.id,
       runnerId: f.runnerId,
@@ -759,11 +774,10 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   const [waiting, ...others] = await blockers();
   assert.deepEqual(others, []);
   assert.equal(waiting?.code, 'model_budget_exhausted');
-  assert.equal(
-    waiting?.message,
-    'Daily model tokens used up; resumes at 00:00 UTC or raise your limit',
+  assert.deepEqual(
+    [waiting?.message, waiting?.next, waiting?.whose, waiting?.related],
+    [wait.message, wait.next, wait.whose, wait.related],
   );
-  assert.equal(waiting?.whose, 'operator');
   // The machine takes no new work while the person's day stays spent.
   assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,
@@ -782,6 +796,51 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     outcome: 'crash_loop',
   });
   assert.equal((await f.sessions.get(f.source, resumed!.id)).outcome, 'crash_loop');
+});
+
+test('a visit the model relay failed counts against nothing and is offered again after the backoff', async (t) => {
+  // Audit 15: a Main release or a relay or provider outage cuts a hosted Codex call, Codex exits
+  // 1, and five such closes held the work for an operator.
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  for (let visit = 0; visit < 6; visit++) {
+    f.relayFault(false);
+    await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+    const leased = await f.sessions.dispatch.lease(f.caller, f.lease());
+    const bound = leased.session;
+    assert.ok(bound, `visit ${visit} is offered: ${leased.reason}`);
+    f.relayFault(true);
+    await f.sessions.release(f.caller, {
+      sessionId: bound.id,
+      runnerId: f.runnerId,
+      outcome: visit % 2 ? 'host_failed' : 'crash_loop',
+      reason: 'local_process_exit_code_1',
+    });
+    const closed = await f.sessions.get(f.source, bound.id);
+    assert.equal(closed.outcome, 'model_interrupted');
+    // Promptly, but not at once: the backoff spaces the visits while the relay recovers.
+    assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).session, null);
+    now += 31_000;
+  }
+  const hold = await f.state.read((sql) =>
+    sql.get<{ attempts: number }>(
+      'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+      f.workTarget.id,
+    ),
+  );
+  assert.equal(Number(hold?.attempts ?? 0), 0, 'a relay fault is no failed launch');
+  // A failure while the relay is sound is the work's own, and counts.
+  f.relayFault(false);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  const sound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  await f.sessions.release(f.caller, {
+    sessionId: sound.id,
+    runnerId: f.runnerId,
+    outcome: 'crash_loop',
+  });
+  assert.equal((await f.sessions.get(f.source, sound.id)).outcome, 'crash_loop');
 });
 
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {
@@ -950,6 +1009,47 @@ test('managed inspection does not hold a released disposable read-only checkout 
       assert.equal(inspected?.capturePending, mode === 'retained');
     });
   }
+});
+
+test('a work host whose runner died stops wanting its capture thirty minutes after the visit closed', async (t) => {
+  // Audit 15 (robust-capture): the workspace clause had no bound, so a host whose runner died
+  // while its machine stayed up was kept running, covering its item, until its day was out.
+  let now = Date.now();
+  const f = await fixture(t, { reviewWorkspace: 'retained', clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const request = f.lease();
+  const leased = await f.sessions.dispatch.lease(f.caller, request);
+  const session = leased.session!;
+  assert.ok(session, leased.reason);
+  await f.sessions.attach(f.caller, {
+    sessionId: session.id,
+    runnerId: f.runnerId,
+    hostRef: 'launch-managed',
+    workspace: {
+      repositoryId: 'repository-managed',
+      workspaceId: 'workspace-managed',
+      mode: 'persistent',
+      branch: 'merv/review/managed',
+      baseOid: 'a'.repeat(40),
+      headOid: 'a'.repeat(40),
+      stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+    },
+  });
+  await f.sessions.authenticate(request.secret);
+  const inspect = async () => (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
+  // The runner dies here: no heartbeat, no release, no workspace result ever again.
+  now += 20 * 3_600_000;
+  await f.sessions.sweep();
+  const expired = await inspect();
+  assert.deepEqual(
+    [expired?.status, expired?.releaseAcknowledged, expired?.capturePending],
+    ['expired', false, true],
+  );
+  now += 30 * 60_000 - 1;
+  assert.equal((await inspect())?.capturePending, true);
+  now += 1;
+  assert.equal((await inspect())?.capturePending, false);
 });
 
 test('managed inspection holds a released session for its declared transcript for thirty minutes', async (t) => {
@@ -1856,24 +1956,4 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     () => f.sessions.launchConnections(successor, prior),
   ])
     await assert.rejects(action(), { code: 'session_forbidden' });
-});
-
-test('a machine gone for good is told to each session that ran on it, and to no other', async (t) => {
-  const f = await fixture(t);
-  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
-  assert.ok(bound);
-  const told = async () =>
-    await f.state.read((sql) =>
-      sql.all<{ project_id: string; subject_id: string; allocation: string }>(
-        "SELECT project_id,subject_id,data_json::jsonb->>'allocationId' AS allocation FROM events WHERE type='session.machine_gone' ORDER BY id",
-      ),
-    );
-  await f.state.transaction((tx) => f.sessions.managed.machineGone('flt_other', tx));
-  assert.deepEqual(await told(), []);
-  await f.state.transaction((tx) => f.sessions.managed.machineGone(f.input.allocationId, tx));
-  assert.deepEqual(await told(), [
-    { project_id: bound.projectId, subject_id: bound.id, allocation: f.input.allocationId },
-  ]);
 });

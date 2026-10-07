@@ -123,10 +123,22 @@ export const grantTokensMigration = {
     tokens BIGINT NOT NULL CHECK (tokens >= 0)
   );`,
 };
+/** The relay's own faults, by session (or `*` for Main's restart), so a visit they cut is not
+ *  counted as its work's failure. A new table: no prod count. */
+export const relayFaultsMigration = {
+  version: 6,
+  sql: `CREATE TABLE fleet_relay_faults (
+    subject TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX fleet_relay_faults_at ON fleet_relay_faults(at);`,
+};
 export const modelMigrations = [
   usageMigration,
   limitsMigration,
   blockerMigration,
   workflowRetryMigration,
   grantTokensMigration,
+  relayFaultsMigration,
 ];

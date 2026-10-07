@@ -75,7 +75,9 @@ export async function replaceBlockers(
         text(item.message, 4000) &&
         text(item.next, 4000) &&
         (item.cause === undefined || text(item.cause, 100)) &&
-        (item.whose === undefined || WHOSE.includes(item.whose)) &&
+        (item.whose === undefined ||
+          WHOSE.includes(item.whose) ||
+          /^actor:\S{1,200}$/.test(item.whose)) &&
         (item.revision === undefined ||
           (Number.isSafeInteger(item.revision) && item.revision >= 0)) &&
         Number.isInteger(item.status) &&
