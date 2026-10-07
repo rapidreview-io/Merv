@@ -116,9 +116,10 @@ test('domain migrations are PostgreSQL without SQLite constructs', () => {
   );
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
+    // PostgreSQL's own json_each is named with its schema, so it never reads as SQLite's.
     assert.doesNotMatch(
       migration.postgres,
-      /RAISE\(ABORT|\bAUTOINCREMENT\b|\bCOLLATE NOCASE\b|\bjson_extract\s*\(|\bjson_each\s*\(|\bjson_valid\s*\(|\bPRAGMA\b/,
+      /RAISE\(ABORT|\bAUTOINCREMENT\b|\bCOLLATE NOCASE\b|\bjson_extract\s*\(|(?<!pg_catalog\.)\bjson_each\s*\(|\bjson_valid\s*\(|\bPRAGMA\b/,
     );
   }
 });

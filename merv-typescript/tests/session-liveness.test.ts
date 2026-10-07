@@ -1398,3 +1398,34 @@ test('the stuck report, the status read and the Running board agree on why work 
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
   assert.deepEqual(await views(f, 'off again'), ['work_deferred', 'dispatch_disabled']);
 });
+
+test('switching dispatch off and on withdraws every hold’s blocker, and a boot withdraws one left behind', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  await f.fail();
+  await f.pastBackoff();
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retries_exhausted');
+  const codes = async () =>
+    (await f.workflows.blockers(f.owner, target.id)).map((blocker) => blocker.code);
+  assert.deepEqual(await codes(), ['launch_held']);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  assert.deepEqual(await codes(), []);
+  assert.equal((await f.workflows.evaluate(f.owner, target.id)).yours, undefined);
+
+  // A reset made before this fix left its blocker: the next boot withdraws it.
+  await f.fail();
+  await f.pastBackoff();
+  assert.deepEqual(await codes(), ['launch_held']);
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
+        f.owner.projectId,
+      ),
+  );
+  await f.upgrade();
+  assert.deepEqual(await codes(), []);
+});

@@ -258,7 +258,7 @@ ALTER TABLE wf_leases ADD COLUMN receipt_digest TEXT;
 CREATE FUNCTION wf_receipt_canonical(v json) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $merv$
 BEGIN
   RETURN CASE json_typeof(v)
-    WHEN 'object' THEN '{' || COALESCE((SELECT string_agg(to_json(k)::text || ':' || wf_receipt_canonical(v -> k), ',' ORDER BY k COLLATE "C") FROM json_object_keys(v) k), '') || '}'
+    WHEN 'object' THEN '{' || COALESCE((SELECT string_agg(to_json(e.key)::text || ':' || wf_receipt_canonical(e.value), ',' ORDER BY e.key COLLATE "C") FROM pg_catalog.json_each(v) e), '') || '}'
     WHEN 'array' THEN '[' || COALESCE((SELECT string_agg(wf_receipt_canonical(a.value), ',' ORDER BY a.n) FROM json_array_elements(v) WITH ORDINALITY a(value, n)), '') || ']'
     ELSE v::text END;
 END $merv$;

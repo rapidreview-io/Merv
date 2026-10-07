@@ -544,3 +544,99 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
     before(rows, adas, { id: ada.actorId, role: 'reviewer' }, { submit: ASK }),
   );
 });
+
+test('an agent’s question is its work owner’s card and an operator’s, and no wait of Code’s hides it', () => {
+  const rows = [
+    {
+      id: 'tasks',
+      label: 'Tasks',
+      group: 'hidden',
+      order: 1,
+      path: '/tasks',
+      workflow: 'task',
+      view: { kind: 'tasks' },
+      status: {},
+      readable: true,
+      needs: { name: 'title', owner: 'producerId' },
+    },
+  ];
+  const at = '2026-10-06T00:00:00.000Z';
+  const question = {
+    provider: 'session-question',
+    key: 'thr_1',
+    code: 'agent_question',
+    message: 'Its agent asked its owner: which dataset?',
+    next: 'Answer with session.message',
+    since: at,
+    status: 409,
+    whose: 'owner',
+  };
+  const base = {
+    provider: 'code',
+    key: 'base',
+    code: 'code_base_pending',
+    message: 'base',
+    next: 'wait',
+    since: at,
+    status: 409,
+  };
+  const gate = (yours?: { ask: string }) => ({
+    instanceId: 't1',
+    terminal: false,
+    workStart: null,
+    nextAction: null,
+    actions: [],
+    blockers: [{ code: 'agent_question', message: question.message, status: 409 }],
+    providerBlockers: [question, base],
+    dependencies: [],
+    instruction: '',
+    currentGate: 'agent_question',
+    ...(yours ? { yours } : {}),
+  });
+  const home = (yours?: { ask: string }, code: unknown[] | null = null) => ({
+    tasks: [
+      {
+        id: 't1',
+        title: 'T1',
+        producerId: 'actor_producer',
+        workflow: { state: 'in_progress', updatedAt: at, revision: 1 },
+      },
+    ],
+    reviews: [],
+    workflows: { workflows: [gate(yours)] },
+    sessions: [
+      {
+        instanceId: 't1',
+        provider: 'session-question',
+        key: 'thr_1',
+        move: { sentence: 'Answer its agent’s question', who: 'x', whose: 'owner' },
+      },
+    ],
+    code,
+  });
+  const show = (data: unknown, viewer: object) =>
+    needsYou(rows as never, data as never, viewer as never, () => undefined).map(
+      (line) => line.sentence,
+    );
+  const operator = { id: 'actor_op', role: 'operator', signedIn: true };
+  const ownersGate = { ask: question.next };
+  assert.deepEqual(show(home(), operator), ['Answer its agent’s question']);
+  assert.deepEqual(
+    show(home(ownersGate), { id: 'actor_producer', role: 'producer', signedIn: true }),
+    ['Answer its agent’s question'],
+  );
+  assert.deepEqual(show(home(), { id: 'actor_other', role: 'producer', signedIn: true }), []);
+  const nobody = [
+    {
+      instanceId: 't1',
+      provider: 'code',
+      key: 'base',
+      move: { sentence: 'Nothing to do', who: '', whose: 'nobody' },
+    },
+  ];
+  assert.deepEqual(show(home(undefined, nobody), operator), ['Answer its agent’s question']);
+  assert.deepEqual(
+    show(home(ownersGate, nobody), { id: 'actor_producer', role: 'producer', signedIn: true }),
+    ['Answer its agent’s question'],
+  );
+});

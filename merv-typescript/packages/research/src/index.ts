@@ -303,6 +303,28 @@ export class ResearchService implements Research {
             },
             tx,
           );
+        } else if (!caller.session) {
+          // A cycle its owner starts by hand without naming one answers the latest run that
+          // stopped for that owner all the same; anyone else's cycle leaves the decision theirs.
+          const asked = (await this.workflows.blockers(caller, undefined, tx))
+            .filter((item) => item.provider === AUTOMATIC_PROVIDER)
+            .filter((item) => item.code === 'research_needs_owner')
+            .at(-1);
+          const ended = asked && (await this.get(caller, asked.instanceId, tx));
+          if (
+            ended &&
+            (caller.actorId === ended.ownerId ||
+              (await this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)))
+          )
+            await this.workflows.replaceBlockers(
+              {
+                projectId: caller.projectId,
+                instanceId: ended.id,
+                provider: AUTOMATIC_PROVIDER,
+                blockers: [],
+              },
+              tx,
+            );
         }
         return await begin(this, caller, input, 'create', null, tx);
       });

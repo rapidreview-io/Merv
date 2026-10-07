@@ -495,6 +495,36 @@ test('a run whose plan stops for its owner says so on the ended cycle until a cy
   );
 });
 
+test('a cycle its owner starts by hand, naming none it follows, answers the latest run that stopped for them', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const input = await f.task();
+  const first = await f.create([input.id], { maxCycles: 5 });
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  await f.approve(first.id, {
+    ...stop,
+    next: { decision: 'stop', reason: 'needs_owner', rationale: 'Choose a dataset.' },
+  });
+  const asked = async () => (await f.research.get(f.owner, first.id)).automation!.blocker?.code;
+  assert.equal(await asked(), 'research_needs_owner');
+  // A writer who is not its owner starts a cycle: the owner's decision is still theirs.
+  const writer = await f.issue('producer');
+  await f.research.create(writer, { name: 'Unrelated', requestId: f.id() });
+  assert.equal(await asked(), 'research_needs_owner');
+  // The New cycle form, as the owner sends it without naming the ended cycle.
+  await f.research.create(f.owner, { name: 'Chosen dataset', requestId: f.id() });
+  assert.equal(await asked(), undefined);
+  assert.equal(
+    (await f.app.ctx.workflows.overview(f.owner, undefined, { open: true })).workflows.some(
+      (item) => item.instanceId === first.id,
+    ),
+    false,
+  );
+});
+
 test('two automatic waves preserve dependencies and lineage, then stop at the configured cycle limit', async (t) => {
   const f = await fixture(t);
   await f.define();

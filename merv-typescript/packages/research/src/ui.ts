@@ -86,6 +86,8 @@ export const researchUiPlugin = {
             'reflectionId',
             'automation',
             'writable',
+            // An ended cycle nothing follows yet is the one a new cycle started beside it follows.
+            'successorId',
           ],
         },
         // A cycle stops on its own wave or consolidation, declared after the work it reflects

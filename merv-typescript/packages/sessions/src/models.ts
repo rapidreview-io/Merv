@@ -330,6 +330,8 @@ export interface ThreadConversation {
      */
     from: 'stream' | 'transcript' | 'none' | 'live' | 'unavailable';
     events: AgentStreamEvent[];
+    /** Set when a transcript's end was read only to its bound, so older events were never read. */
+    truncated?: true;
   }[];
 }
 
@@ -382,7 +384,8 @@ export interface QuestionMove {
   move: {
     sentence: string;
     who: string;
-    whose: 'operator';
+    /** The work item's owner, and any operator. */
+    whose: 'owner';
     /** No page here answers yet: the reader answers with session.message to the thread. */
     control?: { label: string; to: string };
   };

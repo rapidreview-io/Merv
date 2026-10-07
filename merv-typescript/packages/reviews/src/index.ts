@@ -3,7 +3,7 @@ import {
   excludedFromReview,
   NOT_INDEPENDENT,
   REVIEW_VERDICTS,
-  ROUNDS_USED,
+  roundsUsed,
   standings,
 } from './rules.js';
 import { canonical, visible, isDirectHuman } from '@merv/contracts';
@@ -299,7 +299,7 @@ export class ReviewService implements Reviews {
         ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
         ...(open ? { verdicts: REVIEW_VERDICTS.filter((verdict) => open.includes(verdict)) } : {}),
         // needs_changes is ruled out only where the owner's rounds are used up.
-        ...(open && !open.includes('needs_changes') ? { limit: ROUNDS_USED } : {}),
+        ...(open && !open.includes('needs_changes') ? { limit: roundsUsed(open) } : {}),
         // Deciding as owner lifts Reviews' own independence rule, and what the owner says it lifts.
         ...(review.overridable ? { overrides: [NOT_INDEPENDENT[0], ...overrides] } : {}),
         ...(gate === undefined ? {} : { gate }),

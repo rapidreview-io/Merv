@@ -1,4 +1,3 @@
-import { ROUNDS_USED } from '@merv/reviews/rules';
 import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
 import { currentTask } from './fixtures/current-work.js';
 import { currentExperiment } from './fixtures/current-experiment.js';
@@ -946,7 +945,10 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   );
   // The desk offers only what the engine takes: a pass, and nowhere to return the wave.
   const desk = await f.app.ctx.reviews.guide(reviewer, wave.review!.id);
-  assert.deepEqual([desk.verdicts, desk.returns, desk.limit], [['pass'], undefined, ROUNDS_USED]);
+  assert.deepEqual(
+    [desk.verdicts, desk.returns, desk.limit],
+    [['pass'], undefined, 'Every review round is used: pass it, or an admin allows another round.'],
+  );
   const instances = (await f.app.ctx.workflows.list(f.owner)).length;
   for (const returnTo of ['reflecting', 'synthesizing'])
     await assert.rejects(async () => await f.verdict(wave, reviewer, false, returnTo), {

@@ -10,10 +10,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Blobs, Caller, Scope, State, WorkflowPolicy } from '@merv/contracts';
+import {
+  MervError,
+  type Blobs,
+  type Caller,
+  type Scope,
+  type State,
+  type WorkflowPolicy,
+} from '@merv/contracts';
 import { excludedFromReview } from '@merv/reviews/rules';
 import { MachineRunner } from '@merv/runner';
-import { dormantMs, SessionThreads } from '../packages/sessions/src/threads.js';
+import { dormantMs, SessionThreads, transcriptEvents } from '../packages/sessions/src/threads.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 import type {
@@ -1041,6 +1048,7 @@ async function converse(
       controlled: async () => assert.fail(),
       readable: async () => assert.fail(),
       stream: async (id) => (streamed.push(id), streams[id] ?? []),
+      ended: async () => new Set<string>(),
       available: () => {},
     },
   );
@@ -1052,10 +1060,8 @@ async function converse(
       return { url: `https://blobs.test/${hash}`, expiresAt: '' };
     },
   } as unknown as Blobs;
+  // Restored as the read returns, not after the test: a test may converse more than once.
   const fetching = globalThis.fetch;
-  t.after(() => {
-    globalThis.fetch = fetching;
-  });
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     const bytes = stored[String(url).split('/').at(-1)!];
     if (!bytes) return new Response('missing', { status: 404 });
@@ -1070,6 +1076,7 @@ async function converse(
     return { out, gets, streamed, parsed };
   } finally {
     JSON.parse = parse;
+    globalThis.fetch = fetching;
   }
 }
 /** Codex lines of one answer each, padded: `count` of them, ids `${name}0`… */
@@ -1190,4 +1197,63 @@ test('a conversation read parses only the newest transcripts, from their end, to
     ['ses_b', 'transcript', 300, 'b100', 'b399'],
     ['ses_c', 'transcript', 200, 'c0', 'c199'],
   ]);
+});
+
+test('a transcript whose end holds few events is read to 16 MB at most, and its visit says it was cut', async (t) => {
+  // Lines no reader takes, 40 MB of them, then three answers.
+  const noise = `${JSON.stringify({ type: 'noise', pad: 'x'.repeat(1000) })}\n`;
+  const bytes = Buffer.concat([
+    Buffer.from(noise.repeat(Math.ceil(40_000_000 / noise.length))),
+    codexTranscript('a', 3),
+  ]);
+  const starts: number[] = [];
+  const read = await transcriptEvents(
+    async (start) => (starts.push(start), bytes.subarray(start)),
+    bytes.length,
+    '2026-10-06T00:00:00.000Z',
+  );
+  assert.deepEqual(
+    read.events.map((item) => item.event),
+    said('a', 3).map((item) => item.event),
+  );
+  assert.equal(read.truncated, true);
+  assert.ok(Math.min(...starts) >= bytes.length - 16_000_001, String(starts));
+  const { out } = await converse(t, [{ id: 'ses_big', sha256: 'big' }], { stored: { big: bytes } });
+  assert.deepEqual(
+    out.visits.map(({ from, events, truncated }) => [from, events.length, truncated]),
+    [['transcript', 3, true]],
+  );
+});
+
+test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  const threadId = first.session.threadId;
+  const worker = await f.sessions.authenticate(first.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  await f.release(first.session);
+  const path = `/sessions/threads/${threadId}/messages`;
+  // A writer who may not read the work item cannot answer for it.
+  const host = (leased.messaging as unknown as { host: { readable: unknown } }).host;
+  const readable = host.readable;
+  host.readable = async () => {
+    throw new MervError('forbidden', 'Not readable', 403);
+  };
+  const refused = await f.http('POST', path, f.token, { body: 'x', requestId: 'unread' });
+  host.readable = readable;
+  assert.deepEqual([refused.status, refused.body.error.code], [403, 'forbidden']);
+  const read: ThreadMessages = await f.ok('GET', path, f.token);
+  assert.deepEqual([read.messages, read.questions.map((item) => item.answeredAt)], [[], [null]]);
+  // The work ends unanswered: no card, and its thread expires as any dormant one does.
+  await f.move(unit.id, 'submit');
+  await f.move(unit.id, 'approve');
+  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  await f.age(dormantMs + 60_000);
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  const status = await f.app.ctx.state.read((sql) =>
+    sql.get<{ status: string }>('SELECT status FROM session_threads WHERE id=?', threadId),
+  );
+  assert.equal(status?.status, 'retired');
 });

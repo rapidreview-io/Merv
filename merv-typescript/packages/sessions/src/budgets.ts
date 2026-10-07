@@ -78,11 +78,17 @@ async function set(
   );
   // Switching dispatch off and on is the human go-ahead for the whole project: every
   // count starts afresh, where session.release_hold restarts one target.
-  if (next.enabled !== old.enabled)
+  if (next.enabled !== old.enabled) {
+    const held = await tx.all<{ instance_id: string }>(
+      'SELECT DISTINCT instance_id FROM session_dispatch_holds WHERE project_id=? AND held_at IS NOT NULL',
+      caller.projectId,
+    );
     await tx.run(
       'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
       caller.projectId,
     );
+    for (const row of held) await ctx.reportHold(caller.projectId, row.instance_id, null, tx);
+  }
   await recorded(ctx.state, tx, caller, 'session.dispatch_changed', caller.projectId, next);
   return { ...next, fleet: old.fleet, updatedAt: time, updatedBy: caller.actorId };
 }

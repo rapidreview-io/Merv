@@ -46,6 +46,7 @@ export type MapCycle = Pick<
   | 'reflectionId'
   | 'automation'
   | 'writable'
+  | 'successorId'
 >;
 type MapReview = Pick<
   ReviewRequest,

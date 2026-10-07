@@ -138,10 +138,15 @@ export function needsYou(
   const underReview = new Set(openReviews.map((item) => item.subjectId));
   // Work whose newest verdict sent it back, as against work never delivered.
   const returned = new Set(reviews.filter((item) => item.returned).map((item) => item.subjectId));
-  // Code's moves, and Sessions' questions an agent asked its owner, each beside its blocker.
-  const moves = new Map(
-    [...(home?.sessions ?? []), ...(home?.code ?? [])].map((item) => [item.instanceId, item]),
-  );
+  // Code's moves, and Sessions' questions an agent asked its owner, each beside its blocker:
+  // one per record, a question first, and a wait that is nobody's never in front of a person's.
+  type Held = NonNullable<HomeData['sessions']>[number] | NonNullable<HomeData['code']>[number];
+  const moves = new Map<string, Held>();
+  for (const item of [...(home?.sessions ?? []), ...(home?.code ?? [])]) {
+    const had = moves.get(item.instanceId);
+    if (!had || (had.move.whose === 'nobody' && item.move.whose !== 'nobody'))
+      moves.set(item.instanceId, item);
+  }
   for (const item of work) {
     const { row, needs } = item;
     const kind = row.view.kind;
@@ -164,7 +169,13 @@ export function needsYou(
       const blocker = decision.providerBlockers.find(
         (each) => each.provider === held.provider && each.key === held.key,
       );
-      if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
+      // An operator makes every person's move; one that is the work owner's is also theirs,
+      // as the record's gate tells its owner.
+      const shown =
+        held.move.whose !== 'nobody' &&
+        ((viewer.role === 'operator' && viewer.signedIn) ||
+          (held.move.whose === 'owner' && !!decision.yours));
+      if (shown)
         lines.push({
           id: item.id,
           kind,

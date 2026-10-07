@@ -6,7 +6,6 @@ import test, { type TestContext } from 'node:test';
 import type { Caller, ReviewApplication, RunningBoard, Verdict } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
 import type { Task } from '@merv/tasks/types';
-import { ROUNDS_USED } from '@merv/reviews/rules';
 import { LIMIT_ASK } from '@merv/workflows/evaluation';
 import { createApp } from './fixtures/app.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
@@ -170,7 +169,7 @@ test('a task whose review rounds are used up is offered only what ends it, and i
   assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
   assert.deepEqual(
     [claimed.body.result.verdicts, claimed.body.result.returns, claimed.body.result.limit],
-    [['fail'], undefined, ROUNDS_USED],
+    [['fail'], undefined, 'Every review round is used: end it, or an admin allows another round.'],
   );
 
   // Home: the project admin's line, though the work is out for review; the producer has none.
@@ -232,6 +231,64 @@ test('a task whose review rounds are used up is offered only what ends it, and i
   assert.equal((await f.tool('review.start', hand.token, { reviewId: task.reviewId })).status, 200);
   assert.equal((await release(f.boot.token, 'by-admin')).status, 200);
   assert.equal((await release(f.boot.token, 'by-admin-again')).status, 409);
+});
+
+test('an admin may not hand back a leased reviewer’s claim: its session is halted instead', async (t) => {
+  const f = await fixture(t);
+  const reviewer = await f.issue('Leased reviewer', 'operator');
+  const task = await currentTask(f.app.ctx, f.producer.caller, {
+    title: 'Check table units',
+    goal: 'Finish check table units so the draft can cite it.',
+    checks: ['Every reference resolves.'],
+    requestId: f.id('create'),
+  });
+  const current = async () => await f.app.ctx.tasks.get(f.operator, task.id);
+  const held = await f.work.lease(await current());
+  try {
+    const evidence = await f.work.run(
+      held,
+      'artifact.create',
+      { title: f.id('Evidence'), content: 'Every reference resolved.' },
+      (caller, input) => f.app.ctx.artifacts.create(caller, input as never),
+    );
+    const commandId = await f.work.commit(held);
+    await f.work.run(
+      held,
+      'task.submit_delivery',
+      confirmedDelivery(
+        {
+          taskId: task.id,
+          artifactIds: [evidence.id],
+          commandId,
+          expectedRevision: (await current()).workflow.revision,
+          requestId: f.id('deliver'),
+        },
+        1,
+      ),
+      (caller, input) => f.app.ctx.tasks.submitDelivery(caller, input as never),
+    );
+  } finally {
+    await f.work.release(held);
+  }
+  const pending = await current();
+  const review = await f.work.lease(pending, reviewer.caller);
+  try {
+    assert.ok((await f.app.ctx.reviews.get(review.worker, pending.reviewId!)).claimId);
+    const refused = await f.tool('review.release', f.boot.token, {
+      reviewId: pending.reviewId,
+      reason: 'Stuck.',
+      requestId: 'by-admin',
+    });
+    assert.deepEqual(
+      [refused.status, refused.body.error?.code],
+      [409, 'review_claimed_by_session'],
+      JSON.stringify(refused.body),
+    );
+    assert.match(refused.body.error.message, /halt/);
+    assert.equal((await f.app.ctx.reviews.get(f.operator, pending.reviewId!)).status, 'started');
+  } finally {
+    await f.work.release(review);
+  }
 });
 
 const plan =
@@ -296,5 +353,8 @@ test('an experiment whose design rounds are used up is offered only a pass, with
     experiment = await design(experiment);
   }
   const used = (await desk()).body.result;
-  assert.deepEqual([used.verdicts, used.returns, used.limit], [['pass'], undefined, ROUNDS_USED]);
+  assert.deepEqual(
+    [used.verdicts, used.returns, used.limit],
+    [['pass'], undefined, 'Every review round is used: pass it, or an admin allows another round.'],
+  );
 });

@@ -1101,6 +1101,28 @@ test('an authority slower than 1 s but under 2 s never ends a long stream', asyn
   assert.ok(validations > 4, `${validations} reads`);
 });
 
+test('an authority whose every read takes over 2 s never ends a long stream', async (t) => {
+  let validations = 0;
+  const failures: PiRelayFailureRecord[] = [];
+  const f = await fixture({
+    authority: {
+      authorize: async () => grant(),
+      // From the last read before the stream on, every read takes 2.4 s: timed from each read's
+      // start, the next returns 3 s after the one before.
+      validate: async () => {
+        if (++validations >= 3) await new Promise((resolve) => setTimeout(resolve, 2_400));
+      },
+    },
+    onFailure: (record) => void failures.push(record),
+    fetchImpl: ticking(200, 40),
+  });
+  t.after(() => f.close());
+  const text = await (await send(f)).text();
+  assert.deepEqual(failures, []);
+  assert.equal(text.match(/"type":"delta"/g)?.length, 40);
+  assert.match(text, /response\.completed/);
+});
+
 test('an authority that stops answering ends the stream within its staleness bound', async (t) => {
   let validations = 0;
   const failures: PiRelayFailureRecord[] = [];

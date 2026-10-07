@@ -89,6 +89,8 @@ export interface MessageHost {
     input: { projectId: string; instanceId: string; blockers: WorkflowProvidedBlockerInput[] },
     tx: Transaction,
   ): Promise<void>;
+  /** Which of these work items of the project have ended. */
+  ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
   /** The question blockers standing in the caller's project. */
   standing(caller: Caller, tx: Transaction): Promise<{ instanceId: string; key: string }[]>;
 }
@@ -278,6 +280,7 @@ export class SessionMessages {
     tx: Transaction,
   ): Promise<SessionMessage> {
     const thread = await this.threadRow(tx, caller, input.threadId!);
+    await this.host.readable(caller, thread.instance_id, tx);
     const open = await tx.all<QuestionRow>(
       'SELECT * FROM session_questions WHERE thread_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
       thread.id,
@@ -338,11 +341,15 @@ export class SessionMessages {
    * open, so the work's gate and session.stuck say what it waits for, or none.
    */
   private async report(projectId: string, instanceId: string, tx: Transaction): Promise<void> {
-    const open = await tx.all<QuestionRow>(
-      'SELECT * FROM session_questions WHERE project_id=? AND instance_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
-      projectId,
-      instanceId,
-    );
+    // Ended work waits on no answer: its question is cleared with the work's other blockers.
+    const ended = (await this.host.ended(projectId, [instanceId], tx)).has(instanceId);
+    const open = ended
+      ? []
+      : await tx.all<QuestionRow>(
+          'SELECT * FROM session_questions WHERE project_id=? AND instance_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
+          projectId,
+          instanceId,
+        );
     const newest = new Map(open.map((row) => [row.thread_id, row]));
     await this.host.publish(
       {
@@ -355,6 +362,8 @@ export class SessionMessages {
           message: `Its agent asked its owner: ${clip(row.question, 3_900)}`,
           next: `Answer with session.message {threadId: "${row.thread_id}"}; dispatch offers the work again once it is answered.`,
           cause: 'agent_question',
+          // Its owner's move, as Workflows tells that owner; an operator answers too.
+          whose: 'owner' as const,
           related: [],
         })),
       },
@@ -495,7 +504,7 @@ export class SessionMessages {
         move: {
           sentence: 'Answer its agent’s question',
           who: 'Anyone who may write to the project answers it with a message to the thread',
-          whose: 'operator' as const,
+          whose: 'owner' as const,
         },
       }));
     });

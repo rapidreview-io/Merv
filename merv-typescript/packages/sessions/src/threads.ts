@@ -60,6 +60,8 @@ const READ_EVENTS = 500;
 const READ_BYTES = 2_000_000;
 /** The end of a transcript read first; a longer one only while it holds too few events. */
 const TAIL_BYTES = 1_000_000;
+/** The longest end read; what fits of it is sent, and the visit says it was cut. */
+const TAIL_MAX_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
@@ -90,6 +92,8 @@ export class SessionThreads {
       readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
       /** A visit's live stream as a page is first sent it. */
       stream(sessionId: string): Promise<AgentStreamEvent[]>;
+      /** Which of these work items of the project have ended. */
+      ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
       /** Refuses once Sessions has closed. */
       available(): void;
     },
@@ -374,13 +378,32 @@ export class SessionThreads {
    * thread waiting for the answer to its question waits as long as that takes.
    */
   async expire(tx: Transaction): Promise<void> {
+    const before = isoNow(() => this.clock() - dormantMs);
     const rows = await tx.all<Row>(
       `SELECT * FROM session_threads t WHERE status='dormant' AND updated_at<?
         AND NOT EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
         ORDER BY updated_at LIMIT 100`,
-      isoNow(() => this.clock() - dormantMs),
+      before,
     );
     for (const row of rows) await this.retire(row, 'dormant', tx);
+    // A question keeps its thread only while its work can still come back to it.
+    const asking = await tx.all<{ id: string; project_id: string; instance_id: string }>(
+      `SELECT t.id,q.project_id,q.instance_id FROM session_threads t
+        JOIN session_questions q ON q.thread_id=t.id AND q.answered_at IS NULL
+        WHERE t.status='dormant' AND t.updated_at<?`,
+      before,
+    );
+    const ended = new Set<string>();
+    for (const projectId of new Set(asking.map((row) => row.project_id)))
+      for (const id of await this.host.ended(
+        projectId,
+        asking.filter((row) => row.project_id === projectId).map((row) => row.instance_id),
+        tx,
+      ))
+        ended.add(id);
+    for (const id of new Set(asking.map((row) => row.id)))
+      if (asking.every((row) => row.id !== id || ended.has(row.instance_id)))
+        await this.retire(await this.row(id, tx), 'dormant', tx);
   }
   /** The sweep: a thread whose live visit's source lost its delegation is retired. */
   async lapsed(id: string, tx: Transaction): Promise<void> {
@@ -579,11 +602,8 @@ export class SessionThreads {
       // A store that ignores the range sends the whole object.
       return response.status === 206 ? bytes : bytes.subarray(start);
     };
-    return {
-      sessionId,
-      from,
-      events: await transcriptEvents(tail, size, visit.declared_at!, room),
-    };
+    const read = await transcriptEvents(tail, size, visit.declared_at!, room);
+    return { sessionId, from, events: read.events, ...(read.truncated && { truncated: true }) };
   }
 }
 type Said = {
@@ -643,15 +663,15 @@ function newest(events: AgentStreamEvent[], room: Room): AgentStreamEvent[] {
  * the first whole line in it, and a longer end only while that leaves nothing out; a line's index
  * and `seq` count from the first line read. The runner kept whole messages only, so Claude's are
  * read whole. Each event is stamped with the transcript's declaration, as a line carries no time
- * of its own.
+ * of its own. Its end grows to TAIL_MAX_BYTES at most: what fits of that is sent, `truncated`.
  */
 export async function transcriptEvents(
   tail: (start: number) => Promise<Buffer>,
   size: number,
   at: string,
   room: Room = { events: READ_EVENTS, bytes: READ_BYTES },
-): Promise<AgentStreamEvent[]> {
-  for (let length = TAIL_BYTES; ; length *= 4) {
+): Promise<{ events: AgentStreamEvent[]; truncated: boolean }> {
+  for (let length = TAIL_BYTES; ; length = Math.min(length * 4, TAIL_MAX_BYTES)) {
     // One byte more than the end, so a line that starts the end is seen to be whole.
     const start = Math.max(0, size - length - 1);
     const bytes = await tail(start);
@@ -665,9 +685,9 @@ export async function transcriptEvents(
       .map((event, index) => ({ seq: index + 1, at, event: fit(event) }));
     const left = { ...room };
     const kept = newest(events, left);
-    if (start === 0 || kept.length < events.length) {
+    if (start === 0 || kept.length < events.length || length >= TAIL_MAX_BYTES) {
       Object.assign(room, left);
-      return kept;
+      return { events: kept, truncated: start > 0 && kept.length === events.length };
     }
   }
 }

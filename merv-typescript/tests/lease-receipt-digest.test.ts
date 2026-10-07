@@ -30,6 +30,13 @@ test('workflows@13 backfills the digest() of every stored receipt', async () => 
     nul: { log: 'tail: a\u0000b', 'key\u0000': 1 },
     lone: { note: 'half \ud800 pair and \udfff' },
     literal: { note: 'not an escape: \\u0000 \\ud800' },
+    // Wide: the canonical form walks its keys once, not once per key.
+    wide: Object.fromEntries(
+      Array.from({ length: 3_000 }, (_, index) => [
+        `key-${index}`,
+        { at: index, text: 'w'.repeat(40) },
+      ]),
+    ),
   };
   const unreadable = new Set(['nul', 'lone', 'literal']);
   await state.transaction(async (tx) => {
@@ -41,7 +48,10 @@ test('workflows@13 backfills the digest() of every stored receipt', async () => 
         JSON.stringify(receipt),
       );
   });
+  const started = performance.now();
   await state.migrate('workflows', postgresMigrations);
+  const took = performance.now() - started;
+  assert.ok(took < 1_000, `the backfill took ${Math.round(took)} ms`);
   const stored = new Map(
     (
       await state.read((sql) =>

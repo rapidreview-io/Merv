@@ -204,7 +204,8 @@ export async function submit(
 
 /**
  * A claim handed back, by the reviewer who holds it or a project admin, so that anyone
- * eligible may claim the review again. A leased worker's claim goes with its lease.
+ * eligible may claim the review again. A leased worker's claim goes with its lease, so it is
+ * refused here: halting that session releases it.
  */
 export async function release(
   ctx: ReviewsContext,
@@ -241,6 +242,14 @@ export async function release(
         'forbidden',
         'Only the reviewer who claimed it or a project admin may release a review',
         403,
+      );
+      // A leased reviewer's claim goes with its lease: released here, its session would hold
+      // the work and the review would wait on nobody.
+      check(
+        !row.claimed_by_agent,
+        'review_claimed_by_session',
+        'A leased reviewer holds this claim; halt its session (session.halt) and the claim is released with its lease',
+        409,
       );
       await releaseClaim(
         ctx,

@@ -6,9 +6,16 @@ import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/type
 
 /** The verdicts a review may reach. */
 export const REVIEW_VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
-/** What a reviewer is told where the work cannot be returned again. */
-export const ROUNDS_USED =
-  'Every review round is used: pass, end it, or an admin allows another round.';
+/** What a reviewer is told where the work cannot be returned again, by the verdicts left. */
+export function roundsUsed(verdicts: readonly Verdict[]): string {
+  const moves = [
+    ...(verdicts.includes('pass') ? ['pass it'] : []),
+    ...(verdicts.includes('fail') ? ['end it'] : []),
+  ];
+  return moves.length
+    ? `Every review round is used: ${moves.join(', ')}, or an admin allows another round.`
+    : 'Every review round is used: only an admin can allow another round.';
+}
 /** What a domain's review.submit step requires of its input. */
 export const REVIEW_SUBMIT_INPUT = ['verdict', 'notes', 'synopsis', 'findings'] as const;
 

@@ -157,6 +157,7 @@ export type DispatchContext = Pick<
   | 'candidates'
   | 'dispatch'
   | 'presence'
+  | 'reportHold'
 >;
 /** A module's function run on one dispatch, which it takes as its first argument. */
 const bound =
@@ -209,6 +210,12 @@ export class SessionDispatch {
         'SELECT DISTINCT ON (project_id,instance_id) * FROM session_dispatch_holds WHERE held_at IS NOT NULL ORDER BY project_id,instance_id,revision DESC',
       ))
         await this.reportHold(row.project_id, row.instance_id, row, tx);
+      // A go-ahead (a release, or dispatch switched off and on) that left its blocker behind:
+      // work whose counts were reset and that nothing holds now has none.
+      for (const row of await tx.all<{ project_id: string; instance_id: string }>(
+        'SELECT DISTINCT h.project_id,h.instance_id FROM session_dispatch_holds h WHERE h.attempts=0 AND NOT EXISTS (SELECT 1 FROM session_dispatch_holds o WHERE o.project_id=h.project_id AND o.instance_id=h.instance_id AND o.held_at IS NOT NULL)',
+      ))
+        await this.reportHold(row.project_id, row.instance_id, null, tx);
     });
   }
   /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
@@ -292,7 +299,7 @@ export class SessionDispatch {
    * A hold is a project admin's move, reported on the work it holds so it reaches Needs you;
    * it names one revision, so the record moving on withdraws it. Without a row, withdrawn.
    */
-  private async reportHold(
+  async reportHold(
     projectId: string,
     instanceId: string,
     row: HoldRow | null,

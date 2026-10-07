@@ -169,7 +169,14 @@ function useWorkPicks(): { options: Pickable[]; loading: boolean } {
   };
 }
 
-export function CreateResearch({ onSaved }: { onSaved: () => void }) {
+export function CreateResearch({
+  onSaved,
+  follows,
+}: {
+  onSaved: () => void;
+  /** The ended cycle on screen, which a cycle started beside it follows. */
+  follows?: { id: string; name: string };
+}) {
   const [name, setName] = useState('');
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [automatic, setAutomatic] = useState(false);
@@ -196,11 +203,13 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
         void command.submit({
           name,
           dependsOn: dependencies,
+          ...(follows ? { previousCycleId: follows.id } : {}),
           ...(automatic ? { automatic: true, maxCycles: Number(maxCycles) } : {}),
         });
       }}
     >
       <h2>New cycle</h2>
+      {follows && <p className="muted">Follows {follows.name}</p>}
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <RecordPicker
@@ -474,6 +483,11 @@ function WaveList({ shell }: { shell: ShellData }) {
               shown: writes(actor),
               form: (close) => (
                 <CreateResearch
+                  follows={
+                    cycle && !cycle.successorId && ended(shell.workflows, cycle.workflow)
+                      ? { id: cycle.id, name: cycle.name }
+                      : undefined
+                  }
                   onSaved={() => {
                     close();
                     home.reload();

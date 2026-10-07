@@ -962,3 +962,37 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
   assert.deepEqual(buttons(), [['End cycle', false]]);
   assert.equal(document.querySelector('a[href="/reflections/wf_wave"]'), null);
 });
+
+test('a new cycle started beside an ended one follows it', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/task.list', { body: { result: [] } });
+  serve('/tools/experiment.list', { body: { result: [] } });
+  let sent: Record<string, unknown> | undefined;
+  serve('/tools/research.create', (_call, body) => {
+    sent = body;
+    return { body: { result: { id: 'wf_cycle', workflow: { workflow: 'research' } } } };
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(CreateResearch, {
+        onSaved() {},
+        follows: { id: 'wf_ended', name: 'Ended run' },
+      } as never),
+    ),
+  );
+  await settle(10);
+  assert.match(document.querySelector('form')!.textContent!, /Follows Ended run/);
+  const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(name, 'Next run');
+    name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+  });
+  await settle(10);
+  assert.equal(sent?.previousCycleId, 'wf_ended');
+});

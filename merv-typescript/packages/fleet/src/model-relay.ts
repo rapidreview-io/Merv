@@ -46,8 +46,9 @@ const interrupted = `event: error\ndata: ${JSON.stringify({
   code: 'relay_interrupted',
   message: 'The model relay ended this call',
 })}\n\n`;
-/** How long after one authority read a streaming call makes the next: each re-reads the grant
- *  from the database, and a read may take up to the rest of `authorityStaleMs`. */
+/** How long after one authority read starts a streaming call starts the next (at once, where
+ *  that read took longer): each re-reads the grant from the database, and reads that each take
+ *  up to `authorityStaleMs` keep frames within it. */
 const authorityRecheckMs = 3_000;
 /** The Responses API's `usage`, as a finished call's last frame carries it. */
 type Usage = {
@@ -279,8 +280,10 @@ export class ModelRelay<
         throw refusal(error, 401, 'unauthorized');
       }
       let validatedAt = 0;
+      let readStartedAt = 0;
       const validate = async () => {
         if (signal.aborted) throw signal.reason;
+        readStartedAt = Date.now();
         if (expired(grant)) reject(403, 'grant_forbidden');
         try {
           await interruptible(authority.validate(grant), signal);
@@ -289,7 +292,8 @@ export class ModelRelay<
           throw refusal(error, 403, 'grant_forbidden');
         }
         if (expired(grant)) reject(403, 'grant_forbidden');
-        // Stamped when the read returns, so a read of d seconds leaves frames an age of 3 + d.
+        // Stamped when the read returns: the next starts 3 s after this one started, so frames
+        // are at most max(3, d) old where every read takes d seconds.
         validatedAt = Date.now();
       };
       await validate();
@@ -387,7 +391,8 @@ export class ModelRelay<
         );
       };
       resetIdle();
-      // One authority read in flight at a time, 3 s after the last; frames never wait on one.
+      // One authority read in flight at a time, 3 s after the last one started; frames never wait
+      // on one. Timed from its start, a slow read does not also delay the next by its own length.
       const tick = () => {
         if (!done)
           fence = setTimeout(
@@ -397,7 +402,7 @@ export class ModelRelay<
                   ? abort(error.status, error.code)
                   : abort(403, 'grant_forbidden'),
               ),
-            authorityRecheckMs,
+            Math.max(0, authorityRecheckMs - (Date.now() - readStartedAt)),
           );
       };
       tick();
