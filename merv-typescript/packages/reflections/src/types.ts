@@ -80,7 +80,8 @@ export interface Reflections {
   submit(caller: Caller, input: ReflectionSubmit, tx?: Transaction): Promise<Reflection>;
   /** The owner or an operator abandons an unfinished wave, its open lenses with it. */
   end(caller: Caller, input: ReflectionEnd, tx?: Transaction): Promise<Reflection>;
-  approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection>;
+  /** What the wave's approval holds, or null until it is approved: never for one abandoned. */
+  approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection | null>;
   /** The wave still open in the project, if any: only one reflects at a time. */
   open(caller: Caller, tx?: Transaction): Promise<string | undefined>;
   /**

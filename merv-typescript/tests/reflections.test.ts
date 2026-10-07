@@ -374,9 +374,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
       await f.app.ctx.reflections.create(f.owner, { requestId: 'wave', title: 'Different' }),
     { code: 'request_conflict' },
   );
-  await assert.rejects(async () => await f.app.ctx.reflections.approved(f.owner, wave.id), {
-    code: 'reflection_not_approved',
-  });
+  assert.equal(await f.app.ctx.reflections.approved(f.owner, wave.id), null);
   // The frozen corpus, paper snapshot and experiment list of retired waves are no longer shown.
   for (const retired of ['corpus', 'paper', 'experimentIds', 'paperProposal'])
     assert.ok(!(retired in wave), retired);
@@ -477,7 +475,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   wave = await f.verdict(wave, reviewer, true);
   assert.equal(wave.workflow.state, 'approved');
   await assert.rejects(async () => await f.synthesize(wave), { code: 'reflection_complete' });
-  const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, wave.id))!;
   assert.equal(approved.report.id, wave.report!.id);
   // A text change specification is never parsed: no plan, and no criterion to judge one.
   assert.equal(wave.plan, null);
@@ -652,7 +650,7 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
   wave = await f.verdict(wave, await f.actor('Third reviewer', 'reviewer'), true);
   assert.equal(wave.workflow.state, 'approved');
   assert.deepEqual(wave.plan, plan);
-  const approved = await f.app.ctx.reflections.approved(f.owner, wave.id);
+  const approved = (await f.app.ctx.reflections.approved(f.owner, wave.id))!;
   assert.deepEqual(approved.plan, plan);
   assert.equal(approved.changeSpec.hash, originalHash);
   await assert.rejects(
@@ -1642,7 +1640,7 @@ test('standalone Reflections can create and complete its own work without Resear
     true,
   );
   assert.equal(approved.workflow.state, 'approved');
-  assert.equal((await f.app.ctx.reflections.approved(f.owner, wave.id)).id, wave.id);
+  assert.equal((await f.app.ctx.reflections.approved(f.owner, wave.id))!.id, wave.id);
 });
 
 test('an open reflection pauses new tasks and experiments, and ended ones cost nothing', async (t) => {

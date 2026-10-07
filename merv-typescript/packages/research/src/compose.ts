@@ -75,9 +75,7 @@ export async function compose(
   const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
   // A cycle ended while reflecting has a child with nothing approved in it.
   const reflection = record.reflectionId
-    ? (await reflections.get(caller, record.reflectionId, tx)).workflow.state === 'approved'
-      ? await reflections.approved(caller, record.reflectionId, tx)
-      : null
+    ? await reflections.approved(caller, record.reflectionId, tx)
     : null;
   const taskId = record.integrations.at(-1);
   const integration = taskId
