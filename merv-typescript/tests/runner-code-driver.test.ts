@@ -506,6 +506,70 @@ test('special retained nodes cannot be copied into review and a retry keeps the 
   assert.equal(review.snapshot!.headOid, result!.headOid);
 });
 
+/**
+ * The hosted launcher's precondition (Sandboxes `assignment._handoff_tree`): a checkout the
+ * supervisor still owns is handed to the assignment only if every node in it is the
+ * supervisor's, on the checkout's device, and a directory, a symlink or a singly linked file.
+ * Anything else ends the launch before Codex with `assignment launch refused`, exit 70.
+ */
+function handoffRefusals(root: string): string[] {
+  const device = lstatSync(root).dev;
+  const uid = process.getuid!();
+  const refused: string[] = [];
+  const visit = (directory: string) => {
+    for (const name of readdirSync(directory)) {
+      const path = join(directory, name);
+      const info = lstatSync(path);
+      if (info.uid !== uid || info.dev !== device) refused.push(`${path}: owner ${info.uid}`);
+      else if (info.isDirectory()) visit(path);
+      else if (!info.isSymbolicLink() && !(info.isFile() && info.nlink === 1))
+        refused.push(`${path}: unsafe node`);
+    }
+  };
+  visit(root);
+  return refused;
+}
+
+test('a review checkout hands the launcher only supervisor-owned nodes, whatever the writer left', async (t) => {
+  // Ownership is only observable as root, as on a hosted work host: CI runs this file as root too.
+  if (process.platform !== 'linux' || process.getuid?.() !== 0)
+    return t.skip('needs root on Linux, as a hosted work host runs');
+  const f = await writerFixture(t);
+  await f.lease('ses_owner_writer');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const writerLaunch = m.launch('ses_owner_writer');
+  const writer = await driver.prepare(writerLaunch, m.session('ses_owner_writer'));
+  await f.event('session.workspace_attached', 'ses_owner_writer');
+  // What staging's c7 experiment did: its agent ignored the dataset it generates, so the dataset
+  // stays untracked in the writer's checkout, and review receives it as a copy.
+  writeFileSync(join(writer.path, '.gitignore'), 'data/dataset.csv\n__pycache__/\n');
+  writeFileSync(join(writer.path, 'make_dataset.py'), 'print(1)\n');
+  mkdirSync(join(writer.path, 'data'));
+  writeFileSync(join(writer.path, 'data/dataset.csv'), 'x,label\n1,0\n');
+  mkdirSync(join(writer.path, '__pycache__'));
+  writeFileSync(join(writer.path, '__pycache__/m.cpython-311.pyc'), 'pyc');
+  symlinkSync('../data/dataset.csv', join(writer.path, '__pycache__/link'));
+  // The assignment wrote these in the checkout the launcher handed it. (Its Git metadata stays
+  // root's here: this test captures with root Git, not the launcher's assignment Git.)
+  for (const name of ['data', '__pycache__'])
+    execFileSync('chown', ['-R', '--no-dereference', '12001:12001', join(writer.path, name)]);
+  await f.event('session.closed', 'ses_owner_writer');
+  f.end('ses_owner_writer');
+  m.terminal.add(writerLaunch.id);
+  const result = await driver.capture(writerLaunch);
+  await driver.close(writerLaunch);
+
+  f.reviewer('ses_owner_review', result!.headOid);
+  const reviewLaunch = m.launch('ses_owner_review');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_owner_review'));
+  assert.equal(review.path, writer.path);
+  assert.equal(readFileSync(join(review.path, 'data/dataset.csv'), 'utf8'), 'x,label\n1,0\n');
+  assert.equal(readlinkSync(join(review.path, '__pycache__/link')), '../data/dataset.csv');
+  assert.equal(lstatSync(review.path).uid, 0, 'the review checkout is not handed off yet');
+  assert.deepEqual(handoffRefusals(review.path), []);
+});
+
 test('shared review cannot overwrite Code head after a refused writer capture', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_refused');
@@ -1002,6 +1066,8 @@ test('a checkout Code would never keep ends its generation at the last admitted 
 });
 
 test('a final capture clears an index lock the stopped session left, and repeated local failures end in a handover', async (t) => {
+  // Its failures are a Git directory made unwritable, which root writes anyway.
+  if (process.getuid?.() === 0) return t.skip('root ignores the read-only Git directory');
   const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f);
@@ -1068,6 +1134,8 @@ test('a final capture clears an index lock the stopped session left, and repeate
 });
 
 test('the bound on failing captures restarts after the machine stopped trying, and a failed import counts too', async (t) => {
+  // Its failures are a Git directory made unwritable, which root writes anyway.
+  if (process.getuid?.() === 0) return t.skip('root ignores the read-only Git directory');
   const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f, undefined, true, f.unitId);

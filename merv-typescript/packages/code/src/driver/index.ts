@@ -7,6 +7,7 @@ import {
   existsSync,
   fsyncSync,
   fstatSync,
+  lchownSync,
   lstatSync,
   openSync,
   readdirSync,
@@ -1022,6 +1023,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
             .filter(Boolean),
         )
       : new Set<string>();
+    const copied: string[] = [];
     cpSync(preserved, row.path, {
       recursive: true,
       dereference: false,
@@ -1042,9 +1044,20 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         const parent = realpathSync(dirname(target));
         if (parent !== row.path && !parent.startsWith(row.path + sep))
           throw new WorkspaceError('workspace_foreign_path');
+        copied.push(target);
         return true;
       },
     });
+    // The hosted launcher hands off only a checkout that is wholly the supervisor's, and refuses
+    // the launch otherwise (exit 70). Node's copy keeps a file's owner, so a file the writer's
+    // agent left untracked would stay the agent's: every copied node becomes the supervisor's.
+    const uid = process.getuid?.(),
+      gid = process.getgid?.();
+    if (uid !== undefined && gid !== undefined)
+      for (const target of copied) {
+        const info = pathStat(target);
+        if (info && info.uid !== uid) lchownSync(target, uid, gid);
+      }
   }
 
   /** Import only this checkout's immutable objects, never its mutable Git configuration. */
