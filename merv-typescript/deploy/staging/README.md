@@ -85,11 +85,25 @@ In the owner-owned hosted project by default (`--project e2e` uses the E2E runne
    design asks for the training to run on one Modal `cpu-2` machine through the project's native
    Sandboxes connection, released afterwards.
 3. Agents plan, get the design reviewed, run, submit results and get them reviewed.
+4. **Agent questions.** A producer may end its visit with `session.ask_owner` (the work then
+   waits, `work_blocked` / `agent_question` in `session.stuck`). Each poll reads the loop's
+   unanswered questions from `session_questions` (the blocker names no thread), logs the first 200
+   characters and answers as the owner with `session.message {threadId, body, requestId}`, one
+   message per thread (`threadId` works on cycle 7's and cycle 8's `session.message`). A question
+   about Sandboxes or the machine gets "Proceed on the workspace CPU and record
+   machine='workspace'. This staging project has no Sandboxes connection; the check reports that
+   step separately."; anything else gets "Proceed with your best judgement within the experiment's
+   caps; record any deviation in the report." At most 3 answers per run; a fourth question ends
+   the work and fails the run.
 
 Asserts: task `done`; the experiment passes `planned > design_review > running >
 experiment_review > complete`; the last review passes; a result JSON with `accuracy ≥ 0.80`;
 with a Sandboxes connection, native work rows for the experiment and a `sbx_…` machine in the
-result; nothing stuck or held; no live session at the end; inside the caps.
+result; for each answered question, **agent question answered and the work resumed**: the work
+leaves the state it asked in (usually `planned`) within 10 minutes of the answer, else FAIL with
+its state, open questions, live sessions and stuck items; nothing stuck or held (a question that
+was asked and answered does not count; one still open at the end does); no live session at the
+end; inside the caps. `questions_answered` is recorded in the row's facts.
 
 Caps: 45 min (`STG_T1_CAP_SECONDS`) and $2 (`STG_T1_CAP_USD`). Past either, the script abandons
 the experiment, fails the task, halts their sessions and fails. A wall-clock budget of 120 lease
