@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PiCommand, PiEvent } from '../packages/pi/src/models.js';
+import { piUiPlugin } from '../packages/pi/src/ui.js';
 import { click, jump, mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -16,7 +17,7 @@ const { setProject, setToken } = await import('../packages/ui/web/api.js');
 
 const row = {
   id: 'pi',
-  label: 'Agent',
+  label: 'Pi',
   group: 'operations',
   order: 0,
   path: '/agent',
@@ -196,6 +197,25 @@ const cleanup = async () => {
   globalThis.fetch = originalFetch;
   setProject(null);
 };
+
+test('Pi’s own plugin names its rail row Pi, opening its chat', () => {
+  const registered: unknown[] = [];
+  const ctx = {
+    effect: (run: () => unknown) => run(),
+    ui: { register: (entry: unknown) => (registered.push(entry), () => {}) },
+  };
+  piUiPlugin.apply(ctx as unknown as Parameters<typeof piUiPlugin.apply>[0]);
+  assert.deepEqual(registered, [
+    {
+      id: 'pi',
+      label: 'Pi',
+      group: 'operations',
+      order: 0,
+      path: '/agent',
+      view: { kind: 'pi' },
+    },
+  ]);
+});
 
 test('opening an empty Agent warms one conversation, and the first message goes to it', async (t) => {
   t.after(cleanup);

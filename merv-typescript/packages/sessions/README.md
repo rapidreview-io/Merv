@@ -74,7 +74,7 @@ flowchart LR
 
 Sessions is Main's side of every agent machine: the runner leases work, streams the agent's events and declares its conversation over `/sessions`, while the agent calls tools at `/mcp` under the session's policy. A person's page reads the same live stream, and `session.closed` releases the domain leases and compute that named the session. For hosted Codex's model calls, `managed.boundSession` says which session a bearer or session id holds, live or closed by its own handoff; Fleet grants the model, and names the person the calls count toward ([Fleet README](../fleet/README.md)).
 
-The UI adapter registers the rail's `Agents` row (group `operations`, beside Pi's `Agent`), whose
+The UI adapter registers the rail's `Agents` row (group `operations`, beside Pi's `Pi` row), whose
 status badge is `threads.counts`: live threads · threads asking their owner. Its `ui.read` returns
 project status: dispatch, runners and leases, drawn folded under the page as Machines. The
 Agents page is a gallery, one card a thread, from `GET /sessions/threads` (the threads that want
