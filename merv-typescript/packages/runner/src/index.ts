@@ -29,7 +29,7 @@ import type {
   SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
-import { ownEnd } from '@merv/sessions/rules';
+import { INQUIRY_CAPABILITY, ownEnd } from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -55,6 +55,7 @@ import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
   sealed,
+  inquiring,
   collectRepositorySkillPaths,
   handoffGraceMs,
   validateProfile,
@@ -192,6 +193,7 @@ const view = (s: Session) => {
     hardDeadline: s.hardDeadline,
     ...(s.workspace ? { workspace: s.workspace } : {}),
     ...(s.continuity ? { continuity: s.continuity } : {}),
+    ...(s.inquiry ? { inquiry: s.inquiry } : {}),
     execution: { policy: { readOnly, workspace, tools: tools.map(({ name }) => ({ name })) } },
   };
 };
@@ -452,7 +454,8 @@ export class MachineRunner implements Runner {
     // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`), and it
     // has no repository of its own for work that names no driver. A managed runner's
     // capabilities must equal its enrolment, so it names only its drivers.
-    const marker = this.managed() ? ['workflow.workhost.1'] : ['runner.2'];
+    // `inquiry.1`: it runs an inquiry visit as one, read-only and keeping nothing (`inquiring`).
+    const marker = [this.managed() ? 'workflow.workhost.1' : 'runner.2', INQUIRY_CAPABILITY];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
     // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
     const heartbeat = async () => {
@@ -730,6 +733,12 @@ export class MachineRunner implements Runner {
         if (this.stopping) return false;
         const codexHome = launchCodexHome(profile, record.runDirectory);
         const resume = await this.restore(record, profile, session, workspace.path);
+        // An inquiry is put to the conversation it names; a fresh agent would know nothing.
+        check(
+          !inquiring(session) || resume,
+          'inquiry_unresumable',
+          'The conversation the inquiry asks could not be restored',
+        );
         const command = buildLaunch(
           profile,
           {
@@ -1002,10 +1011,25 @@ export class MachineRunner implements Runner {
    */
   private keep(record: LaunchRecord): Owed<ConversationFacts> {
     const profile = record.metadata.profile as RunnerProfile | undefined;
+    const kept = record.metadata.session as unknown as SessionView | undefined;
+    // Where the launch ran, whose copy of a conversation is its own.
+    let cwd: string | undefined;
     try {
-      if (!profile || !(record.metadata.session as unknown as SessionView | undefined)?.continuity)
-        return { state: 'none' };
-      const facts = keepConversation(record.runDirectory, profile, [this.sourceBearer]);
+      cwd = this.driverOf(record)?.get(record.id)?.path;
+    } catch {
+      cwd = undefined;
+    }
+    try {
+      // An inquiry visit's conversation is a fork never saved back: its thread resumes the one
+      // it had. Its copy here is forgotten all the same.
+      if (!profile || !kept?.continuity || kept.inquiry) return { state: 'none' };
+      const facts = keepConversation(
+        record.runDirectory,
+        profile,
+        [this.sourceBearer],
+        process.env,
+        cwd,
+      );
       return facts ? { state: 'owed', ...facts } : { state: 'none' };
     } catch {
       return { state: 'refused', code: 'conversation_unreadable' };
@@ -1017,6 +1041,8 @@ export class MachineRunner implements Runner {
             record.runDirectory,
             profile,
             typeof resumed === 'string' ? resumed : undefined,
+            process.env,
+            kept?.inquiry ? { cwd } : undefined,
           );
       } catch (error) {
         this.lastError = diagnostic(error);

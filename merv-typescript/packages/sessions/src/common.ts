@@ -99,7 +99,7 @@ export async function liveTargets(tx: Transaction, projectId: string): Promise<S
   return new Set(
     (
       await tx.all<{ instance_id: string; revision: number }>(
-        "SELECT instance_id,revision FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+        "SELECT instance_id,revision FROM worker_sessions WHERE project_id=? AND status IN ('offered','active') AND kind='work'",
         projectId,
       )
     ).map((row) => targetKey({ instanceId: row.instance_id, expectedRevision: row.revision })),

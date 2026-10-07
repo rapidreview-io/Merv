@@ -43,6 +43,8 @@ export interface ManagedBoundSession {
   expiresAt: string;
   /** When it closed by its own handoff; absent while it is live. */
   handedOffAt?: string;
+  /** An inquiry visit's asker, whose model tokens it spends rather than the machine's payer's. */
+  inquiry?: { id: string; asker: DelegationSource };
 }
 export interface ManagedRunnerInspection {
   runnerId: string | null;

@@ -42,7 +42,8 @@ import {
   targetKey,
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
-import { label, runnerPlatformSchema } from './rules.js';
+import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
+import { INQUIRY_VISIT_SECONDS, type InquiryCandidate } from './inquiries.js';
 import { withholds } from './budgets.js';
 import { heartbeatSchema, type RunnerRow } from './runners.js';
 import { backoffMs, deferredReasons, type Failure } from './stuck.js';
@@ -144,6 +145,28 @@ interface Hooks {
   byDefault: boolean;
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
+  /** The oldest question a machine of this owner and harness may take (on its work item alone). */
+  inquiry(
+    tx: Transaction,
+    projectId: string,
+    ownerHash: string,
+    harness: string,
+    workInstanceId: string | null,
+  ): Promise<InquiryCandidate | undefined>;
+  /** The work items with such a question. */
+  inquiryDemand(
+    tx: Transaction,
+    projectId: string,
+    ownerHash: string,
+    harness: string,
+  ): Promise<string[]>;
+  /** The inquiry visit for a candidate; it refuses before it writes anything. */
+  inquire(
+    caller: Caller,
+    candidate: InquiryCandidate,
+    input: { runnerId: string; requestId: string; secret: string; hardDeadlineSeconds?: number },
+    tx: Transaction,
+  ): Promise<Session | { refused: MervError }>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
   close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
 }
@@ -481,7 +504,7 @@ export class SessionDispatch {
               SELECT 1 FROM session_threads t JOIN worker_sessions a ON a.id=q.session_id
                WHERE t.id=q.thread_id AND t.status<>'retired'
                  AND (t.latest_session_id IS DISTINCT FROM q.session_id OR t.sha256 IS NULL)
-                 AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s._merv_rowid>a._merv_rowid))))`,
+                 AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work' AND s._merv_rowid>a._merv_rowid))))`,
           caller.projectId,
           new Date(this.clock() - declaredWithinMs).toISOString(),
         )
@@ -632,12 +655,27 @@ export class SessionDispatch {
         await this.recentFailures(tx, owner, input.platform.name),
         this.passing(owner),
       );
-      return {
-        candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
-          instanceId,
-          expectedRevision,
-        })),
-      };
+      const candidates = selected.candidates.map(({ instanceId, expectedRevision }) => ({
+        instanceId,
+        expectedRevision,
+      }));
+      // A question to an agent wants a machine too, on the work item it asks about, at that
+      // work's current revision: only where dispatch is on, as `eligibleCandidates` read it.
+      if (
+        (input.capabilities ?? []).includes(INQUIRY_CAPABILITY) &&
+        (await this.dispatch(caller.projectId, tx)).enabled
+      ) {
+        const asked = (
+          await this.hooks.inquiryDemand(tx, caller.projectId, owner, input.platform.harness)
+        ).filter((id) => !candidates.some((item) => item.instanceId === id));
+        for (const [instanceId, item] of await this.workflows.revisions(
+          caller.projectId,
+          asked,
+          tx,
+        ))
+          candidates.push({ instanceId, expectedRevision: item.revision });
+      }
+      return { candidates };
     });
   }
   /**
@@ -832,28 +870,104 @@ export class SessionDispatch {
       if (managed) await this.hooks.managed.admits(managed.row, tx);
       // A hosted machine stops at its allocation's end, so its step must end five minutes
       // before. A work host starts a step only with all of the step's time left (its owner rents
-      // a fresh host for the next); another machine, with ten minutes.
+      // a fresh host for the next); another machine, with ten minutes. An inquiry needs only its
+      // own short visit.
       const left = managed
         ? Math.floor((Date.parse(managed.row.control_expires_at) - this.clock()) / 1000) - 300
         : Infinity;
-      check(
-        left >= (managed?.row.step_seconds ? Number(managed.row.step_seconds) : 300),
-        'managed_expiring',
-        'Managed machine has too little time for a step',
-        409,
-      );
+      const expiring = () =>
+        check(
+          left >= (managed?.row.step_seconds ? Number(managed.row.step_seconds) : 300),
+          'managed_expiring',
+          'Managed machine has too little time for a step',
+          409,
+        );
+      if (left < INQUIRY_VISIT_SECONDS) expiring();
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
       const capabilities = new Set(
         (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
       );
+      const sources = managed
+        ? await this.hooks.managed.sources(managed.row, tx)
+        : [effectiveCaller];
+      /** What every offer this lease makes ends with: its admission again, and its receipt. */
+      const land = async (session: Session, source: Caller) => {
+        check(
+          await open(),
+          'dispatch_disabled',
+          'Automatic dispatch was disabled while building the offer',
+          409,
+        );
+        const finalAdmission = await this.admitRunner(owner.hash, input, tx, session.id);
+        check(
+          finalAdmission.ok,
+          'runner_control_changed',
+          'Runner controls changed while building the offer',
+          409,
+        );
+        if (managed) await this.hooks.managed.bind(managed.row, session.id, tx);
+        await tx.run(
+          'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
+          owner.hash,
+          input.runnerId,
+          input.requestId,
+          fingerprint,
+          session.id,
+          runner.id,
+          JSON.stringify(input.platform),
+        );
+        await recorded(this.state, tx, source, 'session.dispatched', session.id, {
+          sessionId: session.id,
+          instanceId: session.instanceId,
+          runnerRef: runner.id,
+          platform: input.platform,
+          ...(session.inquiry && { inquiryId: session.inquiry.id }),
+        });
+        return { session, reason: await decided('offered') };
+      };
+      // A person waits on a question, and its visit is short: a machine that runs inquiry
+      // visits takes one before new work. It holds no lease on the work, so the work's own
+      // visit, due meanwhile, is offered as ever, and resumes the conversation as it was.
+      if (capabilities.has(INQUIRY_CAPABILITY))
+        for (const source of sources) {
+          const phaseOwner = await ownerOf(this.scope, source, tx);
+          const inquiry = await this.hooks.inquiry(
+            tx,
+            caller.projectId,
+            phaseOwner.hash,
+            platform.harness,
+            managed?.row.work_instance_id ?? null,
+          );
+          if (!inquiry) continue;
+          if (this.state.readScope)
+            throw new MervError('read_only_scope', 'An offer is a write', 409);
+          const session = await this.hooks.inquire(
+            source,
+            inquiry,
+            {
+              runnerId: input.runnerId,
+              requestId: input.requestId,
+              secret: input.secret,
+              hardDeadlineSeconds: Math.min(input.hardDeadlineSeconds ?? 86400, left),
+            },
+            tx,
+          );
+          // Refused before it wrote anything: the lease goes on to work.
+          if ('refused' in session) {
+            process.stderr.write(
+              `${JSON.stringify({ event: 'dispatch.inquiry_refused', inquiryId: inquiry.id, code: session.refused.code })}\n`,
+            );
+            continue;
+          }
+          return await land(session, source);
+        }
+      expiring();
       let candidate: Target | undefined;
       let assignmentOwner = owner;
       let reason: DispatchDecision = 'no_candidates';
-      for (const source of managed
-        ? await this.hooks.managed.sources(managed.row, tx)
-        : [effectiveCaller]) {
+      for (const source of sources) {
         const phaseOwner = await ownerOf(this.scope, source, tx);
         const failures = await this.recentFailures(
           tx,
@@ -921,37 +1035,7 @@ export class SessionDispatch {
             effectiveCaller,
           );
         });
-      check(
-        await open(),
-        'dispatch_disabled',
-        'Automatic dispatch was disabled while building the offer',
-        409,
-      );
-      const finalAdmission = await this.admitRunner(owner.hash, input, tx, session.id);
-      check(
-        finalAdmission.ok,
-        'runner_control_changed',
-        'Runner controls changed while building the offer',
-        409,
-      );
-      if (managed) await this.hooks.managed.bind(managed.row, session.id, tx);
-      await tx.run(
-        'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
-        owner.hash,
-        input.runnerId,
-        input.requestId,
-        fingerprint,
-        session.id,
-        runner.id,
-        JSON.stringify(input.platform),
-      );
-      await recorded(this.state, tx, effectiveCaller, 'session.dispatched', session.id, {
-        sessionId: session.id,
-        instanceId: session.instanceId,
-        runnerRef: runner.id,
-        platform: input.platform,
-      });
-      return { session, reason: await decided('offered') };
+      return await land(session, effectiveCaller);
     });
   }
 }

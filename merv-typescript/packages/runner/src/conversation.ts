@@ -97,10 +97,11 @@ export function keepConversation(
   profile: RunnerProfile,
   secrets: string[],
   environment: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
 ): ConversationFacts | undefined {
   const found = home(profile, runDirectory, environment);
   const id = found && printed(found.harness, runDirectory);
-  const path = id && found.harness.locate(found.root, id);
+  const path = id && found.harness.locate(found.root, id, cwd);
   if (!id || !path) return undefined;
   const raw = readOwned(path, owner(profile)?.uid ?? process.getuid?.(), MAX_TRANSCRIPT_BYTES);
   const bytes = redactConversation(raw, secrets);
@@ -155,21 +156,27 @@ export function refusedResume(profile: RunnerProfile, runDirectory: string): boo
 /**
  * After a launch ends, kept or not: nothing of its conversations is left in a home the runner
  * shares: those of the conversation it printed and of the one restored for it (which a launch
- * that failed early never took up).
+ * that failed early never took up). An inquiry visit (`forked`, run in `cwd`) forked the one
+ * restored for it, which a work visit of its thread may be running meanwhile in the same home:
+ * of that one, only its own copy goes.
  */
 export function forgetConversations(
   runDirectory: string,
   profile: RunnerProfile,
   restored: string | undefined,
   environment: NodeJS.ProcessEnv = process.env,
+  forked?: { cwd?: string },
 ): void {
   const found = home(profile, runDirectory, environment);
   if (!found || owner(profile)) return;
-  const ids = new Set([printed(found.harness, runDirectory), restored]);
+  const valid = (id: string | undefined): id is string => !!id && conversationIdPattern.test(id);
+  const ids = [...new Set([printed(found.harness, runDirectory), restored])].filter(valid);
+  if (!forked) return found.harness.forget(found.root, ids);
   found.harness.forget(
     found.root,
-    [...ids].filter((id): id is string => !!id && conversationIdPattern.test(id)),
+    ids.filter((id) => id !== restored),
   );
+  if (valid(restored) && forked.cwd) found.harness.forget(found.root, [restored], forked.cwd);
 }
 
 /**

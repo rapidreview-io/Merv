@@ -12,6 +12,7 @@ import {
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import type {
+  InquiryStatus,
   Session,
   SessionMessage,
   SessionMessageInput,
@@ -32,6 +33,9 @@ interface MessageRow {
   acknowledged_at: string | null;
   ack_request_id: string | null;
   reply_body: string | null;
+  /** An inquiry's question (whose reply is its answer), or the context its thread's work reads. */
+  inquiry_id: string | null;
+  inquiry_role: 'question' | 'context' | null;
 }
 interface QuestionRow {
   id: string;
@@ -64,6 +68,9 @@ const keyThreads = (session: Pick<Session, 'projectId' | 'threadId'>) => [
   session.projectId,
   session.threadId,
 ];
+/** What a work visit reads of a thread's messages: all but inquiries' questions, which their
+ *  inquiry visits answer; it reads the context of each answer instead. */
+const FOR_WORK = "inquiry_role IS DISTINCT FROM 'question'";
 /** The provider Sessions publishes an unanswered question as, on the work it withholds. */
 export const QUESTION_PROVIDER = 'session-question';
 const question = (row: QuestionRow): ThreadQuestion => ({
@@ -86,6 +93,10 @@ export interface MessageHost {
   decode(row: Row): Session;
   /** Closes a visit that asked its owner: released, not counted against the work. */
   asked(session: Session, tx: Transaction): Promise<void>;
+  /** An inquiry visit replied to its question: it ends, and its thread's work is told. */
+  answered(session: Session, question: string, reply: string, tx: Transaction): Promise<void>;
+  /** Where these inquiries stand. */
+  inquiryStatuses(tx: Transaction, ids: string[]): Promise<Map<string, InquiryStatus>>;
   /** Refuses a caller who may not read the work item. */
   readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
   /** Sessions' whole opinion of one instance, as Workflows keeps it for the work's gate. */
@@ -115,7 +126,16 @@ export class SessionMessages {
     check(row, 'session_message_not_found', 'Session message not found', 404);
     return row;
   }
-  private publicMessage(row: MessageRow, instanceId: string, session?: Session): SessionMessage {
+  private publicMessage(
+    row: MessageRow,
+    instanceId: string,
+    session?: Session,
+    inquiries?: Map<string, InquiryStatus>,
+  ): SessionMessage {
+    const inquiry =
+      row.inquiry_role === 'question' && inquiries?.get(row.inquiry_id!)
+        ? { inquiry: { id: row.inquiry_id!, status: inquiries.get(row.inquiry_id!)! } }
+        : {};
     return {
       id: row.id,
       sessionId: row.session_id,
@@ -127,6 +147,7 @@ export class SessionMessages {
       createdAt: row.created_at,
       acknowledgedAt: row.acknowledged_at,
       reply: row.reply_body,
+      ...inquiry,
     };
   }
   /**
@@ -134,22 +155,29 @@ export class SessionMessages {
    * before every message went to a thread.
    */
   private async addressed(tx: Transaction, session: Session): Promise<MessageRow[]> {
+    // An inquiry visit reads its one question, and nothing meant for its thread's work.
+    if (session.inquiry)
+      return await tx.all<MessageRow>(
+        'SELECT * FROM session_messages WHERE id=?',
+        session.inquiry.messageId,
+      );
     return await tx.all<MessageRow>(
-      `SELECT * FROM session_messages WHERE project_id=? AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid`,
+      `SELECT * FROM session_messages WHERE project_id=? AND (session_id=? OR thread_id IN (${KEY_THREADS})) AND ${FOR_WORK} ORDER BY _merv_rowid`,
       session.projectId,
       session.id,
       ...keyThreads(session),
     );
   }
   async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
-    const session = await tx.get<{ project_id: string; thread_id: string }>(
-      'SELECT project_id,thread_id FROM worker_sessions WHERE id=?',
+    const session = await tx.get<{ project_id: string; thread_id: string; kind: string }>(
+      'SELECT project_id,thread_id,kind FROM worker_sessions WHERE id=?',
       sessionId,
     );
-    if (!session) return;
+    // An inquiry visit writes nothing a message could fence, and answers only its question.
+    if (!session || session.kind === 'inquiry') return;
     const row = await tx.get<{ id: string }>(
       `SELECT id FROM session_messages WHERE project_id=? AND acknowledged_at IS NULL
-        AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid LIMIT 1`,
+        AND (session_id=? OR thread_id IN (${KEY_THREADS})) AND ${FOR_WORK} ORDER BY _merv_rowid LIMIT 1`,
       session.project_id,
       sessionId,
       ...keyThreads({ projectId: session.project_id, threadId: session.thread_id }),
@@ -464,9 +492,11 @@ export class SessionMessages {
       await this.scope.require(caller, 'read', tx);
       const thread = await this.threadRow(tx, caller, threadId);
       await this.host.readable(caller, thread.instance_id, tx);
+      // The context an answered inquiry left its work repeats the question and its reply.
       const rows = await tx.all<MessageRow & { revision: number | string | null }>(
         `SELECT m.*,s.revision FROM session_messages m LEFT JOIN worker_sessions s ON s.id=m.session_id
-          WHERE m.project_id=? AND (m.thread_id=? OR s.thread_id=?) ORDER BY m._merv_rowid`,
+          WHERE m.project_id=? AND (m.thread_id=? OR s.thread_id=?)
+            AND m.inquiry_role IS DISTINCT FROM 'context' ORDER BY m._merv_rowid`,
         caller.projectId,
         thread.id,
         thread.id,
@@ -475,10 +505,15 @@ export class SessionMessages {
         'SELECT * FROM session_questions WHERE thread_id=? ORDER BY _merv_rowid',
         thread.id,
       );
+      const inquiries = await this.host.inquiryStatuses(tx, [
+        ...new Set(
+          rows.flatMap((row) => (row.inquiry_role === 'question' ? [row.inquiry_id!] : [])),
+        ),
+      ]);
       return {
         threadId: thread.id,
         messages: rows.map(({ revision, ...row }) => ({
-          ...this.publicMessage(row, thread.instance_id),
+          ...this.publicMessage(row, thread.instance_id, undefined, inquiries),
           expectedRevision: revision === null ? null : Number(revision),
         })),
         questions: questions.map(question),
@@ -506,16 +541,24 @@ export class SessionMessages {
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
       check(
         row.project_id === caller.projectId &&
-          (row.session_id === session.id ||
-            (row.thread_id !== null &&
-              !!(await tx.get(
-                `SELECT 1 FROM (${KEY_THREADS}) k(id) WHERE k.id=?`,
-                ...keyThreads(session),
-                row.thread_id,
-              )))),
+          (session.inquiry
+            ? row.id === session.inquiry.messageId
+            : row.inquiry_role !== 'question' &&
+              (row.session_id === session.id ||
+                (row.thread_id !== null &&
+                  !!(await tx.get(
+                    `SELECT 1 FROM (${KEY_THREADS}) k(id) WHERE k.id=?`,
+                    ...keyThreads(session),
+                    row.thread_id,
+                  ))))),
         'session_message_not_found',
         'Message not found in this session',
         404,
+      );
+      check(
+        !session.inquiry || input.reply !== undefined,
+        'invalid_session_message',
+        'An inquiry is answered by its reply: give one',
       );
       check(
         live(session) && session.actorId === caller.actorId,
@@ -551,8 +594,10 @@ export class SessionMessages {
           sessionId: session.id,
           ...(row.thread_id ? { threadId: row.thread_id } : {}),
           replied: input.reply !== undefined,
+          ...(session.inquiry && { inquiryId: session.inquiry.id }),
         },
       });
+      if (session.inquiry) await this.host.answered(session, row.body, input.reply!, tx);
       return read(await this.messageRow(tx, row.id));
     });
   }

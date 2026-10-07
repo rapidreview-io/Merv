@@ -369,11 +369,22 @@ function Calls({ thread, names }: { thread: ThreadView; names: Map<string, strin
   );
 }
 
+/** What a question to an agent (an inquiry) says of itself in the thread, by its status. */
+const inquiryPhrase: Record<string, string> = {
+  queued: 'asking',
+  running: 'answering',
+  answered: 'answered',
+  unanswered: 'no answer',
+  expired: 'no machine took it',
+};
+
 /**
  * What passed between the thread and the people over it, oldest first, and the box that sends
  * it a message, which its live or next visit reads. A question its agent asked stands over the
- * box, which answers it. Only someone who may write to the project is offered the box, and only
- * while the thread takes a message: live, dormant on open work, or answering its question.
+ * box, which answers it. An agent that is not live but kept its conversation is asked instead:
+ * a short read-only visit resumes it and answers now, its answer under the question. Only
+ * someone who may write to the project is offered the box, and only while the thread takes a
+ * message (live, dormant on open work, or answering its question) or may be asked.
  */
 export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   const actor = useActor();
@@ -381,10 +392,16 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
   const read = useTool<ThreadMessages>(path, {}, { every: isLive(thread) ? 5000 : 15_000 });
   const [draft, setDraft] = useState('');
-  const send = useCommand<{ message: { id: string } }>({
-    tool: path,
-    send: (body) => accountRequest(path, { method: 'POST', body, scoped: true }),
-    validate: (result) => typeof result.message?.id === 'string',
+  const said = read.data;
+  const open = said?.questions.filter((question) => !question.answeredAt).at(-1);
+  // Answer its open question; else ask an agent that is not live but kept its conversation;
+  // else send it a message, which its live or next visit reads.
+  const asking = !open && !isLive(thread) && !!thread.asks;
+  const target = asking ? `/sessions/threads/${encodeURIComponent(thread.id)}/ask` : path;
+  const send = useCommand<{ message?: { id: string }; inquiry?: { id: string } }>({
+    tool: target,
+    send: (body) => accountRequest(target, { method: 'POST', body, scoped: true }),
+    validate: (result) => typeof (asking ? result.inquiry?.id : result.message?.id) === 'string',
     onSuccess: () => {
       setDraft('');
       read.reload();
@@ -392,10 +409,8 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
       refreshTools('ui.home');
     },
   });
-  const said = read.data;
-  const open = said?.questions.filter((question) => !question.answeredAt).at(-1);
   // Sessions says whether the thread takes a message now; an open question it asked always does.
-  const can = !!actor && writes(actor) && (thread.takesMessage || !!open);
+  const can = !!actor && writes(actor) && (thread.takesMessage || !!open || asking);
   const lines = said
     ? [
         ...said.questions
@@ -424,7 +439,11 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
                     ? 'You'
                     : (nameOf(line.message.senderActorId) ?? 'Someone')}{' '}
                   · <Ago at={line.at} />
-                  {line.message.acknowledgedAt ? ' · read' : ' · queued'}
+                  {line.message.inquiry
+                    ? ` · ${inquiryPhrase[line.message.inquiry.status] ?? line.message.inquiry.status}`
+                    : line.message.acknowledgedAt
+                      ? ' · read'
+                      : ' · queued'}
                 </span>
                 <p className="wrap">{line.message.body}</p>
                 {line.message.reply && <p className="wrap muted">↳ {line.message.reply}</p>}
@@ -451,15 +470,15 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
             className="textarea"
             rows={2}
             maxLength={8000}
-            aria-label={open ? 'Answer' : 'Message to this thread'}
-            placeholder={open ? 'Answer' : 'Message'}
+            aria-label={open ? 'Answer' : asking ? 'Ask its agent' : 'Message to this thread'}
+            placeholder={open ? 'Answer' : asking ? 'Ask its agent' : 'Message'}
             value={draft}
             readOnly={send.locked}
             onChange={(event) => setDraft(event.target.value)}
           />
           <Submit
-            label="Send"
-            saving="Sending…"
+            label={asking ? 'Ask' : 'Send'}
+            saving={asking ? 'Asking…' : 'Sending…'}
             busy={send.busy}
             retry={send.retry}
             disabled={!draft.trim()}

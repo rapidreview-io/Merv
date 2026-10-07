@@ -185,7 +185,12 @@ test('every boundary image must prove it can be a work host before its release s
   const enrolled = text('packages/fleet/src/hosted-codex.ts').match(
     /hostedCodexCapabilities = Object\.freeze\((\[[^\]]*\])\)/,
   )[1];
-  const capabilities = [...JSON.parse(enrolled.replaceAll("'", '"')), 'workflow.workhost.1'].sort();
+  // And `inquiry.1`, which only the image can say: it runs inquiry visits as such.
+  const capabilities = [
+    ...JSON.parse(enrolled.replaceAll("'", '"')),
+    'workflow.workhost.1',
+    'inquiry.1',
+  ].sort();
   assert.ok(
     gate.includes(
       `b['capabilities'] == ${JSON.stringify(capabilities).replaceAll('"', "'").replaceAll(',', ', ')}`,
@@ -197,12 +202,27 @@ test('every boundary image must prove it can be a work host before its release s
   // pinned): only the local fake Main's loopback listener is hidden from the probe. A stand-in
   // that skipped the attestation let an image whose real ancestry the probe refused ship
   // (2026-10-06: every hosted workflow launch exited 70). The original comes back.
-  assert.match(text('scripts/hosted-runner/assignment-probed.py'), /attest_workflow\(Path\.cwd\(\)\)/);
+  assert.match(
+    text('scripts/hosted-runner/assignment-probed.py'),
+    /attest_workflow\(Path\.cwd\(\)\)/,
+  );
   assert.match(gate, /REAL_LAUNCHER\.write_bytes\(original_launcher\)/);
   assert.match(gate, /exec\(compile\(open\(%r\)\.read\(\), %r, 'exec'\)/);
-  assert.match(gate, /isolation_probe\._listeners = lambda: \[entry for entry in listeners\(\)\n\s+if entry != '0100007F:%%04X 0' %% port\]/);
-  assert.match(gate, /assert set\(receipt\['roots'\]\) == \{'supervisor', 'guardian', 'subreaper', 'group'\}/);
+  assert.match(
+    gate,
+    /isolation_probe\._listeners = lambda: \[entry for entry in listeners\(\)\n\s+if entry != '0100007F:%%04X 0' %% port\]/,
+  );
+  assert.match(
+    gate,
+    /assert set\(receipt\['roots'\]\) == \{'supervisor', 'guardian', 'subreaper', 'group'\}/,
+  );
   assert.match(gate, /'workHostStepAttested': True/);
+  // A person's question to the step's agent runs on the same work host as an inquiry visit:
+  // the same attested launcher, a read-only sandbox, the step's conversation resumed, none kept.
+  assert.match(gate, /== \['read-only'\]/);
+  assert.match(gate, /\['resume', kept\['facts'\]\['conversationId'\], '-'\]/);
+  assert.match(gate, /'conversation' not in inquiry_calls/);
+  assert.match(gate, /'inquiryAttested': True, 'inquiryReadOnlySandbox': True/);
   assert.match(gate, /finally:\n    LAUNCHER\.write_bytes\(original_launcher\)/);
   assert.ok(GATES.boundary.includes('linux-workflow-gate.py'));
   // A worker-lane image differs only in the Pi worker, so it keeps its gated supervisor and reset.

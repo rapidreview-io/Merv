@@ -14,6 +14,7 @@ import {
   requireHuman,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
+import { INQUIRY_CAPABILITY } from '@merv/sessions/rules';
 import type {
   ManagedRunnerBindingIdentity,
   Sessions,
@@ -107,7 +108,13 @@ const refused = (a: FleetAllocation) =>
   a.error === 'runtime_refused' || a.error === 'wallet_refused';
 /** Before Fleet observes the launch no runner can have enrolled, so nothing claimed is at stake. */
 const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'launched';
-const demandInput = { platform: hostedCodexPlatform, capabilities: [...hostedCodexCapabilities] };
+/** What Fleet rents for: work its machines can take, and questions to agents whose conversations
+ *  they can resume (an image that runs inquiry visits says so in its heartbeat; one that does not
+ *  is never offered one, and its host goes unclaimed). */
+const demandInput = {
+  platform: hostedCodexPlatform,
+  capabilities: [...hostedCodexCapabilities, INQUIRY_CAPABILITY],
+};
 /** Messages may carry credentials; operators get the project and the finite code only. */
 const skipped = (projectId: string, error: unknown) => {
   const code = error instanceof MervError ? error.code : 'unexpected';
@@ -213,7 +220,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** A step's machine is for the person who directs it; a review director's, for its voucher.
    * A lookup that fails refuses the request. */
-  async payer(source: DelegationSource, _ownerId: string, tx: Transaction): Promise<string> {
+  async payer(source: DelegationSource, _ownerId: string, tx?: Transaction): Promise<string> {
     const who = source.kind === 'service' ? source.vouchedBy : source;
     return personKey(
       who.kind === 'human' ? who : (await this.scope.requireDelegation(who, 'read', tx)).user,
@@ -221,10 +228,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
     );
   }
   /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
-   *  machine was rented for. */
+   *  machine was rented for; an inquiry visit's, to the person who asked, within its budget. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
     const bound = await this.sessions.managed.boundSession(tokenOrSessionId);
-    const { person } = await this.fleet.inspectOwned(this, bound.allocationId);
+    const person = bound.inquiry
+      ? await this.payer(bound.inquiry.asker, '')
+      : (await this.fleet.inspectOwned(this, bound.allocationId)).person;
     return hostedGrant(bound, person, this.clock());
   }
   /** The managed worker's or project's current Fleet director's budget, without private counts. */
@@ -775,6 +784,7 @@ export const fleetWorkflowPlugin = {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',
       dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       authorize: (token) => adapter.modelGrant(token),
+      inquiries: ctx.sessions.inquiries,
     });
     ctx.effect(() => {
       const model = ctx.fleet.modelRelay(relay);

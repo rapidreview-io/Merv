@@ -446,6 +446,9 @@ function claudeArgs(
     // Thinking and text arrive while they are written, for the live view.
     '--include-partial-messages',
     ...(request.resume ? ['--resume', request.resume] : []),
+    // An inquiry visit forks the conversation it resumes: a work visit of its thread may be
+    // running the same one in this home meanwhile, and the fork leaves that one alone.
+    ...(request.resume && inquiring(request.session) ? ['--fork-session'] : []),
     ...(request.session.continuity ? [] : ['--no-session-persistence']),
     '--setting-sources',
     '',
@@ -511,8 +514,19 @@ function protectLogging(spec: LaunchSpec): LaunchSpec {
  */
 export const sealed = (session: LaunchRequest['session']): boolean => {
   const workspace = effectiveWorkspace(session.execution.policy);
-  return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
+  return (
+    session.execution.policy.readOnly &&
+    ((workspace.mode !== 'none' && workspace.retain) || inquiring(session))
+  );
 };
+/**
+ * An inquiry visit (`session.inquiry`): a person's question to the agent, answered from its
+ * restored conversation. It is sealed as a review of a retained checkout is: the filesystem
+ * read-only (its directory may be the work's own, on a work host), no shell writes, no
+ * connections, and nothing of it kept.
+ */
+export const inquiring = (session: LaunchRequest['session']): boolean =>
+  !!(session as { inquiry?: unknown }).inquiry;
 
 /** Deterministic environment names are local to one spawn, never persisted or global. */
 const nativeServers = (request: LaunchRequest) =>
@@ -635,10 +649,18 @@ export function buildLaunch(
       : profile.harness === 'claude'
         ? claudeArgs(profile, request, url)
         : [...(profile.args ?? [])];
+  const inquiry = inquiring(session);
+  check(
+    !inquiry || (request.resume !== undefined && profile.harness !== 'command'),
+    'invalid_runner_launch',
+    'An inquiry visit runs only on the conversation it asks',
+  );
   const stdin = [
     ...(request.resume
       ? [
-          'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
+          inquiry
+            ? 'A person is asking you about your earlier work in this conversation. This is a short, read-only inquiry, not a return to the work: answer as the assignment below says, and stop.'
+            : 'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
         ]
       : []),
     request.prompt,
@@ -652,12 +674,14 @@ export function buildLaunch(
           'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment. Use huggingface_hub, datasets, transformers or hf download normally; do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
         ]
       : []),
-    sealed(session)
-      ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
-      : session.execution.policy.readOnly
-        ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
-        : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
-    ...(profile.harness === 'claude'
+    inquiry
+      ? 'The local filesystem is read-only, and nothing you do here is kept: Merv’s read tools and your one reply are all this visit has.'
+      : sealed(session)
+        ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
+        : session.execution.policy.readOnly
+          ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
+          : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
+    ...(profile.harness === 'claude' && !inquiry
       ? [
           'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for remote work, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.',
         ]

@@ -31,6 +31,10 @@ An offer opens a new thread, or continues the dormant thread that holds the same
 
 Halting a session (`POST /sessions/:sessionId/halt`) closes its live visit; a thread without continuity retires with it, which revokes its actor. `GET /sessions/threads?instanceId=…` lists a work item's threads and their visits; `GET /sessions/threads/:id/conversation` is an operator's read of what the thread's agent did ([Sessions README](../packages/sessions/README.md#continuity)).
 
+## Inquiry visits
+
+A person may ask any thread's agent a question (`session.ask_thread`), whatever the thread's status. An inquiry visit is a session of the thread's actor that resumes its saved conversation read-only, answers, and stops; it holds no lease on the work and makes no workflow move or write but its reply ([Sessions README](../packages/sessions/README.md#inquiries)). Its conversation is a fork that is never saved back, so the thread's next work visit resumes exactly the conversation it had, and reads the question and answer as a message to its thread. The alternative, saving the inquiry's conversation as the new head, would carry the exchange in the agent's memory but let a person's side question change what the work resumes; it was not chosen.
+
 ## Storage
 
 Threads live in the Sessions-owned `session_threads` table, at most one not retired per continuity key; `worker_sessions.thread_id` names each visit's thread. Live assignment uniqueness is enforced per actor. Historical ids, snapshots, foreign-key references and retention triggers are preserved. Scope distinguishes thread actors from historical session actors and permits role changes only through its internal managed-agent operation.

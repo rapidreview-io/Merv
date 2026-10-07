@@ -679,7 +679,14 @@ export class ProjectScope implements Scope {
         source = await this.sessions.provider().require(caller, sql as Transaction, permission);
         // A session that ended has retired its actor, and Sessions above said how it ended (its
         // handoff completed, say), the way the worker's next call will, whichever closed it first.
-        check(row.active, 'session_closed', 'Session is closed', 401);
+        // An inquiry visit, which Sessions above held to reading, still reads as a thread's actor
+        // its thread retired: a person may ask an agent whose work has ended.
+        check(
+          row.active || (permission === 'read' && caller.session?.inquiry === true),
+          'session_closed',
+          'Session is closed',
+          401,
+        );
         // The source is the worker's delegator, another actor of the same project.
         vouched(source, false, 'forbidden', 'Session source does not match this project');
       } else if (caller.session) {

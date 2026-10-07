@@ -4,7 +4,13 @@ import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
-import type { SessionBudgetInput, SessionMessageInput, Sessions, UsageQuery } from './types.js';
+import type {
+  SessionBudgetInput,
+  SessionMessageInput,
+  Sessions,
+  ThreadInquiryInput,
+  UsageQuery,
+} from './types.js';
 import { systemStatus } from './system-status.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -168,9 +174,26 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'session.ask_thread',
+        description:
+          "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer, and a model-token budget charged to you. Reuse requestId after an uncertain response.",
+        inputSchema: z
+          .object({
+            threadId: z.string().min(1).max(200),
+            body: z.string().min(1).max(8000),
+            requestId: z.string().min(1).max(200),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: ThreadInquiryInput) => ({
+          inquiry: await sessions.inquiries.ask(caller, input),
+        }),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'session.message.ack',
         description:
-          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.',
+          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
         conversation: 'never',
         inputSchema: z
           .object({
@@ -182,7 +205,16 @@ export const sessionsToolsPlugin = {
         handler: async (
           caller: Caller,
           input: { messageId: string; reply?: string; requestId: string },
-        ) => await sessions.messaging.acknowledgeMessage(caller, input),
+        ) => {
+          const message = await sessions.messaging.acknowledgeMessage(caller, input);
+          return caller.session?.inquiry
+            ? {
+                ...message,
+                ended: true,
+                next: 'Your answer is delivered and this inquiry visit has ended. Stop now.',
+              }
+            : message;
+        },
       }),
     );
     ctx.effect(() =>

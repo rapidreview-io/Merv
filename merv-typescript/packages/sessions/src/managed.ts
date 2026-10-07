@@ -29,6 +29,7 @@ import type {
 } from './managed-types.js';
 import {
   capabilitiesSchema as capabilities,
+  INQUIRY_CAPABILITY,
   ownEnd,
   runnerPlatformSchema as profile,
 } from './rules.js';
@@ -398,7 +399,16 @@ export class ManagedRunnerBindings {
         await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
       await this.current(row, tx);
       await this.scope.requireDelegation(session.source, 'read', tx);
+      const asker = session.inquiry
+        ? await tx.get<{ asker_source_json: string }>(
+            'SELECT asker_source_json FROM session_inquiries WHERE id=?',
+            session.inquiry.id,
+          )
+        : undefined;
       return {
+        ...(asker && {
+          inquiry: { id: session.inquiry!.id, asker: JSON.parse(asker.asker_source_json) },
+        }),
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
@@ -482,7 +492,9 @@ export class ManagedRunnerBindings {
     check(
       input.platforms.length === 1 &&
         canonical(input.platforms[0]) === row.platform_json &&
-        canonical(input.capabilities ?? []) === row.capabilities_json,
+        // Its enrolment's, and whether its image runs inquiry visits, which only it can say.
+        canonical((input.capabilities ?? []).filter((item) => item !== INQUIRY_CAPABILITY)) ===
+          row.capabilities_json,
       'managed_profile',
       'Managed runner profile differs from allocation',
       409,

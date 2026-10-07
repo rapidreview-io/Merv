@@ -80,7 +80,10 @@ cannot read its session bearer from any process environment.
 It also proves the image can be a work host, as Main rents every workflow machine:
 the supervisor enrolls with a work-host bootstrap and runs one step through the image's
 own probed launcher, whose attestation must pass (only the local fake Main's loopback
-listener is hidden from it), and two further Codex steps run in
+listener is hidden from it), keeping and delivering that step's conversation; then an
+inquiry visit on the same host, through the same attested launcher in the same directory,
+with Codex's read-only sandbox, resuming the step's conversation (`exec … resume <id> -`) and
+declaring none of its own; and two further Codex steps run in
 one retained working directory with fresh credentials, reset between them through the
 supervisor's own `assignment-probed.py --reset`, which must kill a detached assignment
 process and clear private home and temp state while keeping the step's files.

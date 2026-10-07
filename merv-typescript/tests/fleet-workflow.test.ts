@@ -197,9 +197,10 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
         return structuredClone(served);
       },
       async dispatchDemand(caller: Caller, input: unknown) {
+        // Its work, and questions to its agents (inquiry visits), which its image runs too.
         assert.deepEqual(input, {
           platform: hostedCodexPlatform,
-          capabilities: [...hostedCodexCapabilities],
+          capabilities: [...hostedCodexCapabilities, 'inquiry.1'],
         });
         await scope.require(caller, 'read');
         const demand =

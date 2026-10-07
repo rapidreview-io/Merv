@@ -317,7 +317,7 @@ test('a work host replays the request of its own launch first, then asks for its
   assert.ok(requests.slice(1).every((id) => id !== pending.requestId));
 });
 
-test('presence names runner.2 on a source runner and only the enrolled drivers on a managed one', async (t) => {
+test('presence names runner.2 on a source runner and only the enrolled drivers on a managed one, and inquiry.1 on both', async (t) => {
   const driver: WorkspaceDriverFactory = {
     name: 'code.v2',
     create: () => ({ get: () => undefined, dispose: () => {} }) as unknown as WorkspaceDriver,
@@ -331,11 +331,16 @@ test('presence names runner.2 on a source runner and only the enrolled drivers o
     return fake.calls.find((call) => call.path === '/sessions/runners/heartbeat')!.body!
       .capabilities;
   };
-  assert.deepEqual(await capabilities({}, []), ['runner.2']);
-  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.2']);
+  // Both run inquiry visits as such (`inquiry.1`), which a managed runner adds to its enrolment.
+  assert.deepEqual(await capabilities({}, []), ['inquiry.1', 'runner.2']);
+  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'inquiry.1', 'runner.2']);
   const managed = { workInstanceId: 'instance_managed' };
-  assert.deepEqual(await capabilities(managed, [driver]), ['code.v2', 'workflow.workhost.1']);
-  assert.deepEqual(await capabilities(managed, []), ['workflow.workhost.1']);
+  assert.deepEqual(await capabilities(managed, [driver]), [
+    'code.v2',
+    'inquiry.1',
+    'workflow.workhost.1',
+  ]);
+  assert.deepEqual(await capabilities(managed, []), ['inquiry.1', 'workflow.workhost.1']);
 });
 
 test('a guardian that cannot own its socket ends the launch it claimed, which is released', async (t) => {

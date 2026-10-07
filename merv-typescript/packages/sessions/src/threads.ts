@@ -156,7 +156,8 @@ export class SessionThreads {
           );
     if (held) {
       const visits = await tx.all<{ owner_hash: string; live: boolean }>(
-        "SELECT owner_hash,bool_or(status IN ('offered','active')) AS live FROM worker_sessions WHERE thread_id=? GROUP BY owner_hash",
+        // Its work visits: an inquiry visit holds neither the work nor the conversation.
+        "SELECT owner_hash,bool_or(status IN ('offered','active')) AS live FROM worker_sessions WHERE thread_id=? AND kind='work' GROUP BY owner_hash",
         held.id,
       );
       // Sessions' choice, not the runner's: the thread may have run anywhere.
@@ -227,7 +228,7 @@ export class SessionThreads {
   }
   private async executing(id: string, tx: Transaction): Promise<boolean> {
     return !!(await tx.get(
-      "SELECT 1 FROM worker_sessions WHERE thread_id=? AND status IN ('offered','active')",
+      "SELECT 1 FROM worker_sessions WHERE thread_id=? AND status IN ('offered','active') AND kind='work'",
       id,
     ));
   }
@@ -279,6 +280,14 @@ export class SessionThreads {
         409,
       );
       check(session.continuity, 'conversation_unkept', 'This session keeps no conversation', 409);
+      // The fork: an inquiry visit's conversation is never saved back, so the thread's next work
+      // visit resumes the conversation as it was (and reads the exchange as a message).
+      check(
+        !session.inquiry,
+        'conversation_unkept',
+        'An inquiry visit keeps no conversation: its thread resumes the one it had',
+        409,
+      );
       const found = await this.row(session.threadId, tx);
       const superseded = () =>
         check(
@@ -433,7 +442,7 @@ export class SessionThreads {
     const thread = await this.row(id, tx);
     if (thread.status === 'retired') return;
     const visit = (await tx.get<{ source: string }>(
-      "SELECT session_json::jsonb->>'source' AS source FROM worker_sessions WHERE thread_id=? ORDER BY _merv_rowid DESC LIMIT 1",
+      "SELECT session_json::jsonb->>'source' AS source FROM worker_sessions WHERE thread_id=? AND kind='work' ORDER BY _merv_rowid DESC LIMIT 1",
       id,
     ))!;
     try {
@@ -558,11 +567,12 @@ export class SessionThreads {
         status:
           thread.status === 'retired'
             ? 'retired'
-            : own.some((visit) => live(visit))
+            : own.some((visit) => live(visit) && !visit.inquiry)
               ? 'live'
               : 'dormant',
         takesMessage:
           asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
+        ...(thread.sha256 !== null && thread.uploaded_at !== null && { asks: true as const }),
         visits: own,
       };
     });
@@ -586,8 +596,9 @@ export class SessionThreads {
       harness: string | null;
       streamed: boolean;
       transcript: boolean;
+      kind: 'work' | 'inquiry';
     }>(
-      `SELECT s.id,s.thread_id,s.status,s.runner_id,x.j->>'createdAt' AS created_at,x.j->>'activatedAt' AS activated_at,
+      `SELECT s.id,s.thread_id,s.status,s.runner_id,s.kind,x.j->>'createdAt' AS created_at,x.j->>'activatedAt' AS activated_at,
           x.j->>'expiresAt' AS expires_at,x.j->>'hardDeadline' AS hard_deadline,x.j->>'closedAt' AS closed_at,
           x.j->>'closeReason' AS close_reason,x.j->>'outcome' AS outcome,(x.j#>'{continuity,resume}') IS NOT NULL AS resumed,
           COALESCE(d.platform_json::jsonb->>'harness',u.harness,x.j#>>'{continuity,resume,harness}') AS harness,
@@ -625,6 +636,7 @@ export class SessionThreads {
           ),
         }),
         hasConversation: row.streamed || row.transcript,
+        ...(row.kind === 'inquiry' && { inquiry: true as const }),
       };
       return { threadId: row.thread_id, view };
     });
