@@ -438,6 +438,25 @@ test('denies alternate routes, origins, tokens, unsafe payload fields and tools'
         },
       ],
     },
+    // Fleet's one rule: a file by id, wherever it sits, as hosted Codex's relay refuses it.
+    {
+      tools: [
+        {
+          type: 'function',
+          name: 'read_notes',
+          parameters: { type: 'object', default: { file_id: 'file-abc' } },
+        },
+      ],
+    },
+    {
+      tools: [
+        {
+          type: 'function',
+          name: 'read_notes',
+          parameters: { type: 'object', default: { type: 'item_reference', id: 'msg_1' } },
+        },
+      ],
+    },
   ];
   for (const attack of attacks)
     assert.equal((await send(f, { ...request, ...attack })).status, 400, JSON.stringify(attack));

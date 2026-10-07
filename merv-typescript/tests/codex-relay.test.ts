@@ -375,13 +375,37 @@ test('only Codex-shaped calls pass: no stored, background or chained response, a
         },
       ],
     },
+    // Fleet's one rule, as Pi's relay refuses it: no URL, URI or data string in a schema.
+    ...[
+      { type: 'object', properties: { a: { type: 'string', default: 'https://attacker.test' } } },
+      { type: 'object', properties: { a: { type: 'string', description: 'see data:x' } } },
+      { type: 'object', properties: { a: { type: 'string', contentMediaType: 'image/png' } } },
+      { type: 'object', uri: 'x' },
+    ].map((parameters) => ({
+      ...codex,
+      tools: [
+        {
+          type: 'namespace',
+          name: 'mcp__merv',
+          tools: [{ type: 'function', name: 'task_get', parameters }],
+        },
+      ],
+    })),
   ]) {
     const response = await f.call(body);
     assert.equal(response.status, 400, JSON.stringify(body).slice(0, 200));
     assert.deepEqual(await response.json(), { error: 'invalid_payload' });
   }
   assert.equal((await f.call(withoutInclude)).status, 200);
-  assert.equal(f.upstream.length, 1);
+  // An MCP tool's schema names its dialect, and may have a field called url.
+  const merv = {
+    type: 'object',
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    properties: { url: { type: 'string' }, projectId: { type: 'string' } },
+  };
+  const named = { ...codex, tools: [{ type: 'function', name: 'paper_cite', parameters: merv }] };
+  assert.equal((await f.call(named)).status, 200);
+  assert.equal(f.upstream.length, 2);
 });
 
 test('one call in flight per session, and a session that ends stops its stream', async (t) => {

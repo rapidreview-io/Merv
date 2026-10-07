@@ -252,6 +252,7 @@ const pureRules = new Set([
   '@merv/reflections/names',
   '@merv/workflows/execution',
   '@merv/fleet/model-ledger',
+  '@merv/fleet/model-requests',
   '@merv/fleet/hosted-codex',
   '@merv/workflows/dependency-rows',
   '@merv/workflows/lease-rows',
