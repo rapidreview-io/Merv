@@ -202,7 +202,6 @@ export function useEventStream(
         Math.min(30_000, (busy ? 5000 : 1000) * 2 ** failures++),
       );
     };
-    setState((was) => (was === 'stalled' || was === 'refused' ? 'connecting' : was));
     void connect();
     return () => {
       stopped = true;

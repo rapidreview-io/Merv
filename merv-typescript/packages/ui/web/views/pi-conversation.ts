@@ -243,8 +243,8 @@ export function useConversation() {
       else setResponse((before) => accumulateResponse(before, value));
     },
   );
-  const retrying = live && stream === 'retrying';
-  const unavailable = live && stream === 'refused';
+  const retrying = live && stream.state === 'retrying';
+  const unavailable = live && stream.state === 'refused';
   const streamError = retrying ? RECONNECTING : unavailable ? UNAVAILABLE : '';
   // While the stream is away the conversation is still read, now and then.
   useEffect(() => {
