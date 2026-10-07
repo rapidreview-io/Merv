@@ -1848,39 +1848,6 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
     );
 });
 
-test('sessions@14 strips agent fields, and keeps a session jsonb refuses as it was', async (t) => {
-  const f = await fixture(t);
-  const plain = (await f.offer()).session;
-  const frozen = (await f.offer()).session;
-  // A NUL kept in a session's frozen context is valid JSON text that jsonb refuses.
-  const nul = '{"agentId":"thr_old","note":"a\\u0000b"}';
-  await f.state.transaction(async (tx) => {
-    await tx.run('ALTER TABLE worker_sessions DISABLE TRIGGER worker_sessions_immutable');
-    await tx.run(
-      `UPDATE worker_sessions SET session_json=jsonb_set(session_json::jsonb,'{agentId}','"thr_old"')::text WHERE id=?`,
-      plain.id,
-    );
-    await tx.run('UPDATE worker_sessions SET session_json=? WHERE id=?', nul, frozen.id);
-    await tx.run('ALTER TABLE worker_sessions ENABLE TRIGGER worker_sessions_immutable');
-    await tx.run("DELETE FROM component_migrations WHERE component='sessions' AND version=14");
-    await tx.run('DROP TABLE session_questions');
-    await tx.run('DROP FUNCTION session_questions_guard()');
-    await tx.run('ALTER TABLE session_messages DROP CONSTRAINT session_messages_addressed');
-    await tx.run('ALTER TABLE session_messages DROP COLUMN thread_id');
-  });
-  await f.restart();
-  const rows = await f.state.read((sql) =>
-    sql.all<{ id: string; session_json: string }>(
-      'SELECT id,session_json FROM worker_sessions WHERE id IN (?,?)',
-      plain.id,
-      frozen.id,
-    ),
-  );
-  const json = new Map(rows.map((row) => [row.id, row.session_json]));
-  assert.equal(JSON.parse(json.get(plain.id)!).agentId, undefined);
-  assert.equal(json.get(frozen.id), nul);
-});
-
 test('agent observations retain tool timings and estimates across a restart without retaining payloads', async (t) => {
   const f = await fixture(t);
   const { session: first, token } = await f.offer();

@@ -218,11 +218,8 @@ FOR EACH ROW EXECUTE FUNCTION session_questions_guard();
 ${withoutTriggers(
   'worker_sessions',
   ['worker_sessions_immutable'],
-  `-- A row jsonb refuses (a NUL or lone surrogate kept in its frozen context) keeps the fields; readers ignore them.
-  UPDATE worker_sessions SET session_json = (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch')::text
-  WHERE CASE WHEN pg_input_is_valid(session_json, 'jsonb')
-    THEN (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch') <> session_json::jsonb
-    ELSE false END;`,
+  `UPDATE worker_sessions SET session_json = (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch')::text
+  WHERE (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch') <> session_json::jsonb;`,
 )}`;
 export const postgresMigrations: Record<number, string> = {
   1: `
