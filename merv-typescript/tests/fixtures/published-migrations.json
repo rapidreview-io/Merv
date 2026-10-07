@@ -399,7 +399,7 @@
       "component": "research",
       "version": 9,
       "hash": "3558d59377e4dd1766e95840f0524c7ceea0678aa270d1e39d74c60bcbbc4bb2",
-      "published": false
+      "published": true
     },
     {
       "component": "reviews",
@@ -1024,13 +1024,13 @@
       "component": "sessions",
       "version": 16,
       "hash": "9276a77bac782fb1686702fc509c7885eac82cfc0d79b63aeeeba8538bb9f03b",
-      "published": false
+      "published": true
     },
     {
       "component": "sessions",
       "version": 17,
       "hash": "1b92ccb817e5d755d6eede3d073c925c93e64ecbc96098d06722aa21090db626",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
@@ -1042,7 +1042,7 @@
       "component": "sessions",
       "version": 18,
       "hash": "510c657060dc28c4ea42267e8493dbdf202e5b117df37d78f732b0a5b79069a4",
-      "published": false
+      "published": true
     }
   ]
 }
