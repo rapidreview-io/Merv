@@ -2,8 +2,8 @@
 
 This adapter connects research decisions to the [Code utility](../code/README.md).
 Research owners decide dependencies, accepted outcomes, review requirements and publication
-obligations. The adapter translates those decisions into exact code pins, isolated writers,
-retained evidence, dependency blockers, conflict-resolution work and publication operations.
+obligations. The adapter translates those decisions into exact code pins, retained evidence,
+dependency blockers, conflict-resolution work and publication operations.
 It never makes Code itself depend on a research service.
 
 It provides `ctx.codeWork`; Tasks, Experiments, Research and Knowledge require it. It requires
@@ -64,7 +64,7 @@ flowchart LR
   class codeWork self
 ```
 
-Code work is the one bridge between research decisions and Git: Tasks, Experiments and Research bind to it when it is present, and it alone drives Code. Through Domain Events it initializes each new project, opens and ends a session's writer generation as its workspace attaches and closes, and reconciles research state on every workflow transition.
+Code work is the one bridge between research decisions and Git: Tasks, Experiments and Research bind to it when it is present, and it alone drives Code. Through Domain Events it initializes each new project, asks Code to open and end a session's writer generation as its workspace attaches and closes (Code owns writers and their generations), and reconciles research state on every workflow transition.
 
 ## Composition
 

@@ -1,37 +1,10 @@
-export interface RowStatus {
-  state?: 'ready' | 'degraded' | 'unavailable';
-  count?: number;
-  detail?: string;
-}
-/** How Needs you speaks of a row's records (UiRowNeeds): every word is the owner's. */
-export interface RowNeeds {
-  name: string;
-  owner: string;
-  reads?: Record<string, string>;
-  stops?: string[];
-  subjectOnly?: true;
-}
-/** What a row's owner says of one state of its workflow (UiStateWords). */
-export interface RowStateWords {
-  idle?: true;
-  submitted?: string;
-}
-export interface Row {
-  id: string;
-  label: string;
-  group: string;
-  order: number;
-  path: string;
-  view: { kind: string; [key: string]: unknown };
-  workflow?: string;
-  holds?: string[];
-  rooms?: true;
-  whenCounted?: true;
-  needs?: RowNeeds;
-  states?: Record<string, RowStateWords>;
-  status: RowStatus;
-  readable: boolean;
-}
+import type { UiRowDescription, UiRowNeeds, UiRowStatus, UiStateWords } from '@merv/ui/rows';
+
+/** A row as ui.shell describes it, and its parts: the server's own types. */
+export type Row = UiRowDescription;
+export type RowStatus = UiRowStatus;
+export type RowNeeds = UiRowNeeds;
+export type RowStateWords = UiStateWords;
 export interface PluginState {
   id: string;
   name: string;

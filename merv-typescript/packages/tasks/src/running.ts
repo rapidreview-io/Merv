@@ -1,5 +1,6 @@
 import type { TaskRecord } from './types.js';
 import {
+  check,
   ellipsis,
   keyId,
   keyKind,
@@ -282,15 +283,15 @@ function taskHistory(
 }
 
 /**
- * A task's history alone, as its sidebar tells it, for its record page to poll: its graph, its
- * reviews and what they pinned, and nothing else of the sidebar. Empty for an id that is not a
- * task of this project.
+ * What a task's record page polls: where it stands, read without running an action's check
+ * (the page draws the stage and its prerequisites, never an action), and its history as its
+ * sidebar tells it, from that same graph, its reviews and what they pinned.
  */
-export async function history(
+export async function page(
   ctx: TasksContext,
   caller: Caller,
   taskId: string,
-): Promise<RunningUnitEntry[]> {
+): Promise<{ process: ProcessGraph; history: RunningUnitEntry[] }> {
   caller = structuredClone(caller);
   return await ctx.state.snapshot(async () => {
     const row = await ctx.state.transaction(async (tx) => {
@@ -301,14 +302,14 @@ export async function history(
         caller.projectId,
       );
     });
-    if (!row) return [];
+    check(row, 'not_found', 'Task not found in this project', 404);
     const graph = await ctx.workflows.process(caller, taskId, { checks: false });
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
     const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
     const artifacts = await ctx.state.transaction(
       async (tx) => await ctx.artifacts.find(caller, ids.slice(0, MAX_ARTIFACT_IDS), tx),
     );
-    return taskHistory(row.brief_id, graph, reviews, artifacts);
+    return { process: graph, history: taskHistory(row.brief_id, graph, reviews, artifacts) };
   });
 }
 

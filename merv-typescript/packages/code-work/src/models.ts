@@ -186,11 +186,8 @@ export interface CodeUnitAcceptance {
   reference: string | null;
   /** Whether the reviewer's checkout was attached at exactly that code; null without code. */
   reviewAttached: boolean | null;
-  /**
-   * Where the accepted code is kept. `legacy-local` is the runner's own retained capture:
-   * the server holds the identity and makes no durability claim for the objects.
-   */
-  storage: 'none' | 'legacy-local' | 'code';
+  /** Where the accepted code is kept: Code's own repository, or none for a code-less success. */
+  storage: 'none' | 'code';
   /** The Code operation that made the accepted commit durable; only `code` storage has one. */
   receipt?: string;
 }
@@ -416,7 +413,7 @@ export interface PersonMove {
    * page that makes it: a move nothing here can carry out is still the reader's, and a
    * wait on the server is nobody's however well a person may read why it waits.
    */
-  whose: 'operator' | 'administrator' | 'nobody';
+  whose: 'operator' | 'admin' | 'nobody';
   /** Where a page of this app makes the move; absent where none of them does. */
   control?: { label: string; to: string };
 }

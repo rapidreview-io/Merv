@@ -59,17 +59,16 @@ The previously verified production deployment had metadata-only permissions. Do 
 
 All controls require a bearer and selected project, except the browser-bound public callback. Worker credentials cannot use the controller/publication HTTP routes.
 
-| Route                                                            | Purpose                                                |
-| ---------------------------------------------------------------- | ------------------------------------------------------ |
-| `GET /code/github`                                               | Safe persisted status, repository, base and automation |
-| `POST /code/github/begin`, `POST /finish`, `GET /callback`       | Bound OAuth flow                                       |
-| `GET /code/github/repositories`                                  | Connection owner's installed repository picker         |
-| `POST /code/github/repository`, `POST /disconnect`               | Revision-checked link/unlink/disconnect                |
-| `POST /code/github/automation`                                   | Revision-checked mode/base change                      |
-| `GET /code/github/branches`, `GET /pulls`, `GET /pulls/<number>` | Owner's live repository/PR inspection                  |
-| `GET /code/publications`, `GET /<publication>`                   | Project publication records and exact PR details       |
-| `POST /code/publications/sync`                                   | Reconcile every due publication now                    |
-| `POST /code/publications/merge`                                  | Signed-in operator's exact-head merge request          |
+| Route                                                      | Purpose                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
+| `GET /code/github`                                         | Safe persisted status, repository, base and automation |
+| `POST /code/github/begin`, `POST /finish`, `GET /callback` | Bound OAuth flow                                       |
+| `GET /code/github/repositories`                            | Connection owner's installed repository picker         |
+| `POST /code/github/repository`, `POST /disconnect`         | Revision-checked link/unlink/disconnect                |
+| `POST /code/github/automation`                             | Revision-checked mode/base change                      |
+| `GET /code/github/branches`                                | Owner's live branch picker                             |
+
+Publications have no routes: Merv's pages call `code.publication.read` (one record with its pull request's details), `code.publication.sync` and `code.publication.merge` like any tool.
 
 Remote writes use deterministic refs and recovery reads. A lost PR-create reply is reconciled by its exact branch; a lost merge reply is reconciled against the same PR/head and actual merge SHA. Network work stays outside database writers. Code aborts and drains admitted network work on unload. GitHub replies have bounded size/pagination and safe diagnostics that omit upstream bodies and secrets.
 

@@ -493,8 +493,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   for (const id of ['code-tools', 'code-work-api']) await app.setEnabled(id, false);
   assert.equal((await tool('code.status', reader)).status, 404);
   assert.equal(
-    (await fetch(`${url}/code/publications`, { headers: { authorization: `Bearer ${reader}` } }))
-      .status,
+    (await fetch(`${url}/code/github`, { headers: { authorization: `Bearer ${reader}` } })).status,
     503,
   );
   for (const token of [reader, operator]) {

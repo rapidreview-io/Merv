@@ -499,6 +499,27 @@ test('an experiment naming a review Reviews does not hold is drawn without it, a
   assert.ok(node(board, work(other.id)), 'the other experiment is drawn');
 });
 
+test('a planned experiment’s record page reads one graph without a check, so no artifact is read', async (t) => {
+  const f = await assembled(t);
+  const experiment = await f.create('weight-decay');
+  await f.attach(experiment, 'feasibility', 'feasibility.json');
+  await f.attach(experiment, 'plan', 'design/plan.md');
+  const told = (await f.panel(work(experiment.id))).unit!.history;
+  const reads = t.mock.method(f.app.ctx.artifacts, 'bytes');
+  const graphs = t.mock.method(f.app.ctx.workflows, 'process');
+  const read = await f.tool('ui.read', f.token, {
+    rowId: 'experiments',
+    params: { id: experiment.id },
+  });
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+  assert.equal(reads.mock.callCount(), 0, 'a record page poll reads no artifact bytes');
+  assert.deepEqual(
+    graphs.mock.calls.map((call) => call.arguments.slice(1)),
+    [[experiment.id, { checks: false }]],
+  );
+  assert.deepEqual(read.body.result.history, told);
+});
+
 test('a planned experiment’s sidebar draws its ladder without running a check, so no artifact is read', async (t) => {
   const f = await assembled(t);
   const experiment = await f.create('weight-decay');

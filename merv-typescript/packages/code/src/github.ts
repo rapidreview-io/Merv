@@ -705,14 +705,6 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       client.branches(token, repo.fullName),
     );
   }
-  pulls(caller: Caller) {
-    return this.repositoryRead(caller, (client, token, repo) => client.pulls(token, repo.fullName));
-  }
-  pullDetails(caller: Caller, number: number) {
-    return this.repositoryRead(caller, (client, token, repo) =>
-      client.pullDetails(token, repo.fullName, number),
-    );
-  }
   /** Internal Code capability. The caller and original human owner's live authority are both required. */
   automation<T>(
     caller: Caller,

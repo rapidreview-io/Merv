@@ -128,8 +128,11 @@ export interface Tasks {
   running(caller: Caller, include?: Iterable<string>): Promise<RunningNode[]>;
   /** A task's sidebar on the Running page; null when no task of this project has the id. Reads only. */
   runningPanel(caller: Caller, taskId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
-  /** Its history alone, as its sidebar tells it, for its record page; empty for another id. */
-  history(caller: Caller, taskId: string): Promise<RunningUnitEntry[]>;
+  /** What its record page polls: its graph, read without checks, and its history from it. */
+  page(
+    caller: Caller,
+    taskId: string,
+  ): Promise<{ process: ProcessGraph; history: RunningUnitEntry[] }>;
 }
 
 declare module 'cordis' {

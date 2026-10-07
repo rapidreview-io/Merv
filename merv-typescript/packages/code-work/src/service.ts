@@ -1,5 +1,5 @@
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
-import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
+import type { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
 import {
@@ -266,23 +266,13 @@ export class CodeService implements Code {
       );
       // Replay still checks controller ownership and the exact retained receipt.
       if (command?.status === 'succeeded') return this.commands.completeCommand(caller, input);
-      const binding = command
-        ? (JSON.parse(command.command_json) as { projectId: string; instanceId: string })
-        : null;
-      const writer =
-        binding && (await this.writerStore.row(tx, binding.projectId, binding.instanceId));
-      // Only Code's own repository admits a commit now; nothing verifies one on GitHub.
-      check(
-        !(
-          (!writer || Number(writer.generation) === 0) &&
-          'receipt' in input &&
-          input.receipt?.repositoryId.startsWith('github:')
-        ),
-        'code_upload_required',
-        'A commit to a GitHub repository succeeds only once Code admitted it',
-        409,
-      );
-      if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
+      // A receipt succeeds only for the upload Code admitted under this command.
+      if (command)
+        await this.writerStore.requireAdmitted(
+          input,
+          JSON.parse(command.command_json) as { projectId: string; instanceId: string },
+          tx,
+        );
       return this.commands.completeCommand(caller, input);
     };
     const tx = this.state.ambient;
@@ -414,22 +404,14 @@ export class CodeService implements Code {
     await store.maintain();
     return status;
   }
-  async bindLocal(
-    caller: Caller,
-    input: Parameters<CodeUtility['units']['bindLocal']>[1],
-    binding?: GitHubBinding,
-  ) {
+  async bindLocal(caller: Caller, input: Parameters<CodeUtility['units']['bindLocal']>[1]) {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
     const named = (input as { mainOid?: unknown } | null)?.mainOid;
     const stored =
       typeof named === 'string' &&
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
-    if (!binding) return await this.utility.units.bindLocal(caller, input, stored);
-    return await this.state.transaction(async (tx) => {
-      await this.github.assertBinding(caller, binding, tx, 'read');
-      return await this.utility.units.bindLocal(caller, input, stored, tx);
-    });
+    return await this.utility.units.bindLocal(caller, input, stored);
   }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
   runningHolds: Code['runningHolds'] = (caller) => this.board.holds(caller);

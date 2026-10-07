@@ -6,7 +6,12 @@ import test, { type TestContext } from 'node:test';
 import { createService, type Caller, type Transaction } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
-import { WorkUnitRecords, type AcceptanceBody, type BaseBody } from '@merv/code-work/unit-store';
+import {
+  WorkUnitRecords,
+  type AcceptanceBody,
+  type BaseBody,
+  type UnitReadPolicy,
+} from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeUnitStore } from '@merv/code/units';
 import { CodeStore } from '@merv/code/store/operations';
@@ -30,13 +35,19 @@ class OwnerStore extends WorkUnitRecords {
   }
 }
 
+/** Records read as stored: a publication as it says of itself, a base only once pinned. */
+const asStored: UnitReadPolicy = {
+  publication: async (_sql, _projectId, stored) => stored,
+  baseStatus: async (_tx, _row, base) => (base ? { status: 'pinned', pin: base } : null),
+};
+
 async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'merv-unit-store-'));
   const state = await openState(root);
   const scope = await createService(new ProjectScope(state));
   const writers = new CodeWriterService(state, scope, 900);
   const units = await createService(new CodeUnitStore(state, scope, writers));
-  let store = await createService(new OwnerStore(state, scope, writers, units));
+  let store = await createService(new OwnerStore(state, scope, writers, units, asStored));
   t.after(async () => {
     store.close();
     writers.close();
@@ -77,7 +88,7 @@ async function fixture(t: TestContext) {
     },
     async reopen() {
       store.close();
-      store = await createService(new OwnerStore(state, scope, writers, units));
+      store = await createService(new OwnerStore(state, scope, writers, units, asStored));
     },
   };
 }

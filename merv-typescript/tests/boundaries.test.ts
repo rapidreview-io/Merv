@@ -159,7 +159,6 @@ const capabilities: Record<string, readonly string[]> = {
   nisa: [],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
   fleet: ['state', 'scope', 'sandboxes'],
-  fleetWorkflow: ['fleet', 'sessions', 'scope', 'api', 'state'],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
@@ -841,10 +840,10 @@ test('Cordis service requirements match the architecture and every accessed capa
         assert.equal(relative(packagesRoot, path), join('fleet', 'src', 'workflow.ts'));
         assert.deepEqual(sorted(declared), ['api', 'fleet', 'scope', 'sessions', 'state', 'tools']);
         assert.deepEqual(sorted([...optional]), []);
-        assert.deepEqual(actualProvided, ['fleetWorkflow']);
+        // An adapter, not a service: it registers tools and routes and nothing injects it.
+        assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate workflow orchestration');
         orchestrationAdapters.add(name.text);
-        provided.add('fleetWorkflow');
         return;
       }
       assert.equal(

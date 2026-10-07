@@ -470,15 +470,11 @@ export function RunningSidebar({
   nameOf(id: string): string | undefined;
   open(key: string, route?: string): void;
 }) {
-  const [every, setEvery] = useState(moving ? 4000 : 10_000);
-  const panel = useTool<RunningPanel>('ui.running_panel', { key: target }, { every });
+  const pace = (read?: RunningPanel) => ((read?.live ?? moving) ? 4000 : 10_000);
+  const panel = useTool<RunningPanel>('ui.running_panel', { key: target }, { every: pace });
   const data = panel.data;
-  const live = data?.live;
-  useEffect(() => {
-    if (live !== undefined) setEvery(live ? 4000 : 10_000);
-  }, [live]);
   // The sidebar keeps its own clock: it measures from its own read, which is not the board's.
-  const now = clock(data?.observedAt, panel.loadedAt, useNow(1000), every * 2);
+  const now = clock(data?.observedAt, panel.loadedAt, useNow(1000), pace(data) * 2);
   const head = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const loaded = !!data;

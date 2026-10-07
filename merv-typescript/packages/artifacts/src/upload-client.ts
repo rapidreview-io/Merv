@@ -1,5 +1,4 @@
 import { openSync, fstatSync, readSync, closeSync, constants } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -7,6 +6,7 @@ import {
   check,
   MervError,
   MAX_ARTIFACT_BYTES,
+  sha256Hex,
   type Artifact,
   type ArtifactInput,
 } from '@merv/contracts';
@@ -111,7 +111,7 @@ export async function uploadArtifact(input: {
     check(
       receipt &&
         typeof receipt.id === 'string' &&
-        receipt.hash === createHash('sha256').update(bytes).digest('hex') &&
+        receipt.hash === sha256Hex(bytes) &&
         receipt.size === bytes.length,
       'artifact_upload_failed',
       'Merv returned no matching artifact receipt',

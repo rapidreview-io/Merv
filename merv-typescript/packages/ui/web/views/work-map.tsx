@@ -248,10 +248,8 @@ const Plane = createContext<{ selected: RunningKey | null; onSelect(key: Running
 });
 /** Reads the board at the pace of what moves on it; every clock is the payload's own. */
 export function useLive() {
-  const [cadence, setCadence] = useState(cadenceOf(undefined));
-  const board = useTool<RunningBoard>('ui.running', {}, { every: cadence });
-  const every = cadenceOf(board.data);
-  useEffect(() => setCadence(every), [every]);
+  const board = useTool<RunningBoard>('ui.running', {}, { every: cadenceOf });
+  const cadence = cadenceOf(board.data);
   // Past two cadences the clock stops at the moment the board was read, rather than
   // counting on against a fact nobody has refreshed.
   const now = clock(

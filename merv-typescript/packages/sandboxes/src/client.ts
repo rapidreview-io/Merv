@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { check, MervError, type Json } from '@merv/contracts';
+import { check, MervError, sha256Hex, type Json } from '@merv/contracts';
 import type { SandboxConnection } from './types.js';
 
 const grant = /^sbxt_[A-Za-z0-9_-]{4,512}$/;
@@ -215,7 +214,7 @@ export class SandboxClient {
       connection.tokenEnv,
       connection.subject,
     ]);
-    const fingerprint = createHash('sha256').update(secret).digest('hex');
+    const fingerprint = sha256Hex(secret);
     if (this.#consumers.get(key) !== fingerprint) {
       const identity = (await this.#send(connection, secret, 'GET', '/v1/auth/me')) as Record<
         string,

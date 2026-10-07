@@ -580,8 +580,14 @@ test('a task’s record page reads its history alone, never the whole sidebar', 
   const panel = tasks.runningPanel;
   tasks.runningPanel = () => assert.fail('the record page read the whole sidebar');
   t.after(() => void (tasks.runningPanel = panel));
+  // One graph, read without running a check: the page draws where it stands, not its actions.
+  const graphs = t.mock.method(f.app.ctx.workflows, 'process');
   const read = await f.tool('ui.read', f.boot.token, { rowId: 'tasks', params: { id: task.id } });
   assert.equal(read.status, 200, JSON.stringify(read.body));
+  assert.deepEqual(
+    graphs.mock.calls.map((call) => call.arguments.slice(1)),
+    [[task.id, { checks: false }]],
+  );
   assert.deepEqual(read.body.result.history, told);
   assert.equal(told?.length, 3);
 });

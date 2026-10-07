@@ -8,7 +8,7 @@ import type {
 } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
-import { Ago, StatusPill, cx, words } from '../components';
+import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
 import { Markdown } from '../markdown';
 import { stagesOfGraph } from '../process';
@@ -43,7 +43,6 @@ import {
  */
 
 type Reference = Pick<RunningUnitEntry, 'role' | 'stage' | 'instance' | 'at'>;
-const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
  * A thread of another record than the unit's own (a lens of a wave): read when its disc is

@@ -31,8 +31,8 @@ export const experimentsUiPlugin = {
           owner: 'ownerId',
           reads: { design_review: 'Review this design', experiment_review: 'Review these results' },
         },
-        // One record, with the gate it stands at: the process graph is derived from the
-        // same record, so the page reads both in one answer rather than two.
+        // One record, with the stage it stands at and its history, both from one graph read
+        // without running an action's check: the page polls this and draws no action.
         read: async (caller, params) => {
           const id = params?.id;
           check(
@@ -42,11 +42,8 @@ export const experimentsUiPlugin = {
           );
           return JSON.parse(
             JSON.stringify({
-              experiment: await experiments.get(caller, id),
-              process: await experiments.process(caller, id),
+              ...(await experiments.page(caller, id)),
               codeUnit: await experiments.codeUnit(caller, id),
-              // Its history as its sidebar tells it, read alone: the page polls this.
-              history: await experiments.history(caller, id),
             }),
           ) as Json;
         },

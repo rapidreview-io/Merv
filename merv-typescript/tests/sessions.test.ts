@@ -1709,6 +1709,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       ALTER TABLE session_messages DROP CONSTRAINT session_messages_addressed;
       ALTER TABLE session_messages DROP COLUMN thread_id;
       ALTER TABLE session_messages ALTER COLUMN session_id SET NOT NULL;
+      CREATE INDEX session_messages_pending ON session_messages(project_id,session_id,_merv_rowid) WHERE acknowledged_at IS NULL;
       DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;
       DROP FUNCTION worker_sessions_thread_immutable_guard();
       CREATE FUNCTION worker_sessions_agent_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN NEW; END $g$;
@@ -1727,7 +1728,15 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       ALTER TABLE worker_sessions DROP COLUMN thread_id;
       DROP TABLE session_threads;
       INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
-      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14,15);`);
+      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14,15,16);`);
+    // A message sent to one visit, as every message was before threads.
+    await tx.run(
+      "INSERT INTO session_messages(id,project_id,session_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES('session_message_visit',?,?,?,'to-the-visit','fingerprint','Use the smaller model.',?)",
+      dormant.projectId,
+      dormant.id,
+      f.source.actorId,
+      new Date().toISOString(),
+    );
     // Agents no session ever visited: a persistent one, with a token of its own, and one whose
     // offer never landed. Production holds 694; they stay attribution history in Scope.
     for (const [id, active, tokenHash, persistent] of [
@@ -1819,6 +1828,16 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       agentEra: { n: 0 },
     },
   );
+  // sessions@16: that message is now to the visit's thread, and the pending index by visit is gone.
+  assert.deepEqual(
+    await f.state.read(async (sql) => ({
+      message: await sql.get(
+        "SELECT session_id,thread_id FROM session_messages WHERE id='session_message_visit'",
+      ),
+      index: await sql.get("SELECT to_regclass('session_messages_pending')::text AS name"),
+    })),
+    { message: { session_id: null, thread_id: dormant.threadId }, index: { name: null } },
+  );
   // The live execution reads and authenticates as it did, as its thread's actor.
   assert.deepEqual(await f.sessions.get(f.source, live.id), before);
   assert.deepEqual(await f.sessions.authenticate(token), active);
@@ -1827,6 +1846,11 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
   assert.deepEqual(
     [resumed.threadId, resumed.actorId, resumed.continuity?.resume?.sha256],
     [dormant.threadId, dormant.actorId, sha256],
+  );
+  // Its next visit reads the message its earlier visit never acknowledged before anything else.
+  await assert.rejects(
+    f.state.transaction((tx) => f.sessions.messaging.requireMessagesAcknowledged(resumed.id, tx)),
+    { code: 'session_message_pending' },
   );
   assert.equal(
     (

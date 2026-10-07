@@ -398,10 +398,8 @@ const messages = (answered: boolean) => ({
   messages: [
     {
       id: 'm1',
-      sessionId: null,
       threadId: 'thr_run',
       instanceId: 'wf_1',
-      expectedRevision: null,
       senderActorId: 'actor_me',
       body: 'Use the smaller model.',
       createdAt: at(20),

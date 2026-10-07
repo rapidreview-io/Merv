@@ -424,13 +424,15 @@ export function refreshTools(...names: string[]): void {
 const NOTHING: Read['shown'] = {};
 /**
  * Load a tool result, or a GET route's answer where the name is a same-origin path; `every`
- * (ms) refreshes quietly while keeping the last good data on screen. Every place asking the
- * same question shares one read (see `Read`).
+ * (ms) refreshes quietly while keeping the last good data on screen. It may be a function of
+ * the answer on screen (undefined before the first), for a place that polls faster while what
+ * it shows is live or stops once it has ended. Every place asking the same question shares one
+ * read (see `Read`).
  */
 export function useTool<T>(
   name: string | null,
   input: Record<string, unknown> = {},
-  options: { every?: number } = {},
+  options: { every?: number | ((data: T | undefined) => number | undefined) } = {},
 ): Loaded<T> {
   const epoch = useScopeVersion();
   const key = name ? keyOf(epoch, name, input) : null;
@@ -449,12 +451,16 @@ export function useTool<T>(
     () => NOTHING,
   );
   const place = useRef({}).current;
+  const every =
+    typeof options.every === 'function'
+      ? options.every(shown.data as T | undefined)
+      : options.every;
   useEffect(() => {
     if (!read) return;
     // A place that opens asks at once, joining a read already in flight, unless another
     // place already keeps this answer fresh on its own cadence.
     const kept = read.shown.data !== undefined && [...read.readers.values()].some(Boolean);
-    read.readers.set(place, options.every);
+    read.readers.set(place, every);
     if (kept) schedule(read);
     else void ask(read);
     return () => {
@@ -470,9 +476,9 @@ export function useTool<T>(
   // once: the wait is set again, counted from the last answer.
   useEffect(() => {
     if (!read?.readers.has(place)) return;
-    read.readers.set(place, options.every);
+    read.readers.set(place, every);
     schedule(read);
-  }, [read, place, options.every]);
+  }, [read, place, every]);
   const reload = useCallback(() => void (read && ask(read, true)), [read]);
   return {
     data: shown.data as T | undefined,

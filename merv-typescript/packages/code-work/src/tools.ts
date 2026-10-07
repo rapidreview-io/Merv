@@ -23,7 +23,7 @@ import { baseControlSchema, type CodeBaseControl } from './bases.js';
 import { publicationControlSchema } from './publication-host.js';
 import { repositoryPrepareSchema } from './repository-setup.js';
 import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
-import { codePublicationMergeSchema } from './publications.js';
+import { codePublicationIdSchema, codePublicationMergeSchema } from './publications.js';
 import type { CodePublicationMerge, CodeRepositoryConfigureInput } from './types.js';
 import type { CodeMirrorRetryInput, CodeUnitFenceInput } from './models.js';
 
@@ -49,6 +49,17 @@ export const codeToolsPlugin = {
         inputSchema: codePublicationMergeSchema,
         handler: (caller: Caller, input: CodePublicationMerge) =>
           ctx.codeWork.mergePublication(caller, input),
+      },
+      {
+        name: 'code.publication.read',
+        conversation: 'never' as const,
+        description:
+          'Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.',
+        inputSchema: codePublicationIdSchema,
+        readOnly: true,
+        openWorld: true,
+        handler: (caller: Caller, input: { proposalId: string }) =>
+          ctx.codeWork.publicationDetails(caller, input.proposalId),
       },
       {
         name: 'code.publication.sync',

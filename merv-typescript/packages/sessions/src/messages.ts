@@ -22,8 +22,7 @@ import type {
 interface MessageRow {
   id: string;
   project_id: string;
-  session_id: string | null;
-  thread_id: string | null;
+  thread_id: string;
   sender_actor_id: string;
   request_id: string;
   fingerprint: string;
@@ -115,13 +114,11 @@ export class SessionMessages {
     check(row, 'session_message_not_found', 'Session message not found', 404);
     return row;
   }
-  private publicMessage(row: MessageRow, instanceId: string, session?: Session): SessionMessage {
+  private publicMessage(row: MessageRow, instanceId: string): SessionMessage {
     return {
       id: row.id,
-      sessionId: row.session_id,
       threadId: row.thread_id,
       instanceId,
-      expectedRevision: row.session_id === null ? null : session!.expectedRevision,
       senderActorId: row.sender_actor_id,
       body: row.body,
       createdAt: row.created_at,
@@ -129,15 +126,11 @@ export class SessionMessages {
       reply: row.reply_body,
     };
   }
-  /**
-   * A visit reads the messages to its thread's (`KEY_THREADS`), and those sent to it alone
-   * before every message went to a thread.
-   */
+  /** A visit reads the messages to its thread's (`KEY_THREADS`). */
   private async addressed(tx: Transaction, session: Session): Promise<MessageRow[]> {
     return await tx.all<MessageRow>(
-      `SELECT * FROM session_messages WHERE project_id=? AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid`,
+      `SELECT * FROM session_messages WHERE project_id=? AND thread_id IN (${KEY_THREADS}) ORDER BY _merv_rowid`,
       session.projectId,
-      session.id,
       ...keyThreads(session),
     );
   }
@@ -149,9 +142,8 @@ export class SessionMessages {
     if (!session) return;
     const row = await tx.get<{ id: string }>(
       `SELECT id FROM session_messages WHERE project_id=? AND acknowledged_at IS NULL
-        AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid LIMIT 1`,
+        AND thread_id IN (${KEY_THREADS}) ORDER BY _merv_rowid LIMIT 1`,
       session.project_id,
-      sessionId,
       ...keyThreads({ projectId: session.project_id, threadId: session.thread_id }),
     );
     if (row)
@@ -317,15 +309,11 @@ export class SessionMessages {
   }
   /** A message as its sender reads it again, from its own row. */
   private async view(tx: Transaction, row: MessageRow): Promise<SessionMessage> {
-    if (row.session_id === null) {
-      const thread = await tx.get<ThreadRow>(
-        'SELECT instance_id FROM session_threads WHERE id=?',
-        row.thread_id,
-      );
-      return this.publicMessage(row, thread!.instance_id);
-    }
-    const session = this.host.decode(await this.host.row(tx, row.session_id));
-    return this.publicMessage(row, session.instanceId, session);
+    const thread = await tx.get<ThreadRow>(
+      'SELECT instance_id FROM session_threads WHERE id=?',
+      row.thread_id,
+    );
+    return this.publicMessage(row, thread!.instance_id);
   }
   /**
    * Sessions' opinion of one work item: a blocker for each of its threads with a question still
@@ -427,34 +415,31 @@ export class SessionMessages {
       );
     });
   }
+  /** A leased worker's queue: the messages to its thread's. A person reads a thread instead. */
   async messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]> {
     ordinary(caller);
+    check(
+      caller.session,
+      'session_required',
+      'Only a leased worker reads its queue; read a thread with session.thread_messages',
+      403,
+    );
+    check(
+      sessionId === undefined || sessionId === caller.session.id,
+      'forbidden',
+      'Workers can read only their own messages',
+      403,
+    );
     caller = structuredClone(caller);
     return await this.host.reading(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const id = sessionId ?? caller.session?.id;
-      check(id && text(id, 200), 'invalid_session_message', 'A session ID is required');
-      const row = await this.host.row(tx, id);
-      check(
-        row.project_id === caller.projectId,
-        'session_not_found',
-        'Session not found in this project',
-        404,
-      );
-      if (caller.session)
-        check(
-          caller.session.id === id,
-          'forbidden',
-          'Workers can read only their own messages',
-          403,
-        );
-      const session = this.host.decode(row);
+      const session = this.host.decode(await this.host.row(tx, caller.session!.id));
       return (await this.addressed(tx, session)).map((item) =>
-        this.publicMessage(item, session.instanceId, item.session_id ? session : undefined),
+        this.publicMessage(item, session.instanceId),
       );
     });
   }
-  /** A thread's messages, to it and to each of its visits, and its questions, oldest first. */
+  /** A thread's messages and its questions, oldest first. */
   async thread(caller: Caller, threadId: string): Promise<ThreadMessages> {
     ordinary(caller);
     check(!caller.session, 'session_forbidden', 'A leased worker reads its own messages', 403);
@@ -464,11 +449,9 @@ export class SessionMessages {
       await this.scope.require(caller, 'read', tx);
       const thread = await this.threadRow(tx, caller, threadId);
       await this.host.readable(caller, thread.instance_id, tx);
-      const rows = await tx.all<MessageRow & { revision: number | string | null }>(
-        `SELECT m.*,s.revision FROM session_messages m LEFT JOIN worker_sessions s ON s.id=m.session_id
-          WHERE m.project_id=? AND (m.thread_id=? OR s.thread_id=?) ORDER BY m._merv_rowid`,
+      const rows = await tx.all<MessageRow>(
+        'SELECT * FROM session_messages WHERE project_id=? AND thread_id=? ORDER BY _merv_rowid',
         caller.projectId,
-        thread.id,
         thread.id,
       );
       const questions = await tx.all<QuestionRow>(
@@ -477,10 +460,7 @@ export class SessionMessages {
       );
       return {
         threadId: thread.id,
-        messages: rows.map(({ revision, ...row }) => ({
-          ...this.publicMessage(row, thread.instance_id),
-          expectedRevision: revision === null ? null : Number(revision),
-        })),
+        messages: rows.map((row) => this.publicMessage(row, thread.instance_id)),
         questions: questions.map(question),
       };
     });
@@ -506,13 +486,11 @@ export class SessionMessages {
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
       check(
         row.project_id === caller.projectId &&
-          (row.session_id === session.id ||
-            (row.thread_id !== null &&
-              !!(await tx.get(
-                `SELECT 1 FROM (${KEY_THREADS}) k(id) WHERE k.id=?`,
-                ...keyThreads(session),
-                row.thread_id,
-              )))),
+          !!(await tx.get(
+            `SELECT 1 FROM (${KEY_THREADS}) k(id) WHERE k.id=?`,
+            ...keyThreads(session),
+            row.thread_id,
+          )),
         'session_message_not_found',
         'Message not found in this session',
         404,
@@ -523,8 +501,7 @@ export class SessionMessages {
         'This session has ended',
         409,
       );
-      const read = (item: MessageRow) =>
-        this.publicMessage(item, session.instanceId, item.session_id ? session : undefined);
+      const read = (item: MessageRow) => this.publicMessage(item, session.instanceId);
       if (row.acknowledged_at) {
         check(
           row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
@@ -549,7 +526,7 @@ export class SessionMessages {
         data: {
           messageId: row.id,
           sessionId: session.id,
-          ...(row.thread_id ? { threadId: row.thread_id } : {}),
+          threadId: row.thread_id,
           replied: input.reply !== undefined,
         },
       });

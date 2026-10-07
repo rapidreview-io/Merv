@@ -13,6 +13,7 @@ import type {
   CodeCommitReceipt,
   SessionWorkspace,
 } from '@merv/contracts';
+import { admitUpload } from './fixtures/admitted-upload.js';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
@@ -270,6 +271,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 1 },
   };
   const completion = { ...control, commandId: queued.command.id, receipt };
+  await admitUpload(app.ctx.state, queued.command, receipt.headOid);
   const finished = (await ok('/code/commands/complete', completion)).operation as CodeCommandRecord;
   assert.equal(finished.status, 'succeeded');
   assert.deepEqual(finished.receipt, receipt);

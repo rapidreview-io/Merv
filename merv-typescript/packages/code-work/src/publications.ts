@@ -31,7 +31,7 @@ import {
 } from './publication-host.js';
 import type { CodePublicationApi, CodePublicationMerge } from './types.js';
 
-const codePublicationIdSchema = z
+export const codePublicationIdSchema = z
   .object({ proposalId: z.string().regex(/^codeprop_[A-Za-z0-9_-]+$/) })
   .strict();
 export const codePublicationMergeSchema = codePublicationIdSchema

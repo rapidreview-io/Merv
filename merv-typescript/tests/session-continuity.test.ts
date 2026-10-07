@@ -871,8 +871,8 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
   const sent = (await f.ok('POST', path, f.token, { body: answer, requestId: 'answer-1' }))
     .message as SessionMessage;
   assert.deepEqual(
-    [sent.threadId, sent.sessionId, sent.instanceId, sent.acknowledgedAt],
-    [threadId, null, unit.id, null],
+    [sent.threadId, sent.instanceId, sent.acknowledgedAt],
+    [threadId, unit.id, null],
   );
   assert.equal(
     (await f.ok('POST', path, f.token, { body: answer, requestId: 'answer-1' })).message.id,

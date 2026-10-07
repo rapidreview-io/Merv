@@ -206,6 +206,18 @@ test('a later upload ends one that was only receiving, and a commit succeeds onl
     ),
     refused('code_upload_required'),
   );
+  // A unit that never had a writer admits no commit either: no receipt succeeds without an upload.
+  await assert.rejects(
+    f.state.transaction(
+      async (tx) =>
+        await writers.requireAdmitted(
+          completion('command-b'),
+          { ...command, instanceId: 'wf_never_leased' },
+          tx,
+        ),
+    ),
+    refused('code_upload_required'),
+  );
   assert.equal((await f.send(retried, bundle)).status, 'completed');
   await f.state.transaction(
     async (tx) => await writers.requireAdmitted(completion('command-b'), command, tx),

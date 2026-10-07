@@ -330,11 +330,8 @@ export interface ThreadConversation {
  */
 export interface SessionMessage {
   id: string;
-  sessionId: string | null;
-  threadId: string | null;
+  threadId: string;
   instanceId: string;
-  /** The revision of the visit an older message was sent to; null for a message to a thread. */
-  expectedRevision: number | null;
   senderActorId: string;
   body: string;
   createdAt: string;

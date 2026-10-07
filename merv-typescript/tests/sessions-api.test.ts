@@ -232,7 +232,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.equal(sent.acknowledgedAt, null);
   assert.equal(sent.instanceId, f.instance.id);
   // A session addresses its thread: the one message address.
-  assert.deepEqual([sent.threadId, sent.sessionId], [issued.session.threadId, null]);
+  assert.equal(sent.threadId, issued.session.threadId);
   const retry = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
       sessionId: issued.session.id,
@@ -268,9 +268,16 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
     },
   });
   assert.equal(ack.isError, undefined, JSON.stringify(ack));
+  // The queue is the worker's own; a person reads the thread.
+  await assert.rejects(
+    f.app.ctx.tools.invoke('session.messages', f.source, { sessionId: issued.session.id }),
+    { code: 'session_required' },
+  );
   const acknowledged = (
-    await f.app.ctx.tools.invoke('session.messages', f.source, { sessionId: issued.session.id })
-  ).value as any[];
+    (await f.app.ctx.tools.invoke('session.thread_messages', f.source, {
+      threadId: issued.session.threadId,
+    })) as any
+  ).value.messages as any[];
   assert.equal(acknowledged[0].reply, 'I will correct the plan before submission.');
   assert.ok(acknowledged[0].acknowledgedAt);
   assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);

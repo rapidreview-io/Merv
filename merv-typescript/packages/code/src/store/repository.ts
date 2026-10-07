@@ -1,5 +1,5 @@
-import { check, MervError } from '@merv/contracts';
-import { createHash, randomUUID } from 'node:crypto';
+import { check, MervError, sha256Hex } from '@merv/contracts';
+import { randomUUID } from 'node:crypto';
 import { createServer, connect, type Server } from 'node:net';
 import {
   lstat,
@@ -65,8 +65,7 @@ const incidental = new Set([
 /**
  * The name of a project's directory under the root: the first 32 hex of sha256(projectId).
  */
-export const directoryKey = (projectId: string) =>
-  createHash('sha256').update(projectId).digest('hex').slice(0, 32);
+export const directoryKey = (projectId: string) => sha256Hex(projectId).slice(0, 32);
 
 /** The bytes beneath a path; a missing path holds none. */
 export async function diskBytes(path: string): Promise<number> {
@@ -142,10 +141,7 @@ export class CodeRepositories {
     if (Buffer.byteLength(path) > SOCKET_PATH_BYTES) {
       // The socket still lives in the root, so it still excludes another process there; it
       // is only addressed through a shorter name.
-      const alias = join(
-        tmpdir(),
-        `merv-code-${createHash('sha256').update(this.config.root).digest('hex').slice(0, 16)}`,
-      );
+      const alias = join(tmpdir(), `merv-code-${sha256Hex(this.config.root).slice(0, 16)}`);
       if ((await readlink(alias).catch(() => null)) !== this.config.root) {
         await rm(alias, { force: true });
         await symlink(this.config.root, alias);

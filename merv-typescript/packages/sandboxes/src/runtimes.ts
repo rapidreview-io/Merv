@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { check, MervError, record, type Json } from '@merv/contracts';
+import { check, MervError, record, sha256Hex, type Json } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type {
   SandboxConnection,
@@ -185,17 +184,15 @@ export class SandboxRuntimeRunner implements Omit<
     profile: SandboxRuntimeProfile,
   ) {
     this.#profile = { ...profile, ttlSeconds: profile.ttlSeconds ?? 300 };
-    this.profileId = `srp_${createHash('sha256')
-      .update(
-        JSON.stringify([
-          this.#profile.provider,
-          this.#profile.offerId,
-          this.#profile.releaseId,
-          this.#profile.leaseSeconds,
-          this.#profile.ttlSeconds,
-        ]),
-      )
-      .digest('hex')}`;
+    this.profileId = `srp_${sha256Hex(
+      JSON.stringify([
+        this.#profile.provider,
+        this.#profile.offerId,
+        this.#profile.releaseId,
+        this.#profile.leaseSeconds,
+        this.#profile.ttlSeconds,
+      ]),
+    )}`;
   }
 
   async provision(projectId: string, operationKey: string): Promise<SandboxRuntimeHandle> {
@@ -206,9 +203,7 @@ export class SandboxRuntimeRunner implements Omit<
     );
     const connection = this.connectionFor(projectId);
     // The same logical Fleet operation always gives the service the same create key.
-    const idempotencyKey = `runtime:${createHash('sha256')
-      .update(JSON.stringify([projectId, operationKey]))
-      .digest('hex')}`;
+    const idempotencyKey = `runtime:${sha256Hex(JSON.stringify([projectId, operationKey]))}`;
     const row = await this.client.write(connection, 'POST', '/v1/sandboxes', {
       provider: this.#profile.provider,
       offer_id: this.#profile.offerId,

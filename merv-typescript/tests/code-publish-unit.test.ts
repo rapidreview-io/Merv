@@ -766,11 +766,16 @@ test('a disabled project and a published tree mismatch both show on the unit', a
     requestId: 'failed-canary',
   });
   const writers = new CodeWriterService(f.state, f.scope, 900);
+  // Records read through a policy that adds nothing: a publication as it says of itself.
   const core = new WorkUnitRecords(
     f.state,
     f.scope,
     writers,
     new CodeUnitStore(f.state, f.scope, writers),
+    {
+      publication: async (_sql, _projectId, stored) => stored,
+      baseStatus: async () => null,
+    },
   );
   assert.equal((await core.unit(f.admin, work.id)).publication?.state, 'pending');
   core.close();
