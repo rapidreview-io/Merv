@@ -65,7 +65,7 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
-import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
+import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type { Paper } from '@merv/paper/types';
 export type * from './types.js';
 
@@ -93,7 +93,7 @@ interface StandingContext {
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers ${PAPER_REVIEW_GUIDANCE} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
 /** What the modules (policy.ts, lease.ts, context.ts, commands.ts) read of the service. */
 export type ExperimentsContext = Pick<
