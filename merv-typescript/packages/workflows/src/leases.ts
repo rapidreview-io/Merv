@@ -1,4 +1,12 @@
-import { check, effectiveWorkspace, MervError, recorded, ROLES, visible } from '@merv/contracts';
+import {
+  check,
+  effectiveWorkspace,
+  MervError,
+  now,
+  recorded,
+  ROLES,
+  visible,
+} from '@merv/contracts';
 import type {
   Caller,
   Role,
@@ -411,6 +419,13 @@ export class WorkflowLeases extends WorkflowGuidance {
       const { row, snapshot, registration } = await this.leaseStep(worker, lease, tx);
       await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
       const started = await this.markStarted(worker, snapshot, tx);
+      // The revision's start is its first visit's; this lease's own is kept on the lease.
+      await tx.run(
+        'UPDATE wf_leases SET started_at=COALESCE(started_at,?) WHERE id=? AND project_id=?',
+        now(),
+        lease.leaseId,
+        lease.projectId,
+      );
       this.requireActive(registration);
       return started;
     });

@@ -29,7 +29,7 @@ test('the lease copies move JSON text that jsonb would refuse', async (t) => {
   // came after it.
   const reflections = reflectionMigrations[1]!;
   await sql.query(`ALTER TABLE wf_blockers DROP COLUMN whose, DROP COLUMN revision;
-DELETE FROM component_migrations WHERE component='workflows' AND version IN (14,15);
+DELETE FROM component_migrations WHERE component='workflows' AND version IN (14,15,17);
 DROP TABLE wf_leases; DROP FUNCTION wf_leases_immutable_guard();
 ${taskMigrations[6]}${taskMigrations[7]}${experimentMigrations[1]}${experimentMigrations[2]}
 ${reflections.slice(reflections.indexOf('CREATE TABLE reflection_leases'))}

@@ -77,6 +77,8 @@ interface StandingRow extends Omit<WorkflowSnapshot, 'data'> {
   review_id: string | null;
   created_at?: string;
   lease_id: string | null;
+  /** Whether that lease's own worker has taken it up: a later visit starts afresh. */
+  lease_started: boolean;
 }
 /** What one board read knows beside an experiment's own row. */
 interface StandingContext {
@@ -346,7 +348,9 @@ export class ExperimentService implements Experiments {
     return rows.flatMap((row) => {
       const w = at.get(row.id);
       const lease = live.find((l) => l.instance_id === row.id && l.revision === w?.revision);
-      return w ? [{ ...w, ...row, lease_id: lease?.id ?? null }] : [];
+      return w
+        ? [{ ...w, ...row, lease_id: lease?.id ?? null, lease_started: !!lease?.started_at }]
+        : [];
     });
   }
   /**
@@ -407,13 +411,7 @@ export class ExperimentService implements Experiments {
       idleSince: released && released > row.updatedAt ? released : row.updatedAt,
       again: context.again.has(row.id),
       blocked: context.blocked.has(row.id),
-      lease: row.lease_id
-        ? {
-            started: (await this.workflows.workStarts(caller, row.id, tx)).some(
-              (start) => start.revision === row.revision,
-            ),
-          }
-        : null,
+      lease: row.lease_id ? { started: row.lease_started } : null,
       dependencies: ended
         ? []
         : (context.waitsOn?.get(row.id) ??

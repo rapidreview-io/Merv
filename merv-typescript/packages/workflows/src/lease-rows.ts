@@ -38,6 +38,8 @@ export interface LeaseRow<D = Data> {
   /** What the owning program pinned with the lease, as it wrote it. */
   details: D;
   released_at: string | null;
+  /** When its worker first took it up (workflows@17); null while it is only offered. */
+  started_at: string | null;
 }
 
 /** Writes a step's lease at its acquisition: the step it holds, its review claim and receipt. */
@@ -77,7 +79,7 @@ export async function insertLease(
 /** A lease without its receipt digest and details. */
 export type LeaseSummary = Omit<LeaseRow, 'receipt_digest' | 'details'>;
 const SUMMARY =
-  'id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,released_at';
+  'id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,released_at,started_at';
 // A row workflows@13 could not digest carries its receipt, to be digested here instead.
 const FULL = `${SUMMARY},receipt_digest,details,CASE WHEN receipt_digest IS NULL THEN receipt END AS receipt`;
 /** Which of a project's leases a read takes; an empty list matches none. */

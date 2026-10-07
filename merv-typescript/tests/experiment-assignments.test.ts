@@ -2015,3 +2015,36 @@ test('a re-planned attempt designs against the code its execution resumes from',
   assert.equal(plannerSees, true, 'and the attempt-2 design reads that same tree');
   assert.match(brief, /after an earlier attempt, that attempt’s commits on it/);
 });
+
+test('the card says starting for each visit until its own worker takes it up', async (t) => {
+  const f = await fixture(t);
+  const offerOnly = async (experiment: Experiment) => {
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    return await f.sessions.offer(f.source, {
+      instanceId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      runnerId: 'assignment-test',
+      requestId: f.request(),
+      secret,
+    });
+  };
+  const line = async (experiment: Experiment) =>
+    JSON.stringify(
+      (await f.experiments.running(f.source)).find((n) => n.title === experiment.name)!.lines,
+    );
+  const fresh = await f.running();
+  await offerOnly(fresh);
+  const firstLine = await line(fresh);
+  let experiment = await f.running();
+  const v1 = await f.work.lease(experiment); // attaches: the visit begins
+  const begun = await line(experiment);
+  await f.work.release(v1); // cut before it submitted
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const between = await line(experiment);
+  await offerOnly(experiment);
+  const second = await line(experiment);
+  assert.equal(begun, JSON.stringify([['Running']]));
+  assert.notEqual(between, JSON.stringify([['Running · starting']]), 'no visit, nothing starting');
+  assert.equal(firstLine, JSON.stringify([['Running · starting']]));
+  assert.equal(second, JSON.stringify([['Running · starting']]), 'a second visit not yet begun');
+});
