@@ -282,4 +282,8 @@ CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,re
   // nobody's (a wait on the server). Only the constraint widens; read-only prod check first:
   // SELECT whose, COUNT(*) FROM wf_blockers GROUP BY whose;
   15: `ALTER TABLE wf_blockers DROP CONSTRAINT wf_blockers_whose_check, ADD CONSTRAINT wf_blockers_whose_check CHECK (whose IN ('owner','admin','operator','nobody'));`,
+  // (unpublished) A blocker's move may be one actor's alone (`actor:<id>`), as a person's own
+  // model limit is. Only the constraint widens; read-only prod check first:
+  // SELECT whose, COUNT(*) FROM wf_blockers GROUP BY whose;
+  16: `ALTER TABLE wf_blockers DROP CONSTRAINT wf_blockers_whose_check, ADD CONSTRAINT wf_blockers_whose_check CHECK (whose IN ('owner','admin','operator','nobody') OR whose ~ '^actor:[^[:space:]]{1,200}$');`,
 };

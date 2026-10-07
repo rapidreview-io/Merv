@@ -196,17 +196,27 @@ export class FleetWorkflowAdapter implements FleetOwner {
           huggingFace: (binding) => canonical(binding.platform) === canonical(hostedCodexPlatform),
           // The person a machine is rented for pays its model calls: while they have no tokens
           // left today, it takes no new work, and a visit the relay cut off waits too.
+          // Said to the person whose limit it is, the one who raises it, in Settings.
           modelBudget: async (binding, tx) => {
-            let person: string | undefined;
+            let a: FleetAllocation;
             try {
-              person = (await this.fleet.inspectOwned(this, binding.allocationId, tx)).person;
+              a = await this.fleet.inspectOwned(this, binding.allocationId, tx);
             } catch (error) {
               if (error instanceof MervError && [403, 404].includes(error.status)) return null;
               throw error;
             }
-            if (!person) return null;
-            const budget = await budgetIn(tx, person, this.config.dailyTokensPerPerson);
-            return budget.blocked ? { resetsAt: budget.resetsAt } : null;
+            if (!a.person) return null;
+            const budget = await budgetIn(tx, a.person, this.config.dailyTokensPerPerson);
+            if (!budget.blocked) return null;
+            const payer = a.source.kind === 'service' ? a.source.vouchedBy : a.source;
+            const reset = `${budget.resetsAt.slice(0, 10)} ${budget.resetsAt.slice(11, 16)} UTC`;
+            return {
+              resetsAt: budget.resetsAt,
+              message: `Your daily Fleet model tokens are used up; this work resumes at ${reset}`,
+              next: `Raise your Fleet daily token limit in Settings, or wait until ${reset}`,
+              whose: `actor:${payer.actorId}` as const,
+              related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
+            };
           },
           // A visit whose calls the relay or its provider failed, or that Main's restart cut.
           relayFault: async (_binding, visit, tx) =>

@@ -96,6 +96,7 @@ export type {
 export type {
   ManagedBoundSession,
   ManagedEnrollmentInput,
+  ManagedModelWait,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,

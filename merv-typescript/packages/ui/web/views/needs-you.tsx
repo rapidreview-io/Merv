@@ -176,6 +176,7 @@ export function needsYou(
       const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
       // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
       const thread = blocker.related?.find((each) => each.kind === 'thread');
+      const settings = blocker.related?.find((each) => each.kind === 'settings');
       const work = thread && pathOf(rows, 'work');
       lines.push({
         id: item.id,
@@ -191,6 +192,10 @@ export function needsYou(
           (text, index, all) => !!text && all.indexOf(text) === index && text !== sentence,
         ),
         ...(move?.control ? { desk: { label: move.control.label, to: move.control.to } } : {}),
+        // A blocker that names a room of Settings is moved there, as a person's own limit is.
+        ...(settings && !move?.control
+          ? { desk: { label: settings.label, to: `/settings/${encodeURIComponent(settings.id)}` } }
+          : {}),
       });
       continue;
     }

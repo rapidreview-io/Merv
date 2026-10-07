@@ -96,9 +96,10 @@ interface WorkflowBlocker {
 /**
  * Whose move ending a published blocker is: the record's owner, as its program describes the
  * record (a project admin makes it too); a project admin; an operator, which is a project admin
- * signed in as a person; or nobody, a wait on the server that no person ends.
+ * signed in as a person; one actor of the project alone (`actor:<id>`), such as the person whose
+ * own limit it is; or nobody, a wait on the server that no person ends.
  */
-export type WorkflowWhose = 'owner' | 'admin' | 'operator' | 'nobody';
+export type WorkflowWhose = 'owner' | 'admin' | 'operator' | 'nobody' | `actor:${string}`;
 /** What a provider hands Workflows: its current opinion of why one instance cannot proceed. */
 export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
   /** Stable within one provider and instance, so a repeated opinion updates its own row. */

@@ -367,8 +367,17 @@ test('a rented machine’s person with a spent day gives it no work until their 
       109_851,
     );
   });
+  // Fleet words its own wait, to the person whose limit it is, with a way to Settings.
+  const resetsAt = new Date(Date.parse(`${today}T00:00:00.000Z`) + 86_400_000).toISOString();
+  const payer =
+    allocation.source.kind === 'service' ? allocation.source.vouchedBy : allocation.source;
+  const reset = `${resetsAt.slice(0, 10)} 00:00 UTC`;
   assert.deepEqual(await wait(), {
-    resetsAt: new Date(Date.parse(`${today}T00:00:00.000Z`) + 86_400_000).toISOString(),
+    resetsAt,
+    message: `Your daily Fleet model tokens are used up; this work resumes at ${reset}`,
+    next: `Raise your Fleet daily token limit in Settings, or wait until ${reset}`,
+    whose: `actor:${payer.actorId}`,
+    related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
   });
   await setDailyTokens(f.state, person, 20_100_000);
   assert.equal(await wait(), null);

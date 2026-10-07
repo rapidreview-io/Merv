@@ -14,6 +14,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import type { ManagedModelWait } from '@merv/sessions/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -249,7 +250,7 @@ async function fixture(
     retired = false,
     huggingFace = true,
     relayFault = false,
-    modelBudget: { resetsAt: string } | null = null;
+    modelBudget: ManagedModelWait | null = null;
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
@@ -339,7 +340,7 @@ async function fixture(
       relayFault = value;
     },
     /** The person's model budget as Fleet reports it: when it resets while spent, else null. */
-    modelBudget: (value: { resetsAt: string } | null) => {
+    modelBudget: (value: ManagedModelWait | null) => {
       modelBudget = value;
     },
     workflows,
@@ -715,6 +716,14 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const resetsAt = '2099-01-02T00:00:00.000Z';
+  // Fleet's words, to the person whose limit it is: Sessions says the wait, and words none of it.
+  const wait = {
+    resetsAt,
+    message: 'Your daily Fleet model tokens are used up; this work resumes at 2099-01-02 00:00 UTC',
+    next: 'Raise your Fleet daily token limit in Settings, or wait until 2099-01-02 00:00 UTC',
+    whose: `actor:${f.source.actorId}` as const,
+    related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
+  };
   const blockers = () => f.workflows.blockers(f.owner, f.workTarget.id);
   // Codex exits 1 the moment the relay refuses its call (403 fleet_model_ceiling): more often
   // than the launches a hold allows, and none of them is the work's failure.
@@ -722,7 +731,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     f.modelBudget(null);
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
     assert.ok(bound, `visit ${visit} is offered`);
-    f.modelBudget({ resetsAt });
+    f.modelBudget(wait);
     await f.sessions.release(f.caller, {
       sessionId: bound.id,
       runnerId: f.runnerId,
@@ -743,11 +752,10 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   const [waiting, ...others] = await blockers();
   assert.deepEqual(others, []);
   assert.equal(waiting?.code, 'model_budget_exhausted');
-  assert.equal(
-    waiting?.message,
-    'Daily model tokens used up; resumes at 00:00 UTC or raise your limit',
+  assert.deepEqual(
+    [waiting?.message, waiting?.next, waiting?.whose, waiting?.related],
+    [wait.message, wait.next, wait.whose, wait.related],
   );
-  assert.equal(waiting?.whose, 'operator');
   // The machine takes no new work while the person's day stays spent.
   assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,

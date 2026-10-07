@@ -851,6 +851,7 @@ export class LeasedSessions implements Sessions {
       await this.dispatch.reportModelWait(
         session.projectId,
         session.instanceId,
+        budget,
         session.expectedRevision,
         tx,
       );

@@ -884,3 +884,72 @@ test('a wave’s owner who is no operator sees its lens agent’s question', asy
     [lens.id],
   );
 });
+
+test('a wait a plugin names as one person’s is theirs alone, and its Settings link is their desk', () => {
+  // Audit 15: Fleet's model-budget wait went to every admin as an operator's move, the person
+  // who pays never saw it, and its line opened the record instead of Settings.
+  const at = '2026-10-07T00:00:00.000Z';
+  const wait = {
+    provider: 'session-model-budget',
+    key: 'model_budget',
+    code: 'model_budget_exhausted',
+    message: 'Your daily Fleet model tokens are used up; this work resumes at 2026-10-08 00:00 UTC',
+    next: 'Raise your Fleet daily token limit in Settings, or wait until 2026-10-08 00:00 UTC',
+    since: at,
+    status: 429,
+    whose: 'actor:actor_payer',
+    related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
+  };
+  const decision = {
+    terminal: false,
+    workStart: null,
+    actions: [],
+    nextAction: null,
+    blockers: [],
+    currentGate: 'working',
+    providerBlockers: [wait],
+  } as unknown as WorkflowDecision;
+  const owner = { actorId: 'actor_owner' };
+  const yours = { ask: wait.next, blocker: { provider: wait.provider, key: wait.key } };
+  assert.deepEqual(yoursOf(decision, owner, 'actor_payer'), yours);
+  for (const [reader, as] of [
+    ['actor_owner', {}],
+    ['actor_admin', { admin: true, person: true }],
+  ] as const)
+    assert.equal(yoursOf(decision, owner, reader, as), undefined, reader);
+  const rows = [
+    {
+      id: 'tasks',
+      label: 'Tasks',
+      group: 'hidden',
+      order: 1,
+      path: '/tasks',
+      workflow: 'task',
+      view: { kind: 'tasks' },
+      status: {},
+      readable: true,
+      needs: { name: 'title', owner: 'producerId' },
+    },
+  ];
+  const home = {
+    tasks: [
+      {
+        id: 't1',
+        title: 'T1',
+        producerId: 'actor_owner',
+        workflow: { state: 'in_progress', updatedAt: at, revision: 1 },
+      },
+    ],
+    reviews: [],
+    workflows: {
+      workflows: [{ instanceId: 't1', ...decision, dependencies: [], instruction: '', yours }],
+    },
+  };
+  assert.deepEqual(
+    needsYou(rows as never, home as never, { id: 'actor_payer' }, () => undefined).map((line) => [
+      line.sentence,
+      line.desk,
+    ]),
+    [[wait.next, { label: 'Fleet tokens a day', to: '/settings/session' }]],
+  );
+});

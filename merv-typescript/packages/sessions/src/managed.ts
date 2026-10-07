@@ -26,6 +26,7 @@ import type {
   ManagedBoundSession,
   ManagedRunnerInspection,
   ManagedBindingRow,
+  ManagedModelWait,
 } from './managed-types.js';
 import {
   capabilitiesSchema as capabilities,
@@ -705,12 +706,12 @@ export class ManagedRunnerBindings {
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
     return await this.validator.retired(this.identity(row), tx);
   }
-  /** When the machine's person has no model tokens left today, the moment that ends; else null. */
-  async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<{ resetsAt: string } | null> {
+  /** When the machine's person has no model tokens left today, the validator's wait; else null. */
+  async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<ManagedModelWait | null> {
     return (await this.validator?.modelBudget?.(this.identity(row), tx)) ?? null;
   }
   /** The same, of the machine a session ran on; null for a session no machine of Fleet's ran. */
-  async sessionModelWait(sessionId: string, tx: Transaction): Promise<{ resetsAt: string } | null> {
+  async sessionModelWait(sessionId: string, tx: Transaction): Promise<ManagedModelWait | null> {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     return row ? await this.modelWait(row, tx) : null;
   }

@@ -1,5 +1,6 @@
 /** Types of the managed-runner binding, kept free of runtime imports for the public type module. */
 import type { DelegationSource, Transaction } from '@merv/contracts';
+import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import type { RunnerPlatform, Session } from './types.js';
 
 export interface ManagedRunnerBindingIdentity {
@@ -31,13 +32,14 @@ export type ManagedRunnerValidator = {
   huggingFace?(binding: ManagedRunnerBindingIdentity): boolean;
   /**
    * When the person this machine's work is charged to can spend no more model tokens today, the
-   * moment that ends; else null. The validator's budget, which Sessions only reads: before it
-   * offers the machine work, and when one of its visits fails.
+   * wait, in the validator's own words: else null. The validator's budget, which Sessions only
+   * reads (before it offers the machine work, and when one of its visits fails) and says on the
+   * work as it is given.
    */
   modelBudget?(
     binding: ManagedRunnerBindingIdentity,
     tx: Transaction,
-  ): Promise<{ resetsAt: string } | null>;
+  ): Promise<ManagedModelWait | null>;
   /**
    * Whether the validator's model relay, or its provider, failed this visit's calls lately (an
    * outage, or Main restarting while it was live): its failed close is then nobody's fault.
@@ -48,6 +50,11 @@ export type ManagedRunnerValidator = {
     tx: Transaction,
   ): Promise<boolean>;
 };
+/** A model budget's wait: when it ends, and what the work says of it, to whom, and where. */
+export type ManagedModelWait = { resetsAt: string } & Pick<
+  WorkflowProvidedBlockerInput,
+  'message' | 'next' | 'whose' | 'related'
+>;
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];
 };
