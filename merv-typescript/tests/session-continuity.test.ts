@@ -1261,3 +1261,86 @@ test('a question answered needs its work readable, and one on ended work keeps n
   );
   assert.equal(status?.status, 'retired');
 });
+
+test('a question withholds only the revision it asked at: work moved on by hand is offered, and no longer asks', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(first.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue
+        .filter((item) => item.instanceId === unit.id)
+        .map((item) => item.expectedRevision),
+    );
+  assert.deepEqual(await queued(), []);
+  // The owner moves the work on by hand instead of answering: its review is offered, and the
+  // question, about a revision the work has left, is no longer its gate's.
+  await f.move(unit.id, 'submit');
+  const { revision } = await f.app.ctx.workflows.get(f.owner, unit.id);
+  assert.deepEqual(await queued(), [revision]);
+  assert.deepEqual(await f.app.ctx.workflows.blockers(f.owner, unit.id), []);
+});
+
+test('an answer that arrives before the asking visit declares its conversation waits for it, or for a bound', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  // Visit 1 keeps conversation A; the review sends the work back.
+  const v1 = await f.offer(unit.id, 'runner-a');
+  await f.keep(v1.session, v1.control, '{"type":"user","text":"A"}\n');
+  await f.release(v1.session);
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-a');
+  await f.release(review.session);
+  await f.move(unit.id, 'revise');
+  // Visit 2 resumes A and asks; the owner answers before its runner declares.
+  const v2 = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(v2.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  const path = `/sessions/threads/${v2.session.threadId}/messages`;
+  const answer = (await f.ok('POST', path, f.token, { body: '2025', requestId: 'answer' })).message
+    .id as string;
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue.some(
+        (item) => item.instanceId === unit.id,
+      ),
+    );
+  // Offered now, the work would resume v1's conversation, which never heard the question.
+  assert.equal(await queued(), false);
+  await f.keep(v2.session, v2.control, '{"type":"user","text":"B"}\n');
+  assert.equal(await queued(), true);
+  const v3 = await f.offer(unit.id, 'runner-b');
+  assert.equal(v3.session.continuity?.resume?.sessionId, v2.session.id);
+  await f.release(v3.session);
+
+  // A visit that never declares holds the work only for the bound.
+  await f.move(unit.id, 'submit');
+  const again = await f.offer(unit.id, 'runner-a');
+  await f.release(again.session);
+  await f.move(unit.id, 'revise');
+  const v4 = await f.offer(unit.id, 'runner-a');
+  const fourth = await f.sessions.authenticate(v4.input.secret);
+  await f.app.ctx.tools.invoke('session.message.ack', fourth, {
+    messageId: answer,
+    requestId: 'ack',
+  });
+  await f.app.ctx.tools.invoke('session.ask_owner', fourth, { question: 'Which seed?' });
+  await f.ok('POST', path, f.token, { body: '7', requestId: 'answer-2' });
+  assert.equal(await queued(), false);
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE session_questions DISABLE TRIGGER session_questions_immutable');
+    await tx.run(
+      'UPDATE session_questions SET asked_at=? WHERE session_id=?',
+      new Date(Date.now() - 3_600_000).toISOString(),
+      v4.session.id,
+    );
+    await tx.run('ALTER TABLE session_questions ENABLE TRIGGER session_questions_immutable');
+  });
+  assert.equal(await queued(), true);
+});

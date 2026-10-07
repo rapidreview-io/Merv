@@ -364,6 +364,8 @@ export class SessionMessages {
           cause: 'agent_question',
           // Its owner's move, as Workflows tells that owner; an operator answers too.
           whose: 'owner' as const,
+          // About the revision it asked at: work moved on by any hand no longer waits on it.
+          revision: Number(row.revision),
           related: [],
         })),
       },
