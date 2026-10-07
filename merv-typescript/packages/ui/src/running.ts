@@ -200,6 +200,8 @@ export const nodeOf = parsed(runningNode);
  */
 export const sectionOf = parsed(runningSection);
 const headerOf = parsed(runningHeader);
+/** A unit's history and key artifact, or null when it breaks the contract. */
+export const unitOf = parsed(runningSchema.runningUnit);
 
 /**
  * A control this caller may use, or null. The owner decides `allowed`; a tool this server
@@ -710,6 +712,7 @@ export async function runningPanel(
     ),
   );
   const names = await tools();
+  const unit = own.unit === undefined ? null : unitOf(own.unit);
   return {
     key,
     observedAt: new Date().toISOString(),
@@ -719,5 +722,6 @@ export async function runningPanel(
     ...(sameOriginPath(own.route) ? { route: own.route } : {}),
     live: own.live === true,
     aliases,
+    ...(unit ? { unit } : {}),
   };
 }

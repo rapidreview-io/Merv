@@ -234,6 +234,7 @@ test('an open experiment is a work card that says where it stands and what it wa
     look: 'dashed',
     links: [{ to: work(prerequisite.id), verb: 'waits on', waiting: true }],
     rank: 3,
+    started: waiting.createdAt,
     owner: 'experiments',
   });
   assert.deepEqual(board.edges, [
@@ -362,6 +363,7 @@ test('an open experiment is a work card that says where it stands and what it wa
       lines: [['Abandoned']],
       look: 'quiet',
       rank: 4,
+      started: waiting.createdAt,
     },
   );
   assert.equal(await f.app.ctx.experiments.runningPanel(f.operator, work(prerequisite.id)), null);
@@ -539,6 +541,14 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
     owner: 'experiments',
     rows: [{ label: 'Owner', value: [{ actor: f.operator.actorId }] }],
   });
+  // Its files, newest first, each under the stage it was made in and the producer's role.
+  assert.deepEqual(
+    sidebar.unit?.artifacts?.map((item) => [item.id, item.stage, item.role, item.size]),
+    [
+      [written.id, 'planned', 'producer', written.size],
+      [feasibility.id, 'planned', 'producer', feasibility.size],
+    ],
+  );
   assert.deepEqual(
     [sidebar.route, sidebar.live, sidebar.actions],
     [`/experiments/${experiment.id}`, false, []],

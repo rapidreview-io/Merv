@@ -22,6 +22,7 @@ import {
 } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { DELIVERY_REPORT_CRITERION } from '@merv/tasks/definitions';
 import { openState } from './fixtures/state.js';
 import { assessment, claimUnowned, legacyStart } from './fixtures/review-verdict.js';
 
@@ -639,6 +640,8 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     const reviewLease = await work.lease(pending);
     const reviewer = reviewLease.worker;
     const review = await app.ctx.reviews.get(operator, pending.reviewId!);
+    // A new task's delivery is also reviewed for its report's format, after its own check.
+    assert.deepEqual(review.criteria.slice(1), [DELIVERY_REPORT_CRITERION]);
     const input: ReviewApplication = {
       reviewId: review.id,
       claimId: review.claimId!,
@@ -651,6 +654,12 @@ test('Tasks reject supplied routes before command replay and agree with workflow
           status: 'met',
           evidenceIds: [proof.id],
           notes: 'Recomputed the result.',
+        },
+        {
+          criterionNumber: 2,
+          status: 'met',
+          evidenceIds: [proof.id],
+          notes: 'The report has the required parts.',
         },
       ],
       expectedRevision: pending.workflow.revision,

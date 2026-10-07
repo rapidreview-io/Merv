@@ -1,6 +1,7 @@
 import {
   clip,
   runningKey,
+  type Artifact,
   type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
@@ -9,12 +10,15 @@ import {
   type RunningPanelPart,
   type RunningPhrase,
   type RunningSection,
+  type RunningUnit,
+  type RunningUnitKey,
   type WorkflowDependency,
   type WorkflowHistoryEntry,
   type WorkRoute,
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
-import type { Experiment } from './models.js';
+import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
+import type { Experiment, ExperimentSubmission } from './models.js';
 import { roleRank } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
 
@@ -44,6 +48,8 @@ export interface ExperimentStanding {
   review: ReviewRequest | null;
   /** Every return this review state allows is used. */
   exhausted: boolean;
+  /** When the experiment was created: the live card counts from it. */
+  started?: string;
 }
 
 const ENDED: Record<string, string> = {
@@ -184,6 +190,137 @@ export function experimentNode(standing: ExperimentStanding): RunningNode {
     ...(red ? { attention: red } : {}),
     ...(links.length ? { links } : {}),
     rank,
+    ...(standing.started ? { started: standing.started } : {}),
+  };
+}
+
+/** What crossing into each review gate says its producer did. */
+const GATES = {
+  design_review: { submitted: 'Submitted the design' },
+  experiment_review: { submitted: 'Submitted the results' },
+};
+/** The document each kind of submission hands in. */
+const HANDED: Record<ExperimentSubmission['stage'], 'plan' | 'report'> = {
+  design: 'plan',
+  results: 'report',
+};
+const named = (item: { artifactId: string; path: string }) => ({
+  id: item.artifactId,
+  title: clip(item.path.split('/').pop()!, 200),
+});
+
+/** The files an experiment's panel read: those it names by id, and those its sessions made. */
+export interface ExperimentFiles {
+  found: ReadonlyMap<string, UnitFile['artifact']>;
+  made?: readonly UnitFile['artifact'][];
+}
+
+/** Every file an experiment's record names: its evidence, its figures, and what its reviews cite. */
+export function experimentFileIds(
+  experiment: Experiment,
+  reviews: readonly ReviewRequest[],
+): { ids: string[]; sessions: string[] } {
+  const evidence = [
+    ...experiment.evidence,
+    ...experiment.submissions.flatMap((item) => item.evidence),
+  ];
+  const ids = [
+    ...evidence.flatMap((item) => [item.artifactId, ...item.figureIds]),
+    ...experiment.submissions.flatMap((item) => item.figureIds),
+    ...reviews.flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds)),
+  ];
+  const sessions = [...evidence, ...experiment.submissions].flatMap((item) =>
+    item.sessionId ? [item.sessionId] : [],
+  );
+  return { ids: [...new Set(ids)], sessions: [...new Set(sessions)] };
+}
+
+/**
+ * The experiment as a unit: its history, the one thing to read now, and its files. While it is
+ * designed and its design reviewed, the thing to read is the newest design submitted, or the
+ * draft plan before any was; while it runs, the design that was approved; from its results on,
+ * the report. Its files are what its producer attached and its producing sessions made, what
+ * the server pinned beside them, and what its reviewers cited besides.
+ */
+export function experimentUnit(
+  experiment: Experiment,
+  graph: ProcessGraph,
+  reviews: readonly ReviewRequest[],
+  files: ExperimentFiles = { found: new Map() },
+): RunningUnit {
+  const byReview = new Map(experiment.submissions.map((item) => [item.reviewId, item]));
+  const handed = (submission: ExperimentSubmission | undefined) => {
+    const item = submission?.evidence.find((each) => each.role === HANDED[submission.stage]);
+    return item && named(item);
+  };
+  const history = unitHistory({
+    graph,
+    reviews,
+    gates: GATES,
+    document: (review) => handed(byReview.get(review.id)),
+  });
+  const verdicts = new Map(reviews.map((review) => [review.id, review]));
+  const word = (submission: ExperimentSubmission) => {
+    const review = verdicts.get(submission.reviewId);
+    return review?.verdict ?? (review ? 'in_review' : undefined);
+  };
+  const newest = (stage: ExperimentSubmission['stage'], approved = false) =>
+    experiment.submissions
+      .filter(
+        (item) =>
+          item.stage === stage && (!approved || verdicts.get(item.reviewId)?.verdict === 'pass'),
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .at(-1);
+  const of = (label: string, submission: ExperimentSubmission | undefined, state?: string) => {
+    const artifact = handed(submission);
+    return artifact
+      ? {
+          label,
+          artifact,
+          ...((state ?? word(submission!)) ? { state: state ?? word(submission!) } : {}),
+        }
+      : undefined;
+  };
+  const draft = experiment.evidence
+    .filter(
+      (item) =>
+        item.current && item.role === 'plan' && item.attemptIndex === experiment.attempt.index,
+    )
+    .at(-1);
+  const plan = (): RunningUnitKey | undefined =>
+    of('Current plan', newest('design')) ??
+    (draft ? { label: 'Current plan', state: 'draft', artifact: named(draft) } : undefined);
+  const key: RunningUnitKey | undefined =
+    experiment.workflow.state === 'planned' || experiment.workflow.state === 'design_review'
+      ? plan()
+      : experiment.workflow.state === 'running'
+        ? (of('Current plan', newest('design', true), 'approved') ?? plan())
+        : (of('Report', newest('results')) ?? plan());
+  const file = (id: string, role?: UnitFile['role']): UnitFile[] => {
+    const artifact = files.found.get(id);
+    return artifact ? [{ artifact, ...(role ? { role } : {}) }] : [];
+  };
+  const evidence = [
+    ...experiment.evidence,
+    ...experiment.submissions.flatMap((item) => item.evidence),
+  ];
+  const artifacts = unitArtifacts(graph, [
+    ...evidence.flatMap((item) =>
+      file(item.artifactId, item.systemGenerated ? undefined : 'producer'),
+    ),
+    ...[...evidence, ...experiment.submissions]
+      .flatMap((item) => item.figureIds)
+      .flatMap((id) => file(id, 'producer')),
+    ...(files.made ?? []).map((artifact): UnitFile => ({ artifact, role: 'producer' })),
+    ...reviews
+      .flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds))
+      .flatMap((id) => file(id, 'reviewer')),
+  ]);
+  return {
+    key: key ?? { label: 'Question', text: experiment.intent },
+    history,
+    ...(artifacts.length ? { artifacts } : {}),
   };
 }
 
@@ -197,8 +334,11 @@ export function experimentPanel(input: {
   experiment: Experiment;
   graph: ProcessGraph;
   route: WorkRoute;
+  reviews?: readonly ReviewRequest[];
+  files?: ExperimentFiles;
 }): RunningPanelPart {
-  const { standing, experiment, graph, route } = input;
+  const { standing, experiment, graph, route, reviews } = input;
+  const unit = reviews && experimentUnit(experiment, graph, reviews, input.files);
   const { line } = face(standing);
   const red = attention(standing);
   const ended = !!ENDED[standing.state];
@@ -272,5 +412,6 @@ export function experimentPanel(input: {
     actions: [],
     route: route('experiment', standing.id),
     live: !!standing.lease,
+    ...(unit ? { unit } : {}),
   };
 }

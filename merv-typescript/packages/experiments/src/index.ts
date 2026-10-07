@@ -1,4 +1,4 @@
-import { visible, mapAsync, record } from '@merv/contracts';
+import { MAX_ARTIFACT_IDS, visible, mapAsync, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -36,6 +36,7 @@ import type { Code, CodeCaptureRef } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import {
   enteredAgain,
+  experimentFileIds,
   experimentNode,
   experimentPanel,
   type ExperimentStanding,
@@ -122,6 +123,7 @@ const terminal = new Set<string>(TERMINAL);
 interface StandingRow extends Omit<WorkflowSnapshot, 'data'> {
   name: string;
   review_id: string | null;
+  created_at?: string;
   lease_id: string | null;
 }
 /** What one board read knows beside an experiment's own row. */
@@ -340,7 +342,24 @@ export class ExperimentService implements Experiments {
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
         ),
       };
-      return { standing: await this.standing(caller, row, context, tx), experiment };
+      // Every submission's review, for the history and the verdict on what it handed in.
+      const reviews = await this.reviews.find(
+        caller,
+        experiment.submissions.map((item) => item.reviewId),
+        tx,
+      );
+      // Its files, for the Artifacts tab: those its record names and those its sessions made.
+      const named = experimentFileIds(experiment, [...reviews.values()]);
+      const found = await this.artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx);
+      const made: Artifact[] = [];
+      for (const session of named.sessions)
+        made.push(...(await this.artifacts.list(caller, { session, limit: 200 }, tx)));
+      return {
+        standing: await this.standing(caller, row, context, tx),
+        experiment,
+        reviews: [...reviews.values()],
+        files: { found, made },
+      };
     });
     if (!read) return null;
     // The ladder is where the record stands, so no action's check runs to draw it.
@@ -353,8 +372,8 @@ export class ExperimentService implements Experiments {
     where: string,
     ...params: (string | number)[]
   ): Promise<StandingRow[]> {
-    const rows = await tx.all<Pick<StandingRow, 'id' | 'name' | 'review_id'>>(
-      `SELECT e.id,e.name,e.review_id FROM experiments e WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
+    const rows = await tx.all<Pick<StandingRow, 'id' | 'name' | 'review_id' | 'created_at'>>(
+      `SELECT e.id,e.name,e.review_id,e.created_at FROM experiments e WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
       caller.projectId,
       ...params,
     );
@@ -465,6 +484,7 @@ export class ExperimentService implements Experiments {
           })
         : null,
       exhausted: context.exhausted.has(row.id),
+      ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {

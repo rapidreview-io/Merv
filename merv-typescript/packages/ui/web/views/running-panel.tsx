@@ -19,6 +19,7 @@ import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { Phrase, Reading, Target, silent, steadyText, valueText } from './running-phrase';
 import { ThreadStages } from './threads';
+import { UnitView } from './unit';
 
 /**
  * The sidebar of whatever is in hand on the Work page. Its owner wrote every word of it
@@ -353,8 +354,19 @@ function Body({ section, title }: { section: RunningSection; title: string }) {
   }
 }
 
-/** One section; `title` is the thing's own, for what a section opens over the page. */
-function Section({ section: sent, title }: { section: RunningSection; title: string }) {
+/**
+ * One section; `title` is the thing's own, for what a section opens over the page. A `bare`
+ * section's heading is the fold it stands in, so it is not drawn again.
+ */
+function Section({
+  section: sent,
+  title,
+  bare,
+}: {
+  section: RunningSection;
+  title: string;
+  bare?: boolean;
+}) {
   const reading = useContext(Reading);
   const section = readable(sent, reading);
   if (!section) return null;
@@ -372,6 +384,12 @@ function Section({ section: sent, title }: { section: RunningSection; title: str
   // A workflow's stages are one card with one name, whichever plugin sends them: the owner's
   // title for it is not drawn.
   if (section.kind === 'ladder') return <Body section={section} title={title} />;
+  if (bare)
+    return (
+      <section className="running-section" aria-label={section.title}>
+        <Body section={section} title={title} />
+      </section>
+    );
   if (section.folded)
     return (
       <details className="running-section">
@@ -512,9 +530,20 @@ export function RunningSidebar({
     own && !own.action && attention?.action
       ? { ...own, action: attention.action }
       : (own ?? attention);
+  // A unit of work draws its stages, then its history beside its key artifact; what needs a
+  // person stands at the head of that reading, and every other section folds under Details.
+  const unit = data.unit;
+  const asks = !!unit && !!standing && !standing.quiet;
+  const ladder = unit && data.sections.find((section) => section.kind === 'ladder');
+  const shown = unit
+    ? data.sections.filter((section) => section.attention && section.kind !== 'ladder')
+    : data.sections;
+  const folded = unit
+    ? data.sections.filter((section) => !section.attention && section.kind !== 'ladder')
+    : [];
   return (
     <Reading.Provider value={{ now, nameOf, open }}>
-      <div className="running-sidebar">
+      <div className={cx('running-sidebar', data.unit && 'running-sidebar--unit')}>
         <header className="running-panel-head" ref={head}>
           <div className="running-panel-top">
             <span className="running-kind">{data.header.kind}</span>
@@ -523,7 +552,10 @@ export function RunningSidebar({
           <h2 id="running-panel-title" className="running-panel-title" tabIndex={-1} ref={heading}>
             {data.header.title}
           </h2>
-          <Standing says={data.header.says} attention={standing} />
+          <Standing
+            says={data.header.says}
+            attention={asks ? { says: standing!.says } : standing}
+          />
         </header>
         {data.actions.length > 0 && (
           <div className="cluster running-acts">
@@ -533,13 +565,40 @@ export function RunningSidebar({
           </div>
         )}
         {panel.error && <LoadState {...panel} />}
-        {data.sections.map((section, index) => (
+        {shown.map((section, index) => (
           <Section
             key={`${section.owner ?? ''}:${section.title}:${index}`}
             section={section}
             title={data.header.title}
           />
         ))}
+        {unit && (
+          <UnitView
+            key={data.key}
+            unit={unit}
+            graph={ladder?.kind === 'ladder' ? ladder.graph : undefined}
+            kind={data.header.kind}
+            title={data.header.title}
+            attention={asks ? standing : undefined}
+            wide={!!full}
+            onRead={onFull && !full ? onFull : undefined}
+            details={
+              folded.length > 0 && (
+                <details className="running-section unit-details">
+                  <Summary className="running-section-head">Details</Summary>
+                  {folded.map((section, index) => (
+                    <Section
+                      key={`${section.owner ?? ''}:${section.title}:${index}`}
+                      section={section}
+                      title={data.header.title}
+                      bare={section.title === 'Details'}
+                    />
+                  ))}
+                </details>
+              )
+            }
+          />
+        )}
         {data.route && (
           <Link className="running-open hit" to={data.route}>
             Open record <ArrowRightIcon size={14} />
