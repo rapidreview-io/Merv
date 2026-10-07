@@ -16,6 +16,7 @@ import {
   type AgentStreamEvent,
 } from './agent-stream.js';
 import { isoNow, live, ordinary, readFirst, safeError, text, workNameOf } from './common.js';
+import { messageInquiry, openInquiry } from './inquiries.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
 import { readsAgents } from './rules.js';
@@ -74,7 +75,7 @@ const PAGE = 50;
 /** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
 const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
 /** A question to it (an inquiry) still waiting for a machine or being answered. */
-const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running'))`;
+const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND ${openInquiry('i')})`;
 /** A thread that wants attention whatever its work: live, asking its owner, or asked a question
  *  (an inquiry) that is still open. */
 const URGENT = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
@@ -580,7 +581,9 @@ export class SessionThreads {
           const message = readable.has(view.instanceId) ? said.get(view.id) : undefined;
           return {
             ...view,
-            ...(index < first.length ? {} : { seq: String(page[index]!.seq) }),
+            ...(index < first.length
+              ? { attention: true as const }
+              : { seq: String(page[index]!.seq) }),
             ...(question && {
               question: {
                 id: question.id,
@@ -598,7 +601,7 @@ export class SessionThreads {
                 reply: message.reply_body,
                 ...(message.inquiry_id &&
                   message.inquiry_status && {
-                    inquiry: { id: message.inquiry_id, status: message.inquiry_status },
+                    inquiry: messageInquiry(message.inquiry_id, message.inquiry_status),
                   }),
               },
             }),

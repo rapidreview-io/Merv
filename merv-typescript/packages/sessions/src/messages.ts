@@ -11,6 +11,7 @@ import {
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
+import { messageInquiry } from './inquiries.js';
 import type {
   InquiryStatus,
   Session,
@@ -130,10 +131,8 @@ export class SessionMessages {
     instanceId: string,
     inquiries?: Map<string, InquiryStatus>,
   ): SessionMessage {
-    const inquiry =
-      row.inquiry_role === 'question' && inquiries?.get(row.inquiry_id!)
-        ? { inquiry: { id: row.inquiry_id!, status: inquiries.get(row.inquiry_id!)! } }
-        : {};
+    const status = row.inquiry_role === 'question' && inquiries?.get(row.inquiry_id!);
+    const inquiry = status ? { inquiry: messageInquiry(row.inquiry_id!, status) } : {};
     return {
       id: row.id,
       threadId: row.thread_id,

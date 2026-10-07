@@ -85,6 +85,7 @@ export type {
   ThreadConversation,
   ThreadMessages,
   InquiryStatus,
+  MessageInquiry,
   ThreadInquiry,
   ThreadQuestion,
   ThreadView,

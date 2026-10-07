@@ -372,25 +372,11 @@ function Calls({ thread, names }: { thread: ThreadView; names: Map<string, strin
   );
 }
 
-/** The tool that asks a thread that takes no message: a short visit that answers and stops. */
-const ASK = 'session.ask_thread';
-
-/** What a question to an agent (an inquiry) says of itself in the thread, by its status. */
-const inquiryPhrase: Record<string, string> = {
-  queued: 'asking',
-  running: 'answering',
-  answered: 'answered',
-  unanswered: 'no answer',
-  // Nobody took it in time, or its visit ran out of time before answering.
-  expired: 'expired',
-};
-
 /**
  * The box that speaks to a thread, for someone who may write to the project. A thread that takes
  * a message now (live, dormant on open work, or answering its question) is sent one, which its
- * live or next visit reads at its next tool call. Any other is asked, where Sessions offers
- * `session.ask_thread`: a short visit resumes its conversation, answers and stops. Where it does
- * not, the box stands disabled.
+ * live or next visit reads at its next tool call. One Sessions says may be asked (`asks`) is asked:
+ * a short visit resumes its conversation, answers and stops. Any other stands disabled.
  */
 export function ThreadCompose({
   thread,
@@ -403,38 +389,32 @@ export function ThreadCompose({
   onSent?(): void;
 }) {
   const actor = useActor();
-  const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
-  const sends = thread.takesMessage || answering;
+  const base = `/sessions/threads/${encodeURIComponent(thread.id)}`;
+  const sends = thread.takesMessage;
+  const path = `${base}/${sends ? 'messages' : 'ask'}`;
   const may = !!actor && writes(actor);
-  const catalog = useTool<{ tools?: { name: string }[] }>(
-    sends || !may || !thread.asks ? null : '/tools',
-  );
-  const asks = !sends && !!thread.asks && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
   const [draft, setDraft] = useState('');
-  const send = useCommand<{ message?: { id?: unknown } } | null>({
-    tool: sends ? path : ASK,
-    send: sends
-      ? (body) => accountRequest(path, { method: 'POST', body, scoped: true })
-      : undefined,
-    validate: (result) =>
-      sends ? typeof result?.message?.id === 'string' : !!result && typeof result === 'object',
+  const send = useCommand<{ message?: { id?: unknown }; inquiry?: { id?: unknown } } | null>({
+    tool: path,
+    send: (body) => accountRequest(path, { method: 'POST', body, scoped: true }),
+    validate: (result) => typeof (sends ? result?.message?.id : result?.inquiry?.id) === 'string',
     onSuccess: () => {
       setDraft('');
       // The thread's messages, the Agents page's cards, and Needs you, which an answer clears.
-      refreshTools(path, '/sessions/threads', 'ui.home');
+      refreshTools(`${base}/messages`, '/sessions/threads', 'ui.home');
       onSent?.();
     },
   });
   if (!may) return null;
   const word = answering ? 'Answer' : sends ? 'Message' : 'Ask';
-  const off = !sends && !asks;
+  const off = !sends && !thread.asks;
   return (
     <form
       className="thread-compose"
       onSubmit={(event) => {
         event.preventDefault();
         const body = draft.trim();
-        if (!off && body) void send.submit(sends ? { body } : { threadId: thread.id, body });
+        if (!off && body) void send.submit({ body });
       }}
     >
       <textarea
@@ -470,13 +450,8 @@ export function ThreadCompose({
  */
 export const delivery = (message: {
   acknowledgedAt: string | null;
-  inquiry?: { status: string };
-}) =>
-  message.inquiry
-    ? (inquiryPhrase[message.inquiry.status] ?? message.inquiry.status)
-    : message.acknowledgedAt
-      ? 'Read'
-      : 'Sent';
+  inquiry?: { label: string };
+}) => (message.inquiry ? message.inquiry.label : message.acknowledgedAt ? 'Read' : 'Sent');
 
 /**
  * What passed between the thread and the people over it, oldest first, and the box that speaks

@@ -15,6 +15,7 @@ import type {
   DispatchState,
   InquirySession,
   InquiryStatus,
+  MessageInquiry,
   Session,
   SessionInquiries,
   SessionResume,
@@ -39,6 +40,25 @@ export const INQUIRY_DAILY_TOKENS = 2_000_000;
 /** An inquiry's budget for a conversation of `size` bytes (about four to a token), within a day's. */
 const inquiryBudget = (size: number) =>
   Math.min(INQUIRY_DAILY_TOKENS, INQUIRY_TOKENS + INQUIRY_RESENDS * Math.ceil(size / 4));
+
+/** An inquiry still waiting for a machine or being answered, as SQL over `alias`. */
+export const openInquiry = (alias: string) => `${alias}.status IN ('queued','running')`;
+/** What a page says of a question to an agent, by its status. */
+const LABELS: Record<InquiryStatus, string> = {
+  queued: 'asking',
+  running: 'answering',
+  answered: 'answered',
+  unanswered: 'no answer',
+  // Nobody took it in time, or its visit ran out of time before answering.
+  expired: 'expired',
+};
+/** A question's status as a page shows it. */
+export const messageInquiry = (id: string, status: InquiryStatus): MessageInquiry => ({
+  id,
+  status,
+  open: status === 'queued' || status === 'running',
+  label: LABELS[status],
+});
 
 interface InquiryRow {
   id: string;
@@ -242,7 +262,7 @@ export class Inquiries implements SessionInquiries {
       // What its visits spent is in Sessions' one usage ledger, as its runners reported it; one
       // still open, or that ran with no report, counts its whole budget.
       const day = await tx.get<{ spent: number | string }>(
-        `SELECT COALESCE(SUM(CASE WHEN i.status IN ('queued','running') OR (u.started_at IS NOT NULL AND u.reported_at IS NULL)
+        `SELECT COALESCE(SUM(CASE WHEN ${openInquiry('i')} OR (u.started_at IS NOT NULL AND u.reported_at IS NULL)
             THEN i.token_budget ELSE COALESCE(u.input_tokens,0)+COALESCE(u.output_tokens,0) END),0) AS spent
           FROM session_inquiries i LEFT JOIN session_usage u ON u.session_id=i.session_id
           WHERE i.project_id=? AND i.asker_actor_id=? AND i.asked_at>?`,
@@ -320,7 +340,7 @@ export class Inquiries implements SessionInquiries {
       hosted: boolean;
     }>(
       `SELECT t.id,t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AS kept,
-          EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running')) AS busy,
+          EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND ${openInquiry('i')}) AS busy,
           t.harness='codex' AS codex,
           EXISTS (SELECT 1 FROM (SELECT s.id FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work'
               ORDER BY s._merv_rowid DESC LIMIT 1) w

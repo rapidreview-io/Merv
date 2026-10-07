@@ -80,6 +80,7 @@ const liveB = thread('b', {
 });
 const lapsedC = thread('c', { status: 'live', visits: [working('ses_c', 'lapsed')] });
 const pending = thread('p', {
+  attention: true,
   message: {
     id: 'm1',
     senderActorId: 'actor_me',
@@ -244,6 +245,8 @@ test('the waiting card answers its question through the thread, and its card say
             {
               ...asking,
               question: undefined,
+              // Its unread answer still wants attention, as Sessions says.
+              attention: true,
               message: {
                 id: 'm2',
                 senderActorId: 'actor_me',
@@ -421,7 +424,12 @@ test('a card holding a question that ended says how, not Sent, and folds under R
         createdAt: ago(60),
         acknowledgedAt: null,
         reply: null,
-        inquiry: { id: `inquiry_${id}`, status },
+        inquiry: {
+          id: `inquiry_${id}`,
+          status,
+          open: false,
+          label: status === 'expired' ? 'expired' : 'no answer',
+        },
       },
     });
   await open('operator', {

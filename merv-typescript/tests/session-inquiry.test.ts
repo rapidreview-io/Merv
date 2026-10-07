@@ -403,7 +403,14 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
   const read = await f.messages(threadId);
   assert.deepEqual(
     read.messages.map((item) => [item.id, item.body, item.reply, item.inquiry]),
-    [[asked.messageId, question, answer, { id: asked.id, status: 'answered' }]],
+    [
+      [
+        asked.messageId,
+        question,
+        answer,
+        { id: asked.id, status: 'answered', open: false, label: 'answered' },
+      ],
+    ],
   );
   // Its visit is listed as an inquiry; the thread is exactly as it was: retired, its
   // conversation and latest visit unchanged, and no work ended nor any count against it.
@@ -714,8 +721,13 @@ test('a question holds its thread among those that want attention only while it 
   const asked = await f.ask(threadId, 'Anyone there?');
   // Waiting for a machine: listed first, with no cursor, and asked no second question.
   const waiting = await listed();
-  assert.equal(waiting.seq, undefined);
-  assert.deepEqual(waiting.message?.inquiry, { id: asked.id, status: 'queued' });
+  assert.deepEqual([waiting.seq, waiting.attention], [undefined, true]);
+  assert.deepEqual(waiting.message?.inquiry, {
+    id: asked.id,
+    status: 'queued',
+    open: true,
+    label: 'asking',
+  });
   assert.equal(waiting.asks, undefined);
   // Nobody took it in time: its thread goes back among the rest, saying the question expired.
   const past = new Date(Date.now() - 1000).toISOString();
