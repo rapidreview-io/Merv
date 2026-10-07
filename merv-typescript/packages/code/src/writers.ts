@@ -137,6 +137,64 @@ export class CodeWriterService {
     else if (row.writer_state === 'active') await this.move(tx, row, 'closing');
   }
 
+  /**
+   * The machine a session ran on is gone for good (Fleet released it and its runtime is
+   * deleted), so the final capture it owed can never come: if that session is the current
+   * writer, its generation ends here, at the last commit Code admitted, as an operator's fence
+   * would end it, and the next lease continues from there. A quarantined capture, or an admitted
+   * upload not yet finished, still waits for an operator; a machine of the owner's own never
+   * says it is gone, so its generation waits for it as before.
+   */
+  async machineGone(projectId: string, sessionId: string, tx: Transaction): Promise<void> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    const row = await tx.get<WriterRow>(
+      `SELECT ${writerColumns} FROM code_workspaces WHERE project_id=? AND writer_session_id=?`,
+      projectId,
+      sessionId,
+    );
+    if (
+      !row ||
+      !['reserved', 'active', 'closing', 'recovery_required'].includes(row.writer_state) ||
+      row.quarantine_operation_id !== null ||
+      row.blocked_by
+    )
+      return;
+    if (
+      await tx.get(
+        "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
+        projectId,
+        row.unit_id,
+      )
+    )
+      return;
+    const at = now();
+    // What it was still sending can never be completed: it is held, never admitted.
+    await tx.run(
+      "UPDATE code_operations SET status='failed',error='code_generation_stale',detail_json=?,completed_at=?,updated_at=? WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
+      canonical({ message: 'The writer’s machine is gone; its generation ended' }),
+      at,
+      at,
+      projectId,
+      row.unit_id,
+    );
+    await this.move(tx, row, 'closed');
+    await this.changed(tx, row);
+    await this.state.appendEvent(tx, {
+      projectId,
+      actorId: 'system:code',
+      type: 'code.writer_ended',
+      subjectId: row.unit_id,
+      data: {
+        reason: 'machine_gone',
+        sessionId,
+        generation: Number(row.generation),
+        head: row.head_oid,
+        from: row.writer_state,
+      },
+    });
+  }
+
   /** A generation whose final capture never came is shown as needing an operator. */
   async expire(): Promise<void> {
     if (this.closed) return;

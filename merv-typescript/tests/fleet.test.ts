@@ -816,6 +816,31 @@ test('a release’s hold admits no step on a work machine until it is lifted or 
   assert.deepEqual([await f.fleet.held(), await admits()], [false, true]);
 });
 
+test('a machine released with its runtime deleted is announced gone for good; a cancelled request is not', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const work = await f.fleet.request(f.caller, input('lost'));
+  for (let i = 0; i < 3; i++) await f.fleet.tick();
+  const sandbox = (await f.fleet.inspect(f.caller, work.id)).runtime!.sandboxId;
+  // A rollout replaced it: the provider reports it stopped and deleted.
+  f.runtimes.confirmStopped(sandbox);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, work.id)).phase, 'released');
+  const queued = await f.fleet.request(f.caller, input('never'));
+  await f.fleet.cancel(f.caller, queued.id);
+  const said = async (id: string) =>
+    (
+      await f.state.read((sql) =>
+        sql.all<{ phase: string; gone: string | null }>(
+          "SELECT data_json::jsonb->>'phase' AS phase, data_json::jsonb->>'machineGone' AS gone FROM events WHERE type='fleet.changed' AND subject_id=? ORDER BY id",
+          id,
+        ),
+      )
+    ).map(({ phase, gone }) => `${phase}${gone ? ' gone' : ''}`);
+  assert.equal((await said(work.id)).at(-1), 'released gone');
+  assert.ok((await said(work.id)).slice(0, -1).every((line) => !line.endsWith('gone')));
+  assert.deepEqual(await said(queued.id), ['released']);
+});
+
 test('active unchanged observations perform no writes; admission requires launch', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('stable'));

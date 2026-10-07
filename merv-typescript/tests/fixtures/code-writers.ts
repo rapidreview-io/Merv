@@ -87,8 +87,13 @@ export async function writerFixture(
         });
         return writer;
       }),
-    /** A session event as Code's writer subscription takes it; it subscribes to these two. */
+    /** A session event as Code's writer subscriptions take it: these two, and Code Work's
+     *  session.machine_gone. */
     event: async (type: string, sessionId: string) => {
+      if (type === 'session.machine_gone')
+        return await f.state.transaction((tx) =>
+          f.code.machineGone(f.admin.projectId, sessionId, tx),
+        );
       const change = (
         { 'session.workspace_attached': 'attached', 'session.closed': 'closed' } as const
       )[type as 'session.closed'];

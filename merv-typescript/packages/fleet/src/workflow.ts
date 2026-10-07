@@ -793,6 +793,18 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
 }
 
+/**
+ * Fleet's word that a work machine is gone for good (fleet.changed with machineGone), passed on
+ * to Sessions for the sessions that ran on it: neither knows the other's records.
+ */
+export const machineGone =
+  (sessions: Pick<Sessions, 'managed'>) =>
+  async (event: { subjectId: string; data: unknown }, tx: Transaction) => {
+    const data = event.data as { machineGone?: boolean; owner?: { kind?: string } };
+    if (data.machineGone === true && data.owner?.kind === ownerKind)
+      await sessions.managed.machineGone(event.subjectId, tx);
+  };
+
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
@@ -807,6 +819,17 @@ export const fleetWorkflowPlugin = {
     );
     await adapter.start();
     ctx.effect(() => () => adapter.close());
+    // Where events are delivered, a work machine gone for good is passed on to Sessions.
+    ctx.inject(['domainEvents'], (ctx) => {
+      ctx.effect(async function* () {
+        yield await ctx.domainEvents.subscribe({
+          id: 'fleet.workflow.machine-gone.v1',
+          types: ['fleet.changed'],
+          from: 'now',
+          handle: machineGone(ctx.sessions),
+        });
+      });
+    });
     // The provider key stays on Main: hosted Codex calls the model through this relay.
     const relay = codexModelRelay(ctx.state, {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',

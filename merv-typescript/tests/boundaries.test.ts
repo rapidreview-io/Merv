@@ -843,7 +843,9 @@ test('Cordis service requirements match the architecture and every accessed capa
       if (name.text === 'merv-fleet-workflow') {
         assert.equal(relative(packagesRoot, path), join('fleet', 'src', 'workflow.ts'));
         assert.deepEqual(sorted(declared), ['api', 'fleet', 'scope', 'sessions', 'state', 'tools']);
-        assert.deepEqual(sorted([...optional]), []);
+        // Where events are delivered, it passes Fleet's word that a work machine is gone on to
+        // Sessions.
+        assert.deepEqual(sorted([...optional]), ['domainEvents']);
         // An adapter, not a service: it registers tools and routes and nothing injects it.
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate workflow orchestration');

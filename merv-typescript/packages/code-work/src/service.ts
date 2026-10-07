@@ -404,6 +404,17 @@ export class CodeService implements Code {
     await store.maintain();
     return status;
   }
+  /**
+   * Plugin wiring: a session's machine is gone for good (Sessions' session.machine_gone, which
+   * only a rented machine Fleet released and deleted sends). The final capture that session owed
+   * can never come, so its writer generation ends at the last admitted commit and the next lease
+   * continues from there, with no operator. A quarantined capture, and a machine of the owner's
+   * own, which might come back, still wait for the operator's fence.
+   */
+  async machineGone(projectId: string, sessionId: string, tx: Transaction) {
+    await this.writerStore.machineGone(projectId, sessionId, tx);
+    this.store.wake();
+  }
   async bindLocal(caller: Caller, input: Parameters<CodeUtility['units']['bindLocal']>[1]) {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
     const named = (input as { mainOid?: unknown } | null)?.mainOid;
