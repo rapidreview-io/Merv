@@ -296,6 +296,84 @@ print(json.dumps(out))`,
   assert.equal(out.next, 'session_gate_inquiry_x');
 });
 
+test("the workflow gate's Main answers a running visit's control poll as Sessions does", () => {
+  // A started launch's tick polls GET /sessions/<id>/control and reads its `control` fields; any
+  // other answer is invalid_control_response, retried each tick, so the step never settles and
+  // is never released (2026-10-07, run 20261007T165252Z-06d804cb). The gate's fake Main, as a
+  // step and an inquiry call it in order, must answer the route with exactly the fields Sessions'
+  // SessionControlView picks, and the whole session with its `kind` as Sessions keeps it.
+  const gate = new URL('../scripts/hosted-runner/linux-workflow-gate.py', import.meta.url).pathname;
+  const types = readFileSync(new URL('../packages/sessions/src/types.ts', import.meta.url), 'utf8');
+  const picked = /export type SessionControlView = Pick<\s*Session,([^>]*)>/.exec(types)?.[1];
+  const fields = [...(picked ?? '').matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+  assert.ok(fields.includes('status') && fields.includes('outcome'), picked);
+  const r = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import ast, json, threading, time
+tree = ast.parse(open(${JSON.stringify(gate)}).read())
+g = {'json': json, 'time': time, 'base': 'http://127.0.0.1:9', 'work_instance': 'gate_work_x',
+     'step_id': 'session_gate_x', 'inquiry_id': 'session_gate_inquiry_x', 'step_secret': [],
+     'inquiry_secret': [], 'control_calls': [], 'inquiry_calls': [], 'kept': {}, 'printed': {},
+     'streams': {}, 'step_state': {}, 'inquiry_state': {}, 'step_released': threading.Event(),
+     'inquiry_released': threading.Event(), 'inquiry_ready': threading.Event()}
+fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('step_session', 'control_reply')]
+exec(compile(ast.Module(body=fns, type_ignores=[]), 'gate', 'exec'), g)
+class H:
+    pass
+def call(method, path, body=None):
+    h = H()
+    h.path = path
+    return g['control_reply'](h, method, body)
+out = {}
+for visit, sid in (('step', 'session_gate_x'), ('inquiry', 'session_gate_inquiry_x')):
+    if visit == 'inquiry':
+        g['inquiry_ready'].set()
+    call('POST', '/sessions/lease', {'runnerId': 'r', 'secret': visit})
+    out[visit + 'Kind'] = call('GET', '/sessions/' + sid)['session'].get('kind')
+    call('POST', '/sessions/' + sid + '/attach', {'runnerId': 'r', 'hostRef': 'launch_' + visit})
+    out[visit + 'Running'] = call('GET', '/sessions/' + sid + '/control')
+    if visit == 'step':
+        call('POST', '/sessions/' + sid + '/conversation', {'runnerId': 'r', 'hostRef': 'launch_step',
+             'harness': 'codex', 'conversationId': 'c', 'sha256': 'b' * 64, 'size': 9})
+    call('POST', '/sessions/' + sid + '/release', {'runnerId': 'r', 'outcome': 'host_failed'})
+    out[visit + 'Released'] = call('GET', '/sessions/' + sid + '/control')
+print(json.dumps(out))`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  const iso = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/;
+  for (const [visit, id, kind] of [
+    ['step', 'session_gate_x', 'work'],
+    ['inquiry', 'session_gate_inquiry_x', 'inquiry'],
+  ]) {
+    assert.equal(out[`${visit}Kind`], kind, visit);
+    for (const [when, status, closeReason, outcome] of [
+      ['Running', 'offered', null, null],
+      ['Released', 'released', 'released', 'host_failed'],
+    ]) {
+      const control = out[visit + when]?.control;
+      assert.deepEqual(Object.keys(out[visit + when] ?? {}), ['control'], visit + when);
+      assert.deepEqual(Object.keys(control).sort(), fields, visit + when);
+      const { expiresAt, hardDeadline, ...rest } = control;
+      assert.match(expiresAt, iso);
+      assert.match(hardDeadline, iso);
+      assert.deepEqual(rest, {
+        id,
+        projectId: 'project_workflow_gate',
+        runnerId: 'r',
+        hostRef: `launch_${visit}`,
+        status,
+        closeReason,
+        outcome,
+      });
+    }
+  }
+});
+
 test('release ids match the live Sandboxes catalog and require a digest', () => {
   // The release of 2026-09-25T02:00Z as Sandboxes derived it; the seed moves on with each release.
   const live = `registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3ca9ef18a5fe95d65b0277963098cc938b0908bbb61e80cf6185bfc1d10720a6`;
