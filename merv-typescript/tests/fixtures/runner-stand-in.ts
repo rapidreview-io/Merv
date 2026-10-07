@@ -115,6 +115,8 @@ export function server(
     const session = sessions.get(decodeURIComponent(id ?? ''));
     if (!session) return reply({ error: { code: 'session_not_found', message: 'No' } }, 404);
     if (action === 'launch-connections') return reply({ connections: [] });
+    // A tick's poll: the server answers its control fields, which the runner picks out.
+    if (action === 'control') return reply({ control: session });
     if (action === 'attach') {
       session.hostRef = body!.hostRef;
       if (body!.workspace) session.workspace = { attachment: body!.workspace, result: null };

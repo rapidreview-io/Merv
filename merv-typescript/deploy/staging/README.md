@@ -115,6 +115,13 @@ connection needs a signed-in human to consent at sandboxes.rapidreview.io with c
 `staging-compute`. Until the owner connects the hosted project once, the script tells the agent to
 train in its own workspace, records the Modal step as BLOCKED and the run as PARTIAL.
 
+The Modal step is BLOCKED, not FAIL, whenever the environment cannot give it, with the reason: no
+connection; a connection funded by an account other than staging-compute (its id from the token
+file, `STG_COMPUTE_ACCOUNT_ID` or `/v1/auth/me`); `cpu-2:modal` not offered to staging-compute; or
+the agent reporting that its payer is not offered Modal. In each case the agent is told (in its brief,
+or in the answer to its question) to use its workspace. It FAILS only where Modal was offered and
+the agent did not use it.
+
 ## Cost estimate
 
 Merv records tokens, not dollars. Model cost is estimated from `usage.read` totals at

@@ -73,6 +73,7 @@ import type {
   LaunchConnectionsProvider,
   NativeMcpConnection,
   SessionControl,
+  SessionControlView,
   SessionTranscript,
   SessionTranscriptDeclaration,
   SessionOffer,
@@ -310,6 +311,9 @@ const SESSION =
 /** The same row without its workspace capture, for a check that never reads it. */
 const BARE =
   'SELECT id,project_id,thread_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
+/** The same row without its assignment, execution and lease: the control fields a runner polls. */
+const CONTROL =
+  "SELECT id,project_id,thread_id,owner_hash,(session_json::jsonb-'assignment'-'execution'-'lease')::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions";
 interface Frame {
   tx: Transaction;
   actorId: string;
@@ -1513,6 +1517,26 @@ export class LeasedSessions implements Sessions {
     });
     if (result.error) throw result.error;
     return result.session!;
+  }
+  async control(caller: Caller, sessionId: string): Promise<SessionControlView> {
+    caller = structuredClone(caller);
+    // Its controller's authority only: a closure its lease check would find is the sweep's.
+    const session = await this.reading((tx) =>
+      this.controlled(caller, sessionId, undefined, tx, CONTROL),
+    );
+    const { id, projectId, runnerId, hostRef, status, expiresAt, hardDeadline, closeReason } =
+      session;
+    return {
+      id,
+      projectId,
+      runnerId,
+      hostRef,
+      status,
+      expiresAt,
+      hardDeadline,
+      closeReason,
+      outcome: session.outcome ?? null,
+    };
   }
   async attach(
     caller: Caller,

@@ -456,6 +456,44 @@ test(
 );
 
 test(
+  "a running launch's tick reads only its session's control fields, never the assignment",
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, ['--hold']);
+    const reads = { full: [] as number[], control: [] as number[] };
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const response = await fetch(input, init);
+      const kind = /^\/sessions\/session_[^/]+$/.test(url.pathname)
+        ? 'full'
+        : /^\/sessions\/session_[^/]+\/control$/.test(url.pathname)
+          ? 'control'
+          : undefined;
+      if (kind && init?.method === 'GET')
+        reads[kind].push((await response.clone().arrayBuffer()).byteLength);
+      return response;
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
+    const before = reads.full.length;
+    for (let i = 0; i < 10; i++) await runner.tick();
+    assert.equal(reads.full.length, before, 'A started launch never reads its whole session');
+    assert.ok(reads.control.length >= 10);
+    const [full, control] = [Math.max(...reads.full), Math.max(...reads.control)];
+    assert.ok(control < 1024 && control * 4 < full, `control ${control} B, full ${full} B`);
+    // A closure is still seen through the control fields.
+    await f.app.ctx.sessions.dispatch.halt(f.source);
+    await until(
+      () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
+      runner,
+      'halted process tree',
+    );
+    assert.equal(reads.full.length, before);
+  },
+);
+
+test(
   'pause preserves a running process; transient outage retains its slot; explicit halt stops it',
   { timeout: 30_000 },
   async (t) => {

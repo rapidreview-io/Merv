@@ -195,6 +195,23 @@ export interface SessionControl {
   sessionId: string;
   runnerId: string;
 }
+/**
+ * What a runner's tick reads of a session it supervises, once a second for the whole visit:
+ * whether it still runs, until when, and how it ended. Never the assignment, which the attach
+ * gave it once.
+ */
+export type SessionControlView = Pick<
+  Session,
+  | 'id'
+  | 'projectId'
+  | 'runnerId'
+  | 'hostRef'
+  | 'status'
+  | 'expiresAt'
+  | 'hardDeadline'
+  | 'closeReason'
+  | 'outcome'
+>;
 /** What a runner says about the transcript file it holds; Sessions derives every other column. */
 export interface SessionTranscriptDeclaration {
   hostRef: string;
@@ -388,6 +405,9 @@ export interface Sessions {
   offer(caller: Caller, input: SessionOffer): Promise<Session>;
   list(caller: Caller): Promise<Session[]>;
   get(caller: Caller, sessionId: string): Promise<Session>;
+  /** The session's control fields alone, read without its lease check: the sweep records a
+   *  closure, and this read reports it. */
+  control(caller: Caller, sessionId: string): Promise<SessionControlView>;
   attach(
     caller: Caller,
     input: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
