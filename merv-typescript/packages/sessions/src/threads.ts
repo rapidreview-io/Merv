@@ -75,14 +75,14 @@ const PAGE = 50;
 const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
 /** A question to it (an inquiry) still waiting for a machine or being answered. */
 const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running'))`;
-/**
- * A thread that wants attention: live, asking its owner, or holding a message its agent has not
- * read yet while it may still read it. A question to it (an inquiry) counts only until it ends:
- * one that expired or went unanswered is never read.
- */
-const ATTENTION = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
-  OR (t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id AND m.acknowledged_at IS NULL
-    AND (m.inquiry_role IS DISTINCT FROM 'question' OR ${INQUIRING}))))`;
+/** A thread that wants attention whatever its work: live, asking its owner, or asked a question
+ *  (an inquiry) that is still open. */
+const URGENT = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+  OR ${INQUIRING})`;
+/** A thread holding a person's message its agent has not read, where it is not retired. The
+ *  context an answered inquiry left its work is not one: the person has read that answer. */
+const UNREAD = `(t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id
+  AND m.acknowledged_at IS NULL AND m.inquiry_role IS NULL))`;
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -502,17 +502,20 @@ export class SessionThreads {
       'before is the cursor a page of threads returned',
     );
     return await this.reading(caller, async (tx) => {
+      const attention = await this.attention(tx, caller.projectId);
       const first =
         after === null
           ? await tx.all<Row & { seq: number | string }>(
-              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${ATTENTION} ORDER BY t._merv_rowid DESC`,
+              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${attention.sql} ORDER BY t._merv_rowid DESC`,
               caller.projectId,
+              ...attention.params,
             )
           : [];
       const rest = await tx.all<Row & { seq: number | string }>(
-        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${ATTENTION}
+        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${attention.sql}
           AND (CAST(? AS BIGINT) IS NULL OR t._merv_rowid<?) ORDER BY t._merv_rowid DESC LIMIT ?`,
         caller.projectId,
+        ...attention.params,
         after,
         after,
         PAGE + 1,
@@ -600,6 +603,25 @@ export class SessionThreads {
         next: rest.length > PAGE ? String(rest[PAGE - 1]!.seq) : null,
       };
     });
+  }
+  /**
+   * Which of the project's threads want attention: those `URGENT` names, and those holding an
+   * unread message while they take one (`takesMessage`), so not on work that has ended, which no
+   * visit will read it on.
+   */
+  private async attention(tx: Transaction, projectId: string) {
+    const unread = await tx.all<{ id: string; instance_id: string }>(
+      `SELECT t.id,t.instance_id FROM session_threads t WHERE t.project_id=? AND ${UNREAD} AND NOT ${URGENT}`,
+      projectId,
+    );
+    const ended = unread.length
+      ? await this.host.ended(projectId, [...new Set(unread.map((row) => row.instance_id))], tx)
+      : new Set<string>();
+    const unheard = unread.filter((row) => ended.has(row.instance_id)).map((row) => row.id);
+    return {
+      sql: `(${URGENT} OR (${UNREAD}${unheard.length ? ` AND t.id NOT IN (${unheard.map(() => '?').join(',')})` : ''}))`,
+      params: unheard,
+    };
   }
   /** How many of the project's threads are live, and how many ask their owner a question. */
   async counts(caller: Caller): Promise<ThreadCounts> {

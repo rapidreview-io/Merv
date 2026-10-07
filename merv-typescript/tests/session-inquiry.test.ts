@@ -660,6 +660,40 @@ test('a question holds its thread among those that want attention only while it 
   assert.equal((await listed()).asks, undefined);
 });
 
+test('a thread wants attention for a message only while it takes one: an answer it left, or work that ended, is not waiting', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { unit, threadId } = await f.worked();
+  const listed = async () =>
+    (await f.sessions.threads.project(f.owner)).threads.find((item) => item.id === threadId)!;
+  const asked = await f.ask(threadId, 'Why this design?');
+  await f.present('runner-q');
+  const leased = await f.lease('runner-q');
+  const inquirer = await f.sessions.authenticate(leased.input.secret);
+  await f.app.ctx.tools.invoke('session.message.ack', inquirer, {
+    messageId: asked.messageId,
+    reply: 'Because of the budget.',
+    requestId: 'r',
+  });
+  // The answer left its work a context message: the person read the answer already.
+  assert.notEqual((await listed()).seq, undefined);
+  // A plain message waits for the work's next visit while the work is open...
+  await f.ok('POST', `/sessions/threads/${threadId}/messages`, f.token, {
+    body: 'Mind the seed',
+    requestId: randomUUID(),
+  });
+  assert.equal((await listed()).seq, undefined);
+  // ...and no longer once the work ends, since no visit will ever read it.
+  await f.move(unit.id, 'submit');
+  await f.move(unit.id, 'approve');
+  const ended = await listed();
+  assert.deepEqual([ended.status, ended.takesMessage], ['dormant', false]);
+  assert.notEqual(ended.seq, undefined);
+  // It is listed once, among the rest, on the first page and the next.
+  const page = await f.sessions.threads.project(f.owner);
+  assert.equal(page.threads.filter((item) => item.id === threadId).length, 1);
+});
+
 test('a person’s questions spend at most a day’s tokens, and the project’s budget holds them back as it holds work', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
