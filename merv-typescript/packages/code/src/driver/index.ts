@@ -478,6 +478,29 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     });
   }
 
+  /**
+   * The head a periodic checkpoint commits on: Code's head, while the live checkout holds changes
+   * on it that Code has not admitted; else null (nothing changed, or the agent moved HEAD on its
+   * own, which only its own code.commit may hand over). Read without taking Git's locks, so the
+   * agent's own Git is never kept waiting.
+   */
+  checkpointHead(launchId: string): Promise<string | null> {
+    return this.run(this.workKey ?? launchId, async () => {
+      const row = this.row(launchId);
+      if (!row || row.read_only || row.status !== 'ready' || !row.attachment_json) return null;
+      const env = { GIT_OPTIONAL_LOCKS: '0' };
+      const head = oid(
+        await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path, env }),
+      );
+      if (head !== row.head_oid) return null;
+      const changes = await this.git.ok(['status', '--porcelain', '--untracked-files=all'], {
+        cwd: row.path,
+        env,
+      });
+      return changes.toString().trim() ? head : null;
+    });
+  }
+
   pendingCommits(launchId: string): CodeCommitCommand[] {
     return (
       this.db
@@ -703,6 +726,14 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       recorded.device === visible.dev &&
       recorded.inode === visible.ino
     );
+  }
+
+  /** The commit a launch's final capture built, whether or not Code admitted it. */
+  private finalTarget(row: WorkspaceRow): string | null {
+    const transfer = this.db
+      .prepare("SELECT target_oid FROM code_v2_transfers WHERE launch_id=? AND kind='final'")
+      .get(row.launch_id) as { target_oid: string | null } | undefined;
+    return transfer?.target_oid ?? null;
   }
 
   private priorCaptureRefused(row: WorkspaceRow): boolean {
@@ -1006,23 +1037,20 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       : previous?.head_oid;
     if (sourceHead && !(await this.has(cache, sourceHead)))
       throw new WorkspaceError('workspace_transfer_lost');
-    const tracked = sourceHead
-      ? new Set(
-          (
-            await this.git.ok([
-              '--git-dir',
-              cache,
-              'ls-tree',
-              '-r',
-              '-z',
-              '--name-only',
-              sourceHead,
-            ])
-          )
-            .split('\0')
-            .filter(Boolean),
+    // The checkout starts at Code's admitted head: whatever the last session left that Code did
+    // not admit (its own commits and its edits, which its final capture carried) is not carried
+    // over either. Only what Git ignores, the machine's data, is.
+    const unadmitted =
+      previous && this.priorCaptureRefused(previous) ? this.finalTarget(previous) : null;
+    const tracked = new Set<string>();
+    for (const commit of [sourceHead, unadmitted])
+      if (commit && (await this.has(cache, commit)))
+        for (const name of (
+          await this.git.ok(['--git-dir', cache, 'ls-tree', '-r', '-z', '--name-only', commit])
         )
-      : new Set<string>();
+          .split('\0')
+          .filter(Boolean))
+          tracked.add(name);
     const copied: string[] = [];
     cpSync(preserved, row.path, {
       recursive: true,

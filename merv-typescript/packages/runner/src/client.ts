@@ -466,11 +466,14 @@ export class RunnerClient {
       'id' | 'runnerId' | 'actorId' | 'instanceId' | 'expectedRevision' | 'workspace'
     >,
     hostRef: string,
+    /** A periodic checkpoint to queue when nothing is outstanding. */
+    checkpoint?: { expectedHead: string; requestId: string },
   ): Promise<CodeCommitCommand | null> {
     const value = await this.request('/code/commands/next', {
       sessionId: session.id,
       runnerId: session.runnerId,
       hostRef,
+      ...(checkpoint && { checkpoint }),
     });
     if (value?.command === null) return null;
     const parsed = codeCommitCommandSchema.safeParse(value?.command);

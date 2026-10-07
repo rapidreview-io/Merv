@@ -251,6 +251,49 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   await driver.close(reviewTwoLaunch);
 });
 
+test('a reused machine starts the next writer at Code’s admitted head, never on what the last session left unadmitted', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_reuse_1');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const first = m.launch('ses_reuse_1');
+  const writer = await driver.prepare(first, m.session('ses_reuse_1'));
+  await f.event('session.workspace_attached', 'ses_reuse_1');
+  writeFileSync(join(writer.path, 'admitted.txt'), 'admitted\n');
+  writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
+  const admitted = await driver.checkpointCommit(
+    first,
+    await command(f, driver, 'ses_reuse_1', f.root),
+  );
+  driver.acknowledgeCommit(admitted.commandId);
+  // Its session closes (a handoff) with work it never committed: data Git ignores, a file the
+  // agent committed on its own, and an edit. Its capture comes too late to be admitted.
+  mkdirSync(join(writer.path, '.cache'));
+  writeFileSync(join(writer.path, '.cache/data.bin'), 'data');
+  writeFileSync(join(writer.path, 'wip.txt'), 'never committed\n');
+  writeFileSync(join(writer.path, 'local.txt'), 'local\n');
+  git(writer.path, ['add', 'local.txt']);
+  git(writer.path, ['-c', 'user.name=a', '-c', 'user.email=a@b', 'commit', '-qm', 'local']);
+  writeFileSync(join(writer.path, 'admitted.txt'), 'edited after\n');
+  await f.event('session.closed', 'ses_reuse_1');
+  f.end('ses_reuse_1');
+  m.terminal.add(first.id);
+  assert.equal((await driver.capture(first))!.headOid, admitted.headOid);
+  await driver.close(first);
+  assert.equal((await f.unit()).canonicalHead, admitted.headOid);
+
+  await f.lease('ses_reuse_2');
+  const next = await driver.prepare(m.launch('ses_reuse_2'), m.session('ses_reuse_2'));
+  assert.equal(next.path, writer.path);
+  assert.equal(git(next.path, ['rev-parse', 'HEAD']), admitted.headOid);
+  assert.equal(readFileSync(join(next.path, 'admitted.txt'), 'utf8'), 'admitted\n');
+  assert.equal(existsSync(join(next.path, 'local.txt')), false, 'no unadmitted commit is built on');
+  assert.equal(existsSync(join(next.path, 'wip.txt')), false);
+  assert.equal(git(next.path, ['status', '--porcelain']), '');
+  // What Git ignores is the machine's data, not Code's, and is kept.
+  assert.equal(readFileSync(join(next.path, '.cache/data.bin'), 'utf8'), 'data');
+});
+
 test('a fresh hosted ledger derives the same work path and a foreign symlink cannot claim it', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_fresh');
@@ -613,7 +656,8 @@ test('shared review cannot overwrite Code head after a refused writer capture', 
   await f.lease('ses_refused_retry');
   const retry = await driver.prepare(m.launch('ses_refused_retry'), m.session('ses_refused_retry'));
   assert.equal(retry.snapshot!.headOid, f.root, 'unaccepted source never advances Code');
-  assert.ok(existsSync(join(retry.path, 'token.txt')), 'the writer can recover an unaccepted file');
+  // The next writer starts at Code's admitted head: what was refused stays private, never in it.
+  assert.equal(existsSync(join(retry.path, 'token.txt')), false);
   assert.ok(
     existsSync(
       join(
@@ -961,6 +1005,33 @@ test('an interrupted upload continues where Code stands, and a final capture is 
     operation: { status: string };
   };
   assert.equal(replayed.operation.status, 'completed');
+});
+
+test('a periodic checkpoint is asked for only while the checkout holds changes on Code’s head', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const m = machine(t, f);
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  // Nothing changed: nothing to checkpoint.
+  assert.equal(await driver.checkpointHead('launch-ses_1'), null);
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  assert.equal(await driver.checkpointHead('launch-ses_1'), f.root);
+  // The checkpoint is an ordinary commit command: once admitted, the checkout is clean again.
+  const receipt = await driver.checkpointCommit(
+    m.launch('ses_1'),
+    await command(f, driver, 'ses_1', f.root),
+  );
+  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+  assert.equal(await driver.checkpointHead('launch-ses_1'), null);
+  // A head the agent moved on its own is not Code's: no checkpoint is built on it.
+  writeFileSync(join(path, 'b.txt'), 'two\n');
+  git(path, ['add', 'b.txt']);
+  git(path, ['-c', 'user.name=a', '-c', 'user.email=a@b', 'commit', '-qm', 'local']);
+  writeFileSync(join(path, 'c.txt'), 'three\n');
+  assert.equal(await driver.checkpointHead('launch-ses_1'), null);
+  assert.equal(await driver.checkpointHead('launch-unknown'), null);
 });
 
 test('a final capture Code quarantines reports the last admitted head, and what was refused stays on the machine', async (t) => {
