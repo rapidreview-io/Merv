@@ -189,11 +189,11 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.observe',
         description:
-          'Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.',
+          'Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.',
         readOnly: true,
-        inputSchema: z.object({ agentId: z.string().min(1).max(200) }).strict(),
-        handler: async (caller: Caller, input: { agentId: string }) =>
-          await sessions.observations.read(caller, input.agentId),
+        inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { threadId: string }) =>
+          await sessions.observations.calls(caller, input.threadId),
       }),
     );
     ctx.effect(() =>

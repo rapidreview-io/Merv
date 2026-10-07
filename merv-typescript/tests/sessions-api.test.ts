@@ -178,7 +178,7 @@ test('an offer cannot name an agent, and the agent administration and continuing
     [agentRoute, 'DELETE'],
   ] as const)
     assert.equal((await f.http(path, f.boot.token, undefined, undefined, method)).status, 404);
-  assert.equal((await f.http(`${agentRoute}/observation`, f.boot.token)).status, 200);
+  assert.equal((await f.http(`${agentRoute}/observation`, f.boot.token)).status, 404);
   for (const [path, body] of [
     ['/sessions/agents', { name: 'Agent', runnerId: 'r', requestId: 'r', secret }],
     [`${agentRoute}/rotate`, {}],
@@ -940,35 +940,33 @@ test('project observers see real MCP call metadata and failures, without worker 
     name: 'Observer',
     role: 'reader',
   });
-  const path = `/sessions/agents/${offer.session.threadId}/observation`;
+  const path = `/sessions/threads/${offer.session.threadId}/calls`;
   const response = await f.http(path, reader.token);
   assert.equal(response.status, 200);
+  assert.equal(response.body.threadId, offer.session.threadId);
+  assert.deepEqual(
+    response.body.calls.map((call: any) => [call.sessionId, call.status]),
+    [
+      [offer.session.id, 'failed'],
+      [offer.session.id, 'succeeded'],
+    ],
+  );
+  assert.equal(response.body.totals.calls, 2);
+  assert.ok(response.body.totals.outputTokens > 0);
+  // The project's threads, for the same reader: the live one first, named by its work.
+  const listed = await f.http('/sessions/threads', reader.token);
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.threads[0].id, offer.session.threadId);
+  assert.equal(listed.body.threads[0].status, 'live');
+  assert.equal(listed.body.next, null);
+  // The calls read works without the Sessions tools adapter.
   await f.app.setEnabled('sessions-tools', false);
   assert.equal(
     (await f.app.ctx.tools.list()).some((tool) => tool.name === 'session.observe'),
     false,
   );
-  const observe = (token: string) =>
-    f.http('/tools/ui.read', token, {
-      rowId: 'sessions',
-      params: { agentId: offer.session.threadId },
-    });
-  const tool = await observe(reader.token);
-  assert.equal(tool.status, 200);
-  assert.deepEqual(
-    tool.body.result,
-    response.body,
-    'the UI-owned read works without Sessions tools and returns the same observation',
-  );
-  assert.equal(response.body.agent.id, offer.session.threadId);
-  assert.equal(response.body.agent.currentExecutionId, offer.session.id);
-  assert.deepEqual(
-    response.body.toolCalls.map((call: any) => call.status),
-    ['failed', 'succeeded'],
-  );
-  assert.equal(response.body.tokenStats.totalCalls, 2);
-  assert.ok(response.body.tokenStats.outputTokens > 0);
-  const json = JSON.stringify(response.body);
+  assert.equal((await f.http(path, reader.token)).status, 200);
+  const json = JSON.stringify(response.body) + JSON.stringify(listed.body);
   for (const privateValue of [
     offer.secret,
     'private-input-content',
@@ -979,25 +977,22 @@ test('project observers see real MCP call metadata and failures, without worker 
   ])
     assert.equal(json.includes(privateValue), false);
   assert.equal((await f.http(path, offer.secret)).status, 403);
-  assert.equal((await observe(offer.secret)).status, 403);
+  assert.equal((await f.http('/sessions/threads', offer.secret)).status, 403);
   const other = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other',
     actorName: 'Other',
   });
   assert.equal((await f.http(path, other.token)).status, 404);
-  assert.equal((await observe(other.token)).status, 404);
+  assert.deepEqual((await f.http('/sessions/threads', other.token)).body.threads, []);
   assert.equal((await f.http(`${path}?unknown=true`, reader.token)).status, 400);
+  assert.equal((await f.http('/sessions/threads?unknown=1', reader.token)).status, 400);
   assert.equal((await f.http(path, reader.token, {}, undefined, 'POST')).status, 404);
   await f.app.ctx.scope.credentials.revokeActor(f.source, reader.actor.id);
   assert.notEqual((await f.http(path, reader.token)).status, 200);
-  assert.notEqual((await observe(reader.token)).status, 200);
-  assert.equal(
-    (await f.http('/tools/ui.read', f.boot.token, { rowId: 'sessions', params: { agentId: 123 } }))
-      .status,
-    400,
-  );
+  const status = (token: string) => f.http('/tools/ui.read', token, { rowId: 'sessions' });
+  assert.equal((await status(f.boot.token)).status, 200);
   await sessionsUi.dispose();
-  assert.equal((await observe(f.boot.token)).body.error.code, 'row_unreadable');
+  assert.equal((await status(f.boot.token)).body.error.code, 'row_unreadable');
 });
 
 test('mounted tool errors and invalid output envelopes are recorded as failed calls', async (t) => {
@@ -1031,13 +1026,13 @@ test('mounted tool errors and invalid output envelopes are recorded as failed ca
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
   malformed = true;
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
-  const result = await f.app.ctx.sessions.observations.read(f.source, offered.session.threadId);
+  const result = await f.app.ctx.sessions.observations.calls(f.source, offered.session.threadId);
   assert.deepEqual(
-    result.toolCalls.map((call) => call.status),
+    result.calls.map((call) => call.status),
     ['failed', 'failed'],
   );
-  assert.equal(result.toolCalls[0]!.outputTokens, null);
-  assert.ok(result.toolCalls[1]!.outputTokens! > 0);
+  assert.equal(result.calls[0]!.outputTokens, null);
+  assert.ok(result.calls[1]!.outputTokens! > 0);
   assert.equal(JSON.stringify(result).includes('private upstream failure'), false);
 });
 

@@ -91,9 +91,9 @@ function bound<T = never>(body: unknown, key: string, value: string): T {
 async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRoutes) {
   const path = r.url.pathname;
   const caller = await r.caller();
-  const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
-  if (observationRoute && req.method === 'GET')
-    return await sessions.observations.read(caller, pathSegment(observationRoute[1]!));
+  const callsRoute = /^\/sessions\/threads\/([^/]+)\/calls$/.exec(path);
+  if (callsRoute && req.method === 'GET')
+    return await sessions.observations.calls(caller, pathSegment(callsRoute[1]!));
   const conversationRoute = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
   if (conversationRoute && req.method === 'GET')
     return await sessions.threads.conversation(caller, pathSegment(conversationRoute[1]!));
@@ -269,16 +269,20 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
     if (events && req.method === 'GET')
       return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
+    // A work item's threads by instanceId; else the project's, a page older than `before`.
     if (path === '/sessions/threads' && req.method === 'GET') {
       const query = [...r.url.searchParams.keys()];
       check(
-        query.length === 1 && query[0] === 'instanceId',
+        query.length <= 1 && (!query.length || ['instanceId', 'before'].includes(query[0]!)),
         'invalid_input',
-        'The threads route takes exactly instanceId=<id>',
+        'The threads route takes instanceId=<id>, before=<cursor> or nothing',
       );
-      const instanceId = r.url.searchParams.get('instanceId')!;
+      const instanceId = r.url.searchParams.get('instanceId');
+      const before = r.url.searchParams.get('before') ?? undefined;
       const caller = await r.caller();
-      return { threads: await read(() => sessions.threads.list(caller, instanceId)) };
+      return instanceId === null
+        ? await read(() => sessions.threads.project(caller, before))
+        : { threads: await read(() => sessions.threads.list(caller, instanceId)) };
     }
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');

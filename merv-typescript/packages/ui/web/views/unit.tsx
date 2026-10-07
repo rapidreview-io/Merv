@@ -20,6 +20,7 @@ import {
   RoleMark,
   StageThreads,
   ThreadDialog,
+  groupOf,
   ThreadReading,
   isLive,
   lastActive,
@@ -67,7 +68,13 @@ function ElsewhereDialog({
     if (loaded && !thread) onClose();
   }, [loaded, thread, onClose]);
   return thread ? (
-    <ThreadDialog thread={thread} title={title} loadedAt={loadedAt} onClose={onClose} />
+    <ThreadDialog
+      thread={thread}
+      group={groupOf(threads, thread)}
+      title={title}
+      loadedAt={loadedAt}
+      onClose={onClose}
+    />
   ) : null;
 }
 
@@ -537,6 +544,7 @@ export function UnitView({
       {thread && (
         <ThreadDialog
           thread={thread}
+          group={groupOf(threads, thread)}
           title={title}
           loadedAt={loadedAt}
           onClose={() => setOpened(undefined)}

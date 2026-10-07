@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { check, keyId, keyKind, type Json } from '@merv/contracts';
+import { keyId, keyKind, type Json } from '@merv/contracts';
 import type { RunningRead } from '@merv/ui/types';
 import type {} from './types.js';
 
@@ -22,20 +22,8 @@ export const sessionsUiPlugin = {
           keep: ['instanceId', 'provider', 'key', 'move'],
           list: async (caller) => await ctx.sessions.messaging.questionMoves(caller),
         },
-        read: async (caller, params) => {
-          if (params?.agentId !== undefined) {
-            check(
-              typeof params.agentId === 'string',
-              'invalid_input',
-              'params.agentId names the agent',
-            );
-            return (await ctx.sessions.observations.read(
-              caller,
-              params.agentId,
-            )) as unknown as Json;
-          }
-          return (await ctx.sessions.dispatch.projectStatus(caller)) as unknown as Json;
-        },
+        read: async (caller) =>
+          (await ctx.sessions.dispatch.projectStatus(caller)) as unknown as Json,
       }),
     );
     // The Running page's Sessions lane and the lease sidebars. The

@@ -28,7 +28,6 @@ import type {
   ManagedRunnerValidator,
 } from './managed-types.js';
 import type {
-  AgentObservation,
   BudgetStatus,
   DispatchHold,
   DispatchState,
@@ -43,6 +42,8 @@ import type {
   SessionStatus,
   SessionsProjectStatus,
   StuckReport,
+  ProjectThreads,
+  ThreadCalls,
   ThreadConversation,
   ThreadMessages,
   ThreadQuestion,
@@ -53,9 +54,6 @@ import type {
   SessionWorkspaceRecord,
 } from './models.js';
 export type {
-  AgentObservation,
-  AgentSummary,
-  AgentToolCall,
   BudgetStatus,
   DispatchDecision,
   DispatchHold,
@@ -77,6 +75,10 @@ export type {
   StuckReport,
   QuestionMove,
   SessionMessage,
+  ProjectThread,
+  ProjectThreads,
+  ThreadCall,
+  ThreadCalls,
   ThreadConversation,
   ThreadMessages,
   ThreadQuestion,
@@ -305,9 +307,10 @@ export interface Sessions {
   readonly running: SessionRunningReads;
   /** Fleet's managed runners: their enrollment, credentials and model authority. */
   readonly managed: ManagedRunners;
-  /** What each thread's agent did, as metadata only, named by the thread's id. */
+  /** What each thread's agent called, as metadata only. */
   readonly observations: {
-    read(caller: Caller, agentId: string): Promise<AgentObservation>;
+    /** A thread's newest Merv calls and their totals, for anyone who may read the project. */
+    calls(caller: Caller, threadId: string): Promise<ThreadCalls>;
   };
   /** The workers of each stage: continuity, and the threads a work item's page reads. */
   readonly threads: {
@@ -315,6 +318,8 @@ export interface Sessions {
     register(workflow: string, provider: ContinuityProvider): () => void;
     /** Every thread with a visit on the work item, for anyone who may read it; never a worker. */
     list(caller: Caller, instanceId: string): Promise<ThreadView[]>;
+    /** The project's live threads, then its newest others, older than `before`, a page at a time. */
+    project(caller: Caller, before?: string): Promise<ProjectThreads>;
     /** An operator's read of what the thread's agent did, visit by visit. */
     conversation(caller: Caller, threadId: string): Promise<ThreadConversation>;
   };

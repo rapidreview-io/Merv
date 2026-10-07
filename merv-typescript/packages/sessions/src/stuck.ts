@@ -573,8 +573,6 @@ export async function projectStatus(
       ),
     });
     return {
-      // One transaction, one moment: agents cannot report a lease the leases do not.
-      agents: await ctx.observations.summaries(tx, caller.projectId),
       observedAt: stuck.observedAt,
       liveSessionCount: counts.live,
       sessionTotal: counts.total,

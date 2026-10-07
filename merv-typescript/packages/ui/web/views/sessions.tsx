@@ -9,6 +9,7 @@ import {
   KV,
   KindLabel,
   Live,
+  LoadState,
   Ruled,
   Stamp,
   StatusPill,
@@ -16,21 +17,29 @@ import {
   cx,
   term,
   useNow,
+  words,
   type KVRow,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
-import { ListPage, Segments, useListFilter } from '../list-filters';
+import { Segments } from '../list-filters';
 import { homeOf, rowOf } from '../navigation';
-import { ThreeStates } from '../states';
 import { clock, decisionLiveness, runnerLiveness, type Clock } from '../liveness';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import { AgentDetail, activity, holding, leaseLiveness } from './agent-sessions-panel';
-import { personName } from './people';
+import {
+  RoleMark,
+  ThreadDialog,
+  holding,
+  isLive,
+  lastActive,
+  leaseLiveness,
+  visitCount,
+} from './threads';
 import type {
-  AgentSummary,
   DispatchState,
+  ProjectThread,
+  ProjectThreads,
   RunnerPresence,
   SessionSummary,
   SessionsProjectStatus,
@@ -206,23 +215,14 @@ function LeaseRow({
 export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   const [cadence, setCadence] = useState(4000);
   const state = useTool<SessionsProjectStatus>('ui.read', { rowId: row.id }, { every: cadence });
-  const [selected, setSelected] = useState<string>();
   const [open, setOpen] = useState<string>();
   const [already, setAlready] = useState<string>();
-  const opener = useRef<HTMLButtonElement | null>(null);
   const status = state.data;
   const liveCount = status?.liveSessionCount ?? 0;
-  // The server names a runner's agent by the runner's id; here it is named as the Runners table
-  // names that runner, and an id that table does not name is shortened.
-  const hosts = new Map(status?.runners.map((runner) => [runner.runnerId, runner.machine]));
-  const agents = (status?.agents ?? []).map((agent) => {
-    const id = agent.runnerId;
-    if (agent.name !== `Agent ${id}`) return agent;
-    const name = hosts.get(id)?.hostname ?? personName(id) ?? `${id.slice(0, 8)}…${id.slice(-6)}`;
-    return { ...agent, name };
-  });
-  // An agent is named where it worked; a lease with no name says so with a dash.
-  const agentName = new Map(agents.map((agent) => [agent.id, agent.name]));
+  // A lease is named by the machine it runs on, as the Runners table names it.
+  const hosts = new Map(status?.runners.map((runner) => [runner.id, runner.machine.hostname]));
+  const hostOf = (session: SessionSummary) =>
+    session.runnerRef ? hosts.get(session.runnerRef) : undefined;
   // The page's one clock ticks only while a lease or a runner is actually live,
   // and the read slows to match, so an idle Agents page costs nothing.
   const anyLive = liveCount > 0 || (status?.runners ?? []).some((runner) => runner.live);
@@ -260,12 +260,6 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   };
   // Every machine Fleet was asked for, the ended ones too: its own page, a step further.
   const fleet = shell.rows.find((entry) => entry.id === 'fleet');
-  const retired = agents.filter((agent) => agent.status === 'retired').length;
-  const filter = useListFilter(agents, {
-    stateOf: activity,
-    labels: (agent) => [agent.name, agent.currentAssignment?.label],
-    ids: (agent) => [agent.id],
-  });
   const live = (status?.sessions ?? []).filter((session) => holding(session));
   // A lease that ended more than a day ago is history, one control away rather than the page.
   const [older, showOlder] = useState(false);
@@ -275,19 +269,6 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       holding(session) ||
       now.at - Date.parse(session.closedAt ?? session.expiresAt) < 86_400_000,
   );
-  // What an agent is on, named by its own record or, failing that, by the lease.
-  const byId = new Map((status?.sessions ?? []).map((session) => [session.id, session]));
-  const assigned = (agent: AgentSummary) => {
-    const on = agent.currentAssignment ?? byId.get(agent.currentExecutionId ?? '');
-    return agent.currentExecutionId
-      ? `${on ? on.name : 'Assignment execution'} · ${on?.role ?? ''} · `
-      : '';
-  };
-  const selectedAgent = agents.find((agent) => agent.id === selected);
-  const close = () => {
-    setSelected(undefined);
-    opener.current?.focus();
-  };
   const machines = [
     col<RunnerPresence>('machine', 'Machine', (runner) => (
       <>
@@ -315,6 +296,8 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
           person came for, so none of them waits behind a control. Each says how it stands
           in an element — a pill, a count beside its name, rows — and a section holding
           nothing is its name and a zero. What waits for an agent is on the Work page's map. */}
+      {/* A failed refresh is one line over the page it leaves in place. */}
+      {(!status || state.error) && <LoadState {...state} />}
       {status && (
         <div className="page-stage stack stack--lg sessions-ops">
           {/* Work shows what is live; this is everything there is and has been, a step under it. */}
@@ -416,7 +399,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                       {live.map((session) => (
                         <li key={session.id}>
                           {session.name} · {term(session.role)} ·{' '}
-                          {agentName.get(session.threadId ?? '') ?? 'no agent yet'}
+                          {hostOf(session) ?? 'no machine yet'}
                         </li>
                       ))}
                       {/* The guard names every lease under the click, including the
@@ -449,7 +432,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     session={session}
                     now={now}
                     route={routeOf(session)}
-                    name={agentName.get(session.threadId ?? '')}
+                    name={hostOf(session)}
                     canManage={status.canManage}
                     reload={state.reload}
                     open={open === session.id}
@@ -468,54 +451,104 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               </div>
             )}
           </section>
-          {/* The number is the agents there are; the ones that have
-              retired stay in the list under their own state word. */}
-          <h2 className="section-title">
-            Agents{' '}
-            <span className="section-n">
-              {agents.length - retired}
-              {retired > 0 && ` · ${retired} retired`}
-            </span>
-          </h2>
+          <Agents live={anyLive} />
         </div>
       )}
-      <ListPage
-        load={state}
-        noun="agents"
-        kind="sessions"
-        placeholder="Agent or assignment"
-        filter={filter}
-        rows={[...filter.rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
-        emptyTitle="No agents yet"
-        line={(agent) => ({
-          name: (
-            <button
-              className="row-link agent-select"
-              aria-expanded={selected === agent.id}
-              aria-controls={selected === agent.id ? 'agent-detail' : undefined}
-              onClick={(event) => {
-                opener.current = event.currentTarget;
-                setSelected(agent.id);
-              }}
-            >
-              <strong>{agent.name}</strong>
-            </button>
-          ),
-          standing: (
-            <ThreeStates
-              execution={activity(agent)}
-              meta={
-                // One clause, so it wraps as a sentence does rather than word from time.
-                <span>
-                  {assigned(agent)}joined <Ago at={agent.createdAt} />
-                </span>
-              }
-            />
-          ),
-        })}
-        after={selectedAgent && <AgentDetail agent={selectedAgent} rowId={row.id} close={close} />}
-      />
     </>
+  );
+}
+
+/**
+ * The project's agents: Sessions' threads, every live one first, then the newest others, older
+ * ones a press further. A row opens the thread's dialog, as a unit's Agents tab does.
+ */
+function Agents({ live: anyLive }: { live: boolean }) {
+  const first = useTool<ProjectThreads>(
+    '/sessions/threads',
+    {},
+    { every: anyLive ? 4000 : 15_000 },
+  );
+  const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
+  const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState<string>();
+  const shown = [...(first.data?.threads ?? []), ...(older?.threads ?? [])];
+  // A thread the newest page has just moved off of is still read from the older pages.
+  const seen = new Set<string>();
+  const threads = shown.filter((item) => !seen.has(item.id) && seen.add(item.id));
+  const next = older ? older.next : (first.data?.next ?? null);
+  const more = async () => {
+    setBusy(true);
+    try {
+      const page = await accountRequest<ProjectThreads>(
+        `/sessions/threads?before=${encodeURIComponent(next!)}`,
+        { scoped: true },
+      );
+      setOlder((had) => ({ threads: [...(had?.threads ?? []), ...page.threads], next: page.next }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const thread = threads.find((item) => item.id === opened);
+  const live = threads.filter(isLive).length;
+  return (
+    <section className="stack" aria-label="Agents">
+      <h2 className="section-title">
+        Agents{' '}
+        <span className="section-n">
+          {threads.length}
+          {next ? '+' : ''} · {live} live
+        </span>
+      </h2>
+      {(!first.data || first.error) && <LoadState {...first} />}
+      {threads.length > 0 && (
+        <ul className="unit-rows">
+          {threads.map((item) => {
+            const { visits } = visitCount(item);
+            const last = lastActive(item);
+            const on = isLive(item);
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className="unit-row unit-row--thread"
+                  aria-haspopup="dialog"
+                  onClick={() => setOpened(item.id)}
+                >
+                  <RoleMark role={item.role} />
+                  <span className="unit-row-name">{item.name || term(null)}</span>
+                  <span className="unit-row-stage faint">
+                    {words(item.role)} · {words(item.state)}
+                  </span>
+                  <span className={cx('unit-row-status', !on && 'faint')}>
+                    {on && <span className="live-dot live-dot--live" aria-hidden="true" />}
+                    {on ? 'live' : item.status}
+                  </span>
+                  <span className="faint tabular">
+                    {visits} {visits === 1 ? 'visit' : 'visits'}
+                  </span>
+                  <span className="faint">{last ? <Ago at={last} /> : ''}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {next && (
+        <div>
+          <button type="button" className="btn-text" disabled={busy} onClick={() => void more()}>
+            {busy ? 'Loading…' : 'Show older'}
+          </button>
+        </div>
+      )}
+      {thread && (
+        <ThreadDialog
+          thread={thread}
+          title={thread.name}
+          loadedAt={first.loadedAt}
+          onClose={() => setOpened(undefined)}
+        />
+      )}
+    </section>
   );
 }
 

@@ -488,8 +488,8 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     // The Sessions page's controls, as tools.
     assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
     assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });
-    const observed = await mcp.callTool({ name: 'session.observe', arguments: { agentId: 'x' } });
-    assert.match(JSON.stringify(observed.content), /agent_not_found/);
+    const observed = await mcp.callTool({ name: 'session.observe', arguments: { threadId: 'x' } });
+    assert.match(JSON.stringify(observed.content), /thread_not_found/);
     await mcp.close();
   } finally {
     await app.stop();

@@ -530,12 +530,9 @@ test('status states its own clock and its own limits, and the shell reads nothin
     `observedAt must be the server's own clock, got ${status.body.observedAt}`,
   );
   assert.equal(status.body.runnerTotal, status.body.runners.length);
-  // The agents array is read inside the dispatcher's transaction, so one payload
-  // cannot report an agent on a lease the same payload's sessions do not hold.
+  // The page's agents are its threads, read on their own: the status lists none.
   const ui = await f.http('/tools/ui.read', f.operator, { rowId: 'sessions' }, f.project.id);
-  const held = new Set(ui.body.result.sessions.map((row: { id: string }) => row.id));
-  for (const agent of ui.body.result.agents)
-    if (agent.currentExecutionId) assert.ok(held.has(agent.currentExecutionId), agent.id);
+  assert.equal('agents' in ui.body.result, false);
   assert.equal(typeof ui.body.result.observedAt, 'string');
   assert.equal(typeof ui.body.result.runnerTotal, 'number');
 

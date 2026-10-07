@@ -220,23 +220,11 @@ export interface SessionSummary {
   workspace?: SessionWorkspaceRecord;
 }
 
-/** A thread as the Agents page lists it: the agent of one stage, by its first runner. */
-export interface AgentSummary {
+/** One Merv tool call a visit made, metadata only: never its arguments, result or error. */
+export interface ThreadCall {
   id: string;
-  /** Its latest visit's session. */
+  /** The visit that made it. */
   sessionId: string;
-  actorId: string;
-  name: string;
-  status: 'active' | 'retired';
-  currentExecutionId: string | null;
-  currentAssignment: { label: string; name: string; role: SessionRole } | null;
-  createdAt: string;
-  runnerId: string;
-}
-
-export interface AgentToolCall {
-  id: string;
-  executionId: string;
   tool: string;
   status: 'running' | 'succeeded' | 'failed' | 'interrupted';
   startedAt: string;
@@ -246,36 +234,15 @@ export interface AgentToolCall {
   outputTokens: number | null;
 }
 
-export interface AgentObservation {
-  agent: AgentSummary;
-  assignments: {
-    id: string;
-    instanceId: string;
-    label: string;
-    name: string;
-    role: SessionRole;
-    status: SessionStatus;
-    createdAt: string;
-    activatedAt: string | null;
-    expiresAt: string;
-    closedAt: string | null;
-    closeReason: string | null;
-    outcome?: SessionOutcome | null;
-    liveness: LeaseLiveness;
-    workflow: { name: string; state: string };
-    revision: number;
-    tools: string[];
-  }[];
-  /** Up to 100 executed Merv calls, with in-flight calls first. */
-  toolCalls: AgentToolCall[];
-  toolCallTotal: number;
-  tokenStats: {
-    inputTokens: number;
-    outputTokens: number;
-    completedCalls: number;
-    totalCalls: number;
-  };
-  tokenAccounting: { kind: 'estimate'; method: string };
+/**
+ * A thread's Merv calls: its newest 100, in-flight ones first, and totals over all of them.
+ * Tokens are payload sizes (UTF-8 JSON bytes / 4, rounded up per payload), an estimate that
+ * excludes model context, reasoning and tools called outside Merv.
+ */
+export interface ThreadCalls {
+  threadId: string;
+  calls: ThreadCall[];
+  totals: { calls: number; completed: number; inputTokens: number; outputTokens: number };
 }
 
 /**
@@ -313,6 +280,18 @@ export interface VisitView {
   liveness?: LeaseLiveness;
   /** Its live stream, or its stored transcript, holds what the agent did. */
   hasConversation: boolean;
+}
+/** A thread as the project's Agents page lists it, with the work item it is on. */
+export interface ProjectThread extends ThreadView {
+  /** The work item's name, as its newest visit's assignment gave it. */
+  name: string;
+  workflow: string;
+}
+/** The project's threads: every live one, then the newest others, a page at a time. */
+export interface ProjectThreads {
+  threads: ProjectThread[];
+  /** Passed back as `before`, it reads the next older page; null at the oldest. */
+  next: string | null;
 }
 /** A thread's conversation, an operator's read: each visit's events, oldest visit first. */
 export interface ThreadConversation {
@@ -454,7 +433,6 @@ export interface UsageRollup {
 }
 
 export interface SessionsProjectStatus {
-  agents?: AgentSummary[];
   /** The server's own clock when this payload was measured; every duration anchors here. */
   observedAt: string;
   liveSessionCount: number;

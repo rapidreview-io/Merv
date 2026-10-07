@@ -57,6 +57,8 @@ export const useReadsAgents = () => {
   const role = useContext(SessionContext)?.actor.role;
   return role !== undefined && readsAgents(role);
 };
+/** The signed-in actor, where a page is drawn inside a session. */
+export const useActor = () => useContext(SessionContext)?.actor;
 /** The identity a page's own state belongs to: when it changes, the page starts again. */
 export const useScopeKey = () => {
   const epoch = useScopeVersion();

@@ -1,21 +1,7 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
-import { ordinary as unmanaged, safeCount, text, workName, workNameOf } from './common.js';
-import { leaseLiveness } from './liveness.js';
-import type { AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
-
-/** A thread as an agent: its first visit's runner names it. */
-interface ThreadRow {
-  id: string;
-  actor_id: string;
-  status: 'open' | 'dormant' | 'retired';
-  created_at: string;
-  latest_session_id: string | null;
-  runner_id: string;
-  first_session_id: string;
-}
-const THREAD = `SELECT t._merv_rowid AS seq,t.id,t.actor_id,t.status,t.created_at,t.latest_session_id,f.runner_id,f.id AS first_session_id
-  FROM session_threads t CROSS JOIN LATERAL (SELECT id,runner_id FROM worker_sessions WHERE thread_id=t.id ORDER BY _merv_rowid LIMIT 1) f`;
+import { ordinary as unmanaged, safeCount, text } from './common.js';
+import type { Session, ThreadCall, ThreadCalls } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
 function estimate(value: unknown): number | null {
@@ -31,29 +17,6 @@ const aggregateNumber = safeCount(
   'observation_overflow',
   'Tool observation totals exceed the supported numeric range',
 );
-
-const named = ({ assignment }: Session) => ({
-  label: assignment.label,
-  name: workName(assignment),
-});
-
-function summarizeAgent(
-  thread: ThreadRow,
-  currentExecutionId: string | null,
-  currentAssignment: AgentSummary['currentAssignment'] = null,
-): AgentSummary {
-  return {
-    id: thread.id,
-    sessionId: currentExecutionId ?? thread.latest_session_id ?? thread.first_session_id,
-    actorId: thread.actor_id,
-    name: `Agent ${thread.runner_id}`.slice(0, 200),
-    status: thread.status === 'retired' ? 'retired' : 'active',
-    currentExecutionId,
-    currentAssignment,
-    createdAt: thread.created_at,
-    runnerId: thread.runner_id,
-  };
-}
 
 /**
  * The moment an active session last moved: its activation, or its latest tool call. ISO
@@ -151,114 +114,51 @@ export class AgentObservations {
     return new Map(rows.map((row) => [row.id, row.at]));
   }
 
-  /** Every thread of the project and its live visit, read in the status transaction. */
-  async summaries(tx: Transaction, projectId: string): Promise<AgentSummary[]> {
-    return (
-      await tx.all<
-        ThreadRow & {
-          execution_id: string | null;
-          execution_label: string;
-          execution_name: string;
-          execution_role: Session['role'];
-        }
-      >(
-        `SELECT a.*, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, ${workNameOf('w.session_json::jsonb')} AS execution_name, (w.session_json::jsonb #>> '{role}') AS execution_role
-          FROM (${THREAD} WHERE t.project_id=?) a LEFT JOIN worker_sessions w ON w.thread_id=a.id AND w.status IN ('offered','active') ORDER BY a.created_at DESC,a.seq DESC`,
-        projectId,
-      )
-    ).map((row) =>
-      summarizeAgent(
-        row,
-        row.execution_id,
-        row.execution_id
-          ? { label: row.execution_label, name: row.execution_name, role: row.execution_role }
-          : null,
-      ),
-    );
-  }
-
-  async read(caller: Caller, agentId: string): Promise<AgentObservation> {
+  /**
+   * A thread's Merv calls, metadata only: its newest 100, in-flight ones first, and totals over
+   * all of them. Anyone who may read the project, never a leased worker.
+   */
+  async calls(caller: Caller, threadId: string): Promise<ThreadCalls> {
     unmanaged(caller);
     this.available();
-    check(
-      text(agentId, 200),
-      'invalid_agent',
-      'An agent identifier of 1–200 characters is required',
-    );
+    check(text(threadId, 200), 'invalid_input', 'A thread id of 1–200 characters is required');
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await this.state.snapshotTransaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);
-      const thread = await tx.get<ThreadRow>(
-        `${THREAD} WHERE t.id=? AND t.project_id=?`,
-        agentId,
-        caller.projectId,
-      );
-      check(thread, 'agent_not_found', 'Agent not found in this project', 404);
-      const sessions = (
-        await tx.all<{ session_json: string }>(
-          'SELECT session_json FROM worker_sessions WHERE thread_id=? AND project_id=? ORDER BY _merv_rowid DESC',
-          thread.id,
+      check(
+        await tx.get(
+          'SELECT 1 FROM session_threads WHERE id=? AND project_id=?',
+          threadId,
           caller.projectId,
-        )
-      ).map((row) => JSON.parse(row.session_json) as Session);
-      const current = sessions.find(
-        (session) => session.status === 'offered' || session.status === 'active',
+        ),
+        'thread_not_found',
+        'Thread not found in this project',
+        404,
       );
-      const now = this.clock();
-      const columns = `c.id,c.execution_id AS "executionId",c.tool,c.status,c.started_at AS "startedAt",c.finished_at AS "finishedAt",
-        c.duration_ms AS "durationMs",c.input_tokens AS "inputTokens",c.output_tokens AS "outputTokens"`;
       const from =
         'FROM session_tool_calls c JOIN worker_sessions s ON s.id=c.execution_id WHERE s.thread_id=? AND s.project_id=?';
-      const calls = await tx.all<AgentToolCall>(
-        `SELECT ${columns} ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c._merv_rowid DESC LIMIT 100`,
-        thread.id,
+      const calls = await tx.all<ThreadCall>(
+        `SELECT c.id,c.execution_id AS "sessionId",c.tool,c.status,c.started_at AS "startedAt",c.finished_at AS "finishedAt",
+          c.duration_ms AS "durationMs",c.input_tokens AS "inputTokens",c.output_tokens AS "outputTokens"
+          ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c._merv_rowid DESC LIMIT 100`,
+        threadId,
         caller.projectId,
       );
-      const aggregate = (await tx.get<
-        Record<keyof AgentObservation['tokenStats'], number | string>
-      >(
-        `SELECT COUNT(*) AS "totalCalls",COALESCE(SUM(c.input_tokens),0) AS "inputTokens",
-        COALESCE(SUM(c.output_tokens),0) AS "outputTokens",COALESCE(SUM(CASE WHEN c.status IN ('succeeded','failed') THEN 1 ELSE 0 END),0) AS "completedCalls" ${from}`,
-        thread.id,
+      const totals = (await tx.get<Record<keyof ThreadCalls['totals'], number | string>>(
+        `SELECT COUNT(*) AS "calls",COALESCE(SUM(CASE WHEN c.status IN ('succeeded','failed') THEN 1 ELSE 0 END),0) AS "completed",
+          COALESCE(SUM(c.input_tokens),0) AS "inputTokens",COALESCE(SUM(c.output_tokens),0) AS "outputTokens" ${from}`,
+        threadId,
         caller.projectId,
       ))!;
-      const stats: AgentObservation['tokenStats'] = {
-        totalCalls: aggregateNumber(aggregate.totalCalls),
-        completedCalls: aggregateNumber(aggregate.completedCalls),
-        inputTokens: aggregateNumber(aggregate.inputTokens),
-        outputTokens: aggregateNumber(aggregate.outputTokens),
-      };
       return {
-        agent: summarizeAgent(
-          thread,
-          current?.id ?? null,
-          current ? { ...named(current), role: current.role } : null,
-        ),
-        assignments: sessions.map((session) => ({
-          id: session.id,
-          instanceId: session.instanceId,
-          ...named(session),
-          role: session.role,
-          status: session.status,
-          createdAt: session.createdAt,
-          activatedAt: session.activatedAt,
-          expiresAt: session.expiresAt,
-          closedAt: session.closedAt,
-          closeReason: session.closeReason,
-          outcome: session.outcome,
-          liveness: leaseLiveness(session, now),
-          workflow: { name: session.execution.workflow, state: session.execution.state },
-          revision: session.expectedRevision,
-          tools: session.execution.policy.tools.map((tool) => tool.name),
-        })),
-        toolCalls: calls,
-        toolCallTotal: stats.totalCalls,
-        tokenStats: stats,
-        tokenAccounting: {
-          kind: 'estimate',
-          method:
-            'UTF-8 JSON bytes / 4, rounded up per payload. Excludes model context, reasoning, billing and tools called outside Merv. Logging began when this feature was installed.',
+        threadId,
+        calls,
+        totals: {
+          calls: aggregateNumber(totals.calls),
+          completed: aggregateNumber(totals.completed),
+          inputTokens: aggregateNumber(totals.inputTokens),
+          outputTokens: aggregateNumber(totals.outputTokens),
         },
       };
     });
