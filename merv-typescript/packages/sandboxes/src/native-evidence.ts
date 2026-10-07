@@ -4,6 +4,7 @@ import {
   clip,
   digest,
   MervError,
+  recorded,
   type ArtifactCollectionInput,
   type Artifacts,
   type Scope,
@@ -128,7 +129,7 @@ export class NativeEvidence {
     try {
       read = await this.read(work, connection, value, (found) => (attempt = found));
     } catch (error) {
-      await this.refuse(connection, whole, attempt, '*', error);
+      await this.refuse(work, connection, whole, attempt, '*', error);
       return void this.settled.add(key);
     }
     if (!read) return;
@@ -152,7 +153,7 @@ export class NativeEvidence {
         try {
           await this.register(work, connection, workflow, read.attempt, node);
         } catch (error) {
-          await this.refuse(connection, workflow, read.attempt, node.id, error);
+          await this.refuse(work, connection, workflow, read.attempt, node.id, error);
         }
       }
     this.settled.add(key);
@@ -379,9 +380,11 @@ export class NativeEvidence {
    * as refused, with its error and no collection, so its work rests instead of being polled for
    * ever. Its row keeps the count, so a restart does not begin it again. An unreachable service,
    * a disconnection, a binding that moved or a rate limit says nothing about the Capture and
-   * never counts.
+   * never counts. A refusal is a `sandboxes.capture_refused` event about the work, which its
+   * owner reads beside the work's captures (`NativeWorkService.evidence`).
    */
   private async refuse(
+    work: NativeWorkRow,
     connection: NativeConnectionRow,
     workflow: { namespace: string; id: string },
     attempt: string | null,
@@ -415,11 +418,26 @@ export class NativeEvidence {
         now - Date.parse(counted.failing_since) < REFUSE_AFTER_MS
       )
         return false;
+      const said = clip(`${error.code}: ${error.message}`, 500);
       await tx.run(
         `UPDATE sandbox_native_captures SET error=?,failures=0,failing_since=NULL
          WHERE connection_id=? AND namespace=? AND workflow_id=? AND node_id=?`,
-        clip(`${error.code}: ${error.message}`, 500),
+        said,
         ...key,
+      );
+      await recorded(
+        this.state,
+        tx,
+        await this.scope.serviceActor('sandboxes', work.project_id, tx),
+        'sandboxes.capture_refused',
+        work.work_id,
+        {
+          workflow: work.work_kind,
+          nativeWorkflowId: workflow.id,
+          captureNode: node,
+          attempt,
+          error: said,
+        },
       );
       return true;
     });

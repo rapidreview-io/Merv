@@ -440,6 +440,13 @@ export class SandboxService implements Sandboxes {
       : [];
   };
 
+  evidence: Sandboxes['evidence'] = async (projectId, works, tx) => {
+    const work = this.#nativeWork;
+    return work
+      ? await this.nativeOperation(() => work.evidence(projectId, works, tx))
+      : new Map(works.map((item) => [item.instanceId, { artifactIds: [], refused: [] }]));
+  };
+
   rows(): SandboxRow[] {
     return this.#rows;
   }

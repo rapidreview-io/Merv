@@ -88,6 +88,8 @@ interface StandingContext {
   waitsOn?: ReadonlyMap<string, WorkflowDependency[]>;
   /** Experiments back in a producing state they were in before. */
   again: ReadonlySet<string>;
+  /** Captures Sandboxes refused under each open experiment's current attempt, where any. */
+  refused?: ReadonlyMap<string, number>;
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
@@ -134,7 +136,7 @@ export class ExperimentService implements Experiments {
     return (await this.reviews.apply(caller, input, tx)) as Experiment;
   }
   closed = false;
-  sandboxes?: Pick<Sandboxes, 'captures'>;
+  sandboxes?: Pick<Sandboxes, 'captures' | 'evidence'>;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   readonly contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
@@ -200,7 +202,7 @@ export class ExperimentService implements Experiments {
     }
   }
   /** Captures, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void {
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence'>): () => void {
     this.open();
     this.sandboxes = service;
     return () => {
@@ -237,6 +239,7 @@ export class ExperimentService implements Experiments {
         blocked: new Set(
           (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
         ),
+        refused: await this.refusals(caller, rows, tx),
         // The board draws only what an experiment waits on; what waits on it is its sidebar's.
         waitsOn: await this.workflows.prerequisites(
           caller,
@@ -277,6 +280,7 @@ export class ExperimentService implements Experiments {
         blocked: new Set(
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
         ),
+        refused: new Map([[id, experiment.refusedCaptures?.length ?? 0]]),
       };
       // Every submission's review, for the history and the verdict on what it handed in.
       const reviews = await this.reviews.find(
@@ -370,6 +374,39 @@ export class ExperimentService implements Experiments {
         ended.set(release.instance_id, release.released_at);
     return ended;
   }
+  /**
+   * How many Captures Sandboxes refused under each open experiment's current attempt: two reads
+   * for the whole board, and none without Sandboxes.
+   */
+  private async refusals(
+    caller: Caller,
+    rows: StandingRow[],
+    tx: Transaction,
+  ): Promise<Map<string, number>> {
+    const open = new Map(
+      rows.filter((row) => !terminal.has(row.state)).map((row) => [row.id, row]),
+    );
+    if (!this.sandboxes || !open.size) return new Map();
+    const current = await tx.all<AttemptRow>(
+      `SELECT a.* FROM experiment_attempts a JOIN experiments e ON e.id=a.experiment_id AND e.attempt_index=a.attempt_index
+      WHERE e.project_id=? AND e.id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
+      caller.projectId,
+      JSON.stringify([...open.keys()]),
+    );
+    const found = await this.sandboxes.evidence(
+      caller.projectId,
+      current.map((attempt) => ({
+        instanceId: attempt.experiment_id,
+        // An attempt's epochs rest on its revisions, never on the record's data.
+        attempts: captureEpochs(attemptMetadata(attempt), {
+          revision: open.get(attempt.experiment_id)!.revision,
+          data: {},
+        }),
+      })),
+      tx,
+    );
+    return new Map([...found].map(([id, evidence]) => [id, evidence.refused.length]));
+  }
   /** Which cards are back where they were, counted from their moves without the moves' data. */
   private async counted(
     caller: Caller,
@@ -422,6 +459,7 @@ export class ExperimentService implements Experiments {
       // dangling row costs its own card its reviewer and nothing else on the board.
       review: review ? await this.reviews.get(caller, review, tx).catch(absent) : null,
       ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
+      ...(context.refused?.get(row.id) ? { refusedCaptures: context.refused.get(row.id) } : {}),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
@@ -495,6 +533,20 @@ export class ExperimentService implements Experiments {
     );
     const workflows = rows.map((row) => records.get(row.id)!.snapshot);
     const ends = await this.workflows.ends(workflows, tx);
+    // Only what each current attempt's own compute captured, under any of its states' epochs.
+    const captured = await this.sandboxes?.evidence(
+      caller.projectId,
+      rows.map((row, index) => ({
+        instanceId: row.id,
+        attempts: captureEpochs(
+          attemptMetadata(
+            attemptRows.get(row.id)!.find((item) => item.attempt_index === row.attempt_index)!,
+          ),
+          workflows[index],
+        ),
+      })),
+      tx,
+    );
     return await mapAsync(rows, async (row, index) => {
       const workflow = workflows[index];
       const starts = records.get(row.id)!.workStarts;
@@ -533,14 +585,10 @@ export class ExperimentService implements Experiments {
         submissions: (submissionRows.get(row.id) ?? []).map(submissionMetadata),
         reviewId: row.review_id,
         conclusion: row.conclusion,
-        // Only what this attempt's own compute captured, under any of its states' epochs.
-        captureArtifactIds:
-          (await this.sandboxes?.captures(
-            caller.projectId,
-            row.id,
-            tx,
-            captureEpochs(attempt, workflow),
-          )) ?? [],
+        captureArtifactIds: captured?.get(row.id)!.artifactIds ?? [],
+        ...(captured?.get(row.id)!.refused.length
+          ? { refusedCaptures: captured.get(row.id)!.refused }
+          : {}),
       };
     });
   }

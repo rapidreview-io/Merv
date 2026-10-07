@@ -10,6 +10,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { NativeConnections } from '../packages/sandboxes/src/native-connections.js';
 import { NativeEvidence } from '../packages/sandboxes/src/native-evidence.js';
+import { NativeWorkService } from '../packages/sandboxes/src/native-work.js';
 import {
   nativeMigrations,
   type NativeConnectionRow,
@@ -161,4 +162,47 @@ test('a workflow whose provenance never parses is refused as a whole', async (t)
     { node_id: '*', error: 'sandbox_evidence_invalid: Native capture provenance is incomplete' },
   ]);
   await evidence.publish(h.work, h.connection, broken);
+});
+
+test('a refusal is an event about the work, and the work’s evidence read reports it', async (t) => {
+  const h = await harness(t, 'object404');
+  const evidence = h.evidence();
+  const events = () =>
+    h.state.read((sql) =>
+      sql.all<{ type: string; subject_id: string; data: unknown }>(
+        "SELECT type,subject_id,data_json AS data FROM events WHERE type='sandboxes.capture_refused'",
+      ),
+    );
+  for (let pass = 0; pass < 64; pass++, h.time.now += 30_000)
+    await evidence.publish(h.work, h.connection, h.workflow).catch(() => undefined);
+  const [event, ...more] = await events();
+  assert.equal(more.length, 0, 'one event for one refusal');
+  assert.equal(event?.subject_id, 'task_work');
+  const data = (typeof event!.data === 'string' ? JSON.parse(event!.data) : event!.data) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(data.workflow, 'task');
+  assert.equal(data.nativeWorkflowId, 'wf');
+  assert.equal(data.captureNode, 'node');
+  assert.equal(data.attempt, '1');
+  assert.match(String(data.error), /^sandbox_not_found: /);
+  const work = new NativeWorkService(h.state, {} as never, {} as never, async () => undefined);
+  const read = await h.state.transaction((tx) =>
+    work.evidence(
+      h.caller.projectId,
+      [{ instanceId: 'task_work', attempts: ['1'] }, { instanceId: 'other' }],
+      tx,
+    ),
+  );
+  assert.deepEqual(read.get('task_work'), {
+    artifactIds: [],
+    refused: [{ nativeWorkflowId: 'wf', captureNode: 'node', error: String(data.error) }],
+  });
+  assert.deepEqual(read.get('other'), { artifactIds: [], refused: [] });
+  // Another attempt's read does not hear of it.
+  const later = await h.state.transaction((tx) =>
+    work.evidence(h.caller.projectId, [{ instanceId: 'task_work', attempts: ['2'] }], tx),
+  );
+  assert.deepEqual(later.get('task_work')?.refused, []);
 });

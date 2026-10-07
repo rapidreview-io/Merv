@@ -1150,6 +1150,29 @@ test('a worker cannot attach a sandbox capture another attempt retained', async 
   );
 });
 
+test('a capture Sandboxes refused is on the experiment, its card and its sidebar', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  t.after(f.experiments.bindSandboxes(native.service));
+  const experiment = await f.running();
+  assert.equal((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, undefined);
+  const refused = {
+    nativeWorkflowId: 'wf_train',
+    captureNode: 'outputs',
+    error: 'sandbox_evidence_invalid: Invalid native capture files page',
+  };
+  native.refused.set(experiment.id, [refused]);
+  // Its producer reads it in the record; the owner on the card and in its sidebar.
+  assert.deepEqual((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, [refused]);
+  const said = ['1 compute capture could not be kept as evidence'];
+  const card = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(card?.attention?.says, said);
+  const panel = await f.experiments.runningPanel(f.producer, `work:${experiment.id}`);
+  assert.ok(JSON.stringify(panel).includes(said[0]!));
+});
+
 test('an attempt refuses its 101st result file when it is attached', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();

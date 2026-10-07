@@ -60,6 +60,8 @@ export interface ExperimentStanding {
   review: ReviewRequest | null;
   /** When the experiment was created: the live card counts from it. */
   started?: string;
+  /** Captures of its current attempt's compute that Sandboxes refused, so are not evidence. */
+  refusedCaptures?: number;
 }
 
 const ENDED: Record<string, string> = {
@@ -141,7 +143,8 @@ function face(standing: ExperimentStanding): {
 }
 
 /**
- * Only what a person must do: a failed prerequisite, or no reviewer left. Rounds used up are
+ * Only what a person must do: a failed prerequisite, no reviewer left, or compute output the
+ * attempt lost because Sandboxes refused its capture. Rounds used up are
  * Workflows' mark on the card, in the words every owner's work shares.
  */
 function attention(standing: ExperimentStanding): RunningAttention | undefined {
@@ -152,7 +155,18 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
       says: ['Stopped: ', failed.name, ' failed'],
       who: 'The owner ends the experiment, or its cycle replans it.',
     };
-  return reviewAttention(standing.review);
+  const refused = standing.refusedCaptures ?? 0;
+  return (
+    reviewAttention(standing.review) ??
+    (refused
+      ? {
+          says: [
+            `${refused} compute capture${refused === 1 ? '' : 's'} could not be kept as evidence`,
+          ],
+          who: 'The owner: run it again, or go on without them',
+        }
+      : undefined)
+  );
 }
 
 /**

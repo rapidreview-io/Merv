@@ -1,5 +1,6 @@
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { CodeCaptureRef } from '@merv/code-work/models';
+import type { CaptureEvidence } from '@merv/sandboxes/types';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =
@@ -109,6 +110,11 @@ export interface Experiment {
   reviewId: string | null;
   conclusion: string | null;
   captureArtifactIds?: string[];
+  /**
+   * Captures of the current attempt's compute that Sandboxes refused as ones that can never
+   * register, so their outputs are not evidence: present only when there are any.
+   */
+  refusedCaptures?: CaptureEvidence['refused'];
 }
 export interface ExperimentExhibit {
   experimentId: string;

@@ -29,7 +29,7 @@ export interface ExperimentReview extends ReviewApplication {
 }
 
 export interface Experiments {
-  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void;
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence'>): () => void;
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;
