@@ -173,13 +173,14 @@ export async function seedRunning(
   ) => {
     const joined = await offerTo(record, `${requestId}-assignment`, machine.runnerId);
     const { session } = joined;
-    await work.attach(session);
+    const held = await work.attach(session);
     const reads: Read[] = [['workflow.assignment', { instanceId: record.id }]];
     const lease = {
       sessionId: session.id,
       runnerId: machine.runnerId,
       call: mcp(url, joined.token),
       reads,
+      held,
     };
     leases.push(lease);
     return lease;
@@ -422,6 +423,104 @@ export async function seedRunning(
     ['artifact.read', { artifactId: log.id }],
   );
 
+  // An experiment whose design review sent it back: it is designed again, the returned
+  // design beside the reviewer's verdict.
+  const warmup = await currentExperiment(ctx, input.producerCaller, {
+    name: 'lr-warmup-ablation',
+    intent: 'Does a 500-step learning-rate warmup move the grokking step at p = 97?',
+    details: 'The p = 97 reproduction with and without warmup, three seeds each.',
+    requestId: 'demo-running-warmup',
+  });
+  const warmupPlan = await p('artifact.create', {
+    title: 'Plan: lr-warmup-ablation',
+    content: [
+      '# Summary',
+      'Train the p = 97 reproduction with and without a 500-step linear warmup.',
+      '',
+      '# Objective and hypothesis',
+      'Warmup delays memorisation and so moves the grokking step later by at least 10%.',
+      '',
+      '# Evaluation',
+      'Seeds 7, 11 and 23 for each arm. The grokking step is where validation crosses 95%.',
+      'An arm differs when every seed of it moves the same way.',
+    ].join('\n'),
+    mediaType: 'text/markdown',
+  });
+  const warmupFeasibility = await p('artifact.create', {
+    title: 'Feasibility: lr-warmup-ablation',
+    content: JSON.stringify({
+      formatVersion: 1,
+      resources: [
+        {
+          kind: 'data',
+          name: 'modular addition p=97',
+          unit: 'examples',
+          required: 9409,
+          available: 9409,
+          basis: 'The harness generates the whole table.',
+        },
+        {
+          kind: 'compute',
+          name: 'single GPU',
+          unit: 'hours',
+          required: 2,
+          available: 8,
+          basis: 'lab-gpu-01 reports eight idle hours.',
+        },
+      ],
+      dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
+      blockers: [],
+    }),
+    mediaType: 'application/json',
+  });
+  const warmupRevision = async () =>
+    (await p('experiment.get_state', { experimentId: warmup.id })).workflow.revision;
+  for (const [role, artifact, path] of [
+    ['plan', warmupPlan, 'plan.md'],
+    ['feasibility', warmupFeasibility, 'feasibility.json'],
+  ] as const)
+    await p('experiment.attach', {
+      experimentId: warmup.id,
+      artifactId: artifact.id,
+      role,
+      path,
+      attemptIndex: warmup.attempt.index,
+      expectedRevision: await warmupRevision(),
+      requestId: `demo-running-warmup-attach-${role}`,
+    });
+  await p('experiment.transition', {
+    experimentId: warmup.id,
+    transition: 'submit_design',
+    expectedRevision: await warmupRevision(),
+    requestId: 'demo-running-warmup-design',
+  });
+  const returned = ((await r('review.list')) as any[]).find(
+    (item) => item.subjectId === warmup.id && item.status !== 'submitted',
+  );
+  if (!returned) throw new Error('The demo found no design review for its warmup experiment');
+  const returning = await r('review.start', { reviewId: returned.id });
+  const asked = await r('review.get', { reviewId: returned.id });
+  await r('review.submit', {
+    reviewId: returned.id,
+    claimId: returning.claimId ?? asked.claimId,
+    verdict: 'needs_changes',
+    returnTo: 'planned',
+    synopsis:
+      'Three seeds cannot separate a 10% shift from seed noise; the plan needs a power estimate or more seeds.',
+    findings: asked.criteria.map((_: string, index: number) => ({
+      criterionNumber: index + 1,
+      status: index === 1 ? 'not_met' : 'met',
+      evidenceIds: [...asked.artifactIds],
+      notes:
+        index === 1
+          ? 'Seed-to-seed spread at p = 97 is about 15% of the grokking step, larger than the effect sought.'
+          : 'Checked against the pinned plan and feasibility statement.',
+    })),
+    notes: 'Returning the design for a power estimate.',
+    expectedRevision: asked.subjectRevision,
+    requestId: 'demo-running-warmup-verdict',
+  });
+
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
   await currentExperiment(ctx, input.producerCaller, {
     name: 'embedding-width-ablation',
@@ -435,7 +534,33 @@ export async function seedRunning(
     title: 'Mid-point reflection: what the sweeps show',
     requestId: 'demo-running-reflection',
   });
-  const [lens] = wave.lenses;
+  // Its first lens has reported; an agent is on the second.
+  const [first, lens] = wave.lenses;
+  const reporter = await agent('demo-running-lens-report', studio, first);
+  const assigned = await reporter.call('reflection.lens', { lensId: first.id });
+  const report = await reporter.call('artifact.create', {
+    title: 'Evidence lens: what the sweeps show',
+    content: [
+      '# Summary',
+      'Both sweeps agree: the grokking step falls as weight decay grows, at p = 97 and at p = 113.',
+      '',
+      '# Evidence',
+      '- Decay 0.3 groks at step 14,200; decay 1.0 at 9,810; decay 3.0 at 6,050 (p = 97).',
+      '- The p = 113 run at decay 0.3 has not grokked by step 4,000, as expected.',
+      '',
+      '# Gaps',
+      'One seed per setting so far; the warmup ablation was returned for more seeds.',
+    ].join('\n'),
+    mediaType: 'text/markdown',
+  });
+  await reporter.call('reflection.submit_lens', {
+    lensId: first.id,
+    artifactId: report.id,
+    expectedRevision: assigned.workflow?.revision ?? first.workflow.revision,
+    requestId: 'demo-running-lens-report',
+  });
+  leases.splice(leases.indexOf(reporter), 1);
+  await work.release(reporter.held);
   const reflecting = await agent('demo-running-lens', studio, lens);
   await reflecting.call('reflection.lens', { lensId: lens.id });
   await reflecting.call('project.records');
