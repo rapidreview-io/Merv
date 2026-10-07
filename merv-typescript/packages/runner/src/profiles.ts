@@ -6,7 +6,7 @@ import { inspect } from 'node:util';
 import { z } from 'zod';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import { label, platformName } from '@merv/sessions/rules';
+import { label, live, platformName } from '@merv/sessions/rules';
 import { launcherOf } from './harness/index.js';
 import {
   conversationIdPattern,
@@ -339,11 +339,7 @@ export function buildLaunch(
     'Workspace must be an absolute path',
   );
   const { session } = request;
-  check(
-    session.status === 'offered' || session.status === 'active',
-    'session_closed',
-    'Cannot launch a closed session',
-  );
+  check(live(session), 'session_closed', 'Cannot launch a closed session');
   check(
     session.execution.instanceId === session.instanceId &&
       session.assignment.instanceId === session.instanceId &&

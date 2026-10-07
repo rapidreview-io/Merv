@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { runningKey } from '@merv/contracts/running';
+// A visit that holds its lease, offered or taken up, as Sessions calls its thread live.
+import { live as leased } from '@merv/sessions/rules';
 import type { ProcessGraph } from '@merv/workflows/models';
 import type {
   LeaseLiveness,
@@ -55,8 +57,6 @@ export const holding = ({ liveness }: { liveness: LeaseLiveness }) =>
 export const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 /** The visit whose agent runs now: the one whose stream a page reads. */
 const active = (visit: VisitView) => visit.status === 'active';
-/** A visit that holds its lease, offered or taken up, as Sessions calls its thread live. */
-const leased = (visit: VisitView) => visit.status === 'offered' || visit.status === 'active';
 /** A visit that ended before its agent ran. */
 const failed = (visit: VisitView) =>
   !visit.launched && (visit.status === 'released' || visit.status === 'expired');

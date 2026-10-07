@@ -24,6 +24,7 @@ import {
   idSchema,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
+import { live } from '@merv/sessions/rules';
 import { pendingMerge } from '@merv/code/pending-merge';
 import { postgresMigrations } from './commands.postgres.js';
 import type { CodeCommands } from './types.js';
@@ -325,7 +326,7 @@ export class CodeCommandService implements CodeCommands {
       if (!row) return null;
       const { command } = this.decode(row);
       // A session no longer offered or active holds no lease.
-      if (session.status !== 'offered' && session.status !== 'active') {
+      if (!live(session)) {
         // Recover an already-issued descriptor after a lost response. This records no
         // new dispatch; the runner may reconcile its stopped/fenced Git outcome only.
         if (row.status === 'dispatched') return command;

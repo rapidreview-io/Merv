@@ -31,7 +31,7 @@ import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
 import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
-import { platformPhrase } from './rules.js';
+import { live, platformPhrase } from './rules.js';
 import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
 
 /**
@@ -568,10 +568,10 @@ export class SessionRunning {
       if (!row) return null;
       const [lease] = await this.facts(tx, [row], operator);
       const now = this.clock();
-      const live = row.status === 'offered' || row.status === 'active';
-      const holding = live && !lapsed(lease, now);
+      const leased = live(row);
+      const holding = leased && !lapsed(lease, now);
       const idle = this.thresholds.idleNoticeSeconds;
-      const shown = live ? face(lease, now, idle) : undefined;
+      const shown = leased ? face(lease, now, idle) : undefined;
       const role = ROLES[row.role];
       const work = row.name;
       const ending = row.outcome || row.close_reason;
@@ -636,7 +636,7 @@ export class SessionRunning {
       });
 
       // When it must end, and, while nothing renews it, when it lapses and returns the work.
-      const terms: RunningFact[] = live
+      const terms: RunningFact[] = leased
         ? [
             { label: 'Ends', value: [{ until: row.hard_deadline }] },
             ...(row.status === 'offered' || silent
@@ -713,7 +713,7 @@ export class SessionRunning {
           rows.unshift({ label: 'Machine', value: [ellipsis(machine.hostname, 200)] });
           if (lease.platform)
             rows.push({ label: 'Platform', value: [platformPhrase(lease.platform)] });
-          if (live) {
+          if (leased) {
             const on = await tx.all<{ id: string; name: string; role: SessionRole }>(
               `SELECT s.id,${workNameOf('x.j')} AS name,x.j #>> '{role}' AS role
                 FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
@@ -781,8 +781,8 @@ export class SessionRunning {
           ...(shown?.attention ? { attention: shown.attention } : {}),
         },
         sections,
-        actions: live ? [halt] : [],
-        live,
+        actions: leased ? [halt] : [],
+        live: leased,
         ...(lease.fleet ? { aliases: [runningKey('fleet', lease.fleet)] } : {}),
       };
     });

@@ -30,6 +30,7 @@ import type {
 import {
   capabilitiesSchema as capabilities,
   INQUIRY_CAPABILITY,
+  live,
   ownEnd,
   runnerPlatformSchema as profile,
 } from './rules.js';
@@ -409,7 +410,7 @@ export class ManagedRunnerBindings {
       check(
         session &&
           row &&
-          (session.status === 'offered' || session.status === 'active'
+          (live(session)
             ? Date.parse(session.expiresAt) > this.clock()
             : ownEnd(session.closeReason)),
         'unauthorized',

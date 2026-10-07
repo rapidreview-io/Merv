@@ -3,7 +3,7 @@ import { recorded, check, type Caller, type Transaction } from '@merv/contracts'
 import type { DispatchState, Session, SessionBudgetInput, BudgetStatus } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { isoNow } from './common.js';
-import { label } from './rules.js';
+import { label, live } from './rules.js';
 import type { DispatchContext, SessionRow } from './dispatch.js';
 
 // The project's dispatch switch, its budgets and halt. SessionDispatch (dispatch.ts) runs these
@@ -222,7 +222,7 @@ export async function halt(
     let halted = 0;
     for (const row of rows) {
       const session: Session = { ...JSON.parse(row.session_json), threadId: row.thread_id };
-      if (session.status !== 'offered' && session.status !== 'active') continue;
+      if (!live(session)) continue;
       if (!(await ctx.hooks.close(session, input.reason ?? 'operator_halt', tx))) continue;
       halted++;
       await recorded(ctx.state, tx, caller, 'session.halted', session.id, {
