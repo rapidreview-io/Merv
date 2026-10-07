@@ -63,8 +63,9 @@ Code sits at the bottom of the Git path: only Code work injects it, and research
 | Code work adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeWork plus Tools, API or UI                                  |
 
 The utility owns repository locks and the GitHub client. The integration releases its own
-operations when unloaded. Technical changes to bindings and writers notify optional
-projections within the same transaction; failure rolls back both the fact and projection.
+operations when unloaded. Technical changes to bindings and writers reach the integration
+through the `changed` callback it lends at `openStore`, within the same transaction; failure
+rolls back both the fact and projection.
 Unloading a projection never deletes facts. Persistent repository holds preserve transfer
 and rebinding restrictions when an integration is unloaded. Reattachment rebuilds derived
 research state.

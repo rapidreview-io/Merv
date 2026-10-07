@@ -77,6 +77,7 @@ export class CodeService implements Code {
   private readonly board: CodeRunningReader;
   private publicationClosed = false;
   private releaseProvenance?: () => void;
+  private releaseChanges?: () => void;
   private publicationTimer?: NodeJS.Timeout;
   private networkOperations = new Set<Promise<unknown>>();
   private network<T>(operation: () => Promise<T>): Promise<T> {
@@ -157,12 +158,14 @@ export class CodeService implements Code {
       const opened = await utility.openStore(
         {
           imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
+          changed: (tx, projectId, unitId) => this.unitStore.changed(tx, projectId, unitId),
           workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
           network: (operation) => this.network(operation),
         },
         repositories,
       );
       this.store = opened.store;
+      this.releaseChanges = opened.release;
       this.mirrorStore = opened.mirror;
       this.publicationHost = new PublicationHost(
         state,
@@ -451,6 +454,7 @@ export class CodeService implements Code {
     const merging = this.baseStore?.close();
     this.captureReader?.close();
     this.unitStore?.close();
+    this.releaseChanges?.();
     this.commands.close();
     // Every read is refused from here on. Running admissions and GitHub calls still reach the
     // database, which outlives Code, and are waited for before the writer lock is given up.

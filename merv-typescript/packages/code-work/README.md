@@ -70,8 +70,8 @@ Code work is the one bridge between research decisions and Git: Tasks, Experimen
 
 Every composition loads Code and CodeWork: Tasks, Experiments, Knowledge and Research require
 CodeWork, and CodeWork requires Code and Reviews. Code builds its repository journal and mirror;
-CodeWork opens them with its callbacks (what imported history changes, which sessions hold a
-workspace) and runs imports and the `/code/v2` workspace protocol on them.
+CodeWork opens them with its callbacks (what imported history or a binding or writer change
+changes, which sessions hold a workspace) and runs imports and the `/code/v2` workspace protocol on them.
 
 GitHub's default branch and the branch selected for Merv are different settings. The selected
 branch is the project's base, whatever its name. Each running unit keeps its exact starting

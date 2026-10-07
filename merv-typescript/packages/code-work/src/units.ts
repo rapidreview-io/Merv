@@ -102,19 +102,13 @@ export class CodeUnitService {
       publication: (sql, projectId, stored) => this.enforcedPublication(sql, projectId, stored),
       baseStatus: (tx, row, base) => this.derivedBaseStatus(tx, row, base),
     });
-    this.unobserve = writers.changes.observe(async (change, tx) => {
-      if (change.kind === 'binding') await this.reconcileProject(tx, change.projectId);
-      else await this.reconcileUnit(tx, change.projectId, change.unitId);
-    });
   }
 
-  private readonly unobserve: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.records.initialize();
   }
   close(): void {
-    this.unobserve();
     this.records.close();
   }
 
@@ -1055,6 +1049,11 @@ export class CodeUnitService {
   async imported(tx: Transaction, projectId: string): Promise<void> {
     this.state.assertTransaction(tx);
     await this.reconcileProject(tx, projectId);
+  }
+  /** Code bound the project's main again (no unit), or moved one unit's writer. */
+  async changed(tx: Transaction, projectId: string, unitId?: string): Promise<void> {
+    if (unitId) await this.reconcileUnit(tx, projectId, unitId);
+    else await this.reconcileProject(tx, projectId);
   }
 
   private quarantineBlocker(key: string): WorkflowProvidedBlockerInput {

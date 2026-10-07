@@ -14,7 +14,8 @@ import {
 } from '@merv/contracts';
 import { codeAdmissionLimitsSchema } from '@merv/code/store/protocol';
 import { parseCodeInput } from '@merv/code/input';
-import { migrateCommands, OperatorReceipt } from './receipts.js';
+import { RequestJournal } from '@merv/code/request-journal';
+import { migrateCommands } from './commands.js';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { CodeRepositoryConfigureInput } from './types.js';
 import type { CodeCheckSpec, CodeStoreLimits } from './models.js';
@@ -99,12 +100,13 @@ export async function configureWorkRepository(
       'A leased worker cannot configure this repository',
       403,
     );
-    const journal = new OperatorReceipt(
+    const journal = new RequestJournal(
       tx,
       caller.projectId,
       `actor:${caller.actorId}`,
       requestId,
       digest(body),
+      'code_work_receipts',
     );
     const previous = await journal.previous();
     if (previous) return JSON.parse(previous.result_json) as CodeStoreLimits;

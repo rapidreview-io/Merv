@@ -1,4 +1,4 @@
-import { OperationJournal } from './operation-journal.js';
+import { RequestJournal } from './request-journal.js';
 import {
   canonical,
   check,
@@ -311,7 +311,7 @@ export class CodeUnitStore {
       const principal = `actor:${caller.actorId}`;
       const { requestId, ...payload } = input;
       const inputHash = digest(payload);
-      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const journal = new RequestJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous();
       if (previous) {
         // Every bind journalled before the lineage existed stored a result without `previous`,
@@ -372,7 +372,7 @@ export class CodeUnitStore {
           );
       }
       // Naming main is what every unit with no retained code beneath it was waiting for.
-      await this.writers.changes.emit({ kind: 'binding', projectId: caller.projectId }, tx);
+      await this.writers.changed(tx, caller.projectId);
       const result = (await this.project(tx, caller.projectId))!;
       await journal.complete(operationId, 'local_bind', payload, result, at);
       await recorded(this.state, tx, caller, 'code.local_bound', caller.projectId, {
