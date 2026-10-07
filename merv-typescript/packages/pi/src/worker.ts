@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isOrigin } from '@merv/contracts/origins';
 import {
   calculateContextTokens,
   createAgentSession,
@@ -30,7 +31,6 @@ import type {
   PiWork,
 } from './types.js';
 
-const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 // A /next reply carries a checkpoint of up to 2 MB, escaped again as a JSON string.
 const MAX_RESPONSE_BYTES = 4_500_000;
 const DELAY = 250;
@@ -149,19 +149,14 @@ export async function runPiWorker(
 ): Promise<void> {
   const workerId = options.workerId ?? randomUUID();
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = new URL(bootstrap.baseUrl);
   if (
-    !(url.protocol === 'https:' || (url.protocol === 'http:' && localHosts.has(url.hostname))) ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash ||
+    !isOrigin(bootstrap.baseUrl) ||
     !Number.isFinite(Date.parse(bootstrap.expiresAt)) ||
     Date.parse(bootstrap.expiresAt) <= Date.now() ||
     !/^piw_flt_[A-Za-z0-9]+\.[A-Za-z0-9_-]{43}$/.test(bootstrap.workerToken)
   )
     throw new Error('Invalid worker bootstrap');
+  const url = new URL(bootstrap.baseUrl);
   const seen = new Set<string>();
   const send = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
     const response = await fetchImpl(new URL(`/pi-worker/${path}`, url), {

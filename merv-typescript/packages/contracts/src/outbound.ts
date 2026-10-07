@@ -2,52 +2,19 @@
  * Calls to a service outside Merv (@merv/web's providers, @merv/nisa): the origins one may name,
  * one bounded JSON request, the calls in flight, and what an answer may weigh.
  */
-import { isIP } from 'node:net';
 import { check, MervError } from './index.js';
 import type { Json } from './data.js';
+import { allowedOrigin, allowedUrl, isOrigin } from './origins.js';
 
-/** An https origin, or a loopback http one for a test's fake service. */
-export function allowedOrigin(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.origin !== value) return false;
-    return (
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' &&
-        (url.hostname === 'localhost' ||
-          url.hostname === '[::1]' ||
-          (isIP(url.hostname) === 4 && url.hostname.startsWith('127.'))))
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** An http(s) URL on an allowed origin, naming no credentials, query or fragment; any path. */
-export function allowedUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      // A blob: URL's origin is the URL inside it, so the scheme is checked on its own.
-      (url.protocol === 'https:' || url.protocol === 'http:') &&
-      !/[\x00-\x20\x7f?#]/.test(value) &&
-      !url.username &&
-      !url.password &&
-      allowedOrigin(url.origin)
-    );
-  } catch {
-    return false;
-  }
-}
+export { allowedOrigin, allowedUrl };
 
 /**
  * The allowed origin `value` names, with nothing after it but a slash: the one rule for every
  * service origin an operator configures. Anything else is refused under `code`.
  */
 export function origin(value: unknown, code: string, message: string, status = 400): string {
-  const text = typeof value === 'string' ? value : '';
-  check(allowedUrl(text) && new URL(text).pathname === '/', code, message, status);
-  return new URL(text).origin;
+  check(isOrigin(value), code, message, status);
+  return new URL(value).origin;
 }
 
 type OutboundFailure =

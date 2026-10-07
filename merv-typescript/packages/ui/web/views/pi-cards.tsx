@@ -25,10 +25,12 @@ const label = (host: PiHostView | undefined, key: string) =>
 /** How long the current wait has lasted by the server's clock, `skew` ms ahead of this one; a
  * screen reader hears only what is waited on. */
 export function Seconds({ since, skew }: { since: string; skew: number }) {
-  const now = useNow(1000);
+  // Ticks each second; the clock is read as it draws, so a snapshot read between ticks (and
+  // with it a new skew) never counts back a second.
+  useNow(1000);
   return (
     <span className="tabular" aria-hidden="true">
-      {` · ${Math.max(0, Math.floor((now + skew - Date.parse(since)) / 1000)) || 0} s`}
+      {` · ${Math.max(0, Math.floor((Date.now() + skew - Date.parse(since)) / 1000)) || 0} s`}
     </span>
   );
 }

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, call } from '../api';
-import { StreamError } from '../event-stream';
+import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
-import { readPiEvents, type PiDelta } from '../pi-stream';
 import type {
   PiConversation,
   PiEvent,
@@ -11,6 +10,14 @@ import type {
   PiRan,
   PiSnapshot,
 } from '@merv/pi/models';
+
+type PiDelta = PiEvent & { streamId: string };
+const isDelta = (value: object): value is PiDelta =>
+  'streamId' in value &&
+  'sequence' in value &&
+  'commandId' in value &&
+  'type' in value &&
+  'text' in value;
 
 /** The answer as it streams; `written` is the sequence of its latest words. */
 type TransientResponse = { commandId: string; text: string; progress: string; written: number };
@@ -55,6 +62,7 @@ const WAITS = ['queued', 'machine', 'agent', 'thinking'];
 const UNNAMED = 'New conversation';
 const clip = (text: string) => (text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text);
 const RECONNECTING = 'Reconnecting…';
+const UNAVAILABLE = 'This conversation isn’t available right now.';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
 const said = (cause: unknown, fallback: string): string => {
   if (!(cause instanceof ApiError)) return fallback;
@@ -86,10 +94,10 @@ export function useConversation() {
   const [localResults, setLocalResults] = useState<Record<string, string>>({});
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
-  const [streamError, setStreamError] = useState('');
-  const [unavailable, setUnavailable] = useState(false);
   const [reload, setReload] = useState(0);
   const [snapshotRetry, setSnapshotRetry] = useState(0);
+  /** The conversation whose first snapshot has been read, which is when its stream opens. */
+  const [streaming, setStreaming] = useState<string | null>(null);
   const pending = useRef<{ id: string; text: string } | null>(null);
   // The calls whose outcome this page has told the agent, or is telling it now.
   const telling = useRef(new Set<string>());
@@ -139,7 +147,6 @@ export function useConversation() {
     setConversations((items) =>
       items.map((item) => (item.id === next.conversation.id ? next.conversation : item)),
     );
-    setStreamError('');
   };
   const choose = (id: string) => {
     selection.current = id;
@@ -193,87 +200,58 @@ export function useConversation() {
     };
   }, [reload]);
 
+  const refresh = async (id: string) => {
+    const next = await call<PiSnapshot>('pi.snapshot', { id });
+    if (valid() && selection.current === id) replace(next);
+  };
+  // A conversation chosen (or retried) is read first, then streamed: the stream's snapshots
+  // and deltas keep it current from there.
   useEffect(() => {
     if (!selected) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // Consecutive failures space the next attempt out, up to half a minute.
-    let failures = 0;
-    const controller = new AbortController();
-    const alive = () =>
-      !stopped && !controller.signal.aborted && valid() && selection.current === selected;
     canonical.current = null;
     setSnapshot(null);
     setResponse(null);
-    setStreamError('');
-    setUnavailable(false);
-    const refresh = async () => {
-      const next = await call<PiSnapshot>('pi.snapshot', { id: selected });
-      if (alive()) replace(next);
-    };
-    const connect = async () => {
-      let busyStream = false;
-      try {
-        const since = Date.now();
-        const rotated = await readPiEvents(
-          selected,
-          controller.signal,
-          (next) => {
-            failures = 0;
-            if (alive()) replace(next);
-          },
-          (delta: PiDelta) => {
-            if (!alive()) return;
-            const current = canonical.current;
-            if (!current || current.streamId !== delta.streamId)
-              return void refresh().catch(() => {});
-            if (delta.sequence <= current.sequence) return;
-            canonical.current = { ...current, sequence: delta.sequence };
-            if (delta.type === 'changed') void refresh().catch(() => {});
-            else setResponse((before) => accumulateResponse(before, delta));
-          },
-        );
-        if (!alive()) return;
-        // The server closes every stream after a while and says so first: that is no news, and
-        // a stream that lived is reopened at once.
-        if (!rotated) setStreamError(RECONNECTING);
-        else if (Date.now() - since > 5000) return void connect();
-      } catch (cause) {
-        if (!alive()) return;
-        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status)) {
-          setStreamError('This conversation isn’t available right now.');
-          setUnavailable(true);
-          return;
-        }
-        // Too many pages hold this conversation open: this one waits its turn quietly.
-        busyStream = cause instanceof StreamError && cause.status === 429;
-        if (!busyStream) setStreamError(RECONNECTING);
-      }
-      if (!alive()) return;
-      timer = setTimeout(
-        async () => {
-          if (!alive()) return;
-          await refresh().catch(() => {});
-          if (alive()) void connect();
-        },
-        Math.min(30_000, (busyStream ? 5000 : 2000) * 2 ** failures++),
-      );
-    };
-    void refresh()
+    setStreaming(null);
+    void refresh(selected)
       .catch(() => {})
       .then(() => {
-        if (!alive()) return;
-        void connect();
+        if (stopped || !valid() || selection.current !== selected) return;
+        setStreaming(selected);
         // New conversation hands the composer the cursor, which begins a question there too.
         if (eager.current || document.activeElement === composer.current) warmUp();
         eager.current = false;
       });
     return () => {
       stopped = true;
-      controller.abort();
-      if (timer) clearTimeout(timer);
     };
   }, [selected, snapshotRetry]);
+  const live = streaming !== null && streaming === selected;
+  const stream = useEventStream(
+    live ? `/pi/${encodeURIComponent(streaming)}/events` : null,
+    (event, value) => {
+      if (!valid() || !streaming || selection.current !== streaming) return;
+      if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
+        return replace(value as PiSnapshot);
+      if (event !== 'delta' || !isDelta(value)) return;
+      const current = canonical.current;
+      if (!current || current.streamId !== value.streamId)
+        return void refresh(streaming).catch(() => {});
+      if (value.sequence <= current.sequence) return;
+      canonical.current = { ...current, sequence: value.sequence };
+      if (value.type === 'changed') void refresh(streaming).catch(() => {});
+      else setResponse((before) => accumulateResponse(before, value));
+    },
+  );
+  const retrying = live && stream === 'retrying';
+  const unavailable = live && stream === 'refused';
+  const streamError = retrying ? RECONNECTING : unavailable ? UNAVAILABLE : '';
+  // While the stream is away the conversation is still read, now and then.
+  useEffect(() => {
+    if (!retrying || !streaming) return;
+    const timer = setInterval(() => void refresh(streaming).catch(() => {}), 10_000);
+    return () => clearInterval(timer);
+  }, [retrying, streaming]);
 
   const command = snapshot?.commands.find(
     (item) => item.id === snapshot.conversation.activeCommandId,

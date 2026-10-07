@@ -234,7 +234,13 @@ const capabilityOf = (owner: string) =>
  * modules: the portable id and Git schemas a browser-safe protocol module is built from, and the
  * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
-const contractsRuntimeExports = new Set(['private-directory', 'schemas', 'text', 'workspace']);
+const contractsRuntimeExports = new Set([
+  'origins',
+  'private-directory',
+  'schemas',
+  'text',
+  'workspace',
+]);
 const sharedContract = (specifier: string) =>
   specifier === '@merv/contracts' ||
   (specifier.startsWith('@merv/contracts/') &&

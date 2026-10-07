@@ -252,7 +252,7 @@ export class PiWorkerProtocol {
         command: publicCommand(command),
         checkpoint,
         model: model.id,
-        modelBaseUrl: `${new URL(this.core.config.baseUrl!).origin}/pi-model`,
+        modelBaseUrl: `${this.core.apiOrigin}/pi-model`,
         modelToken: this.core.modelToken(command),
         tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
           tools.includes(name),

@@ -738,7 +738,8 @@ test('reconnect fetches canonical messages and removes stale transient response'
   await settle(2200);
   assert.match(text(), /Complete answer/);
   assert.doesNotMatch(text(), /partial answer/);
-  assert.ok(requests.filter((request) => request.includes('/tools/pi.snapshot')).length >= 2);
+  // The reopened stream's own first snapshot is the canonical read.
+  assert.equal(requests.filter((request) => request.endsWith('/events')).length, 2);
 });
 
 test('project change aborts old stream and opens a clean project conversation', async (t) => {
@@ -1144,7 +1145,7 @@ test('the bar and the transcript say what the turn waits on, counting the second
   await settle(10);
   assert.match(text(), /Reconnecting…/);
   assert.doesNotMatch(bar(), /·/);
-  await settle(2100);
+  await settle(1100);
   assert.match(bar(), /^Starting a machine · 6 s/);
   await push('agent', 'starting');
   assert.match(bar(), /^Loading the agent · 0 s/);
