@@ -8,6 +8,7 @@ import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import {
   canonical,
+  receipted,
   check,
   digest,
   MervError,
@@ -99,7 +100,7 @@ export async function publicationControls(
 export interface PublicationCode {
   store: Pick<CodeStore, 'contains' | 'importRepository'>;
   transport: MirrorTransport;
-  units: Pick<CodeUnitService, 'imported' | 'records'>;
+  units: Pick<CodeUnitService, 'changed' | 'records'>;
 }
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
@@ -167,7 +168,7 @@ export class PublicationHost {
    * An accepted unit has no producing state to return to, so this is all an outcome changes.
    */
   async reconcile(caller: Caller, tx: Transaction) {
-    await this.code.units.imported(tx, caller.projectId);
+    await this.code.units.changed(tx, caller.projectId);
   }
   async ancestor(projectId: string, base: string, head: string) {
     const repos = this.repositories;
@@ -258,7 +259,7 @@ export class PublicationHost {
   }
   async main(caller: Caller, oid: string, tx: Transaction, expectedOid?: string) {
     await this.code.units.records.moveMain(caller, oid, tx, expectedOid);
-    await this.code.units.imported(tx, caller.projectId);
+    await this.reconcile(caller, tx);
   }
   async verifyLocal(caller: Caller, record: CodePublication) {
     check(
@@ -394,53 +395,43 @@ export class PublicationHost {
         'github_human_required',
         'A signed-in human administrator must attest publication enforcement',
       );
-      const previous = await tx.get<{ input_hash: string; result_json: string }>(
-        'SELECT input_hash,result_json FROM code_publication_requests WHERE project_id=? AND actor_id=? AND request_id=?',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-      );
-      if (previous) {
-        check(
-          previous.input_hash === digest(input),
-          'request_conflict',
-          'Request id has different publication control input',
-          409,
-        );
-        return JSON.parse(previous.result_json) as CodePublicationControls;
-      }
-      const controls = await publicationControls(tx, caller.projectId);
-      const evidence = { actorId: caller.actorId, reason: input.reason, at: now() };
-      if (input.action === 'acknowledge_rules') controls.acknowledgement = evidence;
-      else {
-        const binding = await this.github.publicationBinding(caller, tx);
-        const hash = bindingHash(binding.repository.id, binding.revision, binding.baseBranch);
-        if (input.action === 'record_canary') {
-          controls.canary = { ...evidence, staleMerged: input.staleMerged!, bindingHash: hash };
-          if (input.staleMerged) controls.disabled = true;
-        } else {
-          check(
-            !publicationGate(controls, hash).includes('code_publication_canary_required'),
-            'code_publication_disabled',
-            'Record a passing canary after repairing enforcement before clearing disablement',
-            409,
-          );
-          controls.disabled = false;
-        }
-      }
-      await this.saveControls(caller.projectId, controls, tx);
-      // Turning publication off or on again changes what every unit waiting on one is waiting
-      // for, so what they publish is refreshed here rather than at the next poll.
-      await this.reconcile(caller, tx);
-      await tx.run(
-        'INSERT INTO code_publication_requests VALUES(?,?,?,?,?)',
-        caller.projectId,
-        caller.actorId,
+      return await receipted(
+        tx,
+        caller,
         input.requestId,
         digest(input),
-        canonical(controls),
+        async () => {
+          const controls = await publicationControls(tx, caller.projectId);
+          const evidence = { actorId: caller.actorId, reason: input.reason, at: now() };
+          if (input.action === 'acknowledge_rules') controls.acknowledgement = evidence;
+          else {
+            const binding = await this.github.publicationBinding(caller, tx);
+            const hash = bindingHash(binding.repository.id, binding.revision, binding.baseBranch);
+            if (input.action === 'record_canary') {
+              controls.canary = { ...evidence, staleMerged: input.staleMerged!, bindingHash: hash };
+              if (input.staleMerged) controls.disabled = true;
+            } else {
+              check(
+                !publicationGate(controls, hash).includes('code_publication_canary_required'),
+                'code_publication_disabled',
+                'Record a passing canary after repairing enforcement before clearing disablement',
+                409,
+              );
+              controls.disabled = false;
+            }
+          }
+          await this.saveControls(caller.projectId, controls, tx);
+          // Turning publication off or on again changes what every unit waiting on one is waiting
+          // for, so what they publish is refreshed here rather than at the next poll.
+          await this.reconcile(caller, tx);
+          return controls;
+        },
+        {
+          table: 'code_publication_requests',
+          result: 'result_json',
+          conflict: 'Request id has different publication control input',
+        },
       );
-      return controls;
     });
   }
 }

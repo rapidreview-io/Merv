@@ -24,6 +24,12 @@ import { openState, schemaFor } from './state.js';
 import { ReviewService } from '@merv/reviews';
 
 /** Git as a test runs it: no configuration of the machine or the user reaches it. */
+/** One maintenance pass of Code Work's store now, as its timer would make it. */
+export const maintainStore = async (code: CodeService) =>
+  void (await (code as unknown as { store: { maintain(): Promise<unknown> } }).store.maintain());
+/** One publication pass of Code Work's mirror now, as its timer would make it. */
+export const mirrorStep = async (code: CodeService) =>
+  void (await (code as unknown as { mirrorStore: { run(): Promise<unknown> } }).mirrorStore.run());
 export function git(cwd: string, args: string[], input?: string | Buffer): string {
   return execFileSync('git', args, {
     cwd,

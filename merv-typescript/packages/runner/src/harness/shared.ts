@@ -92,6 +92,8 @@ export interface Launcher<P extends RunnerProfile = RunnerProfile> {
  * conversations. Each harness's module answers for it; the rest of the runner only asks.
  */
 export interface Harness {
+  /** The profile's `harness` that names it, which a kept conversation records. */
+  name: 'claude' | 'codex';
   /** A reader of its output a line at a time (`at` is the line's place in the log), keeping
    *  what a block spread over lines needs. */
   lines(): (text: string, at: number) => AgentEvent[];

@@ -9,7 +9,7 @@ import type { CodeService } from '@merv/code-work/service';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, mirrorStep } from './fixtures/code-store.js';
 import { deferred } from './fixtures/deferred.js';
 
 test(
@@ -109,7 +109,7 @@ test(
         };
         return body(tx);
       });
-    const mirroring = bridge.mirrorStep();
+    const mirroring = mirrorStep(bridge);
     await entered.promise;
     assert.equal(pushes, 1, 'the push finished before the held journal write');
     let unloaded = false;
@@ -154,7 +154,7 @@ test(
     (
       ctx.codeWork as unknown as { mirrorStore: { transport: MirrorTransport } }
     ).mirrorStore.transport = transport;
-    await (ctx.codeWork as CodeService).mirrorStep();
+    await mirrorStep(ctx.codeWork as CodeService);
     assert.equal(pushes, 1, 'the completed journal is not republished after reload');
   },
 );

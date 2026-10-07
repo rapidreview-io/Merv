@@ -1,4 +1,4 @@
-import { RequestJournal } from '../request-journal.js';
+import { OperationJournal } from '../request-journal.js';
 import {
   canonical,
   check,
@@ -50,7 +50,7 @@ export class CodeRebinder {
    * proved first, with no transaction open, is that Code's repository holds every commit the
    * project retains as authoritative; one transaction then writes the new binding. It lives
    * beside importRepository because it needs Git and the repositories directory, and reaches
-   * units only through the existing `imported` hook.
+   * units only through the existing `changed` hook.
    */
   async rebindRepository(caller: Caller, value: unknown): Promise<CodeStoreOperation> {
     this.core.assertOpen();
@@ -72,7 +72,7 @@ export class CodeRebinder {
     // the read below enforces inside this transaction rather than an index.
     const prepared = await this.core.state.transaction(async (tx) => {
       await this.humanAdministrator(caller, tx);
-      const journal = new RequestJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
       if (previous) {
         // A finished rebind replays its own answer; the refusals below are about work in
@@ -246,7 +246,7 @@ export class CodeRebinder {
       );
       // Every unpinned unit is derived again under the new binding. Pure SQL: no Git and no
       // network enter this transaction.
-      await this.core.hooks.imported(tx, row.project_id);
+      await this.core.hooks.changed(tx, row.project_id);
       // Last, because the relaxed code_projects_binding trigger requires this operation to
       // still be prepared while code_projects is written.
       await tx.run(

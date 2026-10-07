@@ -307,7 +307,7 @@ export class PiHosts implements FleetOwner {
       const bootstrap: PiBootstrap = {
         kind: 'pi',
         version: 2,
-        baseUrl: new URL(this.core.config.baseUrl!).origin,
+        baseUrl: this.core.apiOrigin,
         hostId: host.id,
         runtimeId: allocation.id,
         epoch: slot.epoch,

@@ -25,7 +25,7 @@ class HeldGit extends ServerGit {
   }
 }
 const hooks: CodeStoreHooks = {
-  imported: async () => {},
+  changed: async () => {},
   workspaces: async () => [],
   fenced: async () => {},
   advanced: async () => {},

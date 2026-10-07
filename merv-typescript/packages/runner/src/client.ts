@@ -324,6 +324,8 @@ export class RunnerClient {
       (reply) => reply?.control,
       async (error: unknown) => {
         if (!(error instanceof RunnerControlError && error.final)) throw error;
+        // TODO(2026-10-07): drop this whole-session fallback once prod Main serves /control
+        // (cycle 10's release); hosted runners then never meet a Main without the route.
         return (await this.request(path))?.session;
       },
     );

@@ -234,7 +234,13 @@ const capabilityOf = (owner: string) =>
  * modules: the portable id and Git schemas a browser-safe protocol module is built from, and the
  * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
-const contractsRuntimeExports = new Set(['private-directory', 'schemas', 'text', 'workspace']);
+const contractsRuntimeExports = new Set([
+  'origins',
+  'private-directory',
+  'schemas',
+  'text',
+  'workspace',
+]);
 const sharedContract = (specifier: string) =>
   specifier === '@merv/contracts' ||
   (specifier.startsWith('@merv/contracts/') &&
@@ -278,7 +284,6 @@ const codeUtilityExports = new Set([
   'github-client',
   'input',
   'pending-merge',
-  'request-journal',
   'service',
   'store/mirror',
   'store/operations',
@@ -624,7 +629,7 @@ function assertCodeUtility(source: ts.SourceFile): void {
       assert.ok(
         !/^(?:Workflows?|Reviews?|Sessions|Sandboxes)(?:$|[A-Z])/.test(node.text) ||
           (node.text === 'WorkflowWorkspacePolicy' &&
-            /[/\\]driver[/\\](?:index|local)\.ts$/.test(source.fileName)),
+            /[/\\]driver[/\\](?:index|local|checkout)\.ts$/.test(source.fileName)),
         `${source.fileName}: research service or policy type ${node.text} belongs in Code Work`,
       );
     if (

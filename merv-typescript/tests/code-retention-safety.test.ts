@@ -5,7 +5,7 @@ import { CodeService } from '@merv/code/service';
 import { CodeMirrorService, enqueueMirror } from '@merv/code/store/mirror';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
-import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
+import { codeStoreFixture, gitSource, maintainStore } from './fixtures/code-store.js';
 import { codeConfig } from './fixtures/code-binding.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -90,7 +90,7 @@ test('retention freezes its ref in the immutable intent and rejects tampered rec
     ),
     { code: 'code_retention_conflict' },
   );
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   const operation = await f.state.read((sql) =>
     sql.get<{ status: string; progress_json: string }>(
       "SELECT status,progress_json FROM code_operations WHERE kind='retain-ref'",

@@ -1,4 +1,4 @@
-import { RequestJournal } from './request-journal.js';
+import { OperationJournal } from './request-journal.js';
 import {
   canonical,
   check,
@@ -346,7 +346,7 @@ export class CodeWriterService {
     );
     const principal = `actor:${caller.actorId}`;
     const { requestId, ...body } = input;
-    const journal = new RequestJournal(tx, caller.projectId, principal, requestId, digest(body));
+    const journal = new OperationJournal(tx, caller.projectId, principal, requestId, digest(body));
     const previous = await journal.previous();
     if (previous) return JSON.parse(previous.result_json) as CodeWriterStatus;
     const row = await this.row(tx, caller.projectId, input.unitId);

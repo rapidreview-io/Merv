@@ -64,7 +64,7 @@ test('managed Code transfers are fenced to one session even for the same source 
       scope,
       { root: join(directory, 'code'), reservedFreeBytes: 1, settleMs: 60_000 },
       {
-        imported: async () => {},
+        changed: async () => {},
         workspaces: async () => [],
         fenced: async () => {},
         advanced: async () => {},

@@ -36,7 +36,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
       scope,
       { root, reservedFreeBytes: 1 },
       {
-        imported: async () => {},
+        changed: async () => {},
         workspaces: async () => [],
         fenced: async () => {},
         advanced: async () => {},

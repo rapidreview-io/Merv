@@ -49,7 +49,7 @@ import {
   restoreConversation,
   type ConversationFacts,
 } from './conversation.js';
-import { harnessOf, launcherOf, type HarnessName } from './harness/index.js';
+import { harnessOf, launcherOf } from './harness/index.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
@@ -1172,10 +1172,10 @@ export class MachineRunner implements Runner {
     const ended = settled.flatMap((id) => this.ledger.get(id) ?? []);
     for (const record of [...this.ledger.open(), ...ended]) {
       const profile = record.metadata.profile as RunnerProfile | undefined;
+      const harness = profile && harnessOf(profile);
       if (
         this.streams.has(record.id) ||
-        !profile ||
-        !harnessOf(profile) ||
+        !harness ||
         record.status === 'reserved' ||
         record.status === 'starting'
       )
@@ -1184,7 +1184,7 @@ export class MachineRunner implements Runner {
         record.id,
         new AgentStream(
           record.runDirectory,
-          profile.harness as HarnessName,
+          harness,
           [this.sourceBearer],
           (batch) => this.client.stream(record.sessionId, this.ledger.runnerId, record.id, batch),
           this.clock,

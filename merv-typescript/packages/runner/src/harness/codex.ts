@@ -35,6 +35,7 @@ const home = (profile: RunnerProfile, runDirectory: string) =>
  * `sessions/YYYY/MM/DD/rollout-…-<id>.jsonl` there.
  */
 export const codex: Harness = {
+  name: 'codex',
   lines: codexEvents,
   usage: (output, model) => spent(output, 'turn.completed', model),
   conversationId: (output) =>

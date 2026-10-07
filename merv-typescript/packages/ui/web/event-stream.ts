@@ -127,7 +127,9 @@ export type EventStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'r
  * One server-sent event stream of this app, read while `url` is given and the tab is shown,
  * each frame handed to `onEvent`. A hidden tab closes it and showing the tab opens it again. A
  * stream the server rotates is opened again at once; a dropped one waits, doubling with each
- * failure up to half a minute; one the server ends (`end`) or refuses is left closed. `after`
+ * failure up to half a minute; one the server is too busy to open (429) waits the same way from
+ * five seconds, still connecting, with nothing to say; one the server ends (`end`) or refuses is
+ * left closed. `after`
  * names the last event the reader holds, so a reconnect asks only for what follows it
  * (`?after=`).
  */
@@ -142,8 +144,11 @@ export function useEventStream(
   latest.current = { onEvent, after };
   useEffect(() => {
     if (!visible || !url) return;
+    // A new stream (another url, or the tab shown again) owes nothing to the last one's state.
+    setState('connecting');
     let stopped = false;
     let failures = 0;
+    let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     const connect = async () => {
@@ -165,15 +170,17 @@ export function useEventStream(
         if (stopped) return;
         if (ended) return setState('ended');
         if (rotated && Date.now() - since > 5000) return void connect();
+        busy = false;
       } catch (cause) {
         if (stopped) return;
         if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status))
           return setState('refused');
+        busy = cause instanceof StreamError && cause.status === 429;
       }
-      setState('retrying');
+      if (!busy) setState('retrying');
       timer = setTimeout(
         () => void (stopped || connect()),
-        Math.min(30_000, 1000 * 2 ** failures++),
+        Math.min(30_000, (busy ? 5000 : 1000) * 2 ** failures++),
       );
     };
     void connect();

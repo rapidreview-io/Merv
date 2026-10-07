@@ -57,7 +57,7 @@ async function fixture(t: TestContext, human = false) {
     return gitRun(...args);
   });
   const bases = new CodeBaseService(f.state, repositories, {
-    changed: (tx, projectId) => units.imported(tx, projectId),
+    changed: (tx, projectId) => units.changed(tx, projectId),
     sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
     serviceWork: f.sessions.serviceWork,
     resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
@@ -651,7 +651,7 @@ test('accepted resolution verification runs outside transactions and recovers af
   );
   await f.bases.close();
   const restarted = new CodeBaseService(f.state, f.repositories, {
-    changed: (tx, projectId) => f.units.imported(tx, projectId),
+    changed: (tx, projectId) => f.units.changed(tx, projectId),
     sponsors: (tx, projectId, members) => f.units.baseSponsors(tx, projectId, members),
     serviceWork: f.sessions.serviceWork,
     resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),

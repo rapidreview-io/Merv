@@ -19,7 +19,7 @@ import test, { type TestContext } from 'node:test';
 import type { CodeWorkspaceManifest } from '@merv/code/store/protocol';
 import type { CodeExport } from '@merv/code/store/operations';
 import { diskBytes } from '@merv/code/store/repository';
-import { git } from './fixtures/code-store.js';
+import { git, maintainStore } from './fixtures/code-store.js';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 
 type Fixture = Awaited<ReturnType<typeof writerFixture>>;
@@ -180,7 +180,7 @@ test('a quarantined capture is never part of what a successor is given, and an e
   const old = new Date(Date.now() - 3600_000);
   const { utimesSync } = await import('node:fs');
   utimesSync(join(f.paths.exports, `${found.exportId}.bundle`), old, old);
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/exports/')));
   await assert.rejects(
     f.code.v2!.readPart!(f.admin, found.exportId, { ...control('ses_2'), offset: 0, length: 10 }),
@@ -216,7 +216,7 @@ test('the sweep never takes a bundle that was cut while it was deciding', async 
   });
   syncBuiltinESMExports();
   t.after(() => syncBuiltinESMExports());
-  const sweeping = f.code.maintainStore();
+  const sweeping = maintainStore(f.code);
   await reached;
   const asked = download(f, 'ses_1', [f.root]);
   await Promise.race([asked, new Promise((tick) => setTimeout(tick, 500))]);
@@ -250,7 +250,7 @@ test('an export a machine is still reading keeps its place, however long the tra
   const old = new Date(Date.now() - 3600_000);
   utimesSync(file, old, old);
   const second = await part(first.length);
-  await f.code.maintainStore();
+  await maintainStore(f.code);
   assert.ok(existsSync(file), 'the bundle of a transfer that is moving is not swept away');
   const parts = [first, second];
   for (let offset = first.length + second.length; offset < found.bytes; offset += size)

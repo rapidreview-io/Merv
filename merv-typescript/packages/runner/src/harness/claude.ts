@@ -28,6 +28,7 @@ const cache = ['cache_creation_input_tokens', 'cache_read_input_tokens'];
 /** The project directory Claude Code keeps a launch's conversations in: its cwd, spelled out. */
 const project = (cwd: string) => realpathSync(cwd).replace(/[^A-Za-z0-9]/g, '-');
 export const claude: Harness = {
+  name: 'claude',
   lines: claudeEvents,
   // A run stopped before its `result` spent what each of its model calls printed.
   usage: (output, model) =>

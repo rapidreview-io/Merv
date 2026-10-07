@@ -78,8 +78,8 @@ export interface CodeImportRemote {
 }
 /** What a machine needs to read a download, or the word that it already has the head. */
 export interface CodeStoreHooks {
-  /** A project's repository gained history: what waited for it is derived again. */
-  imported(tx: Transaction, projectId: string): Promise<void>;
+  /** A project's repository gained history or a binding: what waited for it is derived again. */
+  changed(tx: Transaction, projectId: string): Promise<void>;
   /**
    * Sessions of the project that hold a workspace in Code's repository right now, read-only
    * ones included. Rebinding refuses while any is in flight. It is asked by project on the

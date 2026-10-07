@@ -50,7 +50,6 @@ export type RunningNode = z.input<typeof schema.runningNode> & {
 };
 export type RunningAction = z.input<typeof schema.runningAction>;
 export type RunningSummary = z.input<typeof schema.runningSummary> & { owner?: string };
-export type RunningPlace = z.input<typeof schema.runningPlace>;
 export type RunningFact = z.input<typeof schema.runningFact>;
 export type RunningRow = z.input<typeof schema.runningRow>;
 export type RunningLinkRow = z.input<typeof schema.runningLinkRow>;

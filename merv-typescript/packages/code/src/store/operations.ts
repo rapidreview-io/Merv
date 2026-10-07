@@ -225,7 +225,7 @@ export class CodeStore {
         await initializeManagedProjects(
           this.core.state,
           this.repositories,
-          this.core.hooks.imported,
+          this.core.hooks.changed,
         );
         await this.core.hooks.maintained?.();
         const rows = await this.core.state.read(

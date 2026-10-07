@@ -135,6 +135,8 @@ export function conversationCaller(
 export class PiCore {
   readonly streams = new PiStreams();
   readonly config: z.output<typeof piConfig>;
+  /** The API origin machines reach Main at, as origin() read it from `baseUrl`. */
+  readonly apiOrigin: string;
   readonly secret: string;
   readonly credentials: CredentialStore;
   /** Each person's Agent tokens today, which every model call of theirs is charged to. */
@@ -192,7 +194,11 @@ export class PiCore {
       'Pi needs a private signing secret and an API URL',
       503,
     );
-    origin(this.config.baseUrl, 'pi_configuration', 'Pi requires an HTTPS API origin');
+    this.apiOrigin = origin(
+      this.config.baseUrl,
+      'pi_configuration',
+      'Pi requires an HTTPS API origin',
+    );
   }
 
   ready(): void {

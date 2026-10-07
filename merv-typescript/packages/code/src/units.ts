@@ -1,4 +1,4 @@
-import { RequestJournal } from './request-journal.js';
+import { OperationJournal } from './request-journal.js';
 import {
   canonical,
   check,
@@ -311,7 +311,7 @@ export class CodeUnitStore {
       const principal = `actor:${caller.actorId}`;
       const { requestId, ...payload } = input;
       const inputHash = digest(payload);
-      const journal = new RequestJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous();
       if (previous) {
         // Every bind journalled before the lineage existed stored a result without `previous`,
