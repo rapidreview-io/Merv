@@ -1,11 +1,10 @@
 import { canonical, check, now, visible } from '@merv/contracts';
+import type { Sql, Transaction } from '@merv/contracts';
 import type {
-  Sql,
-  Transaction,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowReference,
-} from '@merv/contracts';
+} from './models.js';
 
 interface BlockerRow {
   instance_id: string;

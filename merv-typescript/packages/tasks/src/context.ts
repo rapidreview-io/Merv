@@ -18,8 +18,8 @@ import {
   type WorkflowAssignmentContent,
   type WorkflowCheckContext,
   type WorkflowExecutionReferences,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import { renderBrief } from './evidence.js';

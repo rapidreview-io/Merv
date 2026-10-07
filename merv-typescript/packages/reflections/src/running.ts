@@ -10,7 +10,6 @@ import {
   runningKey,
   type Artifact,
   type Caller,
-  type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
   type RunningKey,
@@ -23,9 +22,9 @@ import {
   type RunningUnitEntry,
   type RunningUnitKey,
   type Transaction,
-  type WorkflowSnapshot,
   type WorkRoute,
 } from '@merv/contracts';
+import type { ProcessGraph, WorkflowSnapshot } from '@merv/workflows/models';
 import type { ChangeSpec, Reflection } from './types.js';
 import type { ReflectionsContext } from './index.js';
 import { lensName } from './names.js';

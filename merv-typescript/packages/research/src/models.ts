@@ -1,4 +1,5 @@
-import type { Artifact, WorkflowSnapshot } from '@merv/contracts/types';
+import type { Artifact } from '@merv/contracts/types';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { PaperRevision } from '@merv/paper/models';
 import type { CodeUnitPublication } from '@merv/code-work/models';
 

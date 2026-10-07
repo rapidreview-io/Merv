@@ -1,11 +1,6 @@
 import { ENGINE_ACTIONS, identifier, valid } from './definition.js';
-import type {
-  Sql,
-  WorkflowDefinition,
-  WorkflowLimitStatus,
-  WorkflowLoopLimit,
-  WorkflowPolicy,
-} from '@merv/contracts';
+import type { Sql, WorkflowDefinition, WorkflowLoopLimit, WorkflowPolicy } from '@merv/contracts';
+import type { WorkflowLimitStatus } from './models.js';
 
 /**
  * A limit caps an edge that returns work to an earlier state. An edge that stays where it is

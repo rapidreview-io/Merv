@@ -1,9 +1,6 @@
 /** Portable session, runner and agent read models, shared by the server and the browser. */
-import type {
-  RunnerPlatform,
-  SessionWorkspace,
-  WorkflowDispatchCandidate,
-} from '@merv/contracts/types';
+import type { RunnerPlatform, SessionWorkspace } from '@merv/contracts/types';
+import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type { RunningPhrase } from '@merv/contracts/running';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 

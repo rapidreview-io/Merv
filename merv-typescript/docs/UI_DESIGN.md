@@ -126,7 +126,7 @@ Naming follows the same rule of one word per thing. `The record` is the map's ob
 
 ## Remote rows (2026-09-17)
 
-A service outside this process can own rows in the sidebar. It publishes a manifest (packages/contracts/src/ui-manifest.ts) saying what each row holds; a plugin here (packages/sandboxes first) registers the rows and proxies their reads; the browser renders them through the `collection` and `record` view kinds (views/remote.tsx) in the same list and record anatomy as everything else. The manifest never says how a thing looks: columns are Merv's types, the liveness phrase and attention reason use the same modules as sessions, identifiers appear only as machine text in Details, and Act holds only controls bound to tools this process registers. The first row is Sandboxes under Agents.
+A service outside this process can own rows in the sidebar. It publishes a manifest (packages/ui/src/manifest.ts) saying what each row holds; a plugin here (packages/sandboxes first) registers the rows and proxies their reads; the browser renders them through the `collection` and `record` view kinds (views/remote.tsx) in the same list and record anatomy as everything else. The manifest never says how a thing looks: columns are Merv's types, the liveness phrase and attention reason use the same modules as sessions, identifiers appear only as machine text in Details, and Act holds only controls bound to tools this process registers. The first row is Sandboxes under Agents.
 
 ## Navigation remake, wave 5 (2026-09-17): the palette
 

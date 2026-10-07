@@ -1,5 +1,6 @@
 import type { Context } from 'cordis';
-import { check, type Json, type UiCollectionSpec, type UiRecordSpec } from '@merv/contracts';
+import { check, type Json } from '@merv/contracts';
+import type { UiCollectionSpec, UiRecordSpec } from '@merv/ui/manifest';
 import type {} from '@merv/ui/types';
 import { fleetActions, fleetRunning, live, present } from './running.js';
 

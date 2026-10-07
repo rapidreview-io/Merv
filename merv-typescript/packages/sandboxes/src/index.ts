@@ -6,9 +6,9 @@ import {
   type Caller,
   type Json,
   type Transaction,
-  type UiManifestRow,
   record,
 } from '@merv/contracts';
+import type { UiManifestRow } from '@merv/ui/manifest';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';

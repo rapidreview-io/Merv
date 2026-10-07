@@ -1,4 +1,5 @@
-import { check, uiManifestSchema, type UiManifestRow } from '@merv/contracts';
+import { check } from '@merv/contracts';
+import { uiManifestSchema, type UiManifestRow } from '@merv/ui/manifest';
 
 /**
  * The tools this package ships. A control the manifest binds to anything else is dropped
@@ -22,7 +23,7 @@ function withoutNulls(value: unknown): unknown {
 }
 
 /**
- * Validate a published manifest against the contract (`@merv/contracts/ui-manifest`) and drop
+ * Validate a published manifest against the contract (`@merv/ui/manifest`) and drop
  * every control bound to a tool this package does not ship: an act control the browser cannot
  * dispatch must never be rendered at all.
  */

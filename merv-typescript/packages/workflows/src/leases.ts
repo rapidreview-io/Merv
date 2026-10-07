@@ -3,18 +3,20 @@ import type {
   Caller,
   Role,
   Transaction,
-  WorkflowSnapshot,
   WorkflowAssignment,
   WorkflowBegin,
-  WorkflowWorkStart,
   WorkflowExecution,
   WorkflowExecutionReferences,
-  WorkflowExecutionTarget,
-  WorkflowDispatchCandidate,
   WorkflowLease,
   WorkflowLeaseOffer,
   WorkflowAssignmentRule,
 } from '@merv/contracts';
+import type {
+  WorkflowSnapshot,
+  WorkflowWorkStart,
+  WorkflowExecutionTarget,
+  WorkflowDispatchCandidate,
+} from './models.js';
 import { workflowJson } from './json.js';
 import {
   checkAssignment,

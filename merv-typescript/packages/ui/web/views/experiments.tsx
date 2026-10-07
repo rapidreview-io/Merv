@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import { EXPERIMENT_ROLES, roleRank } from '@merv/experiments/rules';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
 import { recordRoutes } from '../list-filters';

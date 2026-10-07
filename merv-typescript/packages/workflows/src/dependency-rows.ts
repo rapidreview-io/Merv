@@ -1,6 +1,7 @@
 /** Pure rules: how every owner of work draws a record's dependency relations on Running. */
 import { workLink } from '@merv/contracts';
-import type { RunningLinkRow, WorkflowDependency, WorkRoute } from '@merv/contracts';
+import type { RunningLinkRow, WorkRoute } from '@merv/contracts';
+import type { WorkflowDependency } from './models.js';
 
 /**
  * A record's open relations as rows: what it still waits on (unsettled, or failed and

@@ -9,8 +9,8 @@ import {
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowPolicy,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';

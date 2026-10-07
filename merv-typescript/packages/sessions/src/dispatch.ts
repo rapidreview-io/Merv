@@ -15,8 +15,8 @@ import {
   type State,
   type Transaction,
   type Workflows,
-  type WorkflowDispatchCandidate,
 } from '@merv/contracts';
+import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   AutomaticLease,
   DispatchDecision,

@@ -1,7 +1,7 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { ResearchAnswer, ResearchRecord } from '@merv/research/models';
-import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { WorkflowDecision } from '@merv/workflows/models';
 import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';

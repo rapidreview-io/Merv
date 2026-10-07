@@ -3,7 +3,7 @@ import type {
   WorkflowDependency,
   WorkflowSnapshot,
   WorkflowWorkStart,
-} from '@merv/contracts/types';
+} from '@merv/workflows/models';
 
 /** A task as Tasks keeps it and every reader reads it: portable, with no server code. */
 export interface Task {

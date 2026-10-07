@@ -1,12 +1,12 @@
 import type {
   Caller,
-  ProcessGraph,
   ReviewApplication,
   RunningNode,
   RunningPanelPart,
   Transaction,
   WorkRoute,
 } from '@merv/contracts';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type {} from 'cordis';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import type { PaperChanges } from '@merv/paper/types';

@@ -1,4 +1,5 @@
-import type { Role } from './workflow-models.js';
+/** A member's role in a project. */
+export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
 
 /** Scope's people, projects and keys as the browser reads them; kept apart from the index so
  * browser-side models can name them. */

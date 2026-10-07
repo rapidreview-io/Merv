@@ -7,10 +7,9 @@ import type {
   State,
   Transaction,
   WorkflowDefinition,
-  WorkflowSnapshot,
   WorkflowPolicy,
-  WorkflowHistoryEntry,
 } from '@merv/contracts';
+import type { WorkflowSnapshot, WorkflowHistoryEntry } from './models.js';
 import { DATA_LIMITS, workflowJson } from './json.js';
 import { PinnedContracts } from './pinned.js';
 

@@ -17,12 +17,14 @@ import {
   type State,
   type StoredEvent,
   type Transaction,
-  type WorkflowProvidedBlockerInput,
-  type WorkflowRelation,
-  type WorkflowRelations,
   type Workflows,
   oidPattern,
 } from '@merv/contracts';
+import type {
+  WorkflowProvidedBlockerInput,
+  WorkflowRelation,
+  WorkflowRelations,
+} from '@merv/workflows/models';
 import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';

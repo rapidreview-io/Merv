@@ -1,10 +1,5 @@
-import {
-  mapAsync,
-  type Caller,
-  type Transaction,
-  type WorkflowProvidedBlocker,
-  type WorkflowDispatchCandidate,
-} from '@merv/contracts';
+import { mapAsync, type Caller, type Transaction } from '@merv/contracts';
+import type { WorkflowProvidedBlocker, WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   DispatchState,
   RunnerPresence,

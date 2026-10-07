@@ -6,7 +6,7 @@ import type {
   RunningUnitEntry,
   RunningUnitKey,
 } from '@merv/contracts/running';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
 import { Ago, StatusPill, cx, words } from '../components';
 import { Icon } from '../icons';

@@ -6,12 +6,8 @@ import test, { type TestContext } from 'node:test';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import {
-  createService,
-  type Caller,
-  type WorkflowSnapshot,
-  type Transaction,
-} from '@merv/contracts';
+import { createService, type Caller, type Transaction } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { sourceCaller } from '@merv/scope/rules';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';

@@ -4,8 +4,8 @@ import {
   type Caller,
   type WorkflowExecutionReferences,
   type WorkflowPolicy,
-  type WorkflowWorkspacePolicy,
 } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';

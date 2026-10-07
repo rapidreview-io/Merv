@@ -11,9 +11,8 @@ import {
   type RunningBoard,
   type RunningNode,
   type RunningPanel,
-  type WorkflowDependency,
-  type WorkflowHistoryEntry,
 } from '@merv/contracts';
+import type { WorkflowDependency, WorkflowHistoryEntry } from '@merv/workflows/models';
 import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
 import {
   enteredAgain,

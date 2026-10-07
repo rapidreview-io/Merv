@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import { Link } from 'react-router-dom';
 import { Ago, Evidence, StatusPill, cx, useArtifacts, words } from './components';
 import { ArrowRightIcon, Icon } from './icons';

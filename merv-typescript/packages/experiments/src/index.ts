@@ -16,18 +16,16 @@ import {
   type Caller,
   type ContextBuilder,
   type ContextRegistration,
-  type ProcessGraph,
   type RunningNode,
   type RunningPanelPart,
   type Reviews,
   type Scope,
   type State,
   type Transaction,
-  type WorkflowDependency,
-  type WorkflowSnapshot,
   type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
+import type { ProcessGraph, WorkflowDependency, WorkflowSnapshot } from '@merv/workflows/models';
 import type { Code } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import {

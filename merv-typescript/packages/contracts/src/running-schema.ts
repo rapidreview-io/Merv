@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Json } from './data.js';
 import { runningKeyPattern, sameOriginPath } from './running.js';
 import { visible } from './text.js';
-import type { ProcessGraph } from './workflow-guidance.js';
+import type { ProcessGraph } from '@merv/workflows/models';
 
 /**
  * The Running vocabulary as the board reads it (see running.ts): each part an owner sends is

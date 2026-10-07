@@ -14,10 +14,10 @@ import {
   check,
   createService,
   type Caller,
-  type WorkflowDecision,
   type WorkflowDefinition,
   type WorkflowPolicy,
 } from '@merv/contracts';
+import type { WorkflowDecision } from '@merv/workflows/models';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';

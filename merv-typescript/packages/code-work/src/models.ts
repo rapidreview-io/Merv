@@ -1,8 +1,5 @@
 /** Portable Code Work read models, shared by the server, research plugins and the browser. */
-import type {
-  WorkflowProvidedBlockerInput,
-  WorkflowProvidedBlocker,
-} from '@merv/contracts/workflow-guidance';
+import type { WorkflowProvidedBlockerInput, WorkflowProvidedBlocker } from '@merv/workflows/models';
 import type { CodeProjectBinding } from '@merv/contracts/code';
 import type { GitHubPullRequest } from '@merv/contracts/github-models';
 import type { z } from 'zod';

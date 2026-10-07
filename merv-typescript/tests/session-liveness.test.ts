@@ -5,9 +5,9 @@ import {
   migrationList,
   type Caller,
   type WorkflowPolicy,
-  type WorkflowWorkspacePolicy,
-  type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';

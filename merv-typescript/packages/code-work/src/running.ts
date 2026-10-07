@@ -24,10 +24,10 @@ import {
   type Sql,
   type State,
   type Transaction,
-  type WorkflowProvidedBlocker,
   type Workflows,
   isDirectHuman,
 } from '@merv/contracts';
+import type { WorkflowProvidedBlocker } from '@merv/workflows/models';
 import { personMove, type PersonMove } from './blockers.js';
 import { PUBLICATION_CODES } from './unit-store.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';

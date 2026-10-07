@@ -8,13 +8,8 @@ import { CodeService } from '@merv/code/service';
 import { CodeStore } from '@merv/code/store/operations';
 import { git, gitSource, openRepositories } from './fixtures/code-store.js';
 import { boundProject, codeConfig } from './fixtures/code-binding.js';
-import {
-  createService,
-  MervError,
-  type Caller,
-  type WorkflowPolicy,
-  type WorkflowWorkspacePolicy,
-} from '@merv/contracts';
+import { createService, MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';

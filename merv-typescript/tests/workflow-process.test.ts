@@ -4,14 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './fixtures/app.js';
-import {
-  check,
-  type Caller,
-  type ProcessGraph,
-  type WorkflowDecision,
-  type WorkflowDefinition,
-  type WorkflowPolicy,
-} from '@merv/contracts';
+import { check, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
+import type { ProcessGraph, WorkflowDecision } from '@merv/workflows/models';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-process-'));

@@ -2,7 +2,6 @@ import {
   clip,
   runningKey,
   type Artifact,
-  type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
   type RunningNode,
@@ -12,10 +11,13 @@ import {
   type RunningSection,
   type RunningUnit,
   type RunningUnitKey,
-  type WorkflowDependency,
-  type WorkflowHistoryEntry,
   type WorkRoute,
 } from '@merv/contracts';
+import type {
+  ProcessGraph,
+  WorkflowDependency,
+  WorkflowHistoryEntry,
+} from '@merv/workflows/models';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
 import type { Experiment, ExperimentSubmission } from './models.js';

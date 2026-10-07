@@ -19,8 +19,8 @@ import {
   type State,
   type Transaction,
   type Workflows,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';

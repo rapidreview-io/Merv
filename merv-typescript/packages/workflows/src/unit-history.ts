@@ -1,10 +1,10 @@
 import type {
   Artifact,
-  ProcessGraph,
   ReviewRequest,
   RunningUnitArtifact,
   RunningUnitEntry,
 } from '@merv/contracts';
+import type { ProcessGraph } from './models.js';
 
 /**
  * A unit's history as its owner tells it on the Work page: every recorded crossing of the

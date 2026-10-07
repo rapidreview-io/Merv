@@ -1,12 +1,5 @@
-import {
-  clip,
-  mapAsync,
-  now,
-  type Artifact,
-  type Caller,
-  type Transaction,
-  type WorkflowDependency,
-} from '@merv/contracts';
+import { clip, mapAsync, now, type Artifact, type Caller, type Transaction } from '@merv/contracts';
+import type { WorkflowDependency } from '@merv/workflows/models';
 import type { ResearchContext } from './index.js';
 import type { ResearchDigest, ResearchRecord } from './types.js';
 

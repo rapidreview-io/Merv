@@ -1,13 +1,12 @@
+import type { WorkflowActionRule, WorkflowDefinition } from '@merv/contracts';
 import type {
   ProcessEdge,
   ProcessGraph,
   ProcessNode,
-  WorkflowActionRule,
   WorkflowDecision,
-  WorkflowDefinition,
   WorkflowDependency,
   WorkflowHistoryEntry,
-} from '@merv/contracts';
+} from './models.js';
 
 /**
  * The process graph: deployed program code plus the record, derived on read and nothing

@@ -11,7 +11,7 @@ import { UnitCode } from './code-section';
 import { useActorNames } from './people';
 import { CriterionRows, type Review } from './reviews';
 import type { ViewProps } from './index';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { Task } from '@merv/tasks/models';
 import type { CodeUnit } from '@merv/code-work/models';
 

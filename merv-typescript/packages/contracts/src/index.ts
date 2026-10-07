@@ -29,8 +29,6 @@ export {
 } from './outbound.js';
 export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
-export type { UiManifestRow, UiCollectionSpec, UiRecordSpec } from './ui-manifest.js';
-export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export type * from './running.js';
 export {
@@ -44,6 +42,7 @@ export {
 export * as runningSchema from './running-schema.js';
 export { MAX_TRANSCRIPT_BYTES, sessionSecretPattern } from './session-inputs.js';
 export { CODE_DRIVER, WorkspaceDeferred } from './workspace-driver.js';
+import type { WorkflowWorkspacePolicy } from './sessions-models.js';
 export type {
   WorkspaceDriver,
   WorkspaceDriverFactory,
@@ -79,41 +78,14 @@ export type { Artifact, ArtifactContent } from './artifact-models.js';
 import type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 import { clip, visible } from './text.js';
+import type { Role } from './scope-models.js';
+export type { Role } from './scope-models.js';
 import type {
-  Role,
   WorkflowDispatchCandidate,
   WorkflowExecutionTarget,
   WorkflowHistoryEntry,
   WorkflowSnapshot,
   WorkflowTransitionCount,
-  WorkflowWorkspacePolicy,
-} from './workflow-models.js';
-export type {
-  Role,
-  WorkflowDispatchCandidate,
-  WorkflowExecutionTarget,
-  WorkflowHistoryEntry,
-  WorkflowSnapshot,
-  WorkflowTransitionCount,
-  WorkflowWorkspacePolicy,
-} from './workflow-models.js';
-export type {
-  WorkflowReference,
-  WorkflowProvidedBlocker,
-  WorkflowProvidedBlockerInput,
-  WorkflowRelation,
-  WorkflowRelations,
-  WorkflowActionStatus,
-  WorkflowDecision,
-  WorkflowLimitStatus,
-  WorkflowOverview,
-  WorkflowDependency,
-  WorkflowWorkStart,
-  ProcessNode,
-  ProcessEdge,
-  ProcessGraph,
-} from './workflow-guidance.js';
-import type {
   WorkflowReference,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
@@ -124,7 +96,7 @@ import type {
   WorkflowDependency,
   WorkflowWorkStart,
   ProcessGraph,
-} from './workflow-guidance.js';
+} from '@merv/workflows/models';
 export class MervError extends Error {
   /** Set by the refusing component when the refusal only means "not yet": nothing is wrong
    *  with what was asked, so whoever retries it does not count it as a failure. */

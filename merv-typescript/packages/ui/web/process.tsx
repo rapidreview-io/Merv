@@ -1,4 +1,4 @@
-import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph, WorkflowDependency } from '@merv/workflows/models';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { KindLabel, StatusPill, cx, toneOf, useNow, words } from './components';

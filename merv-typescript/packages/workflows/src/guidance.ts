@@ -4,6 +4,8 @@ import type {
   Transaction,
   WorkflowDefinition,
   WorkflowEvaluationInput,
+} from '@merv/contracts';
+import type {
   WorkflowDecision,
   WorkflowOverview,
   WorkflowWorkStart,
@@ -11,7 +13,7 @@ import type {
   WorkflowLimitStatus,
   WorkflowProvidedBlocker,
   ProcessGraph,
-} from '@merv/contracts';
+} from './models.js';
 import { processGraph } from './process.js';
 import { readBlockers } from './blockers.js';
 import { decision, prepare, readContext } from './evaluation.js';

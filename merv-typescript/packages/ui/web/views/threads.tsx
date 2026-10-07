@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { runningKey } from '@merv/contracts/running';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadConversation, ThreadView, VisitView } from '@merv/sessions/models';
 import { useTool } from '../api';
 import { Live, LoadState, Ruled, Stamp, col, cx, stamp, useNow, words } from '../components';

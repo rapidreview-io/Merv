@@ -1,4 +1,64 @@
-import type { Data } from './data.js';
+/**
+ * Workflows' wire types, shared by the server and the browser: a workflow record and its history,
+ * a step's lease target and workspace intent, and the guidance a work item carries (its decision,
+ * dependencies, limits, provided blockers and process graph).
+ */
+import type { Data } from '@merv/contracts/data';
+import type { Role } from '@merv/contracts/scope-models';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts/sessions-models';
+/** Portable workflow record, shared by domain services and browser read models. */
+export interface WorkflowSnapshot {
+  id: string;
+  projectId: string;
+  workflow: string;
+  version: number;
+  state: string;
+  revision: number;
+  data: Data;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One recorded transition: the durable account of which edge was taken, by whom. */
+export interface WorkflowHistoryEntry {
+  instanceId: string;
+  revision: number;
+  action: string;
+  actorId: string;
+  requestId: string;
+  fromState: string | null;
+  toState: string;
+  data: Data;
+  createdAt: string;
+}
+
+/** A move as history records it, and how many times the instance made it. */
+export type WorkflowTransitionCount = Pick<
+  WorkflowHistoryEntry,
+  'action' | 'fromState' | 'toState'
+> & {
+  count: number;
+};
+
+export interface WorkflowExecutionTarget {
+  instanceId: string;
+  expectedRevision: number;
+}
+/** Source-authorized scheduling hint; selecting it still requires an atomic offerLease. */
+export interface WorkflowDispatchCandidate extends WorkflowExecutionTarget {
+  projectId: string;
+  workflow: string;
+  version: number;
+  state: string;
+  role: Role;
+  readOnly: boolean;
+  label: string;
+  policyHash: string;
+  registrationId: string;
+  workspace: WorkflowWorkspacePolicy;
+  /** When the instance last changed revision: how long this step has been waiting. */
+  updatedAt: string;
+}
 
 export interface WorkflowReference {
   kind: string;
