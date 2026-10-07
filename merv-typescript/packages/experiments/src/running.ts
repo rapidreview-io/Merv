@@ -298,6 +298,7 @@ export function experimentUnit(
   ];
   // What the system generated (an exhibit) is nobody's own.
   const artifacts = unitFileList(graph, files, {
+    generated: evidence.filter((item) => item.systemGenerated).map((item) => item.artifactId),
     producer: [
       ...evidence.filter((item) => !item.systemGenerated).map((item) => item.artifactId),
       ...[...evidence, ...experiment.submissions].flatMap((item) => item.figureIds),
@@ -305,7 +306,6 @@ export function experimentUnit(
     reviewer: reviews.flatMap((review) =>
       review.findings.flatMap((finding) => finding.evidenceIds),
     ),
-    other: evidence.filter((item) => item.systemGenerated).map((item) => item.artifactId),
   });
   return {
     key: key ?? { label: 'Question', text: experiment.intent },

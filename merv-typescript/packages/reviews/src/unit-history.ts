@@ -207,14 +207,16 @@ export async function unitFiles(
 }
 
 /**
- * The unit's Artifacts tab from its files (`unitArtifacts`): what its producer handed in or
- * made, then what its reviewers cited, then any other file its record names, such as its brief.
- * A file named twice is listed under the first of these.
+ * The unit's Artifacts tab from its files (`unitArtifacts`): what the system generated, which
+ * is nobody's own even when a session made it or a reviewer cited it, then what its producer
+ * handed in or made, then what its reviewers cited, then any other file its record names, such
+ * as its brief. A file named twice is listed under the first of these.
  */
 export function unitFileList(
   graph: ProcessGraph,
   files: UnitFiles,
   named: {
+    generated?: readonly string[];
     producer: readonly string[];
     reviewer: readonly string[];
     other?: readonly string[];
@@ -228,6 +230,7 @@ export function unitFileList(
       : [];
   };
   return unitArtifacts(graph, [
+    ...(named.generated ?? []).flatMap(file()),
     ...named.producer.flatMap(file('producer')),
     ...(files.made ?? []).map((artifact): UnitFile => ({ artifact, role: 'producer' })),
     ...named.reviewer.flatMap(file('reviewer')),
