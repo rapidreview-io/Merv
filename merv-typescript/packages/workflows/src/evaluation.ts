@@ -396,16 +396,25 @@ export async function decision(
 export const LIMIT_ASK =
   'Every round its limit allows is used: allow another, or take the next step by hand or end it';
 
+/** What a project admin is asked where the work waits in a state only they move it on from. */
+export const RESUME_ASK = 'Suspended: a project admin resumes it, or ends what waits on it';
+
+/** Whether the work waits in a state whose rule's tool is workflow.extend_limit. */
+export const resumable = (decision: Pick<WorkflowDecision, 'actions'>) =>
+  decision.actions.some((action) => action.tool === 'workflow.extend_limit');
+
 /**
- * Whether the record may wait on a project admin: at a used-up limit, or by a published word
- * that an admin answers (any but the reader's own as the record's owner, and nobody's).
+ * Whether the record may wait on a project admin: at a used-up limit, in a state only an admin's
+ * allowance moves it on from, or by a published word that an admin answers (any but the
+ * reader's own as the record's owner, and nobody's).
  */
 const adminsMove = (
-  decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers'>,
+  decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers' | 'actions'>,
   owner: WorkflowOwner | undefined,
   actorId: string,
 ) =>
   decision.currentGate === 'loop_limit_reached' ||
+  resumable(decision) ||
   decision.providerBlockers.some(
     (blocker) =>
       blocker.whose === 'admin' ||
@@ -429,7 +438,8 @@ const answers = (
  * Whether a record is the reading caller's own move. A blocker another plugin published that
  * names whose move it is comes first, on ended work too, and it names the blocker: the record's
  * owner's (which a project admin makes too), a project admin's, an operator's (an admin signed
- * in as a person), or nobody's. An open record at a used-up limit is a project admin's. While a
+ * in as a person), or nobody's. An open record at a used-up limit, or suspended where only an
+ * admin's allowance resumes it, is a project admin's. While a
  * blocker names somebody else's move, or nobody's, the record is no move of the reader's own.
  * Otherwise it goes by its program's word on whose the record
  * is (`describe` → `owner`), and the sentence that asks it of them. Refused, it is theirs where
@@ -467,6 +477,8 @@ export function yoursOf(
   // is a project admin's move.
   if (reader.admin && !decision.terminal && decision.currentGate === 'loop_limit_reached')
     return { ask: LIMIT_ASK };
+  // Work suspended where only an admin's allowance resumes it is a project admin's move too.
+  if (reader.admin && !decision.terminal && resumable(decision)) return { ask: RESUME_ASK };
   if (decision.providerBlockers.some((blocker) => blocker.whose)) return undefined;
   if (!owner || owner.actorId !== actorId || decision.terminal) return undefined;
   const words = (action?: string) =>

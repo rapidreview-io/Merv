@@ -614,10 +614,13 @@ test('work waiting in a state whose rule extends a limit is marked with the admi
     after.items.map(({ instanceId, limit }) => [instanceId, limit.exhausted]),
     [[instance.id, false]],
   );
-  assert.deepEqual(limitMarks(after)[0].says, [
-    'Waits for another round of ',
-    { mono: 'review_returns' },
-  ]);
+  // With rounds to spare it is resumed, and no round more is offered.
+  const [resume] = limitMarks(after);
+  assert.deepEqual(resume.says, ['Suspended · an admin resumes it']);
+  assert.deepEqual(
+    [resume.action?.label, resume.action?.input],
+    ['Resume', { instanceId: instance.id, limit: 'review_returns', additional: 0 }],
+  );
   // Work elsewhere in the graph is not marked.
   await f.move(instance.id, 'resume');
   assert.deepEqual((await f.workflows.escalated(f.owner)).items, []);

@@ -23,7 +23,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { WorkflowsService } from '@merv/workflows';
-import { LIMIT_ASK, yoursOf } from '@merv/workflows/evaluation';
+import { LIMIT_ASK, RESUME_ASK, yoursOf } from '@merv/workflows/evaluation';
 import { firstPersonMove, whoseOf } from '@merv/code-work/blockers';
 import { UiRegistry } from '@merv/ui';
 import { homeRead } from '@merv/ui/home';
@@ -155,6 +155,12 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
   assert.equal(yoursOf(capped, owner, me), undefined);
   assert.deepEqual(yoursOf(capped, owner, 'actor_ada', admin), { ask: LIMIT_ASK });
   assert.equal(yoursOf({ ...capped, terminal: true }, owner, 'actor_ada', admin), undefined);
+  // Work suspended where only an admin's allowance resumes it is a project admin's move too.
+  const suspended = gate({
+    currentGate: 'suspended',
+    actions: [{ ...action('resume', 'ready'), tool: 'workflow.extend_limit' }],
+  });
+  assert.deepEqual(yoursOf(suspended, owner, 'actor_ada', admin), { ask: RESUME_ASK });
 });
 
 test('work at a used-up limit, though out for review or only naming its reviews, and work a blocker holds for an admin, though out for review, are an admin’s line', () => {
@@ -224,7 +230,7 @@ test('work at a used-up limit, though out for review or only naming its reviews,
     since: at,
   };
   const home = {
-    tasks: [task('capped'), task('held'), task('launching')],
+    tasks: [task('capped'), task('held'), task('launching'), task('suspended')],
     // A wave at its cap: a record that otherwise only names the reviews of it.
     reflections: [
       {
@@ -262,6 +268,11 @@ test('work at a used-up limit, though out for review or only naming its reviews,
           providerBlockers: [held],
           yours: { ask: held.next, blocker: { provider: held.provider, key: held.key } },
         }),
+        gate('suspended', {
+          currentGate: 'suspended',
+          actions: [{ action: 'resume', tool: 'workflow.extend_limit', status: 'ready' }],
+          yours: { ask: RESUME_ASK },
+        }),
         gate('wave', {
           currentGate: 'loop_limit_reached',
           blockers: [
@@ -284,6 +295,7 @@ test('work at a used-up limit, though out for review or only naming its reviews,
       ['capped', LIMIT_ASK],
       ['held', held.next],
       ['launching', held.next],
+      ['suspended', RESUME_ASK],
       ['wave', LIMIT_ASK],
     ],
   );
@@ -302,6 +314,11 @@ test('work at a used-up limit, though out for review or only naming its reviews,
     to: '/work?key=work:capped',
   });
   assert.equal(lines.find((line: { id: string }) => line.id === 'capped')!.desk, undefined);
+  // A suspended task is resumed on its card too.
+  assert.deepEqual(desked.find((line: { id: string }) => line.id === 'suspended')!.desk, {
+    label: 'Resume',
+    to: '/work?key=work:suspended',
+  });
 });
 
 /** A chore: worked, then done, or ended. Its owner submits it; a review may send it back. */

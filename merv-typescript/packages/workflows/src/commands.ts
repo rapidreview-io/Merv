@@ -62,6 +62,7 @@ export class WorkflowCommands extends WorkflowLeases {
   /**
    * An engine command rather than a program's, so it reaches managed workflows too. It writes
    * a grant without changing an active assignment's revision, so a pinned review stays valid.
+   * With no round to add it writes none, and only resumes work suspended with rounds to spare.
    * An owner may resume suspended work through its hook in this same transaction; if the
    * owner refuses, the allowance and the resume both roll back.
    */
@@ -80,9 +81,9 @@ export class WorkflowCommands extends WorkflowLeases {
       'A limit name is required',
     );
     check(
-      Number.isSafeInteger(input.additional) && input.additional >= 1 && input.additional <= 100,
+      Number.isSafeInteger(input.additional) && input.additional >= 0 && input.additional <= 100,
       'invalid_input',
-      'additional must be an integer between 1 and 100',
+      'additional must be an integer between 0 and 100',
     );
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     check(
@@ -128,17 +129,29 @@ export class WorkflowCommands extends WorkflowLeases {
         'Terminal workflow instances cannot be allowed more rounds',
         409,
       );
-      await tx.run(
-        'INSERT INTO wf_limit_grants (project_id,request_id,instance_id,limit_name,additional,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
-        caller.projectId,
-        input.requestId,
-        snapshot.id,
-        limit.name,
-        input.additional,
-        reason,
-        caller.actorId,
-        now(),
-      );
+      // No round to add resumes work suspended with rounds to spare, where a rule says so.
+      if (!input.additional)
+        check(
+          !(await limitStatus(tx, limit, snapshot.id)).exhausted &&
+            !!registered.policy?.actions.some(
+              (rule) =>
+                rule.tool === 'workflow.extend_limit' && rule.states.includes(snapshot.state),
+            ),
+          'invalid_input',
+          'additional 0 only resumes work suspended before its rounds are used up',
+        );
+      else
+        await tx.run(
+          'INSERT INTO wf_limit_grants (project_id,request_id,instance_id,limit_name,additional,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
+          caller.projectId,
+          input.requestId,
+          snapshot.id,
+          limit.name,
+          input.additional,
+          reason,
+          caller.actorId,
+          now(),
+        );
       const status = await limitStatus(tx, limit, snapshot.id);
       // The grant has its own record, keyed by the instance like every receipt (the retirement
       // migrations match on its id). An owner's optional resume writes its own transition

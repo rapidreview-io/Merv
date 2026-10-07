@@ -155,10 +155,14 @@ export function needsYou(
         (each) => each.provider === yours.blocker!.provider && each.key === yours.blocker!.key,
       );
     const capped = decision.currentGate === 'loop_limit_reached';
+    // Suspended where only an admin's allowance moves it on, as a failed service task waits.
+    const suspended =
+      !capped && decision.actions.some((action) => action.tool === 'workflow.extend_limit');
     // A record that only names the reviews of it is never a move of its own, nor is one out
-    // for review, unless a blocker or its used-up rounds make it the reader's: then nothing
-    // more happens by itself.
-    if (!blocker && !capped && (needs.subjectOnly || underReview.has(item.id))) continue;
+    // for review, unless a blocker, its used-up rounds or its suspension make it the reader's:
+    // then nothing more happens by itself.
+    if (!blocker && !capped && !suspended && (needs.subjectOnly || underReview.has(item.id)))
+      continue;
     if (blocker) {
       // Whose move it is and whether this app can make it are two questions: a move no page
       // here carries out is still the reader's, with no control at all. Code words its own.
@@ -192,11 +196,11 @@ export function needsYou(
     // A move a used-up limit asks of an admin is not the producer's changes.
     const sentence = recordSentence(
       { ask: yours.ask, dependencies },
-      returned.has(item.id) && !capped,
+      returned.has(item.id) && !capped && !suspended,
     );
-    // Another round is allowed on the work's own card on the Work map, so a capped line goes
-    // there; the record's own page holds no such control.
-    const work = capped && pathOf(rows, 'work');
+    // Another round is allowed, and suspended work resumed, on the work's own card on the Work
+    // map, so such a line goes there; the record's own page holds no such control.
+    const work = (capped || suspended) && pathOf(rows, 'work');
     lines.push({
       id: item.id,
       kind,
@@ -205,7 +209,12 @@ export function needsYou(
       at: item.workflow.updatedAt,
       sentence,
       ...(work
-        ? { desk: { label: 'Allow another round', to: `${work}?key=work:${item.id}` } }
+        ? {
+            desk: {
+              label: capped ? 'Allow another round' : 'Resume',
+              to: `${work}?key=work:${item.id}`,
+            },
+          }
         : {}),
       // Where the server's reason is the headline, the fold does not say it again.
       says: said(decision).filter((text) => text !== sentence),

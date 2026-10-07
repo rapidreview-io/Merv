@@ -1,4 +1,5 @@
 import { requireDependencies } from '@merv/workflows/rules';
+import { limitMarks } from '@merv/workflows/ui';
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
@@ -1495,6 +1496,11 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     { code: 'forbidden' },
   );
 
+  // Every round is used, so resuming without another one is refused.
+  await assert.rejects(
+    f.workflows.extendLimit(f.admin, { ...grant, additional: 0, requestId: 'no-round' }),
+    { code: 'invalid_input' },
+  );
   await f.workflows.extendLimit(f.admin, grant);
   const resumed = await f.tasks.get(f.admin, taskId);
   assert.equal(resumed.workflow.state, 'in_progress');
@@ -1871,6 +1877,47 @@ test('project writers lease a service task as producers and mark_failed suspends
   );
   await f.code.reconcileAll();
   assert.equal((await f.record())!.resolutionTaskId, task.id);
+});
+
+test('a service task suspended with rounds to spare is an admin’s move that resumes it without a round', async (t) => {
+  const f = await fixture(t, true);
+  await f.waiter();
+  await f.bases.work(f.admin.projectId);
+  const task = await f.tasks.get(f.admin, (await f.record())!.resolutionTaskId!);
+  await f.tasks.markFailed(f.admin, {
+    taskId: task.id,
+    expectedRevision: 0,
+    requestId: 'failed',
+    reason: 'Cannot resolve this conflict.',
+  });
+  // Suspended with rounds to spare: an admin's move, which resumes it without another round.
+  const asked = await f.workflows.evaluate(f.admin, task.id);
+  assert.equal(asked.state, 'suspended');
+  assert.ok(asked.yours?.ask, 'the suspended task asks a project admin');
+  const escalated = await f.workflows.escalated(f.admin);
+  const [mark] = limitMarks(escalated);
+  assert.deepEqual(
+    [mark.key, mark.says, mark.action?.label, mark.action?.input],
+    [
+      `work:${task.id}`,
+      ['Suspended · an admin resumes it'],
+      'Resume',
+      { instanceId: task.id, limit: 'review_rounds', additional: 0 },
+    ],
+  );
+  const grants = async () =>
+    await f.state.read((sql) =>
+      sql.all('SELECT * FROM wf_limit_grants WHERE instance_id=?', task.id),
+    );
+  await f.workflows.extendLimit(f.admin, {
+    instanceId: task.id,
+    limit: 'review_rounds',
+    additional: 0,
+    reason: 'Try it again',
+    requestId: 'resume',
+  });
+  assert.equal((await f.tasks.get(f.admin, task.id)).workflow.state, 'in_progress');
+  assert.deepEqual(await grants(), [], 'no round is granted to resume it');
 });
 
 test('base operator controls retain history, deny workers, and explain each disposition to waiters', async (t) => {

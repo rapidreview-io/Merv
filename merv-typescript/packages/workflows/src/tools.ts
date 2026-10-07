@@ -96,13 +96,13 @@ export const workflowToolsPlugin = {
         name: 'workflow.extend_limit',
         conversation: 'propose',
         description:
-          'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop.',
+          'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop. additional 0 adds no round and only resumes work suspended before its rounds were used up.',
         readOnly: false,
         inputSchema: z
           .object({
             instanceId: z.string().min(1),
             limit: z.string().min(1),
-            additional: z.number().int().min(1).max(100),
+            additional: z.number().int().min(0).max(100),
             reason: z.string().trim().min(1).max(500),
             requestId: z.string().min(1).max(256),
           })
