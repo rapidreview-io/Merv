@@ -69,6 +69,8 @@ const TAIL_MAX_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
+/** The most work items one read of their threads names: a wave and every attempt's lenses. */
+const LIST_INSTANCES = 100;
 /** How many threads that want no attention a page of the project's threads holds. */
 const PAGE = 50;
 /** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
@@ -473,15 +475,20 @@ export class SessionThreads {
   }
 
   /** Every thread with a visit on the work item, oldest first, each with all of its visits. */
-  async list(caller: Caller, instanceId: string): Promise<ThreadView[]> {
-    check(text(instanceId), 'invalid_input', 'instanceId names a work item');
+  async list(caller: Caller, instanceIds: string | readonly string[]): Promise<ThreadView[]> {
+    const ids = [...new Set(typeof instanceIds === 'string' ? [instanceIds] : instanceIds)];
+    check(
+      ids.length >= 1 && ids.length <= LIST_INSTANCES && ids.every((id) => text(id)),
+      'invalid_input',
+      `instanceId names a work item, or up to ${LIST_INSTANCES} of them`,
+    );
     return await this.reading(caller, async (tx) => {
-      await this.host.readable(caller, instanceId, tx);
+      for (const id of ids) await this.host.readable(caller, id, tx);
       const threads = await tx.all<Row>(
-        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id=?) ORDER BY _merv_rowid',
+        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
         caller.projectId,
         caller.projectId,
-        instanceId,
+        JSON.stringify(ids),
       );
       return (await this.viewed(tx, threads)).map(
         ({ name: _name, workflow: _workflow, ...view }) => view,

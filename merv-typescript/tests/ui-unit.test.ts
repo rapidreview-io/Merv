@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mount, serve, settle, unmount } from './ui-render.js';
+import { mount, requests, serve, settle, unmount } from './ui-render.js';
 import { board } from './ui-running-fixtures.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -501,10 +501,11 @@ test('Agents also lists the threads of the records its owner names inside the un
   t.after(unmount);
   t.after(() => localStorage.clear());
   localStorage.clear();
-  // A wave's lens is a record of its own: its agents are read by its own id.
-  serve('/sessions/threads?instanceId=wf_lens', {
+  // A wave's lens is a record of its own: its agents are read by its own id, with the unit's.
+  serve('/sessions/threads?instanceId=wf_1&instanceId=wf_lens', {
     body: {
       threads: [
+        ...threads,
         {
           id: 'thr_lens',
           instanceId: 'wf_lens',
@@ -530,6 +531,9 @@ test('Agents also lists the threads of the records its owner names inside the un
     all('.agent-card .agent-card-word').map((name) => name.textContent),
     ['Producer', 'Reviewer', 'Evidence lens'],
   );
+  // One read for the unit and every record inside it, not one per record.
+  assert.ok(requests.includes('GET /sessions/threads?instanceId=wf_1&instanceId=wf_lens'));
+  assert.ok(!requests.includes('GET /sessions/threads?instanceId=wf_lens'));
 });
 
 test('an address naming a thread opens Agents on it, a thread of a record inside the unit too', async (t) => {
@@ -544,9 +548,10 @@ test('an address naming a thread opens Agents on it, a thread of a record inside
   // The address chose the tab for this visit only: the kind's remembered tab is unchanged.
   assert.equal(localStorage.getItem('merv:unit-tab:experiment'), null);
   await unmount();
-  serve('/sessions/threads?instanceId=wf_lens', {
+  serve('/sessions/threads?instanceId=wf_1&instanceId=wf_lens', {
     body: {
       threads: [
+        ...threads,
         {
           id: 'thr_lens',
           instanceId: 'wf_lens',
@@ -582,8 +587,9 @@ test('a thread a later record inside the unit resumed is listed once, under the 
     status: 'dormant',
     visits: [visit('ses_a1', at(3)), visit('ses_a2', at(4))],
   };
-  serve('/sessions/threads?instanceId=wf_lens_1', { body: { threads: [resumed] } });
-  serve('/sessions/threads?instanceId=wf_lens_2', { body: { threads: [resumed] } });
+  serve('/sessions/threads?instanceId=wf_1&instanceId=wf_lens_1&instanceId=wf_lens_2', {
+    body: { threads: [...threads, resumed] },
+  });
   await sidebar(
     panel({
       ...unitOf(),

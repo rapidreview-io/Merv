@@ -4,51 +4,14 @@
  * running an action's check.
  */
 import assert from 'node:assert/strict';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import type { Caller, State, Transaction } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
-
-/** How many statements `run` issues itself; background work the app does meanwhile is not counted. */
-function counter(state: State) {
-  const mine = new AsyncLocalStorage<{ statements: number }>();
-  const patched = new WeakSet<object>();
-  const patch = (tx: Transaction) => {
-    if (patched.has(tx)) return;
-    patched.add(tx);
-    for (const key of ['get', 'all', 'run'] as const) {
-      const original = tx[key] as (...args: unknown[]) => unknown;
-      Object.assign(tx, {
-        [key]: (...args: unknown[]) => {
-          const count = mine.getStore();
-          if (count) count.statements++;
-          return original.apply(tx, args);
-        },
-      });
-    }
-  };
-  const target = state as unknown as Record<string, (...args: unknown[]) => unknown>;
-  for (const name of ['transaction', 'read'] as const) {
-    const original = target[name]!.bind(state);
-    target[name] = (fn: unknown, ...rest: unknown[]) =>
-      original(
-        async (tx: Transaction) => {
-          patch(tx);
-          return await (fn as (tx: Transaction) => unknown)(tx);
-        },
-        ...rest,
-      );
-  }
-  return async (run: () => Promise<unknown>) => {
-    const count = { statements: 0 };
-    await mine.run(count, run);
-    return count.statements;
-  };
-}
+import { counter } from './fixtures/statements.js';
 
 test('Home reads its waves in the same statements however many there are', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflections-home-'));

@@ -62,6 +62,7 @@ export type ReflectionsContext = Pick<
   | 'contexts'
   | 'createLenses'
   | 'get'
+  | 'hydrated'
   | 'lens'
   | 'lensRow'
   | 'lensRows'
@@ -185,21 +186,34 @@ export class ReflectionService implements Reflections {
       ),
     );
   }
-  private async hydrateLens(
-    caller: Caller,
-    row: LensRow,
-    tx: Transaction,
-  ): Promise<ReflectionLens> {
-    return {
-      id: row.id,
-      reflectionId: row.reflection_id,
-      attempt: row.attempt,
-      perspective: row.perspective,
-      instructions: row.instructions,
-      producerId: row.producer_id,
-      artifact: row.artifact ? JSON.parse(row.artifact) : null,
-      workflow: await this.workflows.get(caller, row.id, tx),
-    };
+  /**
+   * These lenses, with every workflow read at once. A lens's worker, while its wave reflects,
+   * reads no other lens's report (`authored`).
+   */
+  async hydrated(caller: Caller, rows: LensRow[], tx: Transaction): Promise<ReflectionLens[]> {
+    const own = rows.length
+      ? (await this.authored(caller, tx, rows[0]!.reflection_id))?.own
+      : undefined;
+    const flows = await this.workflows.find(
+      caller,
+      rows.map((row) => row.id),
+      tx,
+    );
+    return rows.map((row) => {
+      const workflow = flows.get(row.id);
+      check(workflow, 'not_found', 'Workflow instance not found', 404);
+      const artifact = row.artifact ? (JSON.parse(row.artifact) as Artifact) : null;
+      return {
+        id: row.id,
+        reflectionId: row.reflection_id,
+        attempt: row.attempt,
+        perspective: row.perspective,
+        instructions: row.instructions,
+        producerId: row.producer_id,
+        artifact: !own || own.has(row.id) ? artifact : null,
+        workflow,
+      };
+    });
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Reflection> {
     caller = structuredClone(caller);
@@ -216,7 +230,6 @@ export class ReflectionService implements Reflections {
   async wave(caller: Caller, id: string, tx: Transaction, lenient = false): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
     const submission = submitted(row);
-    const own = (await this.authored(caller, tx, id))?.own;
     return {
       id,
       projectId: row.project_id,
@@ -224,9 +237,7 @@ export class ReflectionService implements Reflections {
       ownerId: row.owner_id,
       createdAt: row.created_at,
       attempt: row.attempt,
-      lenses: await mapAsync(await this.lensRows(row, tx), async (lens) =>
-        this.withheld(await this.hydrateLens(caller, lens, tx), own),
-      ),
+      lenses: await this.hydrated(caller, await this.lensRows(row, tx), tx),
       workflow: await this.workflows.get(caller, id, tx),
       review: row.review_id
         ? await this.reviews.get(caller, row.review_id, tx).catch((error: unknown) => {
@@ -281,9 +292,8 @@ export class ReflectionService implements Reflections {
   async lens(caller: Caller, id: string, transaction?: Transaction): Promise<ReflectionLens> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const row = await this.lensRow(caller, id, tx);
-      const own = (await this.authored(caller, tx, row.reflection_id))?.own;
-      return this.withheld(await this.hydrateLens(caller, row, tx), own);
+      const [lens] = await this.hydrated(caller, [await this.lensRow(caller, id, tx)], tx);
+      return lens!;
     });
   }
   /**
@@ -335,9 +345,6 @@ export class ReflectionService implements Reflections {
         })
       ).map((lease) => lease.id),
     };
-  }
-  private withheld(lens: ReflectionLens, own: ReadonlySet<string> | undefined): ReflectionLens {
-    return !own || own.has(lens.id) ? lens : { ...lens, artifact: null };
   }
   async command<T>(
     caller: Caller,

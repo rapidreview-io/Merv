@@ -28,6 +28,7 @@ import {
 import type { ProcessGraph, WorkflowSnapshot } from '@merv/workflows/models';
 import type { ChangeSpec, Reflection, ReflectionLens } from './types.js';
 import type { ReflectionsContext } from './index.js';
+import type { LensRow } from './program.js';
 import { lensName } from './names.js';
 
 /**
@@ -424,14 +425,15 @@ export async function runningPanel(
       if (!wave) return null;
       const facts = await runningFacts(ctx, caller, id, tx);
       // The lenses of earlier attempts, for the unit's history and Agents tab.
-      const earlier = await mapAsync(
-        await tx.all<{ id: string }>(
-          'SELECT id FROM reflection_lenses WHERE reflection_id=? AND project_id=? AND attempt<? ORDER BY attempt,_merv_rowid',
+      const earlier = await ctx.hydrated(
+        caller,
+        await tx.all<LensRow>(
+          'SELECT * FROM reflection_lenses WHERE reflection_id=? AND project_id=? AND attempt<? ORDER BY attempt,_merv_rowid',
           id,
           caller.projectId,
           facts.wave.attempt,
         ),
-        async (lens) => await ctx.lens(caller, lens.id, tx),
+        tx,
       );
       return { ...facts, earlier };
     });
