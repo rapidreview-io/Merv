@@ -523,11 +523,30 @@ export class SessionThreads {
       return await read(tx);
     });
   }
-  /** Each thread with all of its visits, live while one of them holds its lease. */
+  /**
+   * Each thread with all of its visits, live while one of them holds its lease, and whether it
+   * takes a message now: as `messaging` accepts one, while it is not retired and its work is
+   * open, or as the answer to a question it asked that is still open.
+   */
   private async viewed(tx: Transaction, threads: Row[]): Promise<ThreadView[]> {
-    const visits = await this.visits(
-      tx,
-      threads.map((thread) => thread.id),
+    const ids = threads.map((thread) => thread.id);
+    const visits = await this.visits(tx, ids);
+    const ended = threads.length
+      ? await this.host.ended(
+          threads[0]!.project_id,
+          [...new Set(threads.map((thread) => thread.instance_id))],
+          tx,
+        )
+      : new Set<string>();
+    const asking = new Set(
+      ids.length
+        ? (
+            await tx.all<{ thread_id: string }>(
+              `SELECT DISTINCT thread_id FROM session_questions WHERE answered_at IS NULL AND thread_id IN (${ids.map(() => '?').join(',')})`,
+              ...ids,
+            )
+          ).map((row) => row.thread_id)
+        : [],
     );
     return threads.map((thread) => {
       const own = visits.filter((visit) => visit.threadId === thread.id).map((visit) => visit.view);
@@ -542,6 +561,8 @@ export class SessionThreads {
             : own.some((visit) => live(visit))
               ? 'live'
               : 'dormant',
+        takesMessage:
+          asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
         visits: own,
       };
     });

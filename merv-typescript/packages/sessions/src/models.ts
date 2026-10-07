@@ -258,6 +258,11 @@ export interface ThreadView {
   state: string;
   role: string;
   status: 'live' | 'dormant' | 'retired';
+  /**
+   * Whether a message to it is taken now: it is live, or dormant on open work, or the message
+   * answers a question it asked that is still open.
+   */
+  takesMessage: boolean;
   /** Oldest first. */
   visits: VisitView[];
 }

@@ -275,6 +275,12 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.ok(acknowledged[0].acknowledgedAt);
   assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
   assert.equal(writes, 1);
+  // Each thread says whether it takes a message now: on open work it does.
+  const takes = async () =>
+    (await f.http(`/sessions/threads?instanceId=${f.instance.id}`, f.boot.token)).body.threads.map(
+      (thread: { takesMessage: boolean }) => thread.takesMessage,
+    );
+  assert.deepEqual(await takes(), [true]);
 
   await f.program.transition(f.source, {
     instanceId: f.instance.id,
@@ -282,6 +288,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
     action: 'finish',
     requestId: 'finish-after-message',
   });
+  assert.deepEqual(await takes(), [false]);
   await assert.rejects(
     f.app.ctx.tools.invoke('session.message', f.source, {
       sessionId: issued.session.id,

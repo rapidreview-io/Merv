@@ -372,8 +372,8 @@ function Calls({ thread, names }: { thread: ThreadView; names: Map<string, strin
 /**
  * What passed between the thread and the people over it, oldest first, and the box that sends
  * it a message, which its live or next visit reads. A question its agent asked stands over the
- * box, which answers it. Only someone who may write to the project is offered the box; a
- * retired thread takes a message only as an answer.
+ * box, which answers it. Only someone who may write to the project is offered the box, and only
+ * while the thread takes a message: live, dormant on open work, or answering its question.
  */
 export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   const actor = useActor();
@@ -392,7 +392,8 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   });
   const said = read.data;
   const open = said?.questions.filter((question) => !question.answeredAt).at(-1);
-  const can = !!actor && writes(actor) && (thread.status !== 'retired' || !!open);
+  // Sessions says whether the thread takes a message now; an open question it asked always does.
+  const can = !!actor && writes(actor) && (thread.takesMessage || !!open);
   const lines = said
     ? [
         ...said.questions

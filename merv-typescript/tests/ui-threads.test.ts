@@ -132,6 +132,7 @@ const threads = [
     state: 'running',
     role: 'producer',
     status: 'dormant',
+    takesMessage: true,
     visits: [
       visit('ses_r1'),
       failedLaunch('ses_r2'),
@@ -455,4 +456,23 @@ test('a reader sees what passed but no box, and an answered question is history'
   assert.equal(box.querySelector('textarea'), null);
   assert.equal(box.querySelector('.thread-question'), null);
   assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
+});
+
+test('a thread that can take no message now, its work finished and nothing asked, has no box', async (t) => {
+  t.after(unmount);
+  serve('/sessions/threads/thr_run/messages', { body: messages(true) });
+  const finished = threads.map((item) =>
+    item.id === 'thr_run' ? { ...item, takesMessage: false } : item,
+  );
+  await open('producer', finished);
+  await press(chip('running'));
+  const box = document.querySelector('dialog .thread-messages')!;
+  assert.match(box.textContent!, /Use the smaller model\./);
+  assert.equal(!!box.querySelector('textarea'), false);
+  await unmount();
+  // The same thread on open work takes one.
+  serve('/sessions/threads/thr_run/messages', { body: messages(true) });
+  await open('producer');
+  await press(chip('running'));
+  assert.equal(!!document.querySelector('dialog .thread-messages textarea'), true);
 });
