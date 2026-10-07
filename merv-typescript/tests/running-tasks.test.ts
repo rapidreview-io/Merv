@@ -91,7 +91,8 @@ async function fixture(t: TestContext) {
     });
   const current = async (task: { id: string }) => await app.ctx.tasks.get(operator, task.id);
   const work = currentWork(app.ctx, { directory, source: producer.caller });
-  const deliver = async (task: { id: string }) => {
+  /** A delivery of its report and, with `more`, that many further files. */
+  const deliver = async (task: { id: string }, more = 0) => {
     const held = await work.lease(await current(task));
     try {
       const evidence = await work.run(
@@ -103,6 +104,20 @@ async function fixture(t: TestContext) {
         },
         (caller, input) => app.ctx.artifacts.create(caller, input as never),
       );
+      const extra = [];
+      for (let index = 0; index < more; index++)
+        extra.push(
+          await work.run(
+            held,
+            'artifact.create',
+            {
+              title: `Table ${index + 1}`,
+              content: 'reference,resolved\nsmith2020,yes',
+              mediaType: 'text/csv',
+            },
+            (caller, input) => app.ctx.artifacts.create(caller, input as never),
+          ),
+        );
       const commandId = await work.commit(held);
       return await work.run(
         held,
@@ -110,7 +125,7 @@ async function fixture(t: TestContext) {
         confirmedDelivery(
           {
             taskId: task.id,
-            artifactIds: [evidence.id],
+            artifactIds: [evidence.id, ...extra.map((artifact) => artifact.id)],
             commandId,
             expectedRevision: (await current(task)).workflow.revision,
             requestId: `deliver-${sequence}`,
@@ -521,7 +536,13 @@ test('a task’s unit reads its delivery once there is one, and tells each round
     at: delivered.history?.[0]?.at,
     said: 'Delivered',
     artifact: delivered.key?.artifact,
+    // And beside its report, the records of the commit and the claims it delivered.
+    files: delivered.history?.[0]?.files,
   });
+  assert.deepEqual(
+    delivered.history?.[0]?.files?.map((file) => file.title.split(':')[0]),
+    ['Delivered commit', 'Delivery confirmations'],
+  );
   assert.equal(delivered.history?.at(-1)?.role, 'reviewer');
 
   await f.verdict(pending, 'needs_changes');
@@ -536,6 +557,17 @@ test('a task’s unit reads its delivery once there is one, and tells each round
   assert.equal(judged?.stage, 'in_review');
   // The task's checks and the delivery report's format criterion.
   assert.equal(judged?.verdict?.of, task.checks.length + 1);
+});
+
+test('a delivery’s post names every file it handed in, its report first', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create('Rebuild citation index');
+  await f.deliver(task, 2);
+  const [post] = (await f.panel(task)).unit!.history!;
+  assert.match(post!.artifact?.title ?? '', /^Evidence \d+$/);
+  const titles = post!.files?.map((file) => file.title) ?? [];
+  assert.ok(titles.includes('Table 1') && titles.includes('Table 2'), titles.join(', '));
+  assert.ok(!titles.includes(post!.artifact!.title), 'the report is not named twice');
 });
 
 test('a key that is not a task of this project has no task sidebar', async (t) => {

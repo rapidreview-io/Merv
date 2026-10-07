@@ -36,6 +36,8 @@ export interface UnitHistoryInput {
   states: Readonly<Record<string, UnitStateWords>>;
   /** The document a submission handed in, read from the review it requested. */
   document?(review: ReviewRequest): { id: string; title: string } | undefined;
+  /** Every other file it handed in. */
+  files?(review: ReviewRequest): { id: string; title: string }[];
 }
 
 /**
@@ -90,7 +92,7 @@ function verdict(review: ReviewRequest, stage: string, at: string): RunningUnitE
   ];
 }
 
-export function unitHistory({ graph, reviews, states, document }: UnitHistoryInput) {
+export function unitHistory({ graph, reviews, states, document, files }: UnitHistoryInput) {
   const gate = (state: string) => states[state]?.submitted !== undefined;
   const rounds = reviews
     .filter((review) => review.subjectId === graph.instanceId)
@@ -108,6 +110,7 @@ export function unitHistory({ graph, reviews, states, document }: UnitHistoryInp
     open = into ? rounds.find((review) => review.subjectRevision === step.revision) : undefined;
     if (into && !out) {
       const handed = open && document?.(open);
+      const rest = (open && files?.(open)) || [];
       entries.push({
         role: 'producer',
         stage: step.from,
@@ -115,6 +118,7 @@ export function unitHistory({ graph, reviews, states, document }: UnitHistoryInp
         at: step.at,
         said: states[step.to]!.submitted,
         ...(handed ? { artifact: handed } : {}),
+        ...(rest.length ? { files: rest } : {}),
       });
     } else if (decided.length) {
       entries.push(...decided);

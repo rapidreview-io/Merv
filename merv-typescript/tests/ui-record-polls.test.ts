@@ -1,6 +1,6 @@
 /**
  * An open record page keeps what it shows current without redoing work nobody asked for: an
- * ended task is not read again, a running experiment's exhibit is read again only when its
+ * ended task is read again only slowly, for its Code section, a running experiment's exhibit is read again only when its
  * evidence changed, and an attempt shows its own figures, never an earlier attempt's.
  */
 import assert from 'node:assert/strict';
@@ -81,37 +81,58 @@ async function open(path: string, view: unknown) {
 }
 const reads = (path: string) => requests.filter((request) => request === `POST ${path}`).length;
 
-test('an ended task’s page reads it once and stops', async (t) => {
-  t.after(unmount);
-  serve('/tools/ui.read', {
-    body: {
-      result: {
-        task: {
-          id: 'wf_1',
-          title: 'Reproduce grokking',
-          goal: 'Show the curve.',
-          checks: ['The curve is attached'],
-          deliveryConfirmations: [],
-          producerId: 'actor_1',
-          briefId: 'art_00000000000000000000000000000001',
-          deliveryIds: [],
-          reviewId: null,
-          workflow: { state: 'done', revision: 3, updatedAt: now },
-          failure: null,
-          dependencies: [],
-          dependents: [],
-          createdAt: now,
-        },
-        process: graph('done', true),
-        codeUnit: null,
+const endedTask = {
+  body: {
+    result: {
+      task: {
+        id: 'wf_1',
+        title: 'Reproduce grokking',
+        goal: 'Show the curve.',
+        checks: ['The curve is attached'],
+        deliveryConfirmations: [],
+        producerId: 'actor_1',
+        briefId: 'art_00000000000000000000000000000001',
+        deliveryIds: [],
+        reviewId: null,
+        workflow: { state: 'done', revision: 3, updatedAt: now },
+        failure: null,
+        dependencies: [],
+        dependents: [],
+        createdAt: now,
       },
+      process: graph('done', true),
+      codeUnit: null,
     },
-  });
+  },
+};
+
+test('an ended task’s page is not read again at the open cadence', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.read', endedTask);
   await open('/tasks/wf_1', TasksView);
   assert.ok(document.body.textContent!.includes('Reproduce grokking'));
   assert.equal(reads('/tools/ui.read'), 1);
   await settle(8_600);
-  assert.equal(reads('/tools/ui.read'), 1, 'an ended task is not read again');
+  assert.equal(reads('/tools/ui.read'), 1, 'an ended task is not read at the open cadence');
+});
+
+test('an ended task’s page still refreshes, slowly: its Code section can change after it ends', async (t) => {
+  t.after(unmount);
+  // Every wait the page sets, by its length.
+  const waits: number[] = [];
+  const real = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+    waits.push(ms ?? 0);
+    return real(handler, ms);
+  }) as typeof setTimeout;
+  t.after(() => void (globalThis.setTimeout = real));
+  serve('/tools/ui.read', endedTask);
+  await open('/tasks/wf_1', TasksView);
+  await settle(20);
+  assert.ok(
+    waits.some((ms) => ms > 30_000 && ms <= 60_000),
+    `a slow cadence stands for the ended task: ${waits.filter((ms) => ms > 1000).join(', ')}`,
+  );
 });
 
 const evidence = (id: string, attemptIndex = 2) => ({

@@ -493,7 +493,8 @@ const runningDocument = z.object({ id: z.string().min(1).max(200), title: words(
  * One entry of a unit's history, oldest first: a submission, a verdict, a return, a move, or
  * what is still open. `role` and `stage` name the thread that did it (Sessions' thread stands at
  * `stage`, a state of `instance`, the unit's own unless named), so its mark opens that thread.
- * `artifact` is the document the entry submitted, which opens in the reading area.
+ * `artifact` is the document the entry submitted, which opens in the reading area, and `files`
+ * every other file it handed in.
  */
 export const runningUnitEntry = z
   .object({
@@ -504,6 +505,7 @@ export const runningUnitEntry = z
     at: lenient(instant.optional()),
     said: words(200).optional(),
     artifact: lenient(runningDocument.optional()),
+    files: lenient(kept(runningDocument, 50).optional()),
     /** The verdict a reviewer posted: its word, how many checks it found met, and its sentence. */
     verdict: lenient(
       z

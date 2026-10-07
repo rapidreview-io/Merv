@@ -16,6 +16,7 @@ await import('../packages/ui/web/components.js');
 const { Thread, historyEntries } = await import('../packages/ui/web/thread.js');
 
 const FIRST = 'art_00000000000000000000000000000002';
+const TABLE = 'art_00000000000000000000000000000003';
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 1, 9, minute)).toISOString();
 const names: Record<string, string> = { actor_ada: 'Ada Byron', actor_rex: 'Rex Reviewer' };
 const nameOf = (id: string) => names[id];
@@ -45,6 +46,8 @@ const history = (producer: string) => [
     actor: producer,
     at: at(20),
     said: 'Delivered',
+    // Every file a delivery handed in besides its report.
+    files: [{ id: TABLE, title: 'Seeds table' }],
   },
   { role: 'reviewer' as const, stage: 'in_review', said: 'Review unclaimed', review: 'review_2' },
 ];
@@ -94,6 +97,16 @@ test('a thread is read in words: the role alone for a stranger, files to open, n
           size: 120,
           createdAt: at(0),
         },
+        {
+          id: TABLE,
+          projectId: 'project_1',
+          createdBy: 'actor_stranger',
+          title: 'Seeds table',
+          mediaType: 'text/csv',
+          hash: 'def',
+          size: 40,
+          createdAt: at(20),
+        },
       ],
     },
   });
@@ -108,6 +121,8 @@ test('a thread is read in words: the role alone for a stranger, files to open, n
   );
   // The earlier delivery still opens from its own post.
   assert.match(posts[0]!.querySelector('details.crit-file summary')!.textContent!, /first try/);
+  // A later delivery names every file it handed in.
+  assert.match(posts[2]!.querySelector('details.crit-file summary')!.textContent!, /Seeds table/);
   assert.deepEqual(
     [...posts[1]!.querySelectorAll('.feed-author, .thread-role')].map((said) => said.textContent),
     ['Rex Reviewer', 'Reviewer'],

@@ -266,17 +266,26 @@ export function taskUnit(
   >,
   made: readonly UnitFile['artifact'][] = [],
 ): RunningUnit {
-  // What a delivery handed in: its report, not the brief it was pinned beside or its code record.
-  const document = (review: ReviewRequest) => {
+  // What a delivery handed in: its report first, then every other file, not the brief it was
+  // pinned beside.
+  const handedIn = (review: ReviewRequest) => {
     const handed = review.artifactIds
       .filter((id) => id !== record.briefId)
       .map((id) => artifacts.get(id))
       .filter((artifact) => artifact !== undefined);
     const report =
       handed.find((artifact) => /^text\/(markdown|plain)/.test(artifact.mediaType)) ?? handed[0];
-    return report && { id: report.id, title: short(report.title) };
+    return [report, ...handed.filter((artifact) => artifact !== report)]
+      .filter((artifact) => artifact !== undefined)
+      .map((artifact) => ({ id: artifact.id, title: short(artifact.title) }));
   };
-  const history = unitHistory({ graph, reviews, states: TASK_STATES, document });
+  const history = unitHistory({
+    graph,
+    reviews,
+    states: TASK_STATES,
+    document: (review) => handedIn(review)[0],
+    files: (review) => handedIn(review).slice(1),
+  });
   const delivered = [...history].reverse().find((entry) => entry.artifact);
   const newest = [...reviews]
     .filter((review) => review.subjectId === record.id)

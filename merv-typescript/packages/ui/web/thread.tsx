@@ -37,6 +37,8 @@ export type Entry =
       role: 'Producer' | 'Reviewer';
       mark?: Mark;
       document?: Handed;
+      /** Every other file it handed in. */
+      files?: Handed[];
       verdict?: Judged;
       /** Absent where the reader cannot name them: the role word then stands alone. */
       who?: string;
@@ -81,6 +83,7 @@ export function historyEntries(
         said: item.said,
         mark: mark?.(item),
         document: item.artifact,
+        files: item.files,
         verdict: item.verdict && { ...item.verdict, review: item.review },
       };
     return {
@@ -216,6 +219,27 @@ export function Thread({
                       meta
                     />
                   ))}
+                {entry.files?.map((file) =>
+                  onDocument ? (
+                    <button
+                      key={file.id}
+                      type="button"
+                      className="thread-doc"
+                      aria-pressed={shown === file.id}
+                      onClick={() => onDocument(file)}
+                    >
+                      <Icon name="file-text" size={14} />
+                      <span>{file.title}</span>
+                    </button>
+                  ) : (
+                    <Evidence
+                      key={file.id}
+                      artifactId={file.id}
+                      artifact={artifacts.get(file.id)}
+                      meta
+                    />
+                  ),
+                )}
                 {entry.verdict && <VerdictLine verdict={entry.verdict} />}
               </div>
             </div>
