@@ -504,6 +504,34 @@ test('a provider keys a workflow: across instances, or never', async (t) => {
   assert.equal(c.session.continuity?.resume?.sessionId, a.session.id);
 });
 
+test('a thread a later work item resumes is that item’s: it takes messages once the first has ended', async (t) => {
+  const f = await fixture(t);
+  t.after(f.sessions.threads.register('continuity-test', () => 'shared'));
+  const first = await f.start();
+  const a = await f.offer(first.id);
+  await f.keep(a.session, a.control);
+  await f.release(a.session);
+  // The first item ends; a second, keyed the same, resumes its thread.
+  await f.move(first.id, 'submit');
+  await f.move(first.id, 'approve');
+  const second = await f.start();
+  const b = await f.offer(second.id);
+  assert.equal(b.session.threadId, a.session.threadId);
+  const thread = (await f.sessions.threads.list(f.owner, second.id)).find(
+    (item) => item.id === b.session.threadId,
+  )!;
+  assert.deepEqual(
+    [thread.instanceId, thread.status, thread.takesMessage],
+    [second.id, 'live', true],
+  );
+  const sent = await f.http('POST', `/sessions/threads/${b.session.threadId}/messages`, f.token, {
+    body: 'Mind the 2025 cohort.',
+    requestId: 'resumed',
+  });
+  assert.equal(sent.status, 200, sent.text);
+  assert.equal(sent.body.message.instanceId, second.id);
+});
+
 test('research keys: a lens by wave and perspective across restarts, an experiment across attempts', async (t) => {
   const f = await fixture(t);
   const { threads } = f.sessions as unknown as LeasedSessions;

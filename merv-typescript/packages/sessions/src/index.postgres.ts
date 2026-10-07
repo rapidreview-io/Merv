@@ -561,4 +561,28 @@ FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
   //   SELECT count(*) AS questions FROM session_questions;
   15: `CREATE INDEX session_threads_continuity ON session_threads(project_id,continuity_key) WHERE continuity_key IS NOT NULL;
 CREATE INDEX session_questions_asked ON session_questions(project_id,asked_at);`,
+  // (unpublished) A thread is on the work item, and in the state, of its newest visit: a key that
+  // spans work items (a lens across its wave's restarts) resumes it on a later one, which then
+  // takes its messages. Its identity is still its id, project, key, role, actor and birth. Open
+  // threads a later item already resumed are moved to it. Read-only prod count first:
+  //   SELECT count(*) AS moved FROM session_threads t
+  //    WHERE t.status <> 'retired' AND t.instance_id IS DISTINCT FROM (SELECT s.instance_id
+  //      FROM worker_sessions s WHERE s.thread_id = t.id ORDER BY s._merv_rowid DESC LIMIT 1);
+  16: `CREATE OR REPLACE FUNCTION session_threads_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP = 'DELETE' OR OLD.status = 'retired' OR NEW.id IS DISTINCT FROM OLD.id OR
+     NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.continuity_key IS DISTINCT FROM OLD.continuity_key OR
+     NEW.role IS DISTINCT FROM OLD.role OR NEW.actor_id IS DISTINCT FROM OLD.actor_id OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION USING MESSAGE = 'A thread keeps its identity, and a retired one is final', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
+  FROM (SELECT DISTINCT ON (s.thread_id) s.thread_id, s.instance_id,
+               COALESCE(s.session_json::jsonb#>>'{execution,state}', '') AS state
+          FROM worker_sessions s WHERE s.thread_id IS NOT NULL
+         ORDER BY s.thread_id, s._merv_rowid DESC) n
+ WHERE n.thread_id = t.id AND t.status <> 'retired' AND n.instance_id <> t.instance_id;`,
 };
