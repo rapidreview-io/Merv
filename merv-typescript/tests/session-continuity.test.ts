@@ -1347,6 +1347,57 @@ test('an answer that arrives before the asking visit declares its conversation w
   assert.equal(await queued(), true);
 });
 
+test('an answer waits for the asking visit’s conversation to be uploaded, not only declared', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const asking = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(asking.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  const path = `/sessions/threads/${asking.session.threadId}/messages`;
+  await f.ok('POST', path, f.token, { body: '2025', requestId: 'answer' });
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue.some(
+        (item) => item.instanceId === unit.id,
+      ),
+    );
+  // Its runner declares the conversation as it releases, and uploads it only after its capture:
+  // offered in between, the next visit could not fetch it and would start without the question.
+  const bytes = Buffer.from('{"type":"user","text":"asked"}\n');
+  const facts = {
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555666',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  };
+  const conversation = `/sessions/${asking.session.id}/conversation`;
+  const declared = (await f.ok('POST', conversation, f.token, { ...asking.control, ...facts }))
+    .conversation;
+  assert.equal(declared.uploadedAt, null);
+  assert.equal(await queued(), false);
+  const { upload } = (
+    await f.ok('POST', conversation, f.token, { ...asking.control, ...facts, deliver: true })
+  ).conversation;
+  const put = await fetch(upload.url, {
+    method: 'PUT',
+    headers: upload.headers,
+    body: new Uint8Array(bytes),
+  });
+  assert.equal(put.status, 200);
+  await f.ok('POST', conversation, f.token, { ...asking.control, ...facts, deliver: true });
+  assert.equal(await queued(), true);
+  const next = await f.offer(unit.id, 'runner-b');
+  assert.equal(next.session.continuity?.resume?.sessionId, asking.session.id);
+  const resumed = await f.http(
+    'POST',
+    `/sessions/${next.session.id}/resume`,
+    f.token,
+    next.control,
+  );
+  assert.equal(resumed.status, 200, resumed.text);
+});
+
 test('only a visit that keeps a conversation is offered session.ask_owner, in its tools and its prompt', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();
