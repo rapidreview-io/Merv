@@ -35,11 +35,11 @@
 //  6 drain until no Pi turn, launch or machine is in flight, releasing each idle Pi machine at every
 //    poll, and until no work machine Fleet rented for workflow steps is up: a Cloudflare rollout
 //    replaces every running container of an app, whatever it runs, so Main holds work machines
-//    (Fleet rents none, admits no new step, and stops each once its step settles) until the switch;
-//    past --drain-minutes the hold is lifted and nothing else changed. Deploy each live app from its
-//    template at HEAD with the new digest and the Sandboxes commit's bridge Worker, and switch
-//    Main's release ids as soon as Cloudflare runs the new image everywhere: until then Sandboxes
-//    refuses Pi launches.
+//    (Fleet rents none, admits no new step, and stops each once its step settles) until a canary
+//    passes; past --drain-minutes the hold is lifted and nothing else changed. Deploy each live
+//    app from its template at HEAD with the new digest and the Sandboxes commit's bridge Worker,
+//    and switch Main's release ids as soon as Cloudflare runs the new image everywhere: until then
+//    Sandboxes refuses Pi launches.
 //  7 verify each app natively (settled health, SSH off), then a canary: one real Pi turn on
 //    Standard as a root-only reader key, whose machine it then releases.
 //  8 staging, once production passed: the release's copy for each staging app (STAGING_APPS) in the

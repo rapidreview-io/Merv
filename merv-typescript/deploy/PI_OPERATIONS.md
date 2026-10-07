@@ -445,9 +445,10 @@ one-machine-per-step machine still running; release in a quiet window.
   drain waits until Fleet has released every one. A step still running at
   `--drain-minutes` stops the release with nothing deployed and the hold lifted;
   rerun later, or with a longer `--drain-minutes` (a step runs for up to two
-  hours, and no new step starts while the drain waits). The switch, or the
-  run's finish, lifts the hold; one left behind lapses an hour after the
-  drain's last look. A rollback drains work machines the same way before it
+  hours, and no new step starts while the drain waits). A passed canary, or the
+  run's finish, lifts the hold (it outlasts the switch, so a failed canary's
+  rollback never waits on a step admitted meanwhile); one left behind lapses an
+  hour after the drain's last look. A rollback drains work machines the same way before it
   redeploys, and staging Main's are drained before the staging apps move.
   The image on every
   Cloudflare app that serves one of Main's machines (Standard, and Large once

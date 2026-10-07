@@ -82,7 +82,7 @@ IDLE = ("e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '
 # A rollout replaces every running container of an app, so a work visit on one would die with it.
 # The drain holds Main's work machines (Fleet's fleet_holds): Fleet rents none, admits no new step
 # on one, and stops each whose step has settled; the drain waits until none is up. Each look renews
-# the hold for an hour; the switch, a drain that gives up, or the run's finish lifts it, and
+# the hold for an hour; a passed canary, a drain that gives up, or the run's finish lifts it, and
 # should none run, it lapses.
 HOLD = ("h AS (INSERT INTO {s}.fleet_holds(name, until) VALUES ('hosted-release', to_char(now() AT TIME ZONE "
         "'UTC' + interval '60 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ON CONFLICT (name) DO UPDATE SET "
@@ -805,11 +805,10 @@ class Step:
         raw = ENV.read_bytes()
         want = with_releases(raw, releases)
         if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
-            unhold()
             return {'changed': False}
-        result = recreate(raw, want, self.run / 'env.before')
-        unhold()  # Main names what Cloudflare runs: work machines rent on it
-        return result
+        # The drain's hold outlasts the switch: a failed canary rolls back, redeploying every app, and
+        # a step admitted meanwhile would hold that rollback up until it ended. The canary lifts it.
+        return recreate(raw, want, self.run / 'env.before')
 
     def canary(self, arg):
         """One real Pi turn as the canary reader on Standard; proves the release served it and its
@@ -859,6 +858,7 @@ class Step:
                   'seconds': round(time.monotonic() - started)}
         need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released']
              and all(result['apps'].values()), 'canary_failed ' + json.dumps(result))
+        unhold()  # the release stays: work machines rent on it again
         return result
 
     def note(self, arg):

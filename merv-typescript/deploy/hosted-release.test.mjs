@@ -749,13 +749,9 @@ print(json.dumps(res))`,
   );
   assert.equal(out.result.changed, true);
   assert.match(out.env, new RegExp(`^A=1\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_${'b'.repeat(64)}\n$`));
-  // Main names what Cloudflare runs, so the drain's hold on work machines is lifted, each time.
-  assert.deepEqual(out.calls, [
-    'docker compose -f compose.yml',
-    'docker compose -f compose.yml',
-    'unhold',
-    'unhold',
-  ]);
+  // The drain's hold on work machines outlasts the switch: a canary that fails rolls back, and a
+  // step admitted meanwhile would hold that rollback up until it ends. The canary lifts it.
+  assert.deepEqual(out.calls, ['docker compose -f compose.yml', 'docker compose -f compose.yml']);
   assert.deepEqual(out.again, { changed: false });
   assert.match(out.busy, /a Main release job is running/);
 });
@@ -967,6 +963,7 @@ def canary(v2=True,releases=True,deleted=True,release_after=0):
         assert \"phase = 'released'\" in query and \"->'runtime'->>'deleted' = 'true'\" in query
         return {'n':int(p==('fa_1',) and phase[0]=='released' and deleted and clock[0]>=release_after)}
     vm.tool,vm.main_read=tool,main_read
+    vm.unhold=lambda:calls.append('unhold')
     try: return [step.canary({'releaseId':'${OLD}'}),calls]
     except RuntimeError as e: return [str(e),calls]
 res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
@@ -975,12 +972,22 @@ apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
 print(json.dumps(res))`,
   );
   const [v2, calls] = out.v2;
-  assert.deepEqual(calls, ['pi.create', 'pi.send', 'pi.snapshot', 'pi.stop', 'pi.machine.stop']);
+  // A release that passed its canary stays: only then may work machines rent and take steps again.
+  assert.deepEqual(calls, [
+    'pi.create',
+    'pi.send',
+    'pi.snapshot',
+    'pi.stop',
+    'pi.machine.stop',
+    'unhold',
+  ]);
   assert.equal(v2.servedByRelease && v2.released && v2.reply, true);
   assert.deepEqual(v2.apps, { 'cloudflare-fleet-large': true });
   // Pi v1 has no machine to release: its pi.stop releases the conversation's.
   assert.equal(out.v1[0].released, true);
   assert.match(out.held[0], /^canary_failed .*"released": false/);
+  // A failed canary keeps the hold for the rollback, which redeploys every app.
+  assert.ok(!out.held[1].includes('unhold'));
   assert.match(out.phaseOnly[0], /^canary_failed .*"released": false/);
   assert.equal(out.late[0].released, true);
   assert.equal(out.late[0].seconds, 327);
