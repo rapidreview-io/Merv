@@ -16,7 +16,6 @@ import {
 } from '@merv/code/store/protocol';
 import { live, ownEnd } from '@merv/sessions/rules';
 import type { Session, Sessions } from '@merv/sessions/types';
-import { live } from '@merv/sessions/rules';
 import { pendingMerge } from '@merv/code/pending-merge';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeStore } from '@merv/code/store/operations';
