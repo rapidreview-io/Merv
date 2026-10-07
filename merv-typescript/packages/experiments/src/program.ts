@@ -994,8 +994,8 @@ export async function inputsOf(
       size: artifact.size,
     };
   });
-  // Paper writes the Introduction from the Problem, whose sections `paper` carries.
-  const { summary: _summary, ...project } = await ctx.scope.project(caller, tx);
+  // Paper serves the Introduction from the Problem, whose sections `paper` carries.
+  const project = await ctx.scope.project(caller, tx);
   return {
     experiment: own({
       id: experiment.id,

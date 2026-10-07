@@ -249,14 +249,10 @@ lines 630–680. Existing TypeScript mechanisms are documented in
    advance coverage. Published doc/lens pointers remain absent until the
    owning program can produce them legitimately.
 
-The Scope Introduction foundation is now implemented in
-[Scope](../packages/scope/src/index.ts) and its
-[narrow input/migration module](../packages/scope/src/project-context.ts): current
-projects return `summary` and `contextRevision`; ordinary operators/producers can
-submit an exact-previous-text update, while leased workers cannot. Accepted
-updates retain immutable request receipts and audit events. New task lease
-receipts capture the Introduction for worker context; old leases and already
-saved contexts retain their original packets. This is current project intent,
+The project Introduction is served by [Paper](../packages/paper/src/index.ts) from
+the paper's Problem, which `paper.patch` changes; Scope holds none. New task lease
+receipts capture the Problem and its revision for worker context; old leases and
+already saved contexts retain their original packets. This is current project intent,
 not a published Reflection or frozen research corpus. The core and task-context
 regressions are in [project-context.test.ts](../tests/project-context.test.ts).
 

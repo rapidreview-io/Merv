@@ -28,7 +28,7 @@ Research requires State, Scope and Workflows. Domain Events, Paper, Reflections,
 
 Sessions owns agent identity and session continuity, while Workflows owns assignment leases and Scope enforces security actors. Existing execution IDs stay fixed for evidence and stale-call fencing. See [agents and assignment executions](../AGENT_CONTINUITY.md).
 
-Scope owns the project Introduction and its revision/retry receipts, exposed through `project.context.update`. This adds no provider. Tasks retains the Introduction captured at lease offer in its existing immutable lease receipt, while ordinary newly built task context reads the current Introduction.
+Paper serves the project Introduction from the paper's Problem (`Paper.introduction`), so the Problem has one writer; Scope holds none. Tasks retains the Problem and its revision captured at lease offer in its existing immutable lease receipt, while ordinary newly built task context reads the current Problem.
 
 Sessions requires State, Scope, Workflows, and Domain Events, and stores session transcripts through Blobs whenever Blobs is loaded. Program registration hooks provide domain ownership and recovery without adding direct Sessions-to-Tasks or Sessions-to-Reviews dependencies. Its `sessions-api` adapter requires Sessions and API and publishes its HTTP controls, which add no MCP tools. The optional `sessions-ui` adapter requires Sessions and UI, and publishes the project dispatch/session page.
 

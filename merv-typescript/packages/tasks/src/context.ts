@@ -153,15 +153,16 @@ export function contextType(
   return type;
 }
 
-/** The project, without its Introduction: Paper writes it from the Problem, whose sections
- * the paper's own items carry. */
+/** The project, and the revision of the Problem Paper serves its Introduction from; the
+ * paper's own items carry the Problem's text. */
 export async function projectContext(
   ctx: TasksContext,
   caller: Caller,
   tx: Transaction,
 ): Promise<Data> {
   const project = await ctx.scope.project(caller, tx);
-  return { id: project.id, name: project.name, contextRevision: project.contextRevision ?? 0 };
+  const { revision } = await ctx.paper.introduction(caller, tx);
+  return { id: project.id, name: project.name, contextRevision: revision };
 }
 
 /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */

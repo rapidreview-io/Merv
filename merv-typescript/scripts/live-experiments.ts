@@ -80,9 +80,10 @@ try {
     actorName: 'Fixture owner',
   });
   source = { projectId: boot.project.id, actorId: boot.actor.id, credentialId: boot.credential.id };
-  await app.ctx.scope.updateProjectContext(source, {
-    summary: introduction,
-    expectedSummary: '',
+  await app.ctx.paper.patch(source, {
+    kind: 'problem',
+    expectedRevision: 0,
+    changes: [{ id: 'problem', content: introduction }],
     requestId: 'project-introduction',
   });
   secrets.push(boot.token);
@@ -368,7 +369,7 @@ try {
   // An owner-side check that the live record reads back what the program wrote. No model
   // claims to have performed Reflection, publication, or claim assessment.
   const records = await app.ctx.knowledge.records(source);
-  assert.equal(records.project.summary, introduction);
+  assert.ok((await app.ctx.paper.introduction(source)).text.includes(introduction.trim()));
   assert.equal(records.experiments.length, 1);
   assert.deepEqual(records.experiments[0], final);
   if (gitProof) {

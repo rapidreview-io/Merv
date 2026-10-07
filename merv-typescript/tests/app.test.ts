@@ -53,7 +53,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 86);
+    assert.equal(catalog.length, 85);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -420,7 +420,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
       'leave production to a Fleet worker',
       'task.get returns',
       'paper.patch (kind problem)',
-      'do not write it yourself',
+      'change the Problem to change it',
       'session.find with',
       'session.stuck says',
       'workflow.status_and_next and workflow.assignment',

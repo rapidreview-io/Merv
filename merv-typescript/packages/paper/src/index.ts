@@ -1,5 +1,5 @@
 import { recorded, mapAsync, parsed } from '@merv/contracts';
-import { childRequest, createService, replayed } from '@merv/contracts';
+import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
@@ -26,11 +26,11 @@ import type {
   PaperWorkspace,
   PaperReview,
   PaperEdit,
+  PaperIntroduction,
 } from './types.js';
 import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { paperInput } from './context.js';
-import { introductionFrom } from './introduction.js';
-import { PROBLEM_SECTIONS } from './rules.js';
+import { introductionFrom, PROBLEM_SECTIONS } from './rules.js';
 import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
@@ -125,6 +125,14 @@ export class PaperService implements Paper {
           },
         ]),
       ) as PaperWorkspace['documents'];
+    });
+  }
+  async introduction(caller: Caller, transaction?: Transaction): Promise<PaperIntroduction> {
+    caller = this.capture(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const problem = await this.current(caller, 'problem', tx);
+      return { revision: problem.revision, text: introductionFrom(problem) };
     });
   }
   async history(
@@ -321,22 +329,6 @@ export class PaperService implements Paper {
         const before = await this.current(caller, input.kind, tx);
         const after = await this.edited(caller, input, before, tx);
         await this.append(caller, before, after, tx);
-        // The Problem is what the project is, and the Introduction says it: Paper is its one
-        // writer, rewriting it from each Problem revision, an empty one included.
-        if (after.kind === 'problem') {
-          const introduction = introductionFrom(after);
-          const current = (await this.scope.project(caller, tx)).summary ?? '';
-          if (introduction !== current)
-            await this.scope.updateProjectContext(
-              caller,
-              {
-                summary: introduction,
-                expectedSummary: current,
-                requestId: childRequest(caller, 'paper', 'introduction', input.requestId),
-              },
-              tx,
-            );
-        }
         return after;
       });
     });
@@ -495,9 +487,6 @@ export const paperPlugin = {
     await ctx.effect(async function* () {
       const service = await createService(new PaperService(ctx.state, ctx.scope, ctx.artifacts));
       yield () => service.close();
-      ctx.scope.introductionWriter =
-        "Merv writes the project Introduction from the paper's Problem: change the Problem with paper.patch";
-      yield () => void (ctx.scope.introductionWriter = undefined);
       yield ctx.provide('paper', service);
     });
   },

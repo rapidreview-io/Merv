@@ -20,9 +20,6 @@ export interface Project {
   id: string;
   name: string;
   createdAt: string;
-  /** Current Scope reads always include these; optional for legacy frozen snapshots. */
-  summary?: string;
-  contextRevision?: number;
 }
 /** A machine bearer owned by a verified user; projectId is its immutable issuance project. */
 export interface UserKey {

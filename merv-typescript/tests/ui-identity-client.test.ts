@@ -233,8 +233,8 @@ test('a refused form says each check sentence, naming a field only beside a gene
   setToken('token');
   const details = [
     {
-      path: ['summary'],
-      message: 'Project Introduction must fit within 16,000 UTF-8 bytes',
+      path: ['content'],
+      message: 'A section must fit within 64,000 characters',
       code: 'custom',
     },
     { path: ['title'], message: 'Required', code: 'invalid_type' },
@@ -245,9 +245,9 @@ test('a refused form says each check sentence, naming a field only beside a gene
       { status: 400 },
     ),
   );
-  await assert.rejects(call('project.context.update'), {
+  await assert.rejects(call('paper.patch'), {
     code: 'invalid_input',
-    message: 'Project Introduction must fit within 16,000 UTF-8 bytes; title Required',
+    message: 'A section must fit within 64,000 characters; title Required',
   });
 });
 

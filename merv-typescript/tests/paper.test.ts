@@ -9,7 +9,7 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { PaperService } from '@merv/paper';
-import { introductionFrom } from '@merv/paper/introduction';
+import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import { contextSections, paperInput } from '@merv/paper/context';
@@ -575,71 +575,45 @@ test("the list of paper sections left out never pushes a consumer's own evidence
   assert.ok(prompt.includes('paper:not-included'), 'what was left out is still named');
 });
 
-test('a Problem patch writes the Introduction from it, replacing what was there, an empty Problem included', async (t) => {
+test('Paper serves the Introduction from the current Problem, at its revision, and Scope holds none', async (t) => {
   const f = await fixture(t);
-  const before = await f.scope.project(f.operator);
-  await f.scope.updateProjectContext(f.operator, {
-    summary: 'A note written by hand.',
-    expectedSummary: before.summary ?? '',
-    requestId: f.request(),
-  });
+  assert.deepEqual(await f.paper.introduction(f.reader), { revision: 0, text: '' });
   const patch = async (changes: { id: string; content: string }[]) =>
     await f.paper.patch(f.producer, {
       kind: 'problem',
-      expectedRevision: (await f.paper.read(f.producer)).documents.problem.current.revision,
+      expectedRevision: (await f.paper.introduction(f.producer)).revision,
       requestId: f.request(),
       changes,
     });
-  // Paper is the Introduction's one writer: an empty Problem leaves it empty too.
   await patch([{ id: 'scope', content: '  ' }]);
-  assert.equal((await f.scope.project(f.operator)).summary, '');
+  assert.deepEqual(await f.paper.introduction(f.reader), { revision: 1, text: '' });
   await patch([
     { id: 'problem', content: 'Can this comparison be evaluated reliably?' },
     { id: 'goals', content: 'Retain independently verified evidence.' },
   ]);
-  assert.equal(
-    (await f.scope.project(f.operator)).summary,
-    '## Problem\n\nCan this comparison be evaluated reliably?\n\n## Goals\n\nRetain independently verified evidence.',
-  );
-  await patch([
-    { id: 'scope', content: 'A bounded local comparison.' },
-    { id: 'constraints', content: 'Use only the frozen available corpus.' },
-  ]);
-  const project = await f.scope.project(f.operator);
-  assert.equal(
-    project.summary,
-    [
-      '## Problem\n\nCan this comparison be evaluated reliably?',
-      '## Scope\n\nA bounded local comparison.',
-      '## Goals\n\nRetain independently verified evidence.',
-      '## Constraints\n\nUse only the frozen available corpus.',
-    ].join('\n\n'),
-  );
-  assert.equal(project.contextRevision, before.contextRevision! + 4);
-  // A patch that says the same thing, and any other document, leaves it and its revision alone.
-  await patch([{ id: 'goals', content: 'Retain independently verified evidence.' }]);
+  assert.deepEqual(await f.paper.introduction(f.reader), {
+    revision: 2,
+    text: '## Problem\n\nCan this comparison be evaluated reliably?\n\n## Goals\n\nRetain independently verified evidence.',
+  });
+  // Any other document leaves it alone; only the Problem's sections are in it.
   await f.paper.patch(f.producer, {
     kind: 'methods',
     expectedRevision: 0,
     requestId: f.request(),
     changes: [{ id: 'm', title: 'M', content: 'Method' }],
   });
-  assert.equal((await f.scope.project(f.operator)).contextRevision, project.contextRevision);
-  // Blanking every section blanks the Introduction.
-  await patch(['problem', 'scope', 'goals', 'constraints'].map((id) => ({ id, content: '' })));
-  assert.equal((await f.scope.project(f.operator)).summary, '');
-});
-
-test('the Introduction written from a long Problem is cut to fit and says so', () => {
-  const long = { id: 'problem', title: 'Problem', content: 'é'.repeat(20_000) };
-  const text = introductionFrom({
-    sections: [
-      long,
-      { id: 'literature', title: 'Literature', content: 'Not part of the Problem.' },
-    ],
-  });
-  assert.ok(Buffer.byteLength(text, 'utf8') <= 16_000);
-  assert.ok(text.startsWith('## Problem\n\né'));
-  assert.match(text, /paper\.read returns the whole Problem\.\]$/);
-  assert.ok(!text.includes('Literature'));
+  assert.equal((await f.paper.introduction(f.reader)).revision, 2);
+  assert.equal(
+    introductionFrom({
+      sections: [
+        { id: 'problem', title: 'Problem', content: 'é'.repeat(20_000) },
+        { id: 'literature', title: 'Literature', content: 'Not part of the Problem.' },
+      ],
+    }),
+    `## Problem\n\n${'é'.repeat(20_000)}`,
+  );
+  // Scope keeps no Introduction of its own, and offers no tool to write one.
+  const project = await f.scope.project(f.operator);
+  assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
+  assert.equal('updateProjectContext' in f.scope, false);
 });

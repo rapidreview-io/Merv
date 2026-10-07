@@ -6,7 +6,7 @@ import type {} from 'cordis';
 
 export interface KnowledgeRecords {
   formatVersion: 1;
-  /** Current Scope facts, including introduction when configured. */
+  /** Current Scope facts; Paper serves the Introduction. */
   project: Project;
   tasks: TaskRecord[];
   experiments: Experiment[];
