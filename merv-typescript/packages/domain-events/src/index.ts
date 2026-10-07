@@ -165,8 +165,25 @@ export class DurableEvents implements DomainEvents {
 
   /** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
   private async due(consumer: EventConsumer, after: number, through: number, tx?: Transaction) {
-    const next = await this.state.nextEvent(after, consumer.types, tx);
-    return next !== undefined && next.id <= through;
+    const next = await this.state.nextEventId(after, consumer.types, tx);
+    return next !== undefined && next <= through;
+  }
+
+  /**
+   * Passes a consumer with nothing it subscribes to before the head. Under the writer lock every
+   * event up to the head is committed and no smaller ID can commit later.
+   */
+  private async toHead(tx: Transaction, consumer: EventConsumer, cursor: number) {
+    const head = await this.state.eventHead(tx);
+    if (head > cursor) await this.advance(tx, consumer, head);
+  }
+
+  private async advance(tx: Transaction, consumer: EventConsumer, cursor: number) {
+    await tx.run(
+      'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
+      cursor,
+      consumer.id,
+    );
   }
 
   private async deliver(): Promise<boolean> {
@@ -205,14 +222,13 @@ export class DurableEvents implements DomainEvents {
             'SELECT * FROM event_consumers WHERE id=?',
             consumer.id,
           );
-          if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
+          if (
+            !row ||
+            row.retry_at > Date.now() ||
+            (await this.due(consumer, row.cursor, Number.MAX_SAFE_INTEGER, tx))
+          )
             continue;
-          if (row.cursor < head)
-            await tx.run(
-              'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
-              head,
-              consumer.id,
-            );
+          await this.toHead(tx, consumer, row.cursor);
           passed.add(consumer.id);
         }
       });
@@ -234,18 +250,11 @@ export class DurableEvents implements DomainEvents {
             // A progress row removed outside the application: deliver nothing, strand no one.
             if (!progress || progress.retry_at > Date.now()) return false;
             attemptedCursor = progress.cursor;
-            // Under the writer lock every event up to the head is committed and no smaller ID can
-            // commit later, so the unsubscribed events before the next subscribed one are passed
-            // with it, and with none left the cursor moves to the head.
+            // The unsubscribed events before the next subscribed one are passed with it, and
+            // with none left the cursor moves to the head.
             const event = await this.state.nextEvent(progress.cursor, consumer.types, tx);
             if (!event) {
-              const head = await this.state.eventHead(tx);
-              if (head > progress.cursor)
-                await tx.run(
-                  'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
-                  head,
-                  consumer.id,
-                );
+              await this.toHead(tx, consumer, progress.cursor);
               return false;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
@@ -256,11 +265,7 @@ export class DurableEvents implements DomainEvents {
             } finally {
               frame.live = false;
             }
-            await tx.run(
-              'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
-              cursor,
-              consumer.id,
-            );
+            await this.advance(tx, consumer, cursor);
             return true;
           });
           this.admitted = { consumer, transaction };

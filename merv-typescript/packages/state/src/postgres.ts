@@ -787,21 +787,38 @@ END $merv$;`);
     types: readonly string[],
     tx?: Transaction,
   ): Promise<StoredEvent | undefined> {
+    const row = await this.next<EventRow>('*', after, types, tx);
+    return row && eventFromRow(row);
+  }
+
+  async nextEventId(
+    after: number,
+    types: readonly string[],
+    tx?: Transaction,
+  ): Promise<number | undefined> {
+    return (await this.next<{ id: number }>('id', after, types, tx))?.id;
+  }
+
+  private async next<T>(
+    columns: string,
+    after: number,
+    types: readonly string[],
+    tx?: Transaction,
+  ) {
     check(
       Number.isSafeInteger(after) && after >= 0 && types.length > 0,
       'invalid_cursor',
       'Invalid event search',
     );
     if (tx) this.assertTransaction(tx);
-    const row = await this.read(
+    return await this.read(
       async (sql) =>
-        await sql.get<EventRow>(
-          `SELECT * FROM events WHERE id>? AND type IN (${types.map(() => '?').join(',')}) ORDER BY id LIMIT 1`,
+        await sql.get<T>(
+          `SELECT ${columns} FROM events WHERE id>? AND type IN (${types.map(() => '?').join(',')}) ORDER BY id LIMIT 1`,
           after,
           ...types,
         ),
     );
-    return row && eventFromRow(row);
   }
 
   async events(projectId: string, after = 0): Promise<StoredEvent[]> {
