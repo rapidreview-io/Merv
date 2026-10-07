@@ -1726,6 +1726,11 @@ export interface Reviews {
   ): Promise<Map<string, ReviewRequest>>;
   /** With `subjectId`, only the reviews of that record. */
   list(caller: Caller, filter?: { subjectId?: string }): Promise<ReviewRequest[]>;
+  /**
+   * What Home and the rail poll: every open review, each subject's current review and newest
+   * verdict, and the newest verdicts, oldest first; `list` holds every review.
+   */
+  home(caller: Caller): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */
   open(caller: Caller): Promise<number>;
   /** `override` claims it as the project's owner: only that person, signed in, may. */

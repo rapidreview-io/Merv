@@ -17,7 +17,7 @@ export const reviewUiPlugin = {
         path: '/reviews',
         view: { kind: 'reviews' },
         home: {
-          tool: 'review.list',
+          list: async (caller) => await reviews.home(caller),
           keep: [
             'id',
             'subjectId',

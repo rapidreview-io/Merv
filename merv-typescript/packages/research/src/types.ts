@@ -14,6 +14,8 @@ export interface Research {
   create(caller: Caller, input: ResearchCreate, tx?: Transaction): Promise<ResearchRecord>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<ResearchRecord>;
   list(caller: Caller, tx?: Transaction): Promise<ResearchRecord[]>;
+  /** What Home and the rail poll: every open cycle and the newest that ended, oldest first. */
+  home(caller: Caller): Promise<ResearchRecord[]>;
   active(caller: Caller): Promise<number>;
   /** The cycles this one follows, oldest first, each with its digest, and the one that follows it. */
   lineage(caller: Caller, id: string, tx?: Transaction): Promise<ResearchLineage>;

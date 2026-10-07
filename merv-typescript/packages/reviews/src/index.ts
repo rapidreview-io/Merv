@@ -65,6 +65,8 @@ const submitFields: ReadonlySet<string> = new Set([
  * The project's owner as the signed-in person: an operator's member actor with human authority.
  * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
  */
+/** How many of the newest verdicts Home's read carries, besides each subject's own. */
+const HOME_VERDICTS = 20;
 const projectOwner = (caller: Caller, actor: Actor) =>
   actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
 
@@ -448,6 +450,39 @@ export class ReviewService implements Reviews {
                 `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
                 caller.projectId,
                 ...(subjectId === undefined ? [] : [subjectId]),
+              )
+            ).map(hydrate),
+          ),
+        ),
+    );
+  }
+
+  async home(caller: Caller): Promise<ReviewRequest[]> {
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read');
+    return await this.state.read(
+      async (sql) =>
+        await this.claimableBy(
+          caller,
+          standings(
+            (
+              await sql.all<ReviewRow>(
+                // Open ones; each subject's current review (currentReview's order) and newest
+                // verdict (standings' `returned`); and the newest verdicts, as Home lists them.
+                `SELECT * FROM reviews WHERE project_id = ? AND id IN (
+                  (SELECT id FROM reviews WHERE project_id = ? AND status IN ('requested', 'started'))
+                  UNION (SELECT DISTINCT ON (subject_id) id FROM reviews WHERE project_id = ?
+                    ORDER BY subject_id, subject_revision DESC, created_at DESC, id DESC)
+                  UNION (SELECT DISTINCT ON (subject_id) id FROM reviews WHERE project_id = ? AND status = 'submitted'
+                    ORDER BY subject_id, created_at DESC, id DESC)
+                  UNION (SELECT id FROM reviews WHERE project_id = ? AND status = 'submitted' AND verdict IS NOT NULL
+                    ORDER BY created_at DESC, id DESC LIMIT ${HOME_VERDICTS})
+                ) ORDER BY created_at, id`,
+                caller.projectId,
+                caller.projectId,
+                caller.projectId,
+                caller.projectId,
+                caller.projectId,
               )
             ).map(hydrate),
           ),
