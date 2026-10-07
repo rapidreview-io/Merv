@@ -25,7 +25,7 @@ for (const operation of ['require', 'authority', 'delegation'] as const) {
         scope.createSessionActor(
           source,
           {
-            sessionId: 'session_fixture',
+            threadId: 'session_fixture',
             name: 'Worker',
             role: 'producer',
           },
@@ -35,7 +35,7 @@ for (const operation of ['require', 'authority', 'delegation'] as const) {
       const caller = {
         actorId: worker.id,
         projectId: worker.projectId,
-        session: { id: 'session_fixture' },
+        session: { id: 'session_fixture', threadId: 'session_fixture' },
       };
       let enter!: () => void, release!: () => void;
       const entered = new Promise<void>((resolve) => {

@@ -357,9 +357,13 @@ export class ProjectScope implements Scope {
     );
     return value;
   }
+  /**
+   * A thread's actor, which every visit of the thread acts as. Its thread id marks it a worker's
+   * (`session_id`) and names the thread whose live visit it requires (`agent_id`).
+   */
   async createSessionActor(
     source: DelegationSource,
-    input: { sessionId: string; threadId?: string; role: Exclude<Role, 'operator'>; name: string },
+    input: { threadId: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor> {
     source = structuredClone(source);
@@ -367,18 +371,14 @@ export class ProjectScope implements Scope {
     this.state.assertTransaction(tx);
     check(
       workerRoles.includes(input.role) &&
-        typeof input.sessionId === 'string' &&
-        input.sessionId.length > 0 &&
-        input.sessionId.length <= 200 &&
-        (input.threadId === undefined ||
-          (typeof input.threadId === 'string' &&
-            input.threadId.length > 0 &&
-            input.threadId.length <= 200)) &&
+        typeof input.threadId === 'string' &&
+        input.threadId.length > 0 &&
+        input.threadId.length <= 200 &&
         typeof input.name === 'string' &&
         visible(input.name) &&
         input.name.length <= 200,
       'invalid_session_actor',
-      'Session actors need a name, lease and non-operator role',
+      'Session actors need a name, thread and non-operator role',
     );
     await this.requireDelegation(source, needs(input.role), tx);
     const value: Actor = {
@@ -387,8 +387,8 @@ export class ProjectScope implements Scope {
       name: input.name.trim(),
       role: input.role,
       active: true,
-      sessionId: input.sessionId,
-      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+      sessionId: input.threadId,
+      threadId: input.threadId,
     };
     await tx.run(
       'INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id) VALUES(?,?,?,?,1,?,?)',
@@ -396,12 +396,12 @@ export class ProjectScope implements Scope {
       value.projectId,
       value.name,
       value.role,
-      input.sessionId,
-      input.threadId ?? null,
+      input.threadId,
+      input.threadId,
     );
     return value;
   }
-  async setAgentRole(
+  async setThreadRole(
     source: DelegationSource,
     actorId: string,
     role: Exclude<Role, 'operator'>,
@@ -409,7 +409,7 @@ export class ProjectScope implements Scope {
   ): Promise<void> {
     source = structuredClone(source);
     this.state.assertTransaction(tx);
-    check(workerRoles.includes(role), 'invalid_session_role', 'Agents cannot become operators');
+    check(workerRoles.includes(role), 'invalid_session_role', 'Threads cannot become operators');
     await this.requireDelegation(source, needs(role), tx);
     const result = await tx.run(
       'UPDATE actors SET role=? WHERE id=? AND project_id=? AND agent_id IS NOT NULL AND active=1',
@@ -417,7 +417,7 @@ export class ProjectScope implements Scope {
       actorId,
       source.projectId,
     );
-    check(result.changes === 1, 'agent_unavailable', 'Agent identity is unavailable', 403);
+    check(result.changes === 1, 'thread_unavailable', 'Thread identity is unavailable', 403);
   }
   async retireSessionActor(actorId: string, reason: string, tx: Transaction): Promise<void> {
     this.state.assertTransaction(tx);
@@ -670,7 +670,8 @@ export class ProjectScope implements Scope {
         // It acts only while the person who vouched for it may still write here.
         await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
-        // A thread's actor is its visits'; an actor from before threads, its one session's.
+        // A thread's actor is its visits'. An actor from before threads (agent_id NULL) is its
+        // one session's, until a production count shows no such actor is still active.
         const own = row.agent_id
           ? row.agent_id === caller.session?.threadId
           : row.session_id === caller.session?.id;

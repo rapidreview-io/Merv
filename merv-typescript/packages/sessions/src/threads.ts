@@ -166,7 +166,7 @@ export class SessionThreads {
         visits[0]!.owner_hash === owner.hash &&
         !visits[0]!.live
       ) {
-        await this.scope.setAgentRole(owner.source, held.actor_id, unit.role, tx);
+        await this.scope.setThreadRole(owner.source, held.actor_id, unit.role, tx);
         await tx.run(
           "UPDATE session_threads SET status='open',updated_at=? WHERE id=?",
           at,
@@ -183,7 +183,7 @@ export class SessionThreads {
     const id = newId('thr');
     const actor = await this.scope.createSessionActor(
       owner.source,
-      { sessionId: id, threadId: id, name: `Agent ${runnerId}`.slice(0, 200), role: unit.role },
+      { threadId: id, name: `Agent ${runnerId}`.slice(0, 200), role: unit.role },
       tx,
     );
     await tx.run(

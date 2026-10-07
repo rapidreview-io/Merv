@@ -38,7 +38,7 @@ async function fixture(t: TestContext) {
   const worker = await state.transaction((tx) =>
     scope.createSessionActor(
       source,
-      { sessionId: 'session_sources', name: 'Worker', role: 'producer' },
+      { threadId: 'session_sources', name: 'Worker', role: 'producer' },
       tx,
     ),
   );
@@ -46,7 +46,7 @@ async function fixture(t: TestContext) {
     session: {
       actorId: worker.id,
       projectId: worker.projectId,
-      session: { id: 'session_sources' },
+      session: { id: 'session_sources', threadId: 'session_sources' },
     },
     managed: {
       actorId: owner.actorId,

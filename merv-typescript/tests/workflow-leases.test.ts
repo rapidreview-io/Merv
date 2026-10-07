@@ -833,7 +833,7 @@ test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
       await f.scope.createSessionActor(
         source,
         {
-          sessionId: 'lease-test',
+          threadId: 'lease-test',
           role: 'producer',
           name: 'Worker',
         },
@@ -843,7 +843,7 @@ test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   const worker: Caller = {
     projectId: actor.projectId,
     actorId: actor.id,
-    session: { id: 'lease-test' },
+    session: { id: 'lease-test', threadId: 'lease-test' },
   };
   const offerTarget = { ...f.target, leaseId: 'lease-test' };
   const offering = f.workflows.offerLease(f.caller, worker, offerTarget);
@@ -884,14 +884,14 @@ test('a lease check with its frozen execution grants the frozen references and d
     async (tx) =>
       await f.scope.createSessionActor(
         source,
-        { sessionId: 'lease-test', role: 'producer', name: 'Worker' },
+        { threadId: 'lease-test', role: 'producer', name: 'Worker' },
         tx,
       ),
   );
   const worker: Caller = {
     projectId: actor.projectId,
     actorId: actor.id,
-    session: { id: 'lease-test' },
+    session: { id: 'lease-test', threadId: 'lease-test' },
   };
   const { lease, execution } = await f.workflows.offerLease(f.caller, worker, {
     ...f.target,

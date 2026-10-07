@@ -213,14 +213,17 @@ test(
     await assert.rejects(scope.require({ ...agent, credentialId: user.credentialId }, 'read'), {
       code: 'forbidden',
     });
-    await assert.rejects(scope.require({ ...agent, session: { id: 'session_1' } }, 'read'), {
-      code: 'forbidden',
-    });
+    await assert.rejects(
+      scope.require({ ...agent, session: { id: 'session_1', threadId: 'session_1' } }, 'read'),
+      {
+        code: 'forbidden',
+      },
+    );
     assert.deepEqual(await scope.delegationSource(agent), source);
     const worker = await state.transaction((tx) =>
       scope.createSessionActor(
         source,
-        { sessionId: 'session_1', name: 'Worker', role: 'reader' },
+        { threadId: 'session_1', name: 'Worker', role: 'reader' },
         tx,
       ),
     );
@@ -287,7 +290,7 @@ test(
     });
     assert.equal(await tools.call('read', agent, {}), 1);
     for (const mixed of [
-      { ...agent, session: { id: 'session_1' } },
+      { ...agent, session: { id: 'session_1', threadId: 'session_1' } },
       { ...agent, credentialId: original.credentialId },
     ]) {
       await assert.rejects(tools.describe(mixed), { code: 'forbidden' });

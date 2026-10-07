@@ -378,14 +378,14 @@ test('resuming an upload waits for no writer, for an owner or a session caller',
   const worker = await app.ctx.state.transaction((tx) =>
     app.ctx.scope.createSessionActor(
       source,
-      { sessionId: 'session_uploads', name: 'Worker', role: 'producer' },
+      { threadId: 'session_uploads', name: 'Worker', role: 'producer' },
       tx,
     ),
   );
   const session: Caller = {
     actorId: worker.id,
     projectId: worker.projectId,
-    session: { id: 'session_uploads' },
+    session: { id: 'session_uploads', threadId: 'session_uploads' },
   };
   // The session provider vouches for the owner and records whether it was asked in a read scope.
   const handed: boolean[] = [];

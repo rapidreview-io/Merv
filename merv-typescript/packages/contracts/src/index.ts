@@ -912,15 +912,16 @@ export interface Scope {
   registerSessionAuthority(authority: SessionAuthority): () => void;
   registerConversationAuthority(authority: ConversationAuthority): () => void;
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
+  /** The actor of a Sessions thread, which every visit of the thread acts as. */
   createSessionActor(
     source: DelegationSource,
-    input: { sessionId: string; threadId?: string; role: Exclude<Role, 'operator'>; name: string },
+    input: { threadId: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor>;
   /** Changes a thread's actor's role within what `source` may delegate. Scope does not know who
    * owns a thread: the caller must already have proven it controls this one (Sessions: the thread
    * an offer opens, or resumes for the same source). */
-  setAgentRole(
+  setThreadRole(
     source: DelegationSource,
     actorId: string,
     role: Exclude<Role, 'operator'>,

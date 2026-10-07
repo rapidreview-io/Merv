@@ -45,9 +45,17 @@ async function fixture(t: TestContext) {
   scope.registerSessionAuthority({ require: async () => source });
   const worker = async (sessionId: string): Promise<Caller> => {
     const actor = await state.transaction((tx) =>
-      scope.createSessionActor(source, { sessionId, name: 'Worker', role: 'producer' }, tx),
+      scope.createSessionActor(
+        source,
+        { threadId: sessionId, name: 'Worker', role: 'producer' },
+        tx,
+      ),
     );
-    return { actorId: actor.id, projectId: actor.projectId, session: { id: sessionId } };
+    return {
+      actorId: actor.id,
+      projectId: actor.projectId,
+      session: { id: sessionId, threadId: sessionId },
+    };
   };
   /** What the guard does to the instance it checks, on the transaction it is given. */
   const fault: { write?: (tx: Transaction, id: string) => Promise<unknown> } = {};
