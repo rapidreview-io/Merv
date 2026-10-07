@@ -234,19 +234,16 @@ export function codexModelRelay(
       const refused = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         if (!(await ledger.charge(tx, grant.person, today, most, limit))) {
+          // The day's largest refusal stands until the reset or a raised limit funds it: a
+          // smaller call that still passes leaves the refused visit waiting.
           await tx.run(
-            'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=excluded.required_tokens',
+            'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=GREATEST(fleet_model_blockers.required_tokens,excluded.required_tokens)',
             grant.person,
             today,
             most,
           );
           return 'ceiling';
         }
-        await tx.run(
-          'DELETE FROM fleet_model_blockers WHERE person=? AND day=?',
-          grant.person,
-          today,
-        );
         if (
           grant.tokenBudget !== undefined &&
           !(await grantLedger.charge(tx, grant.id, most, grant.tokenBudget))

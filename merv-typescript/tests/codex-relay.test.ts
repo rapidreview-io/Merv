@@ -604,7 +604,9 @@ test('the relay’s own interruption is a typed error frame', async (t) => {
   });
 });
 
-test('a successful reservation clears the last refusal, and yesterday’s refusal does not block today', async (t) => {
+test('only the reset or a raised limit lifts a refused wait: a smaller call that passes does not', async (t) => {
+  // Audit 15 (robust-budget): any admitted call deleted the refusal, so the visit refused at the
+  // ceiling was no longer judged to wait; its close counted as a failure and it was held after 5.
   const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
   const f = await fixture(t, most - 1);
   assert.equal((await f.call()).status, 403);
@@ -612,17 +614,37 @@ test('a successful reservation clears the last refusal, and yesterday’s refusa
   const smaller = { model: grant.model, input: [], store: false, stream: true };
   assert.ok(Math.ceil(JSON.stringify(codexPayload(smaller, grant)).length / 4) + 65_536 < most);
   assert.equal((await f.call(smaller)).status, 200);
-  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens, null);
+  const waiting = await modelBudgetStatus(f.state, grant.person, most - 1);
+  assert.deepEqual([waiting.lastRefusedTokens, waiting.blocked], [most, true]);
+  // A smaller refusal later the same day keeps the largest wait.
+  const bigger = {
+    ...smaller,
+    input: [{ type: 'message', role: 'user', content: 'x'.repeat(4e5) }],
+  };
+  assert.equal((await f.call(bigger)).status, 403);
+  const largest = (await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens!;
+  assert.ok(largest > most);
+  assert.equal((await f.call()).status, 403);
+  assert.equal(
+    (await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens,
+    largest,
+  );
+  // A limit raised far enough lifts it.
+  await setDailyTokens(f.state, grant.person, 10 * most);
+  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).blocked, false);
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   await f.state.transaction((tx) =>
     tx.run(
       'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?)',
-      grant.person,
+      'yesterday-person',
       yesterday,
       most + 100_000,
     ),
   );
-  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens, null);
+  assert.equal(
+    (await modelBudgetStatus(f.state, 'yesterday-person', most)).lastRefusedTokens,
+    null,
+  );
   const fresh = await modelBudgetStatus(f.state, 'fresh-person', 65_536);
   assert.equal(fresh.blocked, true);
   assert.equal(fresh.blockReason, 'minimum_reservation_unaffordable');
