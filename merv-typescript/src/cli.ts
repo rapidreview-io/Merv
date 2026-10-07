@@ -84,11 +84,8 @@ async function runMachine(configPath: string) {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    const drivers =
-      parsed.workspaceDrivers?.length === 0
-        ? []
-        : [(await import('@merv/code/driver/index')).codeWorkspaceDriver];
-    const fiber = ctx.plugin(runnerWith(drivers), config);
+    const { codeWorkspaceDriver } = await import('@merv/code/driver/index');
+    const fiber = ctx.plugin(runnerWith([codeWorkspaceDriver]), config);
     await fiber.await();
     if (stopping) return;
     const runner = ctx.get('runner');

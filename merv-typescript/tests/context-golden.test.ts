@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { EXPERIMENT_RECIPES } from '@merv/experiments/program';
+import { EXPERIMENT_RECIPES } from '@merv/experiments/definitions';
 import { ITEM_RECIPES } from '@merv/reflections/definitions';
 import { TASK_TYPES } from '@merv/tasks/definitions';
 import {

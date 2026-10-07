@@ -1724,10 +1724,10 @@ test('a plan creates only managed Git work atomically and replayably', async (t)
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
   assert.equal(plain.workspace, 'git');
   assert.equal(coded.workspace, 'git');
-  assert.equal(coded.workflow.version, 39);
+  assert.equal(coded.workflow.version, 43);
   assert.equal(coded.baseTaskId, undefined);
   assert.equal(experiment.workspace, 'git');
-  assert.equal(experiment.workflow.version, 36);
+  assert.equal(experiment.workflow.version, 40);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.deepEqual(
     (await f.app.ctx.workflows.prerequisites(f.owner, [experiment.id]))
@@ -1776,8 +1776,8 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
   const task = await tasks.get(f.owner, ids.harness);
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
-  assert.equal(task.workflow.version, 39);
-  assert.equal(experiment.workflow.version, 36);
+  assert.equal(task.workflow.version, 43);
+  assert.equal(experiment.workflow.version, 40);
   assert.equal(task.baseTaskId, undefined);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.equal((await code.unit(f.owner, experiment.id)).base, null);

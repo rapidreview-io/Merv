@@ -104,12 +104,6 @@ export async function createTask(
         'New tasks always use Git. Omit workspace or use git, and use dependsOn for accepted code dependencies; baseTaskId is retired.',
       );
       await ctx.code.ensureRepository(caller, tx);
-      check(
-        await ctx.code.hosted(caller, tx),
-        'code_store_required',
-        'Import the existing project repository into Code before creating work',
-        409,
-      );
       const inputIds = input.contextInputs ?? {};
       check(
         inputIds && typeof inputIds === 'object' && !Array.isArray(inputIds),
@@ -207,7 +201,7 @@ export async function createTask(
         'The pinned brief must contain the task goal and every Done-when check',
       );
       // Once Code keeps the project's history, new Git work lives there and nowhere else.
-      const version = taskVersion(ctx.artifacts.largeUploadAvailable, !!service);
+      const version = taskVersion(!!service);
       const workflow = await (
         await ctx.registration(version)
       ).start(

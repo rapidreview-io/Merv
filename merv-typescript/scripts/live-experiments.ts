@@ -198,7 +198,7 @@ try {
     'Every offered worker must receive the frozen Project Introduction',
   );
   // Ask the program for its current version rather than pinning the frozen history.
-  assert.equal(final.workflow.version, programVersion());
+  assert.equal(final.workflow.version, programVersion);
   assert.equal(new Set(sessions.map((session) => session.actorId)).size, 4);
   assert.deepEqual(
     sessions.map((session) => session.expectedRevision),
@@ -687,10 +687,8 @@ try {
             usageReported: JSON.parse(String(launch.metadata_json)).usageReported,
           })),
         pendingRequests: ledger.prepare('SELECT COUNT(*) AS n FROM launch_requests').get()!.n,
-        ownedSlots: ledger
-          .prepare(
-            'SELECT COUNT(*) AS n FROM runner_checkout_slots WHERE owner_launch_id IS NOT NULL',
-          )
+        openWorkspaces: ledger
+          .prepare("SELECT COUNT(*) AS n FROM runner_workspaces WHERE status<>'closed'")
           .get()!.n,
         appStopped: failures.length === 0,
         cleanupErrors: failures.length,
@@ -700,7 +698,7 @@ try {
       });
       if (report) {
         assert.equal(cleanup.pendingRequests, 0);
-        assert.equal(cleanup.ownedSlots, 0);
+        assert.equal(cleanup.openWorkspaces, 0);
         assert.ok(workspaces.every((workspace) => workspace.status === 'closed'));
         if (gitMode) {
           const producer = workspaces.find((workspace) => workspace.mode === 'persistent');

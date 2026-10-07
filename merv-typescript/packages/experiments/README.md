@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers two current contracts, `experiment@36`/`40` (small/large uploads), on which Sandboxes attaches native compute. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
+independent review gates. It registers one current contract, `experiment@40`, on which Sandboxes attaches native compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 ## Where it sits
 
@@ -117,8 +117,14 @@ packages/experiments/
 ├── package.json
 ├── README.md
 └── src/
-    ├── index.ts              # Service: records, commands, evidence sealing, review routing, Running board
-    ├── program.ts            # Workflow, recipes, execution policy, lease hooks and review checks; the service's base class
+    ├── index.ts              # Service: records, review routing, Running board; binds the commands
+    ├── program.ts            # Workflow graph, versions, evidence roles and compute epochs
+    ├── definitions.ts        # Context recipes and review criteria
+    ├── execution-policy.ts   # The tools each assignment is granted
+    ├── context.ts            # Frozen inputs, references and the rendered assignment context
+    ├── lease.ts              # Lease reads, roles and hooks
+    ├── policy.ts             # Registration, the workflow policy, guards and review checks
+    ├── commands.ts           # create, attach, transition, exhibit, submitReview and evidence sealing
     ├── program.postgres.ts   # Published lease-table migrations, through their move into wf_leases
     ├── storage.ts            # Owned table rows and migration registration
     ├── storage.postgres.ts   # Published record-table migrations

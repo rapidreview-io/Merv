@@ -363,7 +363,7 @@ test('code-import brings a local branch into a served project, in steps, as its 
   );
   assert.ok(first.bytes! > PART);
   let status = (await app.ctx.codeWork.status(owner)) as CodeProjectStatus;
-  assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', true]);
+  assert.equal(status.project!.main.stored, true);
   const second = await importRepository({
     url,
     repository: source.repository,

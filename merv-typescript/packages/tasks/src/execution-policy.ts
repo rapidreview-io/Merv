@@ -11,7 +11,6 @@ export type TaskWorkspace = 'code' | 'resolution';
 export function taskExecutionPolicy(
   purpose: 'work' | 'review',
   workspace: TaskWorkspace,
-  largeUploads = false,
 ): WorkflowExecutionPolicy {
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
@@ -42,13 +41,9 @@ export function taskExecutionPolicy(
       ...(purpose === 'work'
         ? [
             grant('artifact.create', {}),
-            ...(largeUploads
-              ? [
-                  grant('artifact.upload_begin', {}),
-                  grant('artifact.upload_resume', {}),
-                  grant('artifact.upload_complete', {}),
-                ]
-              : []),
+            grant('artifact.upload_begin', {}),
+            grant('artifact.upload_resume', {}),
+            grant('artifact.upload_complete', {}),
             grant('task.submit_delivery', { taskId: reference('producerTaskId'), ...revision }),
             grant('task.mark_failed', { ...task, ...revision }),
             grant('code.commit', {}),

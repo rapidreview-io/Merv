@@ -28,7 +28,6 @@ interface ProjectRow {
   repository_id: string;
   binding_json: string;
   main_json: string;
-  store_json: string | null;
 }
 /** Technical workspace identities and retained Git facts; owner policy stays with its caller. */
 export class CodeUnitStore {
@@ -343,7 +342,9 @@ export class CodeUnitStore {
           caller.projectId,
           'local',
           input.repositoryId,
-          canonical({ boundBy: caller.actorId, boundAt: at, operationId }),
+          // Code keeps every project's history: a first bind declares it managed, as older
+          // servers read it.
+          canonical({ boundBy: caller.actorId, boundAt: at, operationId, managed: true }),
           main,
           '{}',
           '[]',
@@ -389,20 +390,19 @@ export class CodeUnitStore {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
-    return (await this.project(tx, caller.projectId))?.durability === 'code';
+    return !!(await this.project(tx, caller.projectId));
   }
 
   async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
     this.assertOpen();
     const row = await sql.get<ProjectRow>(
-      'SELECT project_id,repository_id,binding_json,main_json,store_json FROM code_projects WHERE project_id=?',
+      'SELECT project_id,repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
       projectId,
     );
     if (!row) return null;
     const binding = JSON.parse(row.binding_json) as {
       boundBy: string;
       boundAt: string;
-      managed?: boolean;
       previous?: CodeProjectBinding['previous'];
     };
     const main = JSON.parse(row.main_json) as CodeProjectBinding['main'];
@@ -418,9 +418,6 @@ export class CodeUnitStore {
         admittedAt: main.admittedAt,
         stored: main.stored === true,
       },
-      // Once imported a project stays with Code's repository: a main it does not hold yet
-      // blocks work, it never sends new work back to a runner's own repository.
-      durability: row.store_json === null && !binding.managed ? 'legacy-local' : 'code',
     };
   }
 

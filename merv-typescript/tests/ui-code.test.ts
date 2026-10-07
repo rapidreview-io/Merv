@@ -213,7 +213,6 @@ test('an empty managed repository is visible before GitHub is connected', async 
           project: {
             mode: 'local',
             repositoryId: 'merv:project',
-            durability: 'code',
             main: { oid: 'a'.repeat(40), stored: true },
           },
           units: [],
@@ -1320,7 +1319,6 @@ test('the unit card is the record’s own Code section, and the trunk says what 
         admittedAt: '2026-09-01T00:00:00.000Z',
         stored: true,
       },
-      durability: 'code',
     },
   });
   await mount(page([row], { at: '/code/unit/u8' }));
@@ -1332,7 +1330,8 @@ test('the unit card is the record’s own Code section, and the trunk says what 
   assert.ok(document.querySelector('#code-props')?.className.includes('code-refused'), said);
   await pickNode('main');
   const trunk = document.querySelector('#code-props')?.textContent ?? '';
-  assert.ok(trunk.includes('in the repository this server keeps'), trunk);
+  // Code keeps every project's history, so the main card no longer says where.
+  assert.ok(trunk.includes('Admitted') && !trunk.includes('Kept'), trunk);
 });
 
 test('an operator verb names its consequence and keeps the reason; a session is offered none', async (t) => {

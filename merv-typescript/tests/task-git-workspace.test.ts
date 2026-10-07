@@ -8,7 +8,7 @@ import { currentTaskSuite as fixture } from './fixtures/current-task-suite.js';
 test('current tasks use managed Git and accept only their own leased worker commit', async (t) => {
   const f = await fixture(t);
   const task = await f.create();
-  assert.equal(task.workflow.version, 39);
+  assert.equal(task.workflow.version, 43);
   const policy = (await f.app.ctx.workflows.assignment(f.owner, task.id)).execution.policy!;
   const workspace = effectiveWorkspace(policy);
   assert.equal(workspace.mode === 'none' ? undefined : workspace.driver, 'code.v2');

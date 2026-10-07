@@ -143,7 +143,7 @@ test('a failed initialization stays blocked and retries the same deterministic r
     throw new Error('temporary disk failure');
   });
   await f.state.transaction((tx) => f.code.ensureRepository(caller, tx));
-  assert.equal((await f.code.status(caller)).project?.durability, 'code');
+  assert.ok((await f.code.status(caller)).project);
   assert.equal((await f.code.status(caller)).project?.main.stored, false);
   await initializeManagedProjects(f.state, repositories, async () => {});
   assert.equal((await f.code.status(caller)).operations?.[0]?.error, 'code_initialization_failed');

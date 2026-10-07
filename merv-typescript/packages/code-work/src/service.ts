@@ -452,15 +452,14 @@ export class CodeService implements Code {
   unit: Code['unit'] = (...args) => this.unitStore.records.unit(...args);
   async status(caller: Caller) {
     const status = await this.unitStore.status(caller);
-    const publication =
-      status.project?.durability === 'code'
-        ? {
-            publication: {
-              controls: await this.publicationHost.status(caller),
-              records: await this.publicationStore.publications(caller),
-            },
-          }
-        : {};
+    const publication = status.project
+      ? {
+          publication: {
+            controls: await this.publicationHost.status(caller),
+            records: await this.publicationStore.publications(caller),
+          },
+        }
+      : {};
     const technical = await this.store.describe(caller.projectId);
     const configuredCheck = await this.state.read((sql) => projectCheck(sql, caller.projectId));
     return {

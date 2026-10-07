@@ -11,11 +11,8 @@ import { createApp } from './fixtures/app.js';
 // Captured before retirement. These include the graph, success states and every fixed
 // execution manifest: pruning history must not change current worker permissions.
 const current = {
-  'task@6': '9e61a6e5e930fedbdb21dc5312637e3acea38f886e5a3674f9294bd854f8263c',
   'task@11': 'c01c239aec645fcff44e7727737c332a8086ecd2ea022df5e5c8d6b1680e5d60',
-  'task@39': '125c77e994c38591382d2819f27672d2775fa4c06f65b7416204f4cbfe87cbd0',
   'task@43': 'c1f2f37f67bc6ee96c86d7345419b6708d6938fd4f535c55f29720a84d22779b',
-  'experiment@36': 'f6a4a1ea1ee638d8edd729414215fed080599dae1aadc4dac5255d2718c6a44c',
   'experiment@40': '183e98516c3c980d63cbf45603684978a2a8338afdff451674700b59693d5e07',
 };
 
@@ -59,9 +56,9 @@ test('only current work contracts register, with unchanged permissions across re
 });
 
 test('retired contracts cannot silently become current work', () => {
-  for (const version of [2, 5, 28, 29, 30, 31, 35, 36, 40, 999])
+  for (const version of [2, 5, 6, 28, 29, 30, 31, 35, 36, 39, 40, 999])
     assert.throws(() => taskWorkspace(version), { code: 'workflow_version_retired' });
-  for (const version of [1, 5, 8, 25, 27, 28, 32, 33, 37, 999])
+  for (const version of [1, 5, 8, 25, 27, 28, 32, 33, 36, 37, 999])
     assert.equal(currentExperiment(version), false);
 });
 
@@ -90,8 +87,8 @@ test('retired work survives restart as readable history, with no new claims or m
   const reviews: string[] = [];
   // Reproduce stored, pinned records from a former installation. No old owner code is loaded.
   for (const [name, version, active] of [
-    ['task', 28, 39],
-    ['experiment', 25, 36],
+    ['task', 28, 43],
+    ['experiment', 25, 40],
   ] as const) {
     const pinned = (await app.ctx.workflows.pinned(name, active))!;
     const handle = await app.ctx.workflows.register({ ...pinned.definition, version });

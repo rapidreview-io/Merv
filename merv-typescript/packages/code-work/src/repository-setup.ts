@@ -4,11 +4,8 @@ import type { Caller } from '@merv/contracts';
 import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPreparation, CodeRepositoryPrepareInput } from './models.js';
 import type { Code } from './types.js';
-import type { CodeService } from './service.js';
 
-type PreparationHost = Pick<Code, 'github' | 'importRepository'> & {
-  repositoryState(caller: Caller): ReturnType<CodeService['repositoryState']>;
-};
+type PreparationHost = Pick<Code, 'github' | 'importRepository'>;
 
 const oid = oidSchema;
 export const repositoryPrepareSchema = z
@@ -42,13 +39,6 @@ export async function prepareRepository(
     connection.repository && connection.automation !== 'off',
     'github_repository_required',
     'Select a repository and enable repository access first',
-    409,
-  );
-  const before = await code.repositoryState(caller);
-  check(
-    before.project?.durability === 'code',
-    'code_project_unhosted',
-    'This project’s repository is not kept by Code; import it with code.repository.import first',
     409,
   );
   const operation = await code.importRepository(caller, {

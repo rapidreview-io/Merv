@@ -172,7 +172,7 @@ The capability ships before the older path is removed. What it settled:
 
 ## Versions
 
-New tasks and experiments always use the native contracts (task@39/43 and experiment@36/40),
+New tasks and experiments always use the native contracts (task@43 and experiment@40),
 whether or not the project is connected. Their execution policies grant no compute tools, so they
 need no new versions.
 

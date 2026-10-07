@@ -747,7 +747,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   assert.equal(base.state, 'awaiting_resolution');
   assert.ok(base.resolutionTaskId);
   const task = await f.tasks.get(f.admin, base.resolutionTaskId);
-  assert.equal(task.workflow.version, 6);
+  assert.equal(task.workflow.version, 11);
   assert.match(task.title, /^Merge ‘[AC]’ with ‘[AC]’$/);
   assert.ok(!task.title.includes(base.key.slice(0, 12)));
   assert.match(task.goal, /\bA \(wf_/);
@@ -787,7 +787,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   );
   for (let i = 0; i < 3; i++) await f.code.reconcileAll();
   assert.equal(
-    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
+    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 11).length,
     1,
   );
   const pin = await f.state.transaction((tx) =>
@@ -830,7 +830,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
       0,
     );
   assert.equal(
-    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
+    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 11).length,
     1,
   );
 });
@@ -852,7 +852,7 @@ test('conflict recovery creates and links the task atomically', async (t) => {
   };
   await assert.rejects(f.code.reconcileAll(), /Crash before linkage/);
   assert.equal(
-    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
+    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 11).length,
     0,
   );
   assert.equal((await f.record())!.resolutionTaskId, null);
@@ -865,7 +865,7 @@ test('conflict recovery creates and links the task atomically', async (t) => {
   const record = (await f.record())!;
   assert.ok(record.resolutionTaskId);
   assert.equal(
-    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
+    (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 11).length,
     1,
   );
   assert.equal(
@@ -899,7 +899,7 @@ test('a service task derives its base from prerequisites when it names no commit
     provider.create({ ...brief, requestId: 'derived', dependsOn: [f.left.id, f.extra.id] }, tx),
   );
   const task = await f.tasks.get(f.admin, id);
-  assert.equal(task.workflow.version, 6);
+  assert.equal(task.workflow.version, 11);
   assert.deepEqual(task.dependencies.map((edge) => edge.id).sort(), [f.left.id, f.extra.id].sort());
   await f.bases.work(f.admin.projectId);
   const status = (await f.code.unit(f.admin, id)).baseStatus;
@@ -994,7 +994,7 @@ async function deliver(f: Fixture, taskId: string) {
       sessionId: session.id,
       actorId: worker.actorId,
       revision: task.workflow.revision,
-      workflow: { name: 'task', version: 6, state: 'in_progress' },
+      workflow: { name: 'task', version: 11, state: 'in_progress' },
       readOnly: false,
     } as CodeCapture['provenance'],
     workspace,
@@ -1368,7 +1368,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
         sessionId: session.id,
         actorId: worker.actorId,
         revision: task.workflow.revision,
-        workflow: { name: 'task', version: 6, state: 'in_progress' },
+        workflow: { name: 'task', version: 11, state: 'in_progress' },
         readOnly: false,
       } as CodeCapture['provenance'],
       workspace,
@@ -1513,7 +1513,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     assert.ok(context.prompt.includes(submissions[prior - 1]));
   }
   assert.equal(
-    (await f.tasks.list(f.admin)).filter((task) => task.workflow.version === 6).length,
+    (await f.tasks.list(f.admin)).filter((task) => task.workflow.version === 11).length,
     1,
   );
   const stopped = await f.tasks.markFailed(f.admin, {
@@ -1672,7 +1672,7 @@ for (const verdict of ['pass', 'fail'] as const)
         sessionId: session.id,
         actorId: worker.actorId,
         revision: 0,
-        workflow: { name: 'task', version: 6, state: 'in_progress' },
+        workflow: { name: 'task', version: 11, state: 'in_progress' },
         readOnly: false,
       } as CodeCapture['provenance'],
       workspace,
@@ -1779,7 +1779,7 @@ for (const verdict of ['pass', 'fail'] as const)
       assert.ok(context.prompt.includes('"verdict":"fail"'));
     }
     assert.equal(
-      (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 6).length,
+      (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 11).length,
       1,
     );
   });

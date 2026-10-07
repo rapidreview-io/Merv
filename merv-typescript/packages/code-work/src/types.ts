@@ -148,8 +148,9 @@ export interface CodeUnits {
   bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
   /**
-   * Whether Code keeps this project's history in its own repository. It never turns false
-   * again, and it is read from the database alone, so an owner may ask inside a create.
+   * Whether Code has this project, and so keeps its history in its own repository. It never
+   * turns false again, and it is read from the database alone, so an owner may ask inside a
+   * create.
    */
   hosted(caller: Caller, tx: Transaction): Promise<boolean>;
   status(caller: Caller): Promise<CodeProjectStatus>;

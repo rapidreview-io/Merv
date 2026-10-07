@@ -20,12 +20,13 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
     { from: 'in_review', action: 'mark_failed', to: 'failed' },
   ],
 };
-/** The executable contracts: new work selects one by its uploads, live work keeps its own. */
-export const taskVersions: Record<number, { workspace: TaskWorkspace; largeUploads: boolean }> = {
-  6: { workspace: 'resolution', largeUploads: false },
-  11: { workspace: 'resolution', largeUploads: true },
-  39: { workspace: 'code', largeUploads: false },
-  43: { workspace: 'code', largeUploads: true },
+/**
+ * The executable contracts. Each grants the large-upload tools, which refuse where the blob
+ * store cannot sign uploads; the twins without them (task@6, @39) are retired.
+ */
+export const taskVersions: Record<number, { workspace: TaskWorkspace }> = {
+  11: { workspace: 'resolution' },
+  43: { workspace: 'code' },
 };
 export function taskContract(version: number) {
   const contract = taskVersions[version];
@@ -34,13 +35,7 @@ export function taskContract(version: number) {
 }
 export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
 /** Service tasks are the resolution contracts; every other task runs on a Code one. */
-export const taskVersion = (largeUploads = false, service = false): number =>
-  Number(
-    Object.entries(taskVersions).find(
-      ([, contract]) =>
-        contract.largeUploads === largeUploads && (contract.workspace === 'resolution') === service,
-    )![0],
-  );
+export const taskVersion = (service = false): number => (service ? 11 : 43);
 export const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
 /** The workflow node a Git task's commit is made in. */
 export const producing = {

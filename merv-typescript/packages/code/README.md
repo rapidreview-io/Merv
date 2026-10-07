@@ -86,8 +86,7 @@ manifest), the store, mirror and writer statuses, and their size limits. The mac
 own bodies and the repository preparation belong to Code work.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
-cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;
-`workspaceDrivers: []` supports execution without Code or Git. It is the only driver: the
+cross-machine handoff. The [Runner](../runner/README.md) CLI always loads it. It is the only driver: the
 former local repository driver, for a runner with a repository of its own, was removed.
 
 See [Code operations](../../docs/CODE_OPERATIONS.md),

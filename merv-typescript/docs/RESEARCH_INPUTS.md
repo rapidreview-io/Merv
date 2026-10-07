@@ -46,7 +46,7 @@ that every future offer contains the same project facts.
 
 Implementation: [Scope](../packages/scope/src/project-context.ts),
 [Task context](../packages/tasks/src/index.ts),
-[Experiment context](../packages/experiments/src/program.ts).
+[Experiment context](../packages/experiments/src/context.ts).
 
 ## Live inventory and exact reference reads
 

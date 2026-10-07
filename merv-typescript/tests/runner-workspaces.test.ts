@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { LocalLedger } from '../packages/runner/src/ledger.js';
@@ -109,6 +110,14 @@ test('one work item retains exactly one scratch cwd across sequential sessions a
     f.reopen();
   }
   assert.equal(new Set(paths).size, 1);
+  // Each step's status row is the only record: there is no slot table.
+  const db = new DatabaseSync(f.ledger.path, { readOnly: true });
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='runner_checkout_slots'").get()!
+      .n,
+    0,
+  );
+  db.close();
   assert.equal(
     paths[0],
     join(f.assignment!.directory, createHash('sha256').update('instance').digest('hex')),

@@ -462,12 +462,6 @@ export function CodeCard({
           rows={[
             ['Commit', <Short value={main.main.oid} />],
             ['Admitted', <Ago at={main.main.admittedAt} />],
-            [
-              'Kept',
-              main.durability === 'code'
-                ? 'in the repository this server keeps'
-                : 'on the runner that made it',
-            ],
             // Rebinding has no UI of its own, like binding; what the card shows is the whole
             // lineage, newest first, because work accepted under any repository the project
             // was bound to is still its own and this is the only screen that says so. One row
