@@ -381,7 +381,10 @@ test('a target that keeps failing across runners is held, stops blocking the que
   // The hold is a project admin's move on the work it holds, so it reaches Needs you; the
   // producer reads why the work waits, and nothing it should do.
   const gate = await f.workflows.evaluate(f.owner, target.id);
-  assert.deepEqual(gate.yours, { ask: 'Fix why its launches fail, then release the hold' });
+  assert.deepEqual(gate.yours, {
+    ask: 'Fix why its launches fail, then release the hold',
+    blocker: { provider: 'session-dispatch', key: 'launch' },
+  });
   assert.deepEqual(
     gate.providerBlockers.map(({ provider, code, whose, revision }) => [
       provider,
