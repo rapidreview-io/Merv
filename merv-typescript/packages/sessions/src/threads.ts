@@ -80,10 +80,11 @@ const PAGE = 50;
 const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
 /** A question to it (an inquiry) still waiting for a machine or being answered. */
 const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND ${openInquiry('i')})`;
-/** A thread that wants attention whatever its work: live, asking its owner, or asked a question
- *  (an inquiry) that is still open. */
-const URGENT = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
-  OR ${INQUIRING})`;
+/** A thread that wants attention whatever its work: live, asking its owner a question that still
+ *  stands (`standing`: not about work that has ended, whose `marks` the caller binds), or asked a
+ *  question (an inquiry) that is still open. */
+const urgent = (marks: string) => `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id
+  AND q.answered_at IS NULL${marks ? ` AND q.instance_id NOT IN (${marks})` : ''}) OR ${INQUIRING})`;
 /** A thread holding a person's message its agent has not read, where it is not retired. The
  *  context an answered inquiry left its work is not one: the person has read that answer. */
 const UNREAD = `(t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id
@@ -625,22 +626,32 @@ export class SessionThreads {
     });
   }
   /**
-   * Which of the project's threads want attention: those `URGENT` names, and those holding an
+   * Which of the project's threads want attention: those `urgent` names, and those holding an
    * unread message while they take one (`takesMessage`), so not on work that has ended, which no
-   * visit will read it on.
+   * visit will read it on. A question about work that has ended no longer stands, as `counts`
+   * and `standing` say.
    */
   private async attention(tx: Transaction, projectId: string) {
-    const unread = await tx.all<{ id: string; instance_id: string }>(
-      `SELECT t.id,t.instance_id FROM session_threads t WHERE t.project_id=? AND ${UNREAD} AND NOT ${URGENT}`,
+    const asked = await tx.all<{ instance_id: string }>(
+      'SELECT DISTINCT instance_id FROM session_questions WHERE project_id=? AND answered_at IS NULL',
       projectId,
+    );
+    const over = asked.length
+      ? [...(await this.host.ended(projectId, asked.map((row) => row.instance_id), tx))]
+      : [];
+    const urgentSql = urgent(over.map(() => '?').join(','));
+    const unread = await tx.all<{ id: string; instance_id: string }>(
+      `SELECT t.id,t.instance_id FROM session_threads t WHERE t.project_id=? AND ${UNREAD} AND NOT ${urgentSql}`,
+      projectId,
+      ...over,
     );
     const ended = unread.length
       ? await this.host.ended(projectId, [...new Set(unread.map((row) => row.instance_id))], tx)
       : new Set<string>();
     const unheard = unread.filter((row) => ended.has(row.instance_id)).map((row) => row.id);
     return {
-      sql: `(${URGENT} OR (${UNREAD}${unheard.length ? ` AND t.id NOT IN (${unheard.map(() => '?').join(',')})` : ''}))`,
-      params: unheard,
+      sql: `(${urgentSql} OR (${UNREAD}${unheard.length ? ` AND t.id NOT IN (${unheard.map(() => '?').join(',')})` : ''}))`,
+      params: [...over, ...unheard],
     };
   }
   /** How many of the project's threads are live, and how many ask their owner a question. */

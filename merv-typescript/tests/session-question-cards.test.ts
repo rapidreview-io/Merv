@@ -91,5 +91,6 @@ test('a lens question marks its wave’s card until the lens it asked about ends
   assert.notDeepEqual((await card()).says, ['Asked you a question']);
   assert.equal((await card()).needsYou, 0);
   assert.equal((await thread())?.question, undefined, 'its thread no longer waits on the answer');
+  assert.equal((await thread())?.attention, undefined, 'nor keeps its place on the first page');
   assert.equal((await app.ctx.sessions.threads.counts(owner)).waiting, 0);
 });
