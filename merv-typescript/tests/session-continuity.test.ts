@@ -18,7 +18,10 @@ import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 import type {
   Session,
+  SessionMessage,
   ThreadConversation,
+  ThreadMessages,
+  ThreadQuestion,
   ThreadView,
   VisitView,
 } from '../packages/sessions/src/types.js';
@@ -775,6 +778,150 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
   assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
   const unknown = await f.http('GET', `/sessions/threads?instanceId=${unit.id}&x=1`, f.token);
   assert.equal(unknown.status, 400);
+});
+
+test('an agent asks its owner: its visit ends uncounted, the work waits, and a message to its thread answers and brings it back', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  const threadId = first.session.threadId;
+  const worker = await f.sessions.authenticate(first.input.secret);
+  const question = 'Which split should the evaluation hold out: the 2024 or the 2025 cohort?';
+  const asked = (await f.app.ctx.tools.invoke('session.ask_owner', worker, { question })).value as {
+    question: ThreadQuestion;
+    ended: boolean;
+  };
+  assert.deepEqual(
+    [asked.ended, asked.question.threadId, asked.question.question, asked.question.answeredAt],
+    [true, threadId, question, null],
+  );
+  // The visit ended as released, by its own hand, and nothing counts it against the work.
+  const closed = await f.sessions.get(f.owner, first.session.id);
+  assert.deepEqual(
+    [closed.status, closed.outcome, closed.closeReason],
+    ['released', 'asked_owner', 'asked_owner'],
+  );
+  await assert.rejects(f.app.ctx.tools.invoke('session.messages', worker, {}));
+  // Its runner delivers the conversation as it releases; the release changes nothing.
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const holds = async () =>
+    await f.app.ctx.state.read((sql) =>
+      sql.all('SELECT * FROM session_dispatch_holds WHERE instance_id=?', unit.id),
+    );
+  assert.deepEqual(await holds(), []);
+  // The work waits: withheld from dispatch, its blocker on its gate and in session.stuck, its
+  // question in Needs you, and its thread kept however long the answer takes.
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue.some(
+        (item) => item.instanceId === unit.id,
+      ),
+    );
+  assert.equal(await queued(), false);
+  const blockers = async () =>
+    (await f.app.ctx.workflows.blockers(f.owner, unit.id)).map((item) => [
+      item.provider,
+      item.key,
+      item.code,
+      item.message,
+    ]);
+  assert.deepEqual(await blockers(), [
+    ['session-question', threadId, 'agent_question', `Its agent asked its owner: ${question}`],
+  ]);
+  assert.deepEqual(
+    (await f.sessions.dispatch.stuck(f.owner)).items
+      .filter((item) => item.instanceId === unit.id)
+      .map((item) => item.kind),
+    ['work_blocked'],
+  );
+  assert.deepEqual(
+    (await f.sessions.messaging.questionMoves(f.owner)).map((item) => [
+      item.instanceId,
+      item.key,
+      item.move.sentence,
+    ]),
+    [[unit.id, threadId, 'Answer its agent’s question']],
+  );
+  await f.age(dormantMs + 60_000);
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  const path = `/sessions/threads/${threadId}/messages`;
+  let read: ThreadMessages = await f.ok('GET', path, f.token);
+  assert.deepEqual(
+    [read.messages, read.questions.map((item) => [item.sessionId, item.answeredAt])],
+    [[], [[first.session.id, null]]],
+  );
+
+  // The answer: a message to the thread, which releases the work.
+  const answer = 'Hold out the 2025 cohort.';
+  const sent = (await f.ok('POST', path, f.token, { body: answer, requestId: 'answer-1' }))
+    .message as SessionMessage;
+  assert.deepEqual(
+    [sent.threadId, sent.sessionId, sent.instanceId, sent.acknowledgedAt],
+    [threadId, null, unit.id, null],
+  );
+  assert.equal(
+    (await f.ok('POST', path, f.token, { body: answer, requestId: 'answer-1' })).message.id,
+    sent.id,
+  );
+  assert.deepEqual(await blockers(), []);
+  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  assert.equal(await queued(), true);
+  // The work comes back to the same thread and conversation, and its next visit reads the
+  // answer before anything else.
+  const second = await f.offer(unit.id, 'runner-b');
+  assert.deepEqual(
+    [second.session.threadId, second.session.continuity?.resume?.sessionId],
+    [threadId, first.session.id],
+  );
+  const next = await f.sessions.authenticate(second.input.secret);
+  await assert.rejects(f.app.ctx.tools.invoke('session.ask_owner', next, { question: 'Again?' }), {
+    code: 'session_message_pending',
+  });
+  const inbox = (await f.app.ctx.tools.invoke('session.messages', next, {}))
+    .value as SessionMessage[];
+  assert.deepEqual(
+    inbox.map((item) => [item.id, item.body]),
+    [[sent.id, answer]],
+  );
+  await f.app.ctx.tools.invoke('session.message.ack', next, {
+    messageId: sent.id,
+    reply: 'Holding out 2025.',
+    requestId: 'ack-1',
+  });
+  read = await f.ok('GET', path, f.token);
+  assert.deepEqual(
+    [
+      read.messages.map((item) => [item.id, item.reply]),
+      read.questions.map((item) => [item.answeredAt !== null, item.answerMessageId]),
+    ],
+    [[[sent.id, 'Holding out 2025.']], [[true, sent.id]]],
+  );
+  // Only a person messages, and only a thread of this project; a reviewer, which keeps no
+  // conversation, cannot ask.
+  assert.equal(
+    (await f.http('POST', path, second.input.secret, { body: 'x', requestId: 'x' })).status,
+    403,
+  );
+  const missing = await f.http('POST', '/sessions/threads/thr_missing/messages', f.token, {
+    body: 'x',
+    requestId: 'missing',
+  });
+  assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
+  const other = await f.start();
+  await f.move(other.id, 'submit');
+  const review = await f.offer(other.id, 'runner-c');
+  await assert.rejects(
+    f.app.ctx.tools.invoke(
+      'session.ask_owner',
+      await f.sessions.authenticate(review.input.secret),
+      {
+        question,
+      },
+    ),
+    { code: 'question_unkept' },
+  );
 });
 
 test('a conversation read takes only a large transcript’s end, and a visit it cannot read is unavailable', async (t) => {

@@ -144,7 +144,7 @@ const capabilities: Record<string, readonly string[]> = {
   identity: [],
   // Account ciphertext storage is separate from identity authentication and scope authority.
   secrets: ['state'],
-  sessions: ['state', 'scope', 'workflows', 'domainEvents'],
+  sessions: ['state', 'scope', 'workflows', 'domainEvents', 'blobs'],
   // Code follows session attach and close events to open and end writer generations.
   code: ['state', 'scope', 'domainEvents'],
   codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
@@ -174,7 +174,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
-  sessions: ['tools', 'blobs', 'secrets'],
+  sessions: ['tools', 'secrets'],
   tasks: ['sandboxes'],
 };
 

@@ -216,7 +216,7 @@ async function readingOf(
   const read = { dispatch, fleet, runners, holds };
   if (!admissible)
     return { ...read, queued: 0, waiting: new Map(), deferred: new Map(), quiet: [], stalls: [] };
-  const { all, live: leased, queue, spent, unaccounted } = admissible;
+  const { all, live: leased, queue, spent, unaccounted, asking } = admissible;
   // A target with a live session is being tried right now, so it is not waiting on anyone.
   const waiting = new Map(
     all
@@ -247,8 +247,10 @@ async function readingOf(
     const key = targetKey(item),
       step = item.role === 'operator';
     // With dispatch off, one dispatch_disabled item says why all of them wait.
+    // Work whose agent asked its owner says so through its blocker (work_blocked).
     if (
       leased.has(key) ||
+      asking.has(item.instanceId) ||
       failing.has(key) ||
       deferred.has(key) ||
       Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now ||

@@ -369,10 +369,15 @@ export class SessionThreads {
       'conversation.jsonl',
     );
   }
-  /** The sweep: threads whose work has not come back for `dormantMs`, a bounded batch a pass. */
+  /**
+   * The sweep: threads whose work has not come back for `dormantMs`, a bounded batch a pass. A
+   * thread waiting for the answer to its question waits as long as that takes.
+   */
   async expire(tx: Transaction): Promise<void> {
     const rows = await tx.all<Row>(
-      "SELECT * FROM session_threads WHERE status='dormant' AND updated_at<? ORDER BY updated_at LIMIT 100",
+      `SELECT * FROM session_threads t WHERE status='dormant' AND updated_at<?
+        AND NOT EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+        ORDER BY updated_at LIMIT 100`,
       isoNow(() => this.clock() - dormantMs),
     );
     for (const row of rows) await this.retire(row, 'dormant', tx);

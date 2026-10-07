@@ -28,7 +28,9 @@ import { newest, useHome, type Flow, type HomeData } from './map-data';
  * program describes the record to Workflows) and with which sentence, Reviews says which
  * subjects are out for review and which a verdict sent back, and Code says the move each of
  * its blockers asks of a person (`code`) — the one thing that puts ended work here at all: a
- * publication nobody has merged is a wait on a human and not a record that is running. The
+ * publication nobody has merged is a wait on a human and not a record that is running — and
+ * Sessions says, the same way, which work waits for the answer to its agent's question
+ * (`sessions`). The
  * server's own instruction is written for the agent holding the tool, so it is never the
  * headline: it stays on the card, folded. Every card is gated on its owning ui.shell row, so
  * it goes quiet with its plugin, and every fact here comes from the one read the rail shares.
@@ -136,7 +138,10 @@ export function needsYou(
   const underReview = new Set(openReviews.map((item) => item.subjectId));
   // Work whose newest verdict sent it back, as against work never delivered.
   const returned = new Set(reviews.filter((item) => item.returned).map((item) => item.subjectId));
-  const moves = new Map((home?.code ?? []).map((item) => [item.instanceId, item]));
+  // Code's moves, and Sessions' questions an agent asked its owner, each beside its blocker.
+  const moves = new Map(
+    [...(home?.sessions ?? []), ...(home?.code ?? [])].map((item) => [item.instanceId, item]),
+  );
   for (const item of work) {
     const { row, needs } = item;
     const kind = row.view.kind;

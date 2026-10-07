@@ -549,7 +549,13 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
   const listed = (await client.listTools()).tools;
   assert.deepEqual(
     listed.filter((tool) => !tool.annotations?.readOnlyHint).map((tool) => tool.name),
-    ['checked.default', 'checked.echo', 'checked.transform', 'session.message.ack'],
+    [
+      'checked.default',
+      'checked.echo',
+      'checked.transform',
+      'session.ask_owner',
+      'session.message.ack',
+    ],
   );
   assert.ok(listed.some((tool) => tool.name === 'artifact.list'));
   // A read the policy never named runs as given; a write it never named does not.
@@ -826,7 +832,7 @@ test('leased mounted calls require source grants and keep upstream project argum
     (await client.listTools()).tools
       .filter((tool) => !tool.annotations?.readOnlyHint)
       .map((tool) => tool.name),
-    ['session.message.ack'],
+    ['session.ask_owner', 'session.message.ack'],
     'Lease manifest does not replace the exact source grant',
   );
   f.app.ctx.scope.toolPolicy.replace([

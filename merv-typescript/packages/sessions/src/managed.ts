@@ -28,6 +28,7 @@ import type {
   ManagedBindingRow,
 } from './managed-types.js';
 import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
+import { ownEnd } from './common.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
 const huggingFaceBinding = z
@@ -385,7 +386,7 @@ export class ManagedRunnerBindings {
           row &&
           (session.status === 'offered' || session.status === 'active'
             ? Date.parse(session.expiresAt) > this.clock()
-            : session.closeReason === 'handoff'),
+            : ownEnd(session.closeReason)),
         'unauthorized',
         'No live managed session holds this credential',
         401,
@@ -401,7 +402,7 @@ export class ManagedRunnerBindings {
         expiresAt: new Date(
           Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
         ).toISOString(),
-        ...(session.closeReason === 'handoff' ? { handedOffAt: session.closedAt! } : {}),
+        ...(ownEnd(session.closeReason) ? { handedOffAt: session.closedAt! } : {}),
       };
     });
   }

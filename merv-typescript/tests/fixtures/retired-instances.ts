@@ -416,6 +416,15 @@ ${reflectionLeases.slice(reflectionLeases.indexOf('CREATE TABLE reflection_lease
 DELETE FROM component_migrations WHERE (component='workflows' AND version=12)
   OR (component='tasks' AND version=10) OR (component='experiment_program' AND version=4)
   OR (component='reflections' AND version=5);`);
+    // Thread messages and questions (sessions@14) came later still: version 10's messages return.
+    const messages = sessionMigrations[10]!;
+    await client.query(`DROP TABLE session_questions;
+DROP FUNCTION session_questions_guard();
+ALTER TABLE session_messages DROP CONSTRAINT session_messages_addressed;
+ALTER TABLE session_messages DROP COLUMN thread_id;
+ALTER TABLE session_messages ALTER COLUMN session_id SET NOT NULL;
+${messages.slice(messages.indexOf('CREATE OR REPLACE FUNCTION session_messages_guard'), messages.indexOf('CREATE TRIGGER session_messages_immutable'))}
+DELETE FROM component_migrations WHERE component='sessions' AND version=14;`);
     // So did threads (sessions@13): version 3's attribution guard returns.
     const agentGuard = sessionMigrations[3]!;
     await client.query(`DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;

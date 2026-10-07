@@ -197,6 +197,29 @@ further evidence lookups. The worker can acknowledge receipt with a reply such a
 not require agreeing with the correction. This does not inject text into a running
 shell process or interrupt a long compute command.
 
+A message may instead go to a thread, a stage's worker across its visits:
+`session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
+with `{body, requestId}`. It waits for the thread's live visit or, once its work comes back,
+its next one, and fences that visit's writes until it is acknowledged, exactly as a message to
+a session does. A visit also reads the messages to other threads of its continuity key, so a
+message to a thread its key replaced still reaches the key's worker. A retired thread takes a
+message only as the answer to its question. `session.thread_messages({threadId})`, or
+`GET /sessions/threads/:id/messages`, reads a thread's messages (to it and to each of its
+visits) and its questions, for anyone who may read the work and never for a leased worker.
+
+### A worker asks its owner
+
+A worker that cannot go on without the owner's decision calls
+`session.ask_owner({question})`, a tool every worker has whatever its assignment names. Its
+session closes at once as released with outcome `asked_owner`, never counted as a failed
+launch; its thread waits, dormant, with its conversation, and the dormant sweep leaves it
+waiting however long the answer takes. Until a message to the thread answers it, dispatch
+withholds the work (a hand offer still runs), and Sessions publishes a `session-question`
+blocker (`agent_question`) on it, so its gate and `session.stuck` say what it waits for and
+Needs you asks an operator to answer it (Sessions' `ui.home` part). The answer releases the
+work, and its next visit, which resumes the same conversation, reads the answer as a queued
+message before anything else. A visit that keeps no conversation (a reviewer) cannot ask.
+
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then
 create replacement work with better instructions. Retain earlier evidence and

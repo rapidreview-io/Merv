@@ -4,7 +4,7 @@ import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
-import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
+import type { SessionBudgetInput, SessionMessageInput, Sessions, UsageQuery } from './types.js';
 import { systemStatus } from './system-status.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -117,18 +117,17 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          'Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.',
+          "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
-            sessionId: z.string().min(1).max(200),
+            sessionId: z.string().min(1).max(200).optional(),
+            threadId: z.string().min(1).max(200).optional(),
             body: z.string().min(1).max(8000),
             requestId: z.string().min(1).max(200),
           })
           .strict(),
-        handler: async (
-          caller: Caller,
-          input: { sessionId: string; body: string; requestId: string },
-        ) => await sessions.messaging.message(caller, input),
+        handler: async (caller: Caller, input: SessionMessageInput) =>
+          await sessions.messaging.message(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -140,6 +139,31 @@ export const sessionsToolsPlugin = {
         inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
         handler: async (caller: Caller, input: { sessionId?: string }) =>
           await sessions.messaging.messages(caller, input.sessionId),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.thread_messages',
+        description:
+          'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
+        readOnly: true,
+        inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { threadId: string }) =>
+          await sessions.messaging.thread(caller, input.threadId),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.ask_owner',
+        description:
+          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.',
+        conversation: 'never',
+        inputSchema: z.object({ question: z.string().min(1).max(4000) }).strict(),
+        handler: async (caller: Caller, input: { question: string }) => ({
+          question: await sessions.messaging.ask(caller, input),
+          ended: true,
+          next: 'Your visit has ended. Stop now: the owner’s answer reaches you when the work comes back.',
+        }),
       }),
     );
     ctx.effect(() =>
@@ -186,7 +210,7 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "To steer an assigned agent, use session.find with the work's instanceId to find its current session, then session.message with that sessionId. Messages address sessions, not the work itself. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
+        "To steer an assigned agent, use session.find with the work's instanceId to find its current session, then session.message with that sessionId; or address its thread (session.threads) with threadId, which its next visit reads too. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
       ),
     );
   },

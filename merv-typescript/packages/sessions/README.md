@@ -82,8 +82,11 @@ the optional Sessions tools adapter and keeps the same project-reader authorizat
 and leased-worker denial as the observation HTTP endpoint.
 
 `session.find` resolves a work item's current session. `session.message` queues an operator
-message for that session; `session.messages` and the worker-only `session.message.ack`
-retain receipt and an optional reply. Pending messages are surfaced at the next Merv tool
+message for that session, or for a thread (`threadId`), which its live or next visit reads;
+`session.messages` and the worker-only `session.message.ack` retain receipt and an optional
+reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
+A worker that needs its owner's decision ends its visit with `session.ask_owner`: uncounted,
+its work withheld from dispatch and shown in Needs you until a message to its thread answers. Pending messages are surfaced at the next Merv tool
 interaction and fence worker writes until acknowledged. See [session steering](../../docs/SESSION_LEASES.md#steering-an-assigned-agent)
 for delivery limits and the distinction between acknowledgment and incorporation.
 

@@ -180,7 +180,12 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     message: 'Preserve the exact request across reload.',
     requestId: 'commit',
   };
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
+  assert.deepEqual(await catalog(), [
+    'code.commit',
+    'code.operation',
+    'session.ask_owner',
+    'session.message.ack',
+  ]);
   // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
   // The default composition initializes managed Git before any work.
   const unbound = await waitForManagedCode(app.ctx.codeWork, source);
@@ -223,7 +228,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
   assert.equal(app.ctx.sessions, originalSessions);
   assert.equal((await app.ctx.sessions.get(source, session.id)).status, 'active');
-  assert.deepEqual(await catalog(), ['session.message.ack']);
+  assert.deepEqual(await catalog(), ['session.ask_owner', 'session.message.ack']);
   assert.equal(
     (await rows()).some((row) => row.id === 'code'),
     false,
@@ -243,7 +248,12 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
 
   await app.setEnabled('code', true);
   assert.notEqual(app.ctx.codeWork, originalProvider);
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
+  assert.deepEqual(await catalog(), [
+    'code.commit',
+    'code.operation',
+    'session.ask_owner',
+    'session.message.ack',
+  ]);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
   assert.deepEqual(await commands(), [queued]);
   assert.deepEqual(await invoke('code.commit', input), queued);
@@ -265,7 +275,12 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
   assert.deepEqual(finished.receipt, receipt);
 
   // Commands and their receipts survive the capability being taken away and put back.
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
+  assert.deepEqual(await catalog(), [
+    'code.commit',
+    'code.operation',
+    'session.ask_owner',
+    'session.message.ack',
+  ]);
   await app.setEnabled('code', false);
   await app.setEnabled('code', true);
   assert.deepEqual(await invoke('code.operation', { commandId: queued.command.id }), finished);
@@ -285,5 +300,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     'code.command_succeeded',
   ]);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
+  assert.deepEqual(await catalog(), [
+    'code.commit',
+    'code.operation',
+    'session.ask_owner',
+    'session.message.ack',
+  ]);
 });
