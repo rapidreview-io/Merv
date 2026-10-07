@@ -1,3 +1,4 @@
+import { ROUNDS_USED } from '@merv/reviews/rules';
 import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
 import { currentTask } from './fixtures/current-work.js';
 import { currentExperiment } from './fixtures/current-experiment.js';
@@ -931,6 +932,8 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   );
   // A lens has nothing to return to, and carries no limit of its own.
   assert.deepEqual((await f.app.ctx.workflows.evaluate(f.owner, wave.lenses[0]!.id)).limits, []);
+  const open = await f.app.ctx.reviews.guide(reviewer, wave.review!.id);
+  assert.deepEqual([open.verdicts?.length, open.returns?.length, open.limit], [3, 2, undefined]);
   wave = await f.verdict(wave, reviewer, false, 'reflecting');
   assert.equal(wave.attempt, 2);
   wave = await f.synthesize(await f.lenses(wave));
@@ -941,6 +944,9 @@ test('a reflection returned as often as its limit allows opens no more lenses an
     guidance.limits.map((limit) => [limit.name, limit.actions, limit.used, limit.max]),
     [['review_returns', ['revise_synthesis', 'restart_lenses'], 2, 2]],
   );
+  // The desk offers only what the engine takes: a pass, and nowhere to return the wave.
+  const desk = await f.app.ctx.reviews.guide(reviewer, wave.review!.id);
+  assert.deepEqual([desk.verdicts, desk.returns, desk.limit], [['pass'], undefined, ROUNDS_USED]);
   const instances = (await f.app.ctx.workflows.list(f.owner)).length;
   for (const returnTo of ['reflecting', 'synthesizing'])
     await assert.rejects(async () => await f.verdict(wave, reviewer, false, returnTo), {

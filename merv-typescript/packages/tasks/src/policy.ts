@@ -15,7 +15,7 @@ import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';
 import { GIT_CLAIM, producing, roundsFrom, serviceOwned, taskWorkspace } from './workflow.js';
-import { checkDelivery, checkFailure, checkReissue } from './commands.js';
+import { checkDelivery, checkFailure } from './commands.js';
 import {
   workflowAssignment,
   workflowAssignmentFacts,
@@ -219,6 +219,9 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           'revise',
           'fail_review',
           ...(serviceOwned(version) ? ['revise_suspended'] : []),
+          // Retired: review.release hands a claim back without moving the task. The edge stays
+          // in every pinned definition, so a rule must still guard it; no command takes it.
+          'reissue_review',
         ],
         instructions: {
           submit:
@@ -233,20 +236,6 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
         submit: async (context) => await checkTaskReview(ctx, context),
         start: async ({ caller, snapshot, tx }) => await leasedClaim(ctx, caller, snapshot, tx),
       }),
-      {
-        name: 'reissue_review',
-        states: ['in_review'],
-        transitions: ['reissue_review'],
-        tool: 'task.reissue_review',
-        suggested: false,
-        requiredInput: ['reason'],
-        arguments: taskArguments,
-        instruction:
-          'Only if the current review needs replacement: give a reason to supersede it while preserving the evidence. Normal progress waits for the reviewer.',
-        check: async (context) => {
-          await checkReissue(ctx, context);
-        },
-      },
       {
         name: 'mark_failed',
         states: ['in_progress', 'in_review'],
@@ -403,7 +392,7 @@ export async function checkoutReviewer(
   check(
     caller.session,
     'task_commit_unfetched',
-    'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Fail it, or have the review replaced with task.reissue_review so a leased worker can claim it',
+    'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Fail it, or hand the claim back with review.release so a leased worker can claim it',
     409,
   );
   const lease = await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);

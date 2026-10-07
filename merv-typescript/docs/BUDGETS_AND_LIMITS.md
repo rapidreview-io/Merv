@@ -59,7 +59,11 @@ that are already over it**, retroactively, the moment the new server starts.
 
 So a default of three review rounds means **three returns, after which the fourth
 delivery waits for a human**. That person either reviews it by hand, or grants one more
-round, which buys exactly one more automated review.
+round, which buys exactly one more automated review. Until then the review desk offers
+only the verdicts that do not return the work (`review.get` says so in `limit`), the work
+stands in a project admin's Needs you, and its Running card carries **Allow another
+round**. `workflow.status_and_next` lists every limit of the work, with the rounds used
+and left at the state each one leaves, so a worker can see them too.
 
 ### Allowing more rounds
 
@@ -85,8 +89,8 @@ it. A test that needs a smaller cap constructs the service with its own.
 | reflections | `REFLECTION_LIMITS.reviewReturns` | 2     | `review_returns` | `in_review` → `revise_synthesis`, `restart_lenses`      |
 
 Only a reflection's parent workflow is capped; a lens has one way forward. The research
-cycle has no loop and no limit. Task `reissue_review` and the experiment `retry_running`
-self-edge are not capped: blocking them could strand a review or stop a permitted retry.
+cycle has no loop and no limit. The experiment `retry_running` self-edge is not capped:
+blocking it would stop a permitted retry.
 
 ## Usage
 

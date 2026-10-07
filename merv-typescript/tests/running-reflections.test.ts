@@ -347,7 +347,19 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
     to: { route: `/reviews/${wave.review!.id}`, text: 'Open the review' },
   };
   const answer = await f.board(f.owner);
-  assert.deepEqual(drawn(answer, wave)!.attention, red);
+  // Workflows' mark lends the card the admin's control.
+  const allow = {
+    label: 'Allow another round',
+    verb: 'extend',
+    tool: 'workflow.extend_limit',
+    input: { instanceId: wave.id, limit: 'review_returns', additional: 1 },
+  };
+  const { action, ...own } = drawn(answer, wave)!.attention!;
+  assert.deepEqual(own, red);
+  assert.deepEqual(
+    { label: action?.label, verb: action?.verb, tool: action?.tool, input: action?.input },
+    allow,
+  );
   assert.equal(answer.lanes.work.nodes[0]!.key, keyOf(wave.id));
   assert.ok(answer.lanes.work.needsYou >= 1);
   sidebar = await f.panel(f.owner, keyOf(wave.id));
@@ -360,9 +372,13 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   // A reviewer who takes it by hand is the person it waited for.
   await f.app.ctx.reviews.start(reviewer, wave.review!.id);
   node = drawn(await f.board(f.owner), wave)!;
+  assert.deepEqual(node.lines, [
+    ['Review · ', { actor: reviewer.actorId, prefix: 'with ', unnamed: 'claimed' }],
+  ]);
+  // Its rounds are still used up, which only a project admin changes.
   assert.deepEqual(
-    [node.lines, node.attention],
-    [[['Review · ', { actor: reviewer.actorId, prefix: 'with ', unnamed: 'claimed' }]], undefined],
+    [node.attention?.who, node.attention?.action?.tool],
+    ['A project admin can allow another round', 'workflow.extend_limit'],
   );
 
   // Approved, the wave has left the board, unless another owner holds it there.

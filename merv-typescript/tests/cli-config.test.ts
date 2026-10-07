@@ -273,7 +273,7 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
       catalog.tools.some((tool) => tool.name === name),
       `${name} is served`,
     );
-  assert.ok(catalog.tools.some((tool) => tool.name === 'task.reissue_review'));
+  assert.ok(catalog.tools.some((tool) => tool.name === 'review.release'));
   for (const name of ['ui.shell', 'ui.running', 'ui.running_panel'])
     assert.ok(
       catalog.tools.some((tool) => tool.name === name),

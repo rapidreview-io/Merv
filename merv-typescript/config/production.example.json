@@ -123,6 +123,11 @@
       "required": false
     },
     {
+      "id": "workflows-ui",
+      "name": "@merv/workflows/ui",
+      "required": false
+    },
+    {
       "id": "artifacts-ui",
       "name": "@merv/artifacts/ui",
       "required": false

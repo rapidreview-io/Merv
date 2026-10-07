@@ -64,12 +64,6 @@ export interface TaskDelivery {
   requestId: string;
 }
 export interface TaskReview extends ReviewApplication {}
-export interface TaskReissue {
-  taskId: string;
-  expectedRevision: number;
-  reason: string;
-  requestId: string;
-}
 export interface TaskMarkFailed {
   taskId: string;
   expectedRevision: number;
@@ -112,7 +106,6 @@ export interface Tasks {
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
-  reissueReview(caller: Caller, input: TaskReissue): Promise<Task>;
   markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
   /** The owner capability another plugin creates service tasks with, under its own provider name. */
   serviceTasks(provider: string): ServiceTaskCreator;

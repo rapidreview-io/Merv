@@ -28,8 +28,17 @@ export interface AutomaticRow {
   cycle_index: number;
   max_cycles: number;
 }
-/** Why automatic progress waits, as Research publishes it to Workflows; null when it does not. */
-export type AutomaticBlocker = { code: string; message: string; status: number } | null;
+/**
+ * Why automatic progress waits, as Research publishes it to Workflows; null when it does not.
+ * One that only the cycle's owner ends says so, with its own way on.
+ */
+export type AutomaticBlocker = {
+  code: string;
+  message: string;
+  status: number;
+  next?: string;
+  whose?: 'owner';
+} | null;
 /** The provider Research's automation blockers are published as. */
 export const AUTOMATIC_PROVIDER = 'research';
 const NEXT =
@@ -70,7 +79,7 @@ export async function publishBlocker(
       projectId: row.project_id,
       instanceId: row.research_id,
       provider: AUTOMATIC_PROVIDER,
-      blockers: blocker ? [{ key: 'automatic', ...blocker, next: NEXT, related: [] }] : [],
+      blockers: blocker ? [{ key: 'automatic', next: NEXT, related: [], ...blocker }] : [],
     },
     tx,
   );
@@ -320,7 +329,32 @@ export async function reconcileAutomatic(
     },
     tx,
   );
-  return null;
+  return await needsOwner(ctx, caller, advanced, tx);
+}
+
+/**
+ * A run whose approved plan stops for its owner ends with the owner's decision outstanding:
+ * said on the completed cycle, with the plan's own reason, until a cycle follows it.
+ */
+export async function needsOwner(
+  ctx: ResearchContext,
+  caller: Caller,
+  record: Pick<ResearchRecord, 'reflectionId' | 'successorId'> & { workflow: { state: string } },
+  tx: Transaction,
+): Promise<AutomaticBlocker> {
+  if (record.workflow.state !== 'complete' || record.successorId || !record.reflectionId)
+    return null;
+  const next = (await ctx.providers.reflections.approved(caller, record.reflectionId, tx))?.plan
+    ?.next;
+  return next?.decision === 'stop' && next.reason === 'needs_owner'
+    ? {
+        code: 'research_needs_owner',
+        message: clip(`The approved plan stops for the owner: ${next.rationale}`, 2000),
+        status: 409,
+        next: 'Decide what comes next, then start a research cycle that follows this one',
+        whose: 'owner',
+      }
+    : null;
 }
 
 /**

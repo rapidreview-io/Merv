@@ -45,6 +45,14 @@ export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
    * kinds differently; Workflows stores it unread. Readers use it, never the message.
    */
   cause?: string;
+  /**
+   * Whose move ending it is, where it is a person's: the record's owner, as its program
+   * describes the record, or a project admin. Workflows answers it as that reader's move
+   * (`yours`), so it reaches Needs you.
+   */
+  whose?: 'owner' | 'admin';
+  /** The one revision this opinion is about: once the record moves past it, it lapses unread. */
+  revision?: number;
 }
 /**
  * A blocker a plugin other than the owner published for an instance. Workflows stores it
@@ -58,6 +66,8 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
   next: string;
   related: WorkflowReference[];
   cause?: string;
+  whose?: 'owner' | 'admin';
+  revision?: number;
   /** When this key first took this code; a changed code starts a new age. */
   since: string;
   updatedAt: string;
@@ -130,7 +140,11 @@ export interface WorkflowDecision {
   providerBlockers: WorkflowProvidedBlocker[];
   references: WorkflowReference[];
   dependencies: WorkflowDependency[];
-  /** Loop limits leaving the current state; empty when it has none or the work has ended. */
+  /**
+   * Every loop limit of the definition, each counted at the state it leaves (`from`), so the
+   * work's rounds used and left at each gate are read here; empty once the work has ended.
+   * The gate is `loop_limit_reached` only where one leaving the current state is used up.
+   */
   limits: WorkflowLimitStatus[];
   /** First activation at this revision, if recorded. */
   workStart: WorkflowWorkStart | null;

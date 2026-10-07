@@ -160,7 +160,7 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 50);
+  assert.equal(loaded.entries.length, 51);
   for (const [id, name] of [
     ['feed', '@merv/feed'],
     ['feed-tools', '@merv/feed/tools'],
@@ -302,7 +302,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    50,
+    51,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

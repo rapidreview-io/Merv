@@ -127,15 +127,16 @@ export const limitStatus = async (sql: Sql, limit: WorkflowLoopLimit, instanceId
   (await limitStatusOf(sql, limit, [instanceId])).get(instanceId)!;
 
 /**
- * The limits leaving each instance's current state, two reads per limit however many instances
- * stand at it. Reads only, so guards stay pure.
+ * The limits leaving each instance's current state, or with `every` all its limits, two reads
+ * per limit however many instances it counts for. Reads only, so guards stay pure.
  */
 export async function limitStatusesOf(
   sql: Sql,
   instances: readonly { id: string; state: string; policy?: WorkflowPolicy }[],
+  every = false,
 ): Promise<Map<string, WorkflowLimitStatus[]>> {
   const leaving = ({ state, policy }: (typeof instances)[number]) =>
-    (policy?.limits ?? []).filter((limit) => limit.from === state);
+    (policy?.limits ?? []).filter((limit) => every || limit.from === state);
   const read = new Map<WorkflowLoopLimit, Map<string, WorkflowLimitStatus>>();
   for (const limit of new Set(instances.flatMap(leaving)))
     read.set(

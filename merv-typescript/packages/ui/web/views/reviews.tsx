@@ -33,9 +33,9 @@ import {
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 
 /** A review as review.get and review.list answer it; review.get adds its owner's return routes,
- * the gate it reads and the delivery's claims. */
+ * the gate it reads, the delivery's claims and, where its rounds are used up, what is left. */
 export type Review = ReviewRequest &
-  Pick<ReviewGuide, 'returns' | 'verdicts' | 'overrides' | 'gate' | 'claims'>;
+  Pick<ReviewGuide, 'returns' | 'verdicts' | 'overrides' | 'gate' | 'claims' | 'limit'>;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -620,6 +620,8 @@ function Desk({
           {said.length} / {SYNOPSIS_MAX}
         </p>
       )}
+      {/* Where the work can no longer be returned, the owner says what is left. */}
+      {review.limit && <p className="verdict-help">{review.limit}</p>}
       <div className="cluster">
         {verdicts.map((value) => (
           <button

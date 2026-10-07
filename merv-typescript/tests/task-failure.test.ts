@@ -378,16 +378,6 @@ test('producer and operator withdrawal close requested or claimed reviews and fe
             }),
           { code: 'invalid_transition' },
         );
-        await assert.rejects(
-          async () =>
-            await f.app.ctx.tasks.reissueReview(f.producer.caller, {
-              taskId: pending.id,
-              expectedRevision: 2,
-              reason: 'Reopen',
-              requestId: `reopen-${review.id}`,
-            }),
-          { code: 'invalid_transition' },
-        );
         await f.app.ctx.scope.credentials.revokeActor(f.operator, f.reviewer.caller.actorId);
         await f.app.ctx.domainEvents.drain();
         assert.equal((await f.app.ctx.reviews.get(f.operator, review.id)).status, 'superseded');

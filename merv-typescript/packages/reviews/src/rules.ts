@@ -6,6 +6,9 @@ import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/type
 
 /** The verdicts a review may reach. */
 export const REVIEW_VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
+/** What a reviewer is told where the work cannot be returned again. */
+export const ROUNDS_USED =
+  'Every review round is used: pass, end it, or an admin allows another round.';
 /** What a domain's review.submit step requires of its input. */
 export const REVIEW_SUBMIT_INPUT = ['verdict', 'notes', 'synopsis', 'findings'] as const;
 

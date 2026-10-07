@@ -81,6 +81,7 @@ const gate = (instanceId: string, over: Record<string, unknown> = {}) => ({
   instruction: INSTRUCTION,
   actions: [],
   blockers: [],
+  providerBlockers: [],
   references: [],
   dependencies: [],
   workStart: null,

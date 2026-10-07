@@ -1,7 +1,6 @@
 import type {
   TaskCreate,
   TaskDelivery,
-  TaskReissue,
   TaskMarkFailed,
   TaskContext,
   TaskCheckpointInput,
@@ -168,22 +167,6 @@ export const taskToolsPlugin = {
           summary: { id: task.id, state: task.workflow.state, revision: task.workflow.revision },
           reread: ['task.get', 'workflow.status_and_next'],
         }),
-      },
-      {
-        name: 'task.reissue_review',
-        conversation: 'propose' as const,
-        description:
-          'Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.',
-        inputSchema: z
-          .object({
-            taskId: id,
-            expectedRevision: z.number().int().nonnegative(),
-            reason: z.string().min(1).max(2000),
-            requestId,
-          })
-          .strict(),
-        handler: async (caller: Caller, input: TaskReissue) =>
-          await ctx.tasks.reissueReview(caller, input),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));

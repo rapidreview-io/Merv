@@ -146,8 +146,14 @@ export function needsYou(
     const { row, needs } = item;
     const kind = row.view.kind;
     const decision = gate.get(item.id);
-    // A record that only names the reviews of it is never a move of its own.
-    if (needs.subjectOnly || !decision || underReview.has(item.id)) continue;
+    // A record that only names the reviews of it is never a move of its own, nor is one out
+    // for review, unless its rounds are used up: then nothing more happens by itself.
+    if (
+      needs.subjectOnly ||
+      !decision ||
+      (underReview.has(item.id) && decision.currentGate !== 'loop_limit_reached')
+    )
+      continue;
     // A blocker another plugin published whose next move is a person's outranks the
     // record's own gate and stands here whatever that gate says — including on work
     // that has ended and waits on somebody to carry its accepted code to main. Whose move
@@ -188,9 +194,13 @@ export function needsYou(
     const dependencies = decision.dependencies.filter(
       (dependency) => !needs.stops || !dependency.failed || dependency === stop,
     );
+    // A move a blocker or a used-up limit asks of an admin is not the producer's changes.
+    const admins =
+      decision.currentGate === 'loop_limit_reached' ||
+      decision.providerBlockers.some((each) => each.whose);
     const sentence = recordSentence(
       { ask: decision.yours.ask, dependencies },
-      returned.has(item.id),
+      returned.has(item.id) && !admins,
     );
     lines.push({
       id: item.id,
@@ -199,8 +209,12 @@ export function needsYou(
       to: `${row.path}/${item.id}`,
       at: item.workflow.updatedAt,
       sentence,
-      // Where the server's reason is the headline, the fold does not say it again.
-      says: said(decision).filter((text) => text !== sentence),
+      // Where the server's reason is the headline, the fold does not say it again. A blocker
+      // that names whose move it is says why beside the record's own instruction.
+      says: [
+        ...said(decision),
+        ...decision.providerBlockers.filter((each) => each.whose).map((each) => each.message),
+      ].filter((text, index, all) => text !== sentence && all.indexOf(text) === index),
     });
   }
   if (reviewsRow)

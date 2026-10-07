@@ -909,6 +909,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sandboxes',
       'sessions',
       'tasks',
+      'workflows',
     ],
     api: ['code-work', 'pi', 'scope', 'secrets', 'sessions'],
   };

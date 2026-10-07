@@ -274,4 +274,8 @@ DROP FUNCTION wf_receipt_canonical(json);
 DROP TRIGGER wf_leases_immutable ON wf_leases;
 CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,receipt_digest,details ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
 `,
+  // A blocker may say whose move ending it is, and the one revision it is about. Existing rows
+  // keep neither, as before. Read-only prod check (rows that keep reading as they do):
+  // SELECT provider, COUNT(*) FROM wf_blockers GROUP BY provider;
+  14: `ALTER TABLE wf_blockers ADD COLUMN whose TEXT CHECK (whose IN ('owner','admin')), ADD COLUMN revision BIGINT;`,
 };

@@ -13,7 +13,7 @@ export const workflowToolsPlugin = {
       ctx.tools.register({
         name: 'workflow.status_and_next',
         description:
-          'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
+          'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
         readOnly: true,
         inputSchema: z
           .object({
@@ -113,7 +113,7 @@ export const workflowToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "workflow.status_and_next and workflow.assignment return Merv's own guidance for a piece of work: its next steps, instructions and blockers.",
+        "workflow.status_and_next and workflow.assignment return Merv's own guidance for a piece of work: its next steps, instructions and blockers. Review rounds are capped: status_and_next limits shows the rounds used and left at each gate, and when a gate's rounds are used up the work stops and escalates to the project's owner instead of returning for another round.",
       ),
     );
   },

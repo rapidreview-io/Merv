@@ -6,6 +6,7 @@ import {
   recorded,
   visible,
   type Caller,
+  type ReviewRelease,
   type ReviewRequest,
   type ReviewSubmit,
   type Role,
@@ -201,6 +202,63 @@ export async function submit(
   });
 }
 
+/**
+ * A claim handed back, by the reviewer who holds it or a project admin, so that anyone
+ * eligible may claim the review again. A leased worker's claim goes with its lease.
+ */
+export async function release(
+  ctx: ReviewsContext,
+  caller: Caller,
+  input: ReviewRelease,
+  transaction?: Transaction,
+): Promise<ReviewRequest> {
+  caller = structuredClone(caller);
+  input = plain<ReviewRelease>(input);
+  check(
+    typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 500,
+    'invalid_reason',
+    'A reason of at most 500 characters is required to release a review',
+  );
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'read', tx);
+    return await ctx.command(tx, caller, input.requestId, 'release', input, async () => {
+      const row = await ctx.row(tx, caller, input.reviewId);
+      check(
+        row.status === 'started' && row.claim_id && row.reviewer_id,
+        'review_not_claimed',
+        'Only a claimed, open review can be released',
+        409,
+      );
+      check(
+        !caller.session,
+        'forbidden',
+        'A leased worker’s claim is released with its lease',
+        403,
+      );
+      check(
+        row.reviewer_id === caller.actorId ||
+          (await ctx.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)),
+        'forbidden',
+        'Only the reviewer who claimed it or a project admin may release a review',
+        403,
+      );
+      await releaseClaim(
+        ctx,
+        {
+          projectId: caller.projectId,
+          reviewId: row.id,
+          claimId: row.claim_id,
+          actorId: row.reviewer_id,
+          reason: input.reason,
+          releasedBy: caller.actorId,
+        },
+        tx,
+      );
+      return hydrate(await ctx.row(tx, caller, row.id));
+    });
+  });
+}
+
 /** Trusted event reactions; neither restored access nor an inactive initiator cancels cleanup. */
 export async function releaseClaim(
   ctx: ReviewsContext,
@@ -210,6 +268,8 @@ export async function releaseClaim(
     claimId: string;
     actorId: string;
     reason: string;
+    /** The person who handed it back, where the release was asked for (review.release). */
+    releasedBy?: string;
   },
   tx: Transaction,
 ): Promise<void> {
@@ -224,14 +284,14 @@ export async function releaseClaim(
   if (!row) return;
   const event = await ctx.state.appendEvent(tx, {
     projectId: input.projectId,
-    actorId: input.actorId,
+    actorId: input.releasedBy ?? input.actorId,
     type: 'review.claim_released',
     subjectId: row.id,
     data: {
       previousActorId: input.actorId,
       previousClaimId: input.claimId,
       reason: input.reason,
-      performedBy: 'system:reviews',
+      performedBy: input.releasedBy ? 'review.release' : 'system:reviews',
       subjectId: row.subject_id,
       subjectRevision: row.subject_revision,
     },

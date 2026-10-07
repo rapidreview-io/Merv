@@ -30,6 +30,7 @@ import type { Context } from 'cordis';
 import {
   AUTOMATIC_PROVIDER,
   bindAutomatic,
+  needsOwner,
   publishBlocker,
   type AutomaticRow,
 } from './automatic.js';
@@ -153,9 +154,9 @@ export class ResearchService implements Research {
     });
   }
   /**
-   * Where an automatic run stands: the blocker Research published for the cycle, unless its
-   * event consumer is not bound, or the run finished its authorized cycles here while its plan
-   * wanted another (a reflection that chose to stop ended the run itself).
+   * Where an automatic run stands: the blocker Research published for the cycle (on an ended
+   * one, what its plan asks of the owner), or the run finished its authorized cycles here while
+   * its plan wanted another (a reflection that chose to stop ended the run itself).
    */
   private async automation(
     caller: Caller,
@@ -166,6 +167,12 @@ export class ResearchService implements Research {
   ): Promise<ResearchAutomation> {
     const { workflow } = record;
     const status = { rootId: row.root_id, cycle: row.cycle_index, maxCycles: row.max_cycles };
+    const published = (await this.workflows.blockers(caller, row.research_id, tx)).find(
+      (item) => item.provider === AUTOMATIC_PROVIDER,
+    );
+    // An ended cycle keeps only what it asks of its owner.
+    if (published)
+      return { ...status, blocker: { code: published.code, message: published.message } };
     if (definition.terminal.includes(workflow.state))
       return {
         ...status,
@@ -183,13 +190,7 @@ export class ResearchService implements Research {
               }
             : null,
       };
-    const published = (await this.workflows.blockers(caller, row.research_id, tx)).find(
-      (item) => item.provider === AUTOMATIC_PROVIDER,
-    );
-    return {
-      ...status,
-      blocker: published ? { code: published.code, message: published.message } : null,
-    };
+    return { ...status, blocker: null };
   }
   /** The cycle a row describes, for a caller already authorized to read it. */
   private async record(
@@ -290,7 +291,19 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'create', input, tx, async () => {
-        if (input.previousCycleId) await follow(this, caller, input.previousCycleId, tx);
+        if (input.previousCycleId) {
+          await follow(this, caller, input.previousCycleId, tx);
+          // What the ended cycle asked of its owner is answered by the cycle that follows it.
+          await this.workflows.replaceBlockers(
+            {
+              projectId: caller.projectId,
+              instanceId: input.previousCycleId,
+              provider: AUTOMATIC_PROVIDER,
+              blockers: [],
+            },
+            tx,
+          );
+        }
         return await begin(this, caller, input, 'create', null, tx);
       });
     });
@@ -553,12 +566,22 @@ export class ResearchService implements Research {
             },
             tx,
           );
-        // A cycle that moved is no longer held by what its automation said before.
+        // A cycle that moved is no longer held by what its automation said before, though
+        // one that ended asks its owner what its plan stopped for.
         if (record.automation)
           await publishBlocker(
             this.workflows,
             { project_id: caller.projectId, research_id: record.id },
-            null,
+            await needsOwner(
+              this,
+              caller,
+              {
+                workflow: { state: moved.state },
+                successorId: successor?.id ?? null,
+                reflectionId: record.reflectionId,
+              },
+              tx,
+            ),
             tx,
           );
         await this.event(

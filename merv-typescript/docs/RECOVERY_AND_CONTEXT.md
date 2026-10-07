@@ -17,7 +17,7 @@ Scope commits `active=false` and `actor.revoked` together. Subsequent authorizat
 
 Recovery changes the review from `started` to `requested`, clears its current reviewer/claim ID and records the cause. The review ID, pinned evidence, criteria, snapshot hash and task workflow revision stay the same. Completed verdicts and historical claim events are retained. Actor attribution and task producer identity are not reassigned.
 
-`review.start` returns a fresh `claimId` and increasing `claimGeneration`. `review.submit` now requires that exact claim ID in addition to the current task revision and active reviewer identity. This is an intentional client-contract change: update clients to retain `review.start`'s result. Existing started reviews migrate to stable `legacy:<reviewId>` claim IDs, obtainable through `review.get`. Manual `task.reissue_review` remains available for other recovery cases and still creates a new review/revision.
+`review.start` returns a fresh `claimId` and increasing `claimGeneration`. `review.submit` now requires that exact claim ID in addition to the current task revision and active reviewer identity. This is an intentional client-contract change: update clients to retain `review.start`'s result. Existing started reviews migrate to stable `legacy:<reviewId>` claim IDs, obtainable through `review.get`. For other recovery cases, the reviewer who claimed a review or a project admin hands the claim back with `review.release`; it is released the same way, with the reason recorded.
 
 ## Context formulas belong to task types
 

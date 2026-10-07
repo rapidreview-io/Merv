@@ -1,3 +1,4 @@
+import { REVIEW_VERDICTS } from '@merv/reviews/rules';
 import {
   bound,
   mapAsync,
@@ -123,6 +124,14 @@ export class ReflectionService implements Reflections {
           { value: 'synthesizing', label: 'Synthesis, for a revised report' },
           { value: 'reflecting', label: 'Lenses, for five new reports' },
         ],
+        // Both rejecting verdicts return the wave, so once its returns are used up only a pass
+        // is left.
+        verdicts: async (caller, review, tx) =>
+          (
+            await this.workflows.limitStatusOf(caller, [review.subjectId], 'review_returns', tx)
+          ).get(review.subjectId)?.exhausted
+            ? ['pass']
+            : REVIEW_VERDICTS,
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
       });

@@ -608,7 +608,7 @@ test('review evidence keeps its exact encoded byte limit after safe copying', as
   }
 });
 
-test('required criteria are immutable sorted provenance in the snapshot, returned on reads and carried across reissue', async () => {
+test('required criteria are immutable sorted provenance in the snapshot and returned on reads', async () => {
   const f = await fixture();
   try {
     const input = { ...f.input(), requiredCriteria: [2, 1] };
@@ -651,13 +651,6 @@ test('required criteria are immutable sorted provenance in the snapshot, returne
         ),
       { code: 'state_constraint' },
     );
-    const reissued = await f.reviews.reissue(f.producer, {
-      reviewId: review.id,
-      subjectRevision: 3,
-      requestId: 'reissue-required',
-    });
-    assert.notEqual(reissued.id, review.id);
-    assert.deepEqual(reissued.requiredCriteria, [1, 2]);
   } finally {
     await f.close();
   }

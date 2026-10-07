@@ -503,7 +503,10 @@ test('A design returned as often as its limit allows waits for a human; the refu
   assert.equal(guidance.currentGate, 'loop_limit_reached');
   assert.deepEqual(
     guidance.limits.map((limit) => [limit.name, limit.used, limit.max]),
-    [['design_rounds', 1, 1]],
+    [
+      ['design_rounds', 1, 1],
+      ['result_rounds', 0, 3],
+    ],
   );
   assert.deepEqual((await f.workflows.overview(f.operator)).escalated, [e.id]);
   const verdict = await f.reviewInput(e, 'needs_changes');
@@ -533,10 +536,13 @@ test('The experiment limits default to four design rounds and three result round
   e = await f.transition(e, 'submit_design');
   assert.deepEqual(
     (await f.workflows.evaluate(f.worker(e), e.id)).limits.map((limit) => [limit.name, limit.max]),
-    [['design_rounds', 4]],
+    [
+      ['design_rounds', 4],
+      ['result_rounds', 3],
+    ],
   );
   e = await f.results(await f.submitReview(e));
-  const [results] = (await f.workflows.evaluate(f.worker(e), e.id)).limits;
+  const [, results] = (await f.workflows.evaluate(f.worker(e), e.id)).limits;
   assert.deepEqual(
     [results.name, results.actions, results.max],
     ['result_rounds', ['revise_plan', 'revise_execution'], 3],

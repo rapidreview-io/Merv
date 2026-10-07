@@ -448,6 +448,53 @@ test('a last authorized cycle whose reflection chose to stop reports no cycle li
   assert.equal(done.automation!.blocker, null);
 });
 
+test('a run whose plan stops for its owner says so on the ended cycle until a cycle follows it', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const input = await f.task();
+  const first = await f.create([input.id], { maxCycles: 5 });
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  const rationale = 'The owner must choose between two datasets before any further work.';
+  await f.approve(first.id, {
+    ...stop,
+    next: { decision: 'stop', reason: 'needs_owner', rationale },
+  });
+  const done = await f.research.get(f.owner, first.id);
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal(done.successorId, null);
+  assert.equal(done.automation!.blocker!.code, 'research_needs_owner');
+  assert.match(done.automation!.blocker!.message, /choose between two datasets/);
+  // The ended cycle is its owner's move, with the plan's reason beside it: Needs you reads this.
+  const gate = (
+    await f.app.ctx.workflows.overview(f.owner, undefined, { open: true })
+  ).workflows.find((item) => item.instanceId === first.id);
+  assert.ok(gate?.yours?.ask, JSON.stringify(gate));
+  assert.match(gate!.providerBlockers[0].message, /choose between two datasets/);
+  const writer = await f.issue('producer');
+  assert.equal(
+    (await f.app.ctx.workflows.overview(writer, undefined, { open: true })).workflows.find(
+      (item) => item.instanceId === first.id,
+    )?.yours,
+    undefined,
+  );
+  // The cycle that follows it answers it.
+  await f.research.create(f.owner, {
+    name: 'Chosen dataset',
+    previousCycleId: first.id,
+    requestId: f.id(),
+  });
+  assert.equal((await f.research.get(f.owner, first.id)).automation!.blocker, null);
+  assert.equal(
+    (await f.app.ctx.workflows.overview(f.owner, undefined, { open: true })).workflows.some(
+      (item) => item.instanceId === first.id,
+    ),
+    false,
+  );
+});
+
 test('two automatic waves preserve dependencies and lineage, then stop at the configured cycle limit', async (t) => {
   const f = await fixture(t);
   await f.define();

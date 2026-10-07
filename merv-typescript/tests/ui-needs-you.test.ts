@@ -23,7 +23,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { WorkflowsService } from '@merv/workflows';
-import { yoursOf } from '@merv/workflows/evaluation';
+import { LIMIT_ASK, yoursOf } from '@merv/workflows/evaluation';
 import { firstPersonMove, heldMoves } from '@merv/code-work/blockers';
 import { UiRegistry } from '@merv/ui';
 import { homeRead } from '@merv/ui/home';
@@ -54,6 +54,8 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
       actions: [],
       nextAction: null,
       blockers: [],
+      currentGate: 'working',
+      providerBlockers: [],
       ...over,
     }) as unknown as WorkflowDecision;
   const input = gate({
@@ -104,6 +106,120 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
   });
   assert.equal(yoursOf(delivery, owner, me), undefined);
   assert.deepEqual(yoursOf(delivery, { actorId: me }, me), {});
+  // A blocker another plugin published says whose move ending it is, on ended work too.
+  const published = (whose: 'owner' | 'admin') =>
+    gate({ providerBlockers: [{ ...blocker('held'), next: 'Do it', whose }] });
+  assert.deepEqual(yoursOf(published('owner'), owner, me), { ask: 'Do it' });
+  assert.deepEqual(yoursOf({ ...published('owner'), terminal: true }, owner, me), {
+    ask: 'Do it',
+  });
+  assert.equal(yoursOf(published('owner'), owner, 'actor_ada', true), undefined);
+  assert.equal(yoursOf(published('admin'), owner, me), undefined);
+  assert.deepEqual(yoursOf(published('admin'), undefined, 'actor_ada', true), { ask: 'Do it' });
+  // Every round used is a project admin's move, never the owner's as such.
+  const capped = gate({
+    currentGate: 'loop_limit_reached',
+    blockers: [blocker('loop_limit_reached')],
+  });
+  assert.equal(yoursOf(capped, owner, me), undefined);
+  assert.deepEqual(yoursOf(capped, owner, 'actor_ada', true), { ask: LIMIT_ASK });
+  assert.equal(yoursOf({ ...capped, terminal: true }, owner, 'actor_ada', true), undefined);
+});
+
+test('work at a used-up limit, though out for review, and work a blocker holds for an admin, are an admin’s line', () => {
+  const me = 'actor_admin';
+  const rows = [
+    {
+      id: 'tasks',
+      label: 'Tasks',
+      group: 'hidden',
+      order: 1,
+      path: '/tasks',
+      workflow: 'task',
+      view: { kind: 'tasks' },
+      status: {},
+      readable: true,
+      needs: { name: 'title', owner: 'producerId' },
+    },
+    {
+      id: 'reviews',
+      label: 'Reviews',
+      group: 'hidden',
+      order: 2,
+      path: '/reviews',
+      view: { kind: 'reviews' },
+      status: {},
+      readable: true,
+    },
+  ];
+  const at = '2026-10-06T00:00:00.000Z';
+  const task = (id: string) => ({
+    id,
+    title: id,
+    producerId: 'actor_producer',
+    workflow: { state: 'in_review', updatedAt: at, revision: 7 },
+  });
+  const gate = (instanceId: string, over: Record<string, unknown>) => ({
+    instanceId,
+    terminal: false,
+    workStart: null,
+    nextAction: null,
+    actions: [],
+    blockers: [],
+    providerBlockers: [],
+    dependencies: [],
+    instruction: '',
+    ...over,
+  });
+  const held = {
+    provider: 'session-dispatch',
+    key: 'launch',
+    code: 'launch_held',
+    message: 'Dispatch holds this work after 5 failed launches: exit 70',
+    next: 'Fix why its launches fail, then release the hold',
+    whose: 'admin',
+    since: at,
+  };
+  const home = {
+    tasks: [task('capped'), task('held')],
+    // The capped task's review is open and was never claimed; the held one was sent back.
+    reviews: [
+      { id: 'rev_open', subjectId: 'capped', open: true, claimable: false, createdAt: at },
+      { id: 'rev_old', subjectId: 'held', returned: true, createdAt: at },
+    ],
+    workflows: {
+      workflows: [
+        gate('capped', {
+          currentGate: 'loop_limit_reached',
+          blockers: [
+            { code: 'loop_limit_reached', message: 'review_rounds is exhausted', status: 409 },
+          ],
+          yours: { ask: LIMIT_ASK },
+        }),
+        gate('held', {
+          currentGate: 'launch_held',
+          blockers: [{ code: 'launch_held', message: held.message, status: 409 }],
+          providerBlockers: [held],
+          yours: { ask: held.next },
+        }),
+      ],
+    },
+  };
+  const lines = needsYou(
+    rows as never,
+    home as never,
+    { id: me, role: 'operator' },
+    () => undefined,
+  );
+  assert.deepEqual(
+    lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]).sort(),
+    [
+      ['capped', LIMIT_ASK],
+      ['held', held.next],
+    ],
+  );
+  // Why the work is held stands beside the move.
+  assert.ok(lines.find((line: { id: string }) => line.id === 'held')!.says.includes(held.message));
 });
 
 /** A chore: worked, then done, or ended. Its owner submits it; a review may send it back. */

@@ -363,6 +363,8 @@ export async function decision(
   limits: WorkflowLimitStatus[] = [],
   provided: WorkflowProvidedBlocker[] = [],
   checks = true,
+  /** Whether the reading person is a project admin, asked only where an admin's move stands. */
+  admin: () => Promise<boolean> = async () => false,
 ): Promise<WorkflowDecision> {
   const described: { owner?: WorkflowOwner } = {};
   const result = await ownDecision(
@@ -381,12 +383,28 @@ export async function decision(
   const yours =
     query.action || context.caller.session
       ? undefined
-      : yoursOf(decided, described.owner, context.caller.actorId);
+      : yoursOf(
+          decided,
+          described.owner,
+          context.caller.actorId,
+          adminsMove(decided) && (await admin()),
+        );
   return yours ? { ...decided, yours } : decided;
 }
 
+/** What a project admin is asked where every round a limit allows is used. */
+export const LIMIT_ASK =
+  'Every round its limit allows is used: allow another, or take the next step by hand or end it';
+
+/** Whether the record waits on a project admin: at a used-up limit, or by a published word. */
+const adminsMove = (decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers'>) =>
+  decision.currentGate === 'loop_limit_reached' ||
+  decision.providerBlockers.some((blocker) => blocker.whose === 'admin');
+
 /**
- * Whether an open record is the reading caller's own move, by its program's word on whose it
+ * Whether a record is the reading caller's own move. A blocker another plugin published that
+ * names whose move it is comes first, on ended work too; an open record at a used-up limit is
+ * a project admin's. Otherwise it goes by its program's word on whose the record
  * is (`describe` → `owner`), and the sentence that asks it of them. Refused, it is theirs where
  * the gate wants their input or a prerequisite ended without succeeding; with nothing refused,
  * only where it holds open one of their asks, as work sent back or never begun does: it reports
@@ -396,11 +414,30 @@ export async function decision(
 export function yoursOf(
   decision: Pick<
     WorkflowDecision,
-    'terminal' | 'workStart' | 'actions' | 'nextAction' | 'blockers'
+    | 'terminal'
+    | 'workStart'
+    | 'actions'
+    | 'nextAction'
+    | 'blockers'
+    | 'currentGate'
+    | 'providerBlockers'
   >,
   owner: WorkflowOwner | undefined,
   actorId: string,
+  /** The reader is a project admin, and the record waits on one. */
+  admin = false,
 ): WorkflowDecision['yours'] {
+  // A blocker another plugin published says whose move ending it is, even on ended work.
+  const published = decision.providerBlockers.find(
+    (blocker) =>
+      (blocker.whose === 'admin' && admin) ||
+      (blocker.whose === 'owner' && owner?.actorId === actorId),
+  );
+  if (published) return { ask: published.next };
+  // Every round a limit allows is used: nothing more happens by itself, and allowing another
+  // is a project admin's move.
+  if (admin && !decision.terminal && decision.currentGate === 'loop_limit_reached')
+    return { ask: LIMIT_ASK };
   if (!owner || owner.actorId !== actorId || decision.terminal) return undefined;
   const words = (action?: string) =>
     action && owner.asks && Object.hasOwn(owner.asks, action) ? owner.asks[action] : undefined;
@@ -514,10 +551,13 @@ async function ownDecision(
     return result;
   }
   result.limits = structuredClone(limits);
-  // Every return a limit allows has been used. The actions stay as they are, because a human
-  // may still accept or end the work; what changes is that the read says why nothing more
-  // will happen by itself. A failed prerequisite is the stronger reason and keeps its gate.
-  const exhausted = query.action ? undefined : limits.find((limit) => limit.exhausted);
+  // Every return a limit leaving this state allows has been used. The actions stay as they
+  // are, because a human may still accept or end the work; what changes is that the read says
+  // why nothing more will happen by itself. A failed prerequisite is the stronger reason and
+  // keeps its gate.
+  const exhausted = query.action
+    ? undefined
+    : limits.find((limit) => limit.from === snapshot.state && limit.exhausted);
   const escalate = (): WorkflowDecision => {
     if (!exhausted || result.currentGate === 'dependency_failed') return result;
     const message = limitMessage(exhausted, snapshot.workflow);

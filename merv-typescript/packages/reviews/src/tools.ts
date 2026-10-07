@@ -6,6 +6,7 @@ import type {
   Caller,
   ReviewApplication,
   ReviewGuide,
+  ReviewRelease,
   ReviewRequest,
   Reviews,
 } from '@merv/contracts';
@@ -63,6 +64,18 @@ export const reviewToolsPlugin = {
             caller,
             await ctx.reviews.start(caller, input.reviewId, undefined, input.override),
           ),
+      },
+      {
+        name: 'review.release',
+        act: { title: 'Release review' },
+        conversation: 'propose' as const,
+        description:
+          'Hand back a claimed review so that another eligible reviewer, or a leased review worker, may claim it. Only the reviewer who claimed it or a project admin may, never a leased worker, whose claim is released with its lease. Pass the reviewId, a reason and a stable requestId; a retry with the same requestId answers the same. Nothing about the work under review changes.',
+        inputSchema: z
+          .object({ reviewId: id, reason: z.string().trim().min(1).max(500), requestId })
+          .strict(),
+        handler: async (caller: Caller, input: ReviewRelease) =>
+          await ctx.reviews.release(caller, input),
       },
       {
         name: 'review.submit',

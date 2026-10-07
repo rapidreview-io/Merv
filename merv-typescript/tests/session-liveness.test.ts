@@ -378,6 +378,20 @@ test('a target that keeps failing across runners is held, stops blocking the que
     lastMessage: 'released',
   });
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).retriesExhausted, 1);
+  // The hold is a project admin's move on the work it holds, so it reaches Needs you; the
+  // producer reads why the work waits, and nothing it should do.
+  const gate = await f.workflows.evaluate(f.owner, target.id);
+  assert.deepEqual(gate.yours, { ask: 'Fix why its launches fail, then release the hold' });
+  assert.deepEqual(
+    gate.providerBlockers.map(({ provider, code, whose, revision }) => [
+      provider,
+      code,
+      whose,
+      revision,
+    ]),
+    [['session-dispatch', 'launch_held', 'admin', 0]],
+  );
+  assert.equal((await f.workflows.evaluate(f.source, target.id)).yours, undefined);
 
   // A held target does not stand in front of healthy work queued behind it.
   const healthy = await f.instance();
@@ -416,6 +430,10 @@ test('a target that keeps failing across runners is held, stops blocking the que
     lastCode: 'launch_failed',
     reason: input.reason,
   });
+
+  // Released, it asks nothing of anyone.
+  assert.deepEqual((await f.workflows.blockers(f.owner, target.id)).length, 0);
+  assert.equal((await f.workflows.evaluate(f.owner, target.id)).yours, undefined);
 
   // The same request answers the same, and records nothing twice.
   assert.deepEqual(await f.sessions.dispatch.releaseHold(f.owner, input), released);
@@ -648,12 +666,16 @@ test('a hold names one revision: the record that moves is offered again', async 
   await f.fail();
   await f.pastBackoff();
   assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retries_exhausted');
+  assert.equal((await f.workflows.blockers(f.owner, target.id))[0]?.code, 'launch_held');
   await f.handle.transition(f.source, {
     instanceId: target.id,
     expectedRevision: 0,
     action: 'revise',
     requestId: request(),
   });
+  // What the hold said was about the revision it names, so it is no longer read.
+  assert.deepEqual(await f.workflows.blockers(f.owner, target.id), []);
+  assert.equal((await f.workflows.evaluate(f.owner, target.id)).yours, undefined);
   const leased = (await f.sessions.dispatch.lease(f.source, auto())).session!;
   assert.deepEqual([leased.instanceId, leased.expectedRevision], [target.id, 1]);
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).retriesExhausted, 0);

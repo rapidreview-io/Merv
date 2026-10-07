@@ -1,3 +1,4 @@
+import { REVIEW_VERDICTS } from '@merv/reviews/rules';
 import { MAX_ARTIFACT_IDS, mapAsync } from '@merv/contracts';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -83,6 +84,8 @@ interface StandingContext {
   /** Experiments in review whose review rounds are used up. */
   exhausted: ReadonlySet<string>;
 }
+/** The limit on returns from the review of each stage. */
+const ROUNDS: Record<string, string> = { design: 'design_rounds', results: 'result_rounds' };
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** Where a rejected design or results review may send the experiment, by the stage it read. */
@@ -169,6 +172,21 @@ export class ExperimentService implements Experiments {
             review.id,
           );
           return (row && RETURNS[row.stage]) ?? [];
+        },
+        // Both rejecting verdicts return the experiment, so once the gate's rounds are used up
+        // only a pass is left.
+        verdicts: async (caller, review, tx) => {
+          const row = await tx.get<{ stage: string }>(
+            'SELECT stage FROM experiment_submissions WHERE review_id=?',
+            review.id,
+          );
+          const limit = row ? ROUNDS[row.stage] : undefined;
+          const rounds = limit
+            ? (await this.workflows.limitStatusOf(caller, [review.subjectId], limit, tx)).get(
+                review.subjectId,
+              )
+            : undefined;
+          return rounds?.exhausted ? ['pass'] : REVIEW_VERDICTS;
         },
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
