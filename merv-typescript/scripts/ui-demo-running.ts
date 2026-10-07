@@ -435,14 +435,31 @@ export async function seedRunning(
     title: 'Plan: lr-warmup-ablation',
     content: [
       '# Summary',
-      'Train the p = 97 reproduction with and without a 500-step linear warmup.',
+      'Does a 500-step linear warmup move the grokking step at p = 97?',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  D[p = 97 table] --> A[No warmup]',
+      '  D --> B[500-step warmup]',
+      '  A --> M[Grokking step]',
+      '  B --> M',
+      '  M --> X{Later by 10%?}',
+      '```',
       '',
       '# Objective and hypothesis',
       'Warmup delays memorisation and so moves the grokking step later by at least 10%.',
       '',
       '# Evaluation',
-      'Seeds 7, 11 and 23 for each arm. The grokking step is where validation crosses 95%.',
-      'An arm differs when every seed of it moves the same way.',
+      '| Arm | Warmup | Seeds |',
+      '|---|---|---|',
+      '| Control | none | 7, 11, 23 |',
+      '| Warmup | 500 steps, linear | 7, 11, 23 |',
+      '',
+      '**Measure:** the step where validation accuracy crosses 95%.',
+      '**Success:** every warmup seed groks at least 10% later than its control.',
+      '**Budget:** 2 GPU-hours on lab-gpu-01.',
+      '',
+      '- Seed spread may swamp a 10% shift.',
     ].join('\n'),
     mediaType: 'text/markdown',
   });
@@ -520,6 +537,188 @@ export async function seedRunning(
     expectedRevision: asked.subjectRevision,
     requestId: 'demo-running-warmup-verdict',
   });
+
+  // An experiment that ran and passed both reviews: its report stands alone.
+  const decay = await currentExperiment(ctx, input.producerCaller, {
+    name: 'decay-sweep-p97',
+    intent: 'Does the grokking step fall as weight decay grows at p = 97?',
+    details: 'Three decays on the p = 97 reproduction, one seed each.',
+    requestId: 'demo-running-decay',
+  });
+  const decayRevision = async () =>
+    (await p('experiment.get_state', { experimentId: decay.id })).workflow.revision;
+  const decayPlan = await p('artifact.create', {
+    title: 'Plan: decay-sweep-p97',
+    content: [
+      '# Summary',
+      'Does the grokking step fall as weight decay grows at p = 97?',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  D[p = 97 table] --> A[decay 0.3]',
+      '  D --> B[decay 1.0]',
+      '  D --> C[decay 3.0]',
+      '  A & B & C --> M[Grokking step]',
+      '  M --> X{Falls with decay?}',
+      '```',
+      '',
+      '# Objective and hypothesis',
+      'Stronger weight decay makes the network grok sooner.',
+      '',
+      '# Evaluation',
+      '| Arm | Weight decay |',
+      '|---|---|',
+      '| Low | 0.3 |',
+      '| Mid | 1.0 |',
+      '| High | 3.0 |',
+      '',
+      '**Measure:** the step where validation accuracy crosses 95%.',
+      '**Success:** the step falls monotonically with decay.',
+      '**Budget:** 3 GPU-hours.',
+    ].join('\n'),
+    mediaType: 'text/markdown',
+  });
+  const decayFeasibility = await p('artifact.create', {
+    title: 'Feasibility: decay-sweep-p97',
+    content: JSON.stringify({
+      formatVersion: 1,
+      resources: [
+        {
+          kind: 'data',
+          name: 'modular addition p=97',
+          unit: 'examples',
+          required: 9409,
+          available: 9409,
+          basis: 'The harness generates the whole table.',
+        },
+        {
+          kind: 'compute',
+          name: 'single GPU',
+          unit: 'hours',
+          required: 3,
+          available: 8,
+          basis: 'lab-gpu-01 reports eight idle hours.',
+        },
+      ],
+      dependencies: [{ name: 'evaluation harness', present: true, basis: 'In this project.' }],
+      blockers: [],
+    }),
+    mediaType: 'application/json',
+  });
+  for (const [role, artifact, path] of [
+    ['plan', decayPlan, 'plan.md'],
+    ['feasibility', decayFeasibility, 'feasibility.json'],
+  ] as const)
+    await p('experiment.attach', {
+      experimentId: decay.id,
+      artifactId: artifact.id,
+      role,
+      path,
+      attemptIndex: decay.attempt.index,
+      expectedRevision: await decayRevision(),
+      requestId: `demo-running-decay-attach-${role}`,
+    });
+  await p('experiment.transition', {
+    experimentId: decay.id,
+    transition: 'submit_design',
+    expectedRevision: await decayRevision(),
+    requestId: 'demo-running-decay-design',
+  });
+  /** The reviewer passes the open review of `subject`, every criterion met. */
+  const pass = async (subject: string, requestId: string) => {
+    const open = ((await r('review.list')) as any[]).find(
+      (item) => item.subjectId === subject && item.status !== 'submitted',
+    );
+    if (!open) throw new Error(`The demo found no open review of ${subject}`);
+    const claimed = await r('review.start', { reviewId: open.id });
+    const asked = await r('review.get', { reviewId: open.id });
+    await r('review.submit', {
+      reviewId: open.id,
+      claimId: claimed.claimId ?? asked.claimId,
+      verdict: 'pass',
+      synopsis: 'The evidence answers the question as planned.',
+      findings: asked.criteria.map((_: string, index: number) => ({
+        criterionNumber: index + 1,
+        status: 'met',
+        evidenceIds: [...asked.artifactIds],
+        notes: 'Checked against the pinned evidence.',
+      })),
+      notes: 'Passing.',
+      expectedRevision: asked.subjectRevision,
+      requestId,
+    });
+  };
+  await pass(decay.id, 'demo-running-decay-design-verdict');
+  const decayRun = await work.lease(
+    await p('experiment.get_state', { experimentId: decay.id }),
+    input.producerCaller,
+  );
+  const made = async (title: string, content: string, mediaType: string) =>
+    await work.run(decayRun, 'artifact.create', { title, content, mediaType }, (caller, input) =>
+      ctx.artifacts.create(caller, input),
+    );
+  const decayResult = await made(
+    'Results: decay-sweep-p97',
+    JSON.stringify({ grokking_step: { '0.3': 14200, '1.0': 9810, '3.0': 6050 } }),
+    'application/json',
+  );
+  const decayReport = await made(
+    'Report: decay-sweep-p97',
+    [
+      '# Summary',
+      'Yes: the grokking step falls as weight decay grows, from 14,200 at 0.3 to 6,050 at 3.0.',
+      'The fall is monotonic, so stronger decay makes the network grok sooner at p = 97.',
+      '',
+      '# Results',
+      '| Arm | Weight decay | Grokking step | 95% interval |',
+      '|---|---:|---:|---:|',
+      '| Low | 0.3 | 14,200 | ± 900 |',
+      '| Mid | 1.0 | 9,810 | ± 700 |',
+      '| High | 3.0 | 6,050 | ± 500 |',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  D[p = 97 table] --> A[decay 0.3: 14,200]',
+      '  D --> B[decay 1.0: 9,810]',
+      '  D --> C[decay 3.0: 6,050]',
+      '  A & B & C --> X{Falls with decay? Yes}',
+      '```',
+      '',
+      'Evidence: metrics_exhibit.json, results.json.',
+      '',
+      '# Deviations from plan',
+      'None.',
+      '',
+      '# Conclusion',
+      '- Stronger decay brings grokking forward.',
+      '- One seed per arm: the intervals are run-to-run estimates.',
+    ].join('\n'),
+    'text/markdown',
+  );
+  for (const [role, artifact, path] of [
+    ['result', decayResult, 'results.json'],
+    ['report', decayReport, 'report.md'],
+  ] as const)
+    await work.run(
+      decayRun,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path,
+        attemptIndex: decay.attempt.index,
+        requestId: `demo-running-decay-attach-${role}`,
+      },
+      (caller, input) => ctx.experiments.attach(caller, input),
+    );
+  await work.run(
+    decayRun,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: 'demo-running-decay-results' },
+    (caller, input) => ctx.experiments.transition(caller, input),
+  );
+  await work.release(decayRun);
+  await pass(decay.id, 'demo-running-decay-results-verdict');
 
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
   await currentExperiment(ctx, input.producerCaller, {

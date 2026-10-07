@@ -2,26 +2,43 @@ import { useContext, useEffect, useState, type ReactNode } from 'react';
 import type {
   RunningAttention,
   RunningUnit,
+  RunningUnitArtifact,
   RunningUnitEntry,
   RunningUnitKey,
 } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import type { ThreadView } from '@merv/sessions/models';
-import { StatusPill, cx } from '../components';
+import { Ago, StatusPill, cx, words } from '../components';
+import { Icon } from '../icons';
 import { Markdown } from '../markdown';
+import { stagesOfGraph } from '../process';
 import { Thread, type Entry, type Handed } from '../thread';
-import { ArtifactBody } from './artifacts';
+import { ArtifactBody, bytes, fileType } from './artifacts';
 import { Act } from './running-panel';
 import { Reading, Target } from './running-phrase';
-import { StageThreads, ThreadDialog, roleLetter, threadFor, useThreadList } from './threads';
+import {
+  RoleMark,
+  StageThreads,
+  ThreadDialog,
+  ThreadReading,
+  isLive,
+  lastActive,
+  roleLetter,
+  threadFor,
+  threadName,
+  useThreadList,
+  visitCount,
+} from './threads';
 
 /**
  * A unit of work on the Work page: its stages with the agents on them, then two columns — on
- * the left what happened, as a narrow history; on the right the one thing to read, the unit's
- * key artifact, whole. Its owner says which artifact that is and what each entry of the
- * history was (RunningUnit); this page knows no workflow and names none of its states. A
- * document an entry handed in opens on the right in the key artifact's place, until the way
- * back. Each entry's role disc opens the thread that did it.
+ * the left what happened, as a narrow history; on the right three tabs. Document is the one
+ * thing to read, the unit's key artifact, whole; Agents, every thread of the unit by stage,
+ * one read in place; Artifacts, every file of the unit's, one previewed in place. Its owner
+ * says which artifact is key, what each entry of the history was and which files are its own
+ * (RunningUnit); this page knows no workflow and names none of its states. A document an entry
+ * handed in opens in the Document tab in the key artifact's place, until the way back. Each
+ * entry's role disc opens the thread that did it.
  */
 
 type Reference = Pick<RunningUnitEntry, 'role' | 'stage' | 'instance' | 'at'>;
@@ -217,9 +234,155 @@ function Ask({ attention }: { attention: RunningAttention }) {
   );
 }
 
+/** Each stage's threads under it, in the program's order, one opened in place on a press. */
+function Agents({
+  threads,
+  order,
+  loadedAt,
+  opened,
+  onOpen,
+}: {
+  threads: readonly ThreadView[];
+  order: readonly string[];
+  loadedAt?: string;
+  opened?: string;
+  onOpen(id: string | undefined): void;
+}) {
+  const thread = threads.find((item) => item.id === opened);
+  if (thread)
+    return (
+      <div className="unit-tab-body">
+        <header className="unit-key-head">
+          <button type="button" className="btn-text" onClick={() => onOpen(undefined)}>
+            ← Agents
+          </button>
+          <span className="unit-key-label">{threadName(thread)}</span>
+        </header>
+        <ThreadReading key={thread.id} thread={thread} loadedAt={loadedAt} />
+      </div>
+    );
+  const rank = (state: string) => {
+    const at = order.indexOf(state);
+    return at < 0 ? order.length : at;
+  };
+  const stages = [...new Set(threads.map((item) => item.state))].sort((a, b) => rank(a) - rank(b));
+  return (
+    <div className="unit-tab-body">
+      {stages.map((stage) => (
+        <section key={stage} className="unit-group" aria-label={capital(words(stage))}>
+          <h3 className="unit-group-head">{capital(words(stage))}</h3>
+          <ul className="unit-rows">
+            {threads
+              .filter((item) => item.state === stage)
+              .map((item) => {
+                const { visits } = visitCount(item);
+                const last = lastActive(item);
+                const live = isLive(item);
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className="unit-row unit-row--agent"
+                      aria-label={threadName(item)}
+                      onClick={() => onOpen(item.id)}
+                    >
+                      <RoleMark role={item.role} />
+                      <span className="unit-row-name">{capital(words(item.role))}</span>
+                      <span className="unit-row-stage faint">{words(stage)}</span>
+                      <span className={cx('unit-row-status', !live && 'faint')}>
+                        {live && <span className="live-dot live-dot--live" aria-hidden="true" />}
+                        {live ? 'live' : item.status}
+                      </span>
+                      <span className="faint tabular">
+                        {visits} {visits === 1 ? 'visit' : 'visits'}
+                      </span>
+                      <span className="faint">{last ? <Ago at={last} /> : ''}</span>
+                    </button>
+                  </li>
+                );
+              })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** The unit's files, newest first, one previewed in place on a press. */
+function Files({
+  files,
+  opened,
+  onOpen,
+}: {
+  files: readonly RunningUnitArtifact[];
+  opened?: string;
+  onOpen(id: string | undefined): void;
+}) {
+  const file = files.find((item) => item.id === opened);
+  if (file)
+    return (
+      <div className="unit-tab-body">
+        <header className="unit-key-head">
+          <button type="button" className="btn-text" onClick={() => onOpen(undefined)}>
+            ← Artifacts
+          </button>
+        </header>
+        <ArtifactBody artifactId={file.id} />
+      </div>
+    );
+  return (
+    <ul className="unit-rows unit-tab-body">
+      {files.map((item) => {
+        const type = fileType(item);
+        return (
+          <li key={item.id}>
+            <button
+              type="button"
+              className="unit-row unit-row--file"
+              onClick={() => onOpen(item.id)}
+            >
+              <span className="file-glyph" role="img" aria-label={type.label} title={type.label}>
+                <Icon name={type.icon} size={14} />
+              </span>
+              <span className="unit-row-name">{item.title}</span>
+              <span className="unit-row-by faint">
+                {item.role && <RoleMark role={item.role} />}
+                {item.stage && words(item.stage)}
+              </span>
+              <span className="faint tabular">{item.size !== undefined && bytes(item.size)}</span>
+              <span className="faint">{item.at && <Ago at={item.at} />}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+type Tab = 'document' | 'agents' | 'artifacts';
+const TABS: Tab[] = ['document', 'agents', 'artifacts'];
+/** The tab a reader last chose for this kind of unit, kept in the browser where it can be. */
+const tabKey = (kind: string) => `merv:unit-tab:${kind.toLowerCase()}`;
+function remembered(kind: string): Tab {
+  try {
+    const kept = localStorage.getItem(tabKey(kind));
+    return TABS.find((tab) => tab === kept) ?? 'document';
+  } catch {
+    return 'document';
+  }
+}
+function remember(kind: string, tab: Tab) {
+  try {
+    localStorage.setItem(tabKey(kind), tab);
+  } catch {
+    // A browser that keeps nothing still switches tabs.
+  }
+}
+
 export function UnitView({
   unit,
   graph,
+  kind,
   title,
   attention,
   wide,
@@ -228,6 +391,8 @@ export function UnitView({
 }: {
   unit: RunningUnit;
   graph?: ProcessGraph;
+  /** The unit's kind, under which the reader's tab is remembered. */
+  kind: string;
   /** The unit's name, under which a thread's dialog is titled. */
   title: string;
   /** What needs a person, where the owner said so: one line at the head of the reading. */
@@ -243,6 +408,11 @@ export function UnitView({
   const [opened, setOpened] = useState<string>();
   const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();
+  // The choice made here, for this kind; another kind reads its own remembered tab.
+  const [made, setMade] = useState<{ kind: string; tab: Tab }>();
+  const chosen = made?.kind === kind ? made.tab : remembered(kind);
+  const [agent, setAgent] = useState<string>();
+  const [file, setFile] = useState<string>();
   const thread = threads.find((item) => item.id === opened);
   const open = (reference: Reference, threadId?: string) => {
     if (threadId) setOpened(threadId);
@@ -253,6 +423,22 @@ export function UnitView({
   // A document from the history stands in the key artifact's place until the way back.
   const showing = document && document.id !== key?.artifact?.id ? document : undefined;
   const ask = attention && !attention.quiet ? attention : undefined;
+  const files = unit.artifacts;
+  // A tab the unit has nothing for is not drawn, and one remembered for it reads the document.
+  const offered = TABS.filter(
+    (tab) => (tab !== 'agents' || !!graph) && (tab !== 'artifacts' || !!files),
+  );
+  const tab = offered.includes(chosen) ? chosen : 'document';
+  const choose = (next: Tab) => {
+    setMade({ kind, tab: next });
+    remember(kind, next);
+  };
+  const counts: Record<Tab, number | undefined> = {
+    document: undefined,
+    agents: threads.length,
+    artifacts: files?.length,
+  };
+  const order = graph ? stagesOfGraph(graph).map((step) => step.state) : [];
   return (
     <>
       {graph && (
@@ -266,48 +452,85 @@ export function UnitView({
             </h3>
             <Thread
               entries={entries}
-              onDocument={(handed) =>
-                setDocument(handed.id === (showing ?? key?.artifact)?.id ? undefined : handed)
-              }
-              shown={(showing ?? key?.artifact)?.id}
+              onDocument={(handed) => {
+                choose('document');
+                setDocument(handed.id === (showing ?? key?.artifact)?.id ? undefined : handed);
+              }}
+              shown={tab === 'document' ? (showing ?? key?.artifact)?.id : undefined}
             />
           </section>
         )}
-        <section className="unit-reading" aria-label={showing?.title ?? key?.label ?? 'Reading'}>
-          {ask && <Ask attention={ask} />}
-          {showing ? (
-            <>
-              <header className="unit-key-head">
-                <button type="button" className="btn-text" onClick={() => setDocument(undefined)}>
-                  ← Current
-                </button>
-                <span className="unit-key-label">{showing.title}</span>
-              </header>
-              <div className={cx('unit-body', !wide && 'unit-body--cut')}>
-                <ArtifactBody artifactId={showing.id} />
-              </div>
-            </>
-          ) : (
-            key && (
-              <>
-                <header className="unit-key-head">
-                  <span className="unit-key-label">{key.label}</span>
-                  <StatusPill value={key.state} />
-                </header>
-                <div
-                  className={cx('unit-body', !wide && key.text === undefined && 'unit-body--cut')}
+        <section className="unit-reading" aria-label={capital(tab)}>
+          {offered.length > 1 && (
+            <div className="tabs tabs--strip unit-tabs" role="group" aria-label="Unit">
+              {offered.map((each) => (
+                <button
+                  type="button"
+                  key={each}
+                  aria-pressed={tab === each}
+                  onClick={() => choose(each)}
                 >
-                  <Body of={key} />
-                </div>
-              </>
-            )
+                  {capital(each)}
+                  {counts[each] !== undefined && <span className="state-n">{counts[each]}</span>}
+                </button>
+              ))}
+            </div>
           )}
-          {!wide && onRead && (showing || key?.artifact || key?.parts || key?.items) && (
-            <button type="button" className="btn-text unit-read" onClick={onRead}>
-              Read in full
-            </button>
+          {tab === 'agents' ? (
+            <Agents
+              threads={threads}
+              order={order}
+              loadedAt={loadedAt}
+              opened={agent}
+              onOpen={setAgent}
+            />
+          ) : tab === 'artifacts' && files ? (
+            <Files files={files} opened={file} onOpen={setFile} />
+          ) : (
+            <>
+              {ask && <Ask attention={ask} />}
+              {showing ? (
+                <>
+                  <header className="unit-key-head">
+                    <button
+                      type="button"
+                      className="btn-text"
+                      onClick={() => setDocument(undefined)}
+                    >
+                      ← Current
+                    </button>
+                    <span className="unit-key-label">{showing.title}</span>
+                  </header>
+                  <div className={cx('unit-body', !wide && 'unit-body--cut')}>
+                    <ArtifactBody artifactId={showing.id} />
+                  </div>
+                </>
+              ) : (
+                key && (
+                  <>
+                    <header className="unit-key-head">
+                      <span className="unit-key-label">{key.label}</span>
+                      <StatusPill value={key.state} />
+                    </header>
+                    <div
+                      className={cx(
+                        'unit-body',
+                        !wide && key.text === undefined && 'unit-body--cut',
+                      )}
+                    >
+                      <Body of={key} />
+                    </div>
+                  </>
+                )
+              )}
+              {!wide && onRead && (showing || key?.artifact || key?.parts || key?.items) && (
+                <button type="button" className="btn-text unit-read" onClick={onRead}>
+                  Read in full
+                </button>
+              )}
+              {!showing && unit.checks && unit.checks.length > 0 && <Checks checks={unit.checks} />}
+            </>
           )}
-          {!showing && unit.checks && unit.checks.length > 0 && <Checks checks={unit.checks} />}
         </section>
       </div>
       {details}

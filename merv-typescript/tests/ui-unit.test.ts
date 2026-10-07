@@ -171,6 +171,7 @@ const panel = (unit: unknown, sections: unknown[] = []) => ({
 const documents: Record<string, [string, string]> = {
   art_v1: ['plan-v1.md', '# Plan one\nThree seeds per arm.'],
   art_v2: ['plan-v2.md', '# Plan two\nTen seeds per arm, with a power estimate.'],
+  art_log: ['run.log', 'step 4000: validation 0.04'],
 };
 const artifact = (id: string) => ({
   id,
@@ -184,9 +185,9 @@ const artifact = (id: string) => ({
 });
 const names: Record<string, string> = { actor_codex: 'Codex producer', actor_claude: 'Claude' };
 
-async function sidebar(sent: unknown, full = true) {
+async function sidebar(sent: unknown, full = true, role = 'operator') {
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
-  const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role: 'operator' };
+  const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', {
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
@@ -195,7 +196,22 @@ async function sidebar(sent: unknown, full = true) {
   serve('/tools/ui.running_panel', { body: { result: sent } });
   serve('/sessions/threads?instanceId=wf_1', { body: { threads } });
   serve('/sessions/threads/thr_plan/conversation', {
-    body: { threadId: 'thr_plan', visits: [] },
+    body: {
+      threadId: 'thr_plan',
+      visits: [
+        {
+          sessionId: 'ses_p1',
+          from: 'transcript',
+          events: [
+            {
+              seq: 1,
+              at: at(2),
+              event: { kind: 'text', id: 'a', delta: 'Drafted the warmup plan.', done: true },
+            },
+          ],
+        },
+      ],
+    },
   });
   serve('/sessions/threads/thr_rev/conversation', { body: { threadId: 'thr_rev', visits: [] } });
   serve('/tools/artifact.get', (_, input) => ({
@@ -227,6 +243,36 @@ async function sidebar(sent: unknown, full = true) {
   );
   await settle(30);
 }
+/** The unit's files as its owner lists them, newest first. */
+const files = [
+  {
+    id: 'art_log',
+    title: 'run.log',
+    mediaType: 'text/plain',
+    size: 26,
+    at: at(12),
+    stage: 'running',
+    role: 'producer',
+  },
+  {
+    id: 'art_v2',
+    title: 'plan-v2.md',
+    mediaType: 'text/markdown',
+    size: 44,
+    at: at(10),
+    stage: 'planned',
+    role: 'producer',
+  },
+  {
+    id: 'art_v1',
+    title: 'plan-v1.md',
+    mediaType: 'text/markdown',
+    size: 27,
+    at: at(4),
+    stage: 'planned',
+    role: 'producer',
+  },
+];
 const reading = () => $('.unit-reading')!;
 const label = () => reading().querySelector('.unit-key-label')!.textContent;
 
@@ -355,6 +401,142 @@ test('what needs a person is one line with its move at the head of the reading',
   assert.doesNotMatch($('.running-panel-head')!.textContent!, /An operator allows/);
 });
 
+// ─── The reading's tabs ─────────────────────────────────────────────────────────────────
+
+const tabs = () => all('.unit-tabs button').map((item) => item.textContent);
+const tab = (name: string) =>
+  all('.unit-tabs button').find((item) => item.textContent!.startsWith(name));
+const unitOf = () => ({
+  key: { label: 'Current plan', state: 'draft', artifact: { id: 'art_v2', title: 'plan.md' } },
+  history,
+  artifacts: files,
+});
+
+test('the reading opens on its document, and its tabs count its agents and its files', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()));
+  assert.deepEqual(tabs(), ['Document', 'Agents2', 'Artifacts3']);
+  assert.equal(tab('Document')!.getAttribute('aria-pressed'), 'true');
+  assert.equal(label(), 'Current plan');
+  assert.match(reading().textContent!, /Ten seeds per arm/);
+  // Nothing in the default view is an id.
+  assert.doesNotMatch($('.unit-columns')!.textContent!, /art_|thr_|ses_|wf_1/);
+});
+
+test('the tab chosen is kept for the kind, and a kind without one reads its document', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()));
+  await press(tab('Artifacts'));
+  assert.equal(localStorage.getItem('merv:unit-tab:experiment'), 'artifacts');
+  await unmount();
+  await sidebar(panel(unitOf()));
+  assert.equal(tab('Artifacts')!.getAttribute('aria-pressed'), 'true');
+  assert.ok($('.unit-row--file'));
+  await unmount();
+  const task = panel(unitOf());
+  task.header = { ...task.header, kind: 'Task' };
+  await sidebar(task);
+  assert.equal(tab('Document')!.getAttribute('aria-pressed'), 'true');
+  // A unit whose owner lists no files has no Artifacts tab, and its remembered one reads the document.
+  await unmount();
+  await sidebar(panel({ ...unitOf(), artifacts: undefined }));
+  assert.deepEqual(tabs(), ['Document', 'Agents2']);
+  assert.equal(label(), 'Current plan');
+});
+
+test('a browser that keeps nothing still opens on the document and switches tabs', async (t) => {
+  t.after(unmount);
+  const storage = Object.getPrototypeOf(localStorage);
+  const { getItem, setItem } = storage;
+  storage.getItem = () => {
+    throw new Error('blocked');
+  };
+  storage.setItem = () => {
+    throw new Error('blocked');
+  };
+  t.after(() => Object.assign(storage, { getItem, setItem }));
+  await sidebar(panel(unitOf()));
+  assert.equal(tab('Document')!.getAttribute('aria-pressed'), 'true');
+  await press(tab('Agents'));
+  assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
+});
+
+test('Agents lists every thread by stage in stage order, and reads one in place', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()));
+  await press(tab('Agents'));
+  const groups = all('.unit-group').map((group) => [
+    group.querySelector('.unit-group-head')!.textContent,
+    [...group.querySelectorAll('.unit-row')].map((row) =>
+      [...row.children].map((cell) => cell.textContent).slice(0, 5),
+    ),
+  ]);
+  assert.deepEqual(groups, [
+    ['Planned', [['P', 'Producer', 'planned', 'dormant', '1 visit']]],
+    ['Design review', [['R', 'Reviewer', 'design review', 'retired', '1 visit']]],
+  ]);
+  assert.ok(all('.unit-row--agent time').length === 2, 'each row says when it was last active');
+  await press(button('Producer · planned · dormant'));
+  assert.equal($('dialog[open]'), null, 'no dialog opens');
+  await settle(30);
+  assert.match(reading().textContent!, /Drafted the warmup plan\./);
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
+  await press(button('← Agents'));
+  assert.equal(all('.unit-row--agent').length, 2);
+});
+
+test('a reader who is not an operator reads a thread’s visits in place, never its conversation', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.setItem('merv:unit-tab:experiment', 'agents');
+  await sidebar(panel(unitOf()), true, 'reader');
+  await press(button('Producer · planned · dormant'));
+  assert.ok(reading().querySelector('[aria-label="Visits"]'));
+  assert.equal(button('Conversation'), undefined);
+});
+
+test('Artifacts lists the unit’s files newest first, and previews one in place', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()));
+  await press(tab('Artifacts'));
+  const rows = all('.unit-row--file').map((row) => [
+    row.querySelector('.unit-row-name')!.textContent,
+    row.querySelector('.unit-row-by')!.textContent,
+  ]);
+  assert.deepEqual(rows, [
+    ['run.log', 'Prunning'],
+    ['plan-v2.md', 'Pplanned'],
+    ['plan-v1.md', 'Pplanned'],
+  ]);
+  assert.match(all('.unit-row--file')[1]!.textContent!, /44 B/);
+  await press(all('.unit-row--file')[2]);
+  assert.match(reading().textContent!, /Three seeds per arm/);
+  assert.equal($('.unit-row--file'), null);
+  await press(button('← Artifacts'));
+  assert.equal(all('.unit-row--file').length, 3);
+});
+
+test('a history document read from another tab opens in Document, and ← Current comes back', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()));
+  await press(tab('Artifacts'));
+  await press($('.thread-doc'));
+  assert.equal(tab('Document')!.getAttribute('aria-pressed'), 'true');
+  assert.equal(label(), 'plan-v1.md');
+  await press(button('← Current'));
+  assert.equal(label(), 'Current plan');
+});
+
 // ─── The card's clock ───────────────────────────────────────────────────────────────────
 
 test('a card counts the time since its work began only while a visit works it', async (t) => {
@@ -451,7 +633,8 @@ test('a task reads its goal and open checks, then what it delivered with each ch
       { number: 1, text: 'No leak' },
       { number: 2, text: 'Sizes recorded' },
     ],
-    deliveryConfirmations: [] as { checkNumber: number; status: string }[],
+    deliveryIds: [] as string[],
+    deliveryConfirmations: [] as { checkNumber: number; status: string; evidenceIds: string[] }[],
   };
   const states = ['in_progress', 'in_review', 'done'];
   const before = taskUnit(
@@ -479,8 +662,8 @@ test('a task reads its goal and open checks, then what it delivered with each ch
   const claimed = {
     ...task,
     deliveryConfirmations: [
-      { checkNumber: 1, status: 'met' },
-      { checkNumber: 2, status: 'met' },
+      { checkNumber: 1, status: 'met', evidenceIds: ['art_report'] },
+      { checkNumber: 2, status: 'met', evidenceIds: [] },
     ],
   };
   const inReview = taskUnit(claimed as never, delivered as never, [open] as never, pinned);
@@ -602,6 +785,126 @@ test('an experiment reads its draft or newest design, its approved design while 
         artifact: { id: 'art_rep', title: 'report.md' },
       },
     );
+});
+
+test('an experiment lists its files newest first, each under the stage and role that made it', () => {
+  const states = ['planned', 'design_review', 'running', 'experiment_review', 'complete'];
+  const graph = process(
+    'experiment_review',
+    [
+      crossing('planned', 'design_review', 1, 5),
+      crossing('design_review', 'running', 2, 9),
+      crossing('running', 'experiment_review', 3, 20),
+    ],
+    states,
+  );
+  const file = (id: string, minute: number, mediaType = 'text/markdown') => ({
+    id,
+    title: `${id}.md`,
+    mediaType,
+    size: 100 + minute,
+    createdAt: at(minute),
+  });
+  const evidence = (artifactId: string, role: string, systemGenerated = false) => ({
+    artifactId,
+    role,
+    path: `${role}.md`,
+    figureIds: [],
+    sessionId: null,
+    systemGenerated,
+    current: true,
+    attemptIndex: 1,
+  });
+  const experiment = {
+    id: 'wf_1',
+    intent: 'Does warmup move the grokking step?',
+    workflow: { state: 'experiment_review' },
+    attempt: { index: 1 },
+    evidence: [evidence('plan', 'plan'), evidence('report', 'report')],
+    submissions: [
+      {
+        stage: 'results',
+        reviewId: 'rv1',
+        createdAt: at(20),
+        sessionId: 'ses_run',
+        figureIds: [],
+        evidence: [evidence('exhibit', 'exhibit', true)],
+      },
+    ],
+  };
+  const reviewed = review({
+    id: 'rv1',
+    findings: [{ criterionNumber: 1, status: 'met', evidenceIds: ['plan', 'check'] }],
+  });
+  const found = new Map(
+    [
+      file('plan', 3),
+      file('report', 18),
+      file('exhibit', 20, 'application/json'),
+      file('check', 22),
+    ].map((item) => [item.id, item]),
+  );
+  const unit = experimentUnit(experiment as never, graph as never, [reviewed] as never, {
+    found,
+    made: [file('log', 12, 'text/plain'), file('report', 18)],
+  });
+  assert.deepEqual(
+    unit.artifacts!.map((item) => [item.title, item.stage, item.role]),
+    [
+      ['check.md', 'experiment_review', 'reviewer'],
+      ['exhibit.md', 'running', undefined],
+      ['report.md', 'running', 'producer'],
+      ['log.md', 'running', 'producer'],
+      ['plan.md', 'planned', 'producer'],
+    ],
+  );
+  assert.deepEqual(unit.artifacts![0], {
+    id: 'check',
+    title: 'check.md',
+    mediaType: 'text/markdown',
+    size: 122,
+    at: at(22),
+    stage: 'experiment_review',
+    role: 'reviewer',
+  });
+});
+
+test('a task lists its brief, its delivery and what its delivering session made', () => {
+  const states = ['in_progress', 'in_review', 'done'];
+  const graph = process('in_review', [crossing('in_progress', 'in_review', 2, 5)], states);
+  const file = (id: string, minute: number) => ({
+    id,
+    title: id,
+    mediaType: 'text/markdown',
+    size: 10,
+    createdAt: at(minute),
+  });
+  const task = {
+    id: 'wf_1',
+    goal: 'Remove the leaked equations.',
+    briefId: 'brief',
+    deliveryIds: ['report'],
+    deliveryCodeArtifactId: 'commit',
+    deliveryCode: { sessionId: 'ses_work' },
+    acceptanceChecks: [{ number: 1, text: 'No leak' }],
+    deliveryConfirmations: [{ checkNumber: 1, status: 'met', evidenceIds: ['report'] }],
+  };
+  const open = review({ status: 'requested', artifactIds: ['brief', 'commit', 'report'] });
+  const artifacts = new Map(
+    [file('brief', 0), file('commit', 5), file('report', 4)].map((item) => [item.id, item]),
+  );
+  const unit = taskUnit(task as never, graph as never, [open] as never, artifacts, [
+    file('audit', 2),
+  ]);
+  assert.deepEqual(
+    unit.artifacts!.map((item) => [item.id, item.stage, item.role]),
+    [
+      ['commit', 'in_progress', 'producer'],
+      ['report', 'in_progress', 'producer'],
+      ['audit', 'in_progress', 'producer'],
+      ['brief', 'in_progress', undefined],
+    ],
+  );
 });
 
 test('a reflection reads its lenses, then its synthesis, then the next wave’s plan item by item', () => {

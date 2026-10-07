@@ -574,8 +574,10 @@ export function RunningSidebar({
         ))}
         {unit && (
           <UnitView
+            key={data.key}
             unit={unit}
             graph={ladder?.kind === 'ladder' ? ladder.graph : undefined}
+            kind={data.header.kind}
             title={data.header.title}
             attention={asks ? standing : undefined}
             wide={!!full}

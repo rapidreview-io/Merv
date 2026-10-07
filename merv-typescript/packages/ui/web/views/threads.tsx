@@ -61,8 +61,23 @@ const liveLine = (thread: ThreadView, now: Clock) => {
  */
 const lapsed = (thread: ThreadView) =>
   thread.visits.some((visit) => visit.liveness?.verdict === 'lapsed');
-const threadName = (thread: ThreadView) =>
+export const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
+
+/** How many visits a thread made that ran, and how many launches failed. */
+export function visitCount(thread: ThreadView) {
+  const launches = thread.visits.filter(failed).length;
+  return { visits: thread.visits.length - launches, launches };
+}
+/** Whether a visit of the thread holds its lease now. */
+export const isLive = (thread: ThreadView) => thread.visits.some(active);
+/** When the thread last did anything: the newest moment any of its visits records. */
+export const lastActive = (thread: ThreadView) =>
+  thread.visits
+    .flatMap((visit) => [visit.offeredAt, visit.startedAt, visit.endedAt])
+    .filter((at): at is string => !!at)
+    .sort()
+    .at(-1);
 
 /** A role's mark: its first letter, P for a producer and R for a reviewer. */
 export const roleLetter = (role: string) => role.charAt(0).toUpperCase();
@@ -97,8 +112,7 @@ export function threadFor(
  * Its tooltip says how the lease stands and on which machine.
  */
 function ThreadChip({ thread, now, onOpen }: { thread: ThreadView; now: Clock; onOpen(): void }) {
-  const launches = thread.visits.filter(failed).length;
-  const visits = thread.visits.length - launches;
+  const { visits, launches } = visitCount(thread);
   return (
     <button
       type="button"
@@ -242,8 +256,6 @@ export function ThreadDialog({
   onClose(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const reads = useReadsAgents();
-  const [tab, setTab] = useState<'conversation' | 'visits'>(reads ? 'conversation' : 'visits');
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
   }, []);
@@ -284,28 +296,42 @@ export function ThreadDialog({
             <CloseIcon />
           </button>
         </header>
-        {reads && (
-          <div className="tabs tabs--strip" role="group" aria-label="Thread">
-            {(['conversation', 'visits'] as const).map((each) => (
-              <button
-                type="button"
-                key={each}
-                aria-pressed={tab === each}
-                onClick={() => setTab(each)}
-              >
-                {capital(each)}
-              </button>
-            ))}
-          </div>
-        )}
-        {reads && tab === 'conversation' ? (
-          <Conversation thread={thread} label={name} />
-        ) : (
-          <Visits thread={thread} loadedAt={loadedAt} />
-        )}
+        <ThreadReading thread={thread} loadedAt={loadedAt} />
       </div>
     </dialog>,
     document.body,
+  );
+}
+
+/**
+ * What one thread did: for an operator, its conversation and its visits a press apart; for
+ * anyone else, its visits alone, as the live stream has always been an operator's.
+ */
+export function ThreadReading({ thread, loadedAt }: { thread: ThreadView; loadedAt?: string }) {
+  const reads = useReadsAgents();
+  const [tab, setTab] = useState<'conversation' | 'visits'>(reads ? 'conversation' : 'visits');
+  return (
+    <>
+      {reads && (
+        <div className="tabs tabs--strip" role="group" aria-label="Thread">
+          {(['conversation', 'visits'] as const).map((each) => (
+            <button
+              type="button"
+              key={each}
+              aria-pressed={tab === each}
+              onClick={() => setTab(each)}
+            >
+              {capital(each)}
+            </button>
+          ))}
+        </div>
+      )}
+      {reads && tab === 'conversation' ? (
+        <Conversation thread={thread} label={threadName(thread)} />
+      ) : (
+        <Visits thread={thread} loadedAt={loadedAt} />
+      )}
+    </>
   );
 }
 

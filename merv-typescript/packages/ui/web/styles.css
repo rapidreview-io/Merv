@@ -6263,7 +6263,7 @@ button.role-mark--disc:hover {
 }
 .unit-columns--wide {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   column-gap: calc(2 * var(--space-5));
   align-items: start;
 }
@@ -6395,6 +6395,80 @@ button.unit-part:hover .unit-part-name,
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+}
+/* The reading's three tabs, and what each lists: rows on hairlines, one fact a column. */
+.unit-tabs {
+  margin-bottom: var(--space-2);
+}
+.unit-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.unit-group + .unit-group {
+  margin-top: var(--space-3);
+}
+.unit-group-head {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+ul.unit-rows {
+  list-style: none;
+}
+.unit-row {
+  display: grid;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-1) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.unit-row--agent {
+  grid-template-columns: auto minmax(0, 9rem) minmax(0, 1fr) 72px 64px 72px;
+}
+.unit-row--file {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 10rem) 64px 72px;
+}
+/* Narrow, a row keeps its name and its quiet facts; the group head already says the stage. */
+.unit-columns:not(.unit-columns--wide) .unit-row--agent {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+.unit-columns:not(.unit-columns--wide) .unit-row--file {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.unit-columns:not(.unit-columns--wide) :is(.unit-row-stage, .unit-row-by) {
+  display: none;
+}
+.unit-row:hover .unit-row-name {
+  color: var(--active);
+}
+.unit-row-name,
+.unit-row-stage {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unit-row-status,
+.unit-row-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.unit-row > :last-child {
+  text-align: right;
 }
 /* A document an entry handed in: the way to read it on the right, pressed while it is read. */
 .thread-doc {
