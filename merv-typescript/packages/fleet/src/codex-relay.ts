@@ -189,8 +189,8 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
  * provider key. Each session has one call in flight. A call is charged to its person's day before
  * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
- * when it finishes; one refused before it is sent, or answered with an error status, is refunded,
- * and one cut off keeps its charge. The day's total, kept in the database across restarts,
+ * when it finishes; one refused before it is sent, answered with an error status, or failed with
+ * no usage, is refunded, and one cut off keeps its charge. The day's total, kept in the database across restarts,
  * refuses any call that would pass the ceiling. Its tables are made by `modelMigrations`, which
  * the workflow adapter runs when it starts.
  */

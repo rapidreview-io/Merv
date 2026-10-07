@@ -708,21 +708,36 @@ test('a stream that ends without its terminal frame is a failure', async (t) => 
   assert.equal(response.status, 200);
   const text = await response.text();
   assert.equal(text.match(/output_text\.delta/g)?.length, 2);
-  assert.match(text, /relay_interrupted"\}\n\n$/);
+  assert.match(
+    text,
+    /event: error\ndata: \{"type":"error","code":"relay_interrupted",[^\n]*\}\n\n$/,
+  );
   assert.deepEqual(
     failures.map(({ code, phase }) => [code, phase]),
     [['upstream_failed', 'stream']],
   );
 });
 
-test('a failed response is refused wherever its type sits in the frame', async (t) => {
+test('a failed response ends the call wherever its type sits in the frame, as its code only', async (t) => {
+  const failures: PiRelayFailureRecord[] = [];
   const f = await fixture({
-    fetchImpl: async () => eventStream('data: {"sequence_number":1,"type":"response.failed"}\n\n'),
+    onFailure: (record) => void failures.push(record),
+    fetchImpl: async () =>
+      eventStream(
+        'data: {"sequence_number":1,"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"private provider details"}}}\n\n',
+      ),
   });
   t.after(() => f.close());
   const response = await send(f);
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: 'upstream_failed' });
+  assert.equal(response.status, 200);
+  assert.equal(
+    await response.text(),
+    'event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed","error":{"code":"context_length_exceeded","message":"The model provider failed this call"}}}\n\n',
+  );
+  assert.deepEqual(
+    failures.map(({ code, phase }) => [code, phase]),
+    [['upstream_failed', 'stream']],
+  );
 });
 
 test('a frame that quotes an error type in its content streams', async (t) => {
@@ -744,7 +759,10 @@ test('a frame that quotes an error type in its content streams', async (t) => {
     fetchImpl: async () => eventStream('data: {"type":"error","code":"server_error"}\n\n'),
   });
   t.after(() => error.close());
-  assert.equal((await send(error)).status, 502);
+  assert.equal(
+    await (await send(error)).text(),
+    'event: error\ndata: {"type":"error","code":"server_error","message":"The model provider failed this call"}\n\n',
+  );
 });
 
 test('an authority or ledger that cannot answer is unavailable, not a refusal', async (t) => {
@@ -1317,7 +1335,8 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
     {
       name: 'SSE error frame',
       fetchImpl: async () => eventStream(`event: error\ndata: {"message":"${secret}"}\n\n`),
-      expectedStatus: 502,
+      // The failure streams to the client, by its code alone.
+      expectedStatus: 200,
       expectedPhase: 'stream',
       upstreamHttpStatus: 200,
     },
@@ -1373,7 +1392,7 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
       assert.equal(record.phase, scenario.expectedPhase);
       assert.equal(
         record.code,
-        scenario.expectedStatus === 504 ? 'relay_timeout' : 'upstream_failed',
+        scenario.name === 'idle timeout' ? 'relay_timeout' : 'upstream_failed',
       );
       assert.equal(record.upstreamHttpStatus, scenario.upstreamHttpStatus);
       assert.equal(record.model, 'test-model');
@@ -1437,8 +1456,10 @@ test('streams complete SSE frames incrementally but sanitizes upstream SSE error
     if (next.done) break;
     rest += new TextDecoder().decode(next.value);
   }
-  assert.match(rest, /relay_interrupted/);
-  assert.doesNotMatch(rest, /private provider details/);
+  assert.equal(
+    rest,
+    'event: error\ndata: {"type":"error","code":"upstream_failed","message":"The model provider failed this call"}\n\n',
+  );
 });
 
 test('API shutdown ends an open relay stream after its drain window, as a disconnect', async (t) => {

@@ -40,6 +40,12 @@ const expired = (grant: ModelRelayGrant) => !(Date.parse(grant.expiresAt) > Date
 /** Streamed frames rely on an authority read at most this old; an authority that stops answering
  *  ends the stream. */
 const authorityStaleMs = 5_000;
+/** The relay's own end of a stream it cut short, as the Responses API frames an error. */
+const interrupted = `event: error\ndata: ${JSON.stringify({
+  type: 'error',
+  code: 'relay_interrupted',
+  message: 'The model relay ended this call',
+})}\n\n`;
 /** The Responses API's `usage`, as a finished call's last frame carries it. */
 type Usage = {
   input_tokens?: unknown;
@@ -57,6 +63,25 @@ const failedFrame = (data: string) => {
   } catch {
     return true;
   }
+};
+/** A failure the provider streamed, as the client receives it: its kind and code, which tell the
+ *  client what to do (Codex compacts on `context_length_exceeded`), and none of its words. */
+const providerFailure = (data: string, failedResponse: boolean) => {
+  let parsed: { type?: unknown; code?: unknown; error?: unknown; response?: unknown } | undefined;
+  try {
+    parsed = JSON.parse(data);
+  } catch {}
+  const errorOf = (value: unknown) => (value as { error?: { code?: unknown } } | null)?.error;
+  const raw = errorOf(parsed?.response)?.code ?? errorOf(parsed)?.code ?? parsed?.code;
+  const code =
+    typeof raw === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(raw) ? raw : 'upstream_failed';
+  const message = 'The model provider failed this call';
+  return failedResponse || parsed?.type === 'response.failed'
+    ? `event: response.failed\ndata: ${JSON.stringify({
+        type: 'response.failed',
+        response: { status: 'failed', error: { code, message } },
+      })}\n\n`
+    : `event: error\ndata: ${JSON.stringify({ type: 'error', code, message })}\n\n`;
 };
 
 function limit(value: number | undefined, fallback = 0): number {
@@ -238,6 +263,9 @@ export class ModelRelay<
     let charged = false;
     /** Whether the provider answered with a success status, once it answered. */
     let taken: boolean | undefined;
+    /** How a failure the provider streamed was billed: settled to the usage it reported, or not
+     *  at all when it reported none. */
+    let providerFailed: 'settled' | 'unbilled' | undefined;
     try {
       const authority = this.config.authority;
       let grant: G;
@@ -446,8 +474,18 @@ export class ModelRelay<
             }
           }
           completed ||= terminal === 'completed';
-          if (terminal === 'failed' || /^event:\s*error\s*$/im.test(content) || failedFrame(data))
+          if (terminal === 'failed' || /^event:\s*error\s*$/im.test(content) || failedFrame(data)) {
+            // The provider's failure reaches the client, so it reads why (a context overflow it
+            // can compact for) instead of a stream cut short.
+            startStream();
+            await writeChunk(
+              res,
+              Buffer.from(providerFailure(data, terminal === 'failed')),
+              signal,
+            );
+            providerFailed = usage && typeof usage === 'object' ? 'settled' : 'unbilled';
             reject(502, 'upstream_failed');
+          }
           if (expired(grant)) reject(403, 'grant_forbidden');
           if (Date.now() - validatedAt > authorityStaleMs) reject(504, 'relay_timeout');
           startStream();
@@ -480,9 +518,10 @@ export class ModelRelay<
           elapsedMs: Math.max(0, Date.now() - admittedAt),
           ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
         });
-      // Refused before it was sent, or answered with an error status, the call cost nothing. One
-      // the provider may have run (no answer, or a stream cut off) keeps its charge.
-      if (charged && (phase === 'request' || taken === false))
+      // Refused before it was sent, answered with an error status, or failed with no usage, the
+      // call cost nothing. One the provider may have run (no answer, or a stream cut off) keeps
+      // its charge.
+      if (charged && (phase === 'request' || taken === false || providerFailed === 'unbilled'))
         report((record) => this.config.onUsage?.(record, admitted!, reserved), {
           event: `${this.config.name}_relay_usage` as const,
           model: admitted!.model,
@@ -493,7 +532,7 @@ export class ModelRelay<
           refund: true as const,
         });
       if (failure.status !== 499 && !res.destroyed) {
-        if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');
+        if (res.headersSent) res.end(providerFailed ? undefined : interrupted);
         else this.error(res, failure.status, failure.code);
       }
     } finally {
