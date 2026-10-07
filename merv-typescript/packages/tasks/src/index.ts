@@ -58,7 +58,7 @@ import { checkpoint, leasedClaim, visibleCheckpoints } from './lease.js';
 import { workflowPolicy } from './policy.js';
 import { assignmentFacts, context } from './context.js';
 import { running, runningPanel } from './running.js';
-import { createTask, markFailed, reissueReview, submitDelivery, submitReview } from './commands.js';
+import { createTask, markFailed, submitDelivery, submitReview } from './commands.js';
 
 export type {
   Task,
@@ -67,7 +67,6 @@ export type {
   TaskFailure,
   TaskMarkFailed,
   TaskRecord,
-  TaskReissue,
   TaskReview,
   Tasks,
 } from './types.js';
@@ -126,7 +125,6 @@ export class TaskService implements Tasks {
   readonly runningPanel = bound(this, runningPanel);
   readonly markFailed = bound(this, markFailed);
   readonly submitDelivery = bound(this, submitDelivery);
-  readonly reissueReview = bound(this, reissueReview);
   readonly submitReview = bound(this, submitReview);
   private closed = false;
   private sandboxes?: Pick<Sandboxes, 'captures'>;
@@ -188,8 +186,19 @@ export class TaskService implements Tasks {
         overrides: ['leased_review_required'],
         // A Git task passes only from a leased reviewer in a checkout of the delivered commit
         // (checkoutReviewer), unless its owner decides as owner.
-        verdicts: async (caller, review) =>
-          caller.session || review.override ? REVIEW_VERDICTS : ['needs_changes', 'fail'],
+        // Once review_rounds is used up, nothing returns the task for changes.
+        verdicts: async (caller, review, tx) => {
+          const open =
+            caller.session || review.override
+              ? REVIEW_VERDICTS
+              : (['needs_changes', 'fail'] as const);
+          const rounds = (
+            await this.workflows.limitStatusOf(caller, [review.subjectId], 'review_rounds', tx)
+          ).get(review.subjectId);
+          return rounds?.from === 'in_review' && rounds.exhausted
+            ? open.filter((verdict) => verdict !== 'needs_changes')
+            : open;
+        },
         // A task carries the claims of its newest delivery only, so they stand beside the
         // review of that delivery and beside no earlier one.
         claims: async (caller, review, tx) =>

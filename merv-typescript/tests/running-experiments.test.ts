@@ -411,13 +411,20 @@ test('a review state says who holds the review, and rounds used up need a person
     experiment = await f.design(experiment);
   }
   board = await f.board();
-  assert.deepEqual(node(board, work(experiment.id))?.attention, {
+  const capped = {
     says: ['Out of review rounds'],
     who: 'An independent reviewer reviews it by hand, or an operator allows another round.',
-  });
+  };
+  // Workflows' mark lends the card the admin's control.
+  const { action, ...own } = node(board, work(experiment.id))!.attention!;
+  assert.deepEqual(own, capped);
+  assert.deepEqual(
+    [action?.tool, action?.input],
+    ['workflow.extend_limit', { instanceId: experiment.id, limit: 'design_rounds', additional: 1 }],
+  );
   assert.equal(board.lanes.work.needsYou, 1);
   const sidebar = await f.panel(work(experiment.id));
-  assert.deepEqual(sidebar.header.attention, node(board, work(experiment.id))?.attention);
+  assert.deepEqual(sidebar.header.attention, capped);
   assert.deepEqual(sidebar.header.says, [
     'Design review · unclaimed · ',
     { since: (await f.app.ctx.reviews.get(f.operator, experiment.reviewId!)).createdAt },

@@ -33,6 +33,7 @@ import type {
 } from './types.js';
 import type { AgentObservations } from './observations.js';
 import {
+  HOLD_PROVIDER,
   isoNow,
   liveTargets,
   ordinary as unmanaged,
@@ -197,6 +198,18 @@ export class SessionDispatch {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('session_dispatch', postgresMigrations);
+    // Holds made before they were reported are reported once; an unchanged report writes
+    // nothing. A schema held back below the holds table has none.
+    await this.state.transaction(async (tx) => {
+      const table = await tx.get<{ name: string | null }>(
+        "SELECT to_regclass('session_dispatch_holds')::text AS name",
+      );
+      if (!table?.name) return;
+      for (const row of await tx.all<HoldRow & { project_id: string }>(
+        'SELECT DISTINCT ON (project_id,instance_id) * FROM session_dispatch_holds WHERE held_at IS NOT NULL ORDER BY project_id,instance_id,revision DESC',
+      ))
+        await this.reportHold(row.project_id, row.instance_id, row, tx);
+    });
   }
   /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
   enter(caller?: Caller): void {
@@ -271,7 +284,41 @@ export class SessionDispatch {
       target.instanceId,
       target.expectedRevision,
     ))!;
-    return row.held_at && !old?.held_at ? publicHold(row) : undefined;
+    if (!row.held_at || old?.held_at) return undefined;
+    await this.reportHold(projectId, target.instanceId, row, tx);
+    return publicHold(row);
+  }
+  /**
+   * A hold is a project admin's move, reported on the work it holds so it reaches Needs you;
+   * it names one revision, so the record moving on withdraws it. Without a row, withdrawn.
+   */
+  private async reportHold(
+    projectId: string,
+    instanceId: string,
+    row: HoldRow | null,
+    tx: Transaction,
+  ): Promise<void> {
+    await this.workflows.replaceBlockers(
+      {
+        projectId,
+        instanceId,
+        provider: HOLD_PROVIDER,
+        blockers: row
+          ? [
+              {
+                key: 'launch',
+                code: 'launch_held',
+                status: 409,
+                message: `Dispatch holds this work after ${row.attempts} failed launches: ${row.last_message}`,
+                next: 'Fix why its launches fail, then release the hold',
+                whose: 'admin',
+                revision: Number(row.revision),
+              },
+            ]
+          : [],
+      },
+      tx,
+    );
   }
   private heldData(hold: DispatchHold) {
     return {
@@ -383,6 +430,17 @@ export class SessionDispatch {
             caller.projectId,
             input.instanceId,
             input.expectedRevision,
+          );
+          // A hold of a later revision, if one stands, is still reported.
+          await this.reportHold(
+            caller.projectId,
+            input.instanceId,
+            (await tx.get<HoldRow>(
+              'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND held_at IS NOT NULL ORDER BY revision DESC LIMIT 1',
+              caller.projectId,
+              input.instanceId,
+            )) ?? null,
+            tx,
           );
           await recorded(this.state, tx, caller, 'session.hold_released', input.instanceId, {
             instanceId: row.instance_id,

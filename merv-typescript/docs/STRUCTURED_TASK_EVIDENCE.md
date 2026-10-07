@@ -103,7 +103,8 @@ building later work on the delivered commit.
   (`references.code`). On every reviewer assignment and every proposed verdict, Tasks
   re-reads the receipt from Code and requires it to match the sealed delivery and the
   review to pin the rendered record. The comparison uses the stored producing
-  revision, so `task.reissue_review` does not strand the task.
+  revision, so a review reissued before `task.reissue_review` was retired does not strand
+  the task.
 - **Only that leased review, attached at the delivered commit, can pass a Git task.**
   A verdict of `pass` must come from the session holding the current review lease, and
   Sessions must already hold that session's workspace attachment with a base equal to
@@ -119,9 +120,9 @@ building later work on the delivered commit.
   because such a claim could never pass the task and would shut every review worker
   out (`review_unavailable`). Once `review_rounds` is used up no worker is offered the
   review, so a person may then claim it and fail the task. If that claim is still
-  held after an admin allows another round, the producer or an admin replaces the
-  review with `task.reissue_review`; the fresh review pins the same delivered commit
-  and can be leased.
+  held after an admin allows another round, its claimer or an admin hands it back with
+  `review.release`; the same review, pinned to the same delivered commit, can then be
+  leased.
 
 | Code                     | Meaning                                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------------ |

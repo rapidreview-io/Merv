@@ -14,6 +14,8 @@ import {
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
+import { LIMIT_ASK } from '@merv/workflows/evaluation';
+import { limitMarks } from '@merv/workflows/ui';
 import { openState } from './fixtures/state.js';
 
 const definition: WorkflowDefinition = {
@@ -246,7 +248,13 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
   const instance = await f.start('start');
   const open = await f.start('open');
   await f.move(open.id, 'submit');
-  assert.deepEqual((await f.workflows.evaluate(f.owner, instance.id)).limits, []);
+  // Every limit is read wherever the work stands, so its rounds are seen before its gate.
+  const drafting = await f.workflows.evaluate(f.owner, instance.id);
+  assert.deepEqual(
+    drafting.limits.map(({ name, from, used, remaining }) => [name, from, used, remaining]),
+    [['review_returns', 'in_review', 0, 1]],
+  );
+  assert.notEqual(drafting.currentGate, 'loop_limit_reached');
   await f.move(instance.id, 'submit');
   const fresh = await f.workflows.evaluate(f.owner, instance.id);
   assert.deepEqual(fresh.limits, [
@@ -297,6 +305,34 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
   assert.deepEqual(overview.blocked, []);
   assert.deepEqual(overview.stalled, []);
 
+  // Nothing more happens by itself, so it is a project admin's move whoever produced it, and
+  // its card carries the admin's control. Anyone else reads neither.
+  assert.deepEqual(decision.yours, { ask: LIMIT_ASK });
+  const { actor: producer } = await f.scope.credentials.issueActor(f.owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
+  const reader: Caller = { projectId: f.owner.projectId, actorId: producer.id };
+  assert.equal((await f.workflows.evaluate(reader, instance.id)).yours, undefined);
+  assert.deepEqual(
+    limitMarks(await f.workflows.escalated(f.owner)).map(({ key, action }) => [
+      key,
+      action?.tool,
+      action?.input,
+    ]),
+    [
+      [
+        `work:${instance.id}`,
+        'workflow.extend_limit',
+        { instanceId: instance.id, limit: 'review_returns', additional: 1 },
+      ],
+    ],
+  );
+  assert.deepEqual(
+    limitMarks(await f.workflows.escalated(reader)).map(({ key, action }) => [key, action]),
+    [[`work:${instance.id}`, undefined]],
+  );
+
   // Nothing is dispatched for it until an admin allows another round.
   assert.deepEqual(
     (await f.workflows.dispatchCandidates(f.owner)).map((item) => item.instanceId),
@@ -316,6 +352,8 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
   );
   const after = await f.workflows.overview(f.owner);
   assert.deepEqual(after.escalated, []);
+  assert.deepEqual((await f.workflows.escalated(f.owner)).items, []);
+  assert.equal(after.workflows.find((item) => item.instanceId === instance.id)?.yours, undefined);
   assert.deepEqual(after.ready.sort(), [instance.id, open.id].sort());
   assert.equal((await f.move(instance.id, 'return')).state, 'drafting');
 });

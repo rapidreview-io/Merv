@@ -3,6 +3,7 @@ import {
   excludedFromReview,
   NOT_INDEPENDENT,
   REVIEW_VERDICTS,
+  ROUNDS_USED,
   standings,
 } from './rules.js';
 import { canonical, visible, isDirectHuman } from '@merv/contracts';
@@ -33,12 +34,13 @@ import {
 } from '@merv/contracts';
 import { EARLIER, reviewSections } from './running.js';
 import { freeze, hydrate, type ReviewRow } from './rows.js';
-import { reissue, request, supersede } from './requests.js';
+import { request, supersede } from './requests.js';
 import {
   actorPermissionsChanged,
   actorRevoked,
   checkStart,
   checkSubmit,
+  release,
   releaseClaim,
   start,
   submit,
@@ -76,13 +78,13 @@ export class ReviewService implements Reviews {
   // The producer's side (requests.ts) and the reviewer's (claims.ts) run on this service as their
   // ReviewsContext; the Reviews contract's share of them is bound here.
   readonly request = bound(this, request);
-  readonly reissue = bound(this, reissue);
   readonly supersede = bound(this, supersede);
   readonly checkStart = bound(this, checkStart);
   readonly start = bound(this, start);
   readonly checkSubmit = bound(this, checkSubmit);
   readonly submit = bound(this, submit);
   readonly releaseClaim = bound(this, releaseClaim);
+  readonly release = bound(this, release);
   private readonly owners = new Map<string, Readonly<ReviewSubmitOwner>>();
   private readonly provenanceOwners = new Map<string, ReviewProvenanceResolver>();
   private ownerEpoch = 0;
@@ -284,14 +286,20 @@ export class ReviewService implements Reviews {
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
       if (matches.length !== 1) return {};
       const [{ guidance, returns, verdicts, overrides = [], claims }] = matches;
-      const routes = returns ? [...(await returns(review, tx))] : [];
       const open = verdicts && [...(await verdicts(caller, review, tx))];
+      // A return route is a rejecting verdict's; with none left, there is nowhere to send it.
+      const routes =
+        returns && (!open || open.some((verdict) => verdict !== 'pass'))
+          ? [...(await returns(review, tx))]
+          : [];
       const gate = (await this.gatesOf([review.id], tx)).get(review.id);
       const claimed = claims ? [...(await claims(caller, review, tx))] : [];
       return {
         ...(guidance === undefined ? {} : { guidance }),
         ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
         ...(open ? { verdicts: REVIEW_VERDICTS.filter((verdict) => open.includes(verdict)) } : {}),
+        // needs_changes is ruled out only where the owner's rounds are used up.
+        ...(open && !open.includes('needs_changes') ? { limit: ROUNDS_USED } : {}),
         // Deciding as owner lifts Reviews' own independence rule, and what the owner says it lifts.
         ...(review.overridable ? { overrides: [NOT_INDEPENDENT[0], ...overrides] } : {}),
         ...(gate === undefined ? {} : { gate }),

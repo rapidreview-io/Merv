@@ -33,7 +33,6 @@ import type {
   TaskDeliveryCode,
   TaskFailure,
   TaskMarkFailed,
-  TaskReissue,
   TaskReview,
 } from './types.js';
 import type { TasksContext } from './index.js';
@@ -43,7 +42,7 @@ import { contextInputs, contextType, newestType } from './context.js';
 import { isProducer, producerOrAdmin, unleased } from './lease.js';
 import { reviewAction } from './policy.js';
 
-// Creating a task, and the commands that move it: delivery, reissue, failure and review, with
+// Creating a task, and the commands that move it: delivery, failure and review, with
 // the guards each runs. Each runs on TaskService (index.ts) as its TasksContext.
 
 /** Rejected rounds a task remembers; later ones push the oldest out, which no repair still needs. */
@@ -409,41 +408,6 @@ export async function deliveredCommit(
   return checked.capture;
 }
 
-export async function checkReissue(
-  ctx: TasksContext,
-  { caller, snapshot: current, tx, input }: WorkflowCheckContext,
-): Promise<void> {
-  await ctx.scope.require(caller, 'write', tx);
-  const row = await ctx.row(tx, caller, current.id);
-  sameTask(current, input);
-  await producerOrAdmin(ctx, caller, row, current, tx);
-  check(
-    !input || (typeof input.reason === 'string' && input.reason.trim()),
-    'invalid_reason',
-    'A reason is required to reissue a review',
-  );
-  check(
-    current.state === 'in_review' && row.review_id,
-    'invalid_transition',
-    'Only a task awaiting review can reissue its review',
-    409,
-  );
-  sameRevision(current, input, 'Task revision changed; refresh the task before reissuing review');
-  const previous = await ctx.reviews.get(caller, row.review_id, tx);
-  check(
-    previous.status === 'requested' || previous.status === 'started',
-    'review_closed',
-    'Only an open, unsubmitted review can be reissued',
-    409,
-  );
-  check(
-    previous.subjectRevision === current.revision,
-    'stale_review',
-    'The open review no longer matches the task revision',
-    409,
-  );
-}
-
 export async function checkFailure(
   ctx: TasksContext,
   { caller, snapshot, tx, input }: WorkflowCheckContext,
@@ -720,60 +684,6 @@ export async function submitDelivery(
       return row.id;
     },
   );
-}
-
-export async function reissueReview(
-  ctx: TasksContext,
-  caller: Caller,
-  input: TaskReissue,
-): Promise<Task> {
-  ({ caller, input } = structuredClone({ caller, input }));
-  return await taskCommand(ctx, caller, undefined, 'write', 'reissue_review', input, async (tx) => {
-    const row = await ctx.row(tx, caller, input.taskId);
-    const current = await ctx.workflows.get(caller, row.id, tx);
-    check(
-      row.review_id,
-      'invalid_transition',
-      'Only a task awaiting review can reissue its review',
-      409,
-    );
-    const previous = await ctx.reviews.get(caller, row.review_id, tx);
-    const moved = await advance(
-      ctx,
-      caller,
-      current,
-      {
-        action: 'reissue_review',
-        input: { ...input },
-        requestId: childRequest(caller, 'task', 'reissue', input.requestId),
-        data: { reviewReissueReason: input.reason },
-      },
-      tx,
-    );
-    await ctx.reviews.supersede(caller, previous.id, tx);
-    const review = await ctx.reviews.reissue(
-      caller,
-      {
-        reviewId: previous.id,
-        subjectRevision: moved.revision,
-        requestId: childRequest(caller, 'task', 'reissue', input.requestId),
-      },
-      tx,
-    );
-    await tx.run(
-      'UPDATE tasks SET review_id = ? WHERE id = ? AND project_id = ?',
-      review.id,
-      row.id,
-      caller.projectId,
-    );
-    await recorded(ctx.state, tx, caller, 'task.review_reissued', row.id, {
-      previousReviewId: previous.id,
-      reviewId: review.id,
-      reason: input.reason,
-      snapshotHash: review.snapshotHash,
-    });
-    return row.id;
-  });
 }
 
 export async function submitReview(

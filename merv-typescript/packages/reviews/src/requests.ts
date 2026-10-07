@@ -11,7 +11,6 @@ import {
   visible,
   type Caller,
   type ReviewInput,
-  type ReviewProvenance,
   type ReviewRequest,
   type Transaction,
 } from '@merv/contracts';
@@ -19,7 +18,7 @@ import { ownField } from './findings.js';
 import type { ReviewsContext } from './index.js';
 import { hydrate, type ReviewRow } from './rows.js';
 
-// Requesting a review, reissuing it at a new revision and superseding it: the producer's and the
+// Requesting a review and superseding it: the producer's and the
 // administrator's side of a review. Each runs on ReviewService (index.ts) as its ReviewsContext.
 /**
  * A bounded list field read without invoking accessors and copied as plain JSON: a proxy,
@@ -109,53 +108,6 @@ export async function request(
   });
 }
 
-export async function reissue(
-  ctx: ReviewsContext,
-  caller: Caller,
-  input: { reviewId: string; subjectRevision: number; requestId: string },
-  transaction?: Transaction,
-): Promise<ReviewRequest> {
-  ({ caller, input } = structuredClone({ caller, input }));
-  return await inTransaction(ctx.state, transaction, async (tx) => {
-    await ctx.scope.require(caller, 'write', tx);
-    const row = await ctx.row(tx, caller, input.reviewId);
-    const directing = await requireAdministration(ctx, caller, row, tx);
-    check(
-      row.status !== 'submitted',
-      'review_closed',
-      'Submitted review evidence cannot be reissued',
-      409,
-    );
-    return await saveRequest(
-      ctx,
-      caller,
-      {
-        ...(row.provenance_json
-          ? { provenanceOwner: (JSON.parse(row.provenance_json) as ReviewProvenance).provider }
-          : {}),
-        subjectId: row.subject_id,
-        subjectRevision: input.subjectRevision,
-        producerId: row.producer_id,
-        administrativeActorId: row.administrative_actor_id,
-        artifactIds: JSON.parse(row.artifact_ids),
-        pinnedInputIds: JSON.parse(row.pinned_input_ids),
-        ...(row.excluded_actor_ids == null
-          ? {}
-          : { excludedActorIds: JSON.parse(row.excluded_actor_ids) }),
-        ...(row.required_criteria == null
-          ? {}
-          : { requiredCriteria: JSON.parse(row.required_criteria) }),
-        criteria: JSON.parse(row.criteria),
-        formatVersion: row.format_version,
-        requestId: input.requestId,
-      },
-      tx,
-      directing,
-      row.excluded_actor_ids == null ? [] : (JSON.parse(row.excluded_actor_ids) as string[]),
-    );
-  });
-}
-
 /** Refuses all but the review's owner or an operator; returns the caller's directing authority. */
 export async function requireAdministration(
   ctx: ReviewsContext,
@@ -182,12 +134,6 @@ export async function saveRequest(
   tx: Transaction,
   /** The authority that directs the caller, read once by the command. */
   directing: string,
-  /**
-   * Exclusions a stored request already admitted. A reissue replays them exactly as they
-   * were pinned, and the authority that directed the worker then is rarely the one asking
-   * for the new claim now, so they are not judged again against this caller.
-   */
-  admitted: string[] = [],
 ): Promise<ReviewRequest> {
   const excludedActorIds = contributorExclusions(input);
   if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
@@ -252,7 +198,6 @@ export async function saveRequest(
           (actorId) =>
             actorId === (input.administrativeActorId ?? input.producerId) ||
             actorId === directing ||
-            admitted.includes(actorId) ||
             manifest.some((artifact) => artifact.createdBy === actorId),
         ),
       'invalid_review_exclusions',

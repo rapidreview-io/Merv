@@ -17,7 +17,7 @@ import type {
 } from './types.js';
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
-import { isoNow, targetKey, workNameOf } from './common.js';
+import { HOLD_PROVIDER, isoNow, targetKey, workNameOf } from './common.js';
 import { leaseLiveness } from './liveness.js';
 import type { DispatchContext, HoldRow, SessionDispatch, SessionRow } from './dispatch.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
@@ -472,7 +472,10 @@ export async function stuck(ctx: DispatchContext, caller: Caller): Promise<Stuck
       await readingOf(ctx, caller.projectId, tx, admissible),
       {
         activity: await ctx.observations.activity(tx, caller.projectId),
-        blockers: await ctx.workflows.blockers(caller, undefined, tx),
+        // A hold is reported as dispatch_held, not again as what it publishes.
+        blockers: (await ctx.workflows.blockers(caller, undefined, tx)).filter(
+          (blocker) => blocker.provider !== HOLD_PROVIDER,
+        ),
       },
     );
   });
@@ -567,7 +570,10 @@ export async function projectStatus(
     const reading = await readingOf(ctx, caller.projectId, tx, admissible);
     const stuck = await attention(ctx, caller.projectId, tx, reading, {
       activity,
-      blockers: await ctx.workflows.blockers(caller, undefined, tx),
+      // A hold is reported as dispatch_held, not again as what it publishes.
+      blockers: (await ctx.workflows.blockers(caller, undefined, tx)).filter(
+        (blocker) => blocker.provider !== HOLD_PROVIDER,
+      ),
     });
     return {
       // One transaction, one moment: agents cannot report a lease the leases do not.

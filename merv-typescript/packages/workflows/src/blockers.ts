@@ -17,6 +17,8 @@ interface BlockerRow {
   next: string;
   related_json: string;
   cause: string | null;
+  whose: string | null;
+  revision: number | string | null;
   since: string;
   updated_at: string;
 }
@@ -71,6 +73,9 @@ export async function replaceBlockers(
         text(item.message, 4000) &&
         text(item.next, 4000) &&
         (item.cause === undefined || text(item.cause, 100)) &&
+        (item.whose === undefined || item.whose === 'owner' || item.whose === 'admin') &&
+        (item.revision === undefined ||
+          (Number.isSafeInteger(item.revision) && item.revision >= 0)) &&
         Number.isInteger(item.status) &&
         item.status >= 400 &&
         item.status <= 599,
@@ -98,7 +103,7 @@ export async function replaceBlockers(
     const links = canonical(related(item.related));
     if (!previous) {
       await tx.run(
-        'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,cause,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,cause,whose,revision,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         input.projectId,
         input.instanceId,
         input.provider,
@@ -109,6 +114,8 @@ export async function replaceBlockers(
         item.next,
         links,
         item.cause ?? null,
+        item.whose ?? null,
+        item.revision ?? null,
         at,
         at,
       );
@@ -122,18 +129,26 @@ export async function replaceBlockers(
       Number(previous.status) === item.status &&
       previous.next === item.next &&
       previous.related_json === links &&
-      previous.cause === (item.cause ?? null)
+      previous.cause === (item.cause ?? null) &&
+      previous.whose === (item.whose ?? null) &&
+      (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null)
     )
       continue;
     await tx.run(
-      'UPDATE wf_blockers SET code=?,message=?,status=?,next=?,related_json=?,cause=?,since=?,updated_at=? WHERE instance_id=? AND provider=? AND blocker_key=?',
+      'UPDATE wf_blockers SET code=?,message=?,status=?,next=?,related_json=?,cause=?,whose=?,revision=?,since=?,updated_at=? WHERE instance_id=? AND provider=? AND blocker_key=?',
       item.code,
       item.message,
       item.status,
       item.next,
       links,
       item.cause ?? null,
-      previous.code === item.code ? previous.since : at,
+      item.whose ?? null,
+      item.revision ?? null,
+      // A new code, or the same one about another revision, is a new opinion.
+      previous.code === item.code &&
+        (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null)
+        ? previous.since
+        : at,
       at,
       input.instanceId,
       input.provider,
@@ -146,7 +161,10 @@ export async function clearBlockers(tx: Transaction, instanceId: string): Promis
   await tx.run('DELETE FROM wf_blockers WHERE instance_id=?', instanceId);
 }
 
-/** Published blockers of the instances named, or of the whole project when none are. */
+/**
+ * Published blockers of the instances named, or of the whole project when none are. An opinion
+ * about one revision is read only while the record stands at it.
+ */
 export async function readBlockers(
   sql: Sql,
   projectId: string,
@@ -154,7 +172,7 @@ export async function readBlockers(
 ): Promise<WorkflowProvidedBlocker[]> {
   if (instanceIds && !instanceIds.length) return [];
   const rows = await sql.all<BlockerRow>(
-    `SELECT * FROM wf_blockers WHERE project_id=?${instanceIds ? ` AND instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} ORDER BY since,instance_id,provider,blocker_key`,
+    `SELECT b.* FROM wf_blockers b WHERE b.project_id=?${instanceIds ? ` AND b.instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} AND (b.revision IS NULL OR b.revision=(SELECT i.revision FROM wf_instances i WHERE i.id=b.instance_id)) ORDER BY b.since,b.instance_id,b.provider,b.blocker_key`,
     projectId,
     ...(instanceIds ?? []),
   );
@@ -168,6 +186,8 @@ export async function readBlockers(
     next: row.next,
     related: JSON.parse(row.related_json) as WorkflowReference[],
     ...(row.cause === null ? {} : { cause: row.cause }),
+    ...(row.whose === null ? {} : { whose: row.whose as 'owner' | 'admin' }),
+    ...(row.revision === null ? {} : { revision: Number(row.revision) }),
     since: row.since,
     updatedAt: row.updated_at,
   }));

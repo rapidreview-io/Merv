@@ -1578,6 +1578,17 @@ export interface Workflows {
     tx?: Transaction,
     options?: { open?: boolean },
   ): Promise<WorkflowOverview>;
+  /**
+   * Open work whose current state's loop limit is used up, with that limit, and whether this
+   * reader may allow another round (a project admin who is not a leased worker).
+   */
+  escalated(
+    caller: Caller,
+    tx?: Transaction,
+  ): Promise<{
+    admin: boolean;
+    items: { instanceId: string; revision: number; limit: WorkflowLimitStatus }[];
+  }>;
   /** Only a project admin who is not a leased worker may allow a capped loop more rounds. */
   extendLimit(
     caller: Caller,
@@ -1722,6 +1733,12 @@ export interface ReviewSubmit {
   evidence?: Data;
   requestId: string;
 }
+/** A held claim handed back, with why; review.release replays by requestId. */
+export interface ReviewRelease {
+  reviewId: string;
+  reason: string;
+  requestId: string;
+}
 /**
  * A verdict as the owning domain applies it. Fields the owner names in `fields` pass through
  * Reviews unread, and the owner validates them.
@@ -1742,7 +1759,11 @@ export interface ReviewSubmitOwner {
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
   /** The codes of `claim`'s refusals that the project's owner, deciding as owner, lifts. */
   overrides?: readonly string[];
-  /** The verdicts this caller may submit on an owned review, where the owner's rules rule some out. */
+  /**
+   * The verdicts this caller may submit on an owned review, where the owner's rules rule some
+   * out. An owner rules needs_changes out only once its rounds (`limitStatusOf`) are used up:
+   * the reviewer is then told so, and offered no return route if no rejecting verdict is left.
+   */
   verdicts?(
     caller: Caller,
     review: Readonly<ReviewRequest>,
@@ -1773,11 +1794,6 @@ export interface Reviews {
    * and what the delivery claimed, where it states them. A review the caller has just read (get, start) is not read again. */
   guide(caller: Caller, review: string | ReviewRequest, tx?: Transaction): Promise<ReviewGuide>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
-  reissue(
-    caller: Caller,
-    input: { reviewId: string; subjectRevision: number; requestId: string },
-    tx?: Transaction,
-  ): Promise<ReviewRequest>;
   /** Trusted cleanup of exactly one worker claim, without reviving expired caller authority. */
   releaseClaim(
     input: {
@@ -1786,9 +1802,12 @@ export interface Reviews {
       claimId: string;
       actorId: string;
       reason: string;
+      releasedBy?: string;
     },
     tx: Transaction,
   ): Promise<void>;
+  /** Hands a claim back, by the reviewer who holds it or a project admin, never a leased worker. */
+  release(caller: Caller, input: ReviewRelease, tx?: Transaction): Promise<ReviewRequest>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   /**
    * Several reviews in one read, without what get() adds for an operator; an id the project

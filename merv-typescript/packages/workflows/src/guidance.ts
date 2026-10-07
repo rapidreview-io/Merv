@@ -193,13 +193,17 @@ export class WorkflowGuidance extends WorkflowEngine {
       const blockers = new Map(ids.map((id) => [id, [] as WorkflowProvidedBlocker[]]));
       for (const item of await readBlockers(tx, projectId, ids))
         blockers.get(item.instanceId)!.push(item);
+      // Every limit, so a reader sees the rounds used and left at each gate; ended work has none.
       const limits = await limitStatusesOf(
         tx,
         part.map((row, index) => ({
           id: row.id,
           state: row.state,
-          policy: registered[index]?.policy,
+          policy: registered[index]?.definition.terminal.includes(row.state)
+            ? undefined
+            : registered[index]?.policy,
         })),
+        true,
       );
       for (const [index, row] of part.entries()) {
         const registration = registered[index];
@@ -241,6 +245,13 @@ export class WorkflowGuidance extends WorkflowEngine {
         })),
         tx,
       );
+    // Asked once, and only where some record waits on a project admin; never of a worker.
+    let admin: Promise<boolean> | undefined;
+    const isAdmin = () =>
+      (admin ??=
+        caller.session || !caller.actorId
+          ? Promise.resolve(false)
+          : this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx));
     const decided = await mapAsync(rows, async (row) => {
       const known = facts.get(row.id)!;
       const context = readContext({
@@ -260,6 +271,7 @@ export class WorkflowGuidance extends WorkflowEngine {
           known.limits,
           known.blockers,
           checks,
+          isAdmin,
         ),
       };
     });

@@ -160,7 +160,7 @@ The reviewer should inspect `task.get`, `review.get`, and the pinned artifacts t
 
 Revoked reviewers now have their unfinished claims released automatically through durable Domain Events, preserving the current review ID, evidence and task revision. A new `review.start` returns the claim ID required by `review.submit`.
 
-For other cases where a reviewer becomes unavailable, the task's producer or an operator can call `task.reissue_review` with `taskId`, `expectedRevision`, `reason`, and a fresh `requestId`. It replaces an open review with a new unclaimed review, preserves the evidence and criteria, and advances the task revision. Refresh `task.get` for the new review ID and revision. The old claim is superseded; an already submitted verdict cannot be reset this way.
+For other cases where a reviewer becomes unavailable, the reviewer who claimed it or a project admin can call `review.release` with `reviewId`, `reason`, and a fresh `requestId`. The same review, with its evidence and criteria, is open to claim again, and the work's revision does not change. An already submitted verdict cannot be reset this way.
 
 ## Browser UI
 
@@ -208,8 +208,8 @@ The installed feature adapters contribute **44 domain tools**, or **46 tools** w
 | Scope        | `project.get`, `actor.whoami`, `actor.list`, `actor.create`, `actor.credentials`, `actor.issue_token`, `actor.rotate_token`, `actor.revoke_token`, `actor.revoke` |
 | Artifacts    | `artifact.create`, `artifact.get`, `artifact.read`, `artifact.list`                                                                                               |
 | Experiments  | `experiment.create`, `experiment.list`, `experiment.get_state`, `experiment.attach`, `experiment.transition`, `experiment.exhibit`                                |
-| Reviews      | `review.list`, `review.get`, `review.start`, `review.submit`                                                                                                      |
-| Task program | `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, `task.reissue_review`, `task.mark_failed`                      |
+| Reviews      | `review.list`, `review.get`, `review.start`, `review.submit`, `review.release`                                                                                    |
+| Task program | `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, `task.mark_failed`                                             |
 | Workflows    | `workflow.status_and_next`, `workflow.assignment`, `workflow.begin`                                                                                               |
 | Feed         | `feed.post`, `feed.get`, `feed.list`, `feed.activity`                                                                                                             |
 | Code         | `code.commit`, `code.operation`                                                                                                                                   |
@@ -387,7 +387,7 @@ For example, an artifacts-only Cordis application can install `statePlugin`, `bl
 - **Supported mutations are retryable.** Task commands, workflow commands, and review request/verdict commands persist their original response. Reusing a request ID with different input is a conflict. `artifact.create` and `actor.create` are not deduplicated commands. Revision checks reject stale transitions; request retries return the previously committed response.
 - **Review routing is atomic.** Reviews owns `review.submit` and selects exactly one registered domain owner. Tasks applies its verdict, transition, events and deduplication records in that same transaction, preserving its existing result and replay behavior. Missing or ambiguous ownership is refused, including while Tasks drains during unload. `needs_changes` permits a new delivery and a fresh review snapshot.
 - **Revoked claims recover automatically.** Domain Events persists per-consumer progress and retries. Reviews releases unfinished claims while preserving evidence; current claim IDs fence context builds, checkpoints and verdicts. See [recovery and context](docs/RECOVERY_AND_CONTEXT.md).
-- **Open claims can also be replaced manually.** `task.reissue_review` atomically supersedes the current unsubmitted review, pins the same evidence and criteria into a new review, increments the task revision, and records the reason. Only the task producer or an operator can do this. Stale claims and stale revisions cannot submit a verdict against the replacement.
+- **Open claims can also be handed back.** `review.release` releases a claim of any owner's review, records the reason, and opens the same review to claim again. Only the reviewer who claimed it or a project admin can do this, never a leased worker, whose claim goes with its lease. The released claim ID can no longer submit a verdict.
 - **Feed posts commit once.** Body, author, same-project artifact references, activity event, and request response commit together. Posts are immutable. `feed.list` uses a post sequence cursor; `feed.activity` uses a separate event ID cursor and includes activity recorded while the feed was unloaded.
 - **Unloading releases runtime resources.** Feature tool registrations return awaited disposers; they stop admission and drain admitted calls. HTTP shutdown also drains calls when their clients have disconnected, and gives in-flight responses 45 seconds to reach their readers before it closes their connections, which ends any stream still open. Grouped Cordis effects withdraw provided services and await consumers before closing resources. Durable records, blobs, and workflow histories remain on disk.
 

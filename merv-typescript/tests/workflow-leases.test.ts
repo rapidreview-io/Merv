@@ -569,23 +569,14 @@ test('a leased status_and_next admission stays within a statement budget', async
   assert.equal(references, 0);
 });
 
-test('logical task owner can reissue worker delivery while preserving immutable review input/output provenance', async (t) => {
+test('a worker delivery pins its review input and output provenance, which no other producer can claim', async (t) => {
   const f = await fixture(t);
   const offered = await f.offer();
   const worker = await f.app.ctx.sessions.authenticate(offered.secret);
   const { artifact, delivered } = await f.deliver(worker);
   const original = await f.app.ctx.reviews.get(f.source, delivered.reviewId!);
-  const reissued = await f.app.ctx.tasks.reissueReview(f.source, {
-    taskId: delivered.id,
-    expectedRevision: delivered.workflow.revision,
-    reason: 'Use another reviewer.',
-    requestId: 'reissue',
-  });
-  const replacement = await f.app.ctx.reviews.get(f.source, reissued.reviewId!);
-  assert.equal(replacement.producerId, worker.actorId);
-  assert.equal(replacement.administrativeActorId, f.source.actorId);
-  assert.deepEqual(replacement.pinnedInputIds, original.pinnedInputIds);
-  assert.deepEqual(replacement.artifactIds, original.artifactIds);
+  assert.equal(original.producerId, worker.actorId);
+  assert.equal(original.administrativeActorId, f.source.actorId);
   const foreign = await f.app.ctx.scope.credentials.issueActor(f.source, {
     role: 'producer',
     name: 'Foreign producer',
@@ -595,15 +586,6 @@ test('logical task owner can reissue worker delivery while preserving immutable 
     projectId: f.source.projectId,
     credentialId: foreign.credential.id,
   };
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.reviews.reissue(foreignCaller, {
-        reviewId: replacement.id,
-        subjectRevision: replacement.subjectRevision + 1,
-        requestId: 'steal',
-      }),
-    { code: 'forbidden' },
-  );
   const own = await f.app.ctx.artifacts.create(foreignCaller, {
     title: 'Own',
     content: 'Own output.',

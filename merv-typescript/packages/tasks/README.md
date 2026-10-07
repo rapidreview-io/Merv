@@ -67,7 +67,7 @@ Confirmation coverage and evidence references are structural gates; the independ
 
 Task command request IDs are scoped to actor and project. An identical retry returns its originally committed response; different input under the same ID is rejected. `expectedRevision` always means the task workflow revision.
 
-The optional `taskToolsPlugin` installs `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, `task.reissue_review`, and `task.mark_failed`. Reviews owns the generic `review.submit` tool. Tasks registers its submit-owner callback from the service lifecycle, identifies its subjects from durable Task records, and applies the existing Task command in the dispatcher's transaction. Historical submissions remain owned so successful retries retain their original response.
+The optional `taskToolsPlugin` installs `task.create`, `task.get`, `task.list`, `task.context`, `task.checkpoint`, `task.submit_delivery`, and `task.mark_failed`. Reviews owns the generic `review.submit` tool. Tasks registers its submit-owner callback from the service lifecycle, identifies its subjects from durable Task records, and applies the existing Task command in the dispatcher's transaction. Historical submissions remain owned so successful retries retain their original response.
 
 Disposal withdraws the review owner before suspending Tasks and draining its dependent tools, then releases workflow and context registrations after that drain. The generic review tool refuses missing ownership during unload. Durable tasks, verdicts and versioned workflow definitions remain available after restoration.
 
