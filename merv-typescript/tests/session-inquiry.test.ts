@@ -711,6 +711,26 @@ test('an inquiry to a long conversation is budgeted for that conversation, resen
   }
 });
 
+test('a long saved conversation is budgeted for what one call can resend, so it leaves room in the day', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const small = await f.worked();
+  const asked = await f.ask(small.threadId, 'What did that cost?');
+  await f.present('runner-q');
+  const visit = (await f.lease('runner-q')).session!;
+  assert.equal(visit.inquiry?.id, asked.id);
+  await f.release(visit, { usage: { inputTokens: 100_000, outputTokens: 0 } });
+  // Hours of work keep a conversation file far larger than the model's window: its agent
+  // compacted as it went, so no call resends more than the window, whatever the file weighs.
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-hand');
+  await f.release(first.session);
+  await f.keep(first.session, first.control, `{"type":"user","text":"${'x'.repeat(4_000_000)}"}\n`);
+  const long = await f.ask(first.session.threadId, 'Why seed 3?');
+  assert.ok(long.tokenBudget + 100_000 <= INQUIRY_DAILY_TOKENS, String(long.tokenBudget));
+  assert.ok(long.tokenBudget >= INQUIRY_TOKENS + 4 * 200_000, String(long.tokenBudget));
+});
+
 test('a question holds its thread among those that want attention only while it is open, and the card says how it ended', async (t) => {
   const f = await fixture(t);
   await f.dispatch();

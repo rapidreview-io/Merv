@@ -33,13 +33,21 @@ export const INQUIRY_TOKENS = 300_000;
  *  resumed conversation carries all of it, and an answer takes a call or a few. */
 const INQUIRY_RESENDS = 4;
 /**
+ * The most one call resends: an agent compacts its conversation before it passes the model's
+ * window (272K tokens for gpt-6.1-sol), so a saved file that weighs more says only that it did.
+ */
+const RESENT_TOKENS = 272_000;
+/**
  * The model tokens one person's questions may spend in a day, wherever they ran: each counts
  * what its runner reported, and one still waiting, running or unreported its whole budget.
  */
 export const INQUIRY_DAILY_TOKENS = 2_000_000;
 /** An inquiry's budget for a conversation of `size` bytes (about four to a token), within a day's. */
 const inquiryBudget = (size: number) =>
-  Math.min(INQUIRY_DAILY_TOKENS, INQUIRY_TOKENS + INQUIRY_RESENDS * Math.ceil(size / 4));
+  Math.min(
+    INQUIRY_DAILY_TOKENS,
+    INQUIRY_TOKENS + INQUIRY_RESENDS * Math.min(RESENT_TOKENS, Math.ceil(size / 4)),
+  );
 
 /** An inquiry still waiting for a machine or being answered, as SQL over `alias`. */
 export const openInquiry = (alias: string) => `${alias}.status IN ('queued','running')`;
