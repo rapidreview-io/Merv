@@ -187,11 +187,23 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
 /** How long after a relay fault a visit's failed close is put down to it. Codex gives up on a
  *  call after about 6 s of retries, and its runner releases the visit once Main answers. */
 const relayFaultMs = 15 * 60_000;
+/** The codes of a streamed provider failure that are the provider's own, not the request's. */
+const providerOutages = new Set([
+  'server_error',
+  'internal_error',
+  'server_is_overloaded',
+  'overloaded',
+  'rate_limit_exceeded',
+  'slow_down',
+]);
 /** A call's end that is the relay's or its provider's, not the visit's: an outage or a stream
  *  cut short, the relay unable to judge or busy, or Main shutting down. A provider's refusal of
  *  the request itself (any other 4xx) is the visit's. */
 const relayFault = (record: ModelRelayFailure) =>
   ['upstream_failed', 'relay_unavailable', 'relay_timeout', 'relay_busy'].includes(record.code) &&
+  // A failure the provider streamed is its outage only when it says so; a context overflow or
+  // an invalid prompt is the request's own, however often the visit sends it.
+  (record.providerCode === undefined || providerOutages.has(record.providerCode)) &&
   !(
     record.upstreamHttpStatus !== undefined &&
     record.upstreamHttpStatus >= 400 &&

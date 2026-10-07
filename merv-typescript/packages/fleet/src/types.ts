@@ -104,6 +104,8 @@ export interface ModelRelayFailure<E extends string = string> {
   model: string;
   elapsedMs: number;
   upstreamHttpStatus?: number;
+  /** A failure the provider streamed: the code its frame named (`upstream_failed` if none). */
+  providerCode?: string;
 }
 /** One finished model call's tokens, for spend per model, or a zero refund record for a charged
  *  call the provider never took; it names no person or conversation. */

@@ -70,15 +70,21 @@ const failedFrame = (data: string) => {
 };
 /** A failure the provider streamed, as the client receives it: its kind and code, which tell the
  *  client what to do (Codex compacts on `context_length_exceeded`), and none of its words. */
-const providerFailure = (data: string, failedResponse: boolean) => {
+const providerCode = (data: string) => {
   let parsed: { type?: unknown; code?: unknown; error?: unknown; response?: unknown } | undefined;
   try {
     parsed = JSON.parse(data);
   } catch {}
   const errorOf = (value: unknown) => (value as { error?: { code?: unknown } } | null)?.error;
   const raw = errorOf(parsed?.response)?.code ?? errorOf(parsed)?.code ?? parsed?.code;
-  const code =
-    typeof raw === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(raw) ? raw : 'upstream_failed';
+  return typeof raw === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(raw) ? raw : 'upstream_failed';
+};
+const providerFailure = (data: string, failedResponse: boolean) => {
+  let parsed: { type?: unknown } | undefined;
+  try {
+    parsed = JSON.parse(data);
+  } catch {}
+  const code = providerCode(data);
   const message = 'The model provider failed this call';
   return failedResponse || parsed?.type === 'response.failed'
     ? `event: response.failed\ndata: ${JSON.stringify({
@@ -270,6 +276,8 @@ export class ModelRelay<
     /** How a failure the provider streamed was billed: settled to the usage it reported, or not
      *  at all when it reported none. */
     let providerFailed: 'settled' | 'unbilled' | undefined;
+    /** The code of a failure the provider streamed, as its frame named it. */
+    let failedWith: string | undefined;
     try {
       const authority = this.config.authority;
       let grant: G;
@@ -492,6 +500,7 @@ export class ModelRelay<
               signal,
             );
             providerFailed = usage && typeof usage === 'object' ? 'settled' : 'unbilled';
+            failedWith = providerCode(data);
             reject(502, 'upstream_failed');
           }
           if (expired(grant)) reject(403, 'grant_forbidden');
@@ -525,6 +534,7 @@ export class ModelRelay<
           model: admitted.model,
           elapsedMs: Math.max(0, Date.now() - admittedAt),
           ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
+          ...(failedWith === undefined ? {} : { providerCode: failedWith }),
         });
       // Refused before it was sent, answered with an error status, or failed with no usage, the
       // call cost nothing. One the provider may have run (no answer, or a stream cut off) keeps
