@@ -168,11 +168,13 @@ export function needsYou(
       // here carries out is still the reader's, with no control at all. Code words its own.
       const move = personMove(blocker);
       const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
+      // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
+      const work = blocker.related?.some((item) => item.kind === 'thread') && pathOf(rows, 'work');
       lines.push({
         id: item.id,
         kind,
         name: item.name,
-        to: `${row.path}/${item.id}`,
+        to: work ? `${work}?key=work:${item.id}` : `${row.path}/${item.id}`,
         at: blocker.since,
         sentence,
         ...(move ? { who: move.who } : {}),

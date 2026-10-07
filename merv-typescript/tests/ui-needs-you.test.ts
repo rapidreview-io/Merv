@@ -654,6 +654,7 @@ test('a blocker the gate names as the reader’s move is their line, in its own 
     since: at,
     status: 409,
     whose: 'owner',
+    related: [{ kind: 'thread', id: 'thr_1', label: 'Its agent’s thread' }],
   };
   const publication = {
     provider: 'code',
@@ -664,6 +665,7 @@ test('a blocker the gate names as the reader’s move is their line, in its own 
     since: at,
     status: 409,
     whose: 'operator',
+    related: [],
   };
   const home = (blocker: typeof question, yours?: object) => ({
     tasks: [
@@ -719,4 +721,15 @@ test('a blocker the gate names as the reader’s move is their line, in its own 
   ]);
   // Whose it is is the gate's answer: where it names nothing of the reader's, there is no line.
   assert.deepEqual(show(home(question)), []);
+  // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
+  const work = { ...rows[0], id: 'work', path: '/work', view: { kind: 'work' }, needs: undefined };
+  const to = (blocker: typeof question) =>
+    needsYou(
+      [...rows, work] as never,
+      home(blocker, named(blocker)) as never,
+      { id: 'actor_op' },
+      () => undefined,
+    ).map((line) => line.to);
+  assert.deepEqual(to(question), ['/work?key=work:t1']);
+  assert.deepEqual(to(publication), ['/tasks/t1']);
 });
