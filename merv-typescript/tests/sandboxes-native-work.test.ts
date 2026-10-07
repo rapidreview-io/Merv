@@ -294,6 +294,15 @@ test('native work pins one payer and returns only verified capture IDs from the 
       'current',
       'verified',
     ]);
+    // A capture refused as one that can never register is no collection.
+    await tx.run(
+      "INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,attempt_ref,error) VALUES('connection','ns_work','wf4','node','2','sandbox_evidence_invalid: refused')",
+    );
+    assert.deepEqual(await f.work.captures('project', 'task_work', tx), [
+      'current',
+      'earlier',
+      'verified',
+    ]);
   });
   assert.equal(f.calls.length, 0);
 });

@@ -913,6 +913,12 @@
       "published": true
     },
     {
+      "component": "sandboxes-native",
+      "version": 6,
+      "hash": "fc963917ab44e49d124a94248fcd293a0e1e107b5b0bd75024e24049e7a550b4",
+      "published": false
+    },
+    {
       "component": "code_repository_sync",
       "version": 1,
       "hash": "641e09699b431b85e5837e1a9a95c4a61ea1996819335aadcc04d43bcd83734d",

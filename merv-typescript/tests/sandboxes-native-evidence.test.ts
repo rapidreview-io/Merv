@@ -469,6 +469,50 @@ test('a capture title cut at its limit never ends in half a character', async (t
   assert.equal(collection?.title, `${prefix}${'x'.repeat(200 - prefix.length - 1)}`);
 });
 
+test('a capture that can never register is refused after five failed passes, and the rest register', async (t) => {
+  const f = await fixture(t);
+  f.captures.push(
+    { id: 'broken', state: 'succeeded', result: { outputs: { safe: 'obj' }, output_state: null } },
+    { id: 'good', state: 'succeeded', result: { outputs: { kept: 'kept' }, output_state: null } },
+  );
+  f.receipts.set('broken', [{ name: '../escape', object_id: 'obj' }]);
+  f.objects.set('kept', file('kept'));
+  const rows = () =>
+    f.state.read((sql) =>
+      sql.all('SELECT node_id,artifact_id,error FROM sandbox_native_captures ORDER BY node_id'),
+    );
+  // An unreachable service says nothing about the capture: those passes never count.
+  for (let pass = 0; pass < 6; pass++)
+    await assert.rejects(f.publish(), { code: 'sandbox_unavailable' });
+  f.objects.set('obj', file('obj'));
+  for (let pass = 0; pass < 4; pass++)
+    await assert.rejects(f.publish(), { code: 'sandbox_evidence_invalid' });
+  assert.deepEqual(await rows(), []);
+  await f.publish();
+  const [refused, good] = (await rows()) as {
+    node_id: string;
+    artifact_id: string | null;
+    error: string | null;
+  }[];
+  assert.deepEqual(refused, {
+    node_id: 'broken',
+    artifact_id: null,
+    error: 'sandbox_evidence_invalid: Invalid native capture files page',
+  });
+  assert.equal(good?.node_id, 'good');
+  assert.ok(good.artifact_id);
+  assert.deepEqual(
+    (await f.artifacts.list(f.caller)).map((artifact) => artifact.id),
+    [good.artifact_id],
+  );
+  // The refusal is recorded, so a later instance reads the workflow and registers nothing more.
+  const again = new NativeEvidence(f.state, f.scope, f.artifacts, f.connections);
+  const calls = f.calls.length;
+  await again.publish(f.work, f.connection, f.workflow);
+  assert.ok(f.calls.slice(calls).every((call) => call.includes('/captures?')));
+  assert.equal((await rows()).length, 2);
+});
+
 test('nondelegated admin workflows do not publish Merv evidence or stall closure', async (t) => {
   const f = await fixture(t);
   f.captures.push({
