@@ -712,7 +712,7 @@
       "component": "sessions",
       "version": 14,
       "hash": "7154b551d10c3c0a33dfcccd205bfcaa6168f5a60207a81afa2af0cda2ecfe45",
-      "published": false
+      "published": true
     },
     {
       "component": "tasks",
@@ -976,7 +976,7 @@
       "component": "workflows",
       "version": 13,
       "hash": "c559fdec27c65a36a303a5a5ee89c00cbe02d963c669042ae2fa2136d47cdbdf",
-      "published": false
+      "published": true
     },
     {
       "component": "tasks",
@@ -1000,13 +1000,13 @@
       "component": "tasks",
       "version": 11,
       "hash": "fa77bc1aaf8033648631b9ce81bb33351ea57d1c15aa92277fe3795e0ce4f6b0",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
       "version": 14,
       "hash": "6a3283e62da4fabff5b682faad0e4e049508c11a5145b105722d794d837775c2",
-      "published": false
+      "published": true
     }
   ]
 }
