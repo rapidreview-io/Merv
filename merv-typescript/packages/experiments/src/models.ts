@@ -1,6 +1,5 @@
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { CodeCaptureRef } from '@merv/code-work/models';
-import type { CaptureEvidence } from '@merv/sandboxes/types';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =
@@ -88,6 +87,15 @@ export interface ExperimentAttempt {
   createdAt: string;
 }
 /** All fields here are metadata; artifact bytes and the exhibit document use separate reads. */
+/**
+ * One entry of Sandboxes' `CaptureEvidence['refused']`, restated here because this module is read
+ * by the web bundle, which cannot type-check `@merv/sandboxes/types` (it imports `@merv/contracts`).
+ */
+export interface RefusedCapture {
+  nativeWorkflowId: string;
+  captureNode: string;
+  error: string;
+}
 export interface Experiment {
   id: string;
   projectId: string;
@@ -114,7 +122,7 @@ export interface Experiment {
    * Captures of the current attempt's compute that Sandboxes refused as ones that can never
    * register, so their outputs are not evidence: present only when there are any.
    */
-  refusedCaptures?: CaptureEvidence['refused'];
+  refusedCaptures?: RefusedCapture[];
 }
 export interface ExperimentExhibit {
   experimentId: string;
