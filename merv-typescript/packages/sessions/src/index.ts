@@ -318,9 +318,6 @@ const permission = (role: Session['role']): Permission =>
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
-/** The same row without its workspace capture, for a check that never reads it. */
-const BARE =
-  'SELECT id,project_id,thread_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
 /** The same row without its assignment, execution and lease: the control fields a runner polls. */
 const CONTROL =
   "SELECT id,project_id,thread_id,owner_hash,(session_json::jsonb-'assignment'-'execution'-'lease')::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions";
@@ -436,12 +433,13 @@ export class LeasedSessions implements Sessions {
         this.controlled(caller, id, runnerId, tx),
       ),
     );
+    // An append runs once a runner tick while its agent prints, and reads 4 control fields.
     this.streams = await createService(
       new SessionStreams(
         state,
         scope,
         this.clock,
-        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, BARE),
+        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, CONTROL),
         available,
       ),
     );
