@@ -1013,6 +1013,12 @@
       "version": 15,
       "hash": "aa7325f3bf8dde3890ad8b5b615f01c0ccdd67cc1b860dee22d13f64850861d7",
       "published": false
+    },
+    {
+      "component": "workflows",
+      "version": 15,
+      "hash": "fded25b8c54a80b9bce21d3bdbce84c0d70cdc41a479dfbacc812380add00aaa",
+      "published": false
     }
   ]
 }

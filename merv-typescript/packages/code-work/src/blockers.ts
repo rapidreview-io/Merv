@@ -15,9 +15,9 @@
  * the very sentence the Code page writes.
  */
 
-import type { BlockerMove, CodeBlockerGroup, PersonMove } from './models.js';
+import type { CodeBlockerGroup, PersonMove } from './models.js';
 
-export type { BlockerMove, PersonMove };
+export type { PersonMove };
 
 /**
  * Which of four things a blocker's code says is holding work up. Quarantine is the strongest
@@ -201,21 +201,13 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
 }
 
 /**
- * Per instance, the first of its blockers whose next move is a person's, named by its
- * provider and key, with that move: Code's word on a record's blocker, which Home attaches
- * to that blocker. Its wait on the server, a move that is nobody's, is one of them: the
- * record it holds is no move of its owner's either.
+ * Whose move Code tells Workflows a blocker of its own is (`whose`), from the move it asks: an
+ * administrator's is a project admin's, and a wait on the server is nobody's. Workflows then
+ * answers it as that reader's move, so Needs you reads it from the record's gate.
  */
-export function heldMoves(
-  blockers: readonly (CodeBlocker & { instanceId: string; provider: string; key: string })[],
-): BlockerMove[] {
-  const first = new Map<string, BlockerMove>();
-  for (const { instanceId, provider, key, ...blocker } of blockers) {
-    if (first.has(instanceId)) continue;
-    const move = personMove({ ...blocker, key });
-    if (move) first.set(instanceId, { instanceId, provider, key, move });
-  }
-  return [...first.values()];
+export function whoseOf(blocker: CodeBlocker): 'admin' | 'operator' | 'nobody' | undefined {
+  const whose = personMove(blocker)?.whose;
+  return whose === 'administrator' ? 'admin' : whose;
 }
 
 /** The first blocker of a list whose next move is a person's, with that move. */

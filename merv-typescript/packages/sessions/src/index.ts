@@ -428,10 +428,6 @@ export class LeasedSessions implements Sessions {
       ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
       publish: (input, tx) =>
         this.workflows.replaceBlockers({ ...input, provider: QUESTION_PROVIDER }, tx),
-      standing: async (caller, tx) =>
-        (await this.workflows.blockers(caller, undefined, tx))
-          .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
-          .map(({ instanceId, key }) => ({ instanceId, key })),
     });
     this.invocations = new SessionInvocations(this.observations, this.clock, {
       open: () => this.ensureOpen(),

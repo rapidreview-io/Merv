@@ -12,7 +12,6 @@ import {
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import type {
-  QuestionMove,
   Session,
   SessionMessage,
   SessionMessageInput,
@@ -96,8 +95,6 @@ export interface MessageHost {
   ): Promise<void>;
   /** Which of these work items of the project have ended. */
   ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
-  /** The question blockers standing in the caller's project. */
-  standing(caller: Caller, tx: Transaction): Promise<{ instanceId: string; key: string }[]>;
 }
 
 /**
@@ -354,13 +351,14 @@ export class SessionMessages {
           code: 'agent_question',
           status: 409,
           message: `Its agent asked its owner: ${clip(row.question, 3_900)}`,
-          next: `Answer with session.message {threadId: "${row.thread_id}"}; dispatch offers the work again once it is answered.`,
+          next: 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
           cause: 'agent_question',
-          // Its owner's move, as Workflows tells that owner; an operator answers too.
+          // Its owner's move, as Workflows tells that owner and a project admin; the question
+          // reaches Needs you through this blocker alone.
           whose: 'owner' as const,
           // About the revision it asked at: work moved on by any hand no longer waits on it.
           revision: Number(row.revision),
-          related: [],
+          related: [{ kind: 'thread', id: row.thread_id, label: 'Its agent’s thread' }],
         })),
       },
       tx,
@@ -485,24 +483,6 @@ export class SessionMessages {
         })),
         questions: questions.map(question),
       };
-    });
-  }
-  /** Each question still open whose blocker stands, as Needs you asks a person to answer it. */
-  async questionMoves(caller: Caller): Promise<QuestionMove[]> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.host.reading(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return (await this.host.standing(caller, tx)).map(({ instanceId, key }) => ({
-        instanceId,
-        provider: QUESTION_PROVIDER,
-        key,
-        move: {
-          sentence: 'Answer its agent’s question',
-          who: 'Anyone who may write to the project answers it with a message to the thread',
-          whose: 'owner' as const,
-        },
-      }));
     });
   }
   async acknowledgeMessage(

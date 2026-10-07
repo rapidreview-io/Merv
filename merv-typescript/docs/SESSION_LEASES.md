@@ -208,15 +208,20 @@ visits) and its questions, for anyone who may read the work and never for a leas
 ### A worker asks its owner
 
 A worker that cannot go on without the owner's decision calls
-`session.ask_owner({question})`, a tool every worker has whatever its assignment names. Its
+`session.ask_owner({question})`, a tool every worker that keeps a conversation has whatever its
+assignment names. Its
 session closes at once as released with outcome `asked_owner`, never counted as a failed
 launch; its thread waits, dormant, with its conversation, and the dormant sweep leaves it
 waiting however long the answer takes. Until a message to the thread answers it, dispatch
-withholds the work (a hand offer still runs), and Sessions publishes a `session-question`
-blocker (`agent_question`) on it, so its gate and `session.stuck` say what it waits for and
-Needs you asks an operator to answer it (Sessions' `ui.home` part). The answer releases the
-work, and its next visit, which resumes the same conversation, reads the answer as a queued
-message before anything else. A visit that keeps no conversation (a reviewer) cannot ask.
+withholds the revision it asked at (a hand offer still runs), and Sessions publishes a
+`session-question` blocker (`agent_question`) about that revision, whose move is the work's
+owner's (`whose: 'owner'`, which a project admin makes too). Its gate and `session.stuck` say
+what it waits for, and the gate names the blocker as the reader's move, which is how Needs you
+asks them to answer it. Work moved on by any other hand no longer waits on it. The answer
+releases the work once the asking visit has declared its conversation (or ten minutes after the
+question), and its next visit, which resumes the same conversation, reads the answer as a queued
+message before anything else. A visit that keeps no conversation (a reviewer) is not offered
+the tool, nor told of it.
 
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then

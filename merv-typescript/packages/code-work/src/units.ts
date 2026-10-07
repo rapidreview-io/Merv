@@ -1,5 +1,5 @@
 import { baseKey } from './base-plan.js';
-import { admissionCause, blockerGroup } from './blockers.js';
+import { admissionCause, blockerGroup, whoseOf } from './blockers.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeUnitStore } from '@merv/code/units';
@@ -1344,7 +1344,16 @@ export class CodeUnitService {
         },
       ];
     await this.workflows.replaceBlockers(
-      { projectId, instanceId: unitId, provider: PROVIDER, blockers },
+      {
+        projectId,
+        instanceId: unitId,
+        provider: PROVIDER,
+        // Each says whose move ending it is, which the record's gate answers to its reader.
+        blockers: blockers.map((blocker) => {
+          const whose = whoseOf(blocker);
+          return whose ? { ...blocker, whose } : blocker;
+        }),
+      },
       tx,
     );
   }

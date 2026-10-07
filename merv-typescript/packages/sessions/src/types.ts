@@ -34,7 +34,6 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
-  QuestionMove,
   SessionDeferral,
   SessionMessage,
   SessionOutcome,
@@ -73,7 +72,6 @@ export type {
   StuckItem,
   StuckKind,
   StuckReport,
-  QuestionMove,
   SessionMessage,
   ProjectThread,
   ProjectThreads,
@@ -491,8 +489,6 @@ export interface SessionMessaging {
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
   /** The worker ends its visit asking its owner; the work waits for the answer. */
   ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion>;
-  /** Questions still waiting, as Needs you reads them. */
-  questionMoves(caller: Caller): Promise<QuestionMove[]>;
   acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },

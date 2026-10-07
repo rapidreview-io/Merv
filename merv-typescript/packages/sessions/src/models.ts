@@ -352,23 +352,6 @@ export interface ThreadMessages {
   messages: SessionMessage[];
   questions: ThreadQuestion[];
 }
-/**
- * A question still waiting for its answer, as Needs you reads it beside the blocker that
- * withholds the work: the same shape as Code's moves.
- */
-export interface QuestionMove {
-  instanceId: string;
-  provider: string;
-  key: string;
-  move: {
-    sentence: string;
-    who: string;
-    /** The work item's owner, and any operator. */
-    whose: 'owner';
-    /** No page here answers yet: the reader answers with session.message to the thread. */
-    control?: { label: string; to: string };
-  };
-}
 
 export interface UsageTotals {
   sessions: number;

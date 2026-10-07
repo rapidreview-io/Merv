@@ -30,7 +30,6 @@ import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
 import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
-import { heldMoves } from './blockers.js';
 import type {
   CheckedCodeCapture,
   Code,
@@ -434,7 +433,6 @@ export class CodeService implements Code {
   }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
   runningHolds: Code['runningHolds'] = (caller) => this.board.holds(caller);
-  homeMoves: Code['homeMoves'] = async (caller) => heldMoves(await this.workflows.blockers(caller));
   runningChecks: Code['runningChecks'] = (caller) => this.board.checks(caller);
   runningPanel: Code['runningPanel'] = (caller, key) => this.board.panel(caller, key);
   runningCode: Code['runningCode'] = (caller, keys) => this.board.sections(caller, keys);

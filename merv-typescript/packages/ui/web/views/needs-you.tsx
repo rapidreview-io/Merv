@@ -17,6 +17,7 @@ import {
   words,
 } from '../components';
 import { ArrowRightIcon, CheckIcon } from '../icons';
+import { personMove } from '@merv/code-work/blockers';
 import { namesOf } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
@@ -26,11 +27,11 @@ import { newest, useHome, type Flow, type HomeData } from './map-data';
  * saying its move in one sentence a person reads. Whose move a record is comes from its
  * owners, never from this page: its gate says whether it is the reader's own (`yours`, as its
  * program describes the record to Workflows) and with which sentence, Reviews says which
- * subjects are out for review and which a verdict sent back, and Code says the move each of
- * its blockers asks of a person (`code`) — the one thing that puts ended work here at all: a
- * publication nobody has merged is a wait on a human and not a record that is running — and
- * Sessions says, the same way, which work waits for the answer to its agent's question
- * (`sessions`). The
+ * subjects are out for review and which a verdict sent back. A blocker another plugin published
+ * names whose move ending it is, and the gate answers that too, naming the blocker: an agent's
+ * question to its owner, or a publication nobody has merged — the one thing that puts ended
+ * work here at all, a wait on a human and not a record that is running. Code words its own
+ * blockers' moves for a person (`personMove`). The
  * server's own instruction is written for the agent holding the tool, so it is never the
  * headline: it stays on the card, folded. Every card is gated on its owning ui.shell row, so
  * it goes quiet with its plugin, and every fact here comes from the one read the rail shares.
@@ -122,8 +123,8 @@ const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
 export function needsYou(
   rows: Row[],
   home: HomeData | undefined,
-  /** Who is reading, and whether they are a person: the publication verbs answer only one. */
-  viewer: { id: string; role: string; signedIn?: boolean },
+  /** Who is reading: whose move each record is, the server has already said for them. */
+  viewer: { id: string },
   named: Named,
 ): Line[] {
   const me = viewer.id;
@@ -138,63 +139,45 @@ export function needsYou(
   const underReview = new Set(openReviews.map((item) => item.subjectId));
   // Work whose newest verdict sent it back, as against work never delivered.
   const returned = new Set(reviews.filter((item) => item.returned).map((item) => item.subjectId));
-  // Code's moves, and Sessions' questions an agent asked its owner, each beside its blocker:
-  // one per record, a question first, and a wait that is nobody's never in front of a person's.
-  type Held = NonNullable<HomeData['sessions']>[number] | NonNullable<HomeData['code']>[number];
-  const moves = new Map<string, Held>();
-  for (const item of [...(home?.sessions ?? []), ...(home?.code ?? [])]) {
-    const had = moves.get(item.instanceId);
-    if (!had || (had.move.whose === 'nobody' && item.move.whose !== 'nobody'))
-      moves.set(item.instanceId, item);
-  }
   for (const item of work) {
     const { row, needs } = item;
     const kind = row.view.kind;
     const decision = gate.get(item.id);
-    // A record that only names the reviews of it is never a move of its own, nor is one out
-    // for review, unless its rounds are used up: then nothing more happens by itself.
-    if (
-      needs.subjectOnly ||
-      !decision ||
-      (underReview.has(item.id) && decision.currentGate !== 'loop_limit_reached')
-    )
-      continue;
-    // A blocker another plugin published whose next move is a person's outranks the
-    // record's own gate and stands here whatever that gate says — including on work
-    // that has ended and waits on somebody to carry its accepted code to main. Whose move
-    // it is and whether this app can make it are two questions: a move no page here
-    // carries out is still the reader's, with no control at all.
-    const held = moves.get(item.id);
-    if (held) {
-      const blocker = decision.providerBlockers.find(
-        (each) => each.provider === held.provider && each.key === held.key,
+    const yours = decision?.yours;
+    if (!decision || !yours) continue;
+    // A blocker another plugin published that the gate names as the reader's move outranks the
+    // record's own gate and stands here whatever that gate says — including on work that has
+    // ended and waits on somebody to carry its accepted code to main.
+    const blocker =
+      yours.blocker &&
+      decision.providerBlockers.find(
+        (each) => each.provider === yours.blocker!.provider && each.key === yours.blocker!.key,
       );
-      // An operator makes every person's move; one that is the work owner's is also theirs,
-      // as the record's gate tells its owner.
-      const shown =
-        held.move.whose !== 'nobody' &&
-        ((viewer.role === 'operator' && viewer.signedIn) ||
-          (held.move.whose === 'owner' && !!decision.yours));
-      if (shown)
-        lines.push({
-          id: item.id,
-          kind,
-          name: item.name,
-          to: `${row.path}/${item.id}`,
-          at: blocker?.since ?? item.workflow.updatedAt,
-          sentence: held.move.sentence,
-          who: held.move.who,
-          says: [...said(decision), blocker?.next].filter(
-            (text, index, all) =>
-              !!text && all.indexOf(text) === index && text !== held.move.sentence,
-          ) as string[],
-          ...(held.move.control
-            ? { desk: { label: held.move.control.label, to: held.move.control.to } }
-            : {}),
-        });
+    const capped = decision.currentGate === 'loop_limit_reached';
+    // A record that only names the reviews of it is never a move of its own, nor is one out
+    // for review, unless a blocker or its used-up rounds make it the reader's: then nothing
+    // more happens by itself.
+    if (!blocker && !capped && (needs.subjectOnly || underReview.has(item.id))) continue;
+    if (blocker) {
+      // Whose move it is and whether this app can make it are two questions: a move no page
+      // here carries out is still the reader's, with no control at all. Code words its own.
+      const move = personMove(blocker);
+      const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
+      lines.push({
+        id: item.id,
+        kind,
+        name: item.name,
+        to: `${row.path}/${item.id}`,
+        at: blocker.since,
+        sentence,
+        ...(move ? { who: move.who } : {}),
+        says: [...said(decision), blocker.message, blocker.next].filter(
+          (text, index, all) => !!text && all.indexOf(text) === index && text !== sentence,
+        ),
+        ...(move?.control ? { desk: { label: move.control.label, to: move.control.to } } : {}),
+      });
       continue;
     }
-    if (!decision.yours) continue;
     // A record that stops on its own child (a cycle on its wave or its consolidation) is
     // stopped only when its gate refuses on one of the codes its row names, and then by
     // the child declared last; any other prerequisite of it may fail and stop nothing.
@@ -205,13 +188,10 @@ export function needsYou(
     const dependencies = decision.dependencies.filter(
       (dependency) => !needs.stops || !dependency.failed || dependency === stop,
     );
-    // A move a blocker or a used-up limit asks of an admin is not the producer's changes.
-    const admins =
-      decision.currentGate === 'loop_limit_reached' ||
-      decision.providerBlockers.some((each) => each.whose);
+    // A move a used-up limit asks of an admin is not the producer's changes.
     const sentence = recordSentence(
-      { ask: decision.yours.ask, dependencies },
-      returned.has(item.id) && !admins,
+      { ask: yours.ask, dependencies },
+      returned.has(item.id) && !capped,
     );
     lines.push({
       id: item.id,
@@ -220,12 +200,8 @@ export function needsYou(
       to: `${row.path}/${item.id}`,
       at: item.workflow.updatedAt,
       sentence,
-      // Where the server's reason is the headline, the fold does not say it again. A blocker
-      // that names whose move it is says why beside the record's own instruction.
-      says: [
-        ...said(decision),
-        ...decision.providerBlockers.filter((each) => each.whose).map((each) => each.message),
-      ].filter((text, index, all) => text !== sentence && all.indexOf(text) === index),
+      // Where the server's reason is the headline, the fold does not say it again.
+      says: said(decision).filter((text) => text !== sentence),
     });
   }
   if (reviewsRow)
@@ -391,14 +367,7 @@ const unwellOf = (rows: Row[]) =>
 export function useNow(rows: Row[], every?: number) {
   const session = useSession();
   const home = useHome(every);
-  // The publication verbs refuse a key and a bearer actor outright, so whether the reader
-  // is a person is part of whose move a Code blocker is.
-  const lines = needsYou(
-    rows,
-    home.data,
-    { ...session.actor, signedIn: session.account.kind === 'user' },
-    namesOf(home.data?.actors),
-  );
+  const lines = needsYou(rows, home.data, session.actor, namesOf(home.data?.actors));
   return { home, lines, count: lines.length + unwellOf(rows).length };
 }
 

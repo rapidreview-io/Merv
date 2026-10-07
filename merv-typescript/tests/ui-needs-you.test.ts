@@ -24,7 +24,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { WorkflowsService } from '@merv/workflows';
 import { LIMIT_ASK, yoursOf } from '@merv/workflows/evaluation';
-import { firstPersonMove, heldMoves } from '@merv/code-work/blockers';
+import { firstPersonMove, whoseOf } from '@merv/code-work/blockers';
 import { UiRegistry } from '@merv/ui';
 import { homeRead } from '@merv/ui/home';
 import reviewUiPlugin from '@merv/reviews/ui';
@@ -106,27 +106,58 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
   });
   assert.equal(yoursOf(delivery, owner, me), undefined);
   assert.deepEqual(yoursOf(delivery, { actorId: me }, me), {});
-  // A blocker another plugin published says whose move ending it is, on ended work too.
-  const published = (whose: 'owner' | 'admin') =>
-    gate({ providerBlockers: [{ ...blocker('held'), next: 'Do it', whose }] });
-  assert.deepEqual(yoursOf(published('owner'), owner, me), { ask: 'Do it' });
-  assert.deepEqual(yoursOf({ ...published('owner'), terminal: true }, owner, me), {
-    ask: 'Do it',
+  // A blocker another plugin published says whose move ending it is, on ended work too, and
+  // the gate names it: the record's owner's (an admin's too), an admin's, an operator's (an
+  // admin signed in as a person), or nobody's.
+  const admin = { admin: true },
+    person = { admin: true, person: true };
+  const held = (whose: string, key = whose) => ({
+    ...blocker('held'),
+    provider: 'plugin',
+    key,
+    next: `Do it: ${whose}`,
+    whose,
   });
-  assert.equal(yoursOf(published('owner'), owner, 'actor_ada', true), undefined);
-  assert.equal(yoursOf(published('admin'), owner, me), undefined);
-  assert.deepEqual(yoursOf(published('admin'), undefined, 'actor_ada', true), { ask: 'Do it' });
+  const published = (...items: ReturnType<typeof held>[]) =>
+    gate({ ...input, providerBlockers: items });
+  const asked = (whose: string, key = whose) => ({
+    ask: `Do it: ${whose}`,
+    blocker: { provider: 'plugin', key },
+  });
+  assert.deepEqual(yoursOf(published(held('owner')), owner, me), asked('owner'));
+  assert.deepEqual(
+    yoursOf({ ...published(held('owner')), terminal: true }, owner, me),
+    asked('owner'),
+  );
+  assert.deepEqual(yoursOf(published(held('owner')), owner, 'actor_ada', admin), asked('owner'));
+  assert.equal(yoursOf(published(held('owner')), owner, 'actor_ada'), undefined);
+  assert.equal(yoursOf(published(held('admin')), owner, me), undefined);
+  assert.deepEqual(
+    yoursOf(published(held('admin')), undefined, 'actor_ada', admin),
+    asked('admin'),
+  );
+  assert.equal(yoursOf(published(held('operator')), owner, 'actor_ada', admin), undefined);
+  assert.deepEqual(
+    yoursOf(published(held('operator')), owner, 'actor_ada', person),
+    asked('operator'),
+  );
+  // While a blocker holds the record for somebody else, or for nobody, its owner's own ask
+  // waits; a wait that is nobody's never hides a move that is somebody's.
+  for (const whose of ['admin', 'operator', 'nobody'])
+    assert.equal(yoursOf(published(held(whose)), owner, me), undefined, whose);
+  assert.equal(yoursOf(published(held('nobody')), owner, 'actor_ada', person), undefined);
+  assert.deepEqual(yoursOf(published(held('nobody'), held('owner')), owner, me), asked('owner'));
   // Every round used is a project admin's move, never the owner's as such.
   const capped = gate({
     currentGate: 'loop_limit_reached',
     blockers: [blocker('loop_limit_reached')],
   });
   assert.equal(yoursOf(capped, owner, me), undefined);
-  assert.deepEqual(yoursOf(capped, owner, 'actor_ada', true), { ask: LIMIT_ASK });
-  assert.equal(yoursOf({ ...capped, terminal: true }, owner, 'actor_ada', true), undefined);
+  assert.deepEqual(yoursOf(capped, owner, 'actor_ada', admin), { ask: LIMIT_ASK });
+  assert.equal(yoursOf({ ...capped, terminal: true }, owner, 'actor_ada', admin), undefined);
 });
 
-test('work at a used-up limit, though out for review, and work a blocker holds for an admin, are an admin’s line', () => {
+test('work at a used-up limit, though out for review or only naming its reviews, and work a blocker holds for an admin, though out for review, are an admin’s line', () => {
   const me = 'actor_admin';
   const rows = [
     {
@@ -150,6 +181,18 @@ test('work at a used-up limit, though out for review, and work a blocker holds f
       view: { kind: 'reviews' },
       status: {},
       readable: true,
+    },
+    {
+      id: 'reflections',
+      label: 'Reflections',
+      group: 'hidden',
+      order: 3,
+      path: '/reflections',
+      workflow: 'reflection',
+      view: { kind: 'reflections' },
+      status: {},
+      readable: true,
+      needs: { name: 'title', owner: 'ownerId', subjectOnly: true },
     },
   ];
   const at = '2026-10-06T00:00:00.000Z';
@@ -181,11 +224,22 @@ test('work at a used-up limit, though out for review, and work a blocker holds f
     since: at,
   };
   const home = {
-    tasks: [task('capped'), task('held')],
-    // The capped task's review is open and was never claimed; the held one was sent back.
+    tasks: [task('capped'), task('held'), task('launching')],
+    // A wave at its cap: a record that otherwise only names the reviews of it.
+    reflections: [
+      {
+        id: 'wave',
+        title: 'wave',
+        ownerId: 'actor_producer',
+        workflow: { state: 'synthesizing', updatedAt: at, revision: 3 },
+      },
+    ],
+    // The capped task's review is open and was never claimed; the held one was sent back; the
+    // launching one is out for review, and dispatch holds its reviewer's launches.
     reviews: [
       { id: 'rev_open', subjectId: 'capped', open: true, claimable: false, createdAt: at },
       { id: 'rev_old', subjectId: 'held', returned: true, createdAt: at },
+      { id: 'rev_held', subjectId: 'launching', open: true, claimable: false, createdAt: at },
     ],
     workflows: {
       workflows: [
@@ -200,7 +254,20 @@ test('work at a used-up limit, though out for review, and work a blocker holds f
           currentGate: 'launch_held',
           blockers: [{ code: 'launch_held', message: held.message, status: 409 }],
           providerBlockers: [held],
-          yours: { ask: held.next },
+          yours: { ask: held.next, blocker: { provider: held.provider, key: held.key } },
+        }),
+        gate('launching', {
+          currentGate: 'launch_held',
+          blockers: [{ code: 'launch_held', message: held.message, status: 409 }],
+          providerBlockers: [held],
+          yours: { ask: held.next, blocker: { provider: held.provider, key: held.key } },
+        }),
+        gate('wave', {
+          currentGate: 'loop_limit_reached',
+          blockers: [
+            { code: 'loop_limit_reached', message: 'review_returns is exhausted', status: 409 },
+          ],
+          yours: { ask: LIMIT_ASK },
         }),
       ],
     },
@@ -216,6 +283,8 @@ test('work at a used-up limit, though out for review, and work a blocker holds f
     [
       ['capped', LIMIT_ASK],
       ['held', held.next],
+      ['launching', held.next],
+      ['wave', LIMIT_ASK],
     ],
   );
   // Why the work is held stands beside the move.
@@ -302,7 +371,10 @@ function before(
     if (!decision || under.has(item.id)) continue;
     const held = firstPersonMove(decision.providerBlockers ?? []);
     if (held) {
-      if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
+      if (
+        viewer.role === 'operator' &&
+        (held.move.whose === 'administrator' || (held.move.whose === 'operator' && viewer.signedIn))
+      )
         lines.push([item.id, held.move.sentence]);
       continue;
     }
@@ -419,8 +491,15 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
   // Out for review, held by somebody else.
   const held = await start('Held');
   await reviews.start(ada, (await review(held.id, 'review-held')).id);
-  // Code holds it for an operator.
+  // Code holds it for an administrator, and says so as Code publishes its blockers.
   const coded = await start('Coded');
+  const base = {
+    key: 'main',
+    code: 'code_base_pending',
+    status: 409,
+    message: 'main is not in the repository',
+    next: 'An administrator binds or imports main.',
+  };
   await state.transaction(
     async (tx) =>
       await workflows.replaceBlockers(
@@ -428,15 +507,7 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
           projectId: me.projectId,
           instanceId: coded.id,
           provider: 'code',
-          blockers: [
-            {
-              key: 'publication',
-              code: 'code_publication_disabled',
-              status: 409,
-              message: 'publication is not enabled for this project',
-              next: 'An operator enables publication.',
-            },
-          ],
+          blockers: [{ ...base, whose: whoseOf(base) }],
         },
         tx,
       ),
@@ -464,18 +535,6 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
         })),
     },
     needs: { name: 'title', owner: 'ownerId' },
-  });
-  registry.register({
-    id: 'code',
-    label: 'Code',
-    group: 'operations',
-    order: 2,
-    path: '/code',
-    view: { kind: 'code' },
-    home: {
-      keep: ['instanceId', 'provider', 'key', 'move'],
-      list: async (caller) => heldMoves(await workflows.blockers(caller)),
-    },
   });
   const tools = {
     call: async (name: string, caller: Caller) => {
@@ -509,26 +568,21 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
   assert.deepEqual(
     said.sort(),
     [
-      [coded.id, 'Publication is disabled for this project until an operator clears it'],
+      [coded.id, 'Main is not in this project’s repository yet'],
       [input.id, ASK],
       [returned.id, 'Changes requested: submit the chore for review'],
       [stranded.id, 'Decide what happens next: Upstream failed'],
     ].sort(),
   );
   assert.deepEqual(said, before(rows, home, operator, { submit: ASK }));
-  // Code's move is an operator's, signed in as a person: for anyone else the record is
-  // held, and not their move.
-  for (const viewer of [
-    { ...operator, signedIn: false },
-    { id: reader.actorId, role: 'reader', signedIn: true },
-  ]) {
-    const theirs = viewer.id === me.actorId ? home : await read(reader);
-    const listed = needsYou(rows as never, theirs as never, viewer, named)
-      .map((line: { id: string; sentence: string }) => [line.id, line.sentence])
-      .sort();
-    assert.ok(!listed.some(([id]: string[]) => id === coded.id), viewer.role);
-    assert.deepEqual(listed, before(rows, theirs, viewer, { submit: ASK }), viewer.role);
-  }
+  // Code's move is an administrator's: for anyone else the record is held, and not their move.
+  const viewer = { id: reader.actorId, role: 'reader', signedIn: true };
+  const theirs = await read(reader);
+  const listed = needsYou(rows as never, theirs as never, viewer, named)
+    .map((line: { id: string; sentence: string }) => [line.id, line.sentence])
+    .sort();
+  assert.ok(!listed.some(([id]: string[]) => id === coded.id));
+  assert.deepEqual(listed, before(rows, theirs, viewer, { submit: ASK }));
   // The review somebody else holds is theirs to finish: Ada's list holds it, and nothing else.
   const adas = await read(ada);
   assert.deepEqual(
@@ -545,7 +599,7 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
   );
 });
 
-test('an agent’s question is its work owner’s card and an operator’s, and no wait of Code’s hides it', () => {
+test('a blocker the gate names as the reader’s move is their line, in its own words or Code’s', () => {
   const rows = [
     {
       id: 'tasks',
@@ -566,34 +620,22 @@ test('an agent’s question is its work owner’s card and an operator’s, and 
     key: 'thr_1',
     code: 'agent_question',
     message: 'Its agent asked its owner: which dataset?',
-    next: 'Answer with session.message',
+    next: 'Answer its agent’s question with a message to its thread',
     since: at,
     status: 409,
     whose: 'owner',
   };
-  const base = {
+  const publication = {
     provider: 'code',
-    key: 'base',
-    code: 'code_base_pending',
-    message: 'base',
-    next: 'wait',
+    key: 'publication',
+    code: 'code_publication_disabled',
+    message: 'publication is not enabled',
+    next: 'An operator enables publication.',
     since: at,
     status: 409,
+    whose: 'operator',
   };
-  const gate = (yours?: { ask: string }) => ({
-    instanceId: 't1',
-    terminal: false,
-    workStart: null,
-    nextAction: null,
-    actions: [],
-    blockers: [{ code: 'agent_question', message: question.message, status: 409 }],
-    providerBlockers: [question, base],
-    dependencies: [],
-    instruction: '',
-    currentGate: 'agent_question',
-    ...(yours ? { yours } : {}),
-  });
-  const home = (yours?: { ask: string }, code: unknown[] | null = null) => ({
+  const home = (blocker: typeof question, yours?: object) => ({
     tasks: [
       {
         id: 't1',
@@ -603,40 +645,48 @@ test('an agent’s question is its work owner’s card and an operator’s, and 
       },
     ],
     reviews: [],
-    workflows: { workflows: [gate(yours)] },
-    sessions: [
-      {
-        instanceId: 't1',
-        provider: 'session-question',
-        key: 'thr_1',
-        move: { sentence: 'Answer its agent’s question', who: 'x', whose: 'owner' },
-      },
-    ],
-    code,
-  });
-  const show = (data: unknown, viewer: object) =>
-    needsYou(rows as never, data as never, viewer as never, () => undefined).map(
-      (line) => line.sentence,
-    );
-  const operator = { id: 'actor_op', role: 'operator', signedIn: true };
-  const ownersGate = { ask: question.next };
-  assert.deepEqual(show(home(), operator), ['Answer its agent’s question']);
-  assert.deepEqual(
-    show(home(ownersGate), { id: 'actor_producer', role: 'producer', signedIn: true }),
-    ['Answer its agent’s question'],
-  );
-  assert.deepEqual(show(home(), { id: 'actor_other', role: 'producer', signedIn: true }), []);
-  const nobody = [
-    {
-      instanceId: 't1',
-      provider: 'code',
-      key: 'base',
-      move: { sentence: 'Nothing to do', who: '', whose: 'nobody' },
+    workflows: {
+      workflows: [
+        {
+          instanceId: 't1',
+          terminal: false,
+          workStart: null,
+          nextAction: null,
+          actions: [],
+          blockers: [{ code: blocker.code, message: blocker.message, status: 409 }],
+          providerBlockers: [blocker],
+          dependencies: [],
+          instruction: '',
+          currentGate: blocker.code,
+          ...(yours ? { yours } : {}),
+        },
+      ],
     },
-  ];
-  assert.deepEqual(show(home(undefined, nobody), operator), ['Answer its agent’s question']);
-  assert.deepEqual(
-    show(home(ownersGate, nobody), { id: 'actor_producer', role: 'producer', signedIn: true }),
-    ['Answer its agent’s question'],
-  );
+  });
+  const show = (data: unknown) =>
+    needsYou(rows as never, data as never, { id: 'actor_op' }, () => undefined).map((line) => [
+      line.sentence,
+      line.who ?? null,
+      line.desk?.to ?? null,
+      line.says,
+    ]);
+  const named = (blocker: typeof question) => ({
+    ask: blocker.next,
+    blocker: { provider: blocker.provider, key: blocker.key },
+  });
+  // A question: the blocker's own words, and why beside them.
+  assert.deepEqual(show(home(question, named(question))), [
+    [question.next, null, null, [question.message]],
+  ]);
+  // Code's blocker: Code's words for a person, who makes the move, and where.
+  assert.deepEqual(show(home(publication, named(publication))), [
+    [
+      'Publication is disabled for this project until an operator clears it',
+      'An operator',
+      null,
+      [publication.message, publication.next],
+    ],
+  ]);
+  // Whose it is is the gate's answer: where it names nothing of the reader's, there is no line.
+  assert.deepEqual(show(home(question)), []);
 });

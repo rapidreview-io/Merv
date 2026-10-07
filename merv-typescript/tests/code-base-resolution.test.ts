@@ -2105,6 +2105,8 @@ test('budget admission reaches the stuck report and consumes neither launch hold
     ['code_base_admission', 'budget_exceeded'],
   );
   assert.equal(personMove(blockers[0]!)?.sentence, 'The budget set for this project is spent');
+  // Code says whose move ending it is, which the record's gate answers to a project admin.
+  assert.equal(blockers[0]!.whose, 'admin');
   const stuck = await f.sessions.dispatch.stuck(f.admin);
   assert.ok(
     stuck.items.some(

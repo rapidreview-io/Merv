@@ -212,6 +212,11 @@ async function fixture(t: TestContext) {
     keep,
     agent,
     start,
+    /** The owner's move on the work, as its gate answers Needs you. */
+    yours: async (instanceId: string) =>
+      (await app.ctx.workflows.overview(owner, undefined, { open: true })).workflows.find(
+        (item) => item.instanceId === instanceId,
+      )?.yours,
     /** As though every key's work had stayed away for `ms`. */
     age: async (ms: number) =>
       await app.ctx.state.transaction((tx) =>
@@ -847,14 +852,11 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
       .map((item) => item.kind),
     ['work_blocked'],
   );
-  assert.deepEqual(
-    (await f.sessions.messaging.questionMoves(f.owner)).map((item) => [
-      item.instanceId,
-      item.key,
-      item.move.sentence,
-    ]),
-    [[unit.id, threadId, 'Answer its agent’s question']],
-  );
+  // Needs you reads it from the work's gate: the blocker is the one channel.
+  assert.deepEqual(await f.yours(unit.id), {
+    ask: 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
+    blocker: { provider: 'session-question', key: threadId },
+  });
   await f.age(dormantMs + 60_000);
   await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
   const path = `/sessions/threads/${threadId}/messages`;
@@ -877,7 +879,7 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     sent.id,
   );
   assert.deepEqual(await blockers(), []);
-  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  assert.equal(await f.yours(unit.id), undefined);
   assert.equal(await queued(), true);
   // The work comes back to the same thread and conversation, and its next visit reads the
   // answer before anything else.
@@ -1253,7 +1255,7 @@ test('a question answered needs its work readable, and one on ended work keeps n
   // The work ends unanswered: no card, and its thread expires as any dormant one does.
   await f.move(unit.id, 'submit');
   await f.move(unit.id, 'approve');
-  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  assert.equal(await f.yours(unit.id), undefined);
   await f.age(dormantMs + 60_000);
   await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
   const status = await f.app.ctx.state.read((sql) =>

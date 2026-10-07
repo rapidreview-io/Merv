@@ -365,7 +365,7 @@ export async function decision(
   limits: WorkflowLimitStatus[] = [],
   provided: WorkflowProvidedBlocker[] = [],
   checks = true,
-  /** Whether the reading person is a project admin, asked only where an admin's move stands. */
+  /** Whether the reader is a project admin, asked only where an admin's move may stand. */
   admin: () => Promise<boolean> = async () => false,
 ): Promise<WorkflowDecision> {
   const described: { owner?: WorkflowOwner } = {};
@@ -385,12 +385,10 @@ export async function decision(
   const yours =
     query.action || context.caller.session
       ? undefined
-      : yoursOf(
-          decided,
-          described.owner,
-          context.caller.actorId,
-          adminsMove(decided) && (await admin()),
-        );
+      : yoursOf(decided, described.owner, context.caller.actorId, {
+          admin: adminsMove(decided, described.owner, context.caller.actorId) && (await admin()),
+          person: !!context.caller.human,
+        });
   return yours ? { ...decided, yours } : decided;
 }
 
@@ -398,15 +396,42 @@ export async function decision(
 export const LIMIT_ASK =
   'Every round its limit allows is used: allow another, or take the next step by hand or end it';
 
-/** Whether the record waits on a project admin: at a used-up limit, or by a published word. */
-const adminsMove = (decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers'>) =>
+/**
+ * Whether the record may wait on a project admin: at a used-up limit, or by a published word
+ * that an admin answers (any but the reader's own as the record's owner, and nobody's).
+ */
+const adminsMove = (
+  decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers'>,
+  owner: WorkflowOwner | undefined,
+  actorId: string,
+) =>
   decision.currentGate === 'loop_limit_reached' ||
-  decision.providerBlockers.some((blocker) => blocker.whose === 'admin');
+  decision.providerBlockers.some(
+    (blocker) =>
+      blocker.whose === 'admin' ||
+      blocker.whose === 'operator' ||
+      (blocker.whose === 'owner' && owner?.actorId !== actorId),
+  );
+
+/** Who reads a decision, as far as whose move a published blocker is: `whose` and the reader. */
+const answers = (
+  whose: WorkflowProvidedBlocker['whose'],
+  owner: boolean,
+  reader: { admin?: boolean; person?: boolean },
+) =>
+  whose === 'owner'
+    ? owner || !!reader.admin
+    : whose === 'admin'
+      ? !!reader.admin
+      : whose === 'operator' && !!reader.admin && !!reader.person;
 
 /**
  * Whether a record is the reading caller's own move. A blocker another plugin published that
- * names whose move it is comes first, on ended work too; an open record at a used-up limit is
- * a project admin's. Otherwise it goes by its program's word on whose the record
+ * names whose move it is comes first, on ended work too, and it names the blocker: the record's
+ * owner's (which a project admin makes too), a project admin's, an operator's (an admin signed
+ * in as a person), or nobody's. An open record at a used-up limit is a project admin's. While a
+ * blocker names somebody else's move, or nobody's, the record is no move of the reader's own.
+ * Otherwise it goes by its program's word on whose the record
  * is (`describe` → `owner`), and the sentence that asks it of them. Refused, it is theirs where
  * the gate wants their input or a prerequisite ended without succeeding; with nothing refused,
  * only where it holds open one of their asks, as work sent back or never begun does: it reports
@@ -426,20 +451,23 @@ export function yoursOf(
   >,
   owner: WorkflowOwner | undefined,
   actorId: string,
-  /** The reader is a project admin, and the record waits on one. */
-  admin = false,
+  /** The reader: a project admin where the record may wait on one, and signed in as a person. */
+  reader: { admin?: boolean; person?: boolean } = {},
 ): WorkflowDecision['yours'] {
   // A blocker another plugin published says whose move ending it is, even on ended work.
-  const published = decision.providerBlockers.find(
-    (blocker) =>
-      (blocker.whose === 'admin' && admin) ||
-      (blocker.whose === 'owner' && owner?.actorId === actorId),
+  const published = decision.providerBlockers.find((blocker) =>
+    answers(blocker.whose, !!owner && owner.actorId === actorId, reader),
   );
-  if (published) return { ask: published.next };
+  if (published)
+    return {
+      ask: published.next,
+      blocker: { provider: published.provider, key: published.key },
+    };
   // Every round a limit allows is used: nothing more happens by itself, and allowing another
   // is a project admin's move.
-  if (admin && !decision.terminal && decision.currentGate === 'loop_limit_reached')
+  if (reader.admin && !decision.terminal && decision.currentGate === 'loop_limit_reached')
     return { ask: LIMIT_ASK };
+  if (decision.providerBlockers.some((blocker) => blocker.whose)) return undefined;
   if (!owner || owner.actorId !== actorId || decision.terminal) return undefined;
   const words = (action?: string) =>
     action && owner.asks && Object.hasOwn(owner.asks, action) ? owner.asks[action] : undefined;
