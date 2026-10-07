@@ -14,15 +14,10 @@ export function managedRoot(projectId: string) {
   return { body, oid: hash('commit', body), repositoryId: `merv:${projectId}` };
 }
 
-/** Internal declaration only: callers authorize project creation or work before calling. */
+/** Internal declaration only: callers authorize project creation or work, and so prove the
+ * project exists, before calling. */
 export async function declareManagedProject(tx: Transaction, projectId: string): Promise<void> {
   if (await tx.get('SELECT project_id FROM code_projects WHERE project_id=?', projectId)) return;
-  check(
-    await tx.get('SELECT id FROM projects WHERE id=?', projectId),
-    'project_not_found',
-    'No such project',
-    404,
-  );
   const root = managedRoot(projectId),
     at = now(),
     operationId = `cop_init_${digest(projectId)}`;

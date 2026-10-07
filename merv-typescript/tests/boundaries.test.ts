@@ -623,6 +623,13 @@ function assertCodeUtility(source: ts.SourceFile): void {
         ),
         `${source.fileName}: Code must not inspect research-owned tables`,
       );
+      // Its callers already proved the project exists: Scope's rows are Scope's to read.
+      assert.ok(
+        !/\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:projects|actors|actor_credentials|member_actors|project_memberships)\b/i.test(
+          node.text,
+        ),
+        `${source.fileName}: Code must not read Scope's tables`,
+      );
       assert.ok(
         !new Set([
           'workflow.transition',
