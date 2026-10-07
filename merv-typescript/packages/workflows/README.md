@@ -81,6 +81,8 @@ instance id to child ids, on behalf of no caller.
 The same checks run before a transition commits. See [the complete contract,
 task integration and lifecycle behavior](../../docs/WORKFLOW_GUIDANCE.md).
 
+Its wire types (a record and its history, a step's lease target, a work item's decision, dependencies, limits, blockers and process graph) are `@merv/workflows/models`, which the browser imports too.
+
 ## Installing a program
 
 ```ts

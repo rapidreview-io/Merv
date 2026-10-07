@@ -39,3 +39,28 @@ export interface SessionUsageReport {
   outputTokens: number;
   model?: string;
 }
+
+/**
+ * Checkout intent only. The base names an execution reference, which workspace preparation
+ * resolves to an exact commit. `driver` names the workspace driver that prepares the checkout,
+ * opaque to everything but the runner and the plugin that owns the driver.
+ */
+export type WorkflowWorkspacePolicy =
+  | { mode: 'none' }
+  | {
+      mode: 'ephemeral';
+      namespace: string;
+      base: `reference:${string}`;
+      retain: boolean;
+      driver: string;
+    }
+  | {
+      mode: 'persistent';
+      namespace: string;
+      base: `reference:${string}`;
+      retain: boolean;
+      driver: string;
+      /** Always false. Kept only because the pinned fingerprints of registered versions hold them. */
+      perBase: false;
+      advancesCentral: false;
+    };

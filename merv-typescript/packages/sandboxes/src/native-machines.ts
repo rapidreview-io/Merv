@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { check, MervError, type Json, type State, type UiManifestRow } from '@merv/contracts';
+import { check, MervError, type Json, type State } from '@merv/contracts';
+import type { UiManifestRow } from '@merv/ui/manifest';
 import { pages } from './native-client.js';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeWorkRow } from './native-schema.js';

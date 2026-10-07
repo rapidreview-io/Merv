@@ -1,10 +1,6 @@
 import { check } from '@merv/contracts';
-import type {
-  Transaction,
-  WorkflowCheckContext,
-  WorkflowDependency,
-  WorkflowExecutionBinding,
-} from '@merv/contracts';
+import type { Transaction, WorkflowCheckContext, WorkflowExecutionBinding } from '@merv/contracts';
+import type { WorkflowDependency } from './models.js';
 
 // Workflow rules other units apply themselves: pure, so they import it without the service.
 

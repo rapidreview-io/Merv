@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workflow-guidance';
+import type { WorkflowDecision, WorkflowDependency } from '@merv/workflows/models';
 import { refreshTools, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';

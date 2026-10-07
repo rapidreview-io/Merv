@@ -1,4 +1,5 @@
-import { CODE_DRIVER, type WorkflowWorkspacePolicy } from '@merv/contracts';
+import { CODE_DRIVER } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 
 /**
  * The checkout a step of Code-managed work runs in. Work keeps one persistent checkout per

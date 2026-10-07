@@ -6,8 +6,8 @@ import {
   type Caller,
   type WorkflowDefinition,
   type WorkflowPolicy,
-  type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
+import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { openState } from './fixtures/state.js';

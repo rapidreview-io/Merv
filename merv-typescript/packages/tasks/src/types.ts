@@ -2,13 +2,13 @@ import type {
   Caller,
   ContextPackage,
   ContextRecipeDefinition,
-  ProcessGraph,
   ReviewApplication,
   RunningNode,
   RunningPanelPart,
   Transaction,
   WorkRoute,
 } from '@merv/contracts';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type {} from 'cordis';
 import type { Task, TaskConfirmation, TaskRecord } from './models.js';
 import type { CodeUnit } from '@merv/code-work/models';

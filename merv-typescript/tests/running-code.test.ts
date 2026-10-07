@@ -10,13 +10,8 @@ import codeUiPlugin from '@merv/code-work/ui';
 import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-work/running';
 import { personMove } from '@merv/code-work/blockers';
 import { CodeRepositories } from '@merv/code/store/repository';
-import {
-  createService,
-  type Caller,
-  type RunningNode,
-  type RunningSection,
-  type WorkflowSnapshot,
-} from '@merv/contracts';
+import { createService, type Caller, type RunningNode, type RunningSection } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { UiRegistry, type RunningContribution } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import type { SandboxCheckHandle, SandboxChecks } from '@merv/sandboxes';

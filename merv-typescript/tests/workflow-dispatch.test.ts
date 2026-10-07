@@ -14,8 +14,8 @@ import {
   type WorkflowDefinition,
   type WorkflowExecutionPolicy,
   type WorkflowPolicy,
-  type WorkflowWorkspacePolicy,
 } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';

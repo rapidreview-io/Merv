@@ -241,7 +241,7 @@ const sharedContract = (specifier: string) =>
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
  * artifact as a context item, the retirement ledger text every retirement migration embeds, what
- * a runner advertises, the agent stream and its harness readers, hosted Codex's profile and handoff
+ * a runner advertises, the agent stream and its harness readers, the remote-row manifest, hosted Codex's profile and handoff
  * grace, the lease rows every leased step keeps, and a unit's history as its owner tells it on the
  * Work page. */
 const pureRules = new Set([
@@ -264,6 +264,7 @@ const pureRules = new Set([
   '@merv/context-builder/artifact-item',
   '@merv/sessions/rules',
   '@merv/sessions/agent-stream',
+  '@merv/ui/manifest',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */
@@ -555,7 +556,9 @@ test('pure rule modules that other units run import nothing but contracts and zo
     for (const reference of moduleReferences(parse(join(packagesRoot, name!, 'src', `${file}.ts`))))
       assert.ok(
         ['@merv/contracts', '@merv/contracts/text', 'zod'].includes(reference.specifier) ||
-          (reference.typeOnly && reference.specifier.startsWith('@merv/contracts/')),
+          (reference.typeOnly && reference.specifier.startsWith('@merv/contracts/')) ||
+          // Its own unit's public types, which hold no runtime.
+          (reference.typeOnly && reference.specifier === './models.js'),
         `${specifier} imports ${reference.specifier}`,
       );
   }

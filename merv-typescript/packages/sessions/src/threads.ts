@@ -15,13 +15,15 @@ import {
   type AgentEvent,
   type AgentStreamEvent,
 } from './agent-stream.js';
-import { isoNow, live, ordinary, readFirst, safeError, text } from './common.js';
+import { isoNow, live, ordinary, readFirst, safeError, text, workNameOf } from './common.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
+import { readsAgents } from './rules.js';
 import { deliver, uploads } from './transcripts.js';
 import type {
   ContinuityProvider,
   ContinuityUnit,
+  ProjectThreads,
   Session,
   SessionContinuity,
   SessionControl,
@@ -65,6 +67,8 @@ const TAIL_MAX_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
+/** How many threads that are not live a page of the project's threads holds. */
+const PAGE = 50;
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -423,42 +427,103 @@ export class SessionThreads {
 
   /** Every thread with a visit on the work item, oldest first, each with all of its visits. */
   async list(caller: Caller, instanceId: string): Promise<ThreadView[]> {
-    ordinary(caller);
-    this.host.available();
     check(text(instanceId), 'invalid_input', 'instanceId names a work item');
-    caller = structuredClone(caller);
-    return await this.state.snapshotTransaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);
+    return await this.reading(caller, async (tx) => {
       await this.host.readable(caller, instanceId, tx);
-      const threads = await tx.all<Row & { _merv_rowid: number }>(
+      const threads = await tx.all<Row>(
         'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id=?) ORDER BY _merv_rowid',
         caller.projectId,
         caller.projectId,
         instanceId,
       );
-      const visits = await this.visits(
-        tx,
-        threads.map((thread) => thread.id),
+      return await this.viewed(tx, threads);
+    });
+  }
+  /**
+   * The project's threads, as its Agents page lists them: on the first page every live one, then
+   * the newest of the rest, `PAGE` at a time, each page older than the cursor `before`.
+   */
+  async project(caller: Caller, before?: string): Promise<ProjectThreads> {
+    const after = before === undefined ? null : Number(before);
+    check(
+      after === null || (Number.isSafeInteger(after) && after > 0),
+      'invalid_input',
+      'before is the cursor a page of threads returned',
+    );
+    return await this.reading(caller, async (tx) => {
+      const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active'))`;
+      const live =
+        after === null
+          ? await tx.all<Row & { seq: number | string }>(
+              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${LIVE} ORDER BY t._merv_rowid DESC`,
+              caller.projectId,
+            )
+          : [];
+      const rest = await tx.all<Row & { seq: number | string }>(
+        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${LIVE}
+          AND (CAST(? AS BIGINT) IS NULL OR t._merv_rowid<?) ORDER BY t._merv_rowid DESC LIMIT ?`,
+        caller.projectId,
+        after,
+        after,
+        PAGE + 1,
       );
-      return threads.map((thread) => {
-        const own = visits
-          .filter((visit) => visit.threadId === thread.id)
-          .map((visit) => visit.view);
-        return {
-          id: thread.id,
-          instanceId: thread.instance_id,
-          state: thread.state,
-          role: thread.role,
-          status:
-            thread.status === 'retired'
-              ? 'retired'
-              : own.some((visit) => live(visit))
-                ? 'live'
-                : 'dormant',
-          visits: own,
-        };
-      });
+      const page = [...live, ...rest.slice(0, PAGE)];
+      // The work item each is on, as its newest visit's assignment names it.
+      const named = new Map(
+        (page.length
+          ? await tx.all<{ thread_id: string; name: string; workflow: string }>(
+              `SELECT DISTINCT ON (s.thread_id) s.thread_id,${workNameOf('s.session_json::jsonb')} AS name,
+                s.session_json::jsonb #>> '{execution,workflow}' AS workflow
+                FROM worker_sessions s WHERE s.thread_id IN (${page.map(() => '?').join(',')})
+                ORDER BY s.thread_id,s._merv_rowid DESC`,
+              ...page.map((row) => row.id),
+            )
+          : []
+        ).map((row) => [row.thread_id, row]),
+      );
+      const views = await this.viewed(tx, page);
+      return {
+        threads: views.map((view) => ({
+          ...view,
+          name: named.get(view.id)?.name ?? '',
+          workflow: named.get(view.id)?.workflow ?? '',
+        })),
+        next: rest.length > PAGE ? String(rest[PAGE - 1]!.seq) : null,
+      };
+    });
+  }
+  /** A read of the project's threads by a person or their key, never a worker. */
+  private async reading<T>(caller: Caller, read: (tx: Transaction) => Promise<T>): Promise<T> {
+    ordinary(caller);
+    this.host.available();
+    caller = structuredClone(caller);
+    return await this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);
+      return await read(tx);
+    });
+  }
+  /** Each thread with all of its visits, live while one of them holds its lease. */
+  private async viewed(tx: Transaction, threads: Row[]): Promise<ThreadView[]> {
+    const visits = await this.visits(
+      tx,
+      threads.map((thread) => thread.id),
+    );
+    return threads.map((thread) => {
+      const own = visits.filter((visit) => visit.threadId === thread.id).map((visit) => visit.view);
+      return {
+        id: thread.id,
+        instanceId: thread.instance_id,
+        state: thread.state,
+        role: thread.role,
+        status:
+          thread.status === 'retired'
+            ? 'retired'
+            : own.some((visit) => live(visit))
+              ? 'live'
+              : 'dormant',
+        visits: own,
+      };
     });
   }
   private async visits(tx: Transaction, threadIds: string[]) {
@@ -541,7 +606,7 @@ export class SessionThreads {
     const visits = await this.state.snapshotTransaction(async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
       check(
-        actor.role === 'operator',
+        readsAgents(actor.role),
         'forbidden',
         'Only an operator reads an agent’s conversation',
         403,

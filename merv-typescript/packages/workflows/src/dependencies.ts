@@ -1,13 +1,6 @@
 import { canonical, check, mapAsync, now } from '@merv/contracts';
-import type {
-  Data,
-  Sql,
-  Transaction,
-  WorkflowDependency,
-  WorkflowPinned,
-  WorkflowRelations,
-  WorkflowSnapshot,
-} from '@merv/contracts';
+import type { Data, Sql, Transaction, WorkflowPinned } from '@merv/contracts';
+import type { WorkflowDependency, WorkflowRelations, WorkflowSnapshot } from './models.js';
 import type { PinnedContracts } from './pinned.js';
 import { instanceName } from './rules.js';
 

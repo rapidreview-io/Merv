@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import { AGENT_EVENT_TEXT, type AgentEvent, type AgentStreamEvent } from './agent-stream.js';
 import { isoNow, live, readFirst } from './common.js';
+import { readsAgents } from './rules.js';
 import { postgresMigrations } from './stream.postgres.js';
 import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';
 
@@ -161,7 +162,7 @@ export class SessionStreams implements SessionStreamReads {
     const actor = await this.state.snapshotTransaction((tx) =>
       this.scope.require(caller, 'read', tx),
     );
-    check(actor.role === 'operator', 'forbidden', 'Only an operator reads an agent’s stream', 403);
+    check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
     return { growing: await this.growing(sessionId, caller.projectId) };
   }
 

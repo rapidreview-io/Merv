@@ -8,8 +8,8 @@ import {
   type Scope,
   type State,
   type Transaction,
-  type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
+import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import type {
   QuestionMove,

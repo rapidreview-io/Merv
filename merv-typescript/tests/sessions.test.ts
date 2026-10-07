@@ -1167,7 +1167,8 @@ test('dispatch controls and observations retain their original authorization', a
       }),
     projectStatus: (caller) => f.sessions.dispatch.projectStatus(caller),
     workspaceObservation: (caller) => f.sessions.workspaceObservation(caller, session.id),
-    agentObservation: (caller) => f.sessions.observations.read(caller, session.threadId),
+    threadCalls: (caller) => f.sessions.observations.calls(caller, session.threadId),
+    projectThreads: (caller) => f.sessions.threads.project(caller),
   };
   for (const [name, operation] of Object.entries(operations)) {
     await t.test(name, async () => {
@@ -1873,29 +1874,25 @@ test('agent observations retain tool timings and estimates across a restart with
     f.sessions.invocations.run(pending, () => 'duplicate'),
     { code: 'session_invocation' },
   );
-  let observed = await f.sessions.observations.read(f.owner, first.threadId);
-  assert.equal(observed.toolCalls[0]!.status, 'running');
-  assert.equal(observed.toolCalls[0]!.outputTokens, null);
-  assert.equal(observed.agent.currentExecutionId, first.id);
-  assert.equal(observed.assignments[0]!.workflow.name, 'session-fixture');
+  let observed = await f.sessions.observations.calls(f.owner, first.threadId);
+  assert.equal(observed.calls[0]!.status, 'running');
+  assert.equal(observed.calls[0]!.outputTokens, null);
+  assert.equal(observed.calls[0]!.sessionId, first.id);
   f.advance(1234);
   finish({ secret: 'sensitive-result-never-retained' });
   await running;
-  observed = await f.sessions.observations.read(f.owner, first.threadId);
-  assert.equal(observed.toolCalls[0]!.status, 'succeeded');
-  assert.equal(observed.toolCalls[0]!.durationMs, 1234);
-  assert.ok(observed.toolCalls[0]!.inputTokens > 0);
-  assert.ok(observed.toolCalls[0]!.outputTokens! > 0);
-  assert.equal(observed.tokenAccounting.kind, 'estimate');
-  assert.equal(observed.tokenStats.totalCalls, 1);
-  assert.equal(observed.tokenStats.completedCalls, 1);
-  assert.deepEqual(observed.tokenStats, {
-    totalCalls: 1,
-    completedCalls: 1,
-    inputTokens: observed.toolCalls[0]!.inputTokens,
-    outputTokens: observed.toolCalls[0]!.outputTokens,
+  observed = await f.sessions.observations.calls(f.owner, first.threadId);
+  assert.equal(observed.calls[0]!.status, 'succeeded');
+  assert.equal(observed.calls[0]!.durationMs, 1234);
+  assert.ok(observed.calls[0]!.inputTokens > 0);
+  assert.ok(observed.calls[0]!.outputTokens! > 0);
+  assert.deepEqual(observed.totals, {
+    calls: 1,
+    completed: 1,
+    inputTokens: observed.calls[0]!.inputTokens,
+    outputTokens: observed.calls[0]!.outputTokens,
   });
-  await assert.rejects(async () => await f.sessions.observations.read(caller, first.threadId), {
+  await assert.rejects(async () => await f.sessions.observations.calls(caller, first.threadId), {
     code: 'session_forbidden',
   });
   await assert.rejects(
@@ -1946,23 +1943,19 @@ test('agent observations retain tool timings and estimates across a restart with
     },
   );
   await f.restart();
-  assert.equal(
-    (await f.sessions.observations.read(f.owner, first.threadId)).tokenStats.totalCalls,
-    1,
-  );
-  observed = await f.sessions.observations.read(f.owner, second.threadId);
-  assert.equal(observed.agent.id, second.threadId);
+  assert.equal((await f.sessions.observations.calls(f.owner, first.threadId)).totals.calls, 1);
+  observed = await f.sessions.observations.calls(f.owner, second.threadId);
+  assert.equal(observed.threadId, second.threadId);
   assert.deepEqual(
-    observed.assignments.map((a) => a.id),
-    [second.id],
+    observed.calls.map((c) => [c.sessionId, c.status]),
+    [
+      [second.id, 'interrupted'],
+      [second.id, 'failed'],
+    ],
   );
-  assert.deepEqual(
-    observed.toolCalls.map((c) => c.status),
-    ['interrupted', 'failed'],
-  );
-  assert.equal(observed.toolCalls[0]!.finishedAt, null);
-  assert.equal(observed.tokenStats.totalCalls, 2);
-  assert.equal(observed.tokenStats.completedCalls, 1);
+  assert.equal(observed.calls[0]!.finishedAt, null);
+  assert.equal(observed.totals.calls, 2);
+  assert.equal(observed.totals.completed, 1);
   const serialized =
     JSON.stringify(observed) +
     JSON.stringify(
@@ -2008,7 +2001,7 @@ test('a session credential hash that is not in the ledger never authenticates, e
   await f.sessions.release(f.source, { sessionId: offered.session.id, runnerId: 'runner' });
 });
 
-test('agent observations are project-scoped read-only metadata with a bounded call window and lifetime totals', async (t) => {
+test('thread calls are project-scoped read-only metadata with a bounded call window and lifetime totals', async (t) => {
   const f = await fixture(t);
   const offered = await f.offer();
   const caller = await f.sessions.authenticate(offered.token);
@@ -2033,10 +2026,9 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   const before = await f.state.read(
     async (sql) => await sql.get('SELECT COUNT(*) AS n FROM events'),
   );
-  const observation = await f.sessions.observations.read(viewer, offered.session.threadId);
-  assert.equal(observation.toolCalls.length, 100);
-  assert.equal(observation.toolCallTotal, 105);
-  assert.equal(observation.tokenStats.totalCalls, 105);
+  const observation = await f.sessions.observations.calls(viewer, offered.session.threadId);
+  assert.equal(observation.calls.length, 100);
+  assert.equal(observation.totals.calls, 105);
   assert.deepEqual(
     await f.state.read(async (sql) => await sql.get('SELECT COUNT(*) AS n FROM events')),
     before,
@@ -2047,45 +2039,60 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   });
   await assert.rejects(
     async () =>
-      await f.sessions.observations.read(
+      await f.sessions.observations.calls(
         { actorId: other.actor.id, projectId: other.project.id },
         offered.session.threadId,
       ),
-    { code: 'agent_not_found' },
+    { code: 'thread_not_found' },
   );
   await f.scope.credentials.revokeActor(f.owner, reader.actor.id);
   await assert.rejects(
-    async () => await f.sessions.observations.read(viewer, offered.session.threadId),
+    async () => await f.sessions.observations.calls(viewer, offered.session.threadId),
   );
 });
 
-test('agent table includes retired instances in join order and is not truncated by the execution window', async (t) => {
+test('the project reads its live threads, then the newest others a page at a time; its status lists none', async (t) => {
   const f = await fixture(t);
   const ids: string[] = [];
-  for (let index = 0; index < 202; index++) {
+  for (let index = 0; index < 120; index++) {
     f.advance(1000);
     const { session } = await f.offer();
     ids.unshift(session.threadId);
-    // The newest is halted; its agent, left dormant for its work, retires at the sweep after 14 days.
-    if (index === 201) await f.sessions.dispatch.halt(f.owner, { sessionId: session.id });
+    // All but the oldest end: the oldest stays live, so it leads the first page.
+    if (index > 0) await f.sessions.dispatch.halt(f.owner, { sessionId: session.id });
   }
-  f.advance(15 * 86_400_000);
   await f.sessions.sweep();
-  const agents = (await f.sessions.dispatch.projectStatus(f.owner)).agents!;
+  const live = ids.at(-1)!;
+  const first = await f.sessions.threads.project(f.owner);
+  assert.equal(first.threads.length, 51);
   assert.deepEqual(
-    agents.map((agent) => agent.id),
-    ids,
+    first.threads.map((thread) => thread.id),
+    [live, ...ids.slice(0, 50)],
   );
-  assert.equal(agents[0]!.status, 'retired');
-  assert.ok(agents.every((agent) => agent.createdAt && agent.runnerId === 'runner'));
+  assert.equal(first.threads[0]!.status, 'live');
+  assert.notEqual(first.threads[1]!.status, 'live');
+  assert.ok(first.threads.every((thread) => thread.name && thread.workflow === 'session-fixture'));
+  const second = await f.sessions.threads.project(f.owner, first.next!);
+  assert.deepEqual(
+    second.threads.map((thread) => thread.id),
+    ids.slice(50, 100),
+  );
+  const third = await f.sessions.threads.project(f.owner, second.next!);
+  assert.deepEqual(
+    third.threads.map((thread) => thread.id),
+    ids.slice(100, 119),
+  );
+  assert.equal(third.next, null);
+  await assert.rejects(f.sessions.threads.project(f.owner, 'x'), { code: 'invalid_input' });
+  assert.equal('agents' in (await f.sessions.dispatch.projectStatus(f.owner)), false);
 });
 
 test('PostgreSQL preserves lease fencing and tool observations', async (t) => {
   const f = await fixture(t);
   const { session: first, token } = await f.offer();
-  assert.deepEqual((await f.sessions.observations.read(f.owner, first.threadId)).tokenStats, {
-    totalCalls: 0,
-    completedCalls: 0,
+  assert.deepEqual((await f.sessions.observations.calls(f.owner, first.threadId)).totals, {
+    calls: 0,
+    completed: 0,
     inputTokens: 0,
     outputTokens: 0,
   });
@@ -2094,20 +2101,17 @@ test('PostgreSQL preserves lease fencing and tool observations', async (t) => {
     artifactId: 'frozen-artifact',
   });
   await f.sessions.invocations.run(prepared, () => ({ content: 'answer' }));
-  const observation = await f.sessions.observations.read(f.owner, first.threadId);
-  assert.equal(observation.toolCalls[0]?.executionId, first.id);
-  assert.equal(observation.toolCalls[0]?.status, 'succeeded');
-  assert.equal(observation.tokenStats.totalCalls, 1);
-  assert.equal(observation.tokenStats.completedCalls, 1);
-  assert.ok(observation.tokenStats.inputTokens > 0);
-  assert.deepEqual(observation.tokenStats, {
-    totalCalls: 1,
-    completedCalls: 1,
-    inputTokens: observation.toolCalls[0]!.inputTokens,
-    outputTokens: observation.toolCalls[0]!.outputTokens,
+  const observation = await f.sessions.observations.calls(f.owner, first.threadId);
+  assert.equal(observation.calls[0]?.sessionId, first.id);
+  assert.equal(observation.calls[0]?.status, 'succeeded');
+  assert.ok(observation.totals.inputTokens > 0);
+  assert.deepEqual(observation.totals, {
+    calls: 1,
+    completed: 1,
+    inputTokens: observation.calls[0]!.inputTokens,
+    outputTokens: observation.calls[0]!.outputTokens,
   });
-  assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
-  assert.equal(typeof observation.toolCallTotal, 'number');
+  assert.ok(Object.values(observation.totals).every(Number.isSafeInteger));
   await f.sessions.release(f.source, { sessionId: first.id, runnerId: 'runner' });
   const next = await f.offer();
   await assert.rejects(f.scope.require(worker, 'read'), { code: 'session_closed' });

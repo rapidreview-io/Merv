@@ -1,4 +1,4 @@
-import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { WorkflowDecision } from '@merv/workflows/models';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { useTool, type Actor, type Project } from '../api';

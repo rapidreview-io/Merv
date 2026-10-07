@@ -75,7 +75,7 @@ export const researchUiPlugin = {
         workflow: 'research',
         view: { kind: 'research', answers },
         home: {
-          tool: 'research.list',
+          list: async (caller) => await research.home(caller),
           keep: [
             'id',
             'name',

@@ -28,7 +28,6 @@ import {
   type CodeCommitCommand,
   type CodeCommitReceipt,
   type SessionWorkspace,
-  type WorkflowWorkspacePolicy,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
   type WorkspaceDriverHost,
@@ -37,6 +36,7 @@ import {
   type WorkspaceSession,
   type WorkspaceTransport,
 } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import {
   codeWorkspaceManifestSchema,
   type CodeStoreOperation,

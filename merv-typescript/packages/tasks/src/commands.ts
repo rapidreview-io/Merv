@@ -14,9 +14,9 @@ import {
   type Data,
   type Transaction,
   type WorkflowCheckContext,
-  type WorkflowSnapshot,
   type WorkflowTransition,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import {
   DELIVERY_REPORT_CRITERION,
   RESERVED_CONTEXT_INPUTS,

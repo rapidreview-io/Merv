@@ -1,4 +1,4 @@
-import type { Caller, DelegationSource, Permission, Role } from '@merv/contracts';
+import type { Caller, DelegationSource, Permission, Role } from '@merv/contracts/scope-models';
 
 // Scope's role and delegation rules: pure, so any unit may run them.
 

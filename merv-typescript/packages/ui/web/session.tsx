@@ -10,6 +10,8 @@ import {
 } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
+import { permits } from '@merv/scope/rules';
+import { readsAgents } from '@merv/sessions/rules';
 import {
   ApiError,
   accountRequest,
@@ -42,17 +44,21 @@ export const useSession = (): Session => {
   return session;
 };
 /**
- * Whether this actor holds Scope's write permission (`permits` in scope/rules.ts, which the
- * browser cannot import): what a page asks before it offers to create or edit. A record whose
- * owner decides more than the role, such as a cycle only its owner moves, says so itself.
+ * Whether this actor holds Scope's write permission: what a page asks before it offers to create
+ * or edit. A record whose owner decides more than the role, such as a cycle only its owner
+ * moves, says so itself.
  */
-export const writes = (actor: Pick<Actor, 'role'>) =>
-  actor.role === 'operator' || actor.role === 'producer';
+export const writes = (actor: Pick<Actor, 'role'>) => permits(actor.role, 'write');
 /**
  * Whether this reader may read what agents say: Sessions' own test for the live stream and a
- * thread's conversation, the reader's Scope role being operator. Outside a session, no one.
+ * thread's conversation. Outside a session, no one.
  */
-export const useReadsAgents = () => useContext(SessionContext)?.actor.role === 'operator';
+export const useReadsAgents = () => {
+  const role = useContext(SessionContext)?.actor.role;
+  return role !== undefined && readsAgents(role);
+};
+/** The signed-in actor, where a page is drawn inside a session. */
+export const useActor = () => useContext(SessionContext)?.actor;
 /** The identity a page's own state belongs to: when it changes, the page starts again. */
 export const useScopeKey = () => {
   const epoch = useScopeVersion();

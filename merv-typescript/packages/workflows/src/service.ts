@@ -6,19 +6,21 @@ import type {
   WorkflowCatalogEntry,
   WorkflowDefinition,
   Workflows,
-  WorkflowSnapshot,
   WorkflowPolicy,
+  WorkflowLoopLimit,
+  WorkflowPinned,
+} from '@merv/contracts';
+import type {
+  WorkflowSnapshot,
   WorkflowWorkStart,
   WorkflowHistoryEntry,
   WorkflowDependency,
   WorkflowLimitStatus,
-  WorkflowLoopLimit,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowPinned,
   WorkflowRelations,
   WorkflowTransitionCount,
-} from '@merv/contracts';
+} from './models.js';
 import { readBlockers, replaceBlockers } from './blockers.js';
 import { persistContract, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';

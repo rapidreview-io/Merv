@@ -1,4 +1,4 @@
-import type { UiColumn, UiPhrasePart } from '@merv/contracts/ui-manifest';
+import type { UiColumn, UiPhrasePart } from '@merv/ui/manifest';
 import { stamp } from '../components';
 import { elapsed } from '../liveness';
 import { bytes } from './artifacts';

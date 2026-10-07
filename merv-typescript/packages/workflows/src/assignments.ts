@@ -5,8 +5,8 @@ import type {
   WorkflowAssignmentContent,
   WorkflowAssignmentRule,
   WorkflowCheckContext,
-  WorkflowWorkStart,
 } from '@merv/contracts';
+import type { WorkflowWorkStart } from './models.js';
 import { toolName } from './definition.js';
 import { workflowJson } from './json.js';
 

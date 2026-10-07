@@ -272,6 +272,31 @@ export class ResearchService implements Research {
       );
     });
   }
+  /**
+   * What Home and the rail poll, which must not grow with the project's history: every open
+   * cycle, and the newest that ended, which the next cycle follows and which keeps what an
+   * automatic run asks of its owner. Every cycle is `list`'s, read when a page asks for it.
+   */
+  async home(caller: Caller): Promise<ResearchRecord[]> {
+    this.open();
+    caller = structuredClone(caller);
+    return await this.state.transaction(async (tx) => {
+      const actor = await this.scope.require(caller, 'read', tx);
+      const open = (await this.workflows.open('research', caller.projectId, tx)).map(
+        (item) => item.id,
+      );
+      const rows = await tx.all<Row>(
+        `SELECT * FROM research_cycles WHERE project_id=? AND (id IN (SELECT jsonb_array_elements_text(?::jsonb))
+          OR _merv_rowid=(SELECT MAX(_merv_rowid) FROM research_cycles WHERE project_id=? AND id NOT IN (SELECT jsonb_array_elements_text(?::jsonb))))
+          ORDER BY _merv_rowid`,
+        caller.projectId,
+        JSON.stringify(open),
+        caller.projectId,
+        JSON.stringify(open),
+      );
+      return await mapAsync(rows, async (row) => await this.record(caller, row, tx, actor));
+    });
+  }
   /** How many cycles are still open, for the navigation badge, without reading each one. */
   async active(caller: Caller): Promise<number> {
     this.open();

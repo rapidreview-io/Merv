@@ -5,11 +5,11 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   effectiveWorkspace,
   type SessionWorkspace,
-  type WorkflowWorkspacePolicy,
   type WorkspaceDriver,
   type WorkspaceHandle,
   type WorkspaceLaunch,
 } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { privateDirectory } from '@merv/contracts/private-directory';
 import { LocalLedger, terminalLaunch } from './ledger.js';

@@ -8,7 +8,6 @@ import {
   MervError,
   runningKey,
   type Caller,
-  type ProcessGraph,
   type Artifact,
   type ReviewRequest,
   type RunningAttention,
@@ -19,10 +18,9 @@ import {
   type RunningSection,
   type RunningUnit,
   type Transaction,
-  type WorkflowDependency,
-  type WorkflowLimitStatus,
   type WorkRoute,
 } from '@merv/contracts';
+import type { ProcessGraph, WorkflowDependency, WorkflowLimitStatus } from '@merv/workflows/models';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';

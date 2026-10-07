@@ -1,14 +1,8 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import {
-  createService,
-  MervError,
-  migrationList,
-  type Caller,
-  type Data,
-  type WorkflowWorkspacePolicy,
-} from '@merv/contracts';
+import { createService, MervError, migrationList, type Caller, type Data } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';

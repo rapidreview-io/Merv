@@ -4,12 +4,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  Caller,
-  SessionWorkspace,
-  WorkflowWorkspacePolicy,
-  WorkflowExecutionReferences,
-} from '@merv/contracts';
+import type { Caller, SessionWorkspace, WorkflowExecutionReferences } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 const oid = (digit: string) => digit.repeat(40);

@@ -762,7 +762,6 @@ header.page-lede {
    the same way: no frame, no ground, the small size and the muted colour. */
 .btn-text,
 .cite,
-.agent-detail summary,
 .pr-details > summary,
 .crit-file > summary {
   border: 0;
@@ -800,7 +799,6 @@ summary:hover > .caret {
 }
 /* A summary that is a line of text hangs from its caret: where a long title wraps,
    its second line starts under its first word and not under the glyph. */
-.agent-detail summary,
 .pr-details > summary,
 .crit-file > summary,
 details.stack > summary {
@@ -812,7 +810,6 @@ details.stack > summary {
 }
 /* A summary is a control too: it reaches --hit tall around its one line, and gives
    the height back to the page so that nothing under it moves. */
-.agent-detail summary,
 .pr-details > summary,
 .crit-file > summary,
 details.stack > summary {
@@ -1589,8 +1586,7 @@ select.input,
    hairline, two lines at most — what the record is above, how it stands below.
    No head, no columns that move from page to page, and nothing boxed. */
 .rows,
-.ov-list,
-.agent-call-list {
+.ov-list {
   display: flex;
   flex-direction: column;
   list-style: none;
@@ -2956,76 +2952,9 @@ a.home-live:hover .home-live-unit {
   }
 }
 
-/* The agent an operator opened, read under the list that named it. --------- */
+/* A small line of help beside an agent's lease. */
 .agent-help {
   font-size: var(--text-sm);
-}
-.agent-select {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  border: 0;
-  background: none;
-  color: inherit;
-  font-size: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-/* The inspector is read under the rows, divided from them by one hairline. Choosing
-   an agent brings its head to the top of the view, clear of the bar a phone keeps there. */
-.agent-detail {
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
-  scroll-margin-top: var(--space-4);
-}
-.agent-detail h2 {
-  font-size: var(--text-lg);
-  overflow-wrap: anywhere;
-}
-.agent-detail .kv {
-  grid-template-columns: 130px minmax(0, 1fr);
-}
-.agent-detail .kv dd {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.agent-token-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-.agent-token-stats > div {
-  display: flex;
-  flex-direction: column;
-}
-.agent-token-stats strong {
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
-}
-.agent-token-stats span {
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-.agent-call {
-  padding: var(--space-3) 0;
-  border-top: 1px solid var(--line);
-  gap: 6px;
-}
-.agent-call code {
-  overflow-wrap: anywhere;
-  font-size: var(--text-sm);
-}
-.agent-tool-list {
-  padding: 8px 0 0 20px;
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-.agent-history {
-  border-top: 1px solid var(--line-soft);
-  padding-top: 10px;
-}
-.agent-history[open] summary {
-  margin-bottom: 10px;
 }
 
 /* One responsive implementation: the same sidebar becomes an overlay. ----- */
@@ -3076,9 +3005,6 @@ a.home-live:hover .home-live-unit {
   .main,
   .shell--nosb .main {
     padding: var(--topbar-h) 0 0;
-  }
-  .agent-detail {
-    scroll-margin-top: calc(var(--topbar-h) + var(--space-4));
   }
   .sb-edge {
     display: none;
@@ -3174,7 +3100,6 @@ a.home-live:hover .home-live-unit {
     margin-block: -10px;
   }
   /* Stacked summaries would reach into one another at this size, so here they take the room. */
-  .agent-detail summary,
   .pr-details > summary,
   .crit-file > summary,
   details.stack > summary {
@@ -6069,6 +5994,43 @@ details.running-section > summary {
 .thread-dialog-body h2 {
   font-size: var(--text-lg);
 }
+/* A thread's messages, the question its agent asked and the box that answers it. */
+.thread-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.thread-message-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+.thread-message-list li {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.thread-question {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--active);
+}
+.thread-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+.thread-compose .textarea {
+  width: 100%;
+  max-width: none;
+  resize: vertical;
+}
+.thread-compose .error-message {
+  grid-column: 1 / -1;
+}
 .thread-dialog .agent-timeline {
   max-height: calc(100vh - 280px);
 }
@@ -6438,6 +6400,18 @@ ul.unit-rows {
 }
 .unit-row--file {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 10rem) 64px 72px;
+}
+/* The Agents page's threads: the work each is on, then its role and stage. */
+.unit-row--thread {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 14rem) 72px 64px 72px;
+}
+@media (max-width: 880px) {
+  .unit-row--thread {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+  }
+  .unit-row--thread :is(.unit-row-stage, .tabular) {
+    display: none;
+  }
 }
 /* Narrow, a row keeps its name and its quiet facts; the group head already says the stage. */
 .unit-columns:not(.unit-columns--wide) .unit-row--agent {

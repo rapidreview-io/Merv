@@ -186,9 +186,10 @@ test('each part Sessions exposes keeps its entry checks: no managed runner, noth
     await assert.rejects(sessions.dispatch.setDispatch(managed, { enabled: true }), forbidden);
     await assert.rejects(sessions.running.nodes(managed), forbidden);
     await assert.rejects(sessions.running.panel(managed, 'session_x'), forbidden);
-    await assert.rejects(sessions.observations.read(managed, 'agent_x'), forbidden);
+    await assert.rejects(sessions.observations.calls(managed, 'thr_x'), forbidden);
+    await assert.rejects(sessions.threads.project(managed), forbidden);
     const caller: Caller = { projectId: 'project', actorId: 'person' };
-    await assert.rejects(sessions.observations.read(caller, ''), { code: 'invalid_agent' });
+    await assert.rejects(sessions.observations.calls(caller, ''), { code: 'invalid_input' });
   } finally {
     await sessions.close();
   }

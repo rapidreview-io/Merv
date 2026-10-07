@@ -54,4 +54,5 @@ The server plugin owns no research or work records: research and foundation plug
 - `ctx.ui.contribute(part)`: one owner's part of the Running page. An owner of work records declares their `workflows`, and a `work:` key's sidebar is asked only of the owner of its record's workflow.
 - Tools: `ui.shell`, `ui.home`, `ui.running` and `ui.running_panel`, which no agent conversation is offered, and `ui.read`, which returns a row's data when the row has no domain tool of its own.
 - Route: `/ui`, public, serving the built bundle.
+- `@merv/ui/manifest`: the remote-row manifest a service outside this process publishes (Sandboxes, Fleet) and the browser renders, as a zod schema and its types; pure, so any unit may run it.
 - Row: `settings`.

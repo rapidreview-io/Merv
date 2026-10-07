@@ -956,6 +956,40 @@ test('lineage reads the cycles before this one, oldest first, and the one after'
   assert.equal(long.cycles.at(-1)!.digest, null);
 });
 
+test('Home reads the open cycles and the newest that ended, not every cycle ever run', async (t) => {
+  const f = await fixture(t);
+  let previousCycleId: string | undefined;
+  const ids: string[] = [];
+  for (let index = 0; index < 6; index++) {
+    const cycle = await f.research.create(f.owner, {
+      name: `Cycle ${index}`,
+      ...(previousCycleId ? { previousCycleId } : {}),
+      requestId: f.id(),
+    });
+    ids.push(cycle.id);
+    if (index === 5) break;
+    await f.research.end(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: cycle.workflow.revision,
+      outcome: 'abandoned',
+      reason: 'Superseded by the next cycle.',
+      requestId: f.id(),
+    });
+    previousCycleId = cycle.id;
+  }
+  const reader = await f.issue('reader');
+  const gets = t.mock.method(f.app.ctx.workflows, 'get');
+  const home = await f.research.home(reader);
+  assert.deepEqual(
+    home.map((cycle) => cycle.id),
+    ids.slice(4),
+  );
+  // Each is the record list gives; only those two were read.
+  assert.equal(gets.mock.callCount(), 2);
+  const listed = await f.research.list(reader);
+  assert.deepEqual(home, listed.slice(4));
+});
+
 test('research owner authorization, project scoping, selected prerequisite success and request replay survive restart', async (t) => {
   const f = await fixture(t);
   await f.definition();

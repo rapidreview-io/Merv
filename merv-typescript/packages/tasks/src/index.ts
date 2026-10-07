@@ -17,7 +17,6 @@ import {
   type ContextBuilder,
   type ContextRecipeDefinition,
   type ContextRegistration,
-  type ProcessGraph,
   type Reviews,
   type Scope,
   type Sql,
@@ -25,6 +24,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { Context } from 'cordis';
 import { postgresMigrations } from './index.postgres.js';
 

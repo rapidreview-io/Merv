@@ -1,4 +1,4 @@
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';

@@ -1,4 +1,5 @@
-import type { Artifact, ReviewRequest, WorkflowSnapshot } from '@merv/contracts/types';
+import type { Artifact, ReviewRequest } from '@merv/contracts/types';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 
 /** A reflection as Reflections keeps it and every reader reads it: portable, with no server code. */
 export interface ChangeSpecTask {

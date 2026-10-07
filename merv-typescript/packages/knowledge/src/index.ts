@@ -11,8 +11,8 @@ import {
   type State,
   type Transaction,
   type Workflows,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { Experiments } from '@merv/experiments/types';
 import type { Code } from '@merv/code-work/types';
 import { instanceName } from '@merv/workflows/rules';

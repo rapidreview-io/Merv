@@ -2382,7 +2382,7 @@
         },
         {
           "name": "session.observe",
-          "description": "Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.",
+          "description": "Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.",
           "readOnly": true
         },
         {
@@ -2496,7 +2496,7 @@
         },
         {
           "name": "session.observe",
-          "description": "Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.",
+          "description": "Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.",
           "readOnly": true
         },
         {

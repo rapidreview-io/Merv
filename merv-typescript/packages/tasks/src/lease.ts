@@ -13,8 +13,8 @@ import {
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowPolicy,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { TaskCheckpoint, TaskCheckpointInput } from './types.js';
 import type { TaskLeaseRow, TaskRow, TasksContext } from './index.js';
 import { serviceOwned } from './workflow.js';

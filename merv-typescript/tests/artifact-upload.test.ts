@@ -71,7 +71,7 @@ test('file upload uses normal MCP session authority and returns a verified small
   assert.ok(JSON.stringify(receipt).length < 1000);
   assert.equal('content' in receipt, false);
   assert.equal(
-    (await app.ctx.sessions.observations.read(owner, execution.threadId)).toolCalls[0]!.tool,
+    (await app.ctx.sessions.observations.calls(owner, execution.threadId)).calls[0]!.tool,
     'artifact.create',
   );
   await app.ctx.sessions.release(owner, { sessionId: execution.id, runnerId: 'file-test' });

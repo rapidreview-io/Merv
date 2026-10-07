@@ -24,6 +24,7 @@ import {
   Submit,
   cx,
 } from '../components';
+import { permits } from '@merv/scope/rules';
 import { useCurrent } from '../mutations';
 import { ThreeStates } from '../states';
 
@@ -58,7 +59,8 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
   const available =
     projectSelection() === projectId &&
     shell.data?.project?.id === projectId &&
-    shell.data.actor?.role === 'operator' &&
+    !!shell.data.actor &&
+    permits(shell.data.actor.role, 'admin') &&
     shell.data.rows.some((row) => row.id === 'fleet');
   if (!available) return null;
 

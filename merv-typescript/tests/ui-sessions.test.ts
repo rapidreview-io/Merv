@@ -6,7 +6,6 @@
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
-import type { AgentSummary } from '@merv/sessions/types';
 import { leaseLiveness, type LeaseFacts } from '@merv/sessions/liveness';
 
 const { createElement, useState } = await import('react');
@@ -14,8 +13,7 @@ const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
-const { AgentDetail, leaseLiveness: drawn } =
-  await import('../packages/ui/web/views/agent-sessions-panel.js');
+const { leaseLiveness: drawn } = await import('../packages/ui/web/views/threads.js');
 const { clock, clockOf } = await import('../packages/ui/web/liveness.js');
 
 // Every test opens a fresh account scope, including the shared tool-result cache.
@@ -63,6 +61,7 @@ function status(over: Record<string, unknown> = {}) {
     runners: [
       {
         id: 'runner_1',
+        runnerId: 'lab-runner',
         lastSeenAt: at(-5_000),
         live: true,
         capacity: 2,
@@ -85,6 +84,7 @@ function status(over: Record<string, unknown> = {}) {
         role: 'producer',
         status: 'active',
         runnerRef: 'runner_1',
+        runnerId: 'lab-runner',
         hostRef: null,
         platform: null,
         createdAt: at(-600_000),
@@ -93,23 +93,6 @@ function status(over: Record<string, unknown> = {}) {
         closedAt: null,
         closeReason: null,
         workspaceMode: 'none',
-      },
-    ],
-    agents: [
-      {
-        id: 'agent_1',
-        sessionId: 'agent_session_1',
-        actorId: 'actor_worker',
-        name: 'Weight-decay researcher',
-        status: 'active',
-        currentExecutionId: 'sess_1',
-        currentAssignment: {
-          label: 'Work: Sweep weight decay',
-          name: 'Sweep weight decay',
-          role: 'producer',
-        },
-        createdAt: at(-3_600_000),
-        runnerId: 'local-demo',
       },
     ],
     queue: [],
@@ -126,6 +109,49 @@ const worded = <T extends { observedAt: string; sessions: unknown }>(read: T): T
   })),
 });
 const read = (over: Record<string, unknown> = {}) => ({ body: { result: status(over) } });
+/** A thread of the project as Sessions lists it: the work it is on, its stage and its visits. */
+const thread = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+  id,
+  instanceId: `wf_${id}`,
+  state: 'running',
+  role: 'producer',
+  status: 'dormant',
+  name,
+  workflow: 'task',
+  visits: [
+    {
+      sessionId: `ses_${id}`,
+      status: 'released',
+      offeredAt: new Date(Date.now() - 600_000).toISOString(),
+      startedAt: new Date(Date.now() - 590_000).toISOString(),
+      endedAt: new Date(Date.now() - 60_000).toISOString(),
+      outcome: 'submitted',
+      launched: true,
+      resumed: false,
+      runnerId: 'lab-01',
+      hasConversation: true,
+    },
+  ],
+  ...over,
+});
+const live = thread('agent_1', 'Sweep weight decay', {
+  status: 'live',
+  visits: [
+    {
+      sessionId: 'sess_1',
+      status: 'active',
+      offeredAt: new Date(Date.now() - 600_000).toISOString(),
+      startedAt: new Date(Date.now() - 540_000).toISOString(),
+      launched: true,
+      resumed: false,
+      runnerId: 'lab-01',
+      hasConversation: true,
+      liveness: { verdict: 'active', tone: 'ok', rest: [] },
+    },
+  ],
+});
+// Every page reads the project's threads; a test that opens no row only needs them there.
+beforeEach(() => serve('/sessions/threads', { body: { threads: [live], next: null } }));
 
 const fixed = Date.parse('2026-09-16T12:00:00.000Z');
 const before = (seconds: number) => new Date(fixed - seconds * 1000).toISOString();
@@ -221,12 +247,15 @@ test('the page states its subject without a click, in one liveness vocabulary', 
     'Leases 1 · 1 live',
     'Sweep weight decay',
     'lab-01',
-    'Weight-decay researcher',
+    // The project's agents: Sessions' threads, the live one with the work it is on.
+    'Agents 1 · 1 live',
     // The runner says why its last lease request got nothing.
     'declined',
     'capacity full',
   ])
     assert.ok(shown.includes(fact), `${fact} is not on the page: ${shown.slice(0, 800)}`);
+  // A lease is named by its runner's machine, as the Runners table names it.
+  assert.equal(document.querySelector('.lease-row > span')!.textContent, 'lab-01');
   // What waits for an agent is on the Work page's map, and is not listed here a second time.
   assert.ok(!shown.includes('Ready to assign'));
   // The rail does not list this page: it is a step under Work, and says the way back.
@@ -434,41 +463,72 @@ test('a lease opens on the row that lists its workflow, without reading any owne
   );
 });
 
-test('a failed lease shows both the outcome and the runner exit reason', async (t) => {
+test('the Agents page lists threads, live first, and older ones a press further', async (t) => {
   t.after(unmount);
-  const ended = {
-    ...status().sessions[0],
-    status: 'released',
-    closedAt: new Date().toISOString(),
-    outcome: 'crash_loop',
-    closeReason: 'local_process_exit_code_7',
-    workflow: { name: 'task', state: 'in_progress' },
-    tools: [],
-  };
-  serve('/tools/ui.read', () => read({ sessions: [ended] }));
-  serve('/tools/ui.read', (_count, input) => {
-    if (!input.params) return read({ sessions: [ended] });
-    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'agent_1' } });
-    return {
-      body: {
-        result: {
-          agent: status().agents[0],
-          assignments: [ended],
-          toolCalls: [],
-          toolCallTotal: 0,
-          tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
-          tokenAccounting: { kind: 'estimate', method: 'test' },
-        },
-      },
-    };
+  serve('/tools/ui.read', () => read());
+  serve('/sessions/threads', {
+    body: { threads: [live, thread('agent_2', 'Check the config')], next: '7' },
+  });
+  serve('/sessions/threads?before=7', {
+    body: { threads: [thread('agent_3', 'An older task')], next: null },
   });
   await mount(page());
-  const opener = document.querySelector<HTMLButtonElement>('.agent-select')!;
-  await act(async () => opener.click());
+  const names = () =>
+    [...document.querySelectorAll('.unit-row--thread .unit-row-name')].map((n) => n.textContent);
+  assert.deepEqual(names(), ['Sweep weight decay', 'Check the config']);
+  assert.ok(text().includes('Agents 2+ · 1 live'), text());
+  await click('Show older');
+  assert.deepEqual(names(), ['Sweep weight decay', 'Check the config', 'An older task']);
+  assert.equal(
+    [...document.querySelectorAll('button')].find((item) => item.textContent === 'Show older'),
+    undefined,
+  );
+  // One read of the threads, none of a whole agent history.
+  assert.ok(!requests.some((request) => request.includes('/sessions/agents/')));
+});
+
+test('a thread row opens the thread view: a failed visit shows its outcome and exit reason', async (t) => {
+  t.after(unmount);
+  // jsdom has the element but not its modal methods.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Dialog = (window as any).HTMLDialogElement.prototype;
+  Dialog.showModal ??= function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  serve('/tools/ui.read', () => read());
+  const crashed = thread('agent_2', 'Check the config', {
+    status: 'retired',
+    visits: [
+      {
+        ...thread('x', 'x').visits[0],
+        outcome: 'crash_loop',
+        why: 'local_process_exit_code_7',
+      },
+    ],
+  });
+  serve('/sessions/threads', { body: { threads: [crashed], next: null } });
+  serve('/sessions/threads/agent_2/calls', {
+    body: {
+      threadId: 'agent_2',
+      calls: [],
+      totals: { calls: 0, completed: 0, inputTokens: 0, outputTokens: 0 },
+    },
+  });
+  await mount(page());
+  await act(async () => document.querySelector<HTMLButtonElement>('.unit-row--thread')!.click());
   await settle(20);
-  const shown = text();
-  assert.ok(shown.includes('Outcome') && shown.includes('crash loop'), shown);
-  assert.ok(shown.includes('Reason') && shown.includes('local process exit code 7'), shown);
+  const dialog = document.querySelector('dialog')!;
+  assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · running · retired');
+  assert.ok(dialog.textContent!.includes('Check the config'));
+  assert.match(dialog.querySelector('.ruled-row')!.textContent!, /crash loop · exit 7/);
+  // Its calls are the view's other tab.
+  const calls = [...dialog.querySelectorAll('button')].find(
+    (item) => item.textContent === 'Calls',
+  )!;
+  await act(async () => calls.click());
+  await settle(20);
+  assert.ok(requests.includes('GET /sessions/threads/agent_2/calls'));
+  assert.match(dialog.textContent!, /0 calls/);
 });
 
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
@@ -507,12 +567,12 @@ test('a failed poll degrades to one line and never blanks rows that are correct'
       : { status: 500, body: { error: { code: 'server_error', message: 'Upstream failed' } } },
   );
   await mount(page());
-  assert.ok(text().includes('Weight-decay researcher'));
+  assert.ok(text().includes('Agents 1 · 1 live'));
   await settle(4_600);
   const shown = text();
   assert.ok(shown.includes('Could not refresh'), `the failure must be stated: ${shown}`);
   assert.ok(
-    shown.includes('Weight-decay researcher'),
+    shown.includes('Agents 1 · 1 live'),
     `the rows that are still correct must stay: ${shown}`,
   );
   assert.ok(shown.includes('Sweep weight decay'), shown);
@@ -604,206 +664,4 @@ test('halt-all names every live lease under the click, past this read’s window
   assert.ok(shown.includes('Halt 240 live leases'), `the guard under-counted: ${shown}`);
   assert.ok(shown.includes('239 more'), shown);
   assert.ok(shown.includes('released back to the queue'), 'the guard promises no synchrony');
-});
-
-test('choosing an agent brings its panel to the top of the view, and again once it has loaded', async (t) => {
-  t.after(unmount);
-  const seen: [string, unknown][] = [];
-  const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
-  proto.scrollIntoView = function (this: HTMLElement, options: unknown) {
-    seen.push([this.id, options]);
-  };
-  t.after(() => delete proto.scrollIntoView);
-  serve('/tools/ui.read', () => read());
-  serve('/tools/ui.read', (_count, input) => {
-    if (!input.params) return read();
-    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'agent_1' } });
-    return {
-      body: {
-        result: {
-          agent: status().agents[0],
-          assignments: [],
-          toolCalls: [],
-          toolCallTotal: 0,
-          tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
-          tokenAccounting: { kind: 'estimate', method: 'test' },
-        },
-      },
-    };
-  });
-  await mount(page());
-  // The lease over the list names the same agent, so the row is found by what it is.
-  const opener = document.querySelector<HTMLButtonElement>('.agent-select')!;
-  await act(async () => opener.click());
-  await settle(20);
-  // A page cannot scroll past its own foot, and the panel is one line tall until it is read.
-  assert.deepEqual(seen, [
-    ['agent-detail', { block: 'start' }],
-    ['agent-detail', { block: 'start' }],
-  ]);
-  assert.equal(document.activeElement?.id, 'agent-detail-title');
-  assert.equal(opener.getAttribute('aria-controls'), 'agent-detail');
-  assert.equal(opener.getAttribute('aria-expanded'), 'true');
-});
-
-test('an agent a runner started is named for that runner, as the Runners table names it', async (t) => {
-  t.after(unmount);
-  const runner = '0c27f0b2-fefb-447a-83d1-ce2c68d2ae7c';
-  const gone = '5d1e9a40-3b7c-4d11-9f0e-7a2b8c4d6e1f';
-  const base = status();
-  const agent = (id: string, runnerId: string, name = `Agent ${runnerId}`) => ({
-    ...base.agents[0],
-    id,
-    name,
-    runnerId,
-    currentExecutionId: null,
-    currentAssignment: null,
-  });
-  serve('/tools/ui.read', () =>
-    read({
-      runners: [
-        {
-          ...base.runners[0],
-          runnerId: runner,
-          machine: { ...base.runners[0].machine, hostname: 'Gurals-MacBook-Pro.local' },
-        },
-      ],
-      sessions: [{ ...base.sessions[0], threadId: 'agent_mac' }],
-      agents: [
-        { ...agent('agent_mac', runner), currentExecutionId: 'sess_1' },
-        agent('agent_qa', 'qa-launcher'),
-        agent('agent_gone', gone),
-        agent('agent_named', runner, 'Weight-decay researcher'),
-      ],
-    }),
-  );
-  await mount(page());
-  const lease = document.querySelector('.lease-row > span')!;
-  assert.equal(lease.textContent, 'Gurals-MacBook-Pro.local');
-  const listed = [...document.querySelectorAll('.agent-select')].map((node) => node.textContent);
-  assert.deepEqual(listed.sort(), [
-    '5d1e9a40…4d6e1f',
-    'Gurals-MacBook-Pro.local',
-    'Weight-decay researcher',
-    'qa-launcher',
-  ]);
-  assert.ok(!text().includes(runner) && !text().includes(gone), 'a raw runner id names nobody');
-});
-
-const agent = (id: string) =>
-  ({
-    id,
-    name: `Agent ${id}`,
-    status: 'active',
-    createdAt: new Date().toISOString(),
-  }) as AgentSummary;
-const observation = (id: string, tool: string) => ({
-  agent: agent(id),
-  assignments: [],
-  toolCalls: [
-    {
-      id: 'call',
-      tool,
-      status: 'succeeded',
-      startedAt: new Date().toISOString(),
-      durationMs: 20,
-      inputTokens: 1,
-      outputTokens: 2,
-    },
-  ],
-  toolCallTotal: 1,
-  tokenStats: { inputTokens: 1, outputTokens: 2, completedCalls: 1, totalCalls: 1 },
-});
-
-test('agent observation keeps its last good read on failure, pauses while hidden, and refreshes on return', async (t) => {
-  t.after(unmount);
-  let hidden = false;
-  const original = Object.getOwnPropertyDescriptor(document, 'visibilityState');
-  Object.defineProperty(document, 'visibilityState', {
-    configurable: true,
-    get: () => (hidden ? 'hidden' : 'visible'),
-  });
-  t.after(() =>
-    original
-      ? Object.defineProperty(document, 'visibilityState', original)
-      : Reflect.deleteProperty(document, 'visibilityState'),
-  );
-  let reads = 0;
-  serve('/tools/ui.read', (_count, input) => {
-    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'first' } });
-    reads++;
-    return reads === 2
-      ? { network: true }
-      : {
-          body: { result: observation('first', reads === 1 ? 'retained.call' : 'refreshed.call') },
-        };
-  });
-  await mount(createElement(AgentDetail, { agent: agent('first'), rowId: 'sessions', close() {} }));
-  assert.match(text(), /retained.call/);
-  hidden = true;
-  await settle(4200);
-  assert.equal(reads, 2);
-  assert.match(text(), /Could not refresh/);
-  assert.match(text(), /retained.call/, 'a failed poll does not blank the last observation');
-  await settle(4200);
-  assert.equal(reads, 2, 'hidden tabs stop polling');
-  hidden = false;
-  await act(async () => document.dispatchEvent(new window.Event('visibilitychange')));
-  await settle();
-  assert.equal(reads, 3);
-  assert.match(text(), /refreshed.call/);
-  assert.doesNotMatch(text(), /Could not refresh/);
-  assert.ok(requests.every((request) => !request.includes('/sessions/agents/')));
-});
-
-test('late observations cannot replace the selected agent or survive a project change', async (t) => {
-  t.after(unmount);
-  const fixtureFetch = globalThis.fetch;
-  t.after(() => {
-    globalThis.fetch = fixtureFetch;
-  });
-  let release!: () => void;
-  const delayed = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  globalThis.fetch = async (...args) => {
-    const response = await fixtureFetch(...args);
-    if (JSON.parse(String(args[1]?.body ?? '{}')).params?.agentId === 'first') await delayed;
-    return response;
-  };
-  serve('/tools/ui.read', (_count, input) => ({
-    body: {
-      result: observation(
-        String((input.params as { agentId: string }).agentId),
-        `${(input.params as { agentId: string }).agentId}.call`,
-      ),
-    },
-  }));
-  function Selected() {
-    const [selected, select] = useState('first');
-    return createElement(
-      'div',
-      {},
-      createElement('button', { onClick: () => select('second') }, 'Choose second'),
-      createElement(AgentDetail, { agent: agent(selected), rowId: 'sessions', close() {} }),
-    );
-  }
-  await mount(createElement(Selected));
-  await click('Choose second');
-  assert.match(text(), /second.call/);
-  release();
-  await settle();
-  assert.match(text(), /second.call/);
-  assert.doesNotMatch(text(), /first.call/);
-  serve('/tools/ui.read', {
-    status: 404,
-    body: { error: { code: 'agent_not_found', message: 'Agent not found in this project' } },
-  });
-  await act(async () => setProject('another-project'));
-  await settle();
-  assert.doesNotMatch(text(), /second.call/, 'old project activity is discarded');
-  assert.match(
-    document.querySelector('[role="alert"]')?.textContent ?? '',
-    /Agent not found in this project/,
-  );
 });

@@ -4,13 +4,12 @@ import type {
   Data,
   Transaction,
   WorkflowDefinition,
-  WorkflowSnapshot,
   WorkflowStart,
   WorkflowTransition,
   WorkflowAddDependencies,
   WorkflowExtendLimit,
-  WorkflowLimitStatus,
 } from '@merv/contracts';
+import type { WorkflowSnapshot, WorkflowLimitStatus } from './models.js';
 import { clearBlockers } from './blockers.js';
 import { enforceAction, readContext } from './evaluation.js';
 import { limitFor, limitMessage, limitStatus, limitStatusesOf } from './limits.js';

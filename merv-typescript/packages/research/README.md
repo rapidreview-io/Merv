@@ -52,4 +52,4 @@ Research drives the cycle of tasks, experiments and reflections, each of which k
 
 - `@merv/research`: the `research` service. It registers `research@6` with Workflows and subscribes through Domain Events to workflow, code, paper and research events to advance automatic cycles.
 - `@merv/research/tools`: `research.create`, `research.list`, `research.get`, `research.lineage`, `research.replan`, `research.end` and `research.advance`.
-- `@merv/research/ui`: the `/work` page, framed by its cycle, and the `/research` cycles page.
+- `@merv/research/ui`: the `/work` page, framed by its cycle, and the `/research` cycles page. Its part of `ui.home`, which Home and the rail poll, is `research.home`: the open cycles and the newest that ended, so the poll does not grow with every cycle run.

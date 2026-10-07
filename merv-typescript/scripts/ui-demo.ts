@@ -216,6 +216,13 @@ async function main() {
           evidenceIds: [delivery.id],
           notes: 'The seeded delivery retains the learning-curve table and identifies seed 7.',
         },
+        // Any criterion the review adds beyond the task's own checks, met by the same report.
+        ...started.criteria.slice(3).map((_: string, index: number) => ({
+          criterionNumber: index + 4,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The seeded delivery covers it.',
+        })),
       ],
       notes: 'Curve reproduces the published shape; seed and table are present. Accepting.',
       requestId: 'demo-verdict-1',

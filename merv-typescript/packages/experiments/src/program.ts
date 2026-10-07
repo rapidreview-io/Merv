@@ -1,4 +1,5 @@
-import { check, type WorkflowDefinition, type WorkflowSnapshot } from '@merv/contracts';
+import { check, type WorkflowDefinition } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { Experiment, ExperimentAttempt, ExperimentSubmission } from './types.js';
 
 // The experiment workflow: its graph, the executable versions, the evidence roles and the

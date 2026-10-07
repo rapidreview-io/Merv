@@ -19,7 +19,7 @@ import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown
 import { homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
 import { useActorNames } from './people';
-import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { WorkflowActionStatus, WorkflowDecision } from '@merv/workflows/models';
 import type { ReviewClaim, ReviewGuide, ReviewRequest, Verdict } from '@merv/contracts/types';
 import {
   REVIEW_VERDICTS,

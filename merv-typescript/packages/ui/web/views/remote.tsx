@@ -8,7 +8,7 @@ import type {
   UiLivenessSpec,
   UiRecordSpec,
   UiSection,
-} from '@merv/contracts/ui-manifest';
+} from '@merv/ui/manifest';
 import { useTool } from '../api';
 import {
   Ago,

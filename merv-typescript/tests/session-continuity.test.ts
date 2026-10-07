@@ -191,7 +191,11 @@ async function fixture(t: TestContext) {
     assert.equal(typeof stamped.uploadedAt, 'string');
     return { bytes, facts };
   };
-  const agent = async (id: string) => (await sessions.observations.read(owner, id)).agent;
+  // A thread is active until it retires, live or dormant.
+  const agent = async (id: string) => {
+    const thread = (await sessions.threads.project(owner)).threads.find((item) => item.id === id)!;
+    return { status: thread.status === 'retired' ? 'retired' : 'active' };
+  };
   const start = async () =>
     await handle.start(owner, { workflow: 'continuity-test', requestId: randomUUID() });
   return {

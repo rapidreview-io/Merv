@@ -4,8 +4,8 @@ import {
   digest,
   type WorkflowDefinition,
   type WorkflowPolicy,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';

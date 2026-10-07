@@ -1,10 +1,5 @@
-import {
-  mapAsync,
-  type Caller,
-  type Transaction,
-  type WorkflowProvidedBlocker,
-  type WorkflowDispatchCandidate,
-} from '@merv/contracts';
+import { mapAsync, type Caller, type Transaction } from '@merv/contracts';
+import type { WorkflowProvidedBlocker, WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   DispatchState,
   RunnerPresence,
@@ -502,6 +497,7 @@ export async function projectStatus(
           workflow: string | null;
           workspace_mode: SessionSummary['workspaceMode'] | null;
           runner_ref: string | null;
+          runner_id: string;
           platform_json: string | null;
           attachment_json: string | null;
           result_json: string | null;
@@ -509,7 +505,7 @@ export async function projectStatus(
       >(
         // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
         // parsed once, in SQL, and sent without its assignment, execution, lease and source.
-        `SELECT s.id,s.thread_id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
+        `SELECT s.id,s.thread_id,s.runner_id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
           ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
           FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
           CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
@@ -537,6 +533,7 @@ export async function projectStatus(
         label: row.label,
         name: row.name,
         runnerRef: row.runner_ref,
+        runnerId: row.runner_id,
         hostRef: session.hostRef,
         platform: row.platform_json ? JSON.parse(row.platform_json) : null,
         createdAt: session.createdAt,
@@ -578,8 +575,6 @@ export async function projectStatus(
       ),
     });
     return {
-      // One transaction, one moment: agents cannot report a lease the leases do not.
-      agents: await ctx.observations.summaries(tx, caller.projectId),
       observedAt: stuck.observedAt,
       liveSessionCount: counts.live,
       sessionTotal: counts.total,

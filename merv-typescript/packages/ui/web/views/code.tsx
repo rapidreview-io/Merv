@@ -2,6 +2,7 @@ import type { CodeCommandRecord } from '@merv/contracts/code';
 import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { permits } from '@merv/scope/rules';
 import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
 import { EmptyState, LoadState, Short, StatusPill } from '../components';
 import { recordNames, type NamedHome } from '../markdown';
@@ -236,14 +237,14 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
  * that is that person's own actor, or an operator key. A worker's lease is not an
  * account credential and never reaches this page, so the role is the whole of the test.
  */
-export const managesCode = (actor: Actor) => actor.role === 'operator';
+export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
 /**
  * Fencing a writer and every publication control ask for more than authority: their
  * tools refuse a key and a bearer actor outright and answer only a person. The two
  * rules are the server's two rules, and each verb is drawn by the one that governs it.
  */
 export const signedInAdmin = (actor: Actor, account: Account) =>
-  actor.role === 'operator' && account.kind === 'user';
+  permits(actor.role, 'admin') && account.kind === 'user';
 
 export const CodeView = (props: ViewProps) => {
   const { actor, account } = useSession();

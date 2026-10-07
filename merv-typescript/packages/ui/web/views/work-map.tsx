@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -182,41 +183,55 @@ export function mapOf(
 
 /**
  * The lines worth drawing: a prerequisite the unit already reaches through another of its
- * prerequisites is not drawn to it again, since the line through the nearer one says it. A line
- * goes only while what is left still leads from its upper end to its lower one.
+ * prerequisites is not drawn to it again, since the line through the nearer one says it. What
+ * each unit reaches is worked out once, so the map costs its edges times its units at most.
  */
 function direct(edges: MapEdge[]): MapEdge[] {
-  let kept = edges;
-  for (const edge of edges) {
-    const rest = kept.filter((other) => other !== edge);
-    const seen = new Set([edge.from]);
-    const reaches = (key: string): boolean =>
-      key === edge.to ||
-      rest.some(
-        (next) =>
-          next.from === key && !seen.has(next.to) && !!seen.add(next.to) && reaches(next.to),
-      );
-    if (reaches(edge.from)) kept = rest;
-  }
-  return kept;
+  const next = new Map<string, string[]>();
+  for (const edge of edges) next.set(edge.from, [...(next.get(edge.from) ?? []), edge.to]);
+  const reach = new Map<string, Set<string>>();
+  // Everything below `key`. A unit met again while its own reach is worked out (a cycle, which
+  // no owner should send) adds nothing, so every line of the cycle is kept.
+  const below = (key: string): Set<string> => {
+    const known = reach.get(key);
+    if (known) return known;
+    const found = new Set<string>();
+    reach.set(key, found);
+    for (const to of next.get(key) ?? []) {
+      found.add(to);
+      for (const deeper of below(to)) found.add(deeper);
+    }
+    return found;
+  };
+  return edges.filter(
+    (edge) =>
+      !(next.get(edge.from) ?? []).some((via) => via !== edge.to && below(via).has(edge.to)),
+  );
 }
 
 /**
- * The sessions on one thing and the machines serving it or them, as the board relates
- * them: who is working on it, and where.
+ * The sessions on each thing and the machines serving it or them, as the board relates them:
+ * who is working on it, and where. Built once for a board, then asked of each card.
  */
-export function liveOf(board: RunningBoard | undefined, key: RunningKey): RunningNode[] {
-  if (!board) return [];
+export function liveLookup(board: RunningBoard | undefined): (key: RunningKey) => RunningNode[] {
+  if (!board) return () => [];
   const all = new Map(
     [...board.lanes.sessions.nodes, ...board.lanes.hardware.nodes].map((node) => [node.key, node]),
   );
-  const on = (target: RunningKey) =>
-    board.edges
-      .filter((edge) => edge.to === target && edge.verb !== 'waits on')
-      .flatMap((edge) => all.get(edge.from) ?? []);
-  const sessions = on(key);
-  return [...new Set([...sessions, ...sessions.flatMap((node) => on(node.key))])];
+  const serving = new Map<RunningKey, RunningNode[]>();
+  for (const edge of board.edges) {
+    const node = edge.verb !== 'waits on' && all.get(edge.from);
+    if (node) serving.set(edge.to, [...(serving.get(edge.to) ?? []), node]);
+  }
+  const on = (target: RunningKey) => serving.get(target) ?? [];
+  return (key) => {
+    const sessions = on(key);
+    return [...new Set([...sessions, ...sessions.flatMap((node) => on(node.key))])];
+  };
 }
+/** The same for one thing. */
+export const liveOf = (board: RunningBoard | undefined, key: RunningKey): RunningNode[] =>
+  liveLookup(board)(key);
 
 /** A person's or an agent's name, where the reader of the page may see one. */
 type Named = Pick<RunningReading, 'nameOf'>;
@@ -433,12 +448,19 @@ export function WorkMap({
     return () => observer.disconnect();
   }, []);
   const board = live?.board;
-  const { units, edges } = mapOf(board, wave);
-  const layout = workMapLayout(
-    units.map((unit) => unit.key),
-    edges,
-    width,
+  // The clock ticks every second while anything moves; the map is laid out again only when
+  // the board, the wave or the room changes.
+  const { units, edges } = useMemo(() => mapOf(board, wave), [board, wave]);
+  const layout = useMemo(
+    () =>
+      workMapLayout(
+        units.map((unit) => unit.key),
+        edges,
+        width,
+      ),
+    [units, edges, width],
   );
+  const liveOn = useMemo(() => liveLookup(board), [board]);
   const drawn = !!layout;
   // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
   useEffect(() => void (width && onDrawn?.(drawn)), [drawn, width, onDrawn]);
@@ -532,7 +554,7 @@ export function WorkMap({
             unit={unit}
             box={layout.at.get(unit.key)!}
             shapes={shapes}
-            live={liveOf(board, unit.key)}
+            live={liveOn(unit.key)}
             relations={edges
               .filter((edge) => edge.to === unit.key && edge.waiting)
               .map((edge) => `Waits on ${names.get(edge.from)}`)}

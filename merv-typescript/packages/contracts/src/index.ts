@@ -29,8 +29,6 @@ export {
 } from './outbound.js';
 export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
-export type { UiManifestRow, UiCollectionSpec, UiRecordSpec } from './ui-manifest.js';
-export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export type * from './running.js';
 export {
@@ -44,6 +42,7 @@ export {
 export * as runningSchema from './running-schema.js';
 export { MAX_TRANSCRIPT_BYTES, sessionSecretPattern } from './session-inputs.js';
 export { CODE_DRIVER, WorkspaceDeferred } from './workspace-driver.js';
+import type { WorkflowWorkspacePolicy } from './sessions-models.js';
 export type {
   WorkspaceDriver,
   WorkspaceDriverFactory,
@@ -79,41 +78,14 @@ export type { Artifact, ArtifactContent } from './artifact-models.js';
 import type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 import { clip, visible } from './text.js';
+import type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
+export type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
 import type {
-  Role,
   WorkflowDispatchCandidate,
   WorkflowExecutionTarget,
   WorkflowHistoryEntry,
   WorkflowSnapshot,
   WorkflowTransitionCount,
-  WorkflowWorkspacePolicy,
-} from './workflow-models.js';
-export type {
-  Role,
-  WorkflowDispatchCandidate,
-  WorkflowExecutionTarget,
-  WorkflowHistoryEntry,
-  WorkflowSnapshot,
-  WorkflowTransitionCount,
-  WorkflowWorkspacePolicy,
-} from './workflow-models.js';
-export type {
-  WorkflowReference,
-  WorkflowProvidedBlocker,
-  WorkflowProvidedBlockerInput,
-  WorkflowRelation,
-  WorkflowRelations,
-  WorkflowActionStatus,
-  WorkflowDecision,
-  WorkflowLimitStatus,
-  WorkflowOverview,
-  WorkflowDependency,
-  WorkflowWorkStart,
-  ProcessNode,
-  ProcessEdge,
-  ProcessGraph,
-} from './workflow-guidance.js';
-import type {
   WorkflowReference,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
@@ -124,7 +96,7 @@ import type {
   WorkflowDependency,
   WorkflowWorkStart,
   ProcessGraph,
-} from './workflow-guidance.js';
+} from '@merv/workflows/models';
 export class MervError extends Error {
   /** Set by the refusing component when the refusal only means "not yet": nothing is wrong
    *  with what was asked, so whoever retries it does not count it as a failure. */
@@ -700,47 +672,6 @@ export interface Blobs {
   /** The stored object's size (HEAD), or null when none is stored. */
   stored?(namespace: string, hash: string): Promise<number | null>;
 }
-export type Permission = 'read' | 'write' | 'review' | 'admin';
-/**
- * Who a call acts as. At most one authority field may be set. A bare `{ actorId, projectId }`
- * names an independent machine actor or a producing service actor directly: it is trusted
- * in-process authority, carries that actor's full role and checks no credential's liveness, so
- * transports never build one (they attach `credentialId`, `human`, `key`, `session`,
- * `conversation` or `managed`). A member actor still needs its person's `human` or `key`
- * authority, and a worker its session.
- */
-export interface Caller {
-  actorId: string;
-  projectId: string;
-  /** Transport-authenticated credential identity; never accepted from tool arguments. */
-  credentialId?: string;
-  /** Verified human authority attached by the transport, never by tool arguments. */
-  human?: {
-    issuer: string;
-    subject: string;
-    expiresAt: string;
-    membershipId: string;
-  };
-  /** User-owned machine authority, distinct from human login and actor credentials. */
-  key?: { id: string; membershipId: string };
-  /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
-  session?: {
-    id: string;
-    /** The thread this visit belongs to, whose actor the worker acts as. */
-    threadId?: string;
-    invocationId?: string;
-  };
-  conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
-  /** Server-authenticated supervisor; the binding is rechecked on every control. */
-  managed?: {
-    allocationId: string;
-    epoch: number;
-    credentialHash: string;
-    boundSessionId?: string;
-  };
-  /** A project's credential-free service acting for a person, never set by a transport. */
-  service?: { vouchedBy: DelegationSource };
-}
 /**
  * The person themself, signed in: human authority and no other. Never a key, which agents and
  * workers hold, a leased worker, a runner, a conversation, a service or an actor credential.
@@ -765,14 +696,6 @@ export function requireHuman(
 ): asserts caller is Caller & { human: NonNullable<Caller['human']> } {
   check(isDirectHuman(caller), code, message, 403);
 }
-/** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
-export type DelegationSource = { actorId: string; projectId: string } & (
-  | { kind: 'actor'; credentialId: string; expiresAt: string | null }
-  | { kind: 'human'; issuer: string; subject: string; membershipId: string }
-  | { kind: 'key'; keyId: string; membershipId: string; expiresAt: string | null }
-  /** Valid only while the person who vouched for it may still write in its project. */
-  | { kind: 'service'; vouchedBy: DelegationSource }
-);
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
   require(caller: Caller, tx: Transaction, permission: Permission): Promise<DelegationSource>;
@@ -1803,6 +1726,11 @@ export interface Reviews {
   ): Promise<Map<string, ReviewRequest>>;
   /** With `subjectId`, only the reviews of that record. */
   list(caller: Caller, filter?: { subjectId?: string }): Promise<ReviewRequest[]>;
+  /**
+   * What Home and the rail poll: every open review, each subject's current review and newest
+   * verdict, and the newest verdicts, oldest first; `list` holds every review.
+   */
+  home(caller: Caller): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */
   open(caller: Caller): Promise<number>;
   /** `override` claims it as the project's owner: only that person, signed in, may. */

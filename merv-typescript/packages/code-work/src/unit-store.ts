@@ -16,8 +16,8 @@ import {
   type State,
   type Transaction,
   oidPattern,
-  type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
+import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
 import type {

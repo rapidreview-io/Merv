@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Context } from 'cordis';
-import { createService, uiManifestSchema } from '@merv/contracts';
+import { createService } from '@merv/contracts';
+import { uiManifestSchema } from '@merv/ui/manifest';
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';

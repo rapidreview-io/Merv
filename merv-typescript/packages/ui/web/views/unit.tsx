@@ -6,7 +6,7 @@ import type {
   RunningUnitEntry,
   RunningUnitKey,
 } from '@merv/contracts/running';
-import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
 import { Ago, StatusPill, cx, words } from '../components';
 import { Icon } from '../icons';
@@ -20,6 +20,7 @@ import {
   RoleMark,
   StageThreads,
   ThreadDialog,
+  groupOf,
   ThreadReading,
   isLive,
   lastActive,
@@ -67,7 +68,13 @@ function ElsewhereDialog({
     if (loaded && !thread) onClose();
   }, [loaded, thread, onClose]);
   return thread ? (
-    <ThreadDialog thread={thread} title={title} loadedAt={loadedAt} onClose={onClose} />
+    <ThreadDialog
+      thread={thread}
+      group={groupOf(threads, thread)}
+      title={title}
+      loadedAt={loadedAt}
+      onClose={onClose}
+    />
   ) : null;
 }
 
@@ -537,6 +544,7 @@ export function UnitView({
       {thread && (
         <ThreadDialog
           thread={thread}
+          group={groupOf(threads, thread)}
           title={title}
           loadedAt={loadedAt}
           onClose={() => setOpened(undefined)}

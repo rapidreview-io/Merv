@@ -204,8 +204,8 @@ shape of the failure, as `sandbox_forbidden`, `sandbox_not_found`, `sandbox_redi
 service refused it is the answer, so a refused write reports the service's own error code and
 message — `sandbox_operation_state`, `sandbox_validation` — and nothing else from the body.
 
-The published contract is the shared schema in `@merv/contracts/ui-manifest`
-(`packages/contracts/src/ui-manifest.ts`); `src/manifest.ts` drops nulls, validates the manifest
+The published contract is the shared schema in `@merv/ui/manifest`
+(`packages/ui/src/manifest.ts`); `src/manifest.ts` drops nulls, validates the manifest
 against it and filters acts. A column type this build does
 not know rejects the whole manifest; unknown keys are dropped rather than forwarded; field paths
 must be dot paths; the console link must be https or a path on the service itself. The service

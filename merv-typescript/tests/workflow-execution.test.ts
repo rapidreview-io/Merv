@@ -14,8 +14,8 @@ import {
   type WorkflowExecutionPolicy,
   type WorkflowLeaseOffer,
   type WorkflowPolicy,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
+import type { WorkflowSnapshot } from '@merv/workflows/models';
 
 import { ProjectScope } from '@merv/scope';
 import type { PostgresState } from '@merv/state';
