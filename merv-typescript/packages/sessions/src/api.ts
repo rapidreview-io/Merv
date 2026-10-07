@@ -23,6 +23,7 @@ export type SessionRoutes = Pick<
   | 'offer'
   | 'list'
   | 'get'
+  | 'control'
   | 'attach'
   | 'launchConnections'
   | 'huggingfaceAccess'
@@ -84,7 +85,7 @@ const managedRoute = (method: string, path: string): boolean =>
       '/code/commands/next',
       '/code/commands/complete',
     ].includes(path)) ||
-  (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
+  (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+(\/control)?$/.test(path)) ||
   (method === 'POST' &&
     /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections)$/.test(
       path,
@@ -152,13 +153,16 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(control|attach|heartbeat|release|halt|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections))?$/.exec(
       path,
     );
   if (route) {
     const sessionId = pathSegment(route[1]!);
     if (!route[2] && req.method === 'GET')
       return { session: await sessions.get(caller, sessionId) };
+    // What a runner's tick polls: the control fields alone, never the assignment.
+    if (route[2] === 'control' && req.method === 'GET')
+      return { control: await sessions.control(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
       return await sessions.dispatch.halt(caller, { ...(await r.json(haltInput)), sessionId });
     if (req.method === 'POST' && route[2] === 'huggingface-access') {

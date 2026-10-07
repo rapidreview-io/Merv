@@ -136,7 +136,7 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
     );
   return { ...parsed.data, profiles };
 }
-const liveSession = (session: Session) =>
+const liveSession = (session: Pick<Session, 'status'>) =>
   session.status === 'offered' || session.status === 'active';
 const platformOf = (profile: RunnerProfile): RunnerPlatform => ({
   name: profile.name,
@@ -646,7 +646,7 @@ export class MachineRunner implements Runner {
         this.ledger.completeRequest(pending.platform.name, pending.requestId);
     }
   }
-  private deadline(session: Session): number {
+  private deadline(session: Pick<Session, 'expiresAt' | 'hardDeadline'>): number {
     return Math.min(Date.parse(session.expiresAt), Date.parse(session.hardDeadline));
   }
   /** One tick of a launch's supervision; true once it has ended and owes nothing more. The
@@ -654,9 +654,17 @@ export class MachineRunner implements Runner {
   private async reconcileLaunch(initial: LaunchRecord): Promise<boolean> {
     let record = this.ledger.get(initial.id)!;
     if (terminalLaunch(record) && record.metadata.remoteClosed === true) return this.settle(record);
-    let session: Session;
+    // A launch not yet started reads the whole session its workspace is prepared from. A started
+    // one polls only the control fields; the rest is what its lease and attach gave it.
+    const launching = record.status === 'reserved' || record.status === 'starting';
+    let session: SessionView, full: Session | undefined;
     try {
-      session = await this.client.get(record.sessionId, this.ledger.runnerId);
+      session = launching
+        ? view((full = await this.client.get(record.sessionId, this.ledger.runnerId)))
+        : {
+            ...(record.metadata.session as unknown as SessionView),
+            ...(await this.client.control(record.sessionId, this.ledger.runnerId)),
+          };
     } catch (error) {
       // A session refused for good is stopped once and settled with no release. A 404 is
       // final only because a server answers 503 while a route's owning plugin is unmounted.
@@ -667,7 +675,7 @@ export class MachineRunner implements Runner {
       throw error;
     }
     record = this.save(record.id, {
-      session: view(session),
+      session,
       ...(session.hostRef === record.id ? { attached: true } : {}),
     });
     if (!liveSession(session)) {
@@ -706,7 +714,7 @@ export class MachineRunner implements Runner {
         return terminalLaunch(record) && this.settle(record);
       }
     }
-    if (record.status === 'reserved' || record.status === 'starting') {
+    if (full) {
       if (this.stopping) return false;
       const profile = validateProfile(record.metadata.profile);
       // What a failure costs: the workspace before the attach, the launch after it.
@@ -718,16 +726,15 @@ export class MachineRunner implements Runner {
         }
         const driver = this.driverOf(record);
         if (!driver) throw new WorkspaceDeferred('driver_absent', 'workspace_driver_missing');
-        const workspace = await driver.prepare(record, session);
+        const workspace = await driver.prepare(record, full);
         outcome = 'launch_failed';
         // Preparation may take time; the attach route rechecks current admission before spawn.
-        let prompt: string;
-        ({ session, prompt } = await this.client.attach(
+        const { session, prompt } = await this.client.attach(
           record.sessionId,
           this.ledger.runnerId,
           record.id,
           workspace.snapshot,
-        ));
+        );
         this.save(record.id, { session: view(session), attached: true });
         if (!liveSession(session) || this.stopping) return false;
         const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
@@ -806,12 +813,12 @@ export class MachineRunner implements Runner {
         expires = Date.parse(session.expiresAt);
       const slid = Math.min(this.clock() + 4 * 3_600_000, hard);
       if (slid - expires >= (slid === hard ? 1 : 900_000)) {
-        session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
-        record = this.save(record.id, { session: view(session) });
+        session = view(await this.client.heartbeat(record.sessionId, this.ledger.runnerId));
+        record = this.save(record.id, { session });
       }
       if (this.deadline(session) > record.deadline + 60_000)
         await this.host.extendDeadline(record.id, this.deadline(session));
-      await this.reconcileCodeCommands(record, view(session));
+      await this.reconcileCodeCommands(record, session);
     }
     return false;
   }

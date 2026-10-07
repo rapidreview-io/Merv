@@ -359,7 +359,7 @@ test('a launch declares before its release and delivers after its workspace resu
   assert.equal(runner.snapshot().launches[0]?.transcriptPending, true);
   await until(runner, () => !runner.snapshot().launches[0]?.transcriptPending, 'the stamp');
   assert.deepEqual(
-    sessions.events.filter((e) => !['get', 'attach', 'heartbeat'].includes(e)),
+    sessions.events.filter((e) => !['get', 'control', 'attach', 'heartbeat'].includes(e)),
     ['declare', 'release', 'workspace-result', 'deliver', 'PUT', 'deliver'],
   );
   const [put] = sessions.puts;

@@ -20,6 +20,7 @@ import type {
   SessionDeferral,
   SessionReleaseOutcome,
   SessionConversationDeclaration,
+  SessionControlView,
   SessionTranscript,
   SessionTranscriptDeclaration,
   SessionUsageReport,
@@ -94,6 +95,19 @@ const sessionSchema = z
       .optional(),
   })
   .passthrough();
+const controlSchema = z
+  .object({
+    id: z.string().regex(/^session_[A-Za-z0-9_-]+$/),
+    projectId: label,
+    runnerId: label,
+    hostRef: z.string().min(1).max(1024).nullable(),
+    status: z.enum(SESSION_STATUSES),
+    expiresAt: z.string().datetime(),
+    hardDeadline: z.string().datetime(),
+    closeReason: z.string().nullable(),
+    outcome: z.string().nullable().optional(),
+  })
+  .strip();
 const leaseSchema = z.object({ session: z.union([z.null(), sessionSchema]), reason: label });
 const keptSchema = z
   .object({
@@ -299,6 +313,27 @@ export class RunnerClient {
       id,
       runnerId,
     });
+  }
+  /** What a tick reads of a session: its status, deadlines and end. A server too old to answer
+   *  that route is read the whole session, of which the same fields are kept. */
+  async control(id: string, runnerId: string): Promise<SessionControlView> {
+    const path = `/sessions/${encodeURIComponent(id)}`;
+    const value = await this.request(`${path}/control`).then(
+      (reply) => reply?.control,
+      async (error: unknown) => {
+        if (!(error instanceof RunnerControlError && error.code === 'not_found')) throw error;
+        return (await this.request(path))?.session;
+      },
+    );
+    const result = controlSchema.safeParse(value);
+    if (
+      !result.success ||
+      result.data.id !== id ||
+      result.data.projectId !== this.projectId ||
+      result.data.runnerId !== runnerId
+    )
+      throw new RunnerControlError('invalid_control_response', 0);
+    return result.data as SessionControlView;
   }
   async attach(
     id: string,
