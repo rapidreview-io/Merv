@@ -21,7 +21,7 @@ flowchart BT
     fleet["fleet"]
     merv_fleet_tools["merv-fleet-tools"]
     merv_fleet_ui["merv-fleet-ui"]
-    fleetWorkflow["fleetWorkflow"]
+    merv_fleet_workflow["merv-fleet-workflow"]
     identity["identity"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
@@ -133,12 +133,12 @@ flowchart BT
   merv_fleet_ui --> fleet
   merv_fleet_ui --> scope
   merv_fleet_ui --> ui
-  fleetWorkflow --> fleet
-  fleetWorkflow --> sessions
-  fleetWorkflow --> scope
-  fleetWorkflow --> api
-  fleetWorkflow --> state
-  fleetWorkflow --> tools
+  merv_fleet_workflow --> fleet
+  merv_fleet_workflow --> sessions
+  merv_fleet_workflow --> scope
+  merv_fleet_workflow --> api
+  merv_fleet_workflow --> state
+  merv_fleet_workflow --> tools
   knowledge --> state
   knowledge --> scope
   knowledge --> tasks
@@ -211,6 +211,7 @@ flowchart BT
   reviews --> scope
   reviews --> artifacts
   reviews --> domainEvents
+  reviews -. optional .-> workflows
   sandboxes -. optional .-> api
   sandboxes -. optional .-> artifacts
   sandboxes -. optional .-> state

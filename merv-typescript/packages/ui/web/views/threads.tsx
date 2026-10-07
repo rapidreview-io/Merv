@@ -408,8 +408,7 @@ export function ThreadCompose({
   const catalog = useTool<{ tools?: { name: string }[] }>(
     sends || !may || !thread.asks ? null : '/tools',
   );
-  const asks =
-    !sends && !!thread.asks && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
+  const asks = !sends && !!thread.asks && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
   const [draft, setDraft] = useState('');
   const send = useCommand<{ message?: { id?: unknown } } | null>({
     tool: sends ? path : ASK,

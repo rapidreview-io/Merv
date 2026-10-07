@@ -2,7 +2,7 @@
   "snapshot": "2026-10-07",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
   "pluginCount": 71,
-  "serviceProviders": 32,
+  "serviceProviders": 31,
   "toolAdapters": 18,
   "uiAdapters": 16,
   "apiAdapters": 5,
@@ -10,8 +10,8 @@
   "apiEntries": 39,
   "serverPlugins": 70,
   "machinePlugins": 1,
-  "directDependencyCount": 196,
-  "optionalDependencyCount": 13,
+  "directDependencyCount": 197,
+  "optionalDependencyCount": 14,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -23,7 +23,6 @@
     "experiments": 4,
     "feed": 2,
     "fleet": 4,
-    "fleetWorkflow": 0,
     "identity": 1,
     "knowledge": 1,
     "legacyHistory": 1,
@@ -44,7 +43,7 @@
     "tools": 24,
     "ui": 16,
     "web": 1,
-    "workflows": 10
+    "workflows": 11
   },
   "plugins": [
     {
@@ -361,9 +360,7 @@
     {
       "plugin": "merv-fleet-workflow",
       "source": "packages/fleet/src/workflow.ts",
-      "provides": [
-        "fleetWorkflow"
-      ],
+      "provides": [],
       "requires": [
         "fleet",
         "sessions",
@@ -737,7 +734,9 @@
         "artifacts",
         "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "workflows"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

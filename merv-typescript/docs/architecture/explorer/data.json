@@ -104,7 +104,7 @@
         "label": "Execution bindings",
         "purpose": "Fleet Workflow binds dispatch to hosting. Runner executes on a separate machine. These connect execution boundaries.",
         "members": [
-          "fleetWorkflow",
+          "merv-fleet-workflow",
           "runner"
         ]
       },
@@ -296,7 +296,7 @@
       "members": [
         "codeWork",
         "fleet",
-        "fleetWorkflow",
+        "merv-fleet-workflow",
         "pi",
         "secrets"
       ],
@@ -562,6 +562,11 @@
           "readOnly": false
         },
         {
+          "name": "code.publication.read",
+          "description": "Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.",
+          "readOnly": true
+        },
+        {
           "name": "code.publication.sync",
           "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
           "readOnly": false
@@ -683,6 +688,11 @@
           "name": "code.publication.merge",
           "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.",
           "readOnly": false
+        },
+        {
+          "name": "code.publication.read",
+          "description": "Read one integration with its pull request as GitHub has it now: the files, commits, reviews and checks. Merv’s pages read it; agents use code.status.",
+          "readOnly": true
         },
         {
           "name": "code.publication.sync",
@@ -1124,9 +1134,7 @@
     {
       "plugin": "merv-fleet-workflow",
       "source": "packages/fleet/src/workflow.ts",
-      "provides": [
-        "fleetWorkflow"
-      ],
+      "provides": [],
       "requires": [
         "fleet",
         "sessions",
@@ -1139,9 +1147,9 @@
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
-      "id": "fleetWorkflow",
+      "id": "merv-fleet-workflow",
       "group": "other",
-      "owner": "fleetWorkflow",
+      "owner": "merv-fleet-workflow",
       "label": "Fleet Workflow",
       "purpose": "Connects workflow session dispatch to Fleet-hosted workers, preserving assignment authority, runtime identity and lease recovery.",
       "exposedTools": []
@@ -1986,7 +1994,9 @@
         "artifacts",
         "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "workflows"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -2351,6 +2361,11 @@
           "readOnly": false
         },
         {
+          "name": "session.ask_thread",
+          "description": "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer, and a model-token budget charged to you. Reuse requestId after an uncertain response.",
+          "readOnly": false
+        },
+        {
           "name": "session.dispatch",
           "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
           "readOnly": false
@@ -2372,12 +2387,12 @@
         },
         {
           "name": "session.message.ack",
-          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.",
+          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.",
           "readOnly": false
         },
         {
           "name": "session.messages",
-          "description": "Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.",
+          "description": "Assigned worker only: read your queue, the durable messages to your thread with their acknowledgements. sessionId, if given, must be your own. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply. A person reads a thread's messages with session.thread_messages.",
           "readOnly": true
         },
         {
@@ -2397,7 +2412,7 @@
         },
         {
           "name": "session.thread_messages",
-          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
+          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
           "readOnly": true
         },
         {
@@ -2465,6 +2480,11 @@
           "readOnly": false
         },
         {
+          "name": "session.ask_thread",
+          "description": "Ask any thread's agent a question (threadId, from session.threads or the Agents page), live, dormant or retired: whoever may write in the project. A short inquiry visit resumes that agent's saved conversation, with read-only tools and no lease on its work, answers, and stops; its reply arrives on the question's message in session.thread_messages, where its inquiry status says queued, running, answered, unanswered or expired. It never moves the work or changes the agent's conversation: the agent's next work visit resumes as it left off and is told of the exchange. One question at a time per thread (inquiry_busy); a thread that kept no conversation cannot be asked (inquiry_unkept). The visit has 10 minutes to be taken by a machine and 10 to answer, and a model-token budget charged to you. Reuse requestId after an uncertain response.",
+          "readOnly": false
+        },
+        {
           "name": "session.dispatch",
           "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
           "readOnly": false
@@ -2486,12 +2506,12 @@
         },
         {
           "name": "session.message.ack",
-          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.",
+          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.",
           "readOnly": false
         },
         {
           "name": "session.messages",
-          "description": "Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.",
+          "description": "Assigned worker only: read your queue, the durable messages to your thread with their acknowledgements. sessionId, if given, must be your own. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply. A person reads a thread's messages with session.thread_messages.",
           "readOnly": true
         },
         {
@@ -2511,7 +2531,7 @@
         },
         {
           "name": "session.thread_messages",
-          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
+          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
           "readOnly": true
         },
         {
@@ -3257,32 +3277,32 @@
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "fleet",
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "sessions",
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "scope",
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "api",
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "state",
       "optional": false
     },
     {
-      "from": "fleetWorkflow",
+      "from": "merv-fleet-workflow",
       "to": "tools",
       "optional": false
     },
@@ -3647,6 +3667,11 @@
       "optional": false
     },
     {
+      "from": "reviews",
+      "to": "workflows",
+      "optional": true
+    },
+    {
       "from": "sandboxes",
       "to": "api",
       "optional": true
@@ -3944,9 +3969,9 @@
   ],
   "counts": {
     "plugins": 71,
-    "providers": 32,
-    "adapters": 39,
-    "dependencies": 196
+    "providers": 31,
+    "adapters": 40,
+    "dependencies": 197
   },
   "network": [
     {

@@ -189,7 +189,7 @@
       "label": "Fleet",
       "purpose": "Owns machine allocation, leases and resource lifecycle through Sandboxes. Allocation and worker session authority remain separate."
     },
-    "fleetWorkflow": {
+    "merv-fleet-workflow": {
       "label": "Fleet Workflow",
       "purpose": "Connects workflow session dispatch to Fleet-hosted workers, preserving assignment authority, runtime identity and lease recovery."
     },
@@ -269,7 +269,7 @@
         "id": "runtime",
         "label": "Execution bindings",
         "purpose": "Fleet Workflow binds dispatch to hosting. Runner executes on a separate machine. These connect execution boundaries.",
-        "members": ["fleetWorkflow", "runner"]
+        "members": ["merv-fleet-workflow", "runner"]
       },
       {
         "id": "transport",
