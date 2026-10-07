@@ -851,7 +851,9 @@ test('PostgreSQL serializes writers across app instances before allocating event
   const [one, two] = await Promise.all([first, second]);
   assert.ok(two.id > one.id);
   assert.deepEqual(
-    (await state.eventBatch(0, 10)).map((item) => item.id),
+    (await state.read((sql) => sql.all<{ id: number }>('SELECT id FROM events ORDER BY id'))).map(
+      (item) => item.id,
+    ),
     [one.id, two.id],
   );
 });

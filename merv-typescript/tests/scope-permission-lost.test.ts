@@ -35,8 +35,8 @@ test('State.nextEvent finds the first event of the named types after a cursor', 
   const start = await state.eventHead();
   const a = await append('sample.a', 's');
   const b = await append('sample.b', 's');
-  assert.equal(await state.nextEvent(start, ['sample.b', 'sample.a']), a);
-  assert.equal(await state.nextEvent(a, ['sample.a', 'sample.b']), b);
+  assert.equal((await state.nextEvent(start, ['sample.b', 'sample.a']))?.id, a);
+  assert.equal((await state.nextEvent(a, ['sample.a', 'sample.b']))?.id, b);
   assert.equal(await state.nextEvent(a, ['sample.a']), undefined);
   await assert.rejects(state.nextEvent(start, []), { code: 'invalid_cursor' });
 });
