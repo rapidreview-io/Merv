@@ -655,6 +655,7 @@ const said = (content: object[], stopReason = 'stop') => ({
 });
 
 test('older tool results and arguments are clipped before the first exchange is dropped', async () => {
+  // Past the 128 KB a 32,000-token window holds: 4 bytes a token.
   const checkpoint = tree([
     { role: 'user', content: 'Remember the budget is 5k', timestamp: 1 },
     said([{ type: 'text', text: 'Noted: 5k.' }]),
@@ -674,7 +675,7 @@ test('older tool results and arguments are clipped before the first exchange is 
       role: 'toolResult',
       toolCallId: 'call_1',
       toolName: 'project_get',
-      content: [{ type: 'text', text: `Start ${'r'.repeat(40_000)} end` }],
+      content: [{ type: 'text', text: `Start ${'r'.repeat(140_000)} end` }],
       isError: false,
       timestamp: 3,
     },
@@ -691,9 +692,11 @@ test('older tool results and arguments are clipped before the first exchange is 
   assert.ok(sent.includes('omitted') && !sent.includes('a'.repeat(2_000)));
 });
 
-test('one write argument over the history budget still completes, and the next turn restores', async () => {
+test('one write argument past the window still completes: the turn compacts, and the next turn restores', async () => {
   const tools = [{ ...tool, name: 'artifact.create', readOnly: false }];
-  const huge = 'z'.repeat(40_000);
+  // About 35,000 tokens, past a 32,000-token window, and past the 128 KB of history it holds.
+  const huge = 'z'.repeat(140_000);
+  const stored = 'Summary: an artifact was stored.';
   const requests: Record<string, unknown>[] = [];
   let issued = 0;
   const server = slotServer(3, {
@@ -716,6 +719,7 @@ test('one write argument over the history budget still completes, and the next t
     },
     model(_name, body) {
       requests.push(body);
+      if (summarizing(body)) return new Response(sse([message(stored)], stored));
       return new Response(
         requests.length === 1
           ? sse([
@@ -729,9 +733,21 @@ test('one write argument over the history budget still completes, and the next t
   await server.run();
   assert.equal(server.bodies('fail').length, 0);
   assert.equal(server.bodies('complete').length, 2);
-  assert.ok(JSON.stringify(requests[1].input).includes(huge));
-  assert.ok(!JSON.stringify(requests[2].input).includes(huge));
-  assert.match(JSON.stringify(requests[2].input), /Question t1/);
+  // The turn's start is summarized before its next call, which keeps the write and its result.
+  const [summaries, answers] = [
+    requests.filter(summarizing),
+    requests.filter((body) => !summarizing(body)),
+  ];
+  assert.equal(summaries.length, 1);
+  assert.match(JSON.stringify(summaries[0].input), /Question t1/);
+  assert.equal(answers.length, 3);
+  assert.ok(JSON.stringify(answers[1].input).includes(huge));
+  assert.ok(JSON.stringify(answers[1].input).includes(stored));
+  // The next turn starts from the summary, noting the write left out: too long to send again.
+  const next = JSON.stringify(answers[2].input);
+  assert.ok(!next.includes(huge) && next.includes(stored) && next.includes('Question t2'));
+  assert.match(next, /1 earlier steps of this answer are left out/);
+  assert.ok(!next.includes('function_call'));
 });
 
 test('no output cap is sent; an answer the model itself stops for length says so', async () => {
@@ -760,10 +776,10 @@ test('every tool is sent with strict false, so the model may leave an optional i
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  // Bytes bind the first conversation (gpt-6-luna's 304 KB beside 128 KB of tool results); relay
+  // Bytes bind the first conversation (1 MB, where compaction has not bounded it first); relay
   // items bind the second.
   for (const [turns, filler, kept] of [
-    [10, 60_000, 5],
+    [20, 60_000, 16],
     [200, 0, 150],
   ]) {
     const at = new Date().toISOString();
@@ -870,10 +886,10 @@ test('a long earlier answer is history like any other, sent whole while the wind
 });
 
 test('an answer of many steps is saved and sent on, however many of them fit the window', async () => {
-  // 31 calls, each writing a section and reading a project: no one text over 2,000 characters,
-  // about 144 KB in all, past the old 128 KB of history.
+  // 60 calls, each writing a section and reading a project: no one text over 2,000 characters,
+  // past the 128 KB of history a 32,000-token window holds.
   const sections = Array.from(
-    { length: 31 },
+    { length: 60 },
     (_, index) => `Section ${index + 1}: ${'s'.repeat(1_800)}`,
   );
   const toolResult = { summary: 'x'.repeat(2_000) };
@@ -885,14 +901,14 @@ test('an answer of many steps is saved and sent on, however many of them fit the
     assert.deepEqual(app.failures, [], model);
     assert.equal(app.completions.length, 3);
     const first = app.completions[0];
-    assert.equal(first.messages.length, 32);
+    assert.equal(first.messages.length, 61);
     // Main keeps a checkpoint only if it ends at the answer's own last entry.
     const saved = decodeCheckpoint({ content: first.checkpoint, hash: first.checkpointHash });
     assert.equal(saved.leafId, saved.entries.at(-1)!.id);
-    const sent = JSON.stringify(app.modelRequests[32].input);
+    const sent = JSON.stringify(app.modelRequests[61].input);
     const whole = model === 'gpt-6-luna';
     assert.equal(sent.includes(sections[0]), whole, model);
-    assert.ok(sent.includes(sections[30]) && sent.includes('Question 1'), model);
+    assert.ok(sent.includes(sections[59]) && sent.includes('Question 1'), model);
     assert.equal(/\d+ earlier steps of this answer are left out/.test(sent), !whole, model);
   }
 });
@@ -1273,7 +1289,11 @@ function slotServer(
     const body = JSON.parse(await incoming.text()) as Record<string, unknown>;
     calls.push({ route, body });
     if (route === 'responses')
-      return handlers.model(JSON.stringify(body.input).match(/.*Question (\w+)/)![1], body);
+      // The last prompt named; a summary of a turn's start may name none.
+      return handlers.model(
+        [...JSON.stringify(body.input).matchAll(/Question (\w+)/g)].at(-1)?.[1] ?? '',
+        body,
+      );
     if (route === 'next') {
       const reply = handlers.next(bodies('next').length, body);
       return reply instanceof Response ? reply : json(reply);
@@ -1586,4 +1606,225 @@ test('a conversation begun under older instructions continues under Main’s cur
   assert.match(developer[0], /^You are a read-only assistant\./);
   assert.match(developer[1], /^You are Merv’s agent\. Current instructions\./);
   assert.ok(!developer[1].includes('read-only assistant'));
+});
+
+/** `turns` earlier exchanges of a conversation saved before compaction existed, each prompt
+ * `filler` characters long; the last answer says it filled `tokens` of the model's window. */
+function earlier(
+  turns: number,
+  filler: number,
+  tokens = 30_100,
+  first: Record<string, unknown>[] = [],
+) {
+  const at = new Date().toISOString();
+  const entries: Record<string, unknown>[] = [...first];
+  for (let turn = 1; turn <= turns; turn++) {
+    entries.push(
+      {
+        type: 'message',
+        id: `user_${turn}`,
+        parentId: (entries.at(-1)?.id as string | undefined) ?? null,
+        timestamp: at,
+        message: {
+          role: 'user',
+          content: `Question old${turn} ${'y'.repeat(filler)}`,
+          timestamp: 1,
+        },
+      },
+      {
+        type: 'message',
+        id: `answer_${turn}`,
+        parentId: `user_${turn}`,
+        timestamp: at,
+        message: {
+          ...said([{ type: 'text', text: `Answer ${turn}` }]),
+          model: 'gpt-6-luna',
+          usage: {
+            input: tokens - 100,
+            output: 100,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: turn === turns ? tokens : 30_100,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        },
+      },
+    );
+  }
+  const content = JSON.stringify({
+    version: 1,
+    header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
+    entries,
+    leafId: entries.at(-1)!.id,
+  });
+  return { content, hash: digest(content) };
+}
+/** A model reply that says the request and answer filled `tokens` of the window. */
+const filled = (body: string, tokens: number) =>
+  body.replace(
+    '"usage":{"input_tokens":12,"output_tokens":8}',
+    `"usage":{"input_tokens":${tokens - 8},"output_tokens":8,"total_tokens":${tokens}}`,
+  );
+const summarizing = (body: Record<string, unknown>) =>
+  JSON.stringify(body.input).includes('context summarization assistant');
+/** A conversation of `turns` turns, the first restoring `checkpoint`; each later one restores
+ * the checkpoint its turn before saved. */
+function conversation(
+  turns: number,
+  checkpoint: PiWork['checkpoint'],
+  model: (body: Record<string, unknown>, requests: Record<string, unknown>[]) => Response,
+) {
+  const requests: Record<string, unknown>[] = [];
+  let issued = 0;
+  const server = slotServer(3, {
+    next() {
+      const done = server.bodies('complete');
+      if (done.length === turns) server.controller.abort();
+      if (issued > done.length || issued === turns) return { work: null };
+      issued++;
+      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
+      return {
+        work: {
+          ...assignment(`t${issued}`, { conversationId: 'conv_a' }),
+          checkpoint: previous
+            ? { content: previous.checkpoint, hash: previous.checkpointHash }
+            : checkpoint,
+        },
+      };
+    },
+    model(_name, body) {
+      requests.push(body);
+      return model(body, requests);
+    },
+  });
+  return {
+    server,
+    requests,
+    completions: () => server.bodies('complete') as unknown as PiCompletion[],
+  };
+}
+const summary = 'Summary: the budget is 5k.';
+
+test('a long conversation compacts once past 90% of the window, and the next turn starts from its summary', async () => {
+  // Six earlier exchanges of 10,000 tokens each; the first answer fills 250,000 of gpt-6-luna's
+  // 272,000 tokens, past the 244,800 where Codex compacts too.
+  const { server, requests, completions } = conversation(2, earlier(6, 40_000), (body, sent) =>
+    summarizing(body)
+      ? new Response(sse([message(summary)], summary))
+      : new Response(
+          filled(sse([message('Answer')], 'Answer'), sent.length === 1 ? 250_000 : 9_000),
+        ),
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  const summaries = requests.filter(summarizing);
+  assert.equal(summaries.length, 1);
+  // The summary is one more call through the relay, which accepts it as it does any other.
+  const parsed = piResponsesSchema.safeParse(summaries[0]);
+  assert.ok(parsed.success && validPiPayload(parsed.data, ['project_get']));
+  assert.equal(summaries[0].tools, undefined);
+  assert.ok(JSON.stringify(summaries[0].input).includes('Question old1 '));
+  const [first, second] = completions();
+  assert.deepEqual(first.messages, [{ role: 'assistant', text: 'Answer' }]);
+  assert.deepEqual(second.messages, [{ role: 'assistant', text: 'Answer' }]);
+  assert.ok(
+    server
+      .bodies('progress')
+      .some((body) => JSON.stringify(body.events).includes('Compacted earlier conversation')),
+  );
+  // The checkpoint holds the summary, then what Pi kept: the oldest exchanges are gone.
+  const saved = decodeCheckpoint({ content: first.checkpoint, hash: first.checkpointHash });
+  assert.equal(saved.entries[0].type, 'compaction');
+  assert.equal(saved.leafId, saved.entries.at(-1)!.id);
+  assert.ok(
+    !first.checkpoint.includes('Question old1 ') && first.checkpoint.includes('Question t1'),
+  );
+  // The next turn sends the current instructions, the summary and what came after it.
+  const next = requests.at(-1)!;
+  const sent = JSON.stringify(next.input);
+  assert.equal((next.input as { role?: string }[])[0].role, 'developer');
+  assert.ok(sent.includes(summary) && sent.includes('Question t1') && sent.includes('Question t2'));
+  assert.ok(sent.includes('Question old6 ') && !sent.includes('Question old1 '));
+});
+
+test('a checkpoint saved before compaction restores, and compacts before the turn if it is due', async () => {
+  const { server, requests, completions } = conversation(1, earlier(6, 40_000, 250_000), (body) =>
+    summarizing(body)
+      ? new Response(sse([message(summary)], summary))
+      : new Response(sse([message('Answer')], 'Answer')),
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.length, 2);
+  assert.ok(summarizing(requests[0]));
+  assert.ok(JSON.stringify(requests[0].input).includes('Question old1 '));
+  const sent = JSON.stringify(requests[1].input);
+  assert.ok(
+    sent.includes(summary) && sent.includes('Question t1') && !sent.includes('Question old1 '),
+  );
+  assert.deepEqual(completions()[0].messages, [{ role: 'assistant', text: 'Answer' }]);
+});
+
+test('a failed summary keeps the conversation: the turn and the checkpoint fall back to the window', async () => {
+  // Eight exchanges of 60,000 characters: more than gpt-6-luna's window held before compaction
+  // (304 KB beside 128 KB of tool results), restored whole now that compaction bounds it.
+  const { server, requests, completions } = conversation(2, earlier(8, 60_000), (body, sent) => {
+    if (summarizing(body)) return json({ error: { message: 'unavailable' } }, 500);
+    // The first reply reads a project and fills 250,000 tokens: compaction is due before the next.
+    if (sent.length === 1) return new Response(filled(sse([call]), 250_000));
+    return new Response(sse([message('Answer')], 'Answer'));
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  // One summary is tried; once it fails the turn tries no other.
+  assert.equal(requests.filter(summarizing).length, 1);
+  assert.equal(requests.length, 4);
+  assert.ok(JSON.stringify(requests[0].input).includes('Question old1 '));
+  // The rest of the turn is sent within the window, as before compaction: newest exchanges first.
+  const after = JSON.stringify(requests[2].input);
+  assert.ok(!after.includes('Question old1 ') && after.includes('Question old8 '));
+  assert.ok(after.includes('Question t1') && after.includes('function_call_output'));
+  const [first, second] = completions();
+  assert.deepEqual(first.messages, [{ role: 'assistant', text: 'Answer' }]);
+  assert.deepEqual(second.messages, [{ role: 'assistant', text: 'Answer' }]);
+  const saved = decodeCheckpoint({ content: first.checkpoint, hash: first.checkpointHash });
+  assert.ok(saved.entries.every((entry) => entry.type !== 'compaction'));
+  assert.ok(first.checkpoint.length < 330_000 && first.checkpoint.includes('Question t1'));
+  assert.ok(JSON.stringify(requests[3].input).includes('Question t2'));
+  assert.ok(
+    server
+      .bodies('progress')
+      .every((body) => !JSON.stringify(body.events).includes('Compacted earlier conversation')),
+  );
+});
+
+test('a compacted conversation past the relay item cap keeps its summary and its newest exchanges', async () => {
+  const at = new Date().toISOString();
+  const compaction = {
+    type: 'compaction',
+    id: 'summary_1',
+    parentId: null,
+    timestamp: at,
+    summary,
+    firstKeptEntryId: 'user_1',
+    tokensBefore: 250_000,
+  };
+  const { server, requests, completions } = conversation(
+    1,
+    earlier(200, 0, 30_100, [compaction]),
+    () => new Response(sse([message('Answer')], 'Answer')),
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.length, 1);
+  // The summary is one relay item: 149 exchanges of two beside it, the oldest first.
+  const sent = JSON.stringify(requests[0].input);
+  assert.ok(sent.includes(summary));
+  assert.ok(sent.includes('Question old52 ') && !sent.includes('Question old51 '));
+  const saved = decodeCheckpoint({
+    content: completions()[0].checkpoint,
+    hash: completions()[0].checkpointHash,
+  });
+  assert.equal(saved.entries[0].type, 'compaction');
+  assert.ok(saved.entries.length <= 300);
 });

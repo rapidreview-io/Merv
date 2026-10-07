@@ -139,8 +139,8 @@ for (const upstreamStatus of [
     ];
     const burstText = burstDeltas.join('');
     // Far past the old 4096-token cap, 128,000-character message, 64-event buffer and 256 KiB
-    // relay frame; the next turn carries it as history.
-    const longDeltas = Array.from({ length: 80 }, (_, index) => `${index}`.padEnd(8192, 'x'));
+    // relay frame, and the 1 MB of history a turn holds; the next turn carries it as history.
+    const longDeltas = Array.from({ length: 130 }, (_, index) => `${index}`.padEnd(8192, 'x'));
     const grantExpiresAt = expiresAt();
     let toolInvocations = 0;
     const relay = piRelay({
@@ -357,7 +357,7 @@ for (const upstreamStatus of [
       const history = JSON.stringify(piResponsesSchema.parse(forwarded[1]).input);
       assert.match(history, /"0x{8191}1x/);
       assert.match(history, /characters left out/);
-      assert.match(history, /79x+"/);
+      assert.match(history, /129x+"/);
       assert.equal(completions[1]?.messages[0]?.text, 'Offline fixture complete');
     }
     if (upstreamStatus === 'revoked' || upstreamStatus === 'cancelled')
