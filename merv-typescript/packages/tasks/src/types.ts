@@ -98,8 +98,6 @@ export interface Tasks {
   list(caller: Caller): Promise<TaskRecord[]>;
   /** How many tasks are still open, for the navigation badge, without reading each one. */
   active(caller: Caller): Promise<number>;
-  /** What the optional Code plugin holds for a Git task; null without it. */
-  codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
@@ -126,11 +124,19 @@ export interface Tasks {
   running(caller: Caller, include?: Iterable<string>): Promise<RunningNode[]>;
   /** A task's sidebar on the Running page; null when no task of this project has the id. Reads only. */
   runningPanel(caller: Caller, taskId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
-  /** What its record page polls: its graph, read without checks, and its history from it. */
+  /**
+   * What its record page polls, in one snapshot: the task, its graph read without checks, its
+   * history from that graph, and what the optional Code plugin holds for it (null without it).
+   */
   page(
     caller: Caller,
     taskId: string,
-  ): Promise<{ process: ProcessGraph; history: RunningUnitEntry[] }>;
+  ): Promise<{
+    task: Task;
+    process: ProcessGraph;
+    history: RunningUnitEntry[];
+    codeUnit: CodeUnit | null;
+  }>;
 }
 
 declare module 'cordis' {

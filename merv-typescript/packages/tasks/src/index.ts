@@ -46,7 +46,6 @@ import type {
   TaskReview,
   Tasks,
 } from './types.js';
-import type { CodeUnit } from '@merv/code-work/models';
 import {
   serviceOwned,
   serviceWorkflow,
@@ -422,21 +421,6 @@ export class TaskService implements Tasks {
 
   async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
     return await createTask(this, caller, input, transaction);
-  }
-
-  /**
-   * What Code holds for a task: its pinned base, where a base stands, its acceptance. Null
-   * while Code is unavailable or knows no such unit. It is kept off the task record, which work
-   * contexts embed and hash.
-   */
-  async codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null> {
-    caller = structuredClone(caller);
-    try {
-      return await this.code.unit(caller, taskId);
-    } catch (error) {
-      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
-      throw error;
-    }
   }
 
   async get(caller: Caller, taskId: string): Promise<Task> {

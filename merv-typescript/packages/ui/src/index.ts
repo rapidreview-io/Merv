@@ -76,7 +76,7 @@ export class UiRegistry implements Ui {
   }
 
   async describe(caller: Caller): Promise<UiRowDescription[]> {
-    return await mapAsync(this.rows(), async ({ status, read, home: _home, ...row }) => {
+    return await mapAsync(this.rows(), async ({ status, read, page, home: _home, ...row }) => {
       let live: UiRowStatus = {};
       try {
         live = (await status?.(caller)) ?? {};
@@ -86,7 +86,7 @@ export class UiRegistry implements Ui {
           detail: error instanceof Error ? error.message : 'Status is unavailable',
         };
       }
-      return { ...row, status: live, readable: typeof read === 'function' };
+      return { ...row, status: live, readable: !!read || !!page };
     });
   }
 
@@ -95,6 +95,11 @@ export class UiRegistry implements Ui {
     // A row this composition does not have and a row that carries no read read differently,
     // under the one code a client already knows.
     check(row, 'row_unreadable', `No row named ${clip(String(rowId), 80)} in this project`, 404);
+    if (row.page) {
+      const id = params?.id;
+      check(typeof id === 'string' && id.length > 0, 'invalid_input', 'params.id names the record');
+      return JSON.parse(JSON.stringify(await row.page(caller, id))) as Json;
+    }
     check(row.read, 'row_unreadable', `Row has no readable data: ${row.id}`, 404);
     return await row.read(caller, params);
   }

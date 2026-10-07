@@ -1,6 +1,7 @@
 import type { ProcessGraph, WorkflowDependency } from '@merv/workflows/models';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useTool } from './api';
 import { KindLabel, StatusPill, cx, toneOf, useNow, words } from './components';
 import { elapsed } from './liveness';
 import { rowOf, useRows, useStateWords, type StateWords } from './navigation';
@@ -372,5 +373,22 @@ export function Gate({ graph, children }: { graph?: ProcessGraph; children?: Rea
         ))}
       {children}
     </div>
+  );
+}
+
+/**
+ * A record page's one read: the record and the stage it stands at, from its row's `page`, which
+ * runs no action's check. It is read again every 8 s while the record is open; once it has
+ * ended, only every `ended` ms, or never without it.
+ */
+export function useRecordRead<T extends { process: ProcessGraph }>(
+  row: { id: string },
+  id: string,
+  ended?: number,
+) {
+  return useTool<T>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
+    { every: (data) => (data?.process.terminal ? ended : 8000) },
   );
 }

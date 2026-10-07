@@ -1,5 +1,6 @@
 import { absent, mapAsync } from '@merv/contracts';
 import { unitFiles } from '@merv/reviews/unit-history';
+import { recordUnit } from '@merv/code-work/record-unit';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -10,7 +11,6 @@ import {
   inTransaction,
   keyId,
   keyKind,
-  MervError,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -65,7 +65,6 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
-import type { CodeUnit } from '@merv/code-work/models';
 import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
 import type { Paper } from '@merv/paper/types';
 export type * from './types.js';
@@ -305,10 +304,7 @@ export class ExperimentService implements Experiments {
    * check (a submission's checks read the bytes it would submit, and the page draws no action),
    * and its history as its sidebar tells it, from that same graph and its reviews.
    */
-  async page(
-    caller: Caller,
-    experimentId: string,
-  ): Promise<{ experiment: Experiment; process: ProcessGraph; history: RunningUnitEntry[] }> {
+  async page(caller: Caller, experimentId: string): ReturnType<Experiments['page']> {
     this.open();
     caller = structuredClone(caller);
     const read = await inTransaction(this.state, undefined, async (tx) => {
@@ -325,6 +321,7 @@ export class ExperimentService implements Experiments {
       experiment: read.experiment,
       process: graph,
       history: experimentHistory(read.experiment, graph, read.reviews),
+      codeUnit: await recordUnit(this.code, caller, experimentId),
     };
   }
   private async standingRows(
@@ -541,21 +538,6 @@ export class ExperimentService implements Experiments {
           )) ?? [],
       };
     });
-  }
-  /**
-   * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
-   * Null while Code is unavailable or knows no such unit. It is kept off the experiment record,
-   * which leases freeze.
-   */
-  async codeUnit(caller: Caller, id: string): Promise<CodeUnit | null> {
-    this.open();
-    caller = structuredClone(caller);
-    try {
-      return await this.code.unit(caller, id);
-    } catch (error) {
-      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
-      throw error;
-    }
   }
   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
     this.open();

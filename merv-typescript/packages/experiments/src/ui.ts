@@ -1,6 +1,4 @@
 import type { Context } from 'cordis';
-import { check } from '@merv/contracts';
-import type { Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
 import { EXPERIMENT_STATES } from './running.js';
@@ -33,20 +31,7 @@ export const experimentsUiPlugin = {
         },
         // One record, with the stage it stands at and its history, both from one graph read
         // without running an action's check: the page polls this and draws no action.
-        read: async (caller, params) => {
-          const id = params?.id;
-          check(
-            typeof id === 'string' && id.length > 0,
-            'invalid_input',
-            'params.id names the record',
-          );
-          return JSON.parse(
-            JSON.stringify({
-              ...(await experiments.page(caller, id)),
-              codeUnit: await experiments.codeUnit(caller, id),
-            }),
-          ) as Json;
-        },
+        page: (caller, id) => experiments.page(caller, id),
         // Open work: an experiment still on its way to a result. A complete,
         // abandoned or failed record is read, not worked, so it is not counted.
         status: async (caller) => ({ count: (await experiments.occupancy(caller)).active }),

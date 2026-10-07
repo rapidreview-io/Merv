@@ -3,7 +3,7 @@ import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { Evidence, KV, LoadState, RecordPage, Stamp, timeRows, useArtifacts } from '../components';
-import { Gate, Relations, StageMark } from '../process';
+import { Gate, Relations, StageMark, useRecordRead } from '../process';
 import { useSession } from '../session';
 import { Thread, historyEntries } from '../thread';
 import { signedInAdmin } from './code';
@@ -62,16 +62,12 @@ function TaskDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   // An ended task changes no more, but what Code holds of it may (its publication to main): the
   // read that brings it back ended slows the polling to a minute.
-  const record = useTool<{
+  const record = useRecordRead<{
     task: Task;
     process: ProcessGraph;
     codeUnit: CodeUnit | null;
     history: RunningUnitEntry[];
-  }>(
-    'ui.read',
-    { rowId: row.id, params: { id } },
-    { every: (data) => (data?.process.terminal ? 60_000 : 8000) },
-  );
+  }>(row, id, 60_000);
   const nameOf = useActorNames();
   const back = homeOf(shell.rows);
   // The publication verbs answer a signed-in operator and nobody else, so the Code

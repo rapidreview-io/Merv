@@ -18,7 +18,7 @@ import {
   useArtifacts,
 } from '../components';
 import { Markdown, RecordText, useRecordNames } from '../markdown';
-import { Gate, StageMark } from '../process';
+import { Gate, StageMark, useRecordRead } from '../process';
 import { useSession } from '../session';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
@@ -172,16 +172,12 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   // An ended experiment changes no more, but what Code holds of it may (its accepted code's
   // publication to main): the read that brings it back ended slows the polling to a minute.
-  const record = useTool<{
+  const record = useRecordRead<{
     experiment: Experiment;
     process: ProcessGraph;
     codeUnit: CodeUnit | null;
     history: RunningUnitEntry[];
-  }>(
-    'ui.read',
-    { rowId: row.id, params: { id } },
-    { every: (data) => (data?.process.terminal ? 60_000 : 8000) },
-  );
+  }>(row, id, 60_000);
   const state = record.data?.experiment.workflow.state;
   const live = record.data?.process.terminal ? undefined : 8000;
   const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });

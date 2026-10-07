@@ -15,7 +15,7 @@ import {
 import { Tabs, recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { useCommand } from '../mutations';
-import { Gate, StageMark } from '../process';
+import { Gate, StageMark, useRecordRead } from '../process';
 import type { Reflection, ReflectionLens } from '@merv/reflections/models';
 import { lensName } from '@merv/reflections/names';
 import { ArtifactBody } from './artifacts';
@@ -65,11 +65,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   // The wave and the stage it stands at, from one read that runs no action's check; an ended
   // wave changes no more, so it is not polled.
-  const data = useTool<{ reflection: Reflection; process: ProcessGraph }>(
-    'ui.read',
-    { rowId: row.id, params: { id } },
-    { every: (read) => (read?.process.terminal ? undefined : 8000) },
-  );
+  const data = useRecordRead<{ reflection: Reflection; process: ProcessGraph }>(row, id);
   // This row holds lenses too (a lens lease opens here): an id that is no wave is asked as a
   // lens, which opens on its wave's tab.
   const held = useTool<ReflectionLens>(

@@ -26,6 +26,12 @@ export interface UiRow extends UiRowFields {
   /** The owning row validates any pagination or lookup parameters. */
   read?(caller: Caller, params?: Record<string, unknown>): Json | Promise<Json>;
   /**
+   * One record's page, as its record page polls it: `params.id` names it, which ui.read checks
+   * once for every owner. An owner reads it in one snapshot and runs no action's check there,
+   * since the page draws no action. A row has this or `read`.
+   */
+  page?(caller: Caller, id: string): Promise<unknown>;
+  /**
    * This row's part of ui.home, the one read Home and the rail poll, under the row's id: the
    * read-only tool that lists its records, and the fields of each record those pages read.
    * `list`, when given, is read in the tool's place: those records with at least those fields.

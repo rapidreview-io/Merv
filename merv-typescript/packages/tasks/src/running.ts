@@ -1,4 +1,5 @@
-import type { TaskRecord } from './types.js';
+import type { TaskRecord, Tasks } from './types.js';
+import { recordUnit } from '@merv/code-work/record-unit';
 import {
   absent,
   check,
@@ -271,25 +272,26 @@ export async function page(
   ctx: TasksContext,
   caller: Caller,
   taskId: string,
-): Promise<{ process: ProcessGraph; history: RunningUnitEntry[] }> {
+): ReturnType<Tasks['page']> {
   caller = structuredClone(caller);
   return await ctx.state.snapshot(async () => {
-    const row = await ctx.state.transaction(async (tx) => {
+    const { row, task } = await ctx.state.transaction(async (tx) => {
       await ctx.scope.require(caller, 'read', tx);
-      return await tx.get<Pick<TaskRow, 'brief_id'>>(
-        'SELECT brief_id FROM tasks WHERE id=? AND project_id=?',
-        taskId,
-        caller.projectId,
-      );
+      const row = await ctx.row(tx, caller, taskId);
+      return { row, task: await ctx.hydrate(caller, row, tx) };
     });
-    check(row, 'not_found', 'Task not found in this project', 404);
     const graph = await ctx.workflows.process(caller, taskId, { checks: false });
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
     const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
     const artifacts = await ctx.state.transaction(
       async (tx) => await ctx.artifacts.find(caller, ids.slice(0, MAX_ARTIFACT_IDS), tx),
     );
-    return { process: graph, history: taskHistory(row.brief_id, graph, reviews, artifacts) };
+    return {
+      task,
+      process: graph,
+      history: taskHistory(row.brief_id, graph, reviews, artifacts),
+      codeUnit: await recordUnit(ctx.code, caller, taskId),
+    };
   });
 }
 
