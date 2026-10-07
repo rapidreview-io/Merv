@@ -448,7 +448,7 @@ test('a writer answers the thread’s open question from the box under it', asyn
   assert.equal(area.value, '');
 });
 
-test('an agent not live that kept its conversation is asked: the question goes to an inquiry, its answer under it', async (t) => {
+test('an agent that takes no message but kept its conversation is asked: the question goes to an inquiry, its answer under it', async (t) => {
   t.after(unmount);
   serve('/sessions/threads/thr_run/messages', {
     body: {
@@ -471,16 +471,19 @@ test('an agent not live that kept its conversation is asked: the question goes t
       questions: [],
     },
   });
-  serve('/sessions/threads/thr_run/ask', { body: { inquiry: { id: 'inquiry_2' } } });
+  serve('/tools', { body: { tools: [{ name: 'session.ask_thread' }] } });
+  serve('/tools/session.ask_thread', { body: { result: { inquiry: { id: 'inquiry_2' } } } });
   await open(
     'producer',
-    threads.map((item) => (item.id === 'thr_run' ? { ...item, asks: true } : item)),
+    threads.map((item) =>
+      item.id === 'thr_run' ? { ...item, takesMessage: false, asks: true } : item,
+    ),
   );
   await press(chip('running'));
   const box = document.querySelector('dialog .thread-messages')!;
   assert.match(box.textContent!, /You · .* · answeredWhat did you conclude\?↳ The smaller model\./);
   const area = box.querySelector('textarea')!;
-  assert.equal(area.getAttribute('aria-label'), 'Ask its agent');
+  assert.equal(area.getAttribute('aria-label'), 'Ask');
   await act(async () => {
     const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!;
     set.set!.call(area, 'And the seed?');
@@ -488,7 +491,7 @@ test('an agent not live that kept its conversation is asked: the question goes t
   });
   await act(async () => void box.querySelector('form')!.requestSubmit());
   await settle(10);
-  assert.ok(requests.includes('POST /sessions/threads/thr_run/ask'));
+  assert.ok(requests.some((request) => request.includes('session.ask_thread')));
   assert.ok(!requests.includes('POST /sessions/threads/thr_run/messages'));
   assert.equal(area.value, '');
 });
@@ -509,8 +512,9 @@ test('a thread that takes no message is asked instead, through session.ask_threa
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
   // A composition without the tool: the box stands, disabled, and says only what it would do.
   serve('/tools', { body: { tools: [{ name: 'session.message' }] } });
+  // A thread that kept its conversation (`asks`): one that kept none has nobody to ask.
   const finished = threads.map((item) =>
-    item.id === 'thr_run' ? { ...item, takesMessage: false } : item,
+    item.id === 'thr_run' ? { ...item, takesMessage: false, asks: true } : item,
   );
   await open('producer', finished);
   await press(chip('running'));

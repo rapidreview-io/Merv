@@ -594,7 +594,7 @@ test('a thread a later record inside the unit resumed is listed once, under the 
   assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
   await press(tab('Agents'));
   assert.deepEqual(
-    all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
+    all('.agent-card .agent-card-word').map((name) => name.textContent),
     ['Producer', 'Reviewer', 'Evidence lens'],
   );
 });
