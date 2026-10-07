@@ -814,7 +814,8 @@ export class LeasedSessions implements Sessions {
       const result = { source: session.source, readsRetired: session.kind === 'inquiry' };
       // A read decision made in a write transaction gates a write all the same (session.ask_owner
       // and session.message.ack decide 'read'), so only one made on a snapshot is spared.
-      if (requiredPermission === 'read' && (this.state.readScope || session.inquiry)) return result;
+      if (requiredPermission === 'read' && (this.state.readScope || session.kind === 'inquiry'))
+        return result;
       check(
         session.kind !== 'inquiry',
         'inquiry_read_only',
