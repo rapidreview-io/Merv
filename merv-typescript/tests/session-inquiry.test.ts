@@ -878,6 +878,39 @@ test('a thread wants attention for a message only while it takes one: an answer 
   assert.equal(page.threads.filter((item) => item.id === threadId).length, 1);
 });
 
+test('a person may ask three long-running agents a day, counting each answer as Fleet bills it', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  // Hours of work: a conversation file past the model's window, so each answer resends it all.
+  const long = async () => {
+    const unit = await f.start();
+    const first = await f.offer(unit.id, 'runner-hand');
+    await f.release(first.session);
+    await f.keep(
+      first.session,
+      first.control,
+      `{"type":"user","id":"${randomUUID()}","text":"${'x'.repeat(4_000_000)}"}\n`,
+    );
+    return first.session.threadId;
+  };
+  const [a, b, c, d] = [await long(), await long(), await long(), await long()];
+  // The first is answered in three calls, each resending the conversation (cached input
+  // counted in full, as the relay charges it).
+  await f.ask(a, 'Why seed 3?');
+  await f.present('runner-q');
+  const visit = (await f.lease('runner-q')).session!;
+  await f.release(visit, { usage: { inputTokens: 3 * 245_000, outputTokens: 2_000 } });
+  // A second while nothing is open, and a third while the second is.
+  await f.ask(b, 'And why seed 4?');
+  await f.ask(c, 'And why seed 5?');
+  // A fourth would pass the day: the cap still holds.
+  const fourth = await f.http('POST', `/sessions/threads/${d}/ask`, f.token, {
+    body: 'And seed 6?',
+    requestId: randomUUID(),
+  });
+  assert.deepEqual([fourth.status, fourth.body.error?.code], [429, 'inquiry_tokens_spent']);
+});
+
 test('a person’s questions spend at most a day’s tokens, and the project’s budget holds them back as it holds work', async (t) => {
   const f = await fixture(t);
   await f.dispatch();

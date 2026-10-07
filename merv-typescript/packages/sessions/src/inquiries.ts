@@ -41,17 +41,21 @@ const INQUIRY_RESENDS = 4;
  * window (272K tokens for gpt-6.1-sol), so a saved file that weighs more says only that it did.
  */
 const RESENT_TOKENS = 272_000;
+/** How many questions to the longest-running agents one person may ask in a day. */
+const INQUIRY_DAILY_LONGEST = 3;
 /**
  * The model tokens one person's questions may spend in a day, wherever they ran: each counts
- * what its runner reported, and one still waiting, running or unreported its whole budget.
+ * what its runner reported (cached input included, as Fleet's relay bills it), and one still
+ * waiting, running or unreported its whole budget. It is sized in visits, not shrunk per visit:
+ * a long conversation's answer honestly resends all of it on every call, so a smaller visit
+ * budget would be refused mid-answer. The day holds `INQUIRY_DAILY_LONGEST` of the largest,
+ * and more of shorter ones.
  */
-export const INQUIRY_DAILY_TOKENS = 2_000_000;
-/** An inquiry's budget for a conversation of `size` bytes (about four to a token), within a day's. */
+export const INQUIRY_DAILY_TOKENS =
+  INQUIRY_DAILY_LONGEST * (INQUIRY_TOKENS + INQUIRY_RESENDS * RESENT_TOKENS);
+/** An inquiry's budget for a conversation of `size` bytes (about four to a token). */
 const inquiryBudget = (size: number) =>
-  Math.min(
-    INQUIRY_DAILY_TOKENS,
-    INQUIRY_TOKENS + INQUIRY_RESENDS * Math.min(RESENT_TOKENS, Math.ceil(size / 4)),
-  );
+  INQUIRY_TOKENS + INQUIRY_RESENDS * Math.min(RESENT_TOKENS, Math.ceil(size / 4));
 
 /** An inquiry still waiting for a machine or being answered, as SQL over `alias`. */
 export const openInquiry = (alias: string) => `${alias}.status IN ('queued','running')`;
