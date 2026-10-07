@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
-import { dailyTokens } from './model-ledger.js';
+import { dailyTokens, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
@@ -124,23 +124,8 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
 
 const day = () => new Date().toISOString().slice(0, 10);
 const ledger = dailyTokens('fleet_model_usage');
-/** A grant's own budget: `charge` adds a call's most unless that passes `budget` (false then). */
-const grantLedger = {
-  charge: async (sql: Sql, grant: string, tokens: number, budget: number) =>
-    tokens <= budget &&
-    !!(await sql.get(
-      'INSERT INTO fleet_grant_tokens(grant_id,tokens) VALUES(?,?) ON CONFLICT(grant_id) DO UPDATE SET tokens=fleet_grant_tokens.tokens+excluded.tokens WHERE fleet_grant_tokens.tokens+excluded.tokens <= ? RETURNING tokens',
-      grant,
-      tokens,
-      budget,
-    )),
-  settle: (sql: Sql, grant: string, delta: number) =>
-    sql.run(
-      'UPDATE fleet_grant_tokens SET tokens=GREATEST(0,tokens+?) WHERE grant_id=?',
-      delta,
-      grant,
-    ),
-};
+/** A grant's own budget, the same ledger keyed by the grant. */
+const grantLedger = tokenLedger('fleet_grant_tokens', ['grant_id']);
 
 /** A person's daily Fleet model tokens: their own limit, else the deployment's. */
 async function ceiling(sql: Sql, person: string, fallback: number) {
@@ -249,7 +234,7 @@ export function codexModelRelay(
         );
         if (
           grant.tokenBudget !== undefined &&
-          !(await grantLedger.charge(tx, grant.id, most, grant.tokenBudget))
+          !(await grantLedger.charge(tx, [grant.id], most, grant.tokenBudget))
         ) {
           await ledger.settle(tx, grant.person, today, -most);
           return 'budget';
@@ -291,7 +276,7 @@ export function codexModelRelay(
       const delta = record.inputTokens + record.outputTokens - reserved.tokens;
       await state.transaction(async (tx) => {
         await ledger.settle(tx, grant.person, reserved.day, delta);
-        if (grant.tokenBudget !== undefined) await grantLedger.settle(tx, grant.id, delta);
+        if (grant.tokenBudget !== undefined) await grantLedger.settle(tx, [grant.id], delta);
       });
     },
   };
