@@ -138,8 +138,9 @@ export const STALL_MS = 10_000;
  * five seconds, still connecting, with nothing to say; one the server ends (`end`) or refuses is
  * left closed. `after`
  * names the last event the reader holds, so a reconnect asks only for what follows it
- * (`?after=`). A stream with no frame STALL_MS after it was first opened is `stalled`; `retry` opens
- * the stream again at once, from the last event held.
+ * (`?after=`). A stream with no frame STALL_MS after it was first opened from nothing held, and
+ * not ended or refused, is `stalled`; `retry` opens the stream again at once, from the last event
+ * held.
  */
 export function useEventStream(
   url: string | null,
@@ -159,8 +160,11 @@ export function useEventStream(
     let failures = 0;
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    /** When reading began, until the first frame came. */
-    let waiting: number | null = Date.now();
+    /**
+     * When reading began, until the first frame came. A stream opened again from the last event
+     * held owes no frame while its agent is quiet, so it is never slow; nor is one that ended.
+     */
+    let waiting: number | null = latest.current.after?.() ? null : Date.now();
     // Read on the page's clock each second, so a moved clock counts as time that passed.
     const watch = setInterval(() => {
       if (!stopped && waiting !== null && Date.now() - waiting >= STALL_MS) {
@@ -187,13 +191,18 @@ export function useEventStream(
           },
         );
         if (stopped) return;
-        if (ended) return setState('ended');
+        if (ended) {
+          waiting = null;
+          return setState('ended');
+        }
         if (rotated && Date.now() - since > 5000) return void connect();
         busy = false;
       } catch (cause) {
         if (stopped) return;
-        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status))
+        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status)) {
+          waiting = null;
           return setState('refused');
+        }
         busy = cause instanceof StreamError && cause.status === 429;
       }
       if (!busy) setState('retrying');

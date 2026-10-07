@@ -567,7 +567,9 @@ export class SessionRunning {
             undefined,
             tx,
           );
-          if (yours?.blocker) answers.add(instanceId);
+          // The question's own blocker: another provider's that is the reader's move (a model
+          // budget wait, say) does not make them its answerer.
+          if (yours?.blocker?.provider === QUESTION_PROVIDER) answers.add(instanceId);
         } catch (error) {
           if (!(error instanceof MervError)) throw error;
         }

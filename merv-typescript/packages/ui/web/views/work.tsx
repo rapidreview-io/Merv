@@ -561,6 +561,9 @@ function WaveList({ shell }: { shell: ShellData }) {
   );
 }
 
+/** How often a cycle move the gate refuses is checked again while nothing on the page moves. */
+const REFUSED_RECHECK_MS = 30_000;
+
 /**
  * A cycle's one move, here and on its own page, as the cycle's own gate has it. A move the
  * gate refuses is not offered as a button that can only fail: it stands disabled over the
@@ -586,9 +589,20 @@ export function CycleMove({
   const open = !ended(shell.workflows, cycle.workflow);
   // The gate runs every action's check, so it is read as the move opens and again only when the
   // page's check-free read shows the cycle moved (`pulse`: the work it names), or after a move.
-  const checked = useTool<WorkflowDecision>(open ? 'workflow.status_and_next' : null, {
-    instanceId: cycle.id,
-  });
+  // A move it refuses may wait on what that read does not show (a consolidation's code reaching
+  // main), so while it refuses it is checked again now and then, never left refused for good.
+  const checked = useTool<WorkflowDecision>(
+    open ? 'workflow.status_and_next' : null,
+    { instanceId: cycle.id },
+    {
+      every: (decision) =>
+        decision?.actions.some(
+          (action) => action.tool === 'research.advance' && action.status === 'blocked',
+        )
+          ? REFUSED_RECHECK_MS
+          : undefined,
+    },
+  );
   const read = checked.data;
   const moved = JSON.stringify([
     cycle.workflow.revision,

@@ -472,7 +472,7 @@ export class LeasedSessions implements Sessions {
         this.inquiries.answered(session, question, reply, tx),
       inquiryStatuses: (tx, ids) => this.inquiries.statuses(tx, ids),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
-      ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
+      work: (projectId, instanceIds, tx) => this.workAt(projectId, instanceIds, tx),
       publish: (input, tx) =>
         this.workflows.replaceBlockers({ ...input, provider: QUESTION_PROVIDER }, tx),
     });
@@ -2072,21 +2072,30 @@ export class LeasedSessions implements Sessions {
       return false;
     }
   }
+  /** Where each of these work items stands: its revision, and whether its pinned program ended it. */
+  private async workAt(
+    projectId: string,
+    instanceIds: string[],
+    tx: Transaction,
+  ): Promise<Map<string, { revision: number; ended: boolean }>> {
+    const found = new Map<string, { revision: number; ended: boolean }>();
+    for (const [id, item] of await this.workflows.revisions(projectId, instanceIds, tx))
+      found.set(id, {
+        revision: item.revision,
+        ended: !!(
+          await this.workflows.pinned(item.workflow, item.version, tx)
+        )?.definition.terminal.includes(item.state),
+      });
+    return found;
+  }
   /** Which of these work items stand in an end state of their own pinned program. */
   private async endedWork(
     projectId: string,
     instanceIds: string[],
     tx: Transaction,
   ): Promise<Set<string>> {
-    const ended = new Set<string>();
-    for (const [id, item] of await this.workflows.revisions(projectId, instanceIds, tx))
-      if (
-        (
-          await this.workflows.pinned(item.workflow, item.version, tx)
-        )?.definition.terminal.includes(item.state)
-      )
-        ended.add(id);
-    return ended;
+    const work = await this.workAt(projectId, instanceIds, tx);
+    return new Set([...work].filter(([, item]) => item.ended).map(([id]) => id));
   }
   async sweep(): Promise<void> {
     check(!this.state.ambient, 'nested_transaction', 'A sweep runs its own transactions');

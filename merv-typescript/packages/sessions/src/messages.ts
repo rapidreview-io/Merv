@@ -144,8 +144,12 @@ export interface MessageHost {
     input: { projectId: string; instanceId: string; blockers: WorkflowProvidedBlockerInput[] },
     tx: Transaction,
   ): Promise<void>;
-  /** Which of these work items of the project have ended. */
-  ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
+  /** Where these work items of the project stand: each one's revision, and whether it ended. */
+  work(
+    projectId: string,
+    instanceIds: string[],
+    tx: Transaction,
+  ): Promise<Map<string, { revision: number; ended: boolean }>>;
 }
 
 /**
@@ -314,8 +318,8 @@ export class SessionMessages {
   /**
    * The one read of whether a question stands, which threads, counts, attention, the Agents
    * page's cards and the thread's box all ask: a question still unanswered stands while the work
-   * it asked about has not ended (work that ended took its blocker with it, whichever work item
-   * its thread is on now). Read for the project, or only `threads`' questions or `instance`'s;
+   * it asked about has neither ended nor moved past the revision it asked at (either took its
+   * blocker with it, whichever work item its thread is on now). Read for the project, or only `threads`' questions or `instance`'s;
    * `instances` are work items whose end the caller reads too, in the same one check.
    */
   async standing(
@@ -333,8 +337,17 @@ export class SessionMessages {
       ...(read.instance === undefined ? [] : [read.instance]),
     );
     const items = [...new Set([...open.map((row) => row.instance_id), ...(read.instances ?? [])])];
-    const ended = items.length ? await this.host.ended(projectId, items, tx) : new Set<string>();
-    return { questions: open.filter((row) => !ended.has(row.instance_id)), ended };
+    const work = items.length
+      ? await this.host.work(projectId, items, tx)
+      : new Map<string, { revision: number; ended: boolean }>();
+    const ended = new Set([...work].filter(([, item]) => item.ended).map(([id]) => id));
+    // A question is about the revision it asked at, as its blocker is: work that ended, or moved
+    // on by any hand, no longer waits on it.
+    const stands = (row: QuestionRow) => {
+      const item = work.get(row.instance_id);
+      return !!item && !item.ended && item.revision === Number(row.revision);
+    };
+    return { questions: open.filter(stands), ended };
   }
   /**
    * A message to a thread waits for its live or next visit. It answers every question the thread
