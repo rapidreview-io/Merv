@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type {
   RunningAttention,
   RunningUnit,
@@ -12,7 +12,7 @@ import { Ago, StatusPill, cx, words } from '../components';
 import { Icon } from '../icons';
 import { Markdown } from '../markdown';
 import { stagesOfGraph } from '../process';
-import { Thread, type Entry, type Handed } from '../thread';
+import { Thread, historyEntries, type Handed, type Mark } from '../thread';
 import { ArtifactBody, bytes, fileType } from './artifacts';
 import { Act } from './running-panel';
 import { Reading, Target } from './running-phrase';
@@ -78,50 +78,43 @@ function ElsewhereDialog({
   ) : null;
 }
 
-/** The owner's history as the shared thread draws it, each disc the way to its thread. */
-function entriesOf(
-  history: readonly RunningUnitEntry[],
+/** Each entry's role disc, the way to the thread that did it. */
+function marker(
   threads: readonly ThreadView[],
   instance: string | undefined,
-  nameOf: (id: string) => string | undefined,
   open: (reference: Reference, threadId?: string) => void,
-): Entry[] {
-  return history.map((item, at): Entry => {
-    const who = item.actor ? nameOf(item.actor) : undefined;
+) {
+  return (item: RunningUnitEntry): Mark | undefined => {
+    if (!item.role) return undefined;
     const elsewhere = !!item.instance && item.instance !== instance;
     const thread =
-      item.role && item.stage && !elsewhere
+      item.stage && !elsewhere
         ? threadFor(threads, { stage: item.stage, role: item.role, at: item.at })
         : undefined;
-    const mark = item.role && {
+    return {
       letter: roleLetter(item.role),
       label: `${capital(item.role)} thread`,
       ...(thread || (elsewhere && item.stage) ? { onOpen: () => open(item, thread?.id) } : {}),
     };
-    const key = `${at}`;
-    if (item.role && item.at)
-      return {
-        kind: 'post',
-        key,
-        role: item.role === 'producer' ? 'Producer' : 'Reviewer',
-        who,
-        at: item.at,
-        said: item.said,
-        mark: mark || undefined,
-        document: item.artifact,
-        verdict: item.verdict && { ...item.verdict, review: item.review },
-      };
-    return {
-      kind: 'line',
-      key,
-      said: item.said ?? '',
-      who,
-      at: item.at,
-      // The way to a review still open is its Review section's, under Details.
-      mark: mark || undefined,
-      attention: item.attention,
-    };
-  });
+  };
+}
+
+/**
+ * The threads of the records inside the unit (a wave's lenses), each read on its own and
+ * handed up as it arrives.
+ */
+function InnerThreads({
+  instance,
+  onThreads,
+}: {
+  instance: string;
+  onThreads(instance: string, threads: ThreadView[]): void;
+}) {
+  const { threads, loaded } = useThreadList(instance);
+  useEffect(() => {
+    if (loaded) onThreads(instance, threads);
+  }, [loaded, instance, threads, onThreads]);
+  return null;
 }
 
 /** Lenses, perspectives, parts: a line each, and the one pressed opened under the list. */
@@ -412,6 +405,17 @@ export function UnitView({
 }) {
   const { nameOf } = useContext(Reading);
   const { threads, loadedAt } = useThreadList(graph?.instanceId);
+  // The records inside the unit have agents of their own, which its Agents tab lists too.
+  const [inner, setInner] = useState<ReadonlyMap<string, ThreadView[]>>(new Map());
+  const held = useCallback(
+    (instance: string, found: ThreadView[]) =>
+      setInner((known) =>
+        known.get(instance) === found ? known : new Map(known).set(instance, found),
+      ),
+    [],
+  );
+  const inside = unit.instances ?? [];
+  const agents = [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])];
   const [opened, setOpened] = useState<string>();
   const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();
@@ -425,7 +429,11 @@ export function UnitView({
     if (threadId) setOpened(threadId);
     else if (reference.instance) setElsewhere({ ...reference, instance: reference.instance });
   };
-  const entries = entriesOf(unit.history ?? [], threads, graph?.instanceId, nameOf, open);
+  const entries = historyEntries(
+    unit.history ?? [],
+    nameOf,
+    marker(threads, graph?.instanceId, open),
+  );
   const key = unit.key;
   // A document from the history stands in the key artifact's place until the way back.
   const showing = document && document.id !== key?.artifact?.id ? document : undefined;
@@ -442,7 +450,7 @@ export function UnitView({
   };
   const counts: Record<Tab, number | undefined> = {
     document: undefined,
-    agents: threads.length,
+    agents: agents.length,
     artifacts: files?.length,
   };
   const order = graph ? stagesOfGraph(graph).map((step) => step.state) : [];
@@ -485,7 +493,7 @@ export function UnitView({
           )}
           {tab === 'agents' ? (
             <Agents
-              threads={threads}
+              threads={agents}
               order={order}
               loadedAt={loadedAt}
               opened={agent}
@@ -541,6 +549,9 @@ export function UnitView({
         </section>
       </div>
       {details}
+      {inside.map((instance) => (
+        <InnerThreads key={instance} instance={instance} onThreads={held} />
+      ))}
       {thread && (
         <ThreadDialog
           thread={thread}

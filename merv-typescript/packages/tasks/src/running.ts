@@ -23,7 +23,13 @@ import {
 import type { ProcessGraph, WorkflowDependency, WorkflowLimitStatus } from '@merv/workflows/models';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
-import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
+import {
+  reviewWord,
+  unitArtifacts,
+  unitHistory,
+  type UnitFile,
+  type UnitStateWords,
+} from '@merv/reviews/unit-history';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
 import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
@@ -251,8 +257,10 @@ export function taskFileIds(record: TaskRecord, reviews: readonly ReviewRequest[
   };
 }
 
-/** What a delivery says it did, and the review that answered it, by the review gate. */
-const GATES = { in_review: { submitted: 'Delivered' } };
+/** What the shell and a task's history say of its states: crossing into review is a delivery. */
+export const TASK_STATES: Readonly<Record<string, UnitStateWords>> = {
+  in_review: { submitted: 'Delivered' },
+};
 
 /**
  * The task as a unit: its history, and the one thing to read. Before anything is delivered
@@ -280,16 +288,20 @@ export function taskUnit(
       handed.find((artifact) => /^text\/(markdown|plain)/.test(artifact.mediaType)) ?? handed[0];
     return report && { id: report.id, title: short(report.title) };
   };
-  const history = unitHistory({ graph, reviews, gates: GATES, document });
+  const history = unitHistory({ graph, reviews, states: TASK_STATES, document });
   const delivered = [...history].reverse().find((entry) => entry.artifact);
   const newest = [...reviews]
     .filter((review) => review.subjectId === record.id)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .at(-1);
-  const judged = newest?.verdict ? newest : undefined;
+  const word = reviewWord(newest);
+  const judged = word && word !== 'in_review' ? newest : undefined;
   const found = new Map(judged?.findings.map((item) => [item.criterionNumber, item.status]));
+  // A delivery's claims stand while its review is open; a review superseded withdraws them.
   const claimed = new Map(
-    record.deliveryConfirmations.map((item) => [item.checkNumber, item.status]),
+    word === 'in_review'
+      ? record.deliveryConfirmations.map((item) => [item.checkNumber, item.status])
+      : [],
   );
   const checks = record.acceptanceChecks.map(({ number, text }) => {
     const status = delivered ? (judged ? found.get(number) : claimed.get(number)) : undefined;
@@ -321,7 +333,7 @@ export function taskUnit(
     key: delivered?.artifact
       ? {
           label: 'Delivery',
-          state: newest?.verdict ?? (newest ? 'in_review' : graph.state),
+          state: word ?? graph.state,
           artifact: delivered.artifact,
         }
       : { label: 'Goal', text: record.goal },

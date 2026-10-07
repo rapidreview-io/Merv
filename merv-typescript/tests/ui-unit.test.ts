@@ -491,6 +491,34 @@ test('Agents lists every thread by stage in stage order, and reads one in place'
   assert.equal(all('.unit-row--agent').length, 2);
 });
 
+test('Agents also lists the threads of the records its owner names inside the unit', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  // A wave's lens is a record of its own: its agents are read by its own id.
+  serve('/sessions/threads?instanceId=wf_lens', {
+    body: {
+      threads: [
+        {
+          id: 'thr_lens',
+          instanceId: 'wf_lens',
+          state: 'reflecting',
+          role: 'producer',
+          status: 'live',
+          visits: [visit('ses_l1', at(3))],
+        },
+      ],
+    },
+  });
+  await sidebar(panel({ ...unitOf(), instances: ['wf_lens'] }));
+  assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
+  await press(tab('Agents'));
+  assert.deepEqual(
+    all('.unit-group-head').map((head) => head.textContent),
+    ['Planned', 'Design review', 'Reflecting'],
+  );
+});
+
 test('a reader who is not an operator reads a thread’s visits in place, never its conversation', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());
@@ -705,7 +733,7 @@ test('a task reads its goal and open checks, then what it delivered with each ch
 
 test('an experiment reads its draft or newest design, its approved design while running, then its report', () => {
   const states = ['planned', 'design_review', 'running', 'experiment_review', 'complete'];
-  const evidence = (id: string, role: string, path: string, attemptIndex = 1) => ({
+  const evidence = (id: string, role: string, path: string, attemptIndex = 2) => ({
     id: `ev_${id}`,
     artifactId: id,
     role,
@@ -717,12 +745,13 @@ test('an experiment reads its draft or newest design, its approved design while 
     id: string,
     stage: string,
     reviewId: string,
-    item: unknown,
+    item: { attemptIndex: number },
     minute: number,
   ) => ({
     id,
     stage,
     reviewId,
+    attemptIndex: item.attemptIndex,
     evidence: [item],
     createdAt: at(minute),
   });
@@ -747,15 +776,25 @@ test('an experiment reads its draft or newest design, its approved design while 
   );
   const design = submission('s1', 'design', 'rv1', evidence('art_v1', 'plan', 'plan.md', 1), 4);
   const returned = review({ id: 'rv1', verdict: 'needs_changes' });
-  // Returned and designed again: the newest design submitted, under the verdict it got.
+  // A design returned began a new attempt: its plan is the new draft, the returned one history.
   assert.deepEqual(unit(experiment('planned', [design]), 'planned', [returned]), {
-    label: 'Current plan',
-    state: 'needs_changes',
-    artifact: { id: 'art_v1', title: 'plan.md' },
+    label: 'Question',
+    text: 'Does warmup move the grokking step?',
   });
+  assert.deepEqual(
+    unit(
+      experiment('planned', [design], [evidence('art_draft', 'plan', 'plans/plan.md')]),
+      'planned',
+      [returned],
+    ),
+    { label: 'Current plan', state: 'draft', artifact: { id: 'art_draft', title: 'plan.md' } },
+  );
+  const submitted = submission('s1b', 'design', 'rv1b', evidence('art_v1b', 'plan', 'plan.md'), 6);
   assert.equal(
-    unit(experiment('design_review', [design]), 'design_review', [{ ...returned, verdict: null }])!
-      .state,
+    unit(experiment('design_review', [design, submitted]), 'design_review', [
+      returned,
+      review({ id: 'rv1b', verdict: null, status: 'started' }),
+    ])!.state,
     'in_review',
   );
   const approved = submission('s2', 'design', 'rv2', evidence('art_v2', 'plan', 'plan-2.md'), 8);
@@ -777,7 +816,10 @@ test('an experiment reads its draft or newest design, its approved design while 
     assert.deepEqual(
       unit(experiment(state, [approved, results]), state, [
         review({ id: 'rv2', verdict: 'pass' }),
-        review({ id: 'rv3', verdict: state === 'complete' ? 'pass' : null }),
+        review({
+          id: 'rv3',
+          ...(state === 'complete' ? { verdict: 'pass' } : { status: 'started' }),
+        }),
       ]),
       {
         label: 'Report',
