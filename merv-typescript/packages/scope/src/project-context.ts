@@ -1,9 +1,6 @@
 import type { Project } from '@merv/contracts';
 
-/**
- * A project row. `summary` and `context_revision` remain only until a later migration drops
- * them: Paper serves the project Introduction from the Problem, and nothing writes them now.
- */
+/** A project row: its identity only. Paper serves the project Introduction from the Problem. */
 export interface ProjectRow {
   id: string;
   name: string;

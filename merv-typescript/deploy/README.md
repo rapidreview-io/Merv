@@ -130,6 +130,28 @@ in `typescript.env.example`. The next release, or a recreate of Main on its
 current image, picks them up; a restart does not. The runbook for staging and
 production is in [docs/NISA_PLUGIN.md](../docs/NISA_PLUGIN.md#turning-on-literature-and-internet-search).
 
+## One-off: Problem backfill before scope@10
+
+`scope@10` drops Scope's retired `projects.summary`, `projects.context_revision`
+and `project_context_commands`. In production 31 projects have a summary and no
+Paper Problem, so the summary is their only description. Release in this order:
+
+1. Back up production.
+2. Run [`problem-backfill.mjs`](problem-backfill.mjs) in Main's container, first
+   as a dry run, then to write. It copies each such summary into the project's
+   Problem as a draft revision through Paper's service, mapping the Problem's own
+   headings onto its four sections. It prints one JSON line per project (id,
+   summary length, section mapping; never the text) and its totals, and skips any
+   project that already has a Problem:
+
+   ```sh
+   ssh -o BatchMode=yes ResearchSuite_Control 'sudo docker exec -i -e MERV_PROBLEM_BACKFILL=1 -w /app merv-typescript-control-1 node --input-type=module - --dry-run' < deploy/problem-backfill.mjs
+   ssh -o BatchMode=yes ResearchSuite_Control 'sudo docker exec -i -e MERV_PROBLEM_BACKFILL=1 -w /app merv-typescript-control-1 node --input-type=module -' < deploy/problem-backfill.mjs
+   ```
+
+3. Release Main with `scope@10`. The migration refuses, and the release stops,
+   while any project still has a non-empty summary and no Problem.
+
 ## Rollback
 
 1. Enter the agreed Merv maintenance state, stop new TypeScript writes, then deliberately restart the preserved Python control container if rollback is approved. Restore the prior **Merv routing** on Caddy and validate/reload it; leave the sandbox host block untouched. Confirm the legacy container answers through its old upstream. Preserve all new TypeScript writes; they are not automatically reflected in Python.

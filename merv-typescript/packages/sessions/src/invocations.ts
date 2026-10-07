@@ -81,6 +81,13 @@ interface InvocationState {
   validated: boolean;
   /** The tool only reads, so the project is its bound rather than the policy. */
   read: boolean;
+  /**
+   * The session and lease as validated once, at preparation: the call carries them, and only
+   * Sessions' guard re-checks them, cheaply, in a write's own transaction.
+   */
+  session: Session;
+  /** The references the frozen execution granted at preparation; an inquiry visit has none. */
+  references?: WorkflowExecutionReferences;
 }
 /** What tool-call admission uses of Sessions: its open state, snapshots and lease checks. */
 export interface InvocationHost {
@@ -88,6 +95,16 @@ export interface InvocationHost {
   closed(): boolean;
   reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   session(caller: Caller, tx: Transaction): Promise<Session>;
+  /** The calling worker's session, by Sessions' own checks, its lease left for `valid`. */
+  callSession(caller: Caller, tx: Transaction): Promise<Session>;
+  /** The registration generation a work visit's lease runs under now, read from memory. */
+  registration(session: Session): string | undefined;
+  /** The cheap re-check of a call's validated lease, right before an effect it has. */
+  held(
+    caller: Caller,
+    invocation: { registrationId?: string; public: { tool: string } },
+    tx: Transaction,
+  ): Promise<void>;
   valid(
     session: Session,
     tx: Transaction,
@@ -155,45 +172,48 @@ export class SessionInvocations implements SessionInvocationPolicy {
       !!read || (workerTools.has(name) && name !== 'session.ask_owner') || known.names.has(name)
     );
   }
-  private async admit(
-    caller: Caller,
+  /**
+   * The one validation of a call: Sessions' session check, then Workflows' lease check under the
+   * frozen execution, in one snapshot. What it validated travels with the call.
+   */
+  private async admit(caller: Caller, tool: string, input: Data, tx: Transaction, read?: boolean) {
+    const session = await this.host.callSession(caller, tx);
+    // A worker's own tools need only a live lease; the lease is checked before the input is
+    // bounded, so when both are bad the lease error wins.
+    const current = await this.host.valid(
+      session,
+      tx,
+      session.kind === 'inquiry' || workerTools.has(tool) ? undefined : session.execution,
+    );
+    return {
+      session,
+      registrationId: current.registrationId,
+      references: current.references,
+      admission: this.bind(session, current.references, tool, input, read),
+    };
+  }
+  /** The call's arguments under what admission validated: no storage is read. */
+  private bind(
+    session: Session,
+    references: WorkflowExecutionReferences | undefined,
     tool: string,
     input: Data,
-    tx: Transaction,
-    registrationId?: string,
     read?: boolean,
-  ) {
-    const session = await this.host.session(caller, tx);
+  ): WorkflowDispatchAdmission {
     if (session.kind === 'inquiry') {
-      // An inquiry visit has no policy to bind its calls: its reads are bounded by the project.
+      // An inquiry visit has no policy to bind its calls: its reads are bounded by the project,
+      // and its one write is its reply.
       check(
         inquiryCalls(tool, read),
         'inquiry_read_only',
         'An inquiry visit only reads, and replies with session.message.ack',
         403,
       );
-      const current = await this.host.valid(session, tx);
-      return {
-        admission: { tool, input: structuredClone(input) },
-        registrationId: current.registrationId,
-        session,
-      };
+      return { tool, input: structuredClone(input) };
     }
-    // A worker's own tools are always admitted; they need only a live lease. The lease
-    // is checked before the input is bounded, so when both are bad the lease error wins.
-    const ack = workerTools.has(tool);
-    const current = await this.host.valid(session, tx, ack ? undefined : session.execution);
-    if (registrationId !== undefined)
-      check(
-        current.registrationId === registrationId,
-        'execution_replaced',
-        'Workflow implementation changed during invocation',
-        409,
-      );
-    const admission = ack
+    return workerTools.has(tool)
       ? { tool, input: structuredClone(input) }
-      : admitCall({ ...session.execution, references: current.references! }, tool, input, read);
-    return { admission, registrationId: current.registrationId, session };
+      : admitCall({ ...session.execution, references: references! }, tool, input, read);
   }
   async prepare(
     caller: Caller,
@@ -205,7 +225,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
     caller = structuredClone(caller);
     input = snapshotInput(input);
     const prepared = await this.host.reading(
-      async (tx) => await this.admit(caller, tool, input, tx, undefined, read),
+      async (tx) => await this.admit(caller, tool, input, tx, read),
     );
     this.host.open();
     const invocationId = newId('invocation');
@@ -231,6 +251,8 @@ export class SessionInvocations implements SessionInvocationPolicy {
       input: clone(prepared.admission.input),
       validated: false,
       read: !!read,
+      session: prepared.session,
+      references: prepared.references,
     };
     this.invocations.set(invocation, state);
     this.invocationIds.set(invocationId, state);
@@ -240,39 +262,59 @@ export class SessionInvocations implements SessionInvocationPolicy {
     ordinary(caller);
     caller = structuredClone(caller);
     input = snapshotInput(input);
-    await this.host.reading(async (tx) => {
-      const state = caller.session?.invocationId
-        ? this.invocationIds.get(caller.session.invocationId)
-        : undefined;
+    this.host.open();
+    const state = caller.session?.invocationId
+      ? this.invocationIds.get(caller.session.invocationId)
+      : undefined;
+    check(
+      state &&
+        !state.used &&
+        state.public.tool === tool &&
+        state.sessionId === caller.session?.id &&
+        state.session.actorId === caller.actorId &&
+        state.session.projectId === caller.projectId,
+      'session_invocation',
+      'Session invocation is unavailable',
+      403,
+    );
+    if (state.validated)
       check(
-        state && !state.used && state.public.tool === tool,
+        canonical(state.input) === canonical(input),
         'session_invocation',
-        'Session invocation is unavailable',
+        'Session invocation arguments changed',
         403,
       );
-      if (state.validated)
-        check(
-          canonical(state.input) === canonical(input),
-          'session_invocation',
-          'Session invocation arguments changed',
-          403,
-        );
-      const admitted = await this.admit(caller, tool, input, tx, state.registrationId, state.read);
-      this.host.open();
-      check(!state.used, 'session_invocation', 'Session invocation is unavailable', 403);
-      check(
-        canonical(admitted.admission.input) === canonical(input),
-        'session_invocation',
-        'Session arguments no longer match their bindings',
-        403,
-      );
-      // The first validation follows schema parsing. Unbound defaults/stripping are permitted;
-      // fixed bindings are independently re-authorized before retaining the parsed snapshot.
-      if (!state.validated) {
-        state.input = clone(input);
-        state.validated = true;
-      }
-    });
+    // The lease was validated once, at preparation; the arguments are bound again here, against
+    // what that validation granted, without reading storage. A reload of the step's program
+    // since then is still refused: its generation is held in memory.
+    check(
+      this.host.registration(state.session) === state.registrationId,
+      'execution_replaced',
+      'Workflow implementation changed during invocation',
+      409,
+    );
+    const admitted = this.bind(state.session, state.references, tool, input, state.read);
+    check(
+      canonical(admitted.input) === canonical(input),
+      'session_invocation',
+      'Session arguments no longer match their bindings',
+      403,
+    );
+    // A handler that asks again before an effect outside a write transaction (a mounted tool
+    // about to call its upstream) gets the write's re-check: a released or moved lease stops it.
+    if (
+      state.running &&
+      !state.read &&
+      state.session.kind !== 'inquiry' &&
+      this.toolHandler.getStore() === state.public.caller.session!.invocationId
+    )
+      await this.host.reading(async (tx) => await this.host.held(caller, state, tx));
+    // The first validation follows schema parsing. Unbound defaults/stripping are permitted;
+    // fixed bindings are independently re-authorized before retaining the parsed snapshot.
+    if (!state.validated) {
+      state.input = clone(input);
+      state.validated = true;
+    }
   }
   async run<T>(
     invocation: SessionInvocation,
@@ -288,8 +330,9 @@ export class SessionInvocations implements SessionInvocationPolicy {
     // Claim once before yielding so concurrent callers cannot execute one preparation twice.
     state.running = true;
     try {
-      // The registry authorized this call right before run; storing the observation yields,
-      // so it is authorized again below before the tool runs.
+      // The registry bound this call right before run; storing the observation yields, so its
+      // arguments are bound again below. Its lease is not validated again: a write re-checks
+      // it in its own transaction (Sessions' guard).
       await this.observations.start(
         invocation.caller.session!.invocationId!,
         state.sessionId,

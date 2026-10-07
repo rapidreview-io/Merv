@@ -9,7 +9,7 @@ export const piUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'pi',
-        label: 'Agent',
+        label: 'Pi',
         group: 'operations',
         order: 0,
         path: '/agent',

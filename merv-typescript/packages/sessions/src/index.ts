@@ -321,6 +321,8 @@ interface Frame {
   sessionId: string;
   source: DelegationSource;
   role: Session['role'];
+  /** An inquiry visit's frame: it reads as its thread's actor even once that was retired. */
+  readsRetired?: boolean;
 }
 /** Durable step credentials. Domain reservations and all lifecycle mutations share State transactions. */
 export class LeasedSessions implements Sessions {
@@ -479,6 +481,10 @@ export class LeasedSessions implements Sessions {
       closed: () => this.closed,
       reading: (fn) => this.reading(fn),
       session: (caller, tx) => this.session(caller, tx),
+      callSession: (caller, tx) => this.callSession(caller, tx),
+      held: (caller, invocation, tx) => this.stillHeld(caller, invocation, tx),
+      registration: (session) =>
+        session.kind === 'work' ? this.workflows.leaseRegistration(session.lease) : undefined,
       valid: (session, tx, frozen) => this.valid(session, tx, frozen),
       acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
     });
@@ -661,26 +667,15 @@ export class LeasedSessions implements Sessions {
     );
     return execution;
   }
-  private async guard(
+  /**
+   * The worker's own session, as the guard checks it: its row names this worker, it is live and
+   * unexpired, its credential is live, and an inquiry visit only reads.
+   */
+  private async ownSession(
     caller: Caller,
     tx: Transaction,
     requiredPermission: Permission,
-  ): Promise<{ source: DelegationSource; readsRetired?: boolean }> {
-    this.ensureOpen();
-    this.state.assertTransaction(tx);
-    const frame = this.frames
-      .getStore()
-      ?.findLast(
-        (frame) =>
-          frame.tx === tx &&
-          frame.actorId === caller.actorId &&
-          frame.sessionId === caller.session?.id,
-      );
-    if (frame) {
-      await this.scope.requireDelegation(frame.source, permission(frame.role), tx);
-      this.ensureOpen();
-      return { source: frame.source };
-    }
+  ): Promise<Session> {
     check(caller.session, 'session_required', 'Worker authority requires a session', 401);
     const row = await this.row(tx, caller.session.id);
     const session = this.decode(row);
@@ -704,43 +699,155 @@ export class LeasedSessions implements Sessions {
       'An inquiry visit only reads: it holds no lease on the work and writes nothing but its reply',
       403,
     );
+    return session;
+  }
+  /**
+   * A tool call's session, for its one validation (SessionInvocations.admit): the guard's own
+   * checks, and Scope's decision on its actor made under this session's frame, so the lease is
+   * validated once, by the `valid` that follows, and not here as well.
+   */
+  private async callSession(caller: Caller, tx: Transaction): Promise<Session> {
+    ordinary(caller);
+    this.ensureOpen();
+    this.state.assertTransaction(tx);
+    const session = await this.ownSession(caller, tx, 'read');
+    await this.framed(
+      {
+        tx,
+        actorId: session.actorId,
+        sessionId: session.id,
+        source: session.source,
+        role: session.role,
+        readsRetired: session.kind === 'inquiry',
+      },
+      async () => await this.scope.require(caller, 'read', tx),
+    );
+    return session;
+  }
+  /**
+   * A write of a call whose lease was validated at its start: the lease is re-checked once in
+   * the write's own transaction, which holds the writer lock, so a release or a move committed
+   * before it is refused and none can commit between this check and the write: the session's
+   * row and credential, its source's delegation (a revoked source still stops a write), and the
+   * step and its lease row (Workflows.holdsLease). The program's lease hooks are not run again.
+   * Outside a write transaction (a mounted tool's dispatch) it is the last check before the
+   * effect, on a snapshot.
+   */
+  private async stillHeld(
+    caller: Caller,
+    invocation: { registrationId?: string; public: { tool: string } },
+    tx: Transaction,
+  ): Promise<void> {
+    const session = await this.ownSession(caller, tx, 'write');
+    // ownSession refused an inquiry visit's write: only a work visit holds a lease.
+    if (session.kind !== 'work')
+      throw new MervError('inquiry_read_only', 'An inquiry visit only reads', 403);
+    if (
+      invocation.public.tool !== 'session.messages' &&
+      invocation.public.tool !== 'session.message.ack'
+    )
+      await this.messaging.requireMessagesAcknowledged(session.id, tx);
+    await this.source(session, tx);
+    let held: { registrationId: string };
+    try {
+      held = await this.workflows.holdsLease(this.worker(session), session.lease, tx);
+    } catch (error) {
+      if (
+        error instanceof MervError &&
+        error.code === 'revision_conflict' &&
+        (await this.handedOff(session, tx))
+      )
+        throw new MervError(
+          'session_completed',
+          'Your handoff already moved this record; this session has ended',
+          409,
+        );
+      throw error;
+    }
+    check(
+      held.registrationId === invocation.registrationId,
+      'execution_replaced',
+      'Workflow implementation changed during invocation',
+      409,
+    );
+    this.ensureOpen();
+  }
+  private async guard(
+    caller: Caller,
+    tx: Transaction,
+    requiredPermission: Permission,
+  ): Promise<{ source: DelegationSource; readsRetired?: boolean }> {
+    this.ensureOpen();
+    this.state.assertTransaction(tx);
+    const frame = this.frames
+      .getStore()
+      ?.findLast(
+        (frame) =>
+          frame.tx === tx &&
+          frame.actorId === caller.actorId &&
+          frame.sessionId === caller.session?.id,
+      );
+    if (frame) {
+      await this.scope.requireDelegation(frame.source, permission(frame.role), tx);
+      this.ensureOpen();
+      return { source: frame.source, ...(frame.readsRetired && { readsRetired: true }) };
+    }
+    check(caller.session, 'session_required', 'Worker authority requires a session', 401);
+    const invocationId = caller.session.invocationId;
+    const invocation =
+      invocationId === undefined ? undefined : this.invocations.invocationIds.get(invocationId);
+    if (invocationId !== undefined)
+      check(
+        invocation &&
+          invocation.sessionId === caller.session.id &&
+          invocation.session.actorId === caller.actorId &&
+          invocation.session.projectId === caller.projectId &&
+          !invocation.used,
+        'session_invocation',
+        'Session invocation is unavailable',
+        403,
+      );
+    if (invocation?.running) {
+      // The owner's decision (2026-10-07): a call's lease is validated once, when it is
+      // prepared. Its reads use that validation; each write transaction re-checks it once.
+      const { session } = invocation;
+      const result = { source: session.source, readsRetired: session.kind === 'inquiry' };
+      if (requiredPermission === 'read') return result;
+      check(
+        session.kind !== 'inquiry',
+        'inquiry_read_only',
+        'An inquiry visit only reads: it holds no lease on the work and writes nothing but its reply',
+        403,
+      );
+      const checked = this.fenced.get(tx) ?? new Set<string>();
+      if (!checked.has(invocationId!)) {
+        await this.stillHeld(caller, invocation, tx);
+        checked.add(invocationId!);
+        this.fenced.set(tx, checked);
+      }
+      return result;
+    }
+    const session = await this.ownSession(caller, tx, requiredPermission);
     if (
       session.kind === 'work' &&
       requiredPermission !== 'read' &&
-      caller.session?.invocationId !== undefined &&
-      caller.session?.invocationId === this.invocations.toolHandler.getStore()
+      invocationId !== undefined &&
+      invocationId === this.invocations.toolHandler.getStore()
     ) {
-      const tool = this.invocations.invocationIds.get(caller.session.invocationId)?.public.tool;
+      const tool = invocation?.public.tool;
       if (tool !== 'session.messages' && tool !== 'session.message.ack') {
         await this.messaging.requireMessagesAcknowledged(session.id, tx);
       }
     }
     await this.source(session, tx);
-    const invocationId = caller.session.invocationId;
-    if (invocationId !== undefined) {
-      const invocation = this.invocations.invocationIds.get(invocationId);
-      check(
-        invocation && invocation.sessionId === session.id && !invocation.used,
-        'session_invocation',
-        'Session invocation is unavailable',
-        403,
-      );
-      const fenced = this.fenced.get(tx);
-      if (invocation.running && fenced?.has(invocationId))
-        return { source: session.source, readsRetired: session.kind === 'inquiry' };
-      const current = await this.valid(session, tx);
+    const current = await this.valid(session, tx);
+    if (invocation)
       check(
         current.registrationId === invocation.registrationId,
         'execution_replaced',
         'Workflow implementation changed during invocation',
         409,
       );
-      if (invocation.running) {
-        const memo = fenced ?? new Set<string>();
-        memo.add(invocationId);
-        this.fenced.set(tx, memo);
-      }
-    } else await this.valid(session, tx);
     // An inquiry visit, held to reading above, still reads as its thread's actor once the thread
     // retired it: a person may ask an agent whose work has ended.
     return { source: session.source, readsRetired: session.kind === 'inquiry' };
