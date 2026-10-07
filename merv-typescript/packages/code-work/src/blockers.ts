@@ -52,6 +52,8 @@ export interface CodeBlocker {
   related?: readonly { kind: string; id: string; label: string }[];
   /** When this key first took this code, which is how long the person has been owed it. */
   since?: string;
+  /** The record it is published on: for a writer's blocker, the unit of work. */
+  instanceId?: string;
 }
 
 /** Where the reviewed merge and the publication controls stand. */
@@ -191,7 +193,12 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
         sentence: 'The last writer never handed over its final capture; an operator fences it',
         who: 'An operator',
         whose: 'operator',
-        control: { label: 'Fence the writer', to: CANVAS },
+        control: {
+          label: 'Fence the writer',
+          to: blocker.instanceId
+            ? `${CANVAS}/unit/${encodeURIComponent(blocker.instanceId)}`
+            : CANVAS,
+        },
       };
     case 'code_capture_quarantined':
       return {
