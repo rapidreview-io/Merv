@@ -15,6 +15,7 @@ import {
   type CodeWorkspaceManifest,
 } from '@merv/code/store/protocol';
 import type { Session, Sessions } from '@merv/sessions/types';
+import { live } from '@merv/sessions/rules';
 import { pendingMerge } from '@merv/code/pending-merge';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeStore } from '@merv/code/store/operations';
@@ -74,7 +75,7 @@ export class CodeWorkspaceProtocol {
       const input = parseCodeInput(codeUploadBeginSchema, body);
       const session = await this.controlled(caller, input, 'refused');
       check(
-        ['offered', 'active'].includes(session.status),
+        live(session),
         'session_closed',
         'Only the final capture is taken after a session ended',
         409,
@@ -171,12 +172,7 @@ export class CodeWorkspaceProtocol {
     input: { sessionId: string; runnerId: string; hostRef?: string },
   ): Promise<CodeWorkspaceManifest> {
     const session = await this.controlled(caller, input, 'offered');
-    check(
-      ['offered', 'active'].includes(session.status),
-      'session_closed',
-      'The assignment is closed',
-      409,
-    );
+    check(live(session), 'session_closed', 'The assignment is closed', 409);
     const policy = session.execution.policy;
     const workspace = effectiveWorkspace(policy);
     check(
