@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Session } from '@merv/sessions/types';
 import {
   forgetConversations,
@@ -175,6 +175,48 @@ test('the id the harness printed first; a conversation restored is found and tak
     forgetConversations(run, profile, id, environment);
     assert.equal(existsSync(unused), false);
   }
+});
+
+test('an inquiry visit forks a conversation in a shared Claude home and leaves the work visit running it alone', (t) => {
+  const root = directory(t),
+    work = directory(t),
+    asking = directory(t),
+    runWork = directory(t),
+    runAsking = directory(t);
+  const environment = { HOME: root, CLAUDE_CONFIG_DIR: join(root, 'claude') };
+  const profile = claude();
+  const bytes = Buffer.from('{"type":"user","text":"the work so far"}\n');
+  // The thread's work visit and an inquiry of it both resume the same conversation meanwhile.
+  const own = restoreConversation(profile, runWork, work, id, bytes, environment);
+  const copy = restoreConversation(profile, runAsking, asking, id, bytes, environment);
+  const progressed = Buffer.concat([bytes, Buffer.from('{"type":"assistant","text":"more"}\n')]);
+  writeFileSync(own, progressed);
+  const sides = ['file-history', 'session-env'].map((d) => join(root, 'claude', d, id));
+  for (const side of sides) mkdirSync(side, { recursive: true });
+  // The inquiry's Claude forked it under an id of its own.
+  const fork = '0199a0b2-2222-7222-8333-944445555666';
+  const forked = join(dirname(copy), `${fork}.jsonl`);
+  writeFileSync(forked, bytes);
+  mkdirSync(join(root, 'claude', 'file-history', fork), { recursive: true });
+  writeFileSync(
+    join(runAsking, 'stdout.log'),
+    `${JSON.stringify({ type: 'system', subtype: 'init', session_id: fork })}\n`,
+  );
+  writeFileSync(
+    join(runWork, 'stdout.log'),
+    `${JSON.stringify({ type: 'system', subtype: 'init', session_id: id })}\n`,
+  );
+  // The work visit keeps its own copy, however the home lists them.
+  assert.deepEqual(
+    keepConversation(runWork, profile, [], environment, work)?.size,
+    progressed.length,
+  );
+  // The inquiry ends first: its fork and its copy go, the work visit's conversation stays.
+  forgetConversations(runAsking, profile, id, environment, { cwd: asking });
+  for (const gone of [copy, forked, join(root, 'claude', 'file-history', fork)])
+    assert.equal(existsSync(gone), false, gone);
+  for (const kept of [own, ...sides]) assert.equal(existsSync(kept), true, kept);
+  assert.deepEqual(readFileSync(own), progressed);
 });
 
 test('redaction is JSON-safe: inside string values only, other lines as written', () => {

@@ -375,6 +375,15 @@ function Calls({ thread, names }: { thread: ThreadView; names: Map<string, strin
 /** The tool that asks a thread that takes no message: a short visit that answers and stops. */
 const ASK = 'session.ask_thread';
 
+/** What a question to an agent (an inquiry) says of itself in the thread, by its status. */
+const inquiryPhrase: Record<string, string> = {
+  queued: 'asking',
+  running: 'answering',
+  answered: 'answered',
+  unanswered: 'no answer',
+  expired: 'no machine took it',
+};
+
 /**
  * The box that speaks to a thread, for someone who may write to the project. A thread that takes
  * a message now (live, dormant on open work, or answering its question) is sent one, which its
@@ -396,8 +405,11 @@ export function ThreadCompose({
   const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
   const sends = thread.takesMessage || answering;
   const may = !!actor && writes(actor);
-  const catalog = useTool<{ tools?: { name: string }[] }>(sends || !may ? null : '/tools');
-  const asks = !sends && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
+  const catalog = useTool<{ tools?: { name: string }[] }>(
+    sends || !may || !thread.asks ? null : '/tools',
+  );
+  const asks =
+    !sends && !!thread.asks && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
   const [draft, setDraft] = useState('');
   const send = useCommand<{ message?: { id?: unknown } } | null>({
     tool: sends ? path : ASK,
@@ -452,9 +464,19 @@ export function ThreadCompose({
   );
 }
 
-/** Whether a message has reached its agent: Sent until its agent acknowledges it, then Read. */
-export const delivery = (message: { acknowledgedAt: string | null }) =>
-  message.acknowledgedAt ? 'Read' : 'Sent';
+/**
+ * Whether a message has reached its agent: Sent until its agent acknowledges it, then Read. A
+ * question to an agent (an inquiry) says where its answer is instead.
+ */
+export const delivery = (message: {
+  acknowledgedAt: string | null;
+  inquiry?: { status: string };
+}) =>
+  message.inquiry
+    ? (inquiryPhrase[message.inquiry.status] ?? message.inquiry.status)
+    : message.acknowledgedAt
+      ? 'Read'
+      : 'Sent';
 
 /**
  * What passed between the thread and the people over it, oldest first, and the box that speaks

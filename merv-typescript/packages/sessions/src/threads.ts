@@ -70,8 +70,8 @@ const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
 /** How many threads that want no attention a page of the project's threads holds. */
 const PAGE = 50;
-/** A thread one of whose visits holds its lease. */
-const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active'))`;
+/** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
+const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
 /**
  * A thread that wants attention: live, asking its owner, or holding a message its agent has not
  * read yet while it may still read it.
@@ -165,7 +165,8 @@ export class SessionThreads {
           );
     if (held) {
       const visits = await tx.all<{ owner_hash: string; live: boolean }>(
-        "SELECT owner_hash,bool_or(status IN ('offered','active')) AS live FROM worker_sessions WHERE thread_id=? GROUP BY owner_hash",
+        // Its work visits: an inquiry visit holds neither the work nor the conversation.
+        "SELECT owner_hash,bool_or(status IN ('offered','active')) AS live FROM worker_sessions WHERE thread_id=? AND kind='work' GROUP BY owner_hash",
         held.id,
       );
       // Sessions' choice, not the runner's: the thread may have run anywhere.
@@ -239,7 +240,7 @@ export class SessionThreads {
   }
   private async executing(id: string, tx: Transaction): Promise<boolean> {
     return !!(await tx.get(
-      "SELECT 1 FROM worker_sessions WHERE thread_id=? AND status IN ('offered','active')",
+      "SELECT 1 FROM worker_sessions WHERE thread_id=? AND status IN ('offered','active') AND kind='work'",
       id,
     ));
   }
@@ -291,6 +292,14 @@ export class SessionThreads {
         409,
       );
       check(session.continuity, 'conversation_unkept', 'This session keeps no conversation', 409);
+      // The fork: an inquiry visit's conversation is never saved back, so the thread's next work
+      // visit resumes the conversation as it was (and reads the exchange as a message).
+      check(
+        !session.inquiry,
+        'conversation_unkept',
+        'An inquiry visit keeps no conversation: its thread resumes the one it had',
+        409,
+      );
       const found = await this.row(session.threadId, tx);
       const superseded = () =>
         check(
@@ -445,7 +454,7 @@ export class SessionThreads {
     const thread = await this.row(id, tx);
     if (thread.status === 'retired') return;
     const visit = (await tx.get<{ source: string }>(
-      "SELECT session_json::jsonb->>'source' AS source FROM worker_sessions WHERE thread_id=? ORDER BY _merv_rowid DESC LIMIT 1",
+      "SELECT session_json::jsonb->>'source' AS source FROM worker_sessions WHERE thread_id=? AND kind='work' ORDER BY _merv_rowid DESC LIMIT 1",
       id,
     ))!;
     try {
@@ -629,8 +638,8 @@ export class SessionThreads {
     return threads.map((thread) => {
       const mine = visits.filter((visit) => visit.threadId === thread.id);
       const own = mine.map((visit) => visit.view);
-      // The work item it is on, as its newest visit's assignment names it.
-      const newest = mine.at(-1);
+      // The work item it is on, as its newest work visit's assignment names it.
+      const newest = mine.filter((visit) => !visit.view.inquiry).at(-1);
       return {
         name: newest?.name ?? '',
         workflow: newest?.workflow ?? '',
@@ -641,11 +650,12 @@ export class SessionThreads {
         status:
           thread.status === 'retired'
             ? 'retired'
-            : own.some((visit) => live(visit))
+            : own.some((visit) => live(visit) && !visit.inquiry)
               ? 'live'
               : 'dormant',
         takesMessage:
           asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
+        ...(thread.sha256 !== null && thread.uploaded_at !== null && { asks: true as const }),
         visits: own,
       };
     });
@@ -671,8 +681,9 @@ export class SessionThreads {
       transcript: boolean;
       name: string | null;
       workflow: string | null;
+      kind: 'work' | 'inquiry';
     }>(
-      `SELECT s.id,s.thread_id,s.status,s.runner_id,x.j->>'createdAt' AS created_at,x.j->>'activatedAt' AS activated_at,
+      `SELECT s.id,s.thread_id,s.status,s.runner_id,s.kind,x.j->>'createdAt' AS created_at,x.j->>'activatedAt' AS activated_at,
           x.j->>'expiresAt' AS expires_at,x.j->>'hardDeadline' AS hard_deadline,x.j->>'closedAt' AS closed_at,
           x.j->>'closeReason' AS close_reason,${workNameOf('x.j')} AS name,x.j#>>'{execution,workflow}' AS workflow,x.j->>'outcome' AS outcome,(x.j#>'{continuity,resume}') IS NOT NULL AS resumed,
           COALESCE(d.platform_json::jsonb->>'harness',u.harness,x.j#>>'{continuity,resume,harness}') AS harness,
@@ -710,6 +721,7 @@ export class SessionThreads {
           ),
         }),
         hasConversation: row.streamed || row.transcript,
+        ...(row.kind === 'inquiry' && { inquiry: true as const }),
       };
       return { threadId: row.thread_id, view, name: row.name, workflow: row.workflow };
     });

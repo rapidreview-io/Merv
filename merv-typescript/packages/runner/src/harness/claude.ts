@@ -9,6 +9,8 @@ import { entries, firstId, type Harness, spent } from './shared.js';
  * cache, so cache writes and reads are added. Its home is the machine's own, which holds its
  * login; a conversation is `projects/<cwd>/<id>.jsonl`, found in any project directory.
  */
+/** The project directory Claude Code keeps a launch's conversations in: its cwd, spelled out. */
+const project = (cwd: string) => realpathSync(cwd).replace(/[^A-Za-z0-9]/g, '-');
 export const claude: Harness = {
   lines: claudeEvents,
   usage: (output, model) =>
@@ -28,7 +30,10 @@ export const claude: Harness = {
         : undefined,
   home: (_profile, _runDirectory, environment) =>
     environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), '.claude'),
-  locate(root, id) {
+  locate(root, id, cwd) {
+    // The launch's own copy first: an inquiry visit elsewhere may hold the same conversation.
+    const own = cwd && join(root, 'projects', project(cwd), `${id}.jsonl`);
+    if (own && lstatSync(own, { throwIfNoEntry: false })?.isFile()) return own;
     for (const project of entries(join(root, 'projects'))) {
       const path = join(root, 'projects', project.name, `${id}.jsonl`);
       if (project.isDirectory() && lstatSync(path, { throwIfNoEntry: false })?.isFile())
@@ -36,11 +41,14 @@ export const claude: Harness = {
     }
     return undefined;
   },
-  restorePath: (root, cwd, id) => [
-    join(root, 'projects', realpathSync(cwd).replace(/[^A-Za-z0-9]/g, '-')),
-    `${id}.jsonl`,
-  ],
-  forget(root, ids) {
+  restorePath: (root, cwd, id) => [join(root, 'projects', project(cwd)), `${id}.jsonl`],
+  forget(root, ids, cwd) {
+    if (cwd) {
+      for (const id of ids)
+        for (const name of [`${id}.jsonl`, id])
+          rmSync(join(root, 'projects', project(cwd), name), { recursive: true, force: true });
+      return;
+    }
     for (const id of ids)
       for (const path of [
         ...entries(join(root, 'projects')).flatMap((project) =>

@@ -26,12 +26,14 @@ export interface Harness {
   line(head: string): 'delta' | 'whole' | undefined;
   /** Where a launch keeps its conversations. */
   home(profile: RunnerProfile, runDirectory: string, environment: NodeJS.ProcessEnv): string;
-  /** A conversation's file in that home. */
-  locate(root: string, id: string): string | undefined;
+  /** A conversation's file in that home: the one the launch run in `cwd` wrote, where a home
+   *  keeps conversations by directory and that one exists. */
+  locate(root: string, id: string, cwd?: string): string | undefined;
   /** Where a conversation is put to be resumed: its directory and file name. */
   restorePath(root: string, cwd: string, id: string): [string, string];
-  /** Takes these conversations out of a home the runner shares. */
-  forget(root: string, ids: string[]): void;
+  /** Takes these conversations out of a home the runner shares; with `cwd`, only the copies the
+   *  launch run there kept, where another launch may hold the same conversation elsewhere. */
+  forget(root: string, ids: string[], cwd?: string): void;
 }
 
 export const entries = (directory: string) => {

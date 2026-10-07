@@ -199,7 +199,7 @@ async function readingOf(
   // every reader sees the same red.
   const unheld = await tx.all<HoldRow>(
     `SELECT h.* FROM session_dispatch_holds h WHERE h.project_id=? AND h.attempts>0
-      AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=h.project_id AND l.instance_id=h.instance_id AND l.revision=h.revision AND l.status IN ('offered','active'))`,
+      AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=h.project_id AND l.instance_id=h.instance_id AND l.revision=h.revision AND l.status IN ('offered','active') AND l.kind='work')`,
     projectId,
   );
   const at = await ctx.workflows.revisions(

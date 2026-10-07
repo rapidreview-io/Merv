@@ -29,6 +29,14 @@ control_token = 'mr_' + secrets.token_hex(32)
 step_id = 'session_gate_' + secrets.token_hex(8)
 step_secret, control_calls, step_calls = [], [], []
 step_relayed, step_released = threading.Event(), threading.Event()
+# Then a person's question to the step's agent: an inquiry visit on the same work host, which
+# resumes the conversation the step kept, read-only, and keeps nothing of its own. The step's
+# runner declares and delivers its conversation here; the inquiry is offered once the gate has
+# read the step's own launch and receipt.
+inquiry_id = 'session_gate_inquiry_' + secrets.token_hex(8)
+inquiry_secret, inquiry_calls = [], []
+kept = {}
+conversation_stored, inquiry_ready, inquiry_released = threading.Event(), threading.Event(), threading.Event()
 LAUNCHER = Path('/opt/merv/runtime/assignment-probed.py')
 LAUNCH_RECORD = Path('/run/merv-runtime/gate-launch.json')
 REAL_LAUNCHER = Path('/run/merv-runtime/assignment-probed.real.py')
@@ -47,24 +55,34 @@ listeners = isolation_probe._listeners
 isolation_probe._listeners = lambda: [entry for entry in listeners()
                                       if entry != '0100007F:%%04X 0' %% port]
 if sys.argv[1:4] == ['--', '/opt/merv/bin/codex', 'exec']:
-    with open(%r, 'w') as f:
-        json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
+    with open(%r, 'a') as f:
+        f.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}) + '\\n')
 # Run as itself: the attestation pins this launcher's own path as argv[0].
 exec(compile(open(%r).read(), %r, 'exec'), {'__name__': '__main__', '__file__': %r})
 ''' % (str(MAIN_PORT), str(LAUNCH_RECORD), str(REAL_LAUNCHER), str(LAUNCHER), str(LAUNCHER))
 
 
-def step_session(runner_id, status='offered', host_ref=None):
+def step_session(runner_id, status='offered', host_ref=None, inquiry=False):
     common = {'instanceId': work_instance, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate', 'revision': 0}
     now = time.time()
     stamp = lambda t: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))
-    return {'id': step_id, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate', 'instanceId': work_instance,
-            'runnerId': runner_id, 'hostRef': host_ref, 'expectedRevision': 0, 'status': status,
-            'closeReason': None if status == 'offered' else 'released', 'outcome': None,
-            'expiresAt': stamp(now + 3600), 'hardDeadline': stamp(now + 3600),
-            'assignment': {**common, 'label': 'Gate step', 'brief': 'Reply done.', 'execution': {'readOnly': False}},
-            'execution': {**common, 'policy': {'readOnly': False, 'tools': []}, 'references': {}}}
-step_state = {}
+    read_only = inquiry
+    session = {'id': inquiry_id if inquiry else step_id, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate',
+               'instanceId': work_instance, 'threadId': 'thr_gate', 'runnerId': runner_id, 'hostRef': host_ref,
+               'expectedRevision': 0, 'status': status, 'closeReason': None if status == 'offered' else 'released',
+               'outcome': None, 'expiresAt': stamp(now + (600 if inquiry else 3600)),
+               'hardDeadline': stamp(now + (600 if inquiry else 3600)),
+               'assignment': {**common, 'label': 'Inquiry: gate' if inquiry else 'Gate step',
+                              'brief': 'What did you reply?' if inquiry else 'Reply done.',
+                              'execution': {'readOnly': read_only}},
+               'execution': {**common, 'policy': {'readOnly': read_only, 'tools': []}, 'references': {}},
+               # The step keeps its conversation, which the inquiry resumes.
+               'continuity': {'key': 'gate-thread'}}
+    if inquiry:
+        session['continuity']['resume'] = {'sessionId': step_id, **kept['facts']}
+        session['inquiry'] = {'id': 'inquiry_gate', 'messageId': 'session_message_gate', 'askedBy': 'actor_owner'}
+    return session
+step_state, inquiry_state = {}, {}
 
 
 def control_reply(handler, method, body):
@@ -76,26 +94,51 @@ def control_reply(handler, method, body):
     if path == '/code/commands/next':
         return {'command': None}
     if path == '/sessions/lease':
-        if step_state:
-            return {'session': None, 'reason': 'no_candidates'}
-        step_secret.append(body['secret'])
-        step_state.update(runner=body['runnerId'], status='offered', hostRef=None)
-        return {'session': step_session(body['runnerId']), 'reason': 'leased'}
+        if not step_state:
+            step_secret.append(body['secret'])
+            step_state.update(runner=body['runnerId'], status='offered', hostRef=None)
+            return {'session': step_session(body['runnerId']), 'reason': 'leased'}
+        if inquiry_ready.is_set() and not inquiry_state:
+            inquiry_secret.append(body['secret'])
+            inquiry_state.update(runner=body['runnerId'], status='offered', hostRef=None)
+            return {'session': step_session(body['runnerId'], inquiry=True), 'reason': 'offered'}
+        return {'session': None, 'reason': 'no_candidates'}
     parts = path.split('/')
-    if len(parts) < 3 or parts[2] != step_id or not step_state:
+    if len(parts) < 3:
         return None
+    inquiry = parts[2] == inquiry_id and bool(inquiry_state)
+    if not inquiry and (parts[2] != step_id or not step_state):
+        return None
+    state = inquiry_state if inquiry else step_state
     action = parts[3] if len(parts) > 3 else None
-    if action in ('transcript', 'conversation', 'huggingface-access', 'stream'):
+    if inquiry:
+        inquiry_calls.append(action)
+    if action == 'conversation' and not inquiry:
+        # The step's conversation, declared then delivered through one PUT to this Main.
+        facts = {k: body[k] for k in ('harness', 'conversationId', 'sha256', 'size')}
+        kept.setdefault('facts', facts)
+        stored = kept.get('bytes') is not None
+        reply = {'sessionId': step_id, 'sha256': facts['sha256'], 'size': facts['size'],
+                 'uploadedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ') if stored else None}
+        if body.get('deliver') and not stored:
+            reply['upload'] = {'url': base + '/gate-conversation', 'headers': {},
+                               'expiresAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))}
+        return {'conversation': reply}
+    if action == 'resume' and inquiry:
+        return {'download': {'url': base + '/gate-conversation',
+                             'expiresAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))}}
+    if action in ('transcript', 'conversation', 'huggingface-access', 'stream', 'resume'):
         return None
     if action == 'launch-connections':
         return {'connections': []}
     if action == 'attach':
-        step_state['hostRef'] = body['hostRef']
+        state['hostRef'] = body['hostRef']
     if action == 'release':
-        step_state['status'] = 'released'
-        step_released.set()
-    session = step_session(step_state['runner'], step_state['status'], step_state['hostRef'])
-    return {'session': session, **({'prompt': 'Reply done.'} if action == 'attach' else {})}
+        state['status'] = 'released'
+        (inquiry_released if inquiry else step_released).set()
+    session = step_session(state['runner'], state['status'], state['hostRef'], inquiry)
+    prompt = 'Answer the question in the assignment, read-only.' if inquiry else 'Reply done.'
+    return {'session': session, **({'prompt': prompt} if action == 'attach' else {})}
 # The top-level keys and tool types fleet/src/codex-relay.ts admits: a Codex that sends others fails here.
 KEYS = {'model', 'instructions', 'input', 'tools', 'tool_choice', 'parallel_tool_calls', 'reasoning',
         'store', 'stream', 'include', 'prompt_cache_key', 'text', 'client_metadata'}
@@ -130,7 +173,7 @@ def probe_command(port):
     return (PROBE % port) + ("; python3 -c \"import os,hashlib; "
           "assert hashlib.sha256(os.environ.get('HF_TOKEN','').encode()).hexdigest() == '" + hf_digest + "'; "
           "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"") + '; python3 -c ' + shlex.quote(PATCH_PROBE) + probe_suffix
-calls, outputs, holders, relay_credentials = [], [], set(), []
+calls, outputs, holders, relay_credentials, inquiry_inputs = [], [], set(), [], []
 
 
 def environ(pid):
@@ -170,7 +213,7 @@ class Main(http.server.BaseHTTPRequestHandler):
             self.send_response(401)
             self.end_headers()
             return
-        stepped = step_secret and self.headers.get('authorization') == 'Bearer ' + step_secret[0]
+        stepped = self.headers.get('authorization') in ['Bearer ' + s for s in step_secret + inquiry_secret]
         if self.path == '/mcp' and stepped:
             # Merv's MCP server, which the step's Codex requires: a handshake and no tools.
             if 'id' not in body:
@@ -190,6 +233,9 @@ class Main(http.server.BaseHTTPRequestHandler):
         # The step's Codex, with the bearer its runner leased it with: one closing answer.
         if stepped:
             step_calls.append((self.path, sorted(body)))
+            if inquiry_secret and self.headers.get('authorization') == 'Bearer ' + inquiry_secret[0]:
+                # What the inquiry's Codex sends: the step's own turns first, as it resumed them.
+                inquiry_inputs.append(json.dumps(body.get('input', [])))
             step_relayed.set()
             events = [{'type': 'response.created', 'response': {'id': 'resp_step'}},
                       {'type': 'response.output_item.done', 'output_index': 0, 'item': {
@@ -242,11 +288,30 @@ class Main(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
 
+    def do_PUT(self):
+        # The store's signed PUT of the step's conversation, which the inquiry's resume reads.
+        raw = self.rfile.read(int(self.headers.get('content-length', '0')))
+        if self.path != '/gate-conversation' or 'facts' not in kept or \
+                hashlib.sha256(raw).hexdigest() != kept['facts']['sha256']:
+            self.send_response(400)
+            self.end_headers()
+            return
+        kept['bytes'] = raw
+        conversation_stored.set()
+        self.send_response(200)
+        self.end_headers()
+
     def do_DELETE(self):
         self.send_response(405)
         self.end_headers()
 
     def do_GET(self):
+        if self.path == '/gate-conversation' and kept.get('bytes') is not None:
+            self.send_response(200)
+            self.send_header('content-length', str(len(kept['bytes'])))
+            self.end_headers()
+            self.wfile.write(kept['bytes'])
+            return
         if self.path == '/mcp':
             self.send_response(405)  # no server-initiated stream
             self.end_headers()
@@ -303,16 +368,20 @@ try:
     assert control_token.encode() not in command + environ(parent.pid)
     assert step_released.wait(120), 'the work host ran no step through to its release: ' + json.dumps(
         [(m, p) for m, p, _ in control_calls][-12:])
+    # The step kept its conversation and delivered it: what an inquiry visit resumes.
+    assert conversation_stored.wait(120), 'the step delivered no conversation: ' + json.dumps(
+        [(m, p) for m, p, _ in control_calls][-12:])
     assert step_relayed.is_set(), "the step's Codex never called the relay with its own session bearer"
     assert all(p == '/codex-model/responses' and set(k) <= KEYS for p, k in step_calls), step_calls
     presences = [b for m, p, b in control_calls if p == '/sessions/runners/heartbeat']
     # Exactly its enrolment: the Code driver took the work-host config, and the hosted profile.
-    assert presences and all(b['capabilities'] == ['code.v2', 'workflow.workhost.1'] and
+    # `inquiry.1`: the image runs inquiry visits as such, which only it can say.
+    assert presences and all(b['capabilities'] == ['code.v2', 'inquiry.1', 'workflow.workhost.1'] and
                              [x['name'] for x in b['platforms']] == ['hosted-codex'] for b in presences), presences
     [leased] = [b for m, p, b in control_calls if p == '/sessions/lease'][:1]
     assert leased['platform']['name'] == 'hosted-codex'
     retained = Path('/workspace/assignments') / hashlib.sha256(work_instance.encode()).hexdigest()
-    launch = json.loads(LAUNCH_RECORD.read_text())
+    launch = json.loads(LAUNCH_RECORD.read_text().splitlines()[0])
     # What the probed launcher's own attestation requires of the launch, met by the runner.
     assert launch['cwd'] == str(retained) and launch['argv'][:3] == ['--', '/opt/merv/bin/codex', 'exec']
     assert [launch['argv'][i + 1] for i, v in enumerate(launch['argv'][:-1]) if v == '-C'] == [str(retained)]
@@ -324,6 +393,24 @@ try:
     assert receipt['workspace'] == retained.name and receipt['launch_id'] == attached[0]['hostRef'], receipt
     assert set(receipt['roots']) == {'supervisor', 'guardian', 'subreaper', 'group'}, receipt['roots']
     assert receipt['listeners'] == [], receipt['listeners']
+    # The inquiry: the same host's next visit, resuming the step's conversation read-only.
+    inquiry_ready.set()
+    assert inquiry_released.wait(180), 'the work host ran no inquiry through to its release: ' + json.dumps(
+        [(m, p) for m, p, _ in control_calls][-12:])
+    launches = [json.loads(line) for line in LAUNCH_RECORD.read_text().splitlines()]
+    assert len(launches) == 2, launches
+    asked = launches[1]
+    # Through the same attested launcher, in the work's own directory, which its sandbox only reads.
+    assert asked['cwd'] == str(retained) and asked['argv'][:3] == ['--', '/opt/merv/bin/codex', 'exec']
+    assert [asked['argv'][i + 1] for i, v in enumerate(asked['argv'][:-1]) if v == '-C'] == [str(retained)]
+    assert [asked['argv'][i + 1] for i, v in enumerate(asked['argv'][:-1]) if v == '--sandbox'] == ['read-only'], asked
+    assert asked['argv'][-3:] == ['resume', kept['facts']['conversationId'], '-'], asked['argv'][-3:]
+    inquiry_attached = [b for m, p, b in control_calls if p == f'/sessions/{inquiry_id}/attach']
+    receipt = json.loads((Path('/run/merv-isolation') / f'{retained.name}.json').read_text())
+    assert receipt['launch_id'] == inquiry_attached[0]['hostRef'], receipt
+    # It resumed the step's turns, asked the relay with its own bearer, and kept nothing back.
+    assert inquiry_inputs and 'Reply done.' in inquiry_inputs[0], inquiry_inputs[:1]
+    assert 'resume' in inquiry_calls and 'conversation' not in inquiry_calls, inquiry_calls
 finally:
     LAUNCHER.write_bytes(original_launcher)
     LAUNCH_RECORD.unlink(missing_ok=True)
@@ -455,7 +542,7 @@ assert control.returncode == 0 and outside_path.read_text() == 'control\n'
 outside_path.unlink()
 
 request_keys, transcripts, sandbox_results = set(), [], []
-secret_values = [enrollment, model_key, session, hf_token, control_token, *step_secret]
+secret_values = [enrollment, model_key, session, hf_token, control_token, *step_secret, *inquiry_secret]
 try:
     normal_sandbox, _ = checked_launch()
     sandbox_results.append(normal_sandbox)
@@ -505,4 +592,8 @@ print(json.dumps({
     # local fake Main's listener hidden; the normal and retained Codex launches below the step
     # call the assignment launcher directly.
     'workHostStepAttested': True,
+    # A person's question to the step's agent ran on the same host as an inquiry visit: attested,
+    # read-only, resuming the conversation the step kept, and declaring none of its own.
+    'inquiryAttested': True, 'inquiryReadOnlySandbox': True, 'inquiryResumedStepConversation': True,
+    'inquiryConversationNotKept': True,
 }))

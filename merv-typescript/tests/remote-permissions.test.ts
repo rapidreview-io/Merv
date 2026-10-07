@@ -96,7 +96,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     )[0].name,
     '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 86);
+  assert.equal((await otherMcp.listTools()).tools.length, 87);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
     98,

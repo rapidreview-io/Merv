@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import { dailyTokens } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
-import type { ManagedBoundSession } from '@merv/sessions/types';
+import type { ManagedBoundSession, Sessions } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
 import type { ManagedModelGrant, ModelRelayConfig } from './types.js';
 
@@ -22,7 +22,16 @@ export function hostedGrant(
   );
   const { model, effort } = hostedCodexPlatform;
   const { sessionId: id, projectId, allocationId, expiresAt } = bound;
-  return { id, projectId, allocationId, person, model, effort, expiresAt };
+  return {
+    id,
+    projectId,
+    allocationId,
+    person,
+    model,
+    effort,
+    expiresAt,
+    ...(bound.inquiry && { inquiry: true as const }),
+  };
 }
 
 const maxRequestBytes = 16 * 1024 * 1024;
@@ -187,6 +196,8 @@ export function codexModelRelay(
     /** The grant of a bearer or, when the relay checks again, of its session id: the one grant
      *  authority, the workflow adapter's in Main. */
     authorize: (tokenOrSessionId: string) => Promise<ManagedModelGrant>;
+    /** An inquiry visit's own budget, which each of its calls is charged to as well. */
+    inquiries?: Pick<Sessions['inquiries'], 'reserve' | 'settle'>;
   },
 ): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
   return {
@@ -201,6 +212,13 @@ export function codexModelRelay(
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
       const today = day();
+      // An inquiry visit's call is charged to its own budget first, and refunded there when its
+      // asker's day cannot take it.
+      if (grant.inquiry) {
+        const within = !!options.inquiries && (await options.inquiries.reserve(grant.id, most));
+        if (!within) log({ event: 'codex_relay_inquiry_budget', model: grant.model, charge: most });
+        check(within, 'inquiry_budget_spent', "This inquiry's model tokens are spent", 403);
+      }
       const charged = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         const admitted = await ledger.charge(tx, grant.person, today, most, limit);
@@ -220,6 +238,7 @@ export function codexModelRelay(
         return admitted;
       });
       if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
+      if (!charged && grant.inquiry) await options.inquiries?.settle(grant.id, -most);
       check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);
       return { day: today, tokens: most };
     },
@@ -242,6 +261,7 @@ export function codexModelRelay(
       log(record);
       const delta = record.inputTokens + record.outputTokens - reserved.tokens;
       await state.transaction((tx) => ledger.settle(tx, grant.person, reserved.day, delta));
+      if (grant.inquiry) await options.inquiries?.settle(grant.id, delta);
     },
   };
 }

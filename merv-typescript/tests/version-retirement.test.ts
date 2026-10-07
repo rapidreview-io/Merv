@@ -504,7 +504,8 @@ test('retiring the versions that can no longer start deletes their records and n
             // retirement; jsonb orders keys by length.
             // sessions@13 gives each session its actor's thread, these sessions having no agent.
             const added = {
-              worker_sessions: { thread_id: `thr_${String(row.actor_id)}` },
+              // sessions@13 threads every session; sessions@18 makes each a work visit.
+              worker_sessions: { thread_id: `thr_${String(row.actor_id)}`, kind: 'work' },
               reflections: { abandoned: null },
               wf_blockers: { cause: null, whose: null, revision: null },
               research_automation: { unavailable_since: null },
@@ -532,6 +533,7 @@ test('retiring the versions that can no longer start deletes their records and n
   expected.session_managed_assignments = [];
   expected.session_messages = [];
   expected.session_questions = [];
+  expected.session_inquiries = [];
   expected.wf_leases = movedLeases(before);
   const after = await snapshot(client);
   after.wf_leases = after.wf_leases!.map(comparableLease).sort();

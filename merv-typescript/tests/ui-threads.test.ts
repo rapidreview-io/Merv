@@ -448,6 +448,51 @@ test('a writer answers the thread’s open question from the box under it', asyn
   assert.equal(area.value, '');
 });
 
+test('an agent not live that kept its conversation is asked: the question goes to an inquiry, its answer under it', async (t) => {
+  t.after(unmount);
+  serve('/sessions/threads/thr_run/messages', {
+    body: {
+      threadId: 'thr_run',
+      messages: [
+        {
+          id: 'm3',
+          sessionId: null,
+          threadId: 'thr_run',
+          instanceId: 'wf_1',
+          expectedRevision: null,
+          senderActorId: 'actor_me',
+          body: 'What did you conclude?',
+          createdAt: at(60),
+          acknowledgedAt: at(61),
+          reply: 'The smaller model.',
+          inquiry: { id: 'inquiry_1', status: 'answered' },
+        },
+      ],
+      questions: [],
+    },
+  });
+  serve('/sessions/threads/thr_run/ask', { body: { inquiry: { id: 'inquiry_2' } } });
+  await open(
+    'producer',
+    threads.map((item) => (item.id === 'thr_run' ? { ...item, asks: true } : item)),
+  );
+  await press(chip('running'));
+  const box = document.querySelector('dialog .thread-messages')!;
+  assert.match(box.textContent!, /You · .* · answeredWhat did you conclude\?↳ The smaller model\./);
+  const area = box.querySelector('textarea')!;
+  assert.equal(area.getAttribute('aria-label'), 'Ask its agent');
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!;
+    set.set!.call(area, 'And the seed?');
+    area.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => void box.querySelector('form')!.requestSubmit());
+  await settle(10);
+  assert.ok(requests.includes('POST /sessions/threads/thr_run/ask'));
+  assert.ok(!requests.includes('POST /sessions/threads/thr_run/messages'));
+  assert.equal(area.value, '');
+});
+
 test('a reader sees what passed but no box, and an answered question is history', async (t) => {
   t.after(unmount);
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });

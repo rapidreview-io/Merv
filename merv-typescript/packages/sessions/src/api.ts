@@ -18,6 +18,7 @@ export type SessionRoutes = Pick<
   | 'observations'
   | 'threads'
   | 'messaging'
+  | 'inquiries'
   | 'dispatch'
   | 'offer'
   | 'list'
@@ -48,23 +49,31 @@ const messageInput = z
  * adds only what its harness and workspace give, then the frozen assignment. Only a visit that
  * keeps a conversation is told it may ask its owner: no later visit would continue another's.
  */
-export const workerPrompt = (session: Pick<Session, 'continuity'>) =>
-  [
-    'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
-    'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
-    'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
-    'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
-    // Workers read the assignment's tool list as the boundary of what they may look at and
-    // then invent what the project already holds. The list binds writes; reads are open.
-    'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
-    'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
-    ...(session.continuity
-      ? [
-          'If the work cannot go on without the owner’s decision and no tool can settle it, call session.ask_owner with one self-contained question and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
-        ]
-      : []),
-    'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
-  ].join('\n');
+export const workerPrompt = (session: Pick<Session, 'continuity' | 'inquiry'>) =>
+  session.inquiry
+    ? inquiryPrompt
+    : [
+        'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
+        'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
+        'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
+        'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
+        // Workers read the assignment's tool list as the boundary of what they may look at and
+        // then invent what the project already holds. The list binds writes; reads are open.
+        'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
+        'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
+        ...(session.continuity
+          ? [
+              'If the work cannot go on without the owner’s decision and no tool can settle it, call session.ask_owner with one self-contained question and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
+            ]
+          : []),
+        'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
+      ].join('\n');
+/** What an inquiry visit is told instead: its assignment carries the question. */
+const inquiryPrompt = [
+  'You are answering a question about your earlier work in this conversation: an inquiry visit, not a work visit. The frozen assignment below carries the question.',
+  'You hold no lease on the work. Use only the Merv read tools to check anything you need; make no workflow moves, commits or writes, and leave the local files as they are.',
+  'Answer with session.message.ack on the question’s messageId, a stable requestId and your answer as the reply. The reply ends this visit: stop after it.',
+].join('\n');
 
 /** Managed supervisor bearers have no general project, tool or administration transport. */
 const managedRoute = (method: string, path: string): boolean =>
@@ -104,6 +113,15 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (conversationRoute && req.method === 'GET')
     return await sessions.threads.conversation(caller, pathSegment(conversationRoute[1]!));
   // A thread's messages and questions; a person's message to it, which answers its questions.
+  // A person's question to the thread's agent, answered by a read-only inquiry visit.
+  const askRoute = /^\/sessions\/threads\/([^/]+)\/ask$/.exec(path);
+  if (askRoute && req.method === 'POST')
+    return {
+      inquiry: await sessions.inquiries.ask(
+        caller,
+        bound(await r.json(messageInput), 'threadId', pathSegment(askRoute[1]!)),
+      ),
+    };
   const messagesRoute = /^\/sessions\/threads\/([^/]+)\/messages$/.exec(path);
   if (messagesRoute && req.method === 'GET')
     return await sessions.messaging.thread(caller, pathSegment(messagesRoute[1]!));

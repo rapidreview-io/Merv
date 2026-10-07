@@ -189,7 +189,9 @@ export class SessionStreams implements SessionStreamReads {
   async growing(sessionId: string, projectId: string): Promise<boolean> {
     const row = await this.state.read((sql) =>
       sql.get<{ status: Session['status']; closed_at: string | null }>(
-        `SELECT s.status,u.closed_at FROM worker_sessions s LEFT JOIN session_usage u ON u.session_id=s.id
+        // An inquiry visit records no usage row: its close is read from its own.
+        `SELECT s.status,COALESCE(u.closed_at,s.session_json::jsonb->>'closedAt') AS closed_at
+          FROM worker_sessions s LEFT JOIN session_usage u ON u.session_id=s.id
           WHERE s.id=? AND s.project_id=?`,
         sessionId,
         projectId,

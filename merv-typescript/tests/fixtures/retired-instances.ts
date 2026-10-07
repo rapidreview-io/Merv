@@ -395,6 +395,26 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 }
 
 /**
+ * sessions@18 (inquiry visits) undone, back to the release before it: no inquiries, no session
+ * kinds (the live indexes as they were), and messages guarded as sessions@14 left them.
+ */
+export function rewindInquiries(): string {
+  const threads = sessionMigrations[14]!;
+  return `DROP TABLE session_inquiries;
+DROP FUNCTION session_inquiries_guard();
+ALTER TABLE session_messages DROP CONSTRAINT session_messages_inquiry;
+ALTER TABLE session_messages DROP COLUMN inquiry_id, DROP COLUMN inquiry_role;
+${threads.slice(threads.indexOf('CREATE OR REPLACE FUNCTION session_messages_guard'), threads.indexOf('CREATE TABLE session_questions'))}
+DROP TRIGGER worker_sessions_kind_immutable ON worker_sessions;
+DROP FUNCTION worker_sessions_kind_guard();
+ALTER TABLE worker_sessions DROP COLUMN kind;
+CREATE UNIQUE INDEX worker_sessions_live_target ON worker_sessions(project_id,instance_id,revision)
+  WHERE status IN ('offered','active');
+CREATE UNIQUE INDEX worker_sessions_live_actor ON worker_sessions(actor_id) WHERE status IN ('offered','active');
+DELETE FROM component_migrations WHERE component='sessions' AND version=18;`;
+}
+
+/**
  * Rewinds a booted schema to the release before the retirement, then writes the fixture.
  * The caller must have stopped the app that booted it.
  */
@@ -406,7 +426,9 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
-    // sessions@17 (a thread may move to the work item that resumed it) came last of all; its
+    // sessions@18 (inquiry visits) came last of all.
+    await client.query(rewindInquiries());
+    // sessions@17 (a thread may move to the work item that resumed it) came before it; its
     // guard goes with the threads table below.
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version=17",

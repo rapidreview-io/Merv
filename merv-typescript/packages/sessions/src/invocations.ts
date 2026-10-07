@@ -101,6 +101,8 @@ export interface InvocationHost {
  * acknowledging a message, and ending its visit with a question for its owner.
  */
 const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
+/** An inquiry visit's one write: its reply to the question it answers. */
+const inquiryReply = 'session.message.ack';
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionInvocationPolicy {
   readonly instructions =
@@ -121,6 +123,8 @@ export class SessionInvocations implements SessionInvocationPolicy {
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     ordinary(caller);
     caller = structuredClone(caller);
+    // An inquiry visit reads the project and replies; Sessions' guard holds it to that too.
+    if (caller.session?.inquiry) return !!read || name === inquiryReply;
     if (read || (workerTools.has(name) && name !== 'session.ask_owner')) return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
@@ -148,6 +152,22 @@ export class SessionInvocations implements SessionInvocationPolicy {
     read?: boolean,
   ) {
     const session = await this.host.session(caller, tx);
+    if (session.inquiry) {
+      // An inquiry visit has no policy to bind its calls: its reads are bounded by the project,
+      // and its one write is its reply.
+      check(
+        read || tool === inquiryReply,
+        'inquiry_read_only',
+        'An inquiry visit only reads, and replies with session.message.ack',
+        403,
+      );
+      const current = await this.host.valid(session, tx);
+      return {
+        admission: { tool, input: structuredClone(input) },
+        registrationId: current.registrationId,
+        session,
+      };
+    }
     // A worker's own tools are always admitted; they need only a live lease. The lease
     // is checked before the input is bounded, so when both are bad the lease error wins.
     const ack = workerTools.has(tool);
@@ -186,6 +206,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
           id: prepared.session.id,
           threadId: prepared.session.threadId,
           invocationId,
+          ...(prepared.session.inquiry && { inquiry: true as const }),
         }),
       }),
       tool,

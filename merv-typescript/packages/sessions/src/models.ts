@@ -263,6 +263,9 @@ export interface ThreadView {
    * answers a question it asked that is still open.
    */
   takesMessage: boolean;
+  /** It kept a conversation, so its agent may be asked now (`session.ask_thread`), whatever its
+   *  status: a read-only inquiry visit resumes it and answers. */
+  asks?: true;
   /** Oldest first. */
   visits: VisitView[];
 }
@@ -287,6 +290,8 @@ export interface VisitView {
   liveness?: LeaseLiveness;
   /** Its live stream, or its stored transcript, holds what the agent did. */
   hasConversation: boolean;
+  /** An inquiry visit: read-only, answering a person's question, never the thread's work. */
+  inquiry?: true;
 }
 /** A thread as the project's Agents page lists it, with the work item it is on. */
 export interface ProjectThread extends ThreadView {
@@ -364,6 +369,36 @@ export interface SessionMessage {
   createdAt: string;
   acknowledgedAt: string | null;
   reply: string | null;
+  /** A question to an inquiry visit (`session.ask_thread`): its reply is that visit's answer. */
+  inquiry?: { id: string; status: InquiryStatus };
+}
+/**
+ * Where an inquiry stands: waiting for a machine (`queued`), its visit running (`running`), or
+ * ended: `answered` with a reply on its message, `unanswered` when its visit ended without one,
+ * `expired` when no machine took it in time.
+ */
+export type InquiryStatus = 'queued' | 'running' | 'answered' | 'unanswered' | 'expired';
+/**
+ * A person's question to a thread's agent, answered by an inquiry visit: a short, read-only visit
+ * that resumes the thread's saved conversation and never saves it back.
+ */
+export interface ThreadInquiry {
+  id: string;
+  threadId: string;
+  instanceId: string;
+  /** The question, a message to the thread whose reply is the answer. */
+  messageId: string;
+  askedBy: string;
+  status: InquiryStatus;
+  askedAt: string;
+  /** A queued inquiry no machine has taken by then expires. */
+  waitUntil: string;
+  /** Its visit, once a machine took it. */
+  sessionId: string | null;
+  endedAt: string | null;
+  /** The most its visit may spend, and what it is known to have spent (model tokens). */
+  tokenBudget: number;
+  tokens: number;
 }
 /** A question a worker asked its owner as it ended its visit; a message to its thread answers it. */
 export interface ThreadQuestion {

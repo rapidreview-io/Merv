@@ -1,0 +1,527 @@
+import {
+  check,
+  clip,
+  digest,
+  newId,
+  type Caller,
+  type DelegationSource,
+  type Scope,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
+import { isoNow, ordinary, text, workName } from './common.js';
+import type {
+  InquiryStatus,
+  Session,
+  SessionInquiries,
+  SessionResume,
+  ThreadInquiry,
+  ThreadInquiryInput,
+} from './types.js';
+
+/** How long a question waits for a machine to take it before it expires. */
+export const INQUIRY_WAIT_MS = 10 * 60_000;
+/** An inquiry visit's hard deadline from its offer: a short answer, never work. */
+export const INQUIRY_VISIT_SECONDS = 10 * 60;
+/**
+ * The model tokens one inquiry visit may spend, charged to the person who asked: Fleet's relay
+ * holds a hosted visit to it call by call, and a runner's report counts against it after.
+ */
+export const INQUIRY_TOKENS = 300_000;
+/** What an inquiry visit's frozen execution and lease name in place of a workflow policy. */
+export const INQUIRY_POLICY = 'inquiry';
+
+interface InquiryRow {
+  id: string;
+  project_id: string;
+  thread_id: string;
+  message_id: string;
+  asker_actor_id: string;
+  asker_source_json: string;
+  request_id: string;
+  fingerprint: string;
+  status: InquiryStatus;
+  asked_at: string;
+  wait_until: string;
+  session_id: string | null;
+  ended_at: string | null;
+  token_budget: number | string;
+  tokens: number | string;
+  /** Joined from its thread. */
+  instance_id: string;
+}
+const INQUIRY =
+  'SELECT i.*,t.instance_id FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id';
+const view = (row: InquiryRow): ThreadInquiry => ({
+  id: row.id,
+  threadId: row.thread_id,
+  instanceId: row.instance_id,
+  messageId: row.message_id,
+  askedBy: row.asker_actor_id,
+  status: row.status,
+  askedAt: row.asked_at,
+  waitUntil: row.wait_until,
+  sessionId: row.session_id,
+  endedAt: row.ended_at,
+  tokenBudget: Number(row.token_budget),
+  tokens: Number(row.tokens),
+});
+
+/** A queued question a machine may take now, with what its visit is built from. */
+export interface InquiryCandidate {
+  id: string;
+  threadId: string;
+  messageId: string;
+  askedBy: string;
+  instanceId: string;
+  actorId: string;
+  continuityKey: string;
+  resume: SessionResume;
+  /** The question, which the visit's assignment carries. */
+  body: string;
+  /** The thread's newest work visit, whose step the conversation is of. */
+  latest: Session;
+}
+
+/**
+ * The visit an inquiry runs as: the thread's actor and conversation, a short deadline, and an
+ * assignment, execution and lease of its own that name the step the conversation is of but grant
+ * nothing on it. Its policy is read-only with no workspace and no tools: what it may call is the
+ * project's reads and its one reply, which Sessions admits for inquiry visits alone.
+ */
+export function inquirySession(input: {
+  id: string;
+  candidate: InquiryCandidate;
+  projectId: string;
+  source: DelegationSource;
+  runnerId: string;
+  createdAt: string;
+  hardDeadline: string;
+}): Session {
+  const { candidate, id, projectId } = input;
+  const { latest } = candidate;
+  const step = {
+    instanceId: candidate.instanceId,
+    projectId,
+    actorId: candidate.actorId,
+    workflow: latest.execution.workflow,
+    version: latest.execution.version,
+    state: latest.execution.state,
+    revision: latest.expectedRevision,
+  };
+  const name = workName(latest.assignment);
+  return {
+    id,
+    threadId: candidate.threadId,
+    projectId,
+    actorId: candidate.actorId,
+    source: input.source,
+    instanceId: candidate.instanceId,
+    expectedRevision: latest.expectedRevision,
+    role: 'reader',
+    status: 'offered',
+    runnerId: input.runnerId,
+    hostRef: null,
+    createdAt: input.createdAt,
+    activatedAt: null,
+    expiresAt: input.hardDeadline,
+    hardDeadline: input.hardDeadline,
+    closedAt: null,
+    closeReason: null,
+    outcome: null,
+    assignment: {
+      ...step,
+      workStart: null,
+      role: 'reader',
+      label: `Inquiry: ${name}`,
+      name,
+      brief: inquiryBrief(candidate.messageId, candidate.body),
+      references: [],
+      handoff: {
+        instruction: `Answer with session.message.ack {messageId: "${candidate.messageId}", reply, requestId}; the reply ends this visit.`,
+        tools: ['session.message.ack'],
+      },
+      execution: { readOnly: true, tools: [] },
+      context: null,
+    },
+    execution: {
+      ...step,
+      policyHash: INQUIRY_POLICY,
+      registrationId: INQUIRY_POLICY,
+      policy: { readOnly: true, tools: [] },
+      references: {},
+    },
+    lease: {
+      leaseId: id,
+      instanceId: step.instanceId,
+      expectedRevision: step.revision,
+      projectId,
+      actorId: step.actorId,
+      workflow: step.workflow,
+      version: step.version,
+      state: step.state,
+      policyHash: INQUIRY_POLICY,
+      registrationId: INQUIRY_POLICY,
+      receipt: {},
+    },
+    continuity: { key: candidate.continuityKey, resume: candidate.resume },
+    inquiry: { id: candidate.id, messageId: candidate.messageId, askedBy: candidate.askedBy },
+  };
+}
+
+/** What an inquiry visit's assignment tells its agent: the question, and that it only answers. */
+const inquiryBrief = (messageId: string, body: string) =>
+  [
+    'A person over this project is asking you a question about your work. This is an inquiry: a short, read-only visit that resumes your conversation as you left it, to answer them and stop.',
+    'Nothing you do here is part of your work. You hold no lease on it: make no workflow moves, no commits and no writes; the read tools of this project are yours, the local filesystem is read-only, and this conversation is not kept for your work afterwards (your next work visit is told of the question and your answer).',
+    `Answer once, plainly and from what you know, with session.message.ack {messageId: "${messageId}", reply, requestId}. That reply is the answer the person reads, and it ends this visit: stop after it.`,
+    `The question: ${body}`,
+  ].join('\n\n');
+
+/** What the thread's next work visit reads of an inquiry it did not take part in. */
+export const inquiryContext = (question: string, reply: string) =>
+  clip(
+    `While your work was away, a person asked an inquiry visit of yours (your conversation as you left it, read-only) a question, and it answered. Nothing in your work changed because of it; acknowledge this and carry on.\n\nThe question: ${question}\n\nYour answer: ${reply}`,
+    16_000,
+  );
+
+/** What the inquiries module uses of Sessions. */
+export interface InquiryHost {
+  transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
+  /** Refuses a caller who may not read the work item. */
+  readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
+  /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
+  dispatching(projectId: string, tx: Transaction): Promise<boolean>;
+  decode(row: { thread_id: string; session_json: string }): Session;
+}
+
+/**
+ * A person's questions to any thread's agent, live, dormant or retired. Each is a message to the
+ * thread whose reply is the answer, and an inquiry that a machine takes as a short read-only
+ * visit resuming the thread's saved conversation: one open per thread, a few minutes to be taken
+ * and as long to answer, and a token budget charged to the person who asked.
+ */
+export class Inquiries implements SessionInquiries {
+  constructor(
+    private readonly state: State,
+    private readonly scope: Scope,
+    private readonly clock: () => number,
+    private readonly host: InquiryHost,
+  ) {}
+  async ask(caller: Caller, input: ThreadInquiryInput): Promise<ThreadInquiry> {
+    ordinary(caller);
+    check(!caller.session && !caller.managed, 'forbidden', 'Workers cannot ask other agents', 403);
+    check(
+      input &&
+        typeof input === 'object' &&
+        Object.keys(input).every((key) => ['threadId', 'body', 'requestId'].includes(key)) &&
+        text(input.threadId, 200) &&
+        text(input.body, 8_000) &&
+        text(input.requestId, 200),
+      'invalid_inquiry',
+      'A thread ID, a question of 1–8000 characters and a stable requestId are required',
+    );
+    caller = structuredClone(caller);
+    input = structuredClone(input);
+    return await this.host.transaction(async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      const fingerprint = digest({ threadId: input.threadId, body: input.body });
+      const old = await tx.get<InquiryRow>(
+        `${INQUIRY} WHERE i.project_id=? AND i.asker_actor_id=? AND i.request_id=?`,
+        caller.projectId,
+        caller.actorId,
+        input.requestId,
+      );
+      if (old) {
+        check(
+          old.fingerprint === fingerprint,
+          'request_conflict',
+          'Inquiry requestId was used for different input',
+          409,
+        );
+        return view(old);
+      }
+      const thread = await tx.get<{
+        id: string;
+        project_id: string;
+        instance_id: string;
+        sha256: string | null;
+        uploaded_at: string | null;
+      }>(
+        'SELECT id,project_id,instance_id,sha256,uploaded_at FROM session_threads WHERE id=?',
+        input.threadId,
+      );
+      check(
+        thread && thread.project_id === caller.projectId,
+        'thread_not_found',
+        'Thread not found in this project',
+        404,
+      );
+      await this.host.readable(caller, thread.instance_id, tx);
+      check(
+        thread.sha256 !== null && thread.uploaded_at !== null,
+        'inquiry_unkept',
+        'This agent kept no conversation to resume: a fresh agent would know nothing of its work, so there is nobody to ask',
+        409,
+      );
+      check(
+        !(await tx.get(
+          "SELECT 1 FROM session_inquiries WHERE thread_id=? AND status IN ('queued','running')",
+          thread.id,
+        )),
+        'inquiry_busy',
+        'This agent is still on an earlier question; ask again once it has answered',
+        409,
+      );
+      check(
+        await this.host.dispatching(caller.projectId, tx),
+        'dispatch_disabled',
+        'Automatic dispatch is off in this project, so no machine would take the question',
+        409,
+      );
+      const source = await this.scope.delegationSource(caller, tx);
+      const id = newId('inquiry');
+      const messageId = newId('session_message');
+      const now = this.clock();
+      const at = new Date(now).toISOString();
+      await tx.run(
+        "INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,'question')",
+        messageId,
+        caller.projectId,
+        thread.id,
+        caller.actorId,
+        `inquiry:${input.requestId}`,
+        fingerprint,
+        input.body,
+        at,
+        id,
+      );
+      await tx.run(
+        "INSERT INTO session_inquiries(id,project_id,thread_id,message_id,asker_actor_id,asker_source_json,request_id,fingerprint,status,asked_at,wait_until,token_budget) VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?)",
+        id,
+        caller.projectId,
+        thread.id,
+        messageId,
+        caller.actorId,
+        JSON.stringify(source),
+        input.requestId,
+        fingerprint,
+        at,
+        new Date(now + INQUIRY_WAIT_MS).toISOString(),
+        INQUIRY_TOKENS,
+      );
+      await this.state.appendEvent(tx, {
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        type: 'session.inquiry_asked',
+        subjectId: thread.id,
+        data: { inquiryId: id, threadId: thread.id, messageId, instanceId: thread.instance_id },
+      });
+      return view((await tx.get<InquiryRow>(`${INQUIRY} WHERE i.id=?`, id))!);
+    });
+  }
+  /**
+   * The oldest queued question of the project a machine of `ownerHash` may take: its thread's
+   * conversation was kept by `harness` and its work visits ran under the same owner (whose
+   * machines alone resume it, as continuity does), on `workInstanceId` alone for a work host.
+   */
+  async candidate(
+    tx: Transaction,
+    projectId: string,
+    ownerHash: string,
+    harness: string,
+    workInstanceId: string | null,
+  ): Promise<InquiryCandidate | undefined> {
+    const row = await tx.get<{
+      id: string;
+      thread_id: string;
+      message_id: string;
+      asker_actor_id: string;
+      instance_id: string;
+      actor_id: string;
+      continuity_key: string;
+      latest_session_id: string;
+      harness: SessionResume['harness'];
+      conversation_id: string;
+      sha256: string;
+      size: number | string;
+      body: string;
+      visit_id: string;
+      visit_thread: string;
+      visit_json: string;
+    }>(
+      `SELECT i.id,i.thread_id,i.message_id,i.asker_actor_id,t.instance_id,t.actor_id,t.continuity_key,
+          t.latest_session_id,t.harness,t.conversation_id,t.sha256,t.size,m.body,
+          w.id AS visit_id,w.thread_id AS visit_thread,w.session_json AS visit_json
+        FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
+        JOIN session_messages m ON m.id=i.message_id
+        CROSS JOIN LATERAL (SELECT s.id,s.thread_id,s.owner_hash,s.session_json FROM worker_sessions s
+          WHERE s.thread_id=t.id AND s.kind='work' ORDER BY s._merv_rowid DESC LIMIT 1) w
+        WHERE i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
+          AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND t.continuity_key IS NOT NULL
+          AND w.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR t.instance_id=?)
+        ORDER BY i._merv_rowid LIMIT 1`,
+      projectId,
+      isoNow(this.clock),
+      harness,
+      ownerHash,
+      workInstanceId,
+      workInstanceId,
+    );
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      threadId: row.thread_id,
+      messageId: row.message_id,
+      askedBy: row.asker_actor_id,
+      instanceId: row.instance_id,
+      actorId: row.actor_id,
+      continuityKey: row.continuity_key,
+      resume: {
+        sessionId: row.latest_session_id,
+        harness: row.harness,
+        conversationId: row.conversation_id,
+        sha256: row.sha256,
+        size: Number(row.size),
+      },
+      body: row.body,
+      latest: this.host.decode({ thread_id: row.visit_thread, session_json: row.visit_json }),
+    };
+  }
+  /** The work items with a question a machine of `ownerHash` running `harness` could take now,
+   *  each at its current revision: what Fleet rents a work host for. */
+  async demand(
+    tx: Transaction,
+    projectId: string,
+    ownerHash: string,
+    harness: string,
+  ): Promise<string[]> {
+    return (
+      await tx.all<{ instance_id: string }>(
+        `SELECT DISTINCT t.instance_id FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
+          CROSS JOIN LATERAL (SELECT s.owner_hash FROM worker_sessions s
+            WHERE s.thread_id=t.id AND s.kind='work' ORDER BY s._merv_rowid DESC LIMIT 1) w
+          WHERE i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
+            AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND w.owner_hash=?`,
+        projectId,
+        isoNow(this.clock),
+        harness,
+        ownerHash,
+      )
+    ).map((row) => row.instance_id);
+  }
+  /** Its visit took the question: the inquiry runs, or another lease took it first. */
+  async started(tx: Transaction, inquiryId: string, sessionId: string): Promise<void> {
+    const result = await tx.run(
+      "UPDATE session_inquiries SET status='running',session_id=? WHERE id=? AND status='queued'",
+      sessionId,
+      inquiryId,
+    );
+    check(result.changes === 1, 'inquiry_taken', 'The question was taken by another machine', 409);
+  }
+  /** Its visit closed: answered when the question's message carries the reply, else not. */
+  async closed(tx: Transaction, session: Session): Promise<void> {
+    const ref = session.inquiry!;
+    const replied = await tx.get<{ reply_body: string | null }>(
+      'SELECT reply_body FROM session_messages WHERE id=?',
+      ref.messageId,
+    );
+    const status: InquiryStatus = replied?.reply_body
+      ? 'answered'
+      : session.closeReason === 'session_expired'
+        ? 'expired'
+        : 'unanswered';
+    await tx.run(
+      "UPDATE session_inquiries SET status=?,ended_at=? WHERE id=? AND status='running'",
+      status,
+      session.closedAt ?? isoNow(this.clock),
+      ref.id,
+    );
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.inquiry_closed',
+      subjectId: session.id,
+      data: {
+        sessionId: session.id,
+        inquiryId: ref.id,
+        threadId: session.threadId,
+        instanceId: session.instanceId,
+        status,
+        reason: session.closeReason ?? 'released',
+        source: session.source,
+      },
+    });
+  }
+  /** The sweep: questions no machine took in time. */
+  async expire(tx: Transaction): Promise<void> {
+    const at = isoNow(this.clock);
+    // Read first, so a pass with nothing to expire takes no writer.
+    if (
+      !(await tx.get(
+        "SELECT 1 FROM session_inquiries WHERE status='queued' AND wait_until<=? LIMIT 1",
+        at,
+      ))
+    )
+      return;
+    await tx.run(
+      "UPDATE session_inquiries SET status='expired',ended_at=? WHERE status='queued' AND wait_until<=?",
+      at,
+      at,
+    );
+  }
+  /** What a runner reported its visit spent, counted against the budget once known. */
+  async reported(tx: Transaction, sessionId: string, tokens: number): Promise<void> {
+    await tx.run(
+      'UPDATE session_inquiries SET tokens=GREATEST(tokens,?) WHERE session_id=?',
+      tokens,
+      sessionId,
+    );
+  }
+  async reserve(sessionId: string, tokens: number): Promise<boolean> {
+    check(Number.isSafeInteger(tokens) && tokens >= 0, 'invalid_input', 'Tokens are a count', 400);
+    return await this.state.transaction(async (tx) => {
+      const row = await tx.get<{ id: string }>(
+        'SELECT id FROM session_inquiries WHERE session_id=?',
+        sessionId,
+      );
+      if (!row) return true;
+      return !!(await tx.get(
+        'UPDATE session_inquiries SET tokens=tokens+? WHERE id=? AND tokens+?<=token_budget RETURNING id',
+        tokens,
+        row.id,
+        tokens,
+      ));
+    });
+  }
+  async settle(sessionId: string, delta: number): Promise<void> {
+    check(Number.isSafeInteger(delta), 'invalid_input', 'A token correction is a count', 400);
+    await this.state.transaction((tx) =>
+      tx.run(
+        'UPDATE session_inquiries SET tokens=GREATEST(0,tokens+?) WHERE session_id=?',
+        delta,
+        sessionId,
+      ),
+    );
+  }
+  /** An inquiry visit's question and asker, for its message reads and its relay grant. */
+  async asker(tx: Transaction, sessionId: string): Promise<DelegationSource | undefined> {
+    const row = await tx.get<{ asker_source_json: string }>(
+      'SELECT asker_source_json FROM session_inquiries WHERE session_id=?',
+      sessionId,
+    );
+    return row ? JSON.parse(row.asker_source_json) : undefined;
+  }
+  /** The statuses of these inquiries, for the thread's messages read. */
+  async statuses(tx: Transaction, ids: string[]): Promise<Map<string, InquiryStatus>> {
+    if (!ids.length) return new Map();
+    return new Map(
+      (
+        await tx.all<{ id: string; status: InquiryStatus }>(
+          `SELECT id,status FROM session_inquiries WHERE id IN (${ids.map(() => '?').join(',')})`,
+          ...ids,
+        )
+      ).map((row) => [row.id, row.status]),
+    );
+  }
+}

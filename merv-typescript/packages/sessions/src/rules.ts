@@ -44,12 +44,18 @@ export const capabilitiesSchema = z
   .max(16)
   .refine((items) => new Set(items).size === items.length);
 /**
- * A visit its worker ended by its own hand: its handoff, or its question to its owner. Hosted
+ * A visit its worker ended by its own hand: its handoff, its question to its owner, or an
+ * inquiry visit's reply. Hosted
  * Codex may finish the model call it had started for a minute after either, which Sessions and
  * the runner's grace both read here.
  */
 export const ownEnd = (reason: string | null | undefined) =>
-  reason === 'handoff' || reason === 'asked_owner';
+  reason === 'handoff' || reason === 'asked_owner' || reason === 'inquiry_answered';
+/**
+ * What a runner advertises when it runs an inquiry visit as one (`session.inquiry`): read-only,
+ * its conversation restored and never kept. Only such a runner is offered one.
+ */
+export const INQUIRY_CAPABILITY = 'inquiry.1';
 /** Every status a session row can hold (`SessionStatus`). */
 export const SESSION_STATUSES = ['offered', 'active', 'released', 'expired'] as const;
 /** A lease's platform as a person reads it, on the Running sidebar and the Agents page. */

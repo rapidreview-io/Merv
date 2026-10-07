@@ -132,11 +132,13 @@ export interface ManagedModelGrant {
   projectId: string;
   /** The Fleet allocation whose machine runs it. */
   allocationId: string;
-  /** Whose spend it is: the person Fleet rented its machine for. */
+  /** Whose spend it is: the person Fleet rented its machine for, or who asked an inquiry visit. */
   person: string;
   model: string;
   effort?: string;
   expiresAt: string;
+  /** An inquiry visit: each call is charged to its own small budget too. */
+  inquiry?: true;
 }
 /**
  * A relay that holds the provider key for the workers Fleet launches, which hold none

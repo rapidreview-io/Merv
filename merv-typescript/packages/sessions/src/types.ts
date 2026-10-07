@@ -47,6 +47,7 @@ import type {
   ThreadConversation,
   ThreadCounts,
   ThreadMessages,
+  ThreadInquiry,
   ThreadQuestion,
   ThreadView,
   UsageRollup,
@@ -83,6 +84,8 @@ export type {
   ThreadCalls,
   ThreadConversation,
   ThreadMessages,
+  InquiryStatus,
+  ThreadInquiry,
   ThreadQuestion,
   ThreadView,
   UsageRollup,
@@ -127,6 +130,18 @@ export interface Session {
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;
+  /**
+   * An inquiry visit's: the person's question it answers. Such a visit resumes its thread's
+   * conversation (`continuity.resume`) read-only, holds no lease on the work, and never saves the
+   * conversation back; its assignment, execution and lease are its own, never the workflow's.
+   */
+  inquiry?: SessionInquiryRef;
+}
+/** What an inquiry visit answers: its inquiry, the question's message and who asked. */
+export interface SessionInquiryRef {
+  id: string;
+  messageId: string;
+  askedBy: string;
 }
 /** The conversation a session continues: the one its key's latest closed session kept. */
 export interface SessionResume {
@@ -362,6 +377,8 @@ export interface Sessions {
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   /** Operator messages to a live session, read and acknowledged by its worker. */
   readonly messaging: SessionMessaging;
+  /** A person's questions to any thread's agent, each answered by a read-only inquiry visit. */
+  readonly inquiries: SessionInquiries;
   findSession(
     caller: Caller,
     instanceId: string,
@@ -504,6 +521,24 @@ export interface SessionMessaging {
   ): Promise<SessionMessage>;
   /** Refuses while a queued message waits for the worker's acknowledgement. */
   requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void>;
+}
+/** The input of `session.ask_thread`: one question to one thread's agent. */
+export interface ThreadInquiryInput {
+  threadId: string;
+  body: string;
+  requestId: string;
+}
+export interface SessionInquiries {
+  /**
+   * Whoever may write in the project asks a thread's agent: an inquiry visit resumes its saved
+   * conversation read-only, and its reply lands on the question's message in the thread.
+   */
+  ask(caller: Caller, input: ThreadInquiryInput): Promise<ThreadInquiry>;
+  /** Server-only, for a model relay: charge `tokens` to an inquiry visit's budget, false when it
+   *  would pass it. Any other session is not limited here (true). */
+  reserve(sessionId: string, tokens: number): Promise<boolean>;
+  /** Server-only: correct what `reserve` charged by `delta` once the call's usage is known. */
+  settle(sessionId: string, delta: number): Promise<void>;
 }
 export interface SessionInvocationPolicy {
   readonly instructions: string;

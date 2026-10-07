@@ -221,6 +221,104 @@ ${withoutTriggers(
   `UPDATE worker_sessions SET session_json = (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch')::text
   WHERE (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch') <> session_json::jsonb;`,
 )}`;
+/**
+ * Inquiry visits (`session.ask_thread`): a person's question to any thread's agent, answered by a
+ * short read-only visit that resumes the thread's saved conversation and never saves it back.
+ *
+ * - `worker_sessions.kind` tells a work visit from an inquiry visit, and never changes. An inquiry
+ *   holds no lease on the work, so the live-target and live-actor indexes cover work visits only;
+ *   a thread has at most one live inquiry visit.
+ * - `session_inquiries` holds each question: queued until a machine takes it, then its visit.
+ *   At most one is open per thread.
+ * - `session_messages.inquiry_id`/`inquiry_role` mark the question (whose reply is the answer)
+ *   and the context message the thread's next work visit reads; both are immutable.
+ *
+ * Read-only prod counts first (the rows the indexes are rebuilt over):
+ *   SELECT count(*) AS sessions, count(*) FILTER (WHERE status IN ('offered','active')) AS live
+ *     FROM worker_sessions;
+ *   SELECT count(*) AS messages FROM session_messages;
+ */
+const inquiriesMigration = `
+ALTER TABLE worker_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','inquiry'));
+CREATE FUNCTION worker_sessions_kind_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.kind IS DISTINCT FROM OLD.kind THEN
+    RAISE EXCEPTION USING MESSAGE = 'A session''s kind is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER worker_sessions_kind_immutable BEFORE UPDATE ON worker_sessions
+FOR EACH ROW EXECUTE FUNCTION worker_sessions_kind_guard();
+DROP INDEX worker_sessions_live_target;
+CREATE UNIQUE INDEX worker_sessions_live_target ON worker_sessions(project_id,instance_id,revision)
+  WHERE status IN ('offered','active') AND kind='work';
+DROP INDEX worker_sessions_live_actor;
+CREATE UNIQUE INDEX worker_sessions_live_actor ON worker_sessions(actor_id)
+  WHERE status IN ('offered','active') AND kind='work';
+CREATE UNIQUE INDEX worker_sessions_live_inquiry ON worker_sessions(thread_id)
+  WHERE status IN ('offered','active') AND kind='inquiry';
+ALTER TABLE session_messages ADD COLUMN inquiry_id TEXT;
+ALTER TABLE session_messages ADD COLUMN inquiry_role TEXT CHECK (inquiry_role IN ('question','context'));
+ALTER TABLE session_messages ADD CONSTRAINT session_messages_inquiry CHECK ((inquiry_id IS NULL) = (inquiry_role IS NULL));
+CREATE OR REPLACE FUNCTION session_messages_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR OLD.acknowledged_at IS NOT NULL OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.thread_id IS DISTINCT FROM OLD.thread_id OR
+     NEW.sender_actor_id IS DISTINCT FROM OLD.sender_actor_id OR
+     NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.fingerprint IS DISTINCT FROM OLD.fingerprint OR
+     NEW.body IS DISTINCT FROM OLD.body OR NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     NEW.inquiry_id IS DISTINCT FROM OLD.inquiry_id OR NEW.inquiry_role IS DISTINCT FROM OLD.inquiry_role OR
+     NEW.acknowledged_at IS NULL OR NEW.ack_request_id IS NULL THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session messages are retained; acknowledgement is write-once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TABLE session_inquiries (
+  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  thread_id TEXT NOT NULL REFERENCES session_threads(id),
+  message_id TEXT NOT NULL UNIQUE REFERENCES session_messages(id),
+  asker_actor_id TEXT NOT NULL,
+  asker_source_json TEXT NOT NULL CHECK (asker_source_json IS JSON),
+  request_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','running','answered','unanswered','expired')),
+  asked_at TEXT NOT NULL,
+  wait_until TEXT NOT NULL,
+  session_id TEXT UNIQUE REFERENCES worker_sessions(id),
+  ended_at TEXT,
+  token_budget BIGINT NOT NULL CHECK (token_budget > 0),
+  tokens BIGINT NOT NULL DEFAULT 0 CHECK (tokens >= 0),
+  UNIQUE(project_id,asker_actor_id,request_id),
+  CHECK ((status = 'queued') = (session_id IS NULL) OR status = 'expired'),
+  CHECK ((status IN ('queued','running')) = (ended_at IS NULL))
+);
+CREATE UNIQUE INDEX session_inquiries_open ON session_inquiries(thread_id) WHERE status IN ('queued','running');
+CREATE INDEX session_inquiries_queued ON session_inquiries(project_id,_merv_rowid) WHERE status='queued';
+CREATE FUNCTION session_inquiries_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.thread_id IS DISTINCT FROM OLD.thread_id OR NEW.message_id IS DISTINCT FROM OLD.message_id OR
+     NEW.asker_actor_id IS DISTINCT FROM OLD.asker_actor_id OR NEW.asker_source_json IS DISTINCT FROM OLD.asker_source_json OR
+     NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.fingerprint IS DISTINCT FROM OLD.fingerprint OR
+     NEW.asked_at IS DISTINCT FROM OLD.asked_at OR NEW.wait_until IS DISTINCT FROM OLD.wait_until OR
+     NEW.token_budget IS DISTINCT FROM OLD.token_budget OR
+     (OLD.session_id IS NOT NULL AND NEW.session_id IS DISTINCT FROM OLD.session_id) OR
+     (OLD.status NOT IN ('queued','running') AND
+       (NEW.status IS DISTINCT FROM OLD.status OR NEW.ended_at IS DISTINCT FROM OLD.ended_at)) THEN
+    RAISE EXCEPTION USING MESSAGE = 'An inquiry is retained; only its course and spend move on', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_inquiries_immutable BEFORE UPDATE OR DELETE ON session_inquiries
+FOR EACH ROW EXECUTE FUNCTION session_inquiries_guard();
+`;
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE worker_sessions (
@@ -601,4 +699,6 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
           FROM worker_sessions s WHERE s.thread_id IS NOT NULL
          ORDER BY s.thread_id, s._merv_rowid DESC) n
  WHERE n.thread_id = t.id AND t.status <> 'retired' AND n.instance_id <> t.instance_id;`,
+  // (unpublished) Inquiry visits; prod counts in `inquiriesMigration`'s comment.
+  18: inquiriesMigration,
 };
