@@ -187,10 +187,11 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
             whose: 'admin',
           }
         : null;
-    case 'code_recovery_required':
+    case 'code_capture_quarantined':
       // The fence is drawn where the writer is read, on the unit's code card.
       return {
-        sentence: 'The last writer never handed over its final capture; an operator fences it',
+        sentence:
+          'The final capture was refused; an operator fences the writer at the last admitted commit',
         who: 'An operator',
         whose: 'operator',
         control: {
@@ -199,13 +200,6 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
             ? `${CANVAS}/unit/${encodeURIComponent(blocker.instanceId)}`
             : CANVAS,
         },
-      };
-    case 'code_capture_quarantined':
-      return {
-        sentence:
-          'The final capture was refused; an operator fences the writer at the last admitted commit',
-        who: 'An operator',
-        whose: 'operator',
       };
     case 'code_quarantined':
       // Both producers of this code agree the retained base is spent; only the capture

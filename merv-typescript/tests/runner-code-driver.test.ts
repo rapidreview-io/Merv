@@ -117,10 +117,10 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   mkdirSync(join(writer.path, '.cache'));
   writeFileSync(join(writer.path, '.cache/data.bin'), 'writer data');
   symlinkSync('/usr/bin/env', join(writer.path, '.cache/interpreter'));
-  await f.event('session.closed', 'ses_shared_1');
-  f.end('ses_shared_1');
   m.terminal.add(first.id);
   const submitted = await driver.capture(first);
+  await f.event('session.closed', 'ses_shared_1');
+  f.end('ses_shared_1');
   assert.ok(submitted);
   await driver.close(first);
   assert.ok(existsSync(writer.path));
@@ -233,10 +233,10 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   );
   await f.event('session.workspace_attached', 'ses_shared_2');
   writeFileSync(join(next.path, 'second.txt'), 'writer two\n');
-  await f.event('session.closed', 'ses_shared_2');
-  f.end('ses_shared_2');
   m.terminal.add(second.id);
   const secondResult = await driver.capture(second);
+  await f.event('session.closed', 'ses_shared_2');
+  f.end('ses_shared_2');
   await driver.close(second);
   assert.ok(secondResult);
 
@@ -284,10 +284,10 @@ test('a writer follows a closed Code review after the private writer view is res
   const writer = await driver.prepare(first, m.session('ses_restore_writer'));
   await f.event('session.workspace_attached', 'ses_restore_writer');
   writeFileSync(join(writer.path, 'source.txt'), 'writer\n');
-  await f.event('session.closed', 'ses_restore_writer');
-  f.end('ses_restore_writer');
   m.terminal.add(first.id);
   const result = (await driver.capture(first))!;
+  await f.event('session.closed', 'ses_restore_writer');
+  f.end('ses_restore_writer');
   await driver.close(first);
   f.reviewer('ses_restore_review', result.headOid);
   const reviewLaunch = m.launch('ses_restore_review');
@@ -483,10 +483,10 @@ test('special retained nodes cannot be copied into review and a retry keeps the 
   writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
   mkdirSync(join(writer.path, '.cache'));
   execFileSync('mkfifo', [join(writer.path, '.cache/pipe')]);
-  await f.event('session.closed', 'ses_fifo_writer');
-  f.end('ses_fifo_writer');
   m.terminal.add(writerLaunch.id);
   const result = await driver.capture(writerLaunch);
+  await f.event('session.closed', 'ses_fifo_writer');
+  f.end('ses_fifo_writer');
   await driver.close(writerLaunch);
   f.reviewer('ses_fifo_review', result!.headOid);
   const reviewLaunch = m.launch('ses_fifo_review');
@@ -554,10 +554,10 @@ test('a review checkout hands the launcher only supervisor-owned nodes, whatever
   // root's here: this test captures with root Git, not the launcher's assignment Git.)
   for (const name of ['data', '__pycache__'])
     execFileSync('chown', ['-R', '--no-dereference', '12001:12001', join(writer.path, name)]);
-  await f.event('session.closed', 'ses_owner_writer');
-  f.end('ses_owner_writer');
   m.terminal.add(writerLaunch.id);
   const result = await driver.capture(writerLaunch);
+  await f.event('session.closed', 'ses_owner_writer');
+  f.end('ses_owner_writer');
   await driver.close(writerLaunch);
 
   f.reviewer('ses_owner_review', result!.headOid);
@@ -579,10 +579,10 @@ test('shared review cannot overwrite Code head after a refused writer capture', 
   const writer = await driver.prepare(writerLaunch, m.session('ses_refused'));
   await f.event('session.workspace_attached', 'ses_refused');
   writeFileSync(join(writer.path, 'token.txt'), `ghp_${'a'.repeat(36)}\n`);
-  await f.event('session.closed', 'ses_refused');
-  f.end('ses_refused');
   m.terminal.add(writerLaunch.id);
   assert.equal((await driver.capture(writerLaunch))!.headOid, f.root);
+  await f.event('session.closed', 'ses_refused');
+  f.end('ses_refused');
   await driver.close(writerLaunch);
   f.reviewer('ses_refused_review', f.root);
   const reviewLaunch = m.launch('ses_refused_review');
@@ -702,14 +702,14 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
 
   // The session ends with uncommitted work: the final capture carries it to Code.
   writeFileSync(join(path, 'b.txt'), 'trailing\n');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   await assert.rejects(
     driver.capture(m.launch('ses_1')),
     failed('workspace_process_stop_unconfirmed'),
   );
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.ok(result && result.headOid !== receipt.headOid);
   assert.equal((await f.unit()).canonicalHead, result.headOid);
   assert.equal((await f.unit()).writerState, 'closed');
@@ -776,10 +776,10 @@ test('hosted Code checkout has independent Git metadata and its edits pass throu
   const branch = git(handle.path, ['symbolic-ref', '-q', 'HEAD']) || 'refs/heads/left';
   const locks = ['HEAD.lock', `${branch}.lock`].map((name) => join(handle.path, '.git', name));
   for (const lock of locks) writeFileSync(lock, '');
-  await f.event('session.closed', 'ses_hosted');
-  f.end('ses_hosted');
   m.terminal.add(launch.id);
   const final = await driver.capture(launch);
+  await f.event('session.closed', 'ses_hosted');
+  f.end('ses_hosted');
   assert.equal((await f.unit()).canonicalHead, final?.headOid);
   assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
   assert.deepEqual(
@@ -876,10 +876,10 @@ test("an agent commit during admission is rescued: the receipt names Code's comm
     driver.checkpointCommit(m.launch('ses_1'), stale),
     failed('workspace_head_conflict'),
   );
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(git(path, ['rev-parse', 'HEAD^']), receipt.headOid);
   assert.equal(git(path, ['show', `${result!.headOid}:agent.txt`]), 'agent');
   assert.equal((await f.unit()).canonicalHead, result!.headOid);
@@ -926,8 +926,6 @@ test('an interrupted upload continues where Code stands, and a final capture is 
   // The final capture: the first attempt dies after it journalled the commit, before Code
   // heard of it; the second dies after Code began it. Every retry hands over the same commit.
   writeFileSync(join(path, 'wip.txt'), 'left behind\n');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   driver.dispose();
   let finalizes = 0;
@@ -951,6 +949,8 @@ test('an interrupted upload continues where Code stands, and a final capture is 
   driver.dispose();
   driver = m.start();
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(result!.headOid, captured);
   assert.equal(git(path, ['rev-list', '--count', `${receipt.headOid}..HEAD`]), '1');
   assert.equal((await f.unit()).canonicalHead, captured);
@@ -971,10 +971,10 @@ test('a final capture Code quarantines reports the last admitted head, and what 
   const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'token.txt'), `ghp_${'a'.repeat(36)}\n`);
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(result!.headOid, f.root);
   assert.notEqual(git(path, ['rev-parse', 'HEAD']), f.root);
   const unit = await f.unit();
@@ -1003,10 +1003,10 @@ test('a final capture Code refuses to read ends the capture instead of being sen
   const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'huge.bin'), 'more than may be sent\n');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(result!.headOid, f.root);
   assert.equal(driver.get('launch-ses_1')!.status, 'captured');
   await driver.close(m.launch('ses_1'));
@@ -1030,10 +1030,10 @@ test('a checkout Code would never keep ends its generation at the last admitted 
   const huge = join(path, 'huge.bin');
   writeFileSync(huge, '');
   truncateSync(huge, 51 * 1024 * 1024);
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(result!.headOid, receipt.headOid);
   assert.equal(driver.get('launch-ses_1')!.status, 'captured');
   assert.equal((await f.unit()).canonicalHead, receipt.headOid);
@@ -1088,10 +1088,10 @@ test('a final capture clears an index lock the stopped session left, and repeate
   writeFileSync(join(gitDir, 'index.lock'), '');
   writeFileSync(join(gitDir, 'HEAD.lock'), '');
   writeFileSync(branchLock, '');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add('launch-ses_1');
   const result = await driver.capture(m.launch('ses_1'));
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
   assert.equal(git(path, ['show', `${result!.headOid}:a.txt`]), 'one');
   assert.equal((await f.unit()).canonicalHead, result!.headOid);
   assert.equal(existsSync(join(gitDir, 'index.lock')), false);
@@ -1106,8 +1106,6 @@ test('a final capture clears an index lock the stopped session left, and repeate
   await driver.prepare(m.launch('ses_2'), m.session('ses_2'));
   await f.event('session.workspace_attached', 'ses_2');
   writeFileSync(join(path, 'b.txt'), 'two\n');
-  await f.event('session.closed', 'ses_2');
-  f.end('ses_2');
   m.terminal.add('launch-ses_2');
   chmodSync(gitDir, 0o500);
   let handed;
@@ -1117,6 +1115,8 @@ test('a final capture clears an index lock the stopped session left, and repeate
       await assert.rejects(driver.capture(m.launch('ses_2')), failed('workspace_git_failed'));
     db.prepare('UPDATE code_v2_capture_attempts SET since=since-?').run(10 * 60_000);
     handed = await driver.capture(m.launch('ses_2'));
+    await f.event('session.closed', 'ses_2');
+    f.end('ses_2');
   } finally {
     chmodSync(gitDir, 0o700);
   }
@@ -1144,8 +1144,6 @@ test('the bound on failing captures restarts after the machine stopped trying, a
   const { path } = await driver.prepare(launch, m.session('ses_1'));
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'a.txt'), 'one\n');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add(launch.id);
   const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
   t.after(() => db.close());
@@ -1181,6 +1179,8 @@ test('the bound on failing captures restarts after the machine stopped trying, a
     // Kept failing without a pause for the whole bound: the generation is handed over.
     age(10, 0);
     assert.equal((await driver.capture(launch))?.headOid, f.root);
+    await f.event('session.closed', 'ses_1');
+    f.end('ses_1');
   } finally {
     chmodSync(gitDir, 0o700);
   }
@@ -1195,8 +1195,6 @@ test('slow failing captures, each longer than the pause that restarts the bound,
   const { path } = await driver.prepare(launch, m.session('ses_1'));
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'a.txt'), 'one\n');
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   m.terminal.add(launch.id);
   const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
   t.after(() => db.close());
@@ -1212,6 +1210,8 @@ test('slow failing captures, each longer than the pause that restarts the bound,
   const attempt = async () => {
     try {
       return await driver.capture(launch);
+      await f.event('session.closed', 'ses_1');
+      f.end('ses_1');
     } finally {
       // The three minutes have passed: the recorded failure is as old as it would be.
       skew = 0;

@@ -698,7 +698,7 @@ test('units waiting on the same two accepted commits get one merged base, and a 
 
   // A quarantine given by mistake is not a one-way door. Releasing the base an operator
   // named retracts everything that inherited from it, so the work it reached is usable
-  // again; the generation it put into recovery still ends through code.unit.fence.
+  // again; the generation it put into recovery ends at its last admitted commit on the sweep.
   await bases.control(f.scope, f.admin, {
     key: merged.key,
     action: 'release',
@@ -712,15 +712,10 @@ test('units waiting on the same two accepted commits get one merged base, and a 
   for (const waiter of waiters) {
     assert.deepEqual(
       (await f.workflows.blockers(f.admin, waiter.id)).map((blocker) => blocker.code),
-      waiter.id === waiters[0]!.id ? ['code_recovery_required'] : [],
+      [],
     );
     assert.notEqual((await f.code.unit(f.admin, waiter.id)).baseStatus?.status, 'blocked');
   }
-  const released = await f.state.transaction((tx) =>
-    f.core.writers.writerStatus(f.admin, waiters[0]!.id, tx),
-  );
-  assert.equal(released.state, 'recovery_required');
-  assert.equal(released.blocked?.code, 'code_recovery_required');
   const nextWriter = () =>
     f.state.transaction((tx) =>
       f.core.writers.reserveWriter(
@@ -729,13 +724,12 @@ test('units waiting on the same two accepted commits get one merged base, and a 
         tx,
       ),
     );
-  await assert.rejects(nextWriter(), { code: 'code_recovery_required' });
-  // This fixture composes bases without a hosted transfer service; use Code's own writer
-  // fence for the operator, including the transaction's observer.
-  const fenced = await f.state.transaction((tx) =>
-    f.core.writers.fence(f.admin, { unitId: waiters[0]!.id, requestId: 'release-fence' }, tx),
+  await assert.rejects(nextWriter(), { code: 'code_writer_busy' });
+  await f.core.writers.expire();
+  const released = await f.state.transaction((tx) =>
+    f.core.writers.writerStatus(f.admin, waiters[0]!.id, tx),
   );
-  assert.equal(fenced.state, 'closed');
+  assert.equal(released.state, 'closed');
   assert.deepEqual(await f.workflows.blockers(f.admin, waiters[0]!.id), []);
   const next = await nextWriter();
   assert.equal(next.generation, released.generation + 1);

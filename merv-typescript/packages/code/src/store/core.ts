@@ -86,8 +86,14 @@ export interface CodeStoreHooks {
    * rebind's own transaction: who is asking for the rebind must not narrow what it is refused for.
    */
   workspaces(projectId: string, tx: Transaction): Promise<string[]>;
-  /** The writer fence, asked when an upload begins, continues and before any ref moves. */
-  fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final'): Promise<unknown>;
+  /** The writer fence, asked when an upload begins (`begin`), continues and before any ref
+   *  moves. Only a live writer begins one; one in flight may finish after its session closed. */
+  fenced(
+    tx: Transaction,
+    fence: WriterFence,
+    kind: 'checkpoint' | 'final',
+    begin?: boolean,
+  ): Promise<unknown>;
   advanced(
     tx: Transaction,
     fence: WriterFence,

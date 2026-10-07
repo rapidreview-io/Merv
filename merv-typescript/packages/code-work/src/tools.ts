@@ -127,7 +127,7 @@ export const codeToolsPlugin = {
           ],
           [
             'release',
-            'Release this base from quarantine after verifying the alarm was false. Every base and unit that only inherited the quarantine from it is released with it; a base quarantined in its own right keeps its own reach. A writer generation the quarantine had put into recovery_required stays there, and code.unit.fence ends it. Name the verification in reason.',
+            'Release this base from quarantine after verifying the alarm was false. Every base and unit that only inherited the quarantine from it is released with it; a base quarantined in its own right keeps its own reach. A writer generation the quarantine had put into recovery_required ends at its last admitted commit on Code’s next sweep. Name the verification in reason.',
           ],
           [
             'repair',
@@ -158,7 +158,7 @@ export const codeToolsPlugin = {
       {
         name: 'code.unit.get',
         description:
-          'Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage code means Code’s own repository holds the accepted code, and receipt names the operation that made it durable; none means the unit was accepted without code. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.',
+          'Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage code means Code’s own repository holds the accepted code, and receipt names the operation that made it durable; none means the unit was accepted without code. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while an upload its session had in flight when it closed finishes within the grace, closed, or recovery_required while a quarantined capture waits for code.unit.fence); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.',
         inputSchema: z.object({ unitId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { unitId: string }) =>
@@ -203,7 +203,7 @@ export const codeToolsPlugin = {
         name: 'code.unit.fence',
         conversation: 'propose' as const,
         description:
-          'End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required; a rented machine Fleet deleted ends its generation by itself, so this is for a machine of your own, which might come back), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
+          'End the writer generation of a unit whose final capture is quarantined (code_capture_quarantined; read the findings in code.status first): every other writer generation ends by itself with its session. Refused with code_fence_unneeded for a unit no quarantined capture holds. The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
         inputSchema: codeUnitFenceInputSchema,
         handler: async (caller: Caller, input: CodeUnitFenceInput) =>
           await ctx.codeWork.fenceUnit(caller, input),

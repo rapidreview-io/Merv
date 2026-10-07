@@ -86,30 +86,11 @@ test('a lease reserves the next generation only once the last one closed', async
   assert.equal((await f.lease('ses_2')).generation, 2);
   await f.event('session.workspace_attached', 'ses_2');
   assert.equal((await f.unit()).writerState, 'active');
+  await assert.rejects(f.lease('ses_3'), refused('code_writer_busy'));
+  // Its session closed with nothing in flight: the generation ends with it, at once, and asks
+  // nobody for anything.
   await f.event('session.closed', 'ses_2');
   f.end('ses_2');
-  assert.equal((await f.unit()).writerState, 'closing');
-  const waiting = await f.state.transaction(
-    async (tx) => await f.core.writers.writerStatus(f.admin, f.unitId, tx),
-  );
-  assert.equal(waiting.blocked?.code, 'code_writer_busy', 'a closing unit is no candidate');
-  await assert.rejects(f.lease('ses_3'), refused('code_writer_busy'));
-
-  // The grace passes: the unit says it needs an operator, and work on it is refused.
-  await f.code.maintainStore();
-  assert.equal((await f.unit()).writerState, 'recovery_required');
-  assert.equal((await f.unit()).standing, 'held', 'Code Work says which word the unit stands at');
-  const status = await f.code.status(f.admin);
-  assert.deepEqual(
-    status.blockers.map((blocker) => [blocker.key, blocker.code, blocker.group]),
-    [['writer', 'code_recovery_required', 'waiting']],
-    'a recoverable writer waits with the rest; only quarantine is grouped as quarantine',
-  );
-  await assert.rejects(f.lease('ses_3'), refused('code_recovery_required'));
-
-  // The machine comes back after all: the one final capture of that generation heals it.
-  const final = await f.begin('final', 'ses_2', 2, f.root, null);
-  assert.equal(final.status, 'completed');
   assert.equal((await f.unit()).writerState, 'closed');
   assert.deepEqual((await f.code.status(f.admin)).blockers, []);
   assert.equal((await f.lease('ses_3')).generation, 3);
@@ -140,9 +121,10 @@ test("uploads advance a unit's branch only under the whole fence, and the final 
     refused('code_generation_stale'),
   );
 
-  // Trailing work after the last commit arrives with the final capture, after the session.
-  await f.event('session.closed', 'ses_1');
+  // Trailing work after the last commit arrives with the final capture, before the session
+  // closes: it ends the generation.
   const final = await f.upload('final', 'ses_1', 1, first, next);
+  await f.event('session.closed', 'ses_1');
   // Reordered: a checkpoint that arrives after the final finds the generation closed.
   await assert.rejects(
     f.begin('checkpoint', 'ses_1', 1, second, null),
@@ -241,9 +223,9 @@ test('a later upload ends one that was only receiving, and a commit succeeds onl
     'command-c',
   );
   await f.event('session.workspace_attached', 'ses_1');
+  const final = await f.upload('final', 'ses_1', 1, first, f.source.bundle(third, [first]));
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
-  const final = await f.upload('final', 'ses_1', 1, first, f.source.bundle(third, [first]));
   assert.equal(final.status, 'completed');
   assert.equal((await f.operationRow(pending.id))?.error, 'code_upload_superseded');
   assert.equal(git(f.paths.repository, ['rev-parse', `${third}~1`]), second);
@@ -255,13 +237,15 @@ test('a quarantined final capture blocks the unit until a signed-in administrato
   await f.event('session.workspace_attached', 'ses_1');
   const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
   await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
   const secret = f.source.commit(
     { 'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n' },
     'merv: capture',
   );
   const final = await f.upload('final', 'ses_1', 1, first, f.source.bundle(secret, [first]));
+  // Its session closes, and the sweep runs: a quarantined capture still waits for a person.
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  await f.sweep();
   assert.equal(final.status, 'failed');
   assert.equal(final.error, 'code_capture_quarantined');
   assert.ok(final.findings.length > 0);
@@ -292,116 +276,125 @@ test('a quarantined final capture blocks the unit until a signed-in administrato
   assert.equal((await f.unit()).canonicalHead, first);
 });
 
-test('after a fence the old generation is stale and what it was sending is held, never admitted', async (t) => {
-  const f = await fixture(t);
-  await f.lease('ses_1');
-  await f.event('session.workspace_attached', 'ses_1');
-  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-  const bundle = f.source.bundle(first, [f.root]);
-  const sending = await f.begin('checkpoint', 'ses_1', 1, f.root, bundle);
-  await f.code.v2!.putPart(f.admin, sending.id, 0, bundle.content.subarray(0, 64));
-  const human = await f.human();
-  await f.code.fenceUnit(human, { unitId: f.unitId, requestId: 'fence' });
-  assert.deepEqual(await f.operationRow(sending.id), {
-    status: 'failed',
-    phase: 'receiving',
-    error: 'code_generation_stale',
-  });
-  assert.deepEqual(readdirSync(f.paths.held), [`${sending.id}.bundle`]);
-  assert.equal((await f.lease('ses_2')).generation, 2);
-  await assert.rejects(
-    f.begin('checkpoint', 'ses_1', 1, f.root, bundle, 'command-late'),
-    refused('code_generation_stale'),
-  );
-  await assert.rejects(
-    f.begin('final', 'ses_1', 1, f.root, bundle),
-    refused('code_generation_stale'),
-  );
-  assert.equal((await f.unit()).canonicalHead, null);
-  assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/work/')));
-});
-
-test('a writer whose rented machine is gone for good ends by itself at the last admitted commit', async (t) => {
+test('a session closing ends its generation at the last admitted commit, and what it was sending is held', async (t) => {
+  // Whatever closed it: a handoff, a lapsed lease, a lost host, an expiry, a relay outage, a
+  // release of Main. Code hears only session.closed, which every one of them appends.
   const f = await fixture(t, 0);
   await f.lease('ses_1');
   await f.event('session.workspace_attached', 'ses_1');
   const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
   await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
   const second = f.source.commit({ 'a.txt': 'two\n' }, 'second');
-  const sending = await f.begin('checkpoint', 'ses_1', 1, first, f.source.bundle(second, [first]));
-  // A release replaced its machine mid-step: the session closed, and the grace ran out.
+  const bundle = f.source.bundle(second, [first]);
+  const sending = await f.begin('checkpoint', 'ses_1', 1, first, bundle);
+  await f.code.v2!.putPart(f.admin, sending.id, 0, bundle.content.subarray(0, 64));
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
-  await f.code.maintainStore();
-  assert.equal((await f.unit()).writerState, 'recovery_required');
-  // Fleet released that machine and its runtime is deleted: no final capture can ever come.
-  await f.event('session.machine_gone', 'ses_1');
   const unit = await f.unit();
-  assert.equal(unit.writerState, 'closed');
-  assert.equal(unit.canonicalHead, first, 'the next lease continues from the last admitted commit');
+  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
   assert.deepEqual((await f.code.status(f.admin)).blockers, []);
   assert.deepEqual(await f.operationRow(sending.id), {
     status: 'failed',
     phase: 'receiving',
     error: 'code_generation_stale',
   });
+  // Nothing more of that session is admitted: its credentials are dead, and so is its fence.
+  assert.equal((await f.send(sending, bundle)).status, 'failed');
+  await assert.rejects(f.begin('final', 'ses_1', 1, first, bundle), refused('code_writer_closed'));
+  // The next lease continues from the last admitted commit.
   assert.equal((await f.lease('ses_2')).generation, 2);
-  // A gone machine of an earlier generation, or a repeat, moves nothing.
-  await f.event('session.workspace_attached', 'ses_2');
-  await f.event('session.machine_gone', 'ses_1');
-  assert.equal((await f.unit()).writerState, 'active');
-  // A machine gone before the grace ran out ends its generation all the same.
-  await f.event('session.closed', 'ses_2');
-  f.end('ses_2');
-  await f.event('session.machine_gone', 'ses_2');
-  assert.equal((await f.unit()).writerState, 'closed');
-});
-
-test('a quarantined capture still waits for an operator when its machine is gone', async (t) => {
-  const f = await fixture(t);
-  await f.lease('ses_1');
-  await f.event('session.workspace_attached', 'ses_1');
-  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
-  await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
-  await f.event('session.closed', 'ses_1');
-  f.end('ses_1');
-  const secret = f.source.commit(
-    { 'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n' },
-    'merv: capture',
+  await assert.rejects(
+    f.begin('final', 'ses_1', 1, first, bundle, 'late'),
+    refused('code_generation_stale'),
   );
-  const final = await f.upload('final', 'ses_1', 1, first, f.source.bundle(secret, [first]));
-  assert.equal(final.error, 'code_capture_quarantined');
-  await f.event('session.machine_gone', 'ses_1');
-  const unit = await f.unit();
-  assert.equal(unit.writerState, 'recovery_required');
-  assert.deepEqual(unit.quarantine, { operationId: final.id });
-  await assert.rejects(f.lease('ses_2'), refused('code_capture_quarantined'));
+  const ended = await f.state.read((sql) =>
+    sql.all<{ data: string }>(
+      "SELECT data_json AS data FROM events WHERE type='code.writer_ended' ORDER BY id",
+    ),
+  );
+  assert.deepEqual(
+    ended.map((row) => JSON.parse(row.data)),
+    [{ reason: 'session_closed', sessionId: 'ses_1', generation: 1, head: first, from: 'active' }],
+  );
 });
 
-test('a final capture that fully arrived before its machine was gone is admitted, never dropped', async (t) => {
+test('an upload fully on Main when its session closed is admitted within the grace', async (t) => {
   const f = await fixture(t);
   await f.lease('ses_1');
   await f.event('session.workspace_attached', 'ses_1');
   const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
   await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
+  // The machine sent every byte of a commit, and then its session closed.
+  const last = f.source.commit({ 'a.txt': 'two\n' }, 'second');
+  const bundle = f.source.bundle(last, [first]);
+  const inFlight = await f.begin('checkpoint', 'ses_1', 1, first, bundle);
+  await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
-  // The machine sent every byte of its final capture, which waits for its admission on Main,
-  // and then its allocation ran out: Fleet deleted it.
-  const last = f.source.commit({ 'a.txt': 'two\n' }, 'merv: capture');
-  const bundle = f.source.bundle(last, [first]);
-  const final = await f.begin('final', 'ses_1', 1, first, bundle);
-  await f.code.v2!.putPart(f.admin, final.id, 0, bundle.content);
-  await f.event('session.machine_gone', 'ses_1');
   assert.equal((await f.unit()).writerState, 'closing', 'whole bytes on Main are not abandoned');
-  assert.equal((await f.operationRow(final.id))?.status, 'prepared');
+  await assert.rejects(f.lease('ses_2'), refused('code_writer_busy'));
+  await f.sweep();
+  assert.equal((await f.unit()).writerState, 'closing', 'the grace has not passed');
+  // Nothing new begins in the grace; what was in flight finishes.
+  await assert.rejects(f.begin('final', 'ses_1', 1, first, bundle), refused('code_writer_closed'));
   const admitted = (
-    (await f.code.v2!.call(f.admin, `uploads/${final.id}/complete`, {})) as {
+    (await f.code.v2!.call(f.admin, `uploads/${inFlight.id}/complete`, {})) as {
       operation: { status: string };
     }
   ).operation;
   assert.equal(admitted.status, 'completed');
   const unit = await f.unit();
-  assert.equal(unit.writerState, 'closed');
-  assert.equal(unit.canonicalHead, last);
+  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', last]);
+  assert.equal((await f.lease('ses_2')).generation, 2);
+});
+
+test('past the grace, an upload its session left is never admitted', async (t) => {
+  const f = await fixture(t, 0);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  const bundle = f.source.bundle(first, [f.root]);
+  const inFlight = await f.begin('checkpoint', 'ses_1', 1, f.root, bundle);
+  await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  assert.equal((await f.unit()).writerState, 'closing');
+  // A grace of 0: the sweep ends the generation, and the late completion is refused.
+  await f.sweep();
+  const unit = await f.unit();
+  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', null]);
+  assert.equal((await f.operationRow(inFlight.id))?.error, 'code_generation_stale');
+  const late = (
+    (await f.code.v2!.call(f.admin, `uploads/${inFlight.id}/complete`, {})) as {
+      operation: { status: string; error: string };
+    }
+  ).operation;
+  assert.deepEqual([late.status, late.error], ['failed', 'code_generation_stale']);
+  assert.ok(!f.refs().some((ref) => ref.startsWith('refs/merv/work/')));
+});
+
+test('a writer an earlier Code left in recovery_required ends at its last admitted commit on the sweep', async (t) => {
+  // In prod: a unit whose session closed managed_revoked before writers ended with their
+  // sessions, held in recovery_required for a final capture that never came.
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE code_workspaces SET writer_state='recovery_required',writer_changed_at='2026-09-30T00:00:00.000Z' WHERE unit_id=?",
+      f.unitId,
+    ),
+  );
+  await f.sweep();
+  const unit = await f.unit();
+  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
+  assert.deepEqual((await f.code.status(f.admin)).blockers, []);
+  assert.equal((await f.lease('ses_2')).generation, 2);
+  // Only a quarantined capture asks a person: any other fence is refused as unneeded.
+  await assert.rejects(
+    f.code.fenceUnit(await f.human(), { unitId: f.unitId, requestId: 'fence' }),
+    refused('code_fence_unneeded'),
+  );
 });

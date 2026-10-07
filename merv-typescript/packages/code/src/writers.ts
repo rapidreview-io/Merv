@@ -56,9 +56,11 @@ export const writerColumns =
 /**
  * The writer fence of a unit. One leased session at a time may advance a unit's branch in
  * Code's repository, and it is known by a generation: a lease reserves generation g+1 only
- * once g closed, the session's attach makes it active, its end makes it closing, and the one
- * final capture its machine hands over closes it. A generation that never closes is not
- * guessed at: after the grace it waits, visibly, for an operator to fence it.
+ * once g closed, and the session's attach makes it active. A generation lives exactly as long
+ * as its session: the session's close, whatever its reason, ends it at the last commit Code
+ * admitted. Only an upload already in flight then (admitted, or with every byte on Main) may
+ * still finish, within the finalize grace (`closing`); nothing else of that session is ever
+ * admitted. Only a quarantined capture waits for an operator (`recovery_required`).
  */
 export class CodeWriterService {
   private closed = false;
@@ -159,72 +161,79 @@ export class CodeWriterService {
       if (row.writer_state === 'reserved') await this.move(tx, row, 'active');
       return;
     }
-    // A never-attached checkout needs no capture; an attached one waits for its final handoff.
-    if (row.writer_state === 'reserved') await this.move(tx, row, 'closed');
-    else if (row.writer_state === 'active') await this.move(tx, row, 'closing');
+    if (row.writer_state !== 'reserved' && row.writer_state !== 'active') return;
+    // An upload already in flight may still finish within the grace; nothing else may.
+    const uploads = await this.uploads(tx, row);
+    if (uploads.admitted || uploads.received) {
+      await this.failUnfinished(tx, row, uploads.unfinished, 'The writer’s session closed');
+      await this.move(tx, row, 'closing');
+      await this.changed(tx, projectId, row.unit_id);
+    } else await this.end(tx, row, 'session_closed');
   }
 
   /**
-   * The machine a session ran on is gone for good (Fleet released it and its runtime is
-   * deleted), so the final capture it owed can never come: if that session is the current
-   * writer, its generation ends here, at the last commit Code admitted, as an operator's fence
-   * would end it, and the next lease continues from there. A quarantined capture, an admitted
-   * upload not yet finished, or one whose bytes all arrived (Main admits it without the machine;
-   * a final one closes the generation itself), still waits; a machine of the owner's own never
-   * says it is gone, so its generation waits for it as before.
+   * The prepared uploads of a unit's branch, as a session's close judges them: whether one is
+   * admitted (Main finishes it without its machine), whether one has every byte on Main (its
+   * admission needs nothing more from the machine), and the ids of the rest.
    */
-  async machineGone(projectId: string, sessionId: string, tx: Transaction): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    const row = await tx.get<WriterRow>(
-      `SELECT ${writerColumns} FROM code_workspaces WHERE project_id=? AND writer_session_id=?`,
-      projectId,
-      sessionId,
-    );
-    if (
-      !row ||
-      !['reserved', 'active', 'closing', 'recovery_required'].includes(row.writer_state) ||
-      row.quarantine_operation_id !== null ||
-      row.blocked_by
-    )
-      return;
-    // An upload whose every byte is on Main can still be admitted without its machine (one that
-    // was being admitted stays 'receiving' until it is), so it is never failed here.
-    const open = await tx.all<{ phase: string; payload_json: string; progress_json: string }>(
-      "SELECT phase,payload_json,progress_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
-      projectId,
+  private async uploads(tx: Transaction, row: WriterRow) {
+    const open = await tx.all<{
+      id: string;
+      phase: string;
+      payload_json: string;
+      progress_json: string | null;
+    }>(
+      "SELECT id,phase,payload_json,progress_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
+      row.project_id,
       row.unit_id,
     );
-    if (
-      open.some((op) => {
-        if (op.phase !== 'receiving') return true;
-        const bytes = (JSON.parse(op.payload_json) as { bundle?: { bytes?: number } }).bundle
-          ?.bytes;
-        const received = (JSON.parse(op.progress_json ?? '{}') as { received?: number }).received;
-        return typeof bytes === 'number' && (received ?? 0) >= bytes;
-      })
-    )
-      return;
+    const full = (op: (typeof open)[number]) => {
+      const bytes = (JSON.parse(op.payload_json) as { bundle?: { bytes?: number } }).bundle?.bytes;
+      const received = (JSON.parse(op.progress_json ?? '{}') as { received?: number }).received;
+      return typeof bytes === 'number' && (received ?? 0) >= bytes;
+    };
+    return {
+      admitted: open.some((op) => op.phase !== 'receiving'),
+      received: open.some((op) => op.phase === 'receiving' && full(op)),
+      unfinished: open.filter((op) => op.phase === 'receiving' && !full(op)).map((op) => op.id),
+      receiving: open.filter((op) => op.phase === 'receiving').map((op) => op.id),
+    };
+  }
+
+  /** Uploads that can never be completed: held where no route serves them, never admitted. */
+  private async failUnfinished(tx: Transaction, row: WriterRow, ids: string[], why: string) {
     const at = now();
-    // What it was still sending can never be completed: it is held, never admitted.
-    await tx.run(
-      "UPDATE code_operations SET status='failed',error='code_generation_stale',detail_json=?,completed_at=?,updated_at=? WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
-      canonical({ message: 'The writer’s machine is gone; its generation ended' }),
-      at,
-      at,
-      projectId,
-      row.unit_id,
+    for (const id of ids)
+      await tx.run(
+        "UPDATE code_operations SET status='failed',error='code_generation_stale',detail_json=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared' AND phase='receiving'",
+        canonical({ message: `${why}; its generation ended` }),
+        at,
+        at,
+        id,
+      );
+  }
+
+  /**
+   * A generation ends at the last commit Code admitted, as an operator's fence would end it, and
+   * the next lease continues from there. What it was still receiving is held, never admitted.
+   */
+  private async end(tx: Transaction, row: WriterRow, reason: string): Promise<void> {
+    await this.failUnfinished(
+      tx,
+      row,
+      (await this.uploads(tx, row)).receiving,
+      'The writer’s session closed',
     );
     await this.move(tx, row, 'closed');
-    await this.changed(tx, projectId, row.unit_id);
+    await this.changed(tx, row.project_id, row.unit_id);
     await this.state.appendEvent(tx, {
-      projectId,
+      projectId: row.project_id,
       actorId: 'system:code',
       type: 'code.writer_ended',
       subjectId: row.unit_id,
       data: {
-        reason: 'machine_gone',
-        sessionId,
+        reason,
+        sessionId: row.writer_session_id,
         generation: Number(row.generation),
         head: row.head_oid,
         from: row.writer_state,
@@ -232,27 +241,35 @@ export class CodeWriterService {
     });
   }
 
-  /** A generation whose final capture never came is shown as needing an operator. */
+  /**
+   * Each sweep, at start and on the store's interval: a generation whose session closed ends
+   * once nothing it had in flight can still finish. An admitted upload is always finished first
+   * (Main completes it); one with every byte on Main may finish within the grace; past it, what
+   * is left is never admitted. A generation an earlier Code put in recovery_required for a final
+   * capture that never came (no quarantine holds it) ends by the same rule.
+   */
   async expire(): Promise<void> {
     if (this.closed) return;
     const before = new Date(Date.now() - this.finalizeGraceSeconds * 1000).toISOString();
     await this.state.transaction(async (tx) => {
       for (const row of await tx.all<WriterRow>(
-        `SELECT ${writerColumns} FROM code_workspaces WHERE writer_state='closing' AND writer_changed_at<=? ORDER BY project_id,unit_id LIMIT 100`,
-        before,
+        `SELECT ${writerColumns} FROM code_workspaces WHERE writer_state='closing' OR (writer_state='recovery_required' AND quarantine_operation_id IS NULL AND blocked_by IS NULL) ORDER BY project_id,unit_id LIMIT 100`,
       )) {
-        await this.move(tx, row, 'recovery_required');
-        await this.changed(tx, row.project_id, row.unit_id);
+        const uploads = await this.uploads(tx, row);
+        if (uploads.admitted) continue;
+        const grace = row.writer_state === 'closing' && (row.writer_changed_at ?? '') > before;
+        if (grace && uploads.received) continue;
+        await this.end(tx, row, row.writer_state === 'closing' ? 'session_closed' : 'stranded');
       }
     });
   }
 
   /**
-   * The fence every upload passes, at its beginning and again before any ref moves. A
-   * checkpoint needs the live writer; the final capture is also taken after the session ended,
-   * and heals a generation the grace already gave up on.
+   * The fence every upload passes, at its beginning and again before any ref moves. Every
+   * upload begins under the live writer; one in flight when its session closed may go on to be
+   * admitted within the grace (`closing`), and nothing begins once the session has closed.
    */
-  async fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final') {
+  async fenced(tx: Transaction, fence: WriterFence, _kind: 'checkpoint' | 'final', begin = false) {
     const row = await this.row(tx, fence.projectId, fence.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
     check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
@@ -264,20 +281,16 @@ export class CodeWriterService {
       'Another writer generation owns this unit now',
       409,
     );
-    // A session that ended before it attached closed its generation with nothing in it, and
-    // its machine may still say so: a final capture that moves nothing is always answerable.
-    const open =
-      kind === 'final'
-        ? ['reserved', 'active', 'closing', 'recovery_required', ...(fence.moves ? [] : ['closed'])]
-        : ['reserved', 'active'];
     check(
-      open.includes(row.writer_state),
+      (begin ? ['reserved', 'active'] : ['reserved', 'active', 'closing']).includes(
+        row.writer_state,
+      ),
       'code_writer_closed',
       'This writer generation has closed',
       409,
     );
     check(
-      kind === 'final' || row.quarantine_operation_id === null,
+      row.quarantine_operation_id === null,
       'code_capture_quarantined',
       'A capture of this unit is quarantined',
       409,
@@ -305,8 +318,13 @@ export class CodeWriterService {
       fence.projectId,
       fence.unitId,
     );
-    if (!input.final) return;
     const row = (await this.row(tx, fence.projectId, fence.unitId))!;
+    // A final capture ends its generation; so does the last upload a closed session left.
+    if (row.writer_state === 'closing' && !input.final) {
+      if (!(await this.uploads(tx, row)).admitted) await this.end(tx, row, 'session_closed');
+      return;
+    }
+    if (!input.final) return;
     await this.move(tx, row, 'closed');
     await tx.run(
       'UPDATE code_workspaces SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
@@ -331,9 +349,9 @@ export class CodeWriterService {
   }
 
   /**
-   * An operator ends a generation that will not end by itself. The caller has already let
-   * every admitted upload of the unit finish and refuses while one cannot; what is left is
-   * bytes nobody may complete any more.
+   * An operator ends a generation a quarantined capture holds: the only one that does not end
+   * with its session. The caller has already let every admitted upload of the unit finish and
+   * refuses while one cannot; what is left is bytes nobody may complete any more.
    */
   async fence(caller: Caller, value: unknown, tx: Transaction): Promise<CodeWriterStatus> {
     this.assertOpen();
@@ -352,6 +370,12 @@ export class CodeWriterService {
     const row = await this.row(tx, caller.projectId, input.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
     check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
+    check(
+      row.quarantine_operation_id !== null,
+      'code_fence_unneeded',
+      'Only a quarantined capture waits for an operator; this writer generation ends with its session',
+      409,
+    );
     check(
       !(await tx.get(
         "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
@@ -541,20 +565,18 @@ export class CodeWriterService {
         code: 'code_capture_quarantined',
         message: 'The final capture of this unit is quarantined and an operator has not fenced it',
       };
-    if (row.writer_state === 'recovery_required')
-      return {
-        code: 'code_recovery_required',
-        message: 'The last writer of this unit never handed over its final capture',
-      };
     // A live writer holds the unit's lease, so only an ended one can stand in the way: for
-    // the moment its end takes to arrive here, or until its machine hands over what it left.
+    // the moment its end takes to arrive here, or while what its session had in flight
+    // finishes within the grace.
     if (
       row.writer_state === 'closing' ||
+      row.writer_state === 'recovery_required' ||
       (reserving && !['idle', 'closed'].includes(row.writer_state))
     )
       return {
         code: 'code_writer_busy',
-        message: 'The last writer of this unit has not handed over its final capture yet',
+        message:
+          'The last writer of this unit is still ending: what its session had in flight is finishing',
       };
     return null;
   }
