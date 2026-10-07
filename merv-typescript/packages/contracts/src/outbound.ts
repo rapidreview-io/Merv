@@ -3,7 +3,7 @@
  * one bounded JSON request, the calls in flight, and what an answer may weigh.
  */
 import { isIP } from 'node:net';
-import { MervError } from './index.js';
+import { check, MervError } from './index.js';
 
 /** An https origin, or a loopback http one for a test's fake service. */
 export function allowedOrigin(value: string): boolean {
@@ -20,6 +20,31 @@ export function allowedOrigin(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** A URL on an allowed origin, naming no credentials, query or fragment; any path. */
+export function allowedUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      !/[\x00-\x20\x7f?#]/.test(value) &&
+      !url.username &&
+      !url.password &&
+      allowedOrigin(url.origin)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The allowed origin `value` names, with nothing after it but a slash: the one rule for every
+ * service origin an operator configures. Anything else is refused under `code`.
+ */
+export function origin(value: unknown, code: string, message: string, status = 400): string {
+  const text = typeof value === 'string' ? value : '';
+  check(allowedUrl(text) && new URL(text).pathname === '/', code, message, status);
+  return new URL(text).origin;
 }
 
 type OutboundFailure =

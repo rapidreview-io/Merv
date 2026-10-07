@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { allowedUrl } from './outbound.js';
 
 /** Private launch data. This is never a Session field or a persisted runner profile. */
 export const nativeMcpConnectionsSchema = z
@@ -9,23 +10,7 @@ export const nativeMcpConnectionsSchema = z
           .string()
           .regex(/^[a-z][a-z0-9_-]{0,31}$/)
           .refine((name) => name !== 'merv'),
-        url: z
-          .string()
-          .max(2048)
-          .url()
-          .refine((value) => {
-            const url = new URL(value);
-            return (
-              !/[\x00-\x20\x7f]/.test(value) &&
-              (url.protocol === 'https:' ||
-                (url.protocol === 'http:' &&
-                  ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) &&
-              !url.username &&
-              !url.password &&
-              !url.search &&
-              !url.hash
-            );
-          }),
+        url: z.string().max(2048).refine(allowedUrl),
         bearer: z
           .string()
           .min(16)

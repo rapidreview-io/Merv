@@ -3,6 +3,7 @@ import { basename, extname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
+  allowedUrl,
   check,
   MervError,
   MAX_ARTIFACT_BYTES,
@@ -65,17 +66,12 @@ export async function uploadArtifact(input: {
   title?: string;
   mediaType?: string;
 }): Promise<Artifact> {
-  const url = new URL(input.url);
   check(
-    !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      (url.protocol === 'https:' ||
-        (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))),
+    allowedUrl(input.url),
     'artifact_url',
     'Use HTTPS or a loopback HTTP server URL without credentials or query parameters',
   );
+  const url = new URL(input.url);
   check(
     input.token.trim().length > 0 && !/[\r\n]/.test(input.token),
     'artifact_token',

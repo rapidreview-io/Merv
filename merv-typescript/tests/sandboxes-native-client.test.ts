@@ -4,7 +4,6 @@ import { randomBytes } from 'node:crypto';
 import {
   NativeCredentials,
   NativeSandboxClient,
-  nativeOrigin,
   pages,
 } from '../packages/sandboxes/src/native-client.js';
 const secret = `sbxt_${'s'.repeat(43)}`;
@@ -34,7 +33,7 @@ test('native client restricts destination and refuses redirects without reading 
     'https://example.com?token=secret',
     'https://example.com\n',
   ])
-    assert.throws(() => nativeOrigin(origin), { code: 'invalid_sandboxes_config' });
+    assert.throws(() => new NativeSandboxClient(origin), { code: 'invalid_sandboxes_config' });
   let calls = 0;
   const client = new NativeSandboxClient('https://sandbox.example', (async (url, options) => {
     calls++;

@@ -13,7 +13,8 @@ import {
   type Transaction,
   requireHuman,
 } from '@merv/contracts';
-import { NativeCredentials, NativeSandboxClient, nativeOrigin } from './native-client.js';
+import { sandboxOrigin } from './client.js';
+import { NativeCredentials, NativeSandboxClient } from './native-client.js';
 import type { NativeConnectionRow, NativeWorkRow } from './native-schema.js';
 import type { NativeConnectionStatus, NativeSandboxesConfig } from './native-types.js';
 
@@ -56,14 +57,14 @@ export class NativeConnections {
     private readonly state: State,
     private readonly scope: Scope,
     readonly config: NativeSandboxesConfig,
-    sandboxOrigin: string,
+    serviceOrigin: string,
     private readonly environment: NodeJS.ProcessEnv = process.env,
     fetcher: typeof fetch = fetch,
     private readonly clock: () => number = Date.now,
   ) {
     this.credentials = new NativeCredentials(environment[config.encryptionKeyEnv]);
-    this.client = new NativeSandboxClient(sandboxOrigin, fetcher);
-    this.origin = nativeOrigin(config.publicOrigin);
+    this.client = new NativeSandboxClient(serviceOrigin, fetcher);
+    this.origin = sandboxOrigin(config.publicOrigin);
     this.callback = `${this.origin}/sandboxes/connection/callback`;
   }
   private now() {

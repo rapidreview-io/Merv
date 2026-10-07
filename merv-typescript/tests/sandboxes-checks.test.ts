@@ -232,8 +232,8 @@ test('a source is uploaded only to an origin the deployment named, over HTTPS', 
     { code: 'sandbox_origin_refused' },
   );
   await assert.rejects(
-    new SandboxClient('https://sandbox.invalid', 15_000, ['http://bucket.invalid']).upload(
-      'http://bucket.invalid/o',
+    new SandboxClient('https://sandbox.invalid', 15_000, ['http://127.0.0.1:9']).upload(
+      'http://127.0.0.1:9/o',
       {},
       new Uint8Array(1),
     ),

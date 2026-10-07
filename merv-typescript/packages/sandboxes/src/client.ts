@@ -1,4 +1,4 @@
-import { check, MervError, sha256Hex, type Json } from '@merv/contracts';
+import { check, MervError, origin, sha256Hex, type Json } from '@merv/contracts';
 import type { SandboxConnection } from './types.js';
 
 const grant = /^sbxt_[A-Za-z0-9_-]{4,512}$/;
@@ -46,28 +46,13 @@ async function boundedText(response: Response, limit: number): Promise<string> {
   }
 }
 
-/** The one origin this plugin may call, taken from the operator's environment. */
-function sandboxOrigin(value: unknown): string {
-  let url: URL | undefined;
-  try {
-    url = new URL(String(value));
-  } catch {
-    url = undefined;
-  }
-  check(
-    url &&
-      ['http:', 'https:'].includes(url.protocol) &&
-      !!url.hostname &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      ['', '/'].includes(url.pathname),
+/** An origin the operator configured: the service's, a bucket's, or Merv's own public one. */
+export const sandboxOrigin = (value: unknown) =>
+  origin(
+    value,
     'invalid_sandboxes_config',
-    'The sandboxes URL must be an HTTP(S) origin without credentials, query or path',
+    'Sandboxes requires an HTTPS origin without credentials, query or path',
   );
-  return url.origin;
-}
 
 /** Service routes are plain `/v1` paths; `{id}` is the only substitution, and never a path. */
 export function sandboxRoute(path: string, id?: string): string {

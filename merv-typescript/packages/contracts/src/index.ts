@@ -18,9 +18,11 @@ export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js
 export { ordered } from './order.js';
 export {
   allowedOrigin,
+  allowedUrl,
   fetchJson,
   jsonBytes,
   MAX_ANSWER_BYTES,
+  origin,
   OutboundError,
   outboundFailure,
   record,
