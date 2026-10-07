@@ -37,7 +37,7 @@ test('Home reads open reviews, each subject’s current one and the newest verdi
     credentialId: boot.credential.id,
   };
   // One subject reviewed round after round, then open again; 30 others reviewed once.
-  const rows: unknown[][] = [];
+  const rows: [string, string, number, string, string | null, string][] = [];
   let minute = 0;
   const at = () => new Date(Date.UTC(2026, 9, 1, 0, minute++)).toISOString();
   for (let round = 0; round < 12; round++)

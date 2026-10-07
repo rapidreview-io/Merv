@@ -177,6 +177,7 @@ export async function seedRunning(
     const reads: Read[] = [['workflow.assignment', { instanceId: record.id }]];
     const lease = {
       sessionId: session.id,
+      threadId: session.threadId,
       runnerId: machine.runnerId,
       call: mcp(url, joined.token),
       reads,
@@ -317,6 +318,33 @@ export async function seedRunning(
     ['# Seeds', 'Runs use seeds 7, 11, 23, 42 and 101; each run log names its seed.'],
     'demo-running-seeds-delivery',
   );
+
+  // A task whose agent read the owner's note, answered it, then stopped to ask a question:
+  // its thread waits, dormant, until a message to it answers (the Agents tab's box).
+  const modulus = await task(
+    'Choose the held-out modulus',
+    'Pick the prime modulus the held-out runs use, so the comparison with p = 97 stands.',
+    ['The modulus is named with its reason'],
+    'demo-running-modulus',
+  );
+  const asker = await agent('demo-running-asker', lab, modulus);
+  await ctx.sessions.messaging.message(owner, {
+    threadId: asker.threadId,
+    body: 'Keep the training split exactly as in the p = 97 runs.',
+    requestId: 'demo-running-modulus-note',
+  });
+  const [note] = await asker.call('session.messages');
+  await asker.call('session.message.ack', {
+    messageId: note.id,
+    reply: 'Understood: the training split stays as it is.',
+    requestId: 'demo-running-modulus-ack',
+  });
+  await asker.call('session.ask_owner', {
+    question:
+      'p = 113 or p = 127 for the held-out runs? 113 keeps the vocabulary close to 97; 127 tests a larger gap.',
+  });
+  leases.splice(leases.indexOf(asker), 1);
+  await work.release(asker.held).catch(() => undefined);
 
   // An experiment whose design passed review and which an agent on the lab machine runs.
   const name = 'decay-sensitivity-p113';
