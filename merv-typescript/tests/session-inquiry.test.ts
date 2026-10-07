@@ -23,7 +23,7 @@ import {
   INQUIRY_VISIT_SECONDS,
 } from '../packages/sessions/src/inquiries.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
-import { legacyInquiryVisits } from '../packages/sessions/src/index.postgres.js';
+import { inquiryKinds, legacyInquiryVisits } from '../packages/sessions/src/index.postgres.js';
 import type {
   Session,
   SessionMessage,
@@ -716,7 +716,7 @@ test('an inquiry to a long conversation is budgeted for that conversation, resen
   }
 });
 
-test('every inquiry visit stored before visits named their kind is converted by sessions@19: a live one runs to its answer', async (t) => {
+test('every inquiry visit stored before visits named their kind is converted (sessions@19, @21): a live one runs to its answer', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
   const { threadId } = await f.worked();
@@ -776,9 +776,10 @@ test('every inquiry visit stored before visits named their kind is converted by 
   });
   assert.equal((await f.sessions.get(f.owner, visit.id)).status, 'released');
   assert.equal((await f.inquiry(asked.id)).status, 'answered');
-  // A closed one too: Sessions reads every visit by its kind alone.
+  // A closed one too, which sessions@21 rewrites: Sessions reads every visit by its kind alone.
   await legacy();
   await f.app.ctx.state.transaction((tx) => tx.run(legacyInquiryVisits));
+  await f.app.ctx.state.transaction((tx) => tx.run(inquiryKinds));
   const closed = await f.sessions.get(f.owner, visit.id);
   assert.deepEqual(
     [closed.kind, closed.lease, closed.status, inquiryOf(closed)?.id],

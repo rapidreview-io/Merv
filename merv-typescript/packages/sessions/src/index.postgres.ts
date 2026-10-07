@@ -330,16 +330,36 @@ FOR EACH ROW EXECUTE FUNCTION session_inquiries_guard();
  *   SELECT count(*) AS inquiries, COALESCE(sum(tokens),0) AS tokens FROM session_inquiries;
  */
 /**
- * An inquiry visit sessions@18 stored named no kind in its JSON and carried a lease and a
- * workflow binding of its own, with its budget on the inquiry. Sessions reads a visit by its
- * `kind` alone, so every such row, live or closed, is written once in the inquiry shape, with
- * neither; the session's immutability guard would refuse a live one's later writes otherwise.
+ * A live inquiry visit sessions@18 stored carried a lease and a workflow binding of its own, with
+ * its budget on the inquiry. Sessions now reads it as the inquiry kind of Session, with neither,
+ * and the session's immutability guard would refuse every later write of it (its attach, its
+ * close): it is written in that shape once. A closed one is never written again.
  *
  * Read-only prod count first (the rows rewritten):
- *   SELECT count(*) FROM worker_sessions
- *     WHERE kind='inquiry' AND (session_json::jsonb->>'kind') IS DISTINCT FROM 'inquiry';
+ *   SELECT count(*) FROM worker_sessions WHERE kind='inquiry' AND status IN ('offered','active');
  */
 export const legacyInquiryVisits = withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_immutable'],
+  `UPDATE worker_sessions SET session_json = ((session_json::jsonb - 'lease')
+    || jsonb_build_object('kind', 'inquiry',
+      'execution', (session_json::jsonb->'execution') - 'policyHash' - 'registrationId' - 'references',
+      'inquiry', (session_json::jsonb->'inquiry') - 'tokenBudget')
+    || jsonb_strip_nulls(jsonb_build_object('tokenBudget', session_json::jsonb #> '{inquiry,tokenBudget}')))::text
+  WHERE kind='inquiry' AND status IN ('offered','active') AND session_json::jsonb->'lease' IS NOT NULL;`,
+);
+/**
+ * sessions@19 rewrote only live inquiry visits. Sessions now reads a visit by its `kind` alone, so
+ * every inquiry row whose JSON still names no kind (closed ones sessions@18 stored, and any a
+ * Main still on sessions@18 wrote during a release) is written once in the inquiry shape: no
+ * lease or workflow binding, its budget on the session. A closed row is never written again.
+ *
+ * Read-only prod count first (the rows rewritten):
+ *   SELECT status, count(*) FROM worker_sessions
+ *     WHERE kind='inquiry' AND (session_json::jsonb->>'kind') IS DISTINCT FROM 'inquiry'
+ *     GROUP BY status;
+ */
+export const inquiryKinds = withoutTriggers(
   'worker_sessions',
   ['worker_sessions_immutable'],
   `UPDATE worker_sessions SET session_json = ((session_json::jsonb - 'lease')
@@ -750,4 +770,6 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   18: inquiriesMigration,
   // (unpublished) Inquiry spend in session_usage; prod counts in `usageKindMigration`'s comment.
   19: usageKindMigration,
+  // (unpublished) Every inquiry row names its kind; prod count in `inquiryKinds`' comment.
+  21: inquiryKinds,
 };
