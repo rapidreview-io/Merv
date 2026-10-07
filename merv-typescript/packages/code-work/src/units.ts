@@ -1188,8 +1188,14 @@ export class CodeUnitService {
     }
   }
 
-  /** Every unpinned unit of a project: for a new main, and for a start after Code was away. */
-  private async reconcileProject(tx: Transaction, projectId: string): Promise<void> {
+  /**
+   * Every unpinned unit of a project: for a new main, and for a start after Code was away. A
+   * writer that moved while this owner was away may have left a blocker to clear, so `away`
+   * takes every unit that ever had one; otherwise each writer move was seen as it happened, and
+   * only a writer that can still raise a blocker is taken. A publishing unit is always taken: its
+   * blockers are read back from its publication and the project's publication controls.
+   */
+  private async reconcileProject(tx: Transaction, projectId: string, away = false): Promise<void> {
     await this.propagateQuarantine(tx, projectId);
     await this.resolveBases(tx, projectId);
     for (const base of await this.bases.records(tx, projectId)) {
@@ -1201,12 +1207,12 @@ export class CodeUnitService {
     const units = new Set(
       (
         await tx.all<{ unit_id: string }>(
-          `SELECT unit_id FROM code_units WHERE project_id=? AND (${RECONCILED})`,
+          `SELECT unit_id FROM code_units WHERE project_id=? AND (${RECONCILED} OR publication_id IS NOT NULL OR (publishes_at IS NOT NULL AND acceptance_json IS NOT NULL))`,
           projectId,
         )
       ).map((row) => row.unit_id),
     );
-    for (const writer of await this.writers.writerIdentities(tx, projectId))
+    for (const writer of await this.writers.writerIdentities(tx, projectId, !away))
       units.add(writer.unitId);
     for (const unitId of [...units].sort()) await this.reconcileUnit(tx, projectId, unitId);
   }
@@ -1228,7 +1234,7 @@ export class CodeUnitService {
       return [...ids].sort();
     });
     for (const projectId of projects)
-      await this.state.transaction((tx) => this.reconcileProject(tx, projectId));
+      await this.state.transaction((tx) => this.reconcileProject(tx, projectId, !resolving));
   }
 
   /**

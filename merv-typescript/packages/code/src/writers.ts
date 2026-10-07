@@ -401,19 +401,25 @@ export class CodeWriterService {
       : { headOid: writer.head_oid ?? this.base(writer) };
   }
 
-  /** Workspace identities whose writer generation has begun, without exposing owned storage. */
+  /** Workspace identities whose writer generation has begun, without exposing owned storage;
+   * with `blocking`, only those whose writer can still raise a blocker (it has not handed over
+   * its final capture, or that capture is quarantined). */
   async writerIdentities(
     sql: Sql,
     projectId?: string,
+    blocking = false,
   ): Promise<{ projectId: string; unitId: string }[]> {
     this.assertOpen();
+    const which = blocking
+      ? "(writer_state IN ('closing','recovery_required') OR quarantine_operation_id IS NOT NULL)"
+      : 'generation>0';
     const rows =
       projectId === undefined
         ? await sql.all<{ project_id: string; unit_id: string }>(
-            'SELECT project_id,unit_id FROM code_workspaces WHERE generation>0 ORDER BY project_id,unit_id',
+            `SELECT project_id,unit_id FROM code_workspaces WHERE ${which} ORDER BY project_id,unit_id`,
           )
         : await sql.all<{ project_id: string; unit_id: string }>(
-            'SELECT project_id,unit_id FROM code_workspaces WHERE project_id=? AND generation>0 ORDER BY unit_id',
+            `SELECT project_id,unit_id FROM code_workspaces WHERE project_id=? AND ${which} ORDER BY unit_id`,
             projectId,
           );
     return rows.map((row) => ({ projectId: row.project_id, unitId: row.unit_id }));
