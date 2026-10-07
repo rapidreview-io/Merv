@@ -102,8 +102,12 @@ export interface InvocationHost {
  * acknowledging a message, and ending its visit with a question for its owner.
  */
 const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
-/** An inquiry visit's one write: its reply to the question it answers. */
-const inquiryReply = 'session.message.ack';
+/**
+ * What an inquiry visit may call: the project's reads, and its one write, the reply to the
+ * question it answers. Sessions' guard holds its credential to reads; this is the tool rule,
+ * since a worker's own tools (`session.ask_owner`) need only read scope.
+ */
+const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionInvocationPolicy {
   readonly instructions =
@@ -146,8 +150,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
       if (this.toolNames.size >= 1000) this.toolNames.clear();
       this.toolNames.set(id, known);
     }
-    // An inquiry visit reads the project and replies; Sessions' guard holds it to that too.
-    if (known.inquiry) return !!read || name === inquiryReply;
+    if (known.inquiry) return inquiryCalls(name, read);
     return (
       !!read || (workerTools.has(name) && name !== 'session.ask_owner') || known.names.has(name)
     );
@@ -161,11 +164,10 @@ export class SessionInvocations implements SessionInvocationPolicy {
     read?: boolean,
   ) {
     const session = await this.host.session(caller, tx);
-    if (session.inquiry) {
-      // An inquiry visit has no policy to bind its calls: its reads are bounded by the project,
-      // and its one write is its reply.
+    if (session.kind === 'inquiry') {
+      // An inquiry visit has no policy to bind its calls: its reads are bounded by the project.
       check(
-        read || tool === inquiryReply,
+        inquiryCalls(tool, read),
         'inquiry_read_only',
         'An inquiry visit only reads, and replies with session.message.ack',
         403,

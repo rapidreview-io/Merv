@@ -50,8 +50,8 @@ const messageInput = z
  * adds only what its harness and workspace give, then the frozen assignment. Only a visit that
  * keeps a conversation is told it may ask its owner: no later visit would continue another's.
  */
-export const workerPrompt = (session: Pick<Session, 'continuity' | 'inquiry'>) =>
-  session.inquiry
+export const workerPrompt = (session: Session) =>
+  session.kind === 'inquiry'
     ? inquiryPrompt(session.inquiry.messageId)
     : [
         'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',

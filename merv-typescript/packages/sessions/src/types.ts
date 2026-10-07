@@ -141,7 +141,6 @@ export interface WorkSession extends SessionVisit {
   kind: 'work';
   execution: WorkflowExecution;
   lease: WorkflowLease;
-  inquiry?: undefined;
 }
 /**
  * An inquiry visit: a person's question to its thread's agent. It resumes the thread's
@@ -632,10 +631,11 @@ export interface DispatchDemandInput {
 export interface DispatchDemand {
   /**
    * Each target, and since when its revision has stood: what a renter counts its tries from.
-   * `inquiry` marks one wanted only for a question to an agent of it, a short visit that holds no
-   * lease, so a machine of the item that is busy with another visit cannot take it.
+   * `ownHost` marks one that a machine of the item already running does not cover: every one of
+   * them is busy with another visit, and what is wanted (a question to one of its agents) will
+   * not wait for them.
    */
-  candidates: { instanceId: string; expectedRevision: number; since: string; inquiry?: true }[];
+  candidates: { instanceId: string; expectedRevision: number; since: string; ownHost?: true }[];
 }
 
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */

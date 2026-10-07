@@ -6,7 +6,7 @@ import { inspect } from 'node:util';
 import { z } from 'zod';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import { label, platformName } from '@merv/sessions/rules';
+import { label, live, platformName } from '@merv/sessions/rules';
 import { launcherOf } from './harness/index.js';
 import {
   conversationIdPattern,
@@ -288,13 +288,12 @@ export const sealed = (session: LaunchRequest['session']): boolean => {
   );
 };
 /**
- * An inquiry visit (`session.inquiry`): a person's question to the agent, answered from its
+ * An inquiry visit (its `kind`): a person's question to the agent, answered from its
  * restored conversation. It is sealed as a review of a retained checkout is: the filesystem
  * read-only (its directory may be the work's own, on a work host), no shell writes, no
  * connections, and nothing of it kept.
  */
-export const inquiring = (session: LaunchRequest['session']): boolean =>
-  !!(session as { inquiry?: unknown }).inquiry;
+export const inquiring = (session: LaunchRequest['session']): boolean => session.kind === 'inquiry';
 
 /** Deterministic environment names are local to one spawn, never persisted or global. */
 const nativeServers = (request: LaunchRequest) =>
@@ -340,11 +339,7 @@ export function buildLaunch(
     'Workspace must be an absolute path',
   );
   const { session } = request;
-  check(
-    session.status === 'offered' || session.status === 'active',
-    'session_closed',
-    'Cannot launch a closed session',
-  );
+  check(live(session), 'session_closed', 'Cannot launch a closed session');
   check(
     session.execution.instanceId === session.instanceId &&
       session.assignment.instanceId === session.instanceId &&

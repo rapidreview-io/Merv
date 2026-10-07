@@ -56,6 +56,13 @@ export const ownEnd = (reason: string | null | undefined) =>
  * its conversation restored and never kept. Only such a runner is offered one.
  */
 export const INQUIRY_CAPABILITY = 'inquiry.1';
+/**
+ * The live session rule: offered or active, a visit that still holds its lease (and a thread with
+ * one is live). Everyone who reads a session's status (Sessions, Fleet, the runner, Code Work, the
+ * Agents page) asks it here.
+ */
+export const live = (session: { status: string }): boolean =>
+  session.status === 'offered' || session.status === 'active';
 /** Every status a session row can hold (`SessionStatus`). */
 export const SESSION_STATUSES = ['offered', 'active', 'released', 'expired'] as const;
 /** A lease's platform as a person reads it, on the Running sidebar and the Agents page. */

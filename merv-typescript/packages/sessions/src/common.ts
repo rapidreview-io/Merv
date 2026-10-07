@@ -9,15 +9,12 @@ import {
   type Transaction,
   visible,
 } from '@merv/contracts';
-import type { Session } from './types.js';
 
 /** The provider Sessions reports dispatch holds as, beside any other opinion of its own. */
 export const HOLD_PROVIDER = 'session-dispatch';
 /** The provider of the model budget's wait on work a rented machine would take. */
 export const MODEL_BUDGET_PROVIDER = 'session-model-budget';
-/** Offered or active: a session that still holds its lease. */
-export const live = (session: Pick<Session, 'status'>) =>
-  session.status === 'offered' || session.status === 'active';
+export { live } from './rules.js';
 /** Visible text of at most `max` characters and no NUL. */
 export const text = (value: unknown, max = 200) =>
   typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');

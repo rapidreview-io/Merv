@@ -23,7 +23,7 @@ import {
   INQUIRY_VISIT_SECONDS,
 } from '../packages/sessions/src/inquiries.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
-import { legacyInquiryVisits } from '../packages/sessions/src/index.postgres.js';
+import { inquiryKinds, legacyInquiryVisits } from '../packages/sessions/src/index.postgres.js';
 import type {
   Session,
   SessionMessage,
@@ -34,6 +34,9 @@ import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { s3Blobs } from './fixtures/s3-blobs.js';
 
+/** The question an inquiry visit answers; none for a work visit. */
+const inquiryOf = (session?: Session | null) =>
+  session?.kind === 'inquiry' ? session.inquiry : undefined;
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const CONVERSATION = '0199a0b2-1111-7222-8333-944445555666';
 
@@ -320,8 +323,9 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
   await f.present('runner-q');
   const leased = await f.lease('runner-q');
   const visit = leased.session!;
+  assert.equal(visit.kind, 'inquiry');
   assert.deepEqual(
-    [visit.inquiry?.id, visit.inquiry?.messageId, visit.threadId, visit.actorId, visit.role],
+    [visit.inquiry.id, visit.inquiry.messageId, visit.threadId, visit.actorId, visit.role],
     [asked.id, asked.messageId, threadId, first.session.actorId, 'reader'],
   );
   assert.deepEqual(visit.continuity?.resume, { sessionId: first.session.id, ...facts });
@@ -474,9 +478,9 @@ test('an inquiry is refused for a thread with no saved conversation, and one at 
   assert.deepEqual([busy.status, busy.body.error.code], [409, 'inquiry_busy']);
   await f.present('runner-q');
   const leased = await f.lease('runner-q');
-  assert.equal(leased.session?.inquiry?.id, asked.id);
+  assert.equal(inquiryOf(leased.session)?.id, asked.id);
   // Its thread has one live inquiry visit; the next lease finds no other question.
-  assert.equal((await f.lease('runner-q')).session?.inquiry, undefined);
+  assert.equal(inquiryOf((await f.lease('runner-q')).session), undefined);
   const stillBusy = await f.http('POST', `/sessions/threads/${threadId}/ask`, f.token, {
     body: 'Second question?',
     requestId: randomUUID(),
@@ -516,14 +520,14 @@ test('an inquiry has a deadline: unclaimed it expires, and its visit ends at its
   const past = new Date(Date.now() - 1000).toISOString();
   await lapse(`UPDATE session_inquiries SET wait_until='${past}' WHERE id='${unclaimed.id}'`);
   await f.present('runner-q');
-  assert.equal((await f.lease('runner-q')).session?.inquiry, undefined);
+  assert.equal(inquiryOf((await f.lease('runner-q')).session), undefined);
   await f.sessions.sweep();
   assert.equal((await f.inquiry(unclaimed.id)).status, 'expired');
   // A visit past its hard deadline is closed by the sweep, its question unanswered by then.
   const asked = await f.ask(threadId, 'And now?');
   const leased = await f.lease('runner-q');
   const visit = leased.session!;
-  assert.equal(visit.inquiry?.id, asked.id);
+  assert.equal(inquiryOf(visit)?.id, asked.id);
   await lapse(
     `UPDATE worker_sessions SET session_json=(session_json::jsonb || '{"expiresAt":"${past}","hardDeadline":"${past}"}'::jsonb)::text WHERE id='${visit.id}'`,
   );
@@ -553,11 +557,11 @@ test("an inquiry never blocks its work: the work's visit is offered alongside, r
   await f.present('runner-q');
   // The question goes first on a lease: a person waits on it, and it is short.
   const leased = await f.lease('runner-q');
-  assert.equal(leased.session?.inquiry?.id, asked.id);
+  assert.equal(inquiryOf(leased.session)?.id, asked.id);
   // The work's own visit is offered meanwhile, on the same thread and the same conversation.
   const next = await f.lease('runner-q');
   const work = next.session!;
-  assert.equal(work.inquiry, undefined);
+  assert.equal(work.kind, 'work');
   assert.deepEqual(
     [work.instanceId, work.threadId, work.actorId, work.continuity?.resume],
     [unit.id, threadId, first.session.actorId, { sessionId: first.session.id, ...facts }],
@@ -712,7 +716,7 @@ test('an inquiry to a long conversation is budgeted for that conversation, resen
   }
 });
 
-test('a live inquiry visit stored before visits named their kind is converted by sessions@19, and runs to its answer', async (t) => {
+test('every inquiry visit stored before visits named their kind is converted (sessions@19, @21): a live one runs to its answer', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
   const { threadId } = await f.worked();
@@ -722,44 +726,46 @@ test('a live inquiry visit stored before visits named their kind is converted by
   const visit = leased.session!;
   // The row as sessions@18 stored it: a lease and a workflow binding of its own, and its budget
   // on the inquiry.
-  await f.app.ctx.state.transaction(async (tx) => {
-    const row = await tx.get<{ session_json: string }>(
-      'SELECT session_json FROM worker_sessions WHERE id=?',
-      visit.id,
-    );
-    const { kind: _kind, tokenBudget, ...stored } = JSON.parse(row!.session_json);
-    const binding = { policyHash: 'inquiry', registrationId: 'inquiry' };
-    const legacy = {
-      ...stored,
-      inquiry: { ...stored.inquiry, tokenBudget },
-      execution: { ...stored.execution, ...binding, references: {} },
-      lease: {
-        leaseId: visit.id,
-        projectId: visit.projectId,
-        instanceId: visit.instanceId,
-        workflow: visit.execution.workflow,
-        version: visit.execution.version,
-        state: visit.execution.state,
-        expectedRevision: visit.expectedRevision,
-        actorId: visit.actorId,
-        role: 'reader',
-        ...binding,
-      },
-    };
-    await tx.run(
-      withoutTriggers(
-        'worker_sessions',
-        ['worker_sessions_immutable'],
-        `UPDATE worker_sessions SET session_json='${JSON.stringify(legacy).replaceAll("'", "''")}' WHERE id='${visit.id}';`,
-      ),
-    );
-  });
+  const legacy = async () =>
+    await f.app.ctx.state.transaction(async (tx) => {
+      const row = await tx.get<{ session_json: string }>(
+        'SELECT session_json FROM worker_sessions WHERE id=?',
+        visit.id,
+      );
+      const { kind: _kind, tokenBudget, ...stored } = JSON.parse(row!.session_json);
+      const binding = { policyHash: 'inquiry', registrationId: 'inquiry' };
+      const legacy = {
+        ...stored,
+        inquiry: { ...stored.inquiry, tokenBudget },
+        execution: { ...stored.execution, ...binding, references: {} },
+        lease: {
+          leaseId: visit.id,
+          projectId: visit.projectId,
+          instanceId: visit.instanceId,
+          workflow: visit.execution.workflow,
+          version: visit.execution.version,
+          state: visit.execution.state,
+          expectedRevision: visit.expectedRevision,
+          actorId: visit.actorId,
+          role: 'reader',
+          ...binding,
+        },
+      };
+      await tx.run(
+        withoutTriggers(
+          'worker_sessions',
+          ['worker_sessions_immutable'],
+          `UPDATE worker_sessions SET session_json='${JSON.stringify(legacy).replaceAll("'", "''")}' WHERE id='${visit.id}';`,
+        ),
+      );
+    });
+  await legacy();
   await f.app.ctx.state.transaction((tx) => tx.run(legacyInquiryVisits));
   const control = { runnerId: 'runner-q', hostRef: `launch-${randomUUID()}` };
   const attached = (await f.ok('POST', `/sessions/${visit.id}/attach`, f.token, control))
     .session as Session;
   assert.deepEqual(
-    [attached.kind, attached.lease, attached.tokenBudget, attached.inquiry?.id],
+    [attached.kind, attached.lease, attached.tokenBudget, inquiryOf(attached)?.id],
     ['inquiry', undefined, asked.tokenBudget, asked.id],
   );
   const inquirer = await f.sessions.authenticate(leased.input.secret);
@@ -770,6 +776,15 @@ test('a live inquiry visit stored before visits named their kind is converted by
   });
   assert.equal((await f.sessions.get(f.owner, visit.id)).status, 'released');
   assert.equal((await f.inquiry(asked.id)).status, 'answered');
+  // A closed one too, which sessions@21 rewrites: Sessions reads every visit by its kind alone.
+  await legacy();
+  await f.app.ctx.state.transaction((tx) => tx.run(legacyInquiryVisits));
+  await f.app.ctx.state.transaction((tx) => tx.run(inquiryKinds));
+  const closed = await f.sessions.get(f.owner, visit.id);
+  assert.deepEqual(
+    [closed.kind, closed.lease, closed.status, inquiryOf(closed)?.id],
+    ['inquiry', undefined, 'released', asked.id],
+  );
 });
 
 test('a long saved conversation is budgeted for what one call can resend, so it leaves room in the day', async (t) => {
@@ -779,7 +794,7 @@ test('a long saved conversation is budgeted for what one call can resend, so it 
   const asked = await f.ask(small.threadId, 'What did that cost?');
   await f.present('runner-q');
   const visit = (await f.lease('runner-q')).session!;
-  assert.equal(visit.inquiry?.id, asked.id);
+  assert.equal(inquiryOf(visit)?.id, asked.id);
   await f.release(visit, { usage: { inputTokens: 100_000, outputTokens: 0 } });
   // Hours of work keep a conversation file far larger than the model's window: its agent
   // compacted as it went, so no call resends more than the window, whatever the file weighs.
@@ -864,6 +879,39 @@ test('a thread wants attention for a message only while it takes one: an answer 
   assert.equal(page.threads.filter((item) => item.id === threadId).length, 1);
 });
 
+test('a person may ask three long-running agents a day, counting each answer as Fleet bills it', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  // Hours of work: a conversation file past the model's window, so each answer resends it all.
+  const long = async () => {
+    const unit = await f.start();
+    const first = await f.offer(unit.id, 'runner-hand');
+    await f.release(first.session);
+    await f.keep(
+      first.session,
+      first.control,
+      `{"type":"user","id":"${randomUUID()}","text":"${'x'.repeat(4_000_000)}"}\n`,
+    );
+    return first.session.threadId;
+  };
+  const [a, b, c, d] = [await long(), await long(), await long(), await long()];
+  // The first is answered in three calls, each resending the conversation (cached input
+  // counted in full, as the relay charges it).
+  await f.ask(a, 'Why seed 3?');
+  await f.present('runner-q');
+  const visit = (await f.lease('runner-q')).session!;
+  await f.release(visit, { usage: { inputTokens: 3 * 245_000, outputTokens: 2_000 } });
+  // A second while nothing is open, and a third while the second is.
+  await f.ask(b, 'And why seed 4?');
+  await f.ask(c, 'And why seed 5?');
+  // A fourth would pass the day: the cap still holds.
+  const fourth = await f.http('POST', `/sessions/threads/${d}/ask`, f.token, {
+    body: 'And seed 6?',
+    requestId: randomUUID(),
+  });
+  assert.deepEqual([fourth.status, fourth.body.error?.code], [429, 'inquiry_tokens_spent']);
+});
+
 test('a person’s questions spend at most a day’s tokens, and the project’s budget holds them back as it holds work', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
@@ -872,7 +920,7 @@ test('a person’s questions spend at most a day’s tokens, and the project’s
   const asked = await f.ask(a.threadId, 'What did that cost?');
   await f.present('runner-q');
   const visit = (await f.lease('runner-q')).session!;
-  assert.equal(visit.inquiry?.id, asked.id);
+  assert.equal(inquiryOf(visit)?.id, asked.id);
   assert.equal(visit.tokenBudget, asked.tokenBudget);
   // A machine of the owner's reports what the visit spent once it ends.
   await f.release(visit, { usage: { inputTokens: INQUIRY_DAILY_TOKENS - 1000, outputTokens: 0 } });
@@ -898,7 +946,7 @@ test('a person’s questions spend at most a day’s tokens, and the project’s
   assert.equal((await f.lease('runner-q')).session, null);
   assert.equal((await f.inquiry(second.id)).status, 'queued');
   await f.sessions.dispatch.setBudget(f.owner, { maxTokens: null });
-  assert.equal((await f.lease('runner-q')).session?.inquiry?.id, second.id);
+  assert.equal(inquiryOf((await f.lease('runner-q')).session)?.id, second.id);
 });
 
 test('a question no machine could take is refused: a Codex conversation is asked only where its work ran on a hosted machine', async (t) => {
@@ -941,18 +989,18 @@ test('a refused question holds up no other, and a retried reply is told that it 
   const first = await f.ask(a.threadId, 'First?');
   const second = await f.ask(b.threadId, 'Second?');
   // This machine is refused the oldest question (as it would be by a check on that one alone).
-  const leased = f.sessions as unknown as {
-    inquireTransaction(...args: unknown[]): Promise<unknown>;
+  const inquiries = f.sessions.inquiries as unknown as {
+    offer(...args: unknown[]): Promise<unknown>;
   };
-  const inquire = leased.inquireTransaction.bind(leased);
-  leased.inquireTransaction = async (...args: unknown[]) =>
+  const offer = inquiries.offer.bind(inquiries);
+  inquiries.offer = async (...args: unknown[]) =>
     (args[1] as { id: string }).id === first.id
       ? { refused: new MervError('inquiry_refused', 'Refused for the test', 409) }
-      : await inquire(...args);
-  t.after(() => void (leased.inquireTransaction = inquire));
+      : await offer(...args);
+  t.after(() => void (inquiries.offer = offer));
   await f.present('runner-q');
   const visit = await f.lease('runner-q');
-  assert.equal(visit.session?.inquiry?.id, second.id);
+  assert.equal(inquiryOf(visit.session)?.id, second.id);
   assert.equal((await f.inquiry(first.id)).status, 'queued');
 
   // Its reply ends the visit; the same reply again, its response lost, is told that it landed.
@@ -1008,7 +1056,7 @@ test('the live feed shows a thread’s work, never its inquiry visit', async (t)
   assert.equal(inquiry.kind, 'inquiry');
   assert.deepEqual(await live(), []);
   const work = (await f.lease('runner-q')).session!;
-  assert.equal(work.inquiry, undefined);
+  assert.equal(work.kind, 'work');
   assert.deepEqual(
     (await live()).map((visit) => visit.sessionId),
     [work.id],

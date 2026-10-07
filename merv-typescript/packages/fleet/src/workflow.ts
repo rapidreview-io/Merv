@@ -654,14 +654,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return 'finished';
     return observed?.runnerId ? 'running' : 'starting';
   }
-  /** Whether each of these hosts holds a live visit. */
-  private async busy(hosts: FleetAllocation[]): Promise<boolean> {
-    for (const a of hosts) {
-      const session = (await this.sessions.managed.inspect(a.id, a.epoch))?.session;
-      if (session?.status !== 'offered' && session?.status !== 'active') return false;
-    }
-    return true;
-  }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
     if (this.closed) return Promise.resolve();
@@ -691,8 +683,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // revision has stood.
     const served = new Map<string, Map<string, DelegationSource>>();
     const since = new Map<string, string | undefined>();
-    // Targets wanted only for a question to an agent of the item.
-    const asking = new Set<string>();
+    // Targets Sessions says no running host of the item covers.
+    const ownHost = new Set<string>();
     // Projects passed over this pass: their reads failed, or Fleet refused one of their requests.
     const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.dispatch.servedSources()) {
@@ -711,7 +703,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
             if (!wanted.has(targetId(target))) {
               wanted.set(targetId(target), director);
               since.set(grantKey(projectId, targetId(target)), target.since);
-              if (target.inquiry) asking.add(grantKey(projectId, targetId(target)));
+              if (target.ownHost) ownHost.add(grantKey(projectId, targetId(target)));
             }
         served.set(projectId, wanted);
       } catch (error) {
@@ -746,12 +738,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
     if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
     const running = active.filter((a) => a.intent === 'run');
     const covered = new Set(running.flatMap(steps));
-    // A host takes one visit at a time, and a question's visit is short and holds no lease: while
-    // every host of its item is busy with another visit, the question gets a host of its own.
-    for (const key of asking) {
+    // A target Sessions says its item's hosts cannot take gets a host of its own, unless one is
+    // still being launched: Sessions learns of a host only as it launches, and it may take it.
+    for (const key of ownHost) {
       const [projectId, id] = [key.slice(0, key.indexOf(' ')), key.slice(key.indexOf(' ') + 1)];
       const hosts = running.filter((a) => a.projectId === projectId && steps(a).includes(id));
-      if (hosts.length && (await this.busy(hosts))) covered.delete(id);
+      if (hosts.every(launched)) covered.delete(id);
     }
     let slots = Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>

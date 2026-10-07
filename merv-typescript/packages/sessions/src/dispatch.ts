@@ -45,7 +45,7 @@ import {
 import type { ManagedRunnerBindings } from './managed.js';
 import type { ManagedBindingRow } from './managed-types.js';
 import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
-import { INQUIRY_VISIT_SECONDS, type InquiryCandidate } from './inquiries.js';
+import { INQUIRY_VISIT_SECONDS, type Inquiries } from './inquiries.js';
 import { withholds } from './budgets.js';
 import { heartbeatSchema, type RunnerRow } from './runners.js';
 import { backoffMs, deferredReasons, type Failure } from './stuck.js';
@@ -149,30 +149,8 @@ interface Hooks {
   byDefault: boolean;
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
-  /** The oldest question a machine of this owner and harness may take (on its work item alone),
-   *  other than those `skip` names. */
-  inquiry(
-    tx: Transaction,
-    projectId: string,
-    ownerHash: string,
-    harness: string,
-    workInstanceId: string | null,
-    skip: readonly string[],
-  ): Promise<InquiryCandidate | undefined>;
-  /** The work items with such a question. */
-  inquiryDemand(
-    tx: Transaction,
-    projectId: string,
-    ownerHash: string,
-    harness: string,
-  ): Promise<string[]>;
-  /** The inquiry visit for a candidate; it refuses before it writes anything. */
-  inquire(
-    caller: Caller,
-    candidate: InquiryCandidate,
-    input: { runnerId: string; requestId: string; secret: string; hardDeadlineSeconds?: number },
-    tx: Transaction,
-  ): Promise<Session | { refused: MervError }>;
+  /** A person's questions to agents: what a machine may take, and its visit's offer. */
+  inquiries: Pick<Inquiries, 'candidate' | 'demand' | 'offer'>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
   close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
 }
@@ -702,8 +680,8 @@ export class SessionDispatch {
     return await this.state.snapshotTransaction(async (tx) => {
       await this.ordinary(caller, 'read', tx);
       // Only Fleet asks: a project on its own machines has no work for a machine it rents.
-      if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
-        return { candidates: [] };
+      const dispatch = await this.dispatch(caller.projectId, tx);
+      if (!input.platform.enabled || dispatch.ownMachines) return { candidates: [] };
       const owner = (await ownerOf(this.scope, caller, tx)).hash;
       const selected = await this.eligibleCandidates(
         caller,
@@ -723,11 +701,11 @@ export class SessionDispatch {
       // work's current revision: only where dispatch is on, as `eligibleCandidates` read it.
       if (
         (input.capabilities ?? []).includes(INQUIRY_CAPABILITY) &&
-        (await this.dispatch(caller.projectId, tx)).enabled &&
+        dispatch.enabled &&
         !(await this.projectWithholds(caller, tx))
       ) {
         const asked = (
-          await this.hooks.inquiryDemand(tx, caller.projectId, owner, input.platform.harness)
+          await this.hooks.inquiries.demand(tx, caller.projectId, owner, input.platform.harness)
         ).filter((id) => !candidates.some((item) => item.instanceId === id));
         for (const [instanceId, item] of await this.workflows.revisions(
           caller.projectId,
@@ -738,7 +716,10 @@ export class SessionDispatch {
             instanceId,
             expectedRevision: item.revision,
             since: item.updatedAt,
-            inquiry: true,
+            // Its own host while every host of the item is busy with another visit.
+            ...((await this.hooks.managed.hostsBusy(caller.projectId, instanceId, tx)) && {
+              ownHost: true as const,
+            }),
           });
       }
       return { candidates };
@@ -993,7 +974,7 @@ export class SessionDispatch {
           instanceId: session.instanceId,
           runnerRef: runner.id,
           platform: input.platform,
-          ...(session.inquiry && { inquiryId: session.inquiry.id }),
+          ...(session.kind === 'inquiry' && { inquiryId: session.inquiry.id }),
         });
         return { session, reason: await decided('offered') };
       };
@@ -1012,7 +993,7 @@ export class SessionDispatch {
           // A refusal is of one question: a few more are tried before the lease goes on to work.
           const refused: string[] = [];
           while (refused.length < INQUIRY_TRIES) {
-            const inquiry = await this.hooks.inquiry(
+            const inquiry = await this.hooks.inquiries.candidate(
               tx,
               caller.projectId,
               phaseOwner.hash,
@@ -1023,7 +1004,7 @@ export class SessionDispatch {
             if (!inquiry) break;
             if (this.state.readScope)
               throw new MervError('read_only_scope', 'An offer is a write', 409);
-            const session = await this.hooks.inquire(
+            const session = await this.hooks.inquiries.offer(
               source,
               inquiry,
               {

@@ -13,6 +13,7 @@ import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import { messageInquiry } from './inquiries.js';
 import type {
+  InquirySession,
   InquiryStatus,
   Session,
   SessionMessage,
@@ -37,7 +38,8 @@ interface MessageRow {
   inquiry_id: string | null;
   inquiry_role: 'question' | 'context' | null;
 }
-interface QuestionRow {
+/** A question a worker asked its owner, as `session_questions` holds it. */
+export interface QuestionRow {
   id: string;
   project_id: string;
   thread_id: string;
@@ -73,7 +75,28 @@ const keyThreads = (session: Pick<Session, 'projectId' | 'threadId'>) => [
 const FOR_WORK = "inquiry_role IS DISTINCT FROM 'question'";
 /** The provider Sessions publishes an unanswered question as, on the work it withholds. */
 export const QUESTION_PROVIDER = 'session-question';
-const question = (row: QuestionRow): ThreadQuestion => ({
+/**
+ * Where a set of threads' open questions stand, read once (`SessionMessages.standing`): those
+ * that still stand, and which of the work items read have ended.
+ */
+export interface Standing {
+  /** The open questions that stand, oldest first: none is about work that has ended. */
+  questions: QuestionRow[];
+  /** Which of the work items read (each open question's, and those asked about) have ended. */
+  ended: Set<string>;
+}
+/**
+ * Whether a thread takes a message now, by the one rule: it answers a question the thread asked
+ * that still stands, or the thread is not retired and its work has not ended, so a visit will
+ * read it. `standing` must have read the thread and its work item.
+ */
+export const takesMessage = (
+  thread: { id: string; instance_id: string; status: string },
+  standing: Standing,
+) =>
+  standing.questions.some((question) => question.thread_id === thread.id) ||
+  (thread.status !== 'retired' && !standing.ended.has(thread.instance_id));
+const question = (row: QuestionRow, open: boolean): ThreadQuestion => ({
   id: row.id,
   threadId: row.thread_id,
   sessionId: row.session_id,
@@ -83,8 +106,20 @@ const question = (row: QuestionRow): ThreadQuestion => ({
   askedAt: row.asked_at,
   answeredAt: row.answered_at,
   answerMessageId: row.answer_message_id,
+  open,
 });
 
+/** A row of `session_messages`, as its one writer (`SessionMessages.insert`) takes it. */
+export interface MessageInsert {
+  projectId: string;
+  threadId: string;
+  senderActorId: string;
+  requestId: string;
+  fingerprint: string;
+  body: string;
+  /** An inquiry's question (whose reply is its answer), or the context its answer left. */
+  inquiry?: { id: string; role: 'question' | 'context' };
+}
 /** What messaging uses of Sessions: its transactions, session rows, lease check and close. */
 export interface MessageHost {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
@@ -94,7 +129,12 @@ export interface MessageHost {
   /** Closes a visit that asked its owner: released, not counted against the work. */
   asked(session: Session, tx: Transaction): Promise<void>;
   /** An inquiry visit replied to its question: it ends, and its thread's work is told. */
-  answered(session: Session, question: string, reply: string, tx: Transaction): Promise<void>;
+  answered(
+    session: InquirySession,
+    question: string,
+    reply: string,
+    tx: Transaction,
+  ): Promise<void>;
   /** Where these inquiries stand. */
   inquiryStatuses(tx: Transaction, ids: string[]): Promise<Map<string, InquiryStatus>>;
   /** Refuses a caller who may not read the work item. */
@@ -148,7 +188,7 @@ export class SessionMessages {
   /** A visit reads the messages to its thread's (`KEY_THREADS`). */
   private async addressed(tx: Transaction, session: Session): Promise<MessageRow[]> {
     // An inquiry visit reads its one question, and nothing meant for its thread's work.
-    if (session.inquiry)
+    if (session.kind === 'inquiry')
       return await tx.all<MessageRow>(
         'SELECT * FROM session_messages WHERE id=?',
         session.inquiry.messageId,
@@ -239,24 +279,22 @@ export class SessionMessages {
       return await this.toThread(caller, threadId, input, fingerprint, tx);
     });
   }
-  private async insert(
-    tx: Transaction,
-    caller: Caller,
-    input: SessionMessageInput,
-    fingerprint: string,
-    threadId: string,
-  ): Promise<string> {
+  /** The one writer of `session_messages`: a person's message, or an inquiry's question or the
+   *  context its answer leaves the thread's work. */
+  async insert(tx: Transaction, row: MessageInsert): Promise<string> {
     const id = newId('session_message');
     await tx.run(
-      'INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?)',
+      'INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,?)',
       id,
-      caller.projectId,
-      threadId,
-      caller.actorId,
-      input.requestId,
-      fingerprint,
-      input.body,
+      row.projectId,
+      row.threadId,
+      row.senderActorId,
+      row.requestId,
+      row.fingerprint,
+      row.body,
       isoNow(this.clock),
+      row.inquiry?.id ?? null,
+      row.inquiry?.role ?? null,
     );
     return id;
   }
@@ -274,10 +312,34 @@ export class SessionMessages {
     return thread;
   }
   /**
+   * The one read of whether a question stands, which threads, counts, attention, the Agents
+   * page's cards and the thread's box all ask: a question still unanswered stands while the work
+   * it asked about has not ended (work that ended took its blocker with it, whichever work item
+   * its thread is on now). Read for the project, or only `threads`' questions or `instance`'s;
+   * `instances` are work items whose end the caller reads too, in the same one check.
+   */
+  async standing(
+    tx: Transaction,
+    projectId: string,
+    read: { threads?: readonly string[]; instance?: string; instances?: readonly string[] } = {},
+  ): Promise<Standing> {
+    if (read.threads && !read.threads.length) return { questions: [], ended: new Set() };
+    const open = await tx.all<QuestionRow>(
+      `SELECT * FROM session_questions WHERE project_id=? AND answered_at IS NULL
+        ${read.threads ? `AND thread_id IN (${read.threads.map(() => '?').join(',')})` : ''}
+        ${read.instance === undefined ? '' : 'AND instance_id=?'} ORDER BY _merv_rowid`,
+      projectId,
+      ...(read.threads ?? []),
+      ...(read.instance === undefined ? [] : [read.instance]),
+    );
+    const items = [...new Set([...open.map((row) => row.instance_id), ...(read.instances ?? [])])];
+    const ended = items.length ? await this.host.ended(projectId, items, tx) : new Set<string>();
+    return { questions: open.filter((row) => !ended.has(row.instance_id)), ended };
+  }
+  /**
    * A message to a thread waits for its live or next visit. It answers every question the thread
-   * asked that is still open, which lets dispatch offer that work again; a retired thread, or one
-   * whose work has ended, which no visit will take up again, takes a message only as such an
-   * answer.
+   * asked that still stands, which lets dispatch offer that work again, and never one that no
+   * longer stands; a thread that takes no message otherwise (`takesMessage`) is refused.
    */
   private async toThread(
     caller: Caller,
@@ -288,19 +350,25 @@ export class SessionMessages {
   ): Promise<SessionMessage> {
     const thread = await this.threadRow(tx, caller, threadId);
     await this.host.readable(caller, thread.instance_id, tx);
-    const open = await tx.all<QuestionRow>(
-      'SELECT * FROM session_questions WHERE thread_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
-      thread.id,
-    );
+    const standing = await this.standing(tx, caller.projectId, {
+      threads: [thread.id],
+      instances: [thread.instance_id],
+    });
+    const open = standing.questions;
     check(
-      open.length ||
-        (thread.status !== 'retired' &&
-          !(await this.host.ended(caller.projectId, [thread.instance_id], tx)).size),
+      takesMessage(thread, standing),
       'thread_retired',
       'This thread has ended and no visit will read a message to it',
       409,
     );
-    const id = await this.insert(tx, caller, input, fingerprint, thread.id);
+    const id = await this.insert(tx, {
+      projectId: caller.projectId,
+      threadId: thread.id,
+      senderActorId: caller.actorId,
+      requestId: input.requestId,
+      fingerprint,
+      body: input.body,
+    });
     await this.state.appendEvent(tx, {
       projectId: caller.projectId,
       actorId: caller.actorId,
@@ -311,10 +379,10 @@ export class SessionMessages {
     if (open.length) {
       const at = isoNow(this.clock);
       await tx.run(
-        'UPDATE session_questions SET answered_at=?,answer_message_id=? WHERE thread_id=? AND answered_at IS NULL',
+        `UPDATE session_questions SET answered_at=?,answer_message_id=? WHERE answered_at IS NULL AND id IN (${open.map(() => '?').join(',')})`,
         at,
         id,
-        thread.id,
+        ...open.map((row) => row.id),
       );
       for (const instanceId of new Set(open.map((row) => row.instance_id)))
         await this.report(caller.projectId, instanceId, tx);
@@ -347,15 +415,8 @@ export class SessionMessages {
    */
   private async report(projectId: string, instanceId: string, tx: Transaction): Promise<void> {
     // Ended work waits on no answer: its question is cleared with the work's other blockers.
-    const ended = (await this.host.ended(projectId, [instanceId], tx)).has(instanceId);
-    const open = ended
-      ? []
-      : await tx.all<QuestionRow>(
-          'SELECT * FROM session_questions WHERE project_id=? AND instance_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
-          projectId,
-          instanceId,
-        );
-    const newest = new Map(open.map((row) => [row.thread_id, row]));
+    const { questions } = await this.standing(tx, projectId, { instance: instanceId });
+    const newest = new Map(questions.map((row) => [row.thread_id, row]));
     await this.host.publish(
       {
         projectId,
@@ -438,6 +499,7 @@ export class SessionMessages {
       await this.host.asked(session, tx);
       return question(
         (await tx.get<QuestionRow>('SELECT * FROM session_questions WHERE id=?', id))!,
+        true,
       );
     });
   }
@@ -486,6 +548,11 @@ export class SessionMessages {
         'SELECT * FROM session_questions WHERE thread_id=? ORDER BY _merv_rowid',
         thread.id,
       );
+      const standing = new Set(
+        (await this.standing(tx, caller.projectId, { threads: [thread.id] })).questions.map(
+          (row) => row.id,
+        ),
+      );
       const inquiries = await this.host.inquiryStatuses(tx, [
         ...new Set(
           rows.flatMap((row) => (row.inquiry_role === 'question' ? [row.inquiry_id!] : [])),
@@ -494,7 +561,7 @@ export class SessionMessages {
       return {
         threadId: thread.id,
         messages: rows.map((row) => this.publicMessage(row, thread.instance_id, inquiries)),
-        questions: questions.map(question),
+        questions: questions.map((row) => question(row, standing.has(row.id))),
       };
     });
   }
@@ -519,7 +586,7 @@ export class SessionMessages {
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
       check(
         row.project_id === caller.projectId &&
-          (session.inquiry
+          (session.kind === 'inquiry'
             ? row.id === session.inquiry.messageId
             : row.inquiry_role !== 'question' &&
               !!(await tx.get(
@@ -532,7 +599,7 @@ export class SessionMessages {
         404,
       );
       check(
-        !session.inquiry || input.reply !== undefined,
+        session.kind === 'work' || input.reply !== undefined,
         'invalid_session_message',
         'An inquiry is answered by its reply: give one',
       );
@@ -547,7 +614,9 @@ export class SessionMessages {
         this.publicMessage(
           item,
           session.instanceId,
-          session.inquiry && (await this.host.inquiryStatuses(tx, [session.inquiry.id])),
+          session.kind === 'inquiry'
+            ? await this.host.inquiryStatuses(tx, [session.inquiry.id])
+            : undefined,
         );
       if (row.acknowledged_at) {
         check(
@@ -575,10 +644,10 @@ export class SessionMessages {
           sessionId: session.id,
           threadId: row.thread_id,
           replied: input.reply !== undefined,
-          ...(session.inquiry && { inquiryId: session.inquiry.id }),
+          ...(session.kind === 'inquiry' && { inquiryId: session.inquiry.id }),
         },
       });
-      if (session.inquiry) await this.host.answered(session, row.body, input.reply!, tx);
+      if (session.kind === 'inquiry') await this.host.answered(session, row.body, input.reply!, tx);
       return await read(await this.messageRow(tx, row.id));
     });
   }

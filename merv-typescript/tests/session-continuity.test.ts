@@ -510,7 +510,10 @@ test('a thread a later work item resumes is that item’s: it takes messages onc
   const first = await f.start();
   const a = await f.offer(first.id);
   await f.keep(a.session, a.control);
-  await f.release(a.session);
+  // Its agent asks its owner, and nobody answers before the first item ends.
+  await f.app.ctx.tools.invoke('session.ask_owner', await f.sessions.authenticate(a.input.secret), {
+    question: 'Which cohort?',
+  });
   // The first item ends; a second, keyed the same, resumes its thread.
   await f.move(first.id, 'submit');
   await f.move(first.id, 'approve');
@@ -530,6 +533,13 @@ test('a thread a later work item resumes is that item’s: it takes messages onc
   });
   assert.equal(sent.status, 200, sent.text);
   assert.equal(sent.body.message.instanceId, second.id);
+  // An ordinary message to the work it is on now: the question about the ended item no longer
+  // stands, and it does not answer it in passing.
+  const { questions } = await f.sessions.messaging.thread(f.owner, b.session.threadId);
+  assert.deepEqual(
+    questions.map((question) => [question.answeredAt, question.open]),
+    [[null, false]],
+  );
 });
 
 test('research keys: a lens by wave and perspective across restarts, an experiment across attempts', async (t) => {
@@ -1118,7 +1128,7 @@ async function converse(
       controlled: async () => assert.fail(),
       readable: async () => assert.fail(),
       stream: async (id) => (streamed.push(id), streams[id] ?? []),
-      ended: async () => new Set<string>(),
+      standing: async () => ({ questions: [], ended: new Set<string>() }),
       unaskable: async () => new Map(),
       available: () => {},
     },
@@ -1583,7 +1593,8 @@ test('the sweep reads a bounded page of waiting questions a pass, and every one 
       )
     )?.status;
   const read: string[][] = [];
-  const host = (leased.threads as unknown as { host: { ended: Function } }).host;
+  // Whether a question stands is Messages' one read, which asks Workflows what ended.
+  const host = (leased.messaging as unknown as { host: { ended: Function } }).host;
   const original = host.ended;
   host.ended = async (projectId: string, ids: string[], tx: unknown) => {
     read.push(ids);

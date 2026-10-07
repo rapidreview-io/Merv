@@ -2,6 +2,7 @@ import {
   check,
   ellipsis,
   mapAsync,
+  MervError,
   runningKey,
   workLink,
   type Caller,
@@ -31,7 +32,7 @@ import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
 import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
-import { platformPhrase } from './rules.js';
+import { live, platformPhrase } from './rules.js';
 import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
 
 /**
@@ -354,19 +355,38 @@ function dispatchMarks(reading: DispatchReading): RunningMark[] {
   ];
 }
 
+/** Where an agent's question is answered: its thread's box, on Sessions' own Agents page. */
+export const questionRoute = (threadId: string) =>
+  `/sessions?thread=${encodeURIComponent(threadId)}`;
 /**
  * An agent that asked its owner a question, on the work it asked about, while Workflows holds
  * the blocker Sessions published for it: work that ended, or moved on by another hand, waits on
- * it no more, whichever visit or attempt its thread is on now.
+ * it no more, whichever visit or attempt its thread is on now. It is the reader's own ("you", and
+ * counted as needing them) only on the work items in `answers`, where the work's gate names it
+ * the reader's move, as Needs you does; to any other reader it is a quiet line. Either way it
+ * links to the thread (its blocker's key).
  */
-export function questionMarks(blockers: readonly WorkflowProvidedBlocker[]): RunningMark[] {
+export function questionMarks(
+  blockers: readonly WorkflowProvidedBlocker[],
+  answers: ReadonlySet<string>,
+): RunningMark[] {
   return blockers
     .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
-    .map((blocker) => ({
-      key: runningKey('work', blocker.instanceId),
-      says: ['Asked you a question'],
-      who: 'Its owner answers it with a message to its agent’s thread',
-    }));
+    .map((blocker) =>
+      answers.has(blocker.instanceId)
+        ? {
+            key: runningKey('work', blocker.instanceId),
+            says: ['Asked you a question'],
+            who: 'You answer it with a message to its agent’s thread',
+            to: { route: questionRoute(blocker.key), text: 'Answer it' },
+          }
+        : {
+            key: runningKey('work', blocker.instanceId),
+            says: ['Its agent asked its owner a question'],
+            to: { route: questionRoute(blocker.key), text: 'Open its thread' },
+            quiet: true as const,
+          },
+    );
 }
 
 /** The brief as the sidebar carries it: whole, or cut at the last line end within the cap. */
@@ -533,8 +553,26 @@ export class SessionRunning {
     return await this.state.snapshotTransaction(async (tx) => {
       const reading = await this.dispatcher.running(caller, tx);
       const asked = await this.dispatcher.workflows.blockers(caller, undefined, tx);
+      // Whose move each question is, as the work's gate says it to Needs you (a blocker the
+      // gate names as the reader's: the record's owner's, which a project admin makes too). A
+      // gate that cannot be read (its program away) names nobody.
+      const answers = new Set<string>();
+      for (const instanceId of new Set(
+        asked.filter((item) => item.provider === QUESTION_PROVIDER).map((item) => item.instanceId),
+      ))
+        try {
+          const { yours } = await this.dispatcher.workflows.evaluate(
+            caller,
+            instanceId,
+            undefined,
+            tx,
+          );
+          if (yours?.blocker) answers.add(instanceId);
+        } catch (error) {
+          if (!(error instanceof MervError)) throw error;
+        }
       return {
-        marks: [...questionMarks(asked), ...dispatchMarks(reading)],
+        marks: [...questionMarks(asked, answers), ...dispatchMarks(reading)],
         summary: laneSummary(reading),
       };
     });
@@ -568,10 +606,10 @@ export class SessionRunning {
       if (!row) return null;
       const [lease] = await this.facts(tx, [row], operator);
       const now = this.clock();
-      const live = row.status === 'offered' || row.status === 'active';
-      const holding = live && !lapsed(lease, now);
+      const leased = live(row);
+      const holding = leased && !lapsed(lease, now);
       const idle = this.thresholds.idleNoticeSeconds;
-      const shown = live ? face(lease, now, idle) : undefined;
+      const shown = leased ? face(lease, now, idle) : undefined;
       const role = ROLES[row.role];
       const work = row.name;
       const ending = row.outcome || row.close_reason;
@@ -636,7 +674,7 @@ export class SessionRunning {
       });
 
       // When it must end, and, while nothing renews it, when it lapses and returns the work.
-      const terms: RunningFact[] = live
+      const terms: RunningFact[] = leased
         ? [
             { label: 'Ends', value: [{ until: row.hard_deadline }] },
             ...(row.status === 'offered' || silent
@@ -713,7 +751,7 @@ export class SessionRunning {
           rows.unshift({ label: 'Machine', value: [ellipsis(machine.hostname, 200)] });
           if (lease.platform)
             rows.push({ label: 'Platform', value: [platformPhrase(lease.platform)] });
-          if (live) {
+          if (leased) {
             const on = await tx.all<{ id: string; name: string; role: SessionRole }>(
               `SELECT s.id,${workNameOf('x.j')} AS name,x.j #>> '{role}' AS role
                 FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
@@ -781,8 +819,8 @@ export class SessionRunning {
           ...(shown?.attention ? { attention: shown.attention } : {}),
         },
         sections,
-        actions: live ? [halt] : [],
-        live,
+        actions: leased ? [halt] : [],
+        live: leased,
         ...(lease.fleet ? { aliases: [runningKey('fleet', lease.fleet)] } : {}),
       };
     });

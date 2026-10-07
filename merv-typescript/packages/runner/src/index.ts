@@ -29,7 +29,7 @@ import type {
   SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
-import { INQUIRY_CAPABILITY, ownEnd } from '@merv/sessions/rules';
+import { INQUIRY_CAPABILITY, live as liveSession, ownEnd } from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -134,8 +134,6 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
     );
   return { ...parsed.data, profiles };
 }
-const liveSession = (session: Pick<Session, 'status'>) =>
-  session.status === 'offered' || session.status === 'active';
 const platformOf = (profile: RunnerProfile): RunnerPlatform => ({
   name: profile.name,
   harness: profile.harness,
@@ -191,7 +189,8 @@ const view = (s: Session) => {
     hardDeadline: s.hardDeadline,
     ...(s.workspace ? { workspace: s.workspace } : {}),
     ...(s.continuity ? { continuity: s.continuity } : {}),
-    ...(s.inquiry ? { inquiry: s.inquiry } : {}),
+    kind: s.kind,
+    ...(s.kind === 'inquiry' ? { inquiry: s.inquiry } : {}),
     // The budget check reads it from here on, since a running launch polls only the control view.
     ...(s.tokenBudget !== undefined ? { tokenBudget: s.tokenBudget } : {}),
     execution: { policy: { readOnly, workspace, tools: tools.map(({ name }) => ({ name })) } },

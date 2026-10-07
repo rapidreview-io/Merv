@@ -30,6 +30,7 @@ import type {
 import {
   capabilitiesSchema as capabilities,
   INQUIRY_CAPABILITY,
+  live,
   ownEnd,
   runnerPlatformSchema as profile,
 } from './rules.js';
@@ -409,7 +410,7 @@ export class ManagedRunnerBindings {
       check(
         session &&
           row &&
-          (session.status === 'offered' || session.status === 'active'
+          (live(session)
             ? Date.parse(session.expiresAt) > this.clock()
             : ownEnd(session.closeReason)),
         'unauthorized',
@@ -420,16 +421,17 @@ export class ManagedRunnerBindings {
         await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
       await this.current(row, tx);
       await this.scope.requireDelegation(session.source, 'read', tx);
-      const asker = session.inquiry
-        ? await tx.get<{ asker_source_json: string }>(
-            'SELECT asker_source_json FROM session_inquiries WHERE id=?',
-            session.inquiry.id,
-          )
-        : undefined;
+      // Its stored JSON names an inquiry visit's kind; a work visit's older JSON names none.
+      const inquiry = session.kind === 'inquiry' ? session.inquiry : undefined;
+      const asker =
+        inquiry &&
+        (await tx.get<{ asker_source_json: string }>(
+          'SELECT asker_source_json FROM session_inquiries WHERE id=?',
+          inquiry.id,
+        ));
       return {
-        ...(asker && {
-          inquiry: { id: session.inquiry!.id, asker: JSON.parse(asker.asker_source_json) },
-        }),
+        ...(inquiry &&
+          asker && { inquiry: { id: inquiry.id, asker: JSON.parse(asker.asker_source_json) } }),
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
@@ -670,6 +672,28 @@ export class ManagedRunnerBindings {
       canonical(session.source),
       new Date(this.clock()).toISOString(),
     );
+  }
+  /**
+   * Whether every current host Fleet rented for this work item holds a live visit: a host takes
+   * one visit at a time, so a question to one of the item's agents (a short visit that holds no
+   * lease, and need not wait for the work's) needs a host of its own. False while it has none.
+   */
+  async hostsBusy(projectId: string, instanceId: string, tx: Transaction): Promise<boolean> {
+    const rows = await tx.all<ManagedBindingRow & { busy: boolean }>(
+      `SELECT r.*,EXISTS (SELECT 1 FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
+          WHERE a.allocation_id=r.allocation_id AND s.status IN ('offered','active')) AS busy
+        FROM session_managed_runners r WHERE r.project_id=? AND r.work_instance_id=? AND r.control_expires_at>?`,
+      projectId,
+      instanceId,
+      new Date(this.clock()).toISOString(),
+    );
+    let hosts = 0;
+    for (const row of rows) {
+      if (!this.validator || !(await this.validator.current(this.identity(row), tx))) continue;
+      if (!row.busy) return false;
+      hosts++;
+    }
+    return hosts > 0;
   }
   async controlled(
     caller: Caller,

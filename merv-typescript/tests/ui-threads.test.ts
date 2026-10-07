@@ -392,8 +392,9 @@ test('the thread’s calls are a tab anyone who reads it may open', async (t) =>
   assert.match(dialogText(), /1 call · ≈ 120 in · ≈ 40 out/);
 });
 
-/** The thread's messages as Sessions sends them: a question its agent asked, open or not. */
-const messages = (answered: boolean) => ({
+/** The thread's messages as Sessions sends them: a question its agent asked, open or not, and
+ *  whether it still stands (unanswered on work that has not ended). */
+const messages = (answered: boolean, stands = !answered) => ({
   threadId: 'thr_run',
   messages: [
     {
@@ -418,6 +419,7 @@ const messages = (answered: boolean) => ({
       askedAt: at(50),
       answeredAt: answered ? at(51) : null,
       answerMessageId: null,
+      open: stands,
     },
   ],
 });
@@ -446,6 +448,17 @@ test('a writer answers the thread’s open question from the box under it', asyn
   await settle(10);
   assert.ok(requests.includes('POST /sessions/threads/thr_run/messages'));
   assert.equal(area.value, '');
+});
+
+test('a question that no longer stands is not offered an answer: the box only says it was asked', async (t) => {
+  t.after(unmount);
+  serve('/sessions/threads/thr_run/messages', { body: messages(false, false) });
+  await open('producer');
+  await press(chip('running'));
+  const box = document.querySelector('dialog .thread-messages')!;
+  assert.equal(box.querySelector('.thread-question'), null);
+  assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
+  assert.notEqual(box.querySelector('textarea')!.getAttribute('aria-label'), 'Answer');
 });
 
 test('an agent that takes no message but kept its conversation is asked: the question goes to an inquiry, its answer under it', async (t) => {

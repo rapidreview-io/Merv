@@ -24,7 +24,7 @@ export const sessionsUiPlugin = {
             ? {
                 badge: {
                   text: `${live}·${waiting}`,
-                  label: `${live} working, ${waiting} waiting on you`,
+                  label: `${live} working, ${waiting} waiting on an answer`,
                 },
               }
             : {};
