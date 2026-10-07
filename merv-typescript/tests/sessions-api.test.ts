@@ -663,17 +663,16 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   const admissions = () => leaseChecks.mock.calls.filter((call) => call.arguments[3]).length;
   // The session's liveness is its read decision; the transport does not also read it alone.
   const described = t.mock.method(f.app.ctx.sessions, 'session');
-  // Preparation, the check after parsing, and the check after the observation is stored;
-  // a read is admitted once more after its handler releases the read snapshot. Each extra
-  // layer that re-admits would show here.
-  for (const [name, expected] of [
-    ['checked.echo', 3],
-    ['artifact.list', 4],
-  ] as const) {
+  // The owner's decision (2026-10-07): a call's lease is validated once, at preparation; the
+  // later checks bind its arguments against that validation without asking Workflows again.
+  // Each extra layer that re-admits would show here.
+  for (const name of ['checked.echo', 'artifact.list']) {
     leaseChecks.mock.resetCalls();
     const result = await client.callTool({ name, arguments: {} });
     assert.equal(result.isError, undefined, JSON.stringify(result));
-    assert.equal(admissions(), expected, name);
+    assert.equal(admissions(), 1, name);
+    // With the request's authentication, which checks the session's lease as it names it.
+    assert.equal(leaseChecks.mock.callCount(), 2, name);
   }
   await client.listTools();
   assert.equal(described.mock.calls.filter((call) => !call.arguments[1]).length, 0);

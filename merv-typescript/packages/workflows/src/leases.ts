@@ -51,6 +51,7 @@ import {
   type Registration,
 } from './engine.js';
 import { WorkflowGuidance } from './guidance.js';
+import { checkReceipt, leaseRows, liveLease } from './lease-rows.js';
 
 /** One step as load() read it: the frozen context every callback of the call is given. */
 interface Loaded {
@@ -368,6 +369,75 @@ export class WorkflowLeases extends WorkflowGuidance {
       this.requireActive(registration);
       return { registrationId: registration.registrationId, ...(references && { references }) };
     });
+  }
+
+  async holdsLease(
+    worker: Caller,
+    lease: WorkflowLease,
+    tx: Transaction,
+  ): Promise<{ registrationId: string }> {
+    worker = structuredClone(worker);
+    lease = workflowJson(lease, 'invalid_lease', 400);
+    this.state.assertTransaction(tx);
+    this.assertOpen();
+    check(
+      worker.actorId === lease.actorId &&
+        worker.projectId === lease.projectId &&
+        worker.session?.id === lease.leaseId,
+      'invalid_lease',
+      'Lease belongs to a different worker',
+      403,
+    );
+    // Both reads are the ones the owner's own lease reads share in this transaction.
+    const snapshot = this.snapshot(await this.readRow(tx, lease.projectId, lease.instanceId));
+    check(
+      snapshot.revision === lease.expectedRevision,
+      'revision_conflict',
+      'Workflow changed; refresh execution metadata before dispatch',
+      409,
+    );
+    check(
+      snapshot.workflow === lease.workflow &&
+        snapshot.version === lease.version &&
+        snapshot.state === lease.state,
+      'lease_changed',
+      'Lease no longer names this workflow state',
+      409,
+    );
+    const registration = this.definition(snapshot.workflow, snapshot.version);
+    // The step's live lease row, which the owner's own lease read shares. A program that keeps
+    // no lease rows has neither a live row nor one of this lease's: the step's revision and the
+    // worker's session (Sessions) are then all that hold it.
+    const target = {
+      projectId: lease.projectId,
+      instanceId: lease.instanceId,
+      revision: lease.expectedRevision,
+    };
+    const row = await liveLease(this.state, tx, target);
+    if (row?.id === lease.leaseId) {
+      check(
+        row.actor_id === lease.actorId,
+        'stale_lease',
+        'This worker no longer holds the lease on this step',
+        409,
+      );
+      checkReceipt(row, lease.receipt, 'The lease ownership receipt no longer matches');
+    } else
+      check(
+        !row && !(await leaseRows(tx, { projectId: lease.projectId, id: lease.leaseId })).length,
+        'stale_lease',
+        'This worker no longer holds the lease on this step',
+        409,
+      );
+    this.requireActive(registration);
+    return { registrationId: registration.registrationId };
+  }
+
+  leaseRegistration(lease: WorkflowLease): string {
+    this.assertOpen();
+    const registration = this.definition(lease.workflow, lease.version);
+    this.requireActive(registration);
+    return registration.registrationId;
   }
 
   /**
