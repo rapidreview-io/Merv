@@ -203,7 +203,7 @@ export const codeToolsPlugin = {
         name: 'code.unit.fence',
         conversation: 'propose' as const,
         description:
-          'End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
+          'End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required; a rented machine Fleet deleted ends its generation by itself, so this is for a machine of your own, which might come back), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
         inputSchema: codeUnitFenceInputSchema,
         handler: async (caller: Caller, input: CodeUnitFenceInput) =>
           await ctx.codeWork.fenceUnit(caller, input),

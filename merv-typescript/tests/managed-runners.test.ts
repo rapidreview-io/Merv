@@ -1835,3 +1835,23 @@ test('work-host Code transfers use only the unfinished assignment, including clo
   ])
     await assert.rejects(action(), { code: 'session_forbidden' });
 });
+
+test('a machine gone for good is told to each session that ran on it, and to no other', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  assert.ok(bound);
+  const told = async () =>
+    await f.state.read((sql) =>
+      sql.all<{ project_id: string; subject_id: string; allocation: string }>(
+        "SELECT project_id,subject_id,data_json::jsonb->>'allocationId' AS allocation FROM events WHERE type='session.machine_gone' ORDER BY id",
+      ),
+    );
+  await f.state.transaction((tx) => f.sessions.managed.machineGone('flt_other', tx));
+  assert.deepEqual(await told(), []);
+  await f.state.transaction((tx) => f.sessions.managed.machineGone(f.input.allocationId, tx));
+  assert.deepEqual(await told(), [
+    { project_id: bound.projectId, subject_id: bound.id, allocation: f.input.allocationId },
+  ]);
+});

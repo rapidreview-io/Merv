@@ -164,6 +164,74 @@ export class CodeWriterService {
     else if (row.writer_state === 'active') await this.move(tx, row, 'closing');
   }
 
+  /**
+   * The machine a session ran on is gone for good (Fleet released it and its runtime is
+   * deleted), so the final capture it owed can never come: if that session is the current
+   * writer, its generation ends here, at the last commit Code admitted, as an operator's fence
+   * would end it, and the next lease continues from there. A quarantined capture, an admitted
+   * upload not yet finished, or one whose bytes all arrived (Main admits it without the machine;
+   * a final one closes the generation itself), still waits; a machine of the owner's own never
+   * says it is gone, so its generation waits for it as before.
+   */
+  async machineGone(projectId: string, sessionId: string, tx: Transaction): Promise<void> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    const row = await tx.get<WriterRow>(
+      `SELECT ${writerColumns} FROM code_workspaces WHERE project_id=? AND writer_session_id=?`,
+      projectId,
+      sessionId,
+    );
+    if (
+      !row ||
+      !['reserved', 'active', 'closing', 'recovery_required'].includes(row.writer_state) ||
+      row.quarantine_operation_id !== null ||
+      row.blocked_by
+    )
+      return;
+    // An upload whose every byte is on Main can still be admitted without its machine (one that
+    // was being admitted stays 'receiving' until it is), so it is never failed here.
+    const open = await tx.all<{ phase: string; payload_json: string; progress_json: string }>(
+      "SELECT phase,payload_json,progress_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
+      projectId,
+      row.unit_id,
+    );
+    if (
+      open.some((op) => {
+        if (op.phase !== 'receiving') return true;
+        const bytes = (JSON.parse(op.payload_json) as { bundle?: { bytes?: number } }).bundle
+          ?.bytes;
+        const received = (JSON.parse(op.progress_json ?? '{}') as { received?: number }).received;
+        return typeof bytes === 'number' && (received ?? 0) >= bytes;
+      })
+    )
+      return;
+    const at = now();
+    // What it was still sending can never be completed: it is held, never admitted.
+    await tx.run(
+      "UPDATE code_operations SET status='failed',error='code_generation_stale',detail_json=?,completed_at=?,updated_at=? WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared'",
+      canonical({ message: 'The writer’s machine is gone; its generation ended' }),
+      at,
+      at,
+      projectId,
+      row.unit_id,
+    );
+    await this.move(tx, row, 'closed');
+    await this.changed(tx, row);
+    await this.state.appendEvent(tx, {
+      projectId,
+      actorId: 'system:code',
+      type: 'code.writer_ended',
+      subjectId: row.unit_id,
+      data: {
+        reason: 'machine_gone',
+        sessionId,
+        generation: Number(row.generation),
+        head: row.head_oid,
+        from: row.writer_state,
+      },
+    });
+  }
+
   /** A generation whose final capture never came is shown as needing an operator. */
   async expire(): Promise<void> {
     if (this.closed) return;

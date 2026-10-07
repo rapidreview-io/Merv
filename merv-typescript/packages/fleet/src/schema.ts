@@ -39,6 +39,21 @@ export const migrationV2 = {
   CREATE INDEX fleet_allocations_person ON fleet_allocations((data_json::jsonb ->> 'person'), created_at);`,
 };
 
+/**
+ * A hold on work machines, by whoever must replace the apps they run on: deploy/hosted-release-vm.py
+ * holds them while it drains and redeploys the hosted image, since a Cloudflare rollout replaces
+ * every running container. While a row's `until` (an ISO instant, as Fleet writes its own) is
+ * ahead, the workflow owner rents nothing and stops each machine whose step has settled, and no
+ * machine admits a new step. The holder deletes its row; one it leaves lapses.
+ */
+export const migrationV3 = {
+  version: 3,
+  sql: `CREATE TABLE fleet_holds (
+    name TEXT PRIMARY KEY,
+    until TEXT NOT NULL
+  );`,
+};
+
 /** Fleet workflow's own tables (component `fleet_workflow`): its model ledger and retry grants.
  *  Published migration text is immutable after release. */
 export const usageMigration = {

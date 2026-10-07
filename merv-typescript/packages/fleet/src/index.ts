@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
-import { migration, migrationV2 } from './schema.js';
+import { migration, migrationV2, migrationV3 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
@@ -148,7 +148,7 @@ export class FleetService implements Fleet {
     this.runtimes = runtimes;
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration, migrationV2]);
+    await this.state.migrate('fleet', [migration, migrationV2, migrationV3]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -277,6 +277,11 @@ export class FleetService implements Fleet {
       )
     ).map(decode);
   }
+  async held(tx?: Transaction): Promise<boolean> {
+    const read = async (sql: Sql) =>
+      !!(await sql.get('SELECT name FROM fleet_holds WHERE until > ? LIMIT 1', this.time()));
+    return tx ? await read(tx) : await this.state.read(read);
+  }
   async retired(id: string, tx?: Transaction): Promise<boolean> {
     const read = async (sql: Sql) => this.stale(await this.get(sql, id));
     return tx ? await read(tx) : await this.state.read(read);
@@ -346,6 +351,9 @@ export class FleetService implements Fleet {
           phase: a.phase,
           intent: a.intent,
           owner: a.owner,
+          // Released with its runtime deleted: the machine is gone for good, and nothing it
+          // owed (a final capture, a handover) can ever come from it.
+          ...(a.phase === 'released' && a.runtime?.deleted === true ? { machineGone: true } : {}),
           ...(caller ? eventSource(caller) : {}),
         },
       });
@@ -492,6 +500,9 @@ export class FleetService implements Fleet {
   }
   async admits(id: string, epoch: number, tx: Transaction): Promise<boolean> {
     this.state.assertTransaction(tx);
+    // A held work machine (its owner's machines outlive Main) takes no new step: a release is
+    // about to replace it. Pi's are drained by turns, not held.
+    if ((await this.held(tx)) && this.kinds.get((await this.get(tx, id)).owner.kind)) return false;
     return this.fence(
       tx,
       id,

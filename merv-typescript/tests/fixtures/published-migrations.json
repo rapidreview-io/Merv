@@ -20,6 +20,12 @@
       "published": true
     },
     {
+      "component": "fleet",
+      "version": 3,
+      "hash": "9ed74efc61c79c787de08e4a64afc43d05d6678fbdf7b93a3eaf3fcf54d93055",
+      "published": false
+    },
+    {
       "component": "fleet_workflow",
       "version": 1,
       "hash": "7f5b75f5e21b67ed85946c51632cf2a0b301f5509471470d80ec92f59d858679",

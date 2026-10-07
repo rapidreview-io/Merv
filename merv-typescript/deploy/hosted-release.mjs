@@ -33,25 +33,30 @@
 //    stdin into docker login (tmpfs config, logged out after); pin the amd64 manifest digest.
 //  5 catalog: add the release to both Sandboxes services, keeping earlier releases.
 //  6 drain until no Pi turn, launch or machine is in flight, releasing each idle Pi machine at every
-//    poll; deploy each live app from its template at HEAD with the new digest and the Sandboxes
-//    commit's bridge Worker, and switch Main's release ids as soon as Cloudflare runs the new image
-//    everywhere: until then Sandboxes refuses Pi launches.
+//    poll, and until no work machine Fleet rented for workflow steps is up: a Cloudflare rollout
+//    replaces every running container of an app, whatever it runs, so Main holds work machines
+//    (Fleet rents none, admits no new step, and stops each once its step settles) until a canary
+//    passes; past --drain-minutes the hold is lifted and nothing else changed. Deploy each live
+//    app from its template at HEAD with the new digest and the Sandboxes commit's bridge Worker,
+//    and switch Main's release ids as soon as Cloudflare runs the new image everywhere: until then
+//    Sandboxes refuses Pi launches.
 //  7 verify each app natively (settled health, SSH off), then a canary: one real Pi turn on
 //    Standard as a root-only reader key, whose machine it then releases.
 //  8 staging, once production passed: the release's copy for each staging app (STAGING_APPS) in the
-//    Sandboxes catalog, the same image and Worker on those apps, then staging Main (--staging-host)
-//    names those releases. A staging failure is reported in the ledger and never rolls back.
+//    Sandboxes catalog, staging Main's work machines drained as in 6, the same image and Worker on
+//    those apps, then staging Main (--staging-host) names those releases. A staging failure is
+//    reported in the ledger and never rolls back.
 // No run starts, and no open run is driven forward, unless a rollback could run from here: the
 // deployed Sandboxes commit's bridge Worker is in the checkout and wrangler is signed in. A failure
-// after 5 rolls back automatically, in the same order (previous digest and Worker on every app,
-// previous release ids for each machine whose app then runs it; one whose app Sandboxes cannot read
-// keeps its release, and the run stays open), and checks that with a canary. A real run detaches
-// from the terminal and keeps the Mac awake; a later run, or release.mjs, finishes an open run
-// first, rolling it back if the pipeline changed meanwhile. A host out of reach is waited out for
-// 10 minutes, and while this Mac is silent mid-deploy a host timer, which a reboot keeps, points
-// Main at whatever Cloudflare runs. Exit: 0 released, abandoned or nothing to do; 1 failed with
-// production unchanged or rolled back; 2 refused; 3 a run is left open; 4 closed, but the release
-// left live failed its canary.
+// after 5 rolls back automatically, in the same order (work machines drained, previous digest and
+// Worker on every app, previous release ids for each machine whose app then runs it; one whose app
+// Sandboxes cannot read keeps its release, and the run stays open), and checks that with a canary.
+// A real run detaches from the terminal and keeps the Mac awake; a later run, or release.mjs,
+// finishes an open run first, rolling it back if the pipeline changed meanwhile. A host out of
+// reach is waited out for 10 minutes, and while this Mac is silent mid-deploy a host timer, which a
+// reboot keeps, points Main at whatever Cloudflare runs. Exit: 0 released, abandoned or nothing to
+// do; 1 failed with production unchanged or rolled back; 2 refused; 3 a run is left open; 4 closed,
+// but the release left live failed its canary.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
@@ -409,9 +414,10 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
       throw new Error(`cannot read the hosted state on ${host} (ssh exit ${r.status})`);
     return JSON.parse(r.stdout);
   };
-  // Staging Main's switch, on its own host: the committed hosted-release-vm.py, run there as root
-  // from stdin, names these staging releases ({provider: releaseId}; ids only, nothing secret).
-  const onStaging = (releases) => {
+  // Staging Main, on its own host: the committed hosted-release-vm.py, run there as root from stdin.
+  // `staging` names these staging releases ({provider: releaseId}; ids only, nothing secret),
+  // `staging-drain` drains its work machines for up to `seconds`, `staging-unhold` lifts that hold.
+  const onStaging = (command, arg = '') => {
     const r = spawnSync(
       'ssh',
       [
@@ -421,14 +427,15 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
         '-n',
         'python3',
         '-',
-        'staging',
-        `'${JSON.stringify(releases)}'`,
+        command,
+        `'${JSON.stringify(arg)}'`,
       ],
       {
         input: git(['show', `${head}:./deploy/hosted-release-vm.py`]),
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'inherit'],
-        timeout: 15 * 60_000,
+        // A drain waits up to `arg` seconds.
+        timeout: ((command === 'staging-drain' ? arg : 0) + 15 * 60) * 1000,
       },
     );
     let out;
@@ -437,7 +444,7 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
     } catch {
       out = { error: `no result (ssh exit ${r.status})` };
     }
-    if (r.status !== 0 || out.error) throw new Error(`staging switch: ${out.error ?? 'failed'}`);
+    if (r.status !== 0 || out.error) throw new Error(`${command}: ${out.error ?? 'failed'}`);
     return out;
   };
   const upload = (run, sandboxesCommit) => {
@@ -854,6 +861,8 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         for (const [step, value] of steps) {
           if (step === 'catalog') onHost(run, 'catalog', { restore: true });
           else if (step === 'deploy') {
+            // Work machines Main rented since the drain (should its hold have lapsed) end first.
+            onHost(run, 'drain', { work: true });
             deploy(value, providers);
             // Each app on its own: one that cannot be read, or never takes the image, keeps its
             // machine's release, and every other machine still goes back.
@@ -909,12 +918,21 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       try {
         const served = Object.keys(onHost(run, 'stage', { entries, releases }).releases);
         if (served.some((p) => onHost(run, 'native', { provider: p }).image !== image)) {
+          onStaging('staging-drain', plan.drainSeconds); // staging's work visits end first, as in 6
           deploy(next, served);
           await landed(image, 0, served);
         }
-        const switched = onStaging(Object.fromEntries(served.map((p) => [p, releases[p]])));
+        const switched = onStaging(
+          'staging',
+          Object.fromEntries(served.map((p) => [p, releases[p]])),
+        );
         return `staging ${served.join(' + ')} ${switched.changed ? 'switched' : 'already'} on it`;
       } catch (error) {
+        try {
+          onStaging('staging-unhold'); // the drain's hold, should staging Main not have switched
+        } catch {
+          // it lapses within the hour
+        }
         console.error(`staging was not updated (production keeps the release): ${error.message}`);
         return `STAGING NOT UPDATED: ${brief(error.message)}`;
       }

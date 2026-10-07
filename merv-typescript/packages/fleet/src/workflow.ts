@@ -673,6 +673,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * one of its people, and its reviews the owner may not direct through its review director;
    * a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
+    if (await this.fleet.held()) return await this.drainForRelease();
     // The key stays on Main for the relay; without it no machine is rented to call the model.
     check(
       process.env[this.config.modelApiKeyEnv],
@@ -800,6 +801,25 @@ export class FleetWorkflowAdapter implements FleetOwner {
       if (paused) break;
     }
   }
+  /**
+   * While a release holds work machines (it is about to replace the apps they run on, which kills
+   * every running container): rent nothing, and stop each machine with no step in flight, so the
+   * release finds none up. A step in flight runs on, and its machine admits no other (Fleet.admits),
+   * so it stops once the step has settled. Each is judged and stopped under the writer, where no
+   * step can be claimed between the two.
+   */
+  private async drainForRelease(): Promise<void> {
+    for (const a of (await this.fleet.listOwned(this, [])).filter(occupied))
+      if (a.intent !== 'stop')
+        await this.state.transaction(async (tx) => {
+          const session = (await this.sessions.managed.inspect(a.id, a.epoch, tx))?.session;
+          const settled =
+            !session ||
+            ((session.status === 'released' || session.status === 'expired') &&
+              !session.capturePending);
+          if (settled) await this.fleet.cancelOwned(this, a.id, tx);
+        });
+  }
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -811,6 +831,18 @@ export class FleetWorkflowAdapter implements FleetOwner {
     await this.pending?.catch(() => undefined);
   }
 }
+
+/**
+ * Fleet's word that a work machine is gone for good (fleet.changed with machineGone), passed on
+ * to Sessions for the sessions that ran on it: neither knows the other's records.
+ */
+export const machineGone =
+  (sessions: Pick<Sessions, 'managed'>) =>
+  async (event: { subjectId: string; data: unknown }, tx: Transaction) => {
+    const data = event.data as { machineGone?: boolean; owner?: { kind?: string } };
+    if (data.machineGone === true && data.owner?.kind === ownerKind)
+      await sessions.managed.machineGone(event.subjectId, tx);
+  };
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
@@ -826,6 +858,17 @@ export const fleetWorkflowPlugin = {
     );
     await adapter.start();
     ctx.effect(() => () => adapter.close());
+    // Where events are delivered, a work machine gone for good is passed on to Sessions.
+    ctx.inject(['domainEvents'], (ctx) => {
+      ctx.effect(async function* () {
+        yield await ctx.domainEvents.subscribe({
+          id: 'fleet.workflow.machine-gone.v1',
+          types: ['fleet.changed'],
+          from: 'now',
+          handle: machineGone(ctx.sessions),
+        });
+      });
+    });
     // The provider key stays on Main: hosted Codex calls the model through this relay.
     const relay = codexModelRelay(ctx.state, {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',

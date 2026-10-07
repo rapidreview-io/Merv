@@ -76,9 +76,21 @@ const r=await c.query(process.env.MERV_Q.replaceAll('{s}',s),JSON.parse(process.
 console.log(JSON.stringify(r.rows[0]));await c.query(w?'COMMIT':'ROLLBACK')}finally{await c.end()}'''
 # Ends each idle Pi host's idle clock: Main releases its machine at its next pass, as at the idle
 # timeout, instead of a rollout killing it. A host that took a turn meanwhile keeps it.
-IDLE = ("WITH e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
+IDLE = ("e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
         "to_jsonb('1970-01-01T00:00:00.000Z'::text))::text WHERE status = 'live' AND "
-        "data_json::jsonb->>'idleSince' IS NOT NULL) ")
+        "data_json::jsonb->>'idleSince' IS NOT NULL)")
+# A rollout replaces every running container of an app, so a work visit on one would die with it.
+# The drain holds Main's work machines (Fleet's fleet_holds): Fleet rents none, admits no new step
+# on one, and stops each whose step has settled; the drain waits until none is up. Each look renews
+# the hold for an hour; a passed canary, a drain that gives up, or the run's finish lifts it, and
+# should none run, it lapses.
+HOLD = ("h AS (INSERT INTO {s}.fleet_holds(name, until) VALUES ('hosted-release', to_char(now() AT TIME ZONE "
+        "'UTC' + interval '60 minutes', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ON CONFLICT (name) DO UPDATE SET "
+        "until = EXCLUDED.until)")
+UNHOLD = "WITH h AS (DELETE FROM {s}.fleet_holds WHERE name = 'hosted-release') SELECT true AS lifted"
+WORKFLOW = "data_json::jsonb#>>'{owner,kind}' = 'workflow'"
+WORK = ("SELECT coalesce((SELECT json_agg(id) FROM {s}.fleet_allocations WHERE phase <> 'released' AND "
+        + WORKFLOW + "), '[]'::json)::text AS work")
 SBX = r'''import asyncio,json,os
 from sqlalchemy import text
 from merv_sandboxes.config import Settings
@@ -380,8 +392,11 @@ def staging(releases):
         need(set(releases) & set(machines(file_env(raw))), 'staging Main runs no machine on these apps')
         want = with_machines(raw, releases)
         if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
+            unhold()
             return {'changed': False}
-        return recreate(raw, want)
+        result = recreate(raw, want)
+        unhold()
+        return result
 
 
 def with_release(doc, entry, keep=KEEP, protect=()):
@@ -457,20 +472,22 @@ def rootfs(image):
 
 def busy(release=False):
     """Pi turns and launches in flight, by id; idle warm runtimes do not count. With `release` (the
-    drain) the same statement first releases idle Pi hosts (IDLE), and every Pi machine up for a
-    host, which a turn could still land on, counts until Main has released it. Machines Fleet rents
-    for workflow steps never count: they outlive a release by design, and a switch stops them."""
+    drain) the same statement first releases idle Pi hosts (IDLE) and holds work machines (HOLD):
+    every Pi machine up for a host, which a turn could still land on, counts until Main has released
+    it, and every work machine Fleet rented for workflow steps until its step has settled and Fleet
+    has released it, since a rollout replaces it. Outside the drain (the catalog's wait) work
+    machines never count: their steps run for hours, and only the drain's hold ends them."""
     agg = "coalesce((SELECT json_agg({}) FROM {} WHERE {}), '[]'::json)::text"
-    workflow = "data_json::jsonb#>>'{owner,kind}' = 'workflow'"
     reads = {'turns': ("conversation_id || '/' || id", '{s}.pi_commands', f"status IN {ACTIVE}"),
              'launches': ('id', '{s}.fleet_allocations',
-                          f"phase IN ('queued','provisioning','launching','starting') AND NOT ({workflow})"),
+                          f"phase IN ('queued','provisioning','launching','starting') AND NOT ({WORKFLOW})"),
              'kept': ("json_build_array(data_json::jsonb#>>'{runtime,sandboxId}', "
                       "data_json::jsonb#>>'{runtime,launch,launchId}')",
-                      '{s}.fleet_allocations', f"phase <> 'released' AND {workflow}"),
+                      '{s}.fleet_allocations', f"phase <> 'released' AND {WORKFLOW}"),
              **({'warm': ('id', '{s}.fleet_allocations', "phase <> 'released' AND data_json::jsonb->>'intent' = "
-                          "'run' AND data_json::jsonb#>>'{owner,kind}' = 'pi-host'")} if release else {})}
-    main = main_read((IDLE if release else '') + 'SELECT ' +
+                          "'run' AND data_json::jsonb#>>'{owner,kind}' = 'pi-host'"),
+                 'work': ('id', '{s}.fleet_allocations', f"phase <> 'released' AND {WORKFLOW}")} if release else {})}
+    main = main_read((f'WITH {IDLE}, {HOLD} ' if release else '') + 'SELECT ' +
                      ', '.join(agg.format(*read) + ' AS ' + key for key, read in reads.items()), write=release)
     kept = {part for pair in json.loads(main.pop('kept', '[]')) for part in pair if part}
     lists = {**main,
@@ -483,7 +500,8 @@ def busy(release=False):
 
 
 def quiet(limit, release=False):
-    """Wait, bounded, until nothing is in flight for 10 s."""
+    """Wait, bounded, until nothing is in flight for 10 s. The drain (`release`) that gives up lifts
+    its hold on work machines first."""
     deadline, calm = time.monotonic() + limit, None
     while True:
         now = busy(release)
@@ -493,10 +511,37 @@ def quiet(limit, release=False):
             calm = time.monotonic()
         elif time.monotonic() - calm >= 10:
             return {'drained': True}
+        if time.monotonic() >= deadline and release:
+            unhold()
         need(time.monotonic() < deadline, f'not_drained_after_{limit}s {json.dumps({k: v[:5] for k, v in now.items()})}'
-             f"{': idle Agent machines were released, nothing else changed' if release else ': nothing was changed by this step'}"
-             '; rerun when Pi is quieter, or raise --drain-minutes')
+             f"{': idle Agent and work machines were released, nothing else changed' if release else ': nothing was changed by this step'}"
+             f"{'; a work step was still running, which a rollout would kill' if 'work' in now else ''}"
+             '; rerun when Pi and work are quieter, or raise --drain-minutes')
         time.sleep(5)
+
+
+def work_drain(limit):
+    """The drain of work machines alone, on a host whose apps are about to be replaced: Main holds them
+    (HOLD) and this waits, bounded, until Fleet has released every one. One that gives up lifts the
+    hold, having changed nothing but the settled machines it stopped."""
+    deadline = time.monotonic() + limit
+    while True:
+        work = json.loads(main_read(f'WITH {HOLD} {WORK}', write=True)['work'])
+        if not work:
+            return {'drained': True}
+        if time.monotonic() >= deadline:
+            unhold()
+            raise RuntimeError(f'not_drained_after_{limit}s {json.dumps({"work": work[:5]})}: a work step was still '
+                               'running, which a rollout would kill; nothing else changed. Rerun when work is '
+                               'quieter, or raise --drain-minutes')
+        time.sleep(5)
+
+
+def unhold():
+    """Lifts the drain's hold: Fleet rents work machines and admits steps again. Best effort: a hold
+    that cannot be lifted lapses within the hour."""
+    with contextlib.suppress(Exception):
+        main_read(UNHOLD, write=True)
 
 
 def credential(path):
@@ -736,9 +781,14 @@ class Step:
         releases = {e['provider']: arg['releases'][e['provider']] for e in entries}
         return self.add_releases({'entries': entries, 'releases': releases}, self.run / 'stage.before')
 
-    def drain(self, _):
-        """Waits until nothing is in flight and no Pi machine is up, releasing each idle one at every
-        poll: one whose turn ends, or that a page warms, while the drain waits goes too."""
+    def drain(self, arg):
+        """Waits until nothing is in flight and no Pi or work machine is up, releasing each idle Pi
+        machine at every poll (one whose turn ends, or that a page warms, while the drain waits goes
+        too) and holding work machines, so Fleet stops each once its step settles. A rollback's drain
+        ({"work": true}) waits on work machines alone: it must not wait on turns the release it undoes
+        is serving."""
+        if arg.get('work'):
+            return work_drain(self.plan['drainSeconds'])
         return quiet(self.plan['drainSeconds'], release=True)
 
     def native(self, arg):
@@ -756,6 +806,8 @@ class Step:
         want = with_releases(raw, releases)
         if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
             return {'changed': False}
+        # The drain's hold outlasts the switch: a failed canary rolls back, redeploying every app, and
+        # a step admitted meanwhile would hold that rollback up until it ended. The canary lifts it.
         return recreate(raw, want, self.run / 'env.before')
 
     def canary(self, arg):
@@ -806,6 +858,7 @@ class Step:
                   'seconds': round(time.monotonic() - started)}
         need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released']
              and all(result['apps'].values()), 'canary_failed ' + json.dumps(result))
+        unhold()  # the release stays: work machines rent on it again
         return result
 
     def note(self, arg):
@@ -816,7 +869,8 @@ class Step:
         return {**before, **arg}
 
     def finish(self, arg):
-        """Closes the run: the new pins (on success), the guard, the backups, the marker."""
+        """Closes the run: the new pins (on success), the drain's hold, the guard, the backups, the marker."""
+        unhold()
         if arg.get('state'):
             atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
         for name in ('catalog.before', 'stage.before', 'env.before'):  # they hold secrets
@@ -978,10 +1032,15 @@ def main():
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['staging']:  # on the staging host
+    # On the staging host: `staging '<releases>'` switches staging Main; `staging-drain '<seconds>'`
+    # holds its work machines and waits, bounded, until none is up, before its apps are replaced;
+    # `staging-unhold` lifts that hold when they were not.
+    STAGING = {'staging': lambda a: staging(json.loads(a)), 'staging-drain': lambda a: work_drain(int(a)),
+               'staging-unhold': lambda _: unhold() or {'lifted': True}}
+    if sys.argv[1:2] and sys.argv[1] in STAGING:
         os.umask(0o077)
         try:
-            print(json.dumps(staging(json.loads(sys.argv[2]))), flush=True)
+            print(json.dumps(STAGING[sys.argv[1]](sys.argv[2] if len(sys.argv) > 2 else None)), flush=True)
         except Exception as error:
             print(json.dumps({'error': str(error)[-1500:]}), flush=True)
             sys.exit(1)

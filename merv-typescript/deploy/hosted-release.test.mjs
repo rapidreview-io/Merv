@@ -660,6 +660,71 @@ print(json.dumps(res))`);
   assert.deepEqual([out.drained, out.at, out.up], [{ drained: true }, 30, []]);
 });
 
+test('the drain holds work machines and waits until Fleet has released each, or gives up lifting its hold', () => {
+  // Two work steps run as the drain starts; their machines settle and Fleet releases them at 20 s
+  // and 25 s. A Cloudflare rollout replaces every running container, so none may still be up.
+  const out = py(`import types
+clock=[0.0];work=['flt_w1','flt_w2'];queries=[];settles=[True]
+vm.time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda s:clock.__setitem__(0,clock[0]+s))
+vm.sbx=lambda **e:'[]'
+def main_read(q,*p,write=False):
+    queries.append([q,write])
+    if q==vm.UNHOLD: return {'lifted':True}
+    if clock[0]>=20 and work and settles[0]: work.pop()
+    out={'turns':'[]','launches':'[]','kept':json.dumps([['sbx_'+w,'rln_'+w] for w in work])}
+    if 'AS warm' in q: out.update(warm='[]',work=json.dumps(work))
+    return out
+vm.main_read=main_read
+res={'catalog':vm.busy(),'drained':vm.Step(None,{'drainSeconds':900}).drain({}),'at':clock[0],'left':list(work)}
+res['held']=all(vm.HOLD in q and vm.IDLE in q and w for q,w in queries[1:])
+res['catalogHeld']=vm.HOLD in queries[0][0];res['lifted']=any(q==vm.UNHOLD for q,_ in queries)
+work[:]=['flt_long'];clock[0]=0;queries.clear();settles[0]=False
+try: vm.Step(None,{'drainSeconds':60}).drain({})
+except RuntimeError as e: res['gaveUp']=str(e)
+res['liftedAfter']=queries[-1]==[vm.UNHOLD,True]
+print(json.dumps(res))`);
+  // The catalog's wait neither holds nor waits on work machines; their steps run for hours.
+  assert.deepEqual([out.catalog, out.catalogHeld], [{}, false]);
+  assert.deepEqual(
+    [out.drained, out.left, out.held, out.lifted],
+    [{ drained: true }, [], true, false],
+  );
+  assert.ok(out.at >= 25, String(out.at));
+  // A step that runs past --drain-minutes: the drain gives up, lifting its hold, nothing deployed.
+  assert.match(
+    out.gaveUp,
+    /^not_drained_after_60s \{"work": \["flt_long"\]\}.*a work step was still running/,
+  );
+  assert.equal(out.liftedAfter, true);
+});
+
+test('a rollback’s drain, and staging’s, wait on work machines alone, under the same hold', () => {
+  const out = py(`import types
+clock=[0.0];work=['flt_w'];queries=[];settles=[True]
+vm.time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda s:clock.__setitem__(0,clock[0]+s))
+def never(**_): raise AssertionError('a work drain read Pi')
+vm.sbx=never
+def main_read(q,*p,write=False):
+    queries.append([q,write])
+    if q==vm.UNHOLD: return {'lifted':True}
+    if clock[0]>=10 and work and settles[0]: work.pop()
+    return {'work':json.dumps(work)}
+vm.main_read=main_read
+res={'drained':vm.Step(None,{'drainSeconds':900}).drain({'work':True}),'at':clock[0]}
+res['held']=all(q.startswith('WITH '+vm.HOLD) and w for q,w in queries)
+work[:]=['flt_long'];clock[0]=0;queries.clear();settles[0]=False
+try: vm.work_drain(30)
+except RuntimeError as e: res['gaveUp']=str(e)
+res['liftedAfter']=queries[-1]==[vm.UNHOLD,True]
+print(json.dumps(res))`);
+  assert.deepEqual([out.drained, out.at, out.held], [{ drained: true }, 10, true]);
+  assert.match(
+    out.gaveUp,
+    /^not_drained_after_30s \{"work": \["flt_long"\]\}: a work step was still running/,
+  );
+  assert.equal(out.liftedAfter, true);
+});
+
 test('the switch never waits for a drain and refuses while a Main release runs', () => {
   const out = py(
     `${scratch}env=t/'typescript.env';env.write_bytes(b'A=1\\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_${'a'.repeat(64)}\\n')
@@ -673,7 +738,7 @@ def run(c,**k):
     calls.append(' '.join(map(str,c[:4])))
     if 'up' in c: live['id']=vm.env_value(env.read_bytes(),vm.KEY)
     return b''
-vm.run=run;vm.main_release_running=lambda:False
+vm.run=run;vm.main_release_running=lambda:False;vm.unhold=lambda:calls.append('unhold')
 step=vm.Step(r,{'drainSeconds':900})
 new='rt1_${'b'.repeat(64)}'
 res={'result':step.switch({'releaseId':new}),'env':env.read_text(),'calls':calls,'again':step.switch({'releaseId':new})}
@@ -684,6 +749,8 @@ print(json.dumps(res))`,
   );
   assert.equal(out.result.changed, true);
   assert.match(out.env, new RegExp(`^A=1\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_${'b'.repeat(64)}\n$`));
+  // The drain's hold on work machines outlasts the switch: a canary that fails rolls back, and a
+  // step admitted meanwhile would hold that rollback up until it ends. The canary lifts it.
   assert.deepEqual(out.calls, ['docker compose -f compose.yml', 'docker compose -f compose.yml']);
   assert.deepEqual(out.again, { changed: false });
   assert.match(out.busy, /a Main release job is running/);
@@ -896,6 +963,7 @@ def canary(v2=True,releases=True,deleted=True,release_after=0):
         assert \"phase = 'released'\" in query and \"->'runtime'->>'deleted' = 'true'\" in query
         return {'n':int(p==('fa_1',) and phase[0]=='released' and deleted and clock[0]>=release_after)}
     vm.tool,vm.main_read=tool,main_read
+    vm.unhold=lambda:calls.append('unhold')
     try: return [step.canary({'releaseId':'${OLD}'}),calls]
     except RuntimeError as e: return [str(e),calls]
 res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
@@ -904,12 +972,22 @@ apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
 print(json.dumps(res))`,
   );
   const [v2, calls] = out.v2;
-  assert.deepEqual(calls, ['pi.create', 'pi.send', 'pi.snapshot', 'pi.stop', 'pi.machine.stop']);
+  // A release that passed its canary stays: only then may work machines rent and take steps again.
+  assert.deepEqual(calls, [
+    'pi.create',
+    'pi.send',
+    'pi.snapshot',
+    'pi.stop',
+    'pi.machine.stop',
+    'unhold',
+  ]);
   assert.equal(v2.servedByRelease && v2.released && v2.reply, true);
   assert.deepEqual(v2.apps, { 'cloudflare-fleet-large': true });
   // Pi v1 has no machine to release: its pi.stop releases the conversation's.
   assert.equal(out.v1[0].released, true);
   assert.match(out.held[0], /^canary_failed .*"released": false/);
+  // A failed canary keeps the hold for the rollback, which redeploys every app.
+  assert.ok(!out.held[1].includes('unhold'));
   assert.match(out.phaseOnly[0], /^canary_failed .*"released": false/);
   assert.equal(out.late[0].released, true);
   assert.equal(out.late[0].seconds, 327);
@@ -1344,6 +1422,7 @@ def recreate():
     f=vm.file_env(env.read_bytes());main.clear();main.update({vm.KEY:f[vm.KEY],vm.RUNTIMES:f[vm.RUNTIMES].strip("'")})
 recreate();vm.env_of=lambda n:dict(main)
 vm.run=lambda c,**k:calls.append(c[4]) or (recreate() if 'up' in c else None) or b''
+vm.unhold=lambda:calls.append('unhold')
 both={'cloudflare-fleet-staging':'${S}','cloudflare-fleet-staging-large':'${SL}'}
 res={'result':vm.staging(both)['changed'],'env':env.read_text(),'calls':calls,'again':vm.staging(both)}
 for bad in ({'cloudflare-fleet':'${S}'},{'cloudflare-fleet-staging':'latest'}):
@@ -1355,7 +1434,8 @@ print(json.dumps(res))`,
     `MERV_FLEET_RUNTIMES='[{"key":"standard","provider":"cloudflare-fleet-staging","releaseId":"${s}"},{"key":"large","provider":"cloudflare-fleet-staging-large","releaseId":"${l}"}]'`;
   assert.equal(out.result, true);
   assert.equal(out.env, `MERV_FLEET_RUNTIME_RELEASE_ID=${P}\n${line(S, SL)}\nC=2\n`);
-  assert.deepEqual(out.calls, ['run', 'up']); // the render first, then the recreate
+  // The render first, then the recreate; staging's drain hold is lifted once Main names them.
+  assert.deepEqual(out.calls, ['run', 'up', 'unhold', 'unhold']);
   assert.deepEqual(out.again, { changed: false });
   assert.match(out.refused[0], /staging Main runs no machine on these apps/);
   assert.match(out.refused[1], /invalid release id/);
