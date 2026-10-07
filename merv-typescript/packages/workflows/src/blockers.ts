@@ -4,7 +4,10 @@ import type {
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowReference,
+  WorkflowWhose,
 } from './models.js';
+
+const WHOSE: readonly WorkflowWhose[] = ['owner', 'admin', 'operator', 'nobody'];
 
 interface BlockerRow {
   instance_id: string;
@@ -72,7 +75,7 @@ export async function replaceBlockers(
         text(item.message, 4000) &&
         text(item.next, 4000) &&
         (item.cause === undefined || text(item.cause, 100)) &&
-        (item.whose === undefined || item.whose === 'owner' || item.whose === 'admin') &&
+        (item.whose === undefined || WHOSE.includes(item.whose)) &&
         (item.revision === undefined ||
           (Number.isSafeInteger(item.revision) && item.revision >= 0)) &&
         Number.isInteger(item.status) &&
@@ -185,7 +188,7 @@ export async function readBlockers(
     next: row.next,
     related: JSON.parse(row.related_json) as WorkflowReference[],
     ...(row.cause === null ? {} : { cause: row.cause }),
-    ...(row.whose === null ? {} : { whose: row.whose as 'owner' | 'admin' }),
+    ...(row.whose === null ? {} : { whose: row.whose as WorkflowWhose }),
     ...(row.revision === null ? {} : { revision: Number(row.revision) }),
     since: row.since,
     updatedAt: row.updated_at,

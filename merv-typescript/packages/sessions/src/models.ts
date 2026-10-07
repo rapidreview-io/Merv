@@ -314,15 +314,16 @@ export interface ThreadConversation {
 }
 
 /**
- * A message to a worker: to one visit (`sessionId`), or to a thread (`threadId`), which its live
- * or next visit reads. Either is acknowledged by the visit that reads it, with an optional reply.
+ * A message to a worker's thread (`threadId`), which its live or next visit reads and
+ * acknowledges, with an optional reply. One sent to a single visit (`sessionId`) is from before
+ * every message went to a thread.
  */
 export interface SessionMessage {
   id: string;
   sessionId: string | null;
   threadId: string | null;
   instanceId: string;
-  /** The revision of the visit it was sent to; null for a message to a thread. */
+  /** The revision of the visit an older message was sent to; null for a message to a thread. */
   expectedRevision: number | null;
   senderActorId: string;
   body: string;
@@ -350,23 +351,6 @@ export interface ThreadMessages {
   /** Messages to the thread and to each of its visits. */
   messages: SessionMessage[];
   questions: ThreadQuestion[];
-}
-/**
- * A question still waiting for its answer, as Needs you reads it beside the blocker that
- * withholds the work: the same shape as Code's moves.
- */
-export interface QuestionMove {
-  instanceId: string;
-  provider: string;
-  key: string;
-  move: {
-    sentence: string;
-    who: string;
-    /** The work item's owner, and any operator. */
-    whose: 'owner';
-    /** No page here answers yet: the reader answers with session.message to the thread. */
-    control?: { label: string; to: string };
-  };
 }
 
 export interface UsageTotals {

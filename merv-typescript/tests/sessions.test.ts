@@ -1700,7 +1700,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
   });
   const before = await f.sessions.get(f.source, live.id);
   const sha256 = 'a'.repeat(64);
-  // Back to the tables production holds before sessions@13 (and @14): agentId in each session's JSON, the
+  // Back to the tables production holds before sessions@13 (and @14, @15): agentId in each session's JSON, the
   // key's latest closed session in session_conversations, no thread anywhere.
   await f.state.transaction(async (tx) => {
     await tx.run(`
@@ -1727,7 +1727,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       ALTER TABLE worker_sessions DROP COLUMN thread_id;
       DROP TABLE session_threads;
       INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
-      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14);`);
+      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14,15);`);
     // Agents no session ever visited: a persistent one, with a token of its own, and one whose
     // offer never landed. Production holds 694; they stay attribution history in Scope.
     for (const [id, active, tokenHash, persistent] of [

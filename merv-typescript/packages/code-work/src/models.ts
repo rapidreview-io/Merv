@@ -420,10 +420,3 @@ export interface PersonMove {
   /** Where a page of this app makes the move; absent where none of them does. */
   control?: { label: string; to: string };
 }
-/** One record's blocker, by the provider and key that name it, and the move it asks. */
-export interface BlockerMove {
-  instanceId: string;
-  provider: string;
-  key: string;
-  move: PersonMove;
-}

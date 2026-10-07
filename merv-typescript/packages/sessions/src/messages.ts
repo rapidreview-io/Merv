@@ -12,7 +12,6 @@ import {
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import type {
-  QuestionMove,
   Session,
   SessionMessage,
   SessionMessageInput,
@@ -53,12 +52,18 @@ interface ThreadRow {
   status: 'open' | 'dormant' | 'retired';
 }
 /**
- * The threads whose messages a visit of thread `?` reads: its own, and each other one of its
+ * The threads whose messages a visit of a thread reads: its own, and each other one of its
  * continuity key, so a message to a thread its key has since replaced (a conversation that
- * never reached the store) still reaches the key's worker.
+ * never reached the store) still reaches the key's worker. A union of the id and a lookup by
+ * (project, key), each of which reads an index; its parameters are `keyThreads`'.
  */
-const KEY_THREADS = `SELECT o.id FROM session_threads t JOIN session_threads o
-  ON o.id=t.id OR (o.project_id=t.project_id AND o.continuity_key=t.continuity_key) WHERE t.id=?`;
+const KEY_THREADS = `SELECT CAST(? AS TEXT) UNION SELECT o.id FROM session_threads o
+  WHERE o.project_id=? AND o.continuity_key=(SELECT t.continuity_key FROM session_threads t WHERE t.id=?)`;
+const keyThreads = (session: Pick<Session, 'projectId' | 'threadId'>) => [
+  session.threadId,
+  session.projectId,
+  session.threadId,
+];
 /** The provider Sessions publishes an unanswered question as, on the work it withholds. */
 export const QUESTION_PROVIDER = 'session-question';
 const question = (row: QuestionRow): ThreadQuestion => ({
@@ -79,7 +84,6 @@ export interface MessageHost {
   reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   row(tx: Transaction, id: string): Promise<Row>;
   decode(row: Row): Session;
-  valid(session: Session, tx: Transaction): Promise<unknown>;
   /** Closes a visit that asked its owner: released, not counted against the work. */
   asked(session: Session, tx: Transaction): Promise<void>;
   /** Refuses a caller who may not read the work item. */
@@ -91,8 +95,6 @@ export interface MessageHost {
   ): Promise<void>;
   /** Which of these work items of the project have ended. */
   ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
-  /** The question blockers standing in the caller's project. */
-  standing(caller: Caller, tx: Transaction): Promise<{ instanceId: string; key: string }[]>;
 }
 
 /**
@@ -127,21 +129,30 @@ export class SessionMessages {
       reply: row.reply_body,
     };
   }
-  /** A visit reads the messages to it and to its thread's (`KEY_THREADS`). */
+  /**
+   * A visit reads the messages to its thread's (`KEY_THREADS`), and those sent to it alone
+   * before every message went to a thread.
+   */
   private async addressed(tx: Transaction, session: Session): Promise<MessageRow[]> {
     return await tx.all<MessageRow>(
       `SELECT * FROM session_messages WHERE project_id=? AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid`,
       session.projectId,
       session.id,
-      session.threadId,
+      ...keyThreads(session),
     );
   }
   async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
+    const session = await tx.get<{ project_id: string; thread_id: string }>(
+      'SELECT project_id,thread_id FROM worker_sessions WHERE id=?',
+      sessionId,
+    );
+    if (!session) return;
     const row = await tx.get<{ id: string }>(
-      `SELECT id FROM session_messages WHERE acknowledged_at IS NULL AND (session_id=? OR thread_id IN
-        (${KEY_THREADS.replace('t.id=?', 't.id=(SELECT thread_id FROM worker_sessions WHERE id=?)')})) ORDER BY _merv_rowid LIMIT 1`,
+      `SELECT id FROM session_messages WHERE project_id=? AND acknowledged_at IS NULL
+        AND (session_id=? OR thread_id IN (${KEY_THREADS})) ORDER BY _merv_rowid LIMIT 1`,
+      session.project_id,
       sessionId,
-      sessionId,
+      ...keyThreads({ projectId: session.project_id, threadId: session.thread_id }),
     );
     if (row)
       throw new MervError(
@@ -151,6 +162,10 @@ export class SessionMessages {
         { messageId: row.id },
       );
   }
+  /**
+   * A person's message to a thread. For one release a `sessionId` still addresses one: that
+   * visit's thread, which its live visit or its next one reads.
+   */
   async message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage> {
     ordinary(caller);
     check(
@@ -166,7 +181,7 @@ export class SessionMessages {
         text(input.body, 8_000) &&
         text(input.requestId, 200),
       'invalid_session_message',
-      'A session ID or a thread ID, a message of 1–8000 characters and a stable requestId are required',
+      'A thread ID, a message of 1–8000 characters and a stable requestId are required',
     );
     caller = structuredClone(caller);
     input = structuredClone(input);
@@ -192,45 +207,18 @@ export class SessionMessages {
         );
         return await this.view(tx, old);
       }
-      if (input.threadId !== undefined) return await this.toThread(caller, input, fingerprint, tx);
-      const row = await this.host.row(tx, input.sessionId!);
-      check(
-        row.project_id === caller.projectId,
-        'session_not_found',
-        'Session not found in this project',
-        404,
-      );
-      const session = this.host.decode(row);
-      check(
-        live(session),
-        'session_ended',
-        'This session has ended; send to its successor instead',
-        409,
-      );
-      try {
-        await this.host.valid(session, tx);
-      } catch (error) {
-        if (!(error instanceof MervError) || error.status >= 500) throw error;
-        throw new MervError(
-          'session_ended',
-          'This assignment has ended; send to its successor instead',
-          409,
+      let threadId = input.threadId;
+      if (threadId === undefined) {
+        const row = await this.host.row(tx, input.sessionId!);
+        check(
+          row.project_id === caller.projectId,
+          'session_not_found',
+          'Session not found in this project',
+          404,
         );
+        threadId = row.thread_id;
       }
-      const id = await this.insert(tx, caller, input, fingerprint, { session: session.id });
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'session.message_queued',
-        subjectId: session.id,
-        data: {
-          messageId: id,
-          sessionId: session.id,
-          instanceId: session.instanceId,
-          revision: session.expectedRevision,
-        },
-      });
-      return this.publicMessage(await this.messageRow(tx, id), session.instanceId, session);
+      return await this.toThread(caller, threadId, input, fingerprint, tx);
     });
   }
   private async insert(
@@ -238,15 +226,14 @@ export class SessionMessages {
     caller: Caller,
     input: SessionMessageInput,
     fingerprint: string,
-    to: { session: string } | { thread: string },
+    threadId: string,
   ): Promise<string> {
     const id = newId('session_message');
     await tx.run(
-      'INSERT INTO session_messages(id,project_id,session_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?)',
       id,
       caller.projectId,
-      'session' in to ? to.session : null,
-      'thread' in to ? to.thread : null,
+      threadId,
       caller.actorId,
       input.requestId,
       fingerprint,
@@ -270,28 +257,32 @@ export class SessionMessages {
   }
   /**
    * A message to a thread waits for its live or next visit. It answers every question the thread
-   * asked that is still open, which lets dispatch offer that work again; a retired thread, which
-   * no visit will take up again, takes a message only as such an answer.
+   * asked that is still open, which lets dispatch offer that work again; a retired thread, or one
+   * whose work has ended, which no visit will take up again, takes a message only as such an
+   * answer.
    */
   private async toThread(
     caller: Caller,
+    threadId: string,
     input: SessionMessageInput,
     fingerprint: string,
     tx: Transaction,
   ): Promise<SessionMessage> {
-    const thread = await this.threadRow(tx, caller, input.threadId!);
+    const thread = await this.threadRow(tx, caller, threadId);
     await this.host.readable(caller, thread.instance_id, tx);
     const open = await tx.all<QuestionRow>(
       'SELECT * FROM session_questions WHERE thread_id=? AND answered_at IS NULL ORDER BY _merv_rowid',
       thread.id,
     );
     check(
-      thread.status !== 'retired' || open.length,
+      open.length ||
+        (thread.status !== 'retired' &&
+          !(await this.host.ended(caller.projectId, [thread.instance_id], tx)).size),
       'thread_retired',
       'This thread has ended and no visit will read a message to it',
       409,
     );
-    const id = await this.insert(tx, caller, input, fingerprint, { thread: thread.id });
+    const id = await this.insert(tx, caller, input, fingerprint, thread.id);
     await this.state.appendEvent(tx, {
       projectId: caller.projectId,
       actorId: caller.actorId,
@@ -360,11 +351,14 @@ export class SessionMessages {
           code: 'agent_question',
           status: 409,
           message: `Its agent asked its owner: ${clip(row.question, 3_900)}`,
-          next: `Answer with session.message {threadId: "${row.thread_id}"}; dispatch offers the work again once it is answered.`,
+          next: 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
           cause: 'agent_question',
-          // Its owner's move, as Workflows tells that owner; an operator answers too.
+          // Its owner's move, as Workflows tells that owner and a project admin; the question
+          // reaches Needs you through this blocker alone.
           whose: 'owner' as const,
-          related: [],
+          // About the revision it asked at: work moved on by any hand no longer waits on it.
+          revision: Number(row.revision),
+          related: [{ kind: 'thread', id: row.thread_id, label: 'Its agent’s thread' }],
         })),
       },
       tx,
@@ -491,24 +485,6 @@ export class SessionMessages {
       };
     });
   }
-  /** Each question still open whose blocker stands, as Needs you asks a person to answer it. */
-  async questionMoves(caller: Caller): Promise<QuestionMove[]> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.host.reading(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return (await this.host.standing(caller, tx)).map(({ instanceId, key }) => ({
-        instanceId,
-        provider: QUESTION_PROVIDER,
-        key,
-        move: {
-          sentence: 'Answer its agent’s question',
-          who: 'Anyone who may write to the project answers it with a message to the thread',
-          whose: 'owner' as const,
-        },
-      }));
-    });
-  }
   async acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },
@@ -533,8 +509,8 @@ export class SessionMessages {
           (row.session_id === session.id ||
             (row.thread_id !== null &&
               !!(await tx.get(
-                `SELECT 1 FROM (${KEY_THREADS}) k WHERE k.id=?`,
-                session.threadId,
+                `SELECT 1 FROM (${KEY_THREADS}) k(id) WHERE k.id=?`,
+                ...keyThreads(session),
                 row.thread_id,
               )))),
         'session_message_not_found',

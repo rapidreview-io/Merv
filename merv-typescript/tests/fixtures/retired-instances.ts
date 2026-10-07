@@ -406,7 +406,10 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
-    // workflows@14 (whose move a blocker is, and the revision it names) came last.
+    // workflows@15 and sessions@15 (a wider whose, and two indexes) came last of all.
+    await client.query(`DROP INDEX session_threads_continuity, session_questions_asked;
+DELETE FROM component_migrations WHERE (component='workflows' OR component='sessions') AND version=15;`);
+    // workflows@14 (whose move a blocker is, and the revision it names) came before them.
     await client.query(`ALTER TABLE wf_blockers DROP COLUMN whose, DROP COLUMN revision;
 DELETE FROM component_migrations WHERE component='workflows' AND version=14;`);
     // The lease tables moved into Workflows later still (workflows@12, tasks@10,

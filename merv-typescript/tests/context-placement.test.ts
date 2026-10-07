@@ -281,14 +281,14 @@ test('a session worker previews inside a snapshot, where nothing may write', asy
   const worker = await state.transaction((tx) =>
     scope.createSessionActor(
       source,
-      { sessionId: 'session_placement', name: 'Worker', role: 'producer' },
+      { threadId: 'session_placement', name: 'Worker', role: 'producer' },
       tx,
     ),
   );
   const session: Caller = {
     actorId: worker.id,
     projectId: worker.projectId,
-    session: { id: 'session_placement' },
+    session: { id: 'session_placement', threadId: 'session_placement' },
   };
   // The session provider vouches for the owner and records where it was asked.
   const handed: boolean[] = [];

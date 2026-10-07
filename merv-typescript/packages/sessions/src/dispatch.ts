@@ -62,6 +62,11 @@ const leaseSchema = z
     hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
   })
   .strict();
+/**
+ * How long an answered question still withholds its work for the asking visit's conversation:
+ * its runner declares it when its process ends, within a minute's grace of the question.
+ */
+export const declaredWithinMs = 10 * 60_000;
 /** The closes that count against a target: its process failed to launch or to stay up. */
 export const failureReasons = new Set([
   'host_failed',
@@ -465,18 +470,28 @@ export class SessionDispatch {
   async candidates(caller: Caller, tx: Transaction) {
     const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
-    // Work whose agent asked its owner waits for the answer (`session.ask_owner`).
+    // The revision an agent asked its owner at waits for the answer (`session.ask_owner`), and
+    // then for the asking visit's conversation, which the next visit resumes: until its runner
+    // declares it, or a later visit of the thread ran, or `declaredWithinMs` has passed.
     const asking = new Set(
       (
-        await tx.all<{ instance_id: string }>(
-          'SELECT DISTINCT instance_id FROM session_questions WHERE project_id=? AND answered_at IS NULL',
+        await tx.all<{ instance_id: string; revision: number | string }>(
+          `SELECT DISTINCT q.instance_id,q.revision FROM session_questions q WHERE q.project_id=?
+            AND (q.answered_at IS NULL OR (q.asked_at>? AND EXISTS (
+              SELECT 1 FROM session_threads t JOIN worker_sessions a ON a.id=q.session_id
+               WHERE t.id=q.thread_id AND t.status<>'retired'
+                 AND (t.latest_session_id IS DISTINCT FROM q.session_id OR t.sha256 IS NULL)
+                 AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s._merv_rowid>a._merv_rowid))))`,
           caller.projectId,
+          new Date(this.clock() - declaredWithinMs).toISOString(),
         )
-      ).map((row) => row.instance_id),
+      ).map((row) =>
+        targetKey({ instanceId: row.instance_id, expectedRevision: Number(row.revision) }),
+      ),
     );
     const queue = all.filter(
       (item) =>
-        item.role !== 'operator' && !live.has(targetKey(item)) && !asking.has(item.instanceId),
+        item.role !== 'operator' && !live.has(targetKey(item)) && !asking.has(targetKey(item)),
     );
     // A target that keeps failing on one revision is not retried for ever: the backoff only
     // spaces the attempts, so the hold is what ends them. An expiry after activation never

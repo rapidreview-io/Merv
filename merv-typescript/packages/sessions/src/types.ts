@@ -34,7 +34,6 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
-  QuestionMove,
   SessionDeferral,
   SessionMessage,
   SessionOutcome,
@@ -73,7 +72,6 @@ export type {
   StuckItem,
   StuckKind,
   StuckReport,
-  QuestionMove,
   SessionMessage,
   ProjectThread,
   ProjectThreads,
@@ -204,7 +202,10 @@ export interface SessionTranscript {
   /** On a delivery with nothing stored: the store's signed PUT (1 h, exact size, x-amz-checksum-sha256, If-None-Match:*). */
   upload?: { url: string; headers: Record<string, string>; expiresAt: string };
 }
-/** A message to one visit (`sessionId`) or to a thread (`threadId`): exactly one of them. */
+/**
+ * A message to a thread (`threadId`). For one release a `sessionId` addresses that session's
+ * thread instead; exactly one of them.
+ */
 export interface SessionMessageInput {
   sessionId?: string;
   threadId?: string;
@@ -488,8 +489,6 @@ export interface SessionMessaging {
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
   /** The worker ends its visit asking its owner; the work waits for the answer. */
   ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion>;
-  /** Questions still waiting, as Needs you reads them. */
-  questionMoves(caller: Caller): Promise<QuestionMove[]>;
   acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },

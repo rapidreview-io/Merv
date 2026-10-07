@@ -269,14 +269,14 @@ test('a leased worker is neither offered begin nor answered about it', async (t)
     async (tx) =>
       await f.scope.createSessionActor(
         source,
-        { sessionId: 'worker', role: 'producer', name: 'Worker' },
+        { threadId: 'worker', role: 'producer', name: 'Worker' },
         tx,
       ),
   );
   const worker: Caller = {
     projectId: actor.projectId,
     actorId: actor.id,
-    session: { id: 'worker' },
+    session: { id: 'worker', threadId: 'worker' },
   };
   const guidance = await f.workflows.evaluate(worker, f.instance.id);
   assert.ok(!guidance.actions.some((action) => action.action === 'begin'));

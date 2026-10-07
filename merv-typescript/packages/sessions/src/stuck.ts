@@ -245,7 +245,7 @@ async function readingOf(
     // Work whose agent asked its owner says so through its blocker (work_blocked).
     if (
       leased.has(key) ||
-      asking.has(item.instanceId) ||
+      asking.has(key) ||
       failing.has(key) ||
       deferred.has(key) ||
       Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now ||

@@ -106,7 +106,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.find',
         description:
-          'Find the current and latest worker session for one workflow instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.',
+          'Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.',
         readOnly: true,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) =>
@@ -117,7 +117,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A sessionId is still taken for now and addresses that session's thread. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
             sessionId: z.string().min(1).max(200).optional(),
@@ -210,7 +210,7 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "To steer an assigned agent, use session.find with the work's instanceId to find its current session, then session.message with that sessionId; or address its thread (session.threads) with threadId, which its next visit reads too. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
+        "To steer an assigned agent, use session.find with the work's instanceId to find its thread, then session.message with that threadId, which its live visit or its next one reads. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
       ),
     );
   },

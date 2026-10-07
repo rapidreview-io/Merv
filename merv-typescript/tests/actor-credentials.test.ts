@@ -412,7 +412,7 @@ test('session actor creation and role updates retain the authorized delegation a
     await t.test(change, async () => {
       const source = structuredClone(readerSource);
       const input = {
-        sessionId: `session-${change}`,
+        threadId: `thread-${change}`,
         name: 'Reader session',
         role: 'reader' as 'reader' | 'producer',
       };
@@ -435,7 +435,6 @@ test('session actor creation and role updates retain the authorized delegation a
     f.scope.createSessionActor(
       otherSource,
       {
-        sessionId: 'foreign-session',
         threadId: 'foreign-thread',
         name: 'Foreign reader',
         role: 'reader',
@@ -445,9 +444,9 @@ test('session actor creation and role updates retain the authorized delegation a
   );
   const source = await f.scope.delegationSource(f.operator);
   await f.state.transaction(async (tx) => {
-    const pending = f.scope.setAgentRole(source, foreign.id, 'producer', tx);
+    const pending = f.scope.setThreadRole(source, foreign.id, 'producer', tx);
     source.projectId = other.project.id;
-    await assert.rejects(pending, { code: 'agent_unavailable' });
+    await assert.rejects(pending, { code: 'thread_unavailable' });
   });
   assert.equal(
     (await f.state.read((sql) => sql.get('SELECT role FROM actors WHERE id=?', foreign.id)))!.role,
@@ -455,7 +454,7 @@ test('session actor creation and role updates retain the authorized delegation a
   );
 });
 
-test('session actors refuse malformed lease and agent identities before any write', async (t) => {
+test('thread actors refuse a malformed thread identity before any write', async (t) => {
   const f = await fixture();
   t.after(() => f.state.close());
   const source = await f.scope.delegationSource(f.operator);
@@ -463,7 +462,7 @@ test('session actors refuse malformed lease and agent identities before any writ
     f.state.transaction((tx) =>
       f.scope.createSessionActor(
         source,
-        { sessionId: 'session-shape', name: 'Worker', role: 'reader', ...input } as never,
+        { threadId: 'thread-shape', name: 'Worker', role: 'reader', ...input } as never,
         tx,
       ),
     );
@@ -475,25 +474,20 @@ test('session actors refuse malformed lease and agent identities before any writ
     { threadId: { x: 1 } },
     { threadId: '' },
     { threadId: 'a'.repeat(201) },
-    { sessionId: 's'.repeat(201) },
+    { threadId: undefined },
   ])
     await assert.rejects(create(input), { code: 'invalid_session_actor' });
   assert.equal(await count(), 0);
-  const plain = await create({});
-  assert.equal('threadId' in plain, false);
-  const agent = await create({ sessionId: 'session-agent', threadId: 'a'.repeat(200) });
-  assert.equal(agent.threadId, 'a'.repeat(200));
+  // The thread id is the one identity: it marks the actor a worker's and names its thread.
+  const thread = await create({ threadId: 'a'.repeat(200) });
+  assert.equal(thread.threadId, 'a'.repeat(200));
   const stored = await f.state.read((sql) =>
-    sql.all<{ agent_id: string | null }>(
-      'SELECT agent_id FROM actors WHERE id IN (?,?) ORDER BY session_id',
-      agent.id,
-      plain.id,
+    sql.get<{ agent_id: string; session_id: string }>(
+      'SELECT agent_id,session_id FROM actors WHERE id=?',
+      thread.id,
     ),
   );
-  assert.deepEqual(
-    stored.map((row) => row.agent_id),
-    ['a'.repeat(200), null],
-  );
+  assert.deepEqual(stored, { agent_id: 'a'.repeat(200), session_id: 'a'.repeat(200) });
 });
 
 test('a service actor is created once, then found with one read and no write transaction', async (t) => {

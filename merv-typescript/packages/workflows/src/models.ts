@@ -93,6 +93,12 @@ interface WorkflowBlocker {
   message: string;
   status: number;
 }
+/**
+ * Whose move ending a published blocker is: the record's owner, as its program describes the
+ * record (a project admin makes it too); a project admin; an operator, which is a project admin
+ * signed in as a person; or nobody, a wait on the server that no person ends.
+ */
+export type WorkflowWhose = 'owner' | 'admin' | 'operator' | 'nobody';
 /** What a provider hands Workflows: its current opinion of why one instance cannot proceed. */
 export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
   /** Stable within one provider and instance, so a repeated opinion updates its own row. */
@@ -106,11 +112,10 @@ export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
    */
   cause?: string;
   /**
-   * Whose move ending it is, where it is a person's: the record's owner, as its program
-   * describes the record, or a project admin. Workflows answers it as that reader's move
-   * (`yours`), so it reaches Needs you.
+   * Whose move ending it is (`WorkflowWhose`). Workflows answers it as that reader's move
+   * (`yours`), so it reaches Needs you; while it stands, the record is no other move of anyone's.
    */
-  whose?: 'owner' | 'admin';
+  whose?: WorkflowWhose;
   /** The one revision this opinion is about: once the record moves past it, it lapses unread. */
   revision?: number;
 }
@@ -126,7 +131,7 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
   next: string;
   related: WorkflowReference[];
   cause?: string;
-  whose?: 'owner' | 'admin';
+  whose?: WorkflowWhose;
   revision?: number;
   /** When this key first took this code; a changed code starts a new age. */
   since: string;
@@ -210,9 +215,10 @@ export interface WorkflowDecision {
   workStart: WorkflowWorkStart | null;
   /**
    * Present where the open record is the reader's own move, as its program says whose it is:
-   * with `ask`, the sentence asking it of them; without, no sentence was declared.
+   * with `ask`, the sentence asking it of them; without, no sentence was declared. A published
+   * blocker that makes it theirs is named (`blocker`), and its `next` is the ask.
    */
-  yours?: { ask?: string };
+  yours?: { ask?: string; blocker?: { provider: string; key: string } };
 }
 
 /** One recorded crossing of a definition edge, from wf_history and nowhere else. */

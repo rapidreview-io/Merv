@@ -212,6 +212,11 @@ async function fixture(t: TestContext) {
     keep,
     agent,
     start,
+    /** The owner's move on the work, as its gate answers Needs you. */
+    yours: async (instanceId: string) =>
+      (await app.ctx.workflows.overview(owner, undefined, { open: true })).workflows.find(
+        (item) => item.instanceId === instanceId,
+      )?.yours,
     /** As though every key's work had stayed away for `ms`. */
     age: async (ms: number) =>
       await app.ctx.state.transaction((tx) =>
@@ -847,14 +852,11 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
       .map((item) => item.kind),
     ['work_blocked'],
   );
-  assert.deepEqual(
-    (await f.sessions.messaging.questionMoves(f.owner)).map((item) => [
-      item.instanceId,
-      item.key,
-      item.move.sentence,
-    ]),
-    [[unit.id, threadId, 'Answer its agent’s question']],
-  );
+  // Needs you reads it from the work's gate: the blocker is the one channel.
+  assert.deepEqual(await f.yours(unit.id), {
+    ask: 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
+    blocker: { provider: 'session-question', key: threadId },
+  });
   await f.age(dormantMs + 60_000);
   await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
   const path = `/sessions/threads/${threadId}/messages`;
@@ -877,7 +879,7 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     sent.id,
   );
   assert.deepEqual(await blockers(), []);
-  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  assert.equal(await f.yours(unit.id), undefined);
   assert.equal(await queued(), true);
   // The work comes back to the same thread and conversation, and its next visit reads the
   // answer before anything else.
@@ -1253,11 +1255,232 @@ test('a question answered needs its work readable, and one on ended work keeps n
   // The work ends unanswered: no card, and its thread expires as any dormant one does.
   await f.move(unit.id, 'submit');
   await f.move(unit.id, 'approve');
-  assert.deepEqual(await f.sessions.messaging.questionMoves(f.owner), []);
+  assert.equal(await f.yours(unit.id), undefined);
   await f.age(dormantMs + 60_000);
   await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
   const status = await f.app.ctx.state.read((sql) =>
     sql.get<{ status: string }>('SELECT status FROM session_threads WHERE id=?', threadId),
   );
   assert.equal(status?.status, 'retired');
+});
+
+test('a question withholds only the revision it asked at: work moved on by hand is offered, and no longer asks', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(first.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue
+        .filter((item) => item.instanceId === unit.id)
+        .map((item) => item.expectedRevision),
+    );
+  assert.deepEqual(await queued(), []);
+  // The owner moves the work on by hand instead of answering: its review is offered, and the
+  // question, about a revision the work has left, is no longer its gate's.
+  await f.move(unit.id, 'submit');
+  const { revision } = await f.app.ctx.workflows.get(f.owner, unit.id);
+  assert.deepEqual(await queued(), [revision]);
+  assert.deepEqual(await f.app.ctx.workflows.blockers(f.owner, unit.id), []);
+});
+
+test('an answer that arrives before the asking visit declares its conversation waits for it, or for a bound', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  // Visit 1 keeps conversation A; the review sends the work back.
+  const v1 = await f.offer(unit.id, 'runner-a');
+  await f.keep(v1.session, v1.control, '{"type":"user","text":"A"}\n');
+  await f.release(v1.session);
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-a');
+  await f.release(review.session);
+  await f.move(unit.id, 'revise');
+  // Visit 2 resumes A and asks; the owner answers before its runner declares.
+  const v2 = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(v2.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  const path = `/sessions/threads/${v2.session.threadId}/messages`;
+  const answer = (await f.ok('POST', path, f.token, { body: '2025', requestId: 'answer' })).message
+    .id as string;
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue.some(
+        (item) => item.instanceId === unit.id,
+      ),
+    );
+  // Offered now, the work would resume v1's conversation, which never heard the question.
+  assert.equal(await queued(), false);
+  await f.keep(v2.session, v2.control, '{"type":"user","text":"B"}\n');
+  assert.equal(await queued(), true);
+  const v3 = await f.offer(unit.id, 'runner-b');
+  assert.equal(v3.session.continuity?.resume?.sessionId, v2.session.id);
+  await f.release(v3.session);
+
+  // A visit that never declares holds the work only for the bound.
+  await f.move(unit.id, 'submit');
+  const again = await f.offer(unit.id, 'runner-a');
+  await f.release(again.session);
+  await f.move(unit.id, 'revise');
+  const v4 = await f.offer(unit.id, 'runner-a');
+  const fourth = await f.sessions.authenticate(v4.input.secret);
+  await f.app.ctx.tools.invoke('session.message.ack', fourth, {
+    messageId: answer,
+    requestId: 'ack',
+  });
+  await f.app.ctx.tools.invoke('session.ask_owner', fourth, { question: 'Which seed?' });
+  await f.ok('POST', path, f.token, { body: '7', requestId: 'answer-2' });
+  assert.equal(await queued(), false);
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE session_questions DISABLE TRIGGER session_questions_immutable');
+    await tx.run(
+      'UPDATE session_questions SET asked_at=? WHERE session_id=?',
+      new Date(Date.now() - 3_600_000).toISOString(),
+      v4.session.id,
+    );
+    await tx.run('ALTER TABLE session_questions ENABLE TRIGGER session_questions_immutable');
+  });
+  assert.equal(await queued(), true);
+});
+
+test('only a visit that keeps a conversation is offered session.ask_owner, in its tools and its prompt', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const attach = async (instanceId: string, runnerId: string) => {
+    const { revision } = await f.app.ctx.workflows.get(f.owner, instanceId);
+    const input = {
+      instanceId,
+      expectedRevision: revision,
+      runnerId,
+      requestId: randomUUID(),
+      secret: secret(),
+    };
+    const session = await f.sessions.offer(f.owner, input);
+    const attached = await f.ok('POST', `/sessions/${session.id}/attach`, f.token, {
+      runnerId,
+      hostRef: `launch-${randomUUID()}`,
+    });
+    const worker = await f.sessions.authenticate(input.secret);
+    const tools = (await f.app.ctx.tools.describe(worker)).map((tool) => tool.name);
+    return {
+      session,
+      offered: [tools.includes('session.ask_owner'), attached.prompt.includes('session.ask_owner')],
+    };
+  };
+  const producer = await attach(unit.id, 'runner-a');
+  assert.deepEqual(producer.offered, [true, true]);
+  await f.release(producer.session);
+  await f.move(unit.id, 'submit');
+  const reviewer = await attach(unit.id, 'runner-b');
+  assert.equal(reviewer.session.continuity, undefined);
+  assert.deepEqual(reviewer.offered, [false, false]);
+});
+
+test('a visit’s message check reads only its own project’s pending messages and its key’s threads', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  // Thousands of other threads, retired, and one stray message pending to one of them.
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id)
+        SELECT 'actor_seed_' || n, ?, 'Seed', 'producer', 0, 'thr_seed_' || n, 'thr_seed_' || n
+        FROM generate_series(1, 3000) AS n`,
+      f.owner.projectId,
+    );
+    await tx.run(
+      `INSERT INTO session_threads(id,project_id,continuity_key,instance_id,state,role,actor_id,status,retired_reason,created_at,updated_at)
+        SELECT 'thr_seed_' || n, ?, 'seed-key-' || n, 'wf_seed', 'working', 'producer', 'actor_seed_' || n, 'retired', 'dormant', '2026-01-01', '2026-01-01'
+        FROM generate_series(1, 3000) AS n`,
+      f.owner.projectId,
+    );
+    await tx.run(
+      `INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at)
+        VALUES('session_message_stray', ?, 'thr_seed_7', ?, 'stray', 'stray', 'Never read', '2026-01-01')`,
+      f.owner.projectId,
+      f.owner.actorId,
+    );
+    await tx.run('ANALYZE session_threads');
+    await tx.run('ANALYZE session_messages');
+  });
+  // The check as a worker's write sends it, run again under EXPLAIN ANALYZE.
+  const sent: { sql: string; params: unknown[] }[] = [];
+  await f.app.ctx.state.transaction(async (tx) => {
+    const { get } = tx;
+    Object.assign(tx, {
+      get: (sql: string, ...params: never[]) => {
+        if (sql.includes('FROM session_messages')) sent.push({ sql, params });
+        return get.call(tx, sql, ...params);
+      },
+    });
+    await leased.messaging.requireMessagesAcknowledged(first.session.id, tx);
+  });
+  assert.equal(sent.length, 1);
+  const [{ 'QUERY PLAN': plan }] = await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.all<{ 'QUERY PLAN': unknown }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sent[0]!.sql}`,
+        ...(sent[0]!.params as never[]),
+      ),
+  );
+  let threads = 0;
+  const walk = (node: Record<string, unknown>) => {
+    if (node['Relation Name'] === 'session_threads')
+      threads +=
+        Number(node['Actual Rows'] ?? 0) * Number(node['Actual Loops'] ?? 1) +
+        Number(node['Rows Removed by Filter'] ?? 0);
+    for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child);
+  };
+  walk((plan as { Plan: Record<string, unknown> }[])[0]!.Plan);
+  assert.ok(threads < 10, `the check read ${threads} thread rows`);
+});
+
+test('the sweep reads a bounded page of waiting questions a pass, and every one of them in turn', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const ask = async () => {
+    const unit = await f.start();
+    const visit = await f.offer(unit.id, 'runner-a');
+    await f.app.ctx.tools.invoke(
+      'session.ask_owner',
+      await f.sessions.authenticate(visit.input.secret),
+      { question: 'Which cohort?' },
+    );
+    await f.release(visit.session);
+    return { unit, threadId: visit.session.threadId };
+  };
+  // The older question's work stays open; the newer one's ends unanswered.
+  const open = await ask();
+  const ended = await ask();
+  await f.move(ended.unit.id, 'submit');
+  await f.move(ended.unit.id, 'approve');
+  await f.age(dormantMs + 60_000);
+  const status = async (id: string) =>
+    (
+      await f.app.ctx.state.read((sql) =>
+        sql.get<{ status: string }>('SELECT status FROM session_threads WHERE id=?', id),
+      )
+    )?.status;
+  const read: string[][] = [];
+  const host = (leased.threads as unknown as { host: { ended: Function } }).host;
+  const original = host.ended;
+  host.ended = async (projectId: string, ids: string[], tx: unknown) => {
+    read.push(ids);
+    return await original(projectId, ids, tx);
+  };
+  (leased.threads as unknown as { askingPage: number }).askingPage = 1;
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  assert.deepEqual(read, [[open.unit.id]]);
+  assert.equal(await status(ended.threadId), 'dormant');
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  assert.deepEqual(read.at(-1), [ended.unit.id]);
+  assert.deepEqual(
+    [await status(open.threadId), await status(ended.threadId)],
+    ['dormant', 'retired'],
+  );
 });

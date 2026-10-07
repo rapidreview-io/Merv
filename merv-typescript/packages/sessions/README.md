@@ -79,8 +79,8 @@ Agents page lists the project's threads from `GET /sessions/threads` (live ones,
 newest others, a page at a time) and a thread's Merv calls from
 `GET /sessions/threads/:id/calls`, each for any project reader and never a leased worker.
 
-`session.find` resolves a work item's current session. `session.message` queues an operator
-message for that session, or for a thread (`threadId`), which its live or next visit reads;
+`session.find` resolves a work item's current session and its thread. `session.message` queues
+an operator message for a thread (`threadId`), which its live or next visit reads;
 `session.messages` and the worker-only `session.message.ack` retain receipt and an optional
 reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
 A worker that needs its owner's decision ends its visit with `session.ask_owner`: uncounted,

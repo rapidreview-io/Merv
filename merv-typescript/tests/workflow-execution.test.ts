@@ -151,12 +151,16 @@ async function leasing(
   const sessionId = `lease-${randomBytes(4).toString('hex')}`;
   const actor = await state.transaction(
     async (tx) =>
-      await scope.createSessionActor(source, { sessionId, role: 'producer', name: 'Worker' }, tx),
+      await scope.createSessionActor(
+        source,
+        { threadId: sessionId, role: 'producer', name: 'Worker' },
+        tx,
+      ),
   );
   const worker: Caller = {
     projectId: actor.projectId,
     actorId: actor.id,
-    session: { id: sessionId },
+    session: { id: sessionId, threadId: sessionId },
   };
   const offer = async (instance: WorkflowSnapshot) =>
     await workflows.offerLease(caller, worker, {

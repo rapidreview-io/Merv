@@ -553,15 +553,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // Now and the rail share one read, and a part this caller may not read is null rather
   // than a failure that would take the page with it.
   const home = (await tool('ui.home', operator)).body.result as Record<string, unknown>;
+  // Code's moves and agents' questions reach it through the gates' blockers, not parts of their own.
   assert.deepEqual(Object.keys(home).sort(), [
     'actors',
-    'code',
     'experiments',
     'project',
     'reflections',
     'research',
     'reviews',
-    'sessions',
     'tasks',
     'workflows',
   ]);

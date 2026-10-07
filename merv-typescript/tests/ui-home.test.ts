@@ -16,7 +16,6 @@ await import('../packages/ui/web/components.js');
 const { NeedsYou, needsYou, recordSentence, reviewSentence } =
   await import('../packages/ui/web/views/needs-you.js');
 // Code's part of the home read, as the server makes it from the blockers Workflows holds.
-const { heldMoves } = await import('../packages/code-work/src/blockers.js');
 
 const { UiRegistry } = await import('../packages/ui/src/index.js');
 // The rows exactly as the plugins register them: every word Needs you says of a record is its row's.
@@ -99,7 +98,6 @@ const dependency = (name: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const home = (over: Record<string, unknown>) => ({
-  code: null,
   project: null,
   actors: null,
   experiments: null,
@@ -111,7 +109,6 @@ const home = (over: Record<string, unknown>) => ({
   workflows: null,
   reflections: null,
   paper: null,
-  sessions: null,
   connections: null,
   archive: null,
   ...over,
@@ -443,10 +440,15 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
   const data = home({
     tasks: [task('wf_pub', me.id, 'done')],
     experiments: [experiment('wf_quiet', me.id)],
-    code: heldMoves([publication, quiet]),
     workflows: {
       workflows: [
-        gate('wf_pub', { terminal: true, state: 'done', providerBlockers: [publication] }),
+        // As the gate answers a signed-in operator: Code publishes whose move it is.
+        gate('wf_pub', {
+          terminal: true,
+          state: 'done',
+          providerBlockers: [{ ...publication, whose: 'operator' }],
+          yours: { ask: publication.next, blocker: { provider: 'code', key: 'publication' } },
+        }),
         // A code nobody prints is not a move: the record keeps its own gate, its own
         // sentence and its own desk, exactly as if Code had published nothing about it.
         gate('wf_quiet', {
@@ -478,18 +480,15 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
   assert.equal(ordinary.desk, undefined);
 
   // The publication verbs answer a signed-in person and nobody else, so for a reader — and
-  // an operator holding a key rather than an account — the wait is not theirs: it is the red
-  // card on the Work page's map.
-  for (const other of [
-    { id: me.id, role: 'reader', signedIn: true },
-    { ...me, signedIn: false },
-  ])
-    assert.deepEqual(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      needsYou(rows as any, data as any, other, named).map((item: { id: string }) => item.id),
-      ['wf_quiet'],
-      other.role + String(other.signedIn),
-    );
+  // an operator holding a key rather than an account — the gate names no move of theirs: the
+  // wait is the red card on the Work page's map.
+  const theirs = structuredClone(data);
+  delete (theirs.workflows.workflows[0] as { yours?: unknown }).yours;
+  assert.deepEqual(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    needsYou(rows as any, theirs as any, me, named).map((item: { id: string }) => item.id),
+    ['wf_quiet'],
+  );
 });
 
 test('an operator’s move with no control here is still theirs, and promises nothing', () => {
@@ -506,9 +505,18 @@ test('an operator’s move with no control here is still theirs, and promises no
   };
   const data = home({
     tasks: [task('wf_off', me.id, 'done')],
-    code: heldMoves([disabled]),
     workflows: {
-      workflows: [gate('wf_off', { terminal: true, state: 'done', providerBlockers: [disabled] })],
+      workflows: [
+        gate('wf_off', {
+          terminal: true,
+          state: 'done',
+          providerBlockers: [{ ...disabled, whose: 'operator', next: 'An operator enables it.' }],
+          yours: {
+            ask: 'An operator enables it.',
+            blocker: { provider: 'code', key: 'publication' },
+          },
+        }),
+      ],
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

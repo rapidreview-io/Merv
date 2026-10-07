@@ -136,7 +136,7 @@ function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchR
   };
   return {
     session,
-    prompt: workerPrompt,
+    prompt: workerPrompt(session),
     secret,
     mcpUrl: 'http://127.0.0.1:8080/mcp',
     cwd: '/tmp/merv-profile-workspace',

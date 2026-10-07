@@ -60,14 +60,14 @@ async function fixture() {
   const worker = await state.transaction((tx) =>
     scope.createSessionActor(
       source,
-      { sessionId: 'session_locks', name: 'Worker', role: 'producer' },
+      { threadId: 'session_locks', name: 'Worker', role: 'producer' },
       tx,
     ),
   );
   const session: Caller = {
     actorId: worker.id,
     projectId: worker.projectId,
-    session: { id: 'session_locks' },
+    session: { id: 'session_locks', threadId: 'session_locks' },
   };
   // Stub providers vouch for the owner. With `writes` set, the session provider also writes on
   // the transaction it is handed, which a read decision must refuse. It records that transaction.

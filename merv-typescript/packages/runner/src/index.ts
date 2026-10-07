@@ -29,6 +29,7 @@ import type {
   SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
+import { ownEnd } from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -667,12 +668,12 @@ export class MachineRunner implements Runner {
       ...(session.hostRef === record.id ? { attached: true } : {}),
     });
     if (!liveSession(session)) {
-      // Its own handoff closed it: the profile's grace, within its deadline, lets it finish
+      // Its own handoff or question closed it: the profile's grace, within its deadline, lets it finish
       // the turn and exit. The final capture is still taken only once it has ended.
       const since = Number(record.metadata.handedOffAt ?? this.clock()),
         grace = handoffGraceMs(record.metadata.profile as RunnerProfile);
       if (
-        session.closeReason === 'handoff' &&
+        ownEnd(session.closeReason) &&
         record.status === 'running' &&
         this.clock() < Math.min(record.deadline, since + grace)
       ) {

@@ -121,13 +121,17 @@ export class SessionInvocations implements SessionInvocationPolicy {
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     ordinary(caller);
     caller = structuredClone(caller);
-    if (read || workerTools.has(name)) return true;
+    if (read || (workerTools.has(name) && name !== 'session.ask_owner')) return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
     if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
     const names = await this.host.reading(async (tx) => {
       const session = await this.host.session(caller, tx);
-      return new Set(session.execution.policy.tools.map((tool) => tool.name));
+      return new Set([
+        ...session.execution.policy.tools.map((tool) => tool.name),
+        // Only a visit that keeps a conversation can wait for its owner's answer.
+        ...(session.continuity ? ['session.ask_owner'] : []),
+      ]);
     });
     if (id) {
       if (this.toolNames.size >= 1000) this.toolNames.clear();
