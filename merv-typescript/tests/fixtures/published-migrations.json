@@ -579,7 +579,7 @@
       "component": "pi",
       "version": 4,
       "hash": "24b203d241c6f9dffbc0c90642944799888ed4241cbe11e16638e341feda10c1",
-      "published": false
+      "published": true
     },
     {
       "component": "fleet_workflow",
@@ -706,7 +706,7 @@
       "component": "sessions",
       "version": 13,
       "hash": "0f32c5834d8848f89bf3cbdce6afa21a6990f7784a997b4b91b9d0270cc0a63f",
-      "published": false
+      "published": true
     },
     {
       "component": "tasks",
