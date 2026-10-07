@@ -1718,10 +1718,10 @@ test('the sweep reads a bounded page of waiting questions a pass, and every one 
       )
     )?.status;
   const read: string[][] = [];
-  // Whether a question stands is Messages' one read, which asks Workflows what ended.
-  const host = (leased.messaging as unknown as { host: { ended: Function } }).host;
-  const original = host.ended;
-  host.ended = async (projectId: string, ids: string[], tx: unknown) => {
+  // Whether a question stands is Messages' one read, which asks Workflows where the work stands.
+  const host = (leased.messaging as unknown as { host: { work: Function } }).host;
+  const original = host.work;
+  host.work = async (projectId: string, ids: string[], tx: unknown) => {
     read.push(ids);
     return await original(projectId, ids, tx);
   };
