@@ -812,7 +812,9 @@ export class LeasedSessions implements Sessions {
       // prepared. Its reads use that validation; each write transaction re-checks it once.
       const { session } = invocation;
       const result = { source: session.source, readsRetired: session.kind === 'inquiry' };
-      if (requiredPermission === 'read') return result;
+      // A read decision made in a write transaction gates a write all the same (session.ask_owner
+      // and session.message.ack decide 'read'), so only one made on a snapshot is spared.
+      if (requiredPermission === 'read' && (this.state.readScope || session.inquiry)) return result;
       check(
         session.kind !== 'inquiry',
         'inquiry_read_only',
