@@ -60,7 +60,7 @@ import {
 } from './program.js';
 import { designCriteria, feasibilityCriterion, resultsCriteria } from './definitions.js';
 import { allowedArtifacts } from './context.js';
-import { pinnedRecovery, holds } from './lease.js';
+import { pinnedRecovery, holds, resumedOutputs } from './lease.js';
 import {
   handleFor,
   move,
@@ -212,6 +212,7 @@ export async function attach(
       check(
         (await authoredInExecution(ctx, caller, artifact, tx)) ||
           experiment.captureArtifactIds?.includes(artifact.id) ||
+          (await resumedOutputs(ctx, caller, experiment.workflow, tx)).includes(artifact.id) ||
           inherited.some(
             (e) =>
               e.artifactId === artifact.id &&
