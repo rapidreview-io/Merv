@@ -316,7 +316,11 @@ test('failed context projection rolls back its activation event and start, inclu
   // PostgreSQL does not reuse identity values of rolled-back inserts, so the start's event is not
   // head + 1; it is still the one and only event committed after the failed attempts.
   assert.deepEqual(
-    (await f.state.eventBatch(head, 10)).map((event) => event.id),
+    (
+      await f.state.read((sql) =>
+        sql.all<{ id: number }>('SELECT id FROM events WHERE id>? ORDER BY id', head),
+      )
+    ).map((event) => event.id),
     [begun.workStart?.eventId],
   );
 });

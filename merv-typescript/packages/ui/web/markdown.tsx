@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import {
   Fragment,
   memo,
@@ -16,7 +17,6 @@ import { TeX } from './math';
 import { Mermaid } from './mermaid';
 import { pathOf, rowOf, useRows } from './navigation';
 import { offThread } from './off-thread';
-import type { Row } from './shell-types';
 import { safeHref, splitIds } from './markdown-links';
 
 export { safeHref, splitIds };
@@ -87,7 +87,7 @@ type Listed = { id: string; name?: string; title?: string };
 /** `ui.home`: the people, and each row's records under the row's id. */
 export type NamedHome = object;
 type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
-type NamedRow = Pick<Row, 'id' | 'path' | 'view' | 'workflow' | 'holds'>;
+type NamedRow = Pick<UiRowDescription, 'id' | 'path' | 'view' | 'workflow' | 'holds'>;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads: a record opens at

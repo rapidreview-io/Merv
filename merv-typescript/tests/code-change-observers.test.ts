@@ -204,7 +204,7 @@ test('direct core writer changes and research blockers commit or roll back toget
   assert.deepEqual(await f.blockers(), []);
 });
 
-test('removing an observer during its awaited mutation rejects and rolls back the binding', async (t) => {
+test('an owner released during its awaited mutation rejects and rolls back the binding', async (t) => {
   const f = await fixture(t);
   let enter!: () => void;
   const entered = new Promise<void>((resolve) => {
@@ -214,15 +214,16 @@ test('removing an observer during its awaited mutation rejects and rolls back th
   const resumed = new Promise<void>((resolve) => {
     resume = resolve;
   });
-  const unobserve = f.ctx.code.changes.observe(async (change) => {
-    if (change.kind === 'binding') {
+  const release = f.ctx.code.writers.lend({
+    changed: async (_tx, _projectId, unitId) => {
+      if (unitId) return;
       enter();
       await resumed;
-    }
+    },
   });
   const pending = f.bind('b', 'a');
   await entered;
-  unobserve();
+  release();
   resume();
   await assert.rejects(pending, { code: 'code_projection_changed' });
   assert.equal((await f.ctx.codeWork.status(f.caller)).project?.main.oid, 'a'.repeat(40));

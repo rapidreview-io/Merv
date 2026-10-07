@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { Artifact } from '@merv/contracts/artifact-models';
@@ -8,7 +9,7 @@ import { ArrowRightIcon } from '../icons';
 import { recordNames } from '../markdown';
 import { pathOf } from '../navigation';
 import { useSession } from '../session';
-import type { Row, ShellData } from '../shell-types';
+import type { ShellData } from '../shell-types';
 import { newest, type HomeData } from './map-data';
 import { NeedsYou, Part, useNow } from './needs-you';
 import { labels as paperTitles } from './paper-entries';
@@ -71,7 +72,7 @@ function Head({ shell, home }: { shell: ShellData; home: HomeData | undefined })
  * its role, and what it is doing at this moment, with how long. Each is the way to its unit's
  * sidebar on the Work page, where its live stream is.
  */
-function LiveNow({ rows }: { rows: Row[] }) {
+function LiveNow({ rows }: { rows: UiRowDescription[] }) {
   const { board, now } = useLive();
   const nameOf = useActorNames();
   const work = pathOf(rows, 'work');
@@ -143,7 +144,15 @@ const FILES = 5;
  * What was lately recorded, newest first: review verdicts from the home read, the newest
  * files, and the paper's sections as they were last revised. Each is the way to its record.
  */
-function Latest({ rows, home, lost }: { rows: Row[]; home?: HomeData; lost: boolean }) {
+function Latest({
+  rows,
+  home,
+  lost,
+}: {
+  rows: UiRowDescription[];
+  home?: HomeData;
+  lost: boolean;
+}) {
   const reviewsPath = pathOf(rows, 'reviews');
   const filesPath = pathOf(rows, 'artifacts');
   const paperPath = pathOf(rows, 'paper');

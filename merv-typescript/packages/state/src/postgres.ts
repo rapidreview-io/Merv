@@ -782,29 +782,11 @@ END $merv$;`);
     );
   }
 
-  async eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]> {
-    check(
-      Number.isSafeInteger(after) &&
-        after >= 0 &&
-        Number.isSafeInteger(limit) &&
-        limit > 0 &&
-        limit <= 1000,
-      'invalid_cursor',
-      'Invalid event batch bounds',
-    );
-    if (tx) this.assertTransaction(tx);
-    return this.read(async (sql) =>
-      (
-        await sql.all<EventRow>('SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?', after, limit)
-      ).map(eventFromRow),
-    );
-  }
-
   async nextEvent(
     after: number,
     types: readonly string[],
     tx?: Transaction,
-  ): Promise<number | undefined> {
+  ): Promise<StoredEvent | undefined> {
     check(
       Number.isSafeInteger(after) && after >= 0 && types.length > 0,
       'invalid_cursor',
@@ -813,13 +795,13 @@ END $merv$;`);
     if (tx) this.assertTransaction(tx);
     const row = await this.read(
       async (sql) =>
-        await sql.get<{ id: number | null }>(
-          `SELECT MIN(id) AS id FROM events WHERE id>? AND type IN (${types.map(() => '?').join(',')})`,
+        await sql.get<EventRow>(
+          `SELECT * FROM events WHERE id>? AND type IN (${types.map(() => '?').join(',')}) ORDER BY id LIMIT 1`,
           after,
           ...types,
         ),
     );
-    return row?.id ?? undefined;
+    return row && eventFromRow(row);
   }
 
   async events(projectId: string, after = 0): Promise<StoredEvent[]> {

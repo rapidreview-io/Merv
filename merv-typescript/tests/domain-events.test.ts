@@ -1224,3 +1224,70 @@ test('subscribe refuses a missing ID or non-string event types', async () => {
     await state.close();
   }
 });
+
+test('a delivery past unsubscribed events costs one writer transaction and few statements', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const handled: number[] = [];
+  // Every statement either pool sends, BEGIN and COMMIT included.
+  let statements = 0;
+  const count = (pool: { connect: () => Promise<{ query: (...args: unknown[]) => unknown }> }) => {
+    const connect = pool.connect.bind(pool);
+    pool.connect = async () => {
+      const client = await connect();
+      if (!(client as { counted?: boolean }).counted) {
+        const query = client.query.bind(client);
+        client.query = (...args: unknown[]) => (statements++, query(...args));
+        (client as { counted?: boolean }).counted = true;
+      }
+      return client;
+    };
+  };
+  const pools = state as unknown as Record<'pool' | 'readers', Parameters<typeof count>[0]>;
+  count(pools.pool);
+  count(pools.readers);
+  const transaction = state.transaction.bind(state);
+  let transactions = 0;
+  try {
+    await events.subscribe({
+      id: 'measured',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle(event) {
+        handled.push(event.id);
+      },
+    });
+    await events.drain();
+    const deliveries = 10;
+    await transaction(async (tx) => {
+      for (let i = 0; i < deliveries; i++) {
+        await state.appendEvent(tx, {
+          projectId: 'p',
+          actorId: 'a',
+          subjectId: 's',
+          type: 'probe.noise',
+          data: {},
+        });
+        await state.appendEvent(tx, {
+          projectId: 'p',
+          actorId: 'a',
+          subjectId: 's',
+          type: 'probe.created',
+          data: {},
+        });
+      }
+    });
+    statements = 0;
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await events.drain();
+    assert.equal(handled.length, deliveries);
+    // One transaction per delivery and one to find nothing more at the head. Before nextEvent
+    // returned the event itself, this took 21 transactions and 117 statements.
+    assert.ok(transactions <= deliveries + 1, `${transactions} transactions`);
+    assert.ok(statements <= deliveries * 6, `${statements} statements`);
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});

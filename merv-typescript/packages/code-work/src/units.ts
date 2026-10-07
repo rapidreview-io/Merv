@@ -27,6 +27,7 @@ import type {
 import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
+import { publicationControls, publicationGate } from './publication-host.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
 import type {
   CodeCapture,
@@ -81,8 +82,8 @@ export class CodeUnitService {
   readonly records: WorkUnitRecords;
   /** Set by Code Work's start, before anything derives a unit: where several commits merge. */
   bases!: CodeBaseService;
-  /** The journal that carries an accepted unit to main; without it nothing publishes. */
-  publications?: {
+  /** Set by Code Work's start: the journal that carries an accepted unit to main. */
+  publications!: {
     openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
   };
   resolutionTasks?: ResolutionWorkCreator;
@@ -101,19 +102,13 @@ export class CodeUnitService {
       publication: (sql, projectId, stored) => this.enforcedPublication(sql, projectId, stored),
       baseStatus: (tx, row, base) => this.derivedBaseStatus(tx, row, base),
     });
-    this.unobserve = writers.changes.observe(async (change, tx) => {
-      if (change.kind === 'binding') await this.reconcileProject(tx, change.projectId);
-      else await this.reconcileUnit(tx, change.projectId, change.unitId);
-    });
   }
 
-  private readonly unobserve: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.records.initialize();
   }
   close(): void {
-    this.unobserve();
     this.records.close();
   }
 
@@ -388,7 +383,6 @@ export class CodeUnitService {
     acceptanceHash: string,
     tx: Transaction,
   ): Promise<void> {
-    check(this.publications, 'code_unavailable', 'The publication journal is unavailable', 503);
     const base = row.base_json ? (JSON.parse(row.base_json) as BaseBody) : null;
     if (!(body.storage === 'code' && body.code?.tree) || !base?.main) {
       await this.reconcileUnit(tx, caller.projectId, row.unit_id);
@@ -402,7 +396,7 @@ export class CodeUnitService {
       caller.projectId,
       row.unit_id,
     );
-    await this.publications!.openUnit(
+    await this.publications.openUnit(
       caller,
       {
         publicationId,
@@ -1056,6 +1050,11 @@ export class CodeUnitService {
     this.state.assertTransaction(tx);
     await this.reconcileProject(tx, projectId);
   }
+  /** Code bound the project's main again (no unit), or moved one unit's writer. */
+  async changed(tx: Transaction, projectId: string, unitId?: string): Promise<void> {
+    if (unitId) await this.reconcileUnit(tx, projectId, unitId);
+    else await this.reconcileProject(tx, projectId);
+  }
 
   private quarantineBlocker(key: string): WorkflowProvidedBlockerInput {
     return {
@@ -1241,26 +1240,13 @@ export class CodeUnitService {
     projectId: string,
     publication: PublicationStanding | null,
   ): Promise<PublicationStanding | null> {
-    if (publication?.state !== 'pending') return publication;
-    if (publication.destination === 'local') return publication;
-    const controls = await sql.get<{ record_json: string }>(
-      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
-      projectId,
-    );
-    const enforcement = controls
-      ? (JSON.parse(controls.record_json) as {
-          disabled?: boolean;
-          canary?: unknown;
-          visibility?: { incomplete?: boolean };
-          acknowledgement?: unknown;
-        })
-      : {};
+    if (publication?.state !== 'pending' || publication.destination === 'local') return publication;
+    const gate = publicationGate(await publicationControls(sql, projectId));
     // A failed canary explicitly disables publication. Missing setup also blocks merging,
     // but must not say an operator needs to clear a disablement that never happened. Rules
     // the App cannot see wait on an administrator's acknowledgement; a merge still reads them.
-    if (enforcement.disabled) return { ...publication, state: 'disabled' };
-    if (!enforcement.canary || (enforcement.visibility?.incomplete && !enforcement.acknowledgement))
-      return { ...publication, state: 'setup_required' };
+    if (gate.includes('code_publication_disabled')) return { ...publication, state: 'disabled' };
+    if (gate.length) return { ...publication, state: 'setup_required' };
     return publication;
   }
 

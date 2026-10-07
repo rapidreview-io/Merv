@@ -18,7 +18,6 @@ import {
 import { CodeRepositories, type CodeRepositoryConfig } from './store/repository.js';
 import { CodeUnitStore } from './units.js';
 import { CodeWriterService } from './writers.js';
-import { CodeChanges } from './changes.js';
 
 export interface CodeConfiguration {
   finalizeGraceSeconds?: number;
@@ -26,12 +25,14 @@ export interface CodeConfiguration {
 }
 
 /**
- * What the owner of work units lends the repository store: how history arriving changes its
- * units, which of its sessions hold a workspace, and the lane every GitHub call it waits for at
- * unload runs in.
+ * What the owner of work units lends the repository store: how history arriving or a binding
+ * or writer changing changes its units, which of its sessions hold a workspace, and the lane
+ * every GitHub call it waits for at unload runs in.
  */
 export interface CodeStorePort extends Pick<CodeStoreHooks, 'imported' | 'workspaces'> {
   network<T>(operation: () => Promise<T>): Promise<T>;
+  /** A project's binding (no unit) or one unit's writer changed, in the mutation's transaction. */
+  changed(tx: Transaction, projectId: string, unitId?: string): Promise<void>;
 }
 /** The deployment's settings of the store and the mirror, and what a test replaces in them. */
 export interface CodeStoreOptions {
@@ -48,11 +49,12 @@ export interface CodeStoreHandle {
   store: CodeStore;
   mirror: CodeMirrorService;
   transport: MirrorTransport;
+  /** Takes back the port's `changed`: the opener calls it as it starts to close. */
+  release(): void;
 }
 
 /** Durable Git facts and operations. Work-unit policy is supplied by its callers. */
 export class CodeService {
-  readonly changes: CodeChanges;
   readonly units: CodeUnitStore;
   readonly writers: CodeWriterService;
   readonly github: CodeGitHubService;
@@ -64,13 +66,7 @@ export class CodeService {
     config: CodeConfiguration,
     github?: GitHubConfig,
   ) {
-    this.changes = new CodeChanges(state);
-    this.writers = new CodeWriterService(
-      state,
-      scope,
-      config.finalizeGraceSeconds ?? 900,
-      this.changes,
-    );
+    this.writers = new CodeWriterService(state, scope, config.finalizeGraceSeconds ?? 900);
     this.units = new CodeUnitStore(state, scope, this.writers);
     this.github = new CodeGitHubService(state, scope, github);
     this.repositories = new CodeRepositories(config.repositories);
@@ -92,6 +88,17 @@ export class CodeService {
    * their callbacks: a start first finishes what a crash left, which may derive units again.
    */
   async openStore(port: CodeStorePort, options: CodeStoreOptions = {}): Promise<CodeStoreHandle> {
+    // Lent from the start: what the store's start finishes may move writers.
+    const release = this.writers.lend(port);
+    try {
+      return { ...(await this.startStore(port, options)), release };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  private async startStore(port: CodeStorePort, options: CodeStoreOptions) {
     const { github, writers, repositories } = this;
     // Published only once it holds the writer lock and has finished what a crash left.
     const store = new CodeStore(

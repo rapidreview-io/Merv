@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -12,9 +13,15 @@ import {
   MOVED,
   topRows,
 } from '../packages/ui/web/navigation.js';
-import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
+import type { PluginState } from '../packages/ui/web/shell-types.js';
 
-const row = (id: string, kind: string, group: string, order: number, path = `/${id}`): Row => ({
+const row = (
+  id: string,
+  kind: string,
+  group: string,
+  order: number,
+  path = `/${id}`,
+): UiRowDescription => ({
   id,
   label: id,
   group,
@@ -86,10 +93,10 @@ test('the rail lists places, hides the rows other pages absorbed, and leads with
   assert.deepEqual(lit('/artifacts/art_1'), ['artifacts']);
   assert.deepEqual(lit('/nowhere'), []);
   // Work appears only with the work it opens; the archive only when it holds records.
-  const listed = (entries: Row[]) =>
+  const listed = (entries: UiRowDescription[]) =>
     buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));
   assert.deepEqual(listed([row('reflections', 'reflections', 'hidden', 35)]), []);
-  const archive: Row = {
+  const archive: UiRowDescription = {
     ...row('legacy-history', 'legacy-history', 'research', 19),
     whenCounted: true,
   };
@@ -168,7 +175,7 @@ test('a heading is drawn only where it names more than its one row already says'
     group: string,
     order: number,
     label: string,
-  ): Row => ({
+  ): UiRowDescription => ({
     ...row(id, kind, group, order),
     label,
   });

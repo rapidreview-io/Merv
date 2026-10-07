@@ -79,8 +79,6 @@ Ownership rules:
    from `issue` or `authenticate` rather than re-hashing.
 6. Owners re-check their own domain state (actor active, membership, session status)
    alongside `authenticate` or `authenticateHash`, in the same transaction.
-7. `subject` is whatever unit the owner wants to revoke together with
-   `revokeSubject`.
 
 `revoke` is idempotent and keeps the first revocation time; it also revokes an
 expired row, and a hash that was never issued or adopted returns `undefined`.

@@ -166,7 +166,7 @@ export class DurableEvents implements DomainEvents {
   /** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
   private async due(consumer: EventConsumer, after: number, through: number, tx?: Transaction) {
     const next = await this.state.nextEvent(after, consumer.types, tx);
-    return next !== undefined && next <= through;
+    return next !== undefined && next.id <= through;
   }
 
   private async deliver(): Promise<boolean> {
@@ -234,20 +234,19 @@ export class DurableEvents implements DomainEvents {
             // A progress row removed outside the application: deliver nothing, strand no one.
             if (!progress || progress.retry_at > Date.now()) return false;
             attemptedCursor = progress.cursor;
-            const event = (await this.state.eventBatch(progress.cursor, 1, tx))[0];
-            if (!event) return false;
-            if (!consumer.types.includes(event.type)) {
-              // Under the writer lock every event up to the head is committed and no smaller ID
-              // can commit later, so the run of unsubscribed events is passed in one step.
-              const next = await this.state.nextEvent(event.id, consumer.types, tx);
-              const cursor = next !== undefined ? next - 1 : await this.state.eventHead(tx);
-              await tx.run(
-                'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
-                cursor,
-                consumer.id,
-              );
-              // At the head: no further transaction would find anything.
-              return next !== undefined;
+            // Under the writer lock every event up to the head is committed and no smaller ID can
+            // commit later, so the unsubscribed events before the next subscribed one are passed
+            // with it, and with none left the cursor moves to the head.
+            const event = await this.state.nextEvent(progress.cursor, consumer.types, tx);
+            if (!event) {
+              const head = await this.state.eventHead(tx);
+              if (head > progress.cursor)
+                await tx.run(
+                  'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
+                  head,
+                  consumer.id,
+                );
+              return false;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
             const cursor = event.id;

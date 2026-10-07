@@ -112,35 +112,6 @@ test('adoption is insert-only and lifecycle mutations roll back with their owner
   await state.close();
 });
 
-test('owner revokes all rotations of one subject atomically', async () => {
-  const now = Date.parse('2026-09-26T10:00:00.000Z');
-  const state = await openState();
-  const store = new CredentialStore(state, () => now);
-  await store.initialize();
-  const input = {
-    owner: 'sessions',
-    subject: 'agent-1',
-    kind: 'session-agent',
-    expiresAt: iso(now + 60_000),
-    hardDeadline: iso(now + 120_000),
-  };
-  const a = await store.issue(input);
-  const b = await store.issue(input);
-  const other = await store.issue({ ...input, subject: 'agent-2' });
-  await assert.rejects(
-    state.transaction(async (tx) => {
-      await store.revokeSubject('sessions', 'agent-1', 'session-agent', tx);
-      throw new Error('owner failed');
-    }),
-  );
-  await store.authenticate(a.token, 'session-agent');
-  await state.transaction((tx) => store.revokeSubject('sessions', 'agent-1', 'session-agent', tx));
-  await assert.rejects(store.authenticate(a.token, 'session-agent'), denied);
-  await assert.rejects(store.authenticate(b.token, 'session-agent'), denied);
-  await store.authenticate(other.token, 'session-agent');
-  await state.close();
-});
-
 const conflict = (status: number) => (error: unknown) =>
   error instanceof MervError && error.status === status;
 

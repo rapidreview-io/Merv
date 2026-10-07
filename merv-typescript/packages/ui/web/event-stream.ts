@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { sameOriginPath } from '@merv/contracts/running';
 import { currentToken, projectSelection } from './api';
 
@@ -112,4 +113,75 @@ export async function readEventStream(
     reader.releaseLock();
   }
   return rotated;
+}
+
+const shown = () => document.visibilityState !== 'hidden';
+const onShown = (listener: () => void) => {
+  document.addEventListener('visibilitychange', listener);
+  return () => document.removeEventListener('visibilitychange', listener);
+};
+
+export type EventStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'refused';
+
+/**
+ * One server-sent event stream of this app, read while `url` is given and the tab is shown,
+ * each frame handed to `onEvent`. A hidden tab closes it and showing the tab opens it again. A
+ * stream the server rotates is opened again at once; a dropped one waits, doubling with each
+ * failure up to half a minute; one the server ends (`end`) or refuses is left closed. `after`
+ * names the last event the reader holds, so a reconnect asks only for what follows it
+ * (`?after=`).
+ */
+export function useEventStream(
+  url: string | null,
+  onEvent: (event: string, value: object) => void,
+  after?: () => number,
+): EventStreamState {
+  const [state, setState] = useState<EventStreamState>('connecting');
+  const visible = useSyncExternalStore(onShown, shown);
+  const latest = useRef({ onEvent, after });
+  latest.current = { onEvent, after };
+  useEffect(() => {
+    if (!visible || !url) return;
+    let stopped = false;
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const connect = async () => {
+      const since = Date.now();
+      const from = latest.current.after?.() ?? 0;
+      let ended = false;
+      try {
+        const rotated = await readEventStream(
+          from ? `${url}${url.includes('?') ? '&' : '?'}after=${from}` : url,
+          controller.signal,
+          (event, value) => {
+            if (event === 'end') ended = true;
+            if (stopped || event === 'end' || event === 'rotate') return;
+            failures = 0;
+            setState('open');
+            latest.current.onEvent(event, value);
+          },
+        );
+        if (stopped) return;
+        if (ended) return setState('ended');
+        if (rotated && Date.now() - since > 5000) return void connect();
+      } catch (cause) {
+        if (stopped) return;
+        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status))
+          return setState('refused');
+      }
+      setState('retrying');
+      timer = setTimeout(
+        () => void (stopped || connect()),
+        Math.min(30_000, 1000 * 2 ** failures++),
+      );
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [url, visible]);
+  return state;
 }

@@ -12,6 +12,7 @@
     "./github-client": "./src/github-client.ts",
     "./input": "./src/input.ts",
     "./pending-merge": "./src/pending-merge.ts",
+    "./request-journal": "./src/request-journal.ts",
     "./units": "./src/units.ts",
     "./writers": "./src/writers.ts",
     "./store/mirror": "./src/store/mirror.ts",

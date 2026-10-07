@@ -25,8 +25,13 @@ import {
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
-import { migrateCommands } from './receipts.js';
+import { postgresMigrations } from './commands.postgres.js';
 import type { CodeCommands } from './types.js';
+
+/** Code Work's own storage, which its operator receipts live in; every caller migrates it. */
+export async function migrateCommands(state: State): Promise<void> {
+  await state.migrate('code_commands', postgresMigrations);
+}
 
 type Row = {
   id: string;

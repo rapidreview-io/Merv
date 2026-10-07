@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import { check, fetchJson, MervError, OutboundError, type Json } from '@merv/contracts';
+import { sandboxOrigin } from './client.js';
 
 /** Server-only credentials. Domain-separated authenticated encryption binds each
  * value to its durable row; moving ciphertext between connections cannot work. */
@@ -47,30 +48,6 @@ export class NativeCredentials {
   }
 }
 
-export function nativeOrigin(value: string): string {
-  let url: URL | undefined;
-  try {
-    url = new URL(value);
-  } catch {
-    /* reported without credentials below */
-  }
-  check(
-    !/[\x00-\x20\x7f]/.test(value) &&
-      url &&
-      (url.protocol === 'https:' ||
-        (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      url.pathname === '/',
-    'invalid_sandboxes_config',
-    'Sandboxes requires an HTTPS origin',
-    400,
-  );
-  return url.origin;
-}
-
 /**
  * Each page of one cursor-paged list, first to last: the first is read with no cursor, each
  * later one with the cursor the page before it named. A list naming a cursor twice is `stuck`.
@@ -97,7 +74,7 @@ export class NativeSandboxClient {
     origin: string,
     private readonly fetcher: typeof fetch = fetch,
   ) {
-    this.origin = nativeOrigin(origin);
+    this.origin = sandboxOrigin(origin);
   }
   async request<T>(
     path: string,

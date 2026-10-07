@@ -1,4 +1,4 @@
-import { OperationJournal } from './operation-journal.js';
+import { RequestJournal } from './request-journal.js';
 import {
   canonical,
   check,
@@ -21,7 +21,7 @@ import {
   type CodeWriterStatus,
 } from './store/protocol.js';
 import { parseCodeInput } from './input.js';
-import { CodeChanges } from './changes.js';
+import type { CodeStorePort } from './service.js';
 
 export interface WriterRow {
   project_id: string;
@@ -66,8 +66,35 @@ export class CodeWriterService {
     private readonly state: State,
     private readonly scope: Scope,
     readonly finalizeGraceSeconds: number,
-    readonly changes = new CodeChanges(state),
   ) {}
+  /** The owner of work units, lent by openStore until it releases it. */
+  private owner?: Pick<CodeStorePort, 'changed'>;
+
+  /** Lends the owner's `changed` until the returned release; a later lend replaces it. */
+  lend(owner: Pick<CodeStorePort, 'changed'>): () => void {
+    this.owner = owner;
+    return () => {
+      if (this.owner === owner) this.owner = undefined;
+    };
+  }
+
+  /**
+   * A binding (no unit) or one unit's writer changed: the owner derives what waits on it in
+   * the mutation's own transaction, never after commit. An owner that left or arrived while
+   * that ran may have missed it, so the mutation is refused and rolls back.
+   */
+  async changed(tx: Transaction, projectId: string, unitId?: string): Promise<void> {
+    const owner = this.owner;
+    if (!owner) return;
+    this.state.assertTransaction(tx);
+    await owner.changed(tx, projectId, unitId);
+    check(
+      owner === this.owner,
+      'code_projection_changed',
+      'A Code projection changed while this mutation was being applied; retry it',
+      409,
+    );
+  }
 
   /**
    * Called only from the owner's lease acquisition, right after the base was pinned, so a
@@ -147,7 +174,7 @@ export class CodeWriterService {
         before,
       )) {
         await this.move(tx, row, 'recovery_required');
-        await this.changed(tx, row);
+        await this.changed(tx, row.project_id, row.unit_id);
       }
     });
   }
@@ -218,7 +245,7 @@ export class CodeWriterService {
       fence.projectId,
       fence.unitId,
     );
-    await this.changed(tx, row);
+    await this.changed(tx, row.project_id, row.unit_id);
   }
 
   /** A final capture with findings: nothing advanced, and the unit waits for an operator. */
@@ -232,7 +259,7 @@ export class CodeWriterService {
       fence.projectId,
       fence.unitId,
     );
-    await this.changed(tx, row);
+    await this.changed(tx, row.project_id, row.unit_id);
   }
 
   /**
@@ -251,7 +278,7 @@ export class CodeWriterService {
     );
     const principal = `actor:${caller.actorId}`;
     const { requestId, ...body } = input;
-    const journal = new OperationJournal(tx, caller.projectId, principal, requestId, digest(body));
+    const journal = new RequestJournal(tx, caller.projectId, principal, requestId, digest(body));
     const previous = await journal.previous();
     if (previous) return JSON.parse(previous.result_json) as CodeWriterStatus;
     const row = await this.row(tx, caller.projectId, input.unitId);
@@ -282,7 +309,7 @@ export class CodeWriterService {
       caller.projectId,
       input.unitId,
     );
-    await this.changed(tx, row);
+    await this.changed(tx, row.project_id, row.unit_id);
     const result = this.view((await this.row(tx, caller.projectId, input.unitId))!);
     const id = newId('cop');
     await journal.complete(id, 'fence', body, result, at);
@@ -480,9 +507,5 @@ export class CodeWriterService {
       row.project_id,
       row.unit_id,
     );
-  }
-
-  private async changed(tx: Transaction, row: WriterRow): Promise<void> {
-    await this.changes.emit({ kind: 'writer', projectId: row.project_id, unitId: row.unit_id }, tx);
   }
 }

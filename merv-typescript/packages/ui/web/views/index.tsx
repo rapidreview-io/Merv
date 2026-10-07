@@ -1,7 +1,8 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import type { ComponentType } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
-import type { Row, ShellData } from '../shell';
+import type { ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
 import { CodeView } from './code';
 import { ExperimentsView } from './experiments';
@@ -19,7 +20,7 @@ import { TasksView } from './tasks';
 import { WorkView } from './work';
 
 export interface ViewProps {
-  row: Row;
+  row: UiRowDescription;
   shell: ShellData;
 }
 

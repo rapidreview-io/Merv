@@ -5,7 +5,7 @@ import { LoadState, cx, kindOf, words } from '../components';
 import { tailLines, useLiveFeed } from '../live-feed';
 import { rowOf, useRows } from '../navigation';
 import { useReadsAgents } from '../session';
-import type { Row } from '../shell-types';
+import type { UiRowDescription } from '@merv/ui/rows';
 import { ThreadCard, ThreadCompose, ThreadDialog, capital, delivery, isLive } from './threads';
 
 /**
@@ -17,7 +17,7 @@ import { ThreadCard, ThreadCompose, ThreadDialog, capital, delivery, isLive } fr
  */
 
 /** A thread's work as a reader knows it: its kind, as the row that lists it names it, and name. */
-const workOf = (rows: readonly Row[], thread: ProjectThread) => {
+const workOf = (rows: readonly UiRowDescription[], thread: ProjectThread) => {
   const row = thread.workflow ? rowOf(rows, thread.workflow) : undefined;
   const kind = (row && kindOf(row.view.kind).label) || capital(words(thread.workflow));
   return [kind, thread.name].filter(Boolean).join(' · ');

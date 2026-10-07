@@ -179,7 +179,10 @@ async function fixture(
       return row ? { instance: { ...row, data: JSON.parse(row.data_json) } } : null;
     },
   } as unknown as Pick<Workflows, 'relations'>;
-  const work = new NativeWorkService(state, connections, workflows);
+  let publisher: ConstructorParameters<typeof NativeWorkService>[3] = async () => {};
+  const work = new NativeWorkService(state, connections, workflows, (...args) =>
+    publisher(...args),
+  );
   /** A move of the instance as Workflows commits it, delivered to the transition consumer. */
   const move = async (change: { attempt?: string; closed?: boolean }, tx: Transaction) => {
     const instance = (await tx.get<{ revision: number; data_json: string }>(
@@ -262,6 +265,10 @@ async function fixture(
     resources: (fn: typeof resourcePage) => {
       resourcePage = fn;
     },
+    /** How the work's ended workflows register as evidence: by default, at once. */
+    evidence: (fn: typeof publisher) => {
+      publisher = fn;
+    },
   };
 }
 
@@ -285,6 +292,15 @@ test('native work pins one payer and returns only verified capture IDs from the 
     );
     assert.deepEqual(await f.work.captures('project', 'task_work', tx, ['2']), [
       'current',
+      'verified',
+    ]);
+    // A capture refused as one that can never register is no collection.
+    await tx.run(
+      "INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,attempt_ref,error) VALUES('connection','ns_work','wf4','node','2','sandbox_evidence_invalid: refused')",
+    );
+    assert.deepEqual(await f.work.captures('project', 'task_work', tx), [
+      'current',
+      'earlier',
       'verified',
     ]);
   });
@@ -465,7 +481,7 @@ test('closure pages both streams, preserves finalizers, retries evidence indepen
     stopped = false,
     failEvidence = true;
   const published: string[] = [];
-  f.work.setEvidencePublisher(async (work, connection, workflow) => {
+  f.evidence(async (work, connection, workflow) => {
     assert.ok(work.closed_at);
     assert.equal(connection.id, 'connection');
     published.push(workflow.id);

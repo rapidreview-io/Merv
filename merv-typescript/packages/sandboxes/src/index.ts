@@ -239,8 +239,8 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
  * records its open panels ask for, read on this service's own timer, never inside a request.
  */
 export class SandboxService implements Sandboxes {
-  nativeMachines?: NativeMachineReads;
-  #nativeWork?: NativeWorkService;
+  readonly nativeMachines?: NativeMachineReads;
+  readonly #nativeWork?: NativeWorkService;
   readonly #client: SandboxClient;
   readonly #connections: SandboxConnection[];
   readonly #refreshMs: number;
@@ -267,9 +267,20 @@ export class SandboxService implements Sandboxes {
   readonly checks?: SandboxChecks;
   readonly runtimes?: SandboxRuntimes;
 
-  constructor(config: SandboxesConfig) {
+  /** `native` is native compute's work and machine reads, where the deployment configured it. */
+  constructor(
+    config: SandboxesConfig,
+    native: { work?: NativeWorkService; machines?: NativeMachineReads } = {},
+  ) {
     const parsed = configuration.safeParse(config);
     check(parsed.success, 'invalid_sandboxes_config', 'The sandboxes configuration is invalid');
+    this.#nativeWork = native.work;
+    const reader = native.machines;
+    if (reader)
+      this.nativeMachines = {
+        list: (projectId) => this.nativeOperation(() => reader.list(projectId)),
+        record: (projectId, id) => this.nativeOperation(() => reader.record(projectId, id)),
+      };
     this.#connections = parsed.data.connections;
     this.#refreshMs = parsed.data.refreshMs;
     this.#client = new SandboxClient(
@@ -422,23 +433,12 @@ export class SandboxService implements Sandboxes {
     return this.#run(undefined, operation);
   }
 
-  bindNativeWork(work: NativeWorkService): void {
-    this.#nativeWork = work;
-  }
-
   captures: Sandboxes['captures'] = async (projectId, instanceId, tx, attempts) => {
     const work = this.#nativeWork;
     return work
       ? await this.nativeOperation(() => work.captures(projectId, instanceId, tx, attempts))
       : [];
   };
-
-  bindNativeMachines(reader: NativeMachineReads): void {
-    this.nativeMachines = {
-      list: (projectId) => this.nativeOperation(() => reader.list(projectId)),
-      record: (projectId, id) => this.nativeOperation(() => reader.record(projectId, id)),
-    };
-  }
 
   rows(): SandboxRow[] {
     return this.#rows;
@@ -757,14 +757,13 @@ export const sandboxesPlugin = {
       const legacy = config.legacyCaptures;
       if (legacy)
         ctx.inject(['artifacts'], (ctx) => {
-          if (!ctx.artifacts.registerFileProvider) return;
           const download = legacyCaptureDownloads(
             process.env[config.urlEnv],
             config.timeoutMs ?? 15_000,
             legacy,
           );
           ctx.effect(() =>
-            ctx.artifacts.registerFileProvider!('sandboxes', {
+            ctx.artifacts.registerFileProvider('sandboxes', {
               download: (projectId, reference) =>
                 service.nativeOperation(() => download(projectId, reference)),
             }),
@@ -788,7 +787,6 @@ export const sandboxesPlugin = {
           'Configure Sandboxes application authentication',
           503,
         );
-        const service = new SandboxService(config);
         const connections = new NativeConnections(
           ctx.state,
           ctx.scope,
@@ -797,19 +795,16 @@ export const sandboxesPlugin = {
         );
         await ctx.state.migrate('sandboxes-native', nativeMigrations);
         await initializeComputeLedgers(ctx.state);
-        const work = new NativeWorkService(ctx.state, connections, ctx.workflows);
-        service.bindNativeMachines(new NativeMachineReader(ctx.state, connections));
         const evidence = new NativeEvidence(ctx.state, ctx.scope, ctx.artifacts, connections);
-        work.setEvidencePublisher((...args) => evidence.publish(...args));
-        service.bindNativeWork(work);
-        check(
-          ctx.artifacts.registerFileProvider,
-          'sandbox_setup_required',
-          'Native compute requires retained-file support',
-          503,
+        const work = new NativeWorkService(ctx.state, connections, ctx.workflows, (...args) =>
+          evidence.publish(...args),
         );
+        const service = new SandboxService(config, {
+          work,
+          machines: new NativeMachineReader(ctx.state, connections),
+        });
         ctx.effect(() =>
-          ctx.artifacts.registerFileProvider!('sandboxes-native', {
+          ctx.artifacts.registerFileProvider('sandboxes-native', {
             download: (projectId, reference) =>
               service.nativeOperation(() => evidence.download(projectId, reference)),
           }),

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useRef, useState } from 'react';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
-import { StreamError, readEventStream } from './event-stream';
+import { useEventStream } from './event-stream';
 
 /**
  * A worker agent's live stream as the page reads it: the events Sessions relays, merged into
@@ -100,78 +100,31 @@ const eventsOf = (value: object): AgentStreamEvent[] => {
     : [];
 };
 
-const shown = () => document.visibilityState !== 'hidden';
-const onShown = (listener: () => void) => {
-  document.addEventListener('visibilitychange', listener);
-  return () => document.removeEventListener('visibilitychange', listener);
-};
-
-export type AgentStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'refused';
-
 /**
- * One session's stream, read while the page that shows it is mounted and its tab is shown. A
- * hidden tab closes it, and showing the tab again opens it from the last event held, as a
- * dropped connection does after a wait that doubles with each failure, up to half a minute.
- * A stream the server rotates is opened again at once; one the server says has ended is left
- * closed. A snapshot that does not follow what is held (a reader that fell too far behind)
- * starts the timeline over, so no block is joined across what was missed. No url, no stream;
- * a caller that streams another url remounts, so no timeline is carried from one to the other.
+ * One session's stream, read while the page that shows it is mounted and its tab is shown
+ * (`useEventStream`), from the last event held. A snapshot that does not follow what is held (a
+ * reader that fell too far behind) starts the timeline over, so no block is joined across what
+ * was missed. No url, no stream; a caller that streams another url remounts, so no timeline is
+ * carried from one to the other.
  */
 export function useAgentStream(url: string | null) {
   const held = useRef(NO_TIMELINE);
   const [timeline, setTimeline] = useState(NO_TIMELINE);
-  const [state, setState] = useState<AgentStreamState>('connecting');
-  const visible = useSyncExternalStore(onShown, shown);
-  useEffect(() => {
-    if (!visible || !url) return;
-    let stopped = false;
-    let failures = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const controller = new AbortController();
-    const connect = async () => {
-      const since = Date.now();
-      const after = held.current.last;
-      let ended = false;
-      try {
-        const rotated = await readEventStream(
-          after ? `${url}${url.includes('?') ? '&' : '?'}after=${after}` : url,
-          controller.signal,
-          (event, value) => {
-            if (event === 'end') ended = true;
-            if (stopped || (event !== 'snapshot' && event !== 'events')) return;
-            failures = 0;
-            setState('open');
-            const events = eventsOf(value);
-            const gap =
-              event === 'snapshot' &&
-              events.length > 0 &&
-              Math.min(...events.map((item) => item.seq)) > held.current.last + 1;
-            const next = mergeEvents(gap ? NO_TIMELINE : held.current, events);
-            if (next === held.current) return;
-            held.current = next;
-            setTimeline(next);
-          },
-        );
-        if (stopped) return;
-        if (ended) return setState('ended');
-        if (rotated && Date.now() - since > 5000) return void connect();
-      } catch (cause) {
-        if (stopped) return;
-        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status))
-          return setState('refused');
-      }
-      setState('retrying');
-      timer = setTimeout(
-        () => void (stopped || connect()),
-        Math.min(30_000, 1000 * 2 ** failures++),
-      );
-    };
-    void connect();
-    return () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [url, visible]);
+  const state = useEventStream(
+    url,
+    (event, value) => {
+      if (event !== 'snapshot' && event !== 'events') return;
+      const events = eventsOf(value);
+      const gap =
+        event === 'snapshot' &&
+        events.length > 0 &&
+        Math.min(...events.map((item) => item.seq)) > held.current.last + 1;
+      const next = mergeEvents(gap ? NO_TIMELINE : held.current, events);
+      if (next === held.current) return;
+      held.current = next;
+      setTimeline(next);
+    },
+    () => held.current.last,
+  );
   return { timeline, state };
 }

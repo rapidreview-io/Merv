@@ -38,5 +38,5 @@ State is the one door to PostgreSQL: almost every provider, research logic inclu
 
 - `ctx.state`: `transaction`, `read`, `snapshot`, `ambient`, `isolated`, `remember`.
 - `migrate(component, migrations)` for each component's schema.
-- `appendEvent`, `events`, `latestEvents`, `findEvents`, `eventBatch`, `nextEvent`, `eventHead` and `onEventsCommitted` for the domain event log. `findEvents` serves a plugin's narrow question of the log (the first event of a type for a subject, a later one of a type, one command's events), and `nextEvent` finds the next event of some types in any project, which Domain events' dispatcher asks, so no plugin queries the `events` table itself.
+- `appendEvent`, `events`, `latestEvents`, `findEvents`, `nextEvent`, `eventHead` and `onEventsCommitted` for the domain event log. `findEvents` serves a plugin's narrow question of the log (the first event of a type for a subject, a later one of a type, one command's events), and `nextEvent` returns the next event of some types in any project, which Domain events' dispatcher delivers, so no plugin queries the `events` table itself.
 - The `State` and `Transaction` types live in `@merv/contracts`.

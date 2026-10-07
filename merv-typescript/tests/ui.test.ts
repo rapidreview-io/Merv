@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { MervError } from '@merv/contracts';
 import { UiRegistry } from '@merv/ui';
@@ -13,7 +14,6 @@ import { z } from 'zod';
 import { researchUiPlugin } from '@merv/research/ui';
 import { codeUiPlugin } from '@merv/code-work/ui';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
-import type { Row } from '../packages/ui/web/shell-types.js';
 import { createApp } from './fixtures/app.js';
 import { RemoteFixture } from './fixtures/remote-server.js';
 
@@ -442,7 +442,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // Every row above keeps its registration, its record routes and its ui.read; the
   // rail is a separate table of kinds, and these are the places it lists.
   assert.deepEqual(
-    buildNavigation(shell.rows as Row[]).map((section) => [
+    buildNavigation(shell.rows as UiRowDescription[]).map((section) => [
       section.label,
       section.rows.map((entry) => entry.label),
     ]),

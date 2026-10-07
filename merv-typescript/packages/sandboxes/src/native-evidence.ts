@@ -93,10 +93,15 @@ const referenceSchema = z.tuple([
   z.number().int().nonnegative().safe(),
 ]);
 
+/** The passes a Capture may fail in a lasting way before it is refused. */
+const REFUSE_AFTER = 5;
+
 /** Registers immutable native receipts, never downloads/reuploads captured bytes. */
 export class NativeEvidence {
   /** Ended workflows whose every Capture is registered: a later pass has nothing to read. */
   private readonly settled = new Set<string>();
+  /** Lasting failures by Capture, since this process started or the Capture last registered. */
+  private readonly failures = new Map<string, number>();
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -162,161 +167,223 @@ export class NativeEvidence {
         ),
       );
       if (registered) continue;
-      const files: ArtifactCollectionInput['files'] = [];
-      const byName = new Map<string, string>();
-      const add = (name: string, objectId: string, sha256: string, size: number) => {
-        check(
-          relativePath.safeParse(name).success,
-          'sandbox_evidence_invalid',
-          'Capture contains an invalid file path',
-          502,
-        );
-        const existing = byName.get(name);
-        check(
-          existing === undefined || existing === objectId,
-          'sandbox_evidence_invalid',
-          'Capture file paths conflict',
-          502,
-        );
-        if (existing) return;
-        check(
-          files.length < 10_000,
-          'sandbox_evidence_invalid',
-          'Capture exceeds the supported file count',
-          502,
-        );
-        byName.set(name, objectId);
-        files.push({
-          name,
-          size,
-          hash: sha256,
-          provider: 'sandboxes-native',
-          reference: JSON.stringify([
-            1,
-            connection.id,
-            workflow.namespace,
-            work.work_kind,
-            work.work_id,
-            workflow.id,
-            node.id,
-            objectId,
-            sha256,
-            size,
-          ]),
-        });
-      };
-      const manifests: { name: string; objectId: string; sha256: string }[] = [];
-      for (const [name, objectId] of Object.entries(node.result.outputs ?? {}).sort(([a], [b]) =>
-        a < b ? -1 : a > b ? 1 : 0,
-      )) {
-        check(
-          relativePath.safeParse(name).success,
-          'sandbox_evidence_invalid',
-          'Capture contains an invalid output path',
-          502,
-        );
-        const output = await this.inspect(work, connection, workflow.id, objectId);
-        if (output.kind === 'file') add(name, output.id, output.sha256, output.size_bytes);
-        else {
-          manifests.push({ name, objectId: output.id, sha256: output.sha256 });
-          check(
-            output.entries.reduce((sum, file) => sum + file.size_bytes, 0) === output.size_bytes,
-            'sandbox_evidence_invalid',
-            'Native directory size does not match its manifest',
-            502,
-          );
-          for (const file of output.entries)
-            add(`${name}/${file.path}`, file.object_id, file.sha256, file.size_bytes);
-        }
+      try {
+        await this.register(work, connection, workflow, attempt, node);
+        this.failures.delete(this.captureKey(connection, workflow, node.id));
+      } catch (error) {
+        await this.refuse(connection, workflow, attempt, node.id, error);
       }
-      // Terminal failed/cancelled captures may have uploaded some leaves without
-      // finishing their directory manifest. The native service exposes only its
-      // committed immutable leaf receipts; partial state stays explicit.
-      for (const file of await this.retainedFiles(work, connection, workflow.id, node.id)) {
-        const existing = byName.get(file.name);
-        check(
-          !existing || existing === file.object_id,
-          'sandbox_evidence_invalid',
-          'Capture file paths conflict',
-          502,
-        );
-        if (existing) continue;
-        const output = await this.inspect(work, connection, workflow.id, file.object_id);
-        check(
-          output.kind === 'file',
-          'sandbox_evidence_invalid',
-          'Partial capture entry is not a file',
-          502,
-        );
-        add(file.name, output.id, output.sha256, output.size_bytes);
-      }
+    }
+    this.settled.add(key);
+  }
+  /** One Capture as one immutable collection, with its row saying it is registered. */
+  private async register(
+    work: NativeWorkRow,
+    connection: NativeConnectionRow,
+    workflow: z.infer<typeof workflowSchema>,
+    attempt: string,
+    node: z.infer<typeof captureSchema>,
+  ): Promise<void> {
+    const files: ArtifactCollectionInput['files'] = [];
+    const byName = new Map<string, string>();
+    const add = (name: string, objectId: string, sha256: string, size: number) => {
       check(
-        files.length <= 10_000,
+        relativePath.safeParse(name).success,
+        'sandbox_evidence_invalid',
+        'Capture contains an invalid file path',
+        502,
+      );
+      const existing = byName.get(name);
+      check(
+        existing === undefined || existing === objectId,
+        'sandbox_evidence_invalid',
+        'Capture file paths conflict',
+        502,
+      );
+      if (existing) return;
+      check(
+        files.length < 10_000,
         'sandbox_evidence_invalid',
         'Capture exceeds the supported file count',
         502,
       );
-      await this.connections.get(connection.id);
-      await this.state.transaction(async (tx) => {
-        const current = await tx.get<NativeWorkRow>(
-          'SELECT * FROM sandbox_native_work WHERE project_id=? AND work_kind=? AND work_id=?',
-          work.project_id,
-          work.work_kind,
-          work.work_id,
-        );
-        check(
-          current?.connection_id === connection.id &&
-            current.namespace === workflow.namespace &&
-            current.native_grant_id === work.native_grant_id,
-          'sandbox_evidence_invalid',
-          'Capture work binding changed',
-          409,
-        );
-        const active = await tx.get<NativeConnectionRow>(
-          'SELECT * FROM sandbox_native_connections WHERE id=?',
-          connection.id,
-        );
-        check(
-          active && !active.revoked_at && !active.revoke_pending,
-          'sandbox_access_revoked',
-          'Sandboxes connection was disconnected',
-          403,
-        );
-        const caller = await this.scope.serviceActor('sandboxes', work.project_id, tx);
-        const artifact = await this.artifacts.createCollection(
-          caller,
-          {
-            title: clip(`Compute capture — ${workflow.name || workflow.id} / ${node.id}`, 200),
-            sourceKey: `native:${digest([connection.id, workflow.namespace, workflow.id, node.id])}`,
-            files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-            metadata: {
-              ownerKind: work.work_kind,
-              ownerId: work.work_id,
-              attempt,
-              nativeWorkflowId: workflow.id,
-              captureNode: node.id,
-              captureState: node.state,
-              outputState:
-                node.result.output_state ?? (node.state === 'succeeded' ? 'committed' : 'partial'),
-              manifests,
-              evidenceLimitations: workflow.evidence_limitations ?? [],
-            },
-          },
-          tx,
-        );
-        await tx.run(
-          `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,artifact_id,attempt_ref)
-         VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+      byName.set(name, objectId);
+      files.push({
+        name,
+        size,
+        hash: sha256,
+        provider: 'sandboxes-native',
+        reference: JSON.stringify([
+          1,
           connection.id,
           workflow.namespace,
+          work.work_kind,
+          work.work_id,
           workflow.id,
           node.id,
-          artifact.id,
-          attempt,
-        );
+          objectId,
+          sha256,
+          size,
+        ]),
       });
+    };
+    const manifests: { name: string; objectId: string; sha256: string }[] = [];
+    for (const [name, objectId] of Object.entries(node.result.outputs ?? {}).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    )) {
+      check(
+        relativePath.safeParse(name).success,
+        'sandbox_evidence_invalid',
+        'Capture contains an invalid output path',
+        502,
+      );
+      const output = await this.inspect(work, connection, workflow.id, objectId);
+      if (output.kind === 'file') add(name, output.id, output.sha256, output.size_bytes);
+      else {
+        manifests.push({ name, objectId: output.id, sha256: output.sha256 });
+        check(
+          output.entries.reduce((sum, file) => sum + file.size_bytes, 0) === output.size_bytes,
+          'sandbox_evidence_invalid',
+          'Native directory size does not match its manifest',
+          502,
+        );
+        for (const file of output.entries)
+          add(`${name}/${file.path}`, file.object_id, file.sha256, file.size_bytes);
+      }
     }
-    this.settled.add(key);
+    // Terminal failed/cancelled captures may have uploaded some leaves without
+    // finishing their directory manifest. The native service exposes only its
+    // committed immutable leaf receipts; partial state stays explicit.
+    for (const file of await this.retainedFiles(work, connection, workflow.id, node.id)) {
+      const existing = byName.get(file.name);
+      check(
+        !existing || existing === file.object_id,
+        'sandbox_evidence_invalid',
+        'Capture file paths conflict',
+        502,
+      );
+      if (existing) continue;
+      const output = await this.inspect(work, connection, workflow.id, file.object_id);
+      check(
+        output.kind === 'file',
+        'sandbox_evidence_invalid',
+        'Partial capture entry is not a file',
+        502,
+      );
+      add(file.name, output.id, output.sha256, output.size_bytes);
+    }
+    check(
+      files.length <= 10_000,
+      'sandbox_evidence_invalid',
+      'Capture exceeds the supported file count',
+      502,
+    );
+    await this.connections.get(connection.id);
+    await this.state.transaction(async (tx) => {
+      const current = await tx.get<NativeWorkRow>(
+        'SELECT * FROM sandbox_native_work WHERE project_id=? AND work_kind=? AND work_id=?',
+        work.project_id,
+        work.work_kind,
+        work.work_id,
+      );
+      check(
+        current?.connection_id === connection.id &&
+          current.namespace === workflow.namespace &&
+          current.native_grant_id === work.native_grant_id,
+        'sandbox_evidence_invalid',
+        'Capture work binding changed',
+        409,
+      );
+      const active = await tx.get<NativeConnectionRow>(
+        'SELECT * FROM sandbox_native_connections WHERE id=?',
+        connection.id,
+      );
+      check(
+        active && !active.revoked_at && !active.revoke_pending,
+        'sandbox_access_revoked',
+        'Sandboxes connection was disconnected',
+        403,
+      );
+      const caller = await this.scope.serviceActor('sandboxes', work.project_id, tx);
+      const artifact = await this.artifacts.createCollection(
+        caller,
+        {
+          title: clip(`Compute capture — ${workflow.name || workflow.id} / ${node.id}`, 200),
+          sourceKey: `native:${digest([connection.id, workflow.namespace, workflow.id, node.id])}`,
+          files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+          metadata: {
+            ownerKind: work.work_kind,
+            ownerId: work.work_id,
+            attempt,
+            nativeWorkflowId: workflow.id,
+            captureNode: node.id,
+            captureState: node.state,
+            outputState:
+              node.result.output_state ?? (node.state === 'succeeded' ? 'committed' : 'partial'),
+            manifests,
+            evidenceLimitations: workflow.evidence_limitations ?? [],
+          },
+        },
+        tx,
+      );
+      await tx.run(
+        `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,artifact_id,attempt_ref)
+       VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+        connection.id,
+        workflow.namespace,
+        workflow.id,
+        node.id,
+        artifact.id,
+        attempt,
+      );
+    });
+  }
+  private captureKey(
+    connection: NativeConnectionRow,
+    workflow: { namespace: string; id: string },
+    node: string,
+  ) {
+    return JSON.stringify([connection.id, workflow.namespace, workflow.id, node]);
+  }
+  /**
+   * A Capture that fails in a lasting way on REFUSE_AFTER passes is recorded as refused, with its
+   * error and no collection, so its work rests instead of being polled for ever. An unreachable
+   * service, a disconnection or a binding that moved says nothing about the Capture and never
+   * counts.
+   */
+  private async refuse(
+    connection: NativeConnectionRow,
+    workflow: { namespace: string; id: string },
+    attempt: string,
+    node: string,
+    error: unknown,
+  ): Promise<void> {
+    const lasting =
+      error instanceof MervError &&
+      error.code !== 'sandbox_unavailable' &&
+      error.status !== 403 &&
+      error.status !== 409 &&
+      error.status < 503;
+    if (!lasting) throw error;
+    const key = this.captureKey(connection, workflow, node);
+    const failures = (this.failures.get(key) ?? 0) + 1;
+    if (failures < REFUSE_AFTER) {
+      this.failures.set(key, failures);
+      throw error;
+    }
+    this.failures.delete(key);
+    await this.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,attempt_ref,error)
+         VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+        connection.id,
+        workflow.namespace,
+        workflow.id,
+        node,
+        attempt,
+        clip(`${error.code}: ${error.message}`, 500),
+      ),
+    );
   }
   private async captures(work: NativeWorkRow, connection: NativeConnectionRow, workflowId: string) {
     const captures: z.infer<typeof captureSchema>[] = [];
@@ -447,7 +514,7 @@ export class NativeEvidence {
         `SELECT w.* FROM sandbox_native_work w WHERE w.project_id=? AND w.work_kind=? AND w.work_id=?
        AND w.connection_id=? AND w.namespace=? AND EXISTS (
          SELECT 1 FROM sandbox_native_captures c WHERE c.connection_id=w.connection_id
-         AND c.namespace=w.namespace AND c.workflow_id=? AND c.node_id=?)`,
+         AND c.namespace=w.namespace AND c.workflow_id=? AND c.node_id=? AND c.artifact_id IS NOT NULL)`,
         projectId,
         kind,
         workId,

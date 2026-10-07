@@ -103,9 +103,7 @@ test('a project reconciliation passes over ended units whose writer closed', asy
   const measure = async () => {
     statements = 0;
     counting = true;
-    await state.transaction((tx) =>
-      core.changes.emit({ kind: 'binding', projectId: project.id }, tx),
-    );
+    await state.transaction((tx) => core.writers.changed(tx, project.id));
     counting = false;
     return statements;
   };

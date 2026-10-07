@@ -1,4 +1,13 @@
-import { check, MervError, sha256Hex, type Json } from '@merv/contracts';
+import {
+  check,
+  fetchJson,
+  MervError,
+  origin,
+  OutboundError,
+  record,
+  sha256Hex,
+  type Json,
+} from '@merv/contracts';
 import type { SandboxConnection } from './types.js';
 
 const grant = /^sbxt_[A-Za-z0-9_-]{4,512}$/;
@@ -16,58 +25,13 @@ const walletReasons = new Set([
 ]);
 const bodyLimit = 4_000_000;
 
-/** Count decoded response bytes as they arrive, even with absent/compressed Content-Length. */
-async function boundedText(response: Response, limit: number): Promise<string> {
-  const length = Number(response.headers.get('content-length') ?? 0);
-  check(
-    Number.isSafeInteger(length) && length >= 0 && length <= limit,
-    'sandbox_unavailable',
-    'merv-sandboxes answered with an unusable body',
-    502,
-  );
-  const reader = response.body?.getReader();
-  if (!reader) return '';
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      size += part.value.byteLength;
-      check(size <= limit, 'sandbox_unavailable', 'The answer is too large', 502);
-      chunks.push(part.value);
-    }
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-      Buffer.concat(chunks, size),
-    );
-  } finally {
-    // The transport's finally cancels unfinished bodies after this lock is released.
-    reader.releaseLock();
-  }
-}
-
-/** The one origin this plugin may call, taken from the operator's environment. */
-function sandboxOrigin(value: unknown): string {
-  let url: URL | undefined;
-  try {
-    url = new URL(String(value));
-  } catch {
-    url = undefined;
-  }
-  check(
-    url &&
-      ['http:', 'https:'].includes(url.protocol) &&
-      !!url.hostname &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      ['', '/'].includes(url.pathname),
+/** An origin the operator configured: the service's, a bucket's, or Merv's own public one. */
+export const sandboxOrigin = (value: unknown) =>
+  origin(
+    value,
     'invalid_sandboxes_config',
-    'The sandboxes URL must be an HTTP(S) origin without credentials, query or path',
+    'Sandboxes requires an HTTPS origin without credentials, query or path',
   );
-  return url.origin;
-}
 
 /** Service routes are plain `/v1` paths; `{id}` is the only substitution, and never a path. */
 export function sandboxRoute(path: string, id?: string): string {
@@ -86,6 +50,47 @@ export function sandboxRoute(path: string, id?: string): string {
     'The service route is not a plain /v1 path',
   );
   return resolved;
+}
+
+/**
+ * A refused call: a redirect never followed, and for a write the service's own error code and
+ * message (a lease that cannot be renewed, a budget that is spent), nothing else from its body.
+ */
+function refusal(status: number, said: Record<string, unknown> | undefined): MervError {
+  if (status >= 300 && status < 400)
+    return new MervError('sandbox_redirect_refused', 'merv-sandboxes answered a redirect', 502);
+  const error = record(said?.error);
+  const code = error?.code;
+  const reason = record(error?.details)?.reason;
+  const envelope =
+    typeof code === 'string' && errorCode.test(code)
+      ? {
+          code: `sandbox_${typeof reason === 'string' && walletReasons.has(reason) ? reason : code}`,
+          message:
+            typeof error?.message === 'string' && error.message
+              ? error.message.slice(0, 200)
+              : code,
+        }
+      : undefined;
+  return new MervError(
+    envelope?.code ??
+      (status === 404
+        ? 'sandbox_not_found'
+        : status < 500
+          ? 'sandbox_forbidden'
+          : 'sandbox_unavailable'),
+    envelope?.message ?? `merv-sandboxes refused the request (HTTP ${status})`,
+    // The service's 401 is about Merv's grant, never the caller's own sign-in.
+    envelope
+      ? status === 401
+        ? 403
+        : status
+      : status === 429 || status === 404
+        ? status
+        : status < 500
+          ? 403
+          : 503,
+  );
 }
 
 /** The slowest link a part upload is still given time to finish on: one megabit a second. */
@@ -258,105 +263,28 @@ export class SandboxClient {
       'Only the configured sandbox origin may be called',
       403,
     );
-    let response: Response;
     try {
-      response = await fetch(url, {
+      return await fetchJson(url, secret, {
         method,
-        // No redirects: a redirect would send this grant somewhere nobody authorized.
-        redirect: 'manual',
         headers: {
-          authorization: `Bearer ${secret}`,
           'x-sandbox-namespace': connection.namespace,
           ...(connection.subject ? { 'x-sandbox-subject': connection.subject } : {}),
-          accept: 'application/json',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        // A write is the caller's own act on one sandbox it named, and why the service refused
+        // it is the answer; a read's failure body can carry signed URLs and policy detail.
+        ...(body !== undefined && { body, errorBytes: 4096 }),
+        anyJson: true,
+        maxBytes: bodyLimit,
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
-    } catch {
-      throw new MervError('sandbox_unavailable', 'merv-sandboxes is unreachable', 503);
-    }
-    try {
-      const status = response.status;
-      if (status === 0 || (status >= 300 && status < 400))
-        throw new MervError('sandbox_redirect_refused', 'merv-sandboxes answered a redirect', 502);
-      if (status >= 400) throw await this.#refusal(status, response, body !== undefined);
-      const type = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-      check(
-        type === 'application/json',
-        'sandbox_unavailable',
-        'merv-sandboxes answered with an unusable body',
-        502,
-      );
-      try {
-        return JSON.parse(await boundedText(response, bodyLimit)) as Json;
-      } catch (error) {
-        if (error instanceof MervError) throw error;
+    } catch (error) {
+      const failure = error instanceof OutboundError ? error.failure : { kind: 'network' as const };
+      if (failure.kind === 'status') throw refusal(failure.status, (error as OutboundError).body);
+      if (failure.kind === 'too_large')
+        throw new MervError('sandbox_unavailable', 'The answer is too large', 502);
+      if (failure.kind === 'invalid')
         throw new MervError('sandbox_unavailable', 'merv-sandboxes answered invalid JSON', 502);
-      }
-    } finally {
-      // Rejected headers, redirects and undisclosed errors never leave an unread stream
-      // occupying a connection. Cancellation failures must not replace the public error.
-      await response.body?.cancel().catch(() => {});
-    }
-  }
-
-  /**
-   * A read's failure body can carry signed URLs and policy detail, so a read reports the shape
-   * only. A write is the caller's own act on one sandbox it named, and why the service refused
-   * it — a lease that cannot be renewed, a budget that is spent — is the answer: the service's
-   * own error code and message are reported, and nothing else from the body.
-   */
-  async #refusal(status: number, response: Response, disclose: boolean): Promise<MervError> {
-    const envelope = disclose ? await this.#envelope(response) : undefined;
-    return new MervError(
-      envelope
-        ? `sandbox_${envelope.reason && walletReasons.has(envelope.reason) ? envelope.reason : envelope.code}`
-        : status === 404
-          ? 'sandbox_not_found'
-          : status < 500
-            ? 'sandbox_forbidden'
-            : 'sandbox_unavailable',
-      envelope?.message ?? `merv-sandboxes refused the request (HTTP ${status})`,
-      // The service's 401 is about Merv's grant, never the caller's own sign-in.
-      envelope
-        ? status === 401
-          ? 403
-          : status
-        : status === 429
-          ? 429
-          : status === 404
-            ? 404
-            : status < 500
-              ? 403
-              : 503,
-    );
-  }
-
-  async #envelope(
-    response: Response,
-  ): Promise<{ code: string; message: string; reason?: string } | undefined> {
-    try {
-      const text = await boundedText(response, 4096);
-      const error = (
-        JSON.parse(text) as {
-          error?: { code?: unknown; message?: unknown; details?: { reason?: unknown } };
-        }
-      ).error;
-      const code = error?.code;
-      return typeof code === 'string' && errorCode.test(code)
-        ? {
-            code,
-            reason: typeof error?.details?.reason === 'string' ? error.details.reason : undefined,
-            message:
-              typeof error?.message === 'string' && error.message
-                ? error.message.slice(0, 200)
-                : code,
-          }
-        : undefined;
-    } catch {
-      return undefined;
+      throw new MervError('sandbox_unavailable', 'merv-sandboxes is unreachable', 503);
     }
   }
 }

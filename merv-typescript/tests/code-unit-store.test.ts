@@ -140,7 +140,10 @@ test('research records roll facts back with their owner', async (t) => {
     ),
     { code: 'code_acceptance_conflict' },
   );
-  assert.deepEqual((await f.store.status(f.caller)).blockers, []);
+  assert.deepEqual(
+    (await f.state.transaction((tx) => f.store.readStatus(f.caller, tx))).blockers,
+    [],
+  );
 });
 
 test('Code storage imports and rebinds while research retains unfinished bases and their commits', async (t) => {
@@ -229,7 +232,10 @@ test('Code storage imports and rebinds while research retains unfinished bases a
     );
     assert.equal((await rebind()).status, 'completed');
     await f.reopen();
-    assert.equal((await f.store.status(f.caller)).project?.repositoryId, 'renamed');
+    assert.equal(
+      (await f.state.transaction((tx) => f.store.readStatus(f.caller, tx))).project?.repositoryId,
+      'renamed',
+    );
     const tables = await f.state.read((sql) =>
       sql.all<{ name: string }>(
         "SELECT table_name AS name FROM information_schema.tables WHERE table_schema=current_schema() AND table_type='BASE TABLE'",

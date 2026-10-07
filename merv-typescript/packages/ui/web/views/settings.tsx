@@ -1,10 +1,11 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import { useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
 import { EmptyState, KV, LoadState, Ruled, StatusPill, Summary, col, cx } from '../components';
 import { ThreeStates } from '../states';
-import type { PluginState, Row } from '../shell-types';
+import type { PluginState } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
 import { SandboxesConnection } from './sandboxes';
@@ -98,7 +99,7 @@ const unwellFirst = <T,>(items: T[], well: (item: T) => boolean): T[] =>
 
 function Plugins({ shell }: ViewProps) {
   const active = (plugin: PluginState) => plugin.state === 'active';
-  const ready = (row: Row) => (row.status.state ?? 'ready') === 'ready';
+  const ready = (row: UiRowDescription) => (row.status.state ?? 'ready') === 'ready';
   const off = shell.plugins.filter((plugin) => !active(plugin));
   const failed = off.filter((plugin) => plugin.state === 'failed').length;
   const degraded = shell.rows.filter((row) => !ready(row)).length;
@@ -147,12 +148,12 @@ function Plugins({ shell }: ViewProps) {
           rows={unwellFirst(shell.rows, ready)}
           keyOf={(row) => row.id}
           columns={[
-            col<Row>('label', 'Row', (row) => <strong>{row.label}</strong>),
-            col<Row>('group', 'Group', (row) => row.group),
-            col<Row>('kind', 'View kind', (row) => (
+            col<UiRowDescription>('label', 'Row', (row) => <strong>{row.label}</strong>),
+            col<UiRowDescription>('group', 'Group', (row) => row.group),
+            col<UiRowDescription>('kind', 'View kind', (row) => (
               <span className="mono faint">{row.view.kind}</span>
             )),
-            col<Row>('status', 'Status', (row) => (
+            col<UiRowDescription>('status', 'Status', (row) => (
               <StatusPill value={row.status.state ?? 'ready'} />
             )),
           ]}

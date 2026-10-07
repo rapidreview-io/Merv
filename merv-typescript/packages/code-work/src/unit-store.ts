@@ -399,12 +399,6 @@ export class WorkUnitRecords {
       return await this.record(tx, row);
     });
   }
-  async status(caller: Caller): Promise<CodeProjectStatus> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.state.transaction((tx) => this.readStatus(caller, tx));
-  }
-
   async readStatus(caller: Caller, tx: Transaction): Promise<CodeProjectStatus> {
     await this.scope.require(caller, 'read', tx);
     return {

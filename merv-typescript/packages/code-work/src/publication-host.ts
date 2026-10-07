@@ -1,8 +1,10 @@
 import type { CodeWriterService } from '@merv/code/writers';
-import type { GitHubBinding } from '@merv/code/github';
+import type { CodeGitHubService } from '@merv/code/github';
 import type { GitHubClient } from '@merv/code/github-client';
 import { parseCodeInput } from '@merv/code/input';
 import type { MirrorTransport } from '@merv/code/store/mirror';
+import type { CodeStore } from '@merv/code/store/operations';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import {
   canonical,
@@ -13,13 +15,18 @@ import {
   type Caller,
   type Reviews,
   type Scope,
+  type Sql,
   type State,
   type Transaction,
   requireHuman,
   idSchema,
 } from '@merv/contracts';
-import type { CodePublication, CodeProjectStatus } from './models.js';
+import type { CodePublication, CodePublicationControls } from './models.js';
+import type { CodeUnitService } from './units.js';
 import { z } from 'zod';
+
+/** How many times verification imports one merge commit before an operator imports it. */
+const PUBLICATION_IMPORT_ATTEMPTS = 3;
 
 export const publicationApproval = {
   context: 'merv/consolidation-approved',
@@ -45,7 +52,55 @@ export class PublicationIncident extends MervError {
     );
   }
 }
-type Controls = Omit<NonNullable<CodeProjectStatus['publication']>['controls'], 'blockers'>;
+
+/** The GitHub repository, connection revision and main branch a canary was recorded for. */
+export const bindingHash = (repositoryId: number, revision: number, baseBranch: string) =>
+  digest({ repositoryId, revision, baseBranch });
+
+type PublicationBlocker =
+  | 'code_publication_disabled'
+  | 'code_rules_visibility_incomplete'
+  | 'code_publication_canary_required';
+/**
+ * What stops a project publishing to GitHub, read from its controls: a disablement, rules
+ * nobody could read and nobody acknowledged, and no canary. Given the binding a publication
+ * goes to, only a passing canary recorded for exactly that binding counts.
+ */
+export function publicationGate(
+  controls: CodePublicationControls,
+  binding?: string,
+): PublicationBlocker[] {
+  const canary =
+    controls.canary &&
+    (binding === undefined ||
+      (!controls.canary.staleMerged && controls.canary.bindingHash === binding));
+  return [
+    ...(controls.disabled ? (['code_publication_disabled'] as const) : []),
+    ...(controls.visibility?.incomplete && !controls.acknowledgement
+      ? (['code_rules_visibility_incomplete'] as const)
+      : []),
+    ...(!canary ? (['code_publication_canary_required'] as const) : []),
+  ];
+}
+
+/** A project's publication controls; none recorded are empty ones. */
+export async function publicationControls(
+  sql: Sql,
+  projectId: string,
+): Promise<CodePublicationControls> {
+  const row = await sql.get<{ record_json: string }>(
+    'SELECT record_json FROM code_publication_controls WHERE project_id=?',
+    projectId,
+  );
+  return row ? JSON.parse(row.record_json) : {};
+}
+
+/** What Code Work has started by the time its publications open. */
+export interface PublicationCode {
+  store: Pick<CodeStore, 'contains' | 'importRepository'>;
+  transport: MirrorTransport;
+  units: Pick<CodeUnitService, 'imported' | 'records'>;
+}
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
 export class PublicationHost {
@@ -54,39 +109,24 @@ export class PublicationHost {
     private scope: Scope,
     private reviews: Pick<Reviews, 'get'>,
     private repositories: CodeRepositories,
-    private mirror: () => MirrorTransport,
-    private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
-    private binding: (caller: Caller, tx: Transaction) => Promise<GitHubBinding>,
+    private github: Pick<CodeGitHubService, 'publicationBinding'>,
     private writers: CodeWriterService,
-    private moveMain: (
-      caller: Caller,
-      oid: string,
-      tx: Transaction,
-      expectedOid?: string,
-    ) => Promise<void>,
-    private changed: (projectId: string, tx: Transaction) => Promise<void>,
+    private code: PublicationCode,
   ) {}
-  async review(caller: Caller, reviewId: string, tx: Transaction) {
-    return await this.reviews.get(caller, reviewId, tx);
-  }
   async check(caller: Caller, record: CodePublication, tx: Transaction) {
     if (record.destination !== 'local') {
-      const controls = await this.controls(caller.projectId, tx);
+      const gate = publicationGate(
+        await publicationControls(tx, caller.projectId),
+        bindingHash(record.repositoryId, record.connectionRevision, record.baseBranch),
+      );
       check(
-        !controls.disabled,
+        !gate.includes('code_publication_disabled'),
         'code_publication_disabled',
         'A stale-merge canary failed. An operator must repair enforcement and clear the publication disablement.',
         409,
       );
       check(
-        controls.canary &&
-          !controls.canary.staleMerged &&
-          controls.canary.bindingHash ===
-            digest({
-              repositoryId: record.repositoryId,
-              revision: record.connectionRevision,
-              baseBranch: record.baseBranch,
-            }),
+        !gate.includes('code_publication_canary_required'),
         'code_publication_canary_required',
         'Run the release matrix with this App and rules, then record the successful canary before enabling publication.',
         409,
@@ -104,7 +144,7 @@ export class PublicationHost {
       'The publication no longer matches its accepted review',
       409,
     );
-    const review = await this.review(caller, record.review!.id, tx);
+    const review = await this.reviews.get(caller, record.review!.id, tx);
     check(
       review.verdict === 'pass' &&
         review.reviewerId === record.review!.actorId &&
@@ -127,7 +167,7 @@ export class PublicationHost {
    * An accepted unit has no producing state to return to, so this is all an outcome changes.
    */
   async reconcile(caller: Caller, tx: Transaction) {
-    await this.changed(caller.projectId, tx);
+    await this.code.units.imported(tx, caller.projectId);
   }
   async ancestor(projectId: string, base: string, head: string) {
     const repos = this.repositories;
@@ -163,7 +203,7 @@ export class PublicationHost {
   }
   async snapshot(caller: Caller, record: CodePublication) {
     await this.retainSnapshot(caller, record);
-    const mirror = this.mirror();
+    const mirror = this.code.transport;
     const remote = `refs/heads/${record.branch}`;
     const current = await mirror.lsRemote(caller.projectId, remote);
     check(
@@ -186,12 +226,39 @@ export class PublicationHost {
       );
     }
   }
+  /** Code admits the merge commit from GitHub's main before anything reads it. */
   async import(caller: Caller, record: CodePublication, oid: string) {
-    await this.imported(caller, `refs/heads/${record.baseBranch}`, oid);
+    const { store } = this.code;
+    if (await store.contains(caller.projectId, oid)) return;
+    const ref = `refs/heads/${record.baseBranch}`;
+    // A failed import is final under its request id, so each call past one starts the next
+    // attempt. Code's operation journal holds every attempt, and so the bound.
+    const started = now();
+    let operation: CodeStoreOperation | undefined;
+    for (let attempt = 1; attempt <= PUBLICATION_IMPORT_ATTEMPTS; attempt++) {
+      operation = await store.importRepository(caller, {
+        source: 'github',
+        ref,
+        requestId: `publication-import:${oid}${attempt > 1 ? `:${attempt}` : ''}`,
+      });
+      if (operation.status !== 'failed' || operation.createdAt >= started) break;
+    }
+    check(
+      operation!.status !== 'failed' || operation!.createdAt >= started,
+      'code_publication_import_failed',
+      `Importing the merge commit failed ${PUBLICATION_IMPORT_ATTEMPTS} times; read code.status and import ${ref} with code-import`,
+      409,
+    );
+    check(
+      operation!.status === 'completed' && (await store.contains(caller.projectId, oid)),
+      'code_publication_import_pending',
+      'The publication commit must finish Code admission before verification; retry this same request',
+      409,
+    );
   }
   async main(caller: Caller, oid: string, tx: Transaction, expectedOid?: string) {
-    await this.moveMain(caller, oid, tx, expectedOid);
-    await this.changed(caller.projectId, tx);
+    await this.code.units.records.moveMain(caller, oid, tx, expectedOid);
+    await this.code.units.imported(tx, caller.projectId);
   }
   async verifyLocal(caller: Caller, record: CodePublication) {
     check(
@@ -232,14 +299,14 @@ export class PublicationHost {
       parents.length === 2 && (await this.ancestor(caller.projectId, parents[0], record.headOid));
     if (!contained)
       await this.state.transaction(async (tx) => {
-        const controls = await this.controls(caller.projectId, tx);
+        const controls = await publicationControls(tx, caller.projectId);
         controls.disabled = true;
         controls.canary = {
-          bindingHash: digest({
-            repositoryId: record.repositoryId,
-            revision: record.connectionRevision,
-            baseBranch: record.baseBranch,
-          }),
+          bindingHash: bindingHash(
+            record.repositoryId,
+            record.connectionRevision,
+            record.baseBranch,
+          ),
           staleMerged: true,
           actorId: caller.actorId,
           reason: `Publication ${record.proposalId} merged outside reviewed ancestry at ${oid}`,
@@ -284,7 +351,7 @@ export class PublicationHost {
     }
     await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const controls = await this.controls(caller.projectId, tx);
+      const controls = await publicationControls(tx, caller.projectId);
       controls.visibility = { incomplete: evidence.incomplete, evidence, observedAt: now() };
       await this.saveControls(caller.projectId, controls, tx);
     });
@@ -299,14 +366,11 @@ export class PublicationHost {
     );
     return evidence.required;
   }
-  private async controls(projectId: string, tx: Transaction): Promise<Controls> {
-    const row = await tx.get<{ record_json: string }>(
-      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
-      projectId,
-    );
-    return row ? JSON.parse(row.record_json) : {};
-  }
-  private async saveControls(projectId: string, controls: Controls, tx: Transaction) {
+  private async saveControls(
+    projectId: string,
+    controls: CodePublicationControls,
+    tx: Transaction,
+  ) {
     await tx.run(
       'INSERT INTO code_publication_controls(project_id,record_json) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET record_json=excluded.record_json',
       projectId,
@@ -316,17 +380,8 @@ export class PublicationHost {
   async status(caller: Caller) {
     return this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const controls = await this.controls(caller.projectId, tx);
-      return {
-        ...controls,
-        blockers: [
-          ...(controls.disabled ? ['code_publication_disabled'] : []),
-          ...(controls.visibility?.incomplete && !controls.acknowledgement
-            ? ['code_rules_visibility_incomplete']
-            : []),
-          ...(!controls.canary ? ['code_publication_canary_required'] : []),
-        ],
-      };
+      const controls = await publicationControls(tx, caller.projectId);
+      return { ...controls, blockers: publicationGate(controls) };
     });
   }
   async control(caller: Caller, value: unknown) {
@@ -352,40 +407,26 @@ export class PublicationHost {
           'Request id has different publication control input',
           409,
         );
-        return JSON.parse(previous.result_json) as Controls;
+        return JSON.parse(previous.result_json) as CodePublicationControls;
       }
-      const controls = await this.controls(caller.projectId, tx);
+      const controls = await publicationControls(tx, caller.projectId);
       const evidence = { actorId: caller.actorId, reason: input.reason, at: now() };
       if (input.action === 'acknowledge_rules') controls.acknowledgement = evidence;
-      if (input.action === 'record_canary') {
-        const binding = await this.binding(caller, tx);
-        controls.canary = {
-          ...evidence,
-          staleMerged: input.staleMerged!,
-          bindingHash: digest({
-            repositoryId: binding.repository.id,
-            revision: binding.revision,
-            baseBranch: binding.baseBranch,
-          }),
-        };
-        if (input.staleMerged) controls.disabled = true;
-      }
-      if (input.action === 'clear') {
-        const binding = await this.binding(caller, tx);
-        check(
-          controls.canary &&
-            !controls.canary.staleMerged &&
-            controls.canary.bindingHash ===
-              digest({
-                repositoryId: binding.repository.id,
-                revision: binding.revision,
-                baseBranch: binding.baseBranch,
-              }),
-          'code_publication_disabled',
-          'Record a passing canary after repairing enforcement before clearing disablement',
-          409,
-        );
-        controls.disabled = false;
+      else {
+        const binding = await this.github.publicationBinding(caller, tx);
+        const hash = bindingHash(binding.repository.id, binding.revision, binding.baseBranch);
+        if (input.action === 'record_canary') {
+          controls.canary = { ...evidence, staleMerged: input.staleMerged!, bindingHash: hash };
+          if (input.staleMerged) controls.disabled = true;
+        } else {
+          check(
+            !publicationGate(controls, hash).includes('code_publication_canary_required'),
+            'code_publication_disabled',
+            'Record a passing canary after repairing enforcement before clearing disablement',
+            409,
+          );
+          controls.disabled = false;
+        }
       }
       await this.saveControls(caller.projectId, controls, tx);
       // Turning publication off or on again changes what every unit waiting on one is waiting

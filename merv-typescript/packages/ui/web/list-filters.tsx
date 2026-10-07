@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import {
   useCallback,
   useEffect,
@@ -21,7 +22,7 @@ import type { ApiError } from './api';
 import { KindLabel, LoadState, SearchField, cx, useOpenedForm, words } from './components';
 import { homeOf } from './navigation';
 import { OPEN } from './states';
-import type { Row, ShellData } from './shell-types';
+import type { ShellData } from './shell-types';
 
 /** Identity-based narrowing, the only axis beside the search box. */
 export type Scope = 'mine' | 'everyone';
@@ -732,7 +733,7 @@ function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; ba
  * it sent you to, under that record's own URL and divided by one hairline; narrower
  * than that the record replaces the list.
  */
-export function splitRoutes<P extends { row: Row; shell: ShellData }>(
+export function splitRoutes<P extends { row: UiRowDescription; shell: ShellData }>(
   Index: ComponentType<P>,
   Detail: ComponentType<P>,
 ) {
@@ -760,7 +761,9 @@ export function splitRoutes<P extends { row: Row; shell: ShellData }>(
  * record route stays exactly where it was, so every link and pasted URL still lands, the
  * record is the whole page, and its index and its Escape go to the page that draws it.
  */
-export function recordRoutes<P extends { row: Row; shell: ShellData }>(Detail: ComponentType<P>) {
+export function recordRoutes<P extends { row: UiRowDescription; shell: ShellData }>(
+  Detail: ComponentType<P>,
+) {
   return function Routed(props: P) {
     const home = homeOf(props.shell.rows).to;
     return (

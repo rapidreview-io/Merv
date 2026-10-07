@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
+  origin,
   plain,
   MervError,
   sha256Hex,
@@ -191,20 +192,7 @@ export class PiCore {
       'Pi needs a private signing secret and an API URL',
       503,
     );
-    if (this.config.baseUrl) {
-      const url = new URL(this.config.baseUrl);
-      check(
-        !url.username &&
-          !url.password &&
-          !url.search &&
-          !url.hash &&
-          url.pathname === '/' &&
-          (url.protocol === 'https:' ||
-            (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))),
-        'pi_configuration',
-        'Pi requires an HTTPS API origin',
-      );
-    }
+    origin(this.config.baseUrl, 'pi_configuration', 'Pi requires an HTTPS API origin');
   }
 
   ready(): void {
