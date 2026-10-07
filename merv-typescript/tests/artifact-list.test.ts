@@ -77,16 +77,22 @@ test('list pages newest first across ties with no gap or duplicate', async (t) =
   }
   assert.deepEqual(paged, newestFirst(1205));
   // A session's own outputs page the same way.
-  const session = await f.artifacts.list(f.caller, { session: 'session_a', limit: 300 });
+  const session = await f.artifacts.list(f.caller, { sessions: ['session_a'], limit: 300 });
   const rest = await f.artifacts.list(f.caller, {
-    session: 'session_a',
+    sessions: ['session_a'],
     before: session.at(-1)!.id,
   });
   assert.deepEqual(
     [...ids(session), ...ids(rest)],
     newestFirst(1205, (n) => n % 3 === 0),
   );
-  assert.deepEqual(await f.artifacts.list(f.caller, { session: 'session_c' }), []);
+  assert.deepEqual(await f.artifacts.list(f.caller, { sessions: ['session_c'] }), []);
+  // Several sessions' outputs are one read, newest first across them, bounded in all.
+  assert.deepEqual(
+    ids(await f.artifacts.list(f.caller, { sessions: ['session_a', 'session_b'], limit: 50 })),
+    newestFirst(1205, (n) => n % 3 !== 2).slice(0, 50),
+  );
+  assert.deepEqual(await f.artifacts.list(f.caller, { sessions: [] }), []);
   // Another project's list sees none of them.
   assert.deepEqual(await f.artifacts.list(f.outsider), []);
 });
@@ -107,7 +113,8 @@ test('list refuses a cursor outside the project and malformed queries', async (t
     { limit: '10' },
     { before: '' },
     { before: 7 },
-    { session: '' },
+    { sessions: [''] },
+    { sessions: 'session_a' },
   ])
     await assert.rejects(f.artifacts.list(f.caller, query as never), {
       code: 'invalid_artifact',
@@ -143,7 +150,7 @@ test('list queries walk the project and session indexes', async (t) => {
   const plans = await f.state.transaction(async (tx) => {
     await tx.run('SET LOCAL enable_seqscan = off');
     const all = t.mock.method(tx, 'all');
-    const plan = async (query: { before?: string; session?: string }) => {
+    const plan = async (query: { before?: string; sessions?: string[] }) => {
       all.mock.resetCalls();
       await f.artifacts.list(f.caller, query, tx);
       assert.equal(all.mock.callCount(), 1);
@@ -155,8 +162,8 @@ test('list queries walk the project and session indexes', async (t) => {
     return {
       project: await plan({}),
       paged: await plan({ before: id(10) }),
-      session: await plan({ session: 'session_a' }),
-      sessionPaged: await plan({ session: 'session_a', before: id(10) }),
+      session: await plan({ sessions: ['session_a'] }),
+      sessionPaged: await plan({ sessions: ['session_a'], before: id(10) }),
     };
   });
   for (const name of ['project', 'paged'] as const)

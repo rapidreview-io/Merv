@@ -189,9 +189,11 @@ export interface UnitFiles {
   made?: readonly UnitFile['artifact'][];
 }
 
+/** How many files a unit's sessions made its sidebar reads, newest first, in all. */
+export const UNIT_MADE_LIMIT = 500;
 /**
- * Reads a unit's files in the sidebar's transaction: the first MAX_ARTIFACT_IDS its record
- * names, and the newest 200 each of its sessions made.
+ * Reads a unit's files in the sidebar's transaction, in two statements: the first
+ * MAX_ARTIFACT_IDS its record names, and the newest UNIT_MADE_LIMIT its sessions made.
  */
 export async function unitFiles(
   artifacts: Pick<Artifacts, 'find' | 'list'>,
@@ -200,9 +202,9 @@ export async function unitFiles(
   tx: Transaction,
 ): Promise<{ found: Map<string, Artifact>; made: Artifact[] }> {
   const found = await artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx);
-  const made: Artifact[] = [];
-  for (const session of named.sessions)
-    made.push(...(await artifacts.list(caller, { session, limit: 200 }, tx)));
+  const made = named.sessions.length
+    ? await artifacts.list(caller, { sessions: named.sessions, limit: UNIT_MADE_LIMIT }, tx)
+    : [];
   return { found, made };
 }
 
