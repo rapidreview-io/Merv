@@ -212,13 +212,56 @@ const instructions: Record<ActiveState, string> = {
   experiment_review:
     'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
 };
+/**
+ * The plan and the report as the owner wants them read (2026-10-06): visual, brief and scannable,
+ * the report whole without the plan. Their headings are the ones validatePlan and validateReport
+ * require; each template is short because it is part of every planner's and executor's context.
+ */
+const PLAN_TEMPLATE = [
+  '## Summary',
+  'Question: <one line>',
+  '## Objective & hypothesis',
+  '<one line>',
+  '## Evaluation',
+  '```mermaid',
+  'flowchart LR',
+  '  D[Data] --> A[Arm A] & B[Arm B] --> M[Measure] --> X{Decision}',
+  '```',
+  '| Arm | What it varies |',
+  '|---|---|',
+  '',
+  '- Primary measure: <one line>',
+  '- Success: <threshold, one line>',
+  '- Budget: <compute and time, one line>',
+  '',
+  'Risks:',
+  '- <at most 3 bullets>',
+].join('\n');
+const REPORT_TEMPLATE = [
+  '## Summary',
+  '<the answer, two sentences>',
+  '## Results',
+  '| Arm | <primary measure> ± <uncertainty> |',
+  '|---|---|',
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  D[Data] --> R[What ran] --> M[What was measured] --> X{Decision}',
+  '```',
+  'Evidence: [<name>](/artifacts/<artifact id>) for each evidence artifact',
+  '## Deviations from plan',
+  '<None, or bullets>',
+  '## Conclusion',
+  '- <what it means, at most 3 bullets>',
+  '',
+  'Limits:',
+  '- <at most 3 bullets>',
+].join('\n');
 const handoffs: Record<ActiveState, string> = {
-  planned:
-    'Create your own complete UTF-8 plan artifact with Summary, Objective & hypothesis, and Evaluation sections. Verify inherited planning work before retaining your own plan; its bytes may be unchanged after verification, but a predecessor’s plan cannot be submitted as your new output. Attach it as role plan with the current numeric attemptIndex and expectedRevision. Then call experiment.transition with transition submit_design and a stable requestId. Stop while independent design review is pending.',
+  planned: `Create your own UTF-8 Markdown plan artifact, about one screen, in this shape (headings exact; no walls of prose; long technical detail goes in a separate appendix artifact the plan links):\n\n${PLAN_TEMPLATE}\n\nVerify inherited planning work before retaining your own plan; its bytes may be unchanged after verification, but a predecessor’s plan cannot be submitted as your new output. Attach it as role plan with the current numeric attemptIndex and expectedRevision. Then call experiment.transition with transition submit_design and a stable requestId. Stop while independent design review is pending.`,
   design_review:
     'You own the paper update: keep it brief, usually one or two sentences stating the hypothesis, proposed method and this experiment’s purpose as planned work, never as completed results. Submit through review.submit with the current reviewId, claimId and expectedRevision. Supply verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo. Either needs_changes or fail returns to planned; returnTo may be omitted or planned. A design rejection creates a new attempt. Stop after the verdict.',
-  running:
-    'Retain result and report artifacts and attach them to this attempt. The report is a UTF-8 markdown document with Summary, Results, Deviations from plan and Conclusion sections, and it names the pinned metrics exhibit by its filename. Verify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. The reviewer owns the paper update; submit the scientific evidence and report, not paper edits. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.',
+  running: `Retain result and report artifacts and attach them to this attempt. The report is a UTF-8 Markdown document of one to two screens that stands alone, read without the plan, in this shape (headings exact), and it names the pinned metrics exhibit by its filename:\n\n${REPORT_TEMPLATE}\n\nVerify inherited results and figures before reusing their exact frozen records. You must author and attach your own report affirming what you checked; a predecessor’s report cannot be your new submitted output. Selecting what mattered for the report is the authorship; do not hide known rework, pivots or failed attempts, and record them under Deviations from plan. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit and interpret any pinned exhibit in the report. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. The reviewer owns the paper update; submit the scientific evidence and report, not paper edits. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.`,
   experiment_review:
     'You own the paper update: explain what was actually done and learned, replacing planned text with verified outcomes and preserving uncertainty. Add comprehensive methods, results and interpretation when that detail helps explain the project’s trajectory and informs what comes next; there is no brevity requirement for results-review paper updates. Submit through review.submit with the current reviewId, claimId and expectedRevision, verification notes, a plain synopsis and one finding per criterion. Pass rejects returnTo and completes the experiment. For either needs_changes or fail, explicitly choose returnTo planned for a new design/attempt, or running for repair under this same approved plan. A fail verdict does not itself terminally fail the experiment. Stop after the verdict.',
 };
@@ -272,12 +315,19 @@ const verifying =
   ' Open what you are judging rather than judging the summary of it: artifact.read returns the retained bytes of everything pinned to this submission, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
 
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
- * Published versions and recipe bytes are immutable; only their construction is shared. */
+ * Published versions and recipe bytes are immutable; only their construction is shared. The
+ * design and execute recipes are at 12 for the plan and report templates (2026-10-06). */
+const recipeVersions: Record<ActiveState, number> = {
+  planned: 12,
+  design_review: 11,
+  running: 12,
+  experiment_review: 12,
+};
 /** Every recipe's budget, which the paper's items are chosen within too. */
 const CONTEXT_CHARS = 160_000;
 export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: state === 'experiment_review' ? 12 : 11,
+  version: recipeVersions[state],
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
     instructions:
@@ -329,21 +379,24 @@ export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((s
 export const EXPERIMENT_LIMITS = { designRounds: 4, resultRounds: 3 };
 
 /**
- * Feasibility is its own design criterion, the last, so the review can be asked never to waive it;
+ * Feasibility is its own design criterion, number 4, so the review can be asked never to waive it;
  * the statement's arithmetic is its author's, which is why the reviewer is told to look for what it
- * leaves out as well as for what it gets wrong.
+ * leaves out as well as for what it gets wrong. Each stage's last criterion is the document's
+ * format (owner, 2026-10-06), appended so a review requested before it keeps its numbering.
  */
 export const designCriteria = [
   'The plan defines a testable hypothesis and an evaluation that can distinguish it from alternatives.',
   'Controls, baselines, data, metrics and decision criteria make the proposed comparison defensible.',
   'The limitations and possible failure modes of the proposed execution are addressed.',
   'The feasibility statement is accurate and complete: each required and available quantity, the compute and time estimate, and the presence of every dependency were verified by the reviewer against retained records; no requirement, dependency or blocker the design implies is omitted; and no known blocker remains.',
+  'Format: the plan is about one screen, without padding, and has a one-line question, a mermaid flowchart (data → arms → measurement → decision), a table of arms and what each varies, the primary measure and success threshold, a budget line and at most 3 risks.',
 ];
-export const feasibilityCriterion = designCriteria.length;
+export const feasibilityCriterion = 4;
 export const resultsCriteria = [
   'The retained execution and results follow the exact approved plan, with deviations and failures explained.',
   'The submitted measurements agree with the retained results and any metrics exhibit, and the report selects what mattered without hiding known rework.',
   'The report’s conclusions follow from the evidence, including negative findings and limitations.',
+  'Format: the report stands alone without the plan, is one to two screens without padding, and has the answer first in two sentences, a table of every arm’s primary measure with uncertainty, a mermaid diagram of what happened or the decision, at most 3 bullets each of meaning and limits, and links to the evidence.',
 ];
 
 interface FrozenInputs {

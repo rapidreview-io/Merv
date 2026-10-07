@@ -27,7 +27,51 @@ const layout =
   ' Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.';
 const workOutput =
   'Save evidence as immutable artifacts. Submit the delivery with task.submit_delivery using the current task revision and a stable request ID. Do not review your own delivery.';
+/**
+ * The delivery report as the owner wants it read (2026-10-06): brief and scannable. It is short
+ * because it is part of every worker's context.
+ */
+const DELIVERY_TEMPLATE = [
+  '<what was done, one or two sentences>',
+  '',
+  '| Check | Status | Evidence |',
+  '|---|---|---|',
+  '| 1. <check> | met / not met | [<name>](/artifacts/<artifact id>) |',
+  '',
+  'Changed: <N files, M commits>',
+  '',
+  'Follow-ups:',
+  '- <at most 3 bullets>',
+].join('\n');
+const reportedOutput =
+  'Save evidence as immutable artifacts. Also write a delivery report: a UTF-8 Markdown artifact (text/markdown), brief and without padding, in this shape:\n\n' +
+  DELIVERY_TEMPLATE +
+  '\n\nList the report first in artifactIds, in a Git task too. Submit the delivery with task.submit_delivery using the current task revision and a stable request ID. Do not review your own delivery.';
+/** The task.work version from which a delivery has a report, and its review a format criterion. */
+export const REPORTED_WORK = 5;
+/** The review criterion a reported delivery adds after the task's own checks. */
+export const DELIVERY_REPORT_CRITERION =
+  'Format: the delivery report is brief, without padding, and has what was done in one or two sentences, a table of every check (met or not met, evidence link), one line on what changed (files and commits) and at most 3 follow-ups.';
+/** Whether a task's delivery is reviewed for its report's format. */
+export const reportsDelivery = (type: string, version: number) =>
+  type === 'task.work' && Number(version) >= REPORTED_WORK;
 
+/** The work recipe tasks created before the delivery report pin. */
+const work: ContextRecipeDefinition = {
+  name: 'task.work',
+  version: 4,
+  kind: 'work',
+  recipe: {
+    instructions:
+      'Complete the assigned task as one step toward the project paper’s Problem, scope and goals. The task need not finish the whole project. Read any abbreviated paper sections with paper.read. Work from its pinned brief, verify every acceptance criterion, and identify how its result informs the project.' +
+      reading +
+      layout,
+    sections: [task, brief, projectPaper, feedback, checkpoints, checkpointEvidence],
+    maxChars: 96000,
+    outputInstructions: workOutput,
+    format: 2,
+  },
+};
 /**
  * Task types own their recipes. These are definitions, not additional plugins or workflow engines.
  * Each is format 2, the item renderer: the task, the brief, revision feedback and the review
@@ -36,20 +80,13 @@ const workOutput =
  * that retrieves them.
  */
 export const TASK_TYPES: ContextRecipeDefinition[] = [
+  // A task pins its work recipe at creation: task.work@4 stays registered for the tasks created
+  // under it, and every new task takes the newest, @5, which asks for the delivery report.
+  work,
   {
-    name: 'task.work',
-    version: 4,
-    kind: 'work',
-    recipe: {
-      instructions:
-        'Complete the assigned task as one step toward the project paper’s Problem, scope and goals. The task need not finish the whole project. Read any abbreviated paper sections with paper.read. Work from its pinned brief, verify every acceptance criterion, and identify how its result informs the project.' +
-        reading +
-        layout,
-      sections: [task, brief, projectPaper, feedback, checkpoints, checkpointEvidence],
-      maxChars: 96000,
-      outputInstructions: workOutput,
-      format: 2,
-    },
+    ...work,
+    version: REPORTED_WORK,
+    recipe: { ...work.recipe, outputInstructions: reportedOutput },
   },
   {
     name: 'task.review',

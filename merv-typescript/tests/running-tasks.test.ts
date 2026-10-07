@@ -521,7 +521,8 @@ test('a task’s unit reads its delivery once there is one, and tells each round
   const judged = returned.history?.[1];
   assert.equal(judged?.role, 'reviewer');
   assert.equal(judged?.stage, 'in_review');
-  assert.equal(judged?.verdict?.of, task.checks.length);
+  // The task's checks and the delivery report's format criterion.
+  assert.equal(judged?.verdict?.of, task.checks.length + 1);
 });
 
 test('a key that is not a task of this project has no task sidebar', async (t) => {

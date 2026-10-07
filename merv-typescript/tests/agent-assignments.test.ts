@@ -180,7 +180,7 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  // 300 sections whose text all fits task.work@4's 96,000 characters, but at three bytes a
+  // 300 sections whose text all fits task.work@5's 96,000 characters, but at three bytes a
   // character, with long titles and IDs repeated in each note and ref, whose JSON is near 1 MB.
   for (const kind of ['literature', 'methods', 'results'] as const)
     await app.ctx.paper.patch(owner, {
@@ -208,7 +208,7 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
     secret: secret(),
   });
   const context = session.assignment.context!;
-  assert.equal(`${context.type}@${context.typeVersion}`, 'task.work@4');
+  assert.equal(`${context.type}@${context.typeVersion}`, 'task.work@5');
   const { receipt } = (await app.ctx.state.transaction(
     async (tx) =>
       await tx.get<{ receipt: string }>(
@@ -225,7 +225,9 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   const more = Number(/^(\d+) of them/.exec(rest.note ?? '')?.[1] ?? 0);
   assert.ok(sections.length > 0 && more > 0);
   assert.equal(sections.length + left.length + more, 300);
-  assert.ok(context.prompt.includes('\n### paper:literature:current:1:0:literature-0-'));
+  // The top section is named, whole or by its line: lines fill the budget here, so whether its body
+  // also fits depends on the room the recipe's own instructions leave.
+  assert.match(context.prompt, /\n(?:###|-) paper:literature:current:1:0:literature-0-/);
 });
 
 test('a release closes a session as what happened to it, and a closed session only once', async (t) => {

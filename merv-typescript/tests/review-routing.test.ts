@@ -152,6 +152,12 @@ async function fixture(t: TestContext, api = false) {
             evidenceIds: [retained.id],
             notes: 'Recomputed independently.',
           },
+          {
+            criterionNumber: 2,
+            status: 'met' as const,
+            evidenceIds: [retained.id],
+            notes: 'The report has the required parts.',
+          },
         ],
       },
     };

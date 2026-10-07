@@ -307,14 +307,14 @@
         "error": "blob_not_found"
       }
     },
-    "experiment.design@11": {
+    "experiment.design@12": {
       "items/text": {
-        "prompt": "cc3b3eba27ba0a245034dc82659e601cd8409bdd6e8e01d373355a601ae34fca",
+        "prompt": "2089ef0663515678b18e618fa17a9cf38eda3630508a179482b6fd873cdbd08f",
         "omitted": [],
         "sources": []
       },
       "items/artifacts": {
-        "prompt": "2c756b6a5c85407646b3167b969749cc4289c75e4f5c5f18e20bdeea41f1f830",
+        "prompt": "992889bb630b67790133869c7668e6960b446b81d19a54fd41e43869d3312e2e",
         "omitted": [],
         "sources": [
           "artifact_golden_text",
@@ -324,18 +324,21 @@
         ]
       },
       "items/duplicate": {
-        "prompt": "4883ebbe03530526761db6ba6fbb02920cfe897db5e1aa4b0ea1b0a1b5f6d3b6",
+        "prompt": "d4e5f0f6837748128d094f243f0424573ee9f71433a47ffabd85d7811e3fb94a",
         "omitted": [],
         "sources": []
       },
       "items/not-fit": {
-        "prompt": "ccc22c4ffb8d46c0d20f570c84b997045df480842c65eea4c4abdc8536690319",
+        "prompt": "a561ad5fac7a4734f022aa2a48ce909dc3ed9efb7c28dce5e20e7d109e46f25e",
         "omitted": ["experiment:long"],
         "sources": []
       },
       "items/overflow": {
-        "prompt": "dbe49c01314dbd1cd948ae7b7b7d6d34e411fdb84f0b8f2cfe31ec648fcf44e7",
+        "prompt": "6c92f412360363dc55f7687af8eb502db0d1bdba835defa96dc85b5ac0759358",
         "omitted": [
+          "experiment:many:968",
+          "experiment:many:969",
+          "experiment:many:970",
           "experiment:many:971",
           "experiment:many:972",
           "experiment:many:973",
@@ -436,12 +439,12 @@
         "sources": []
       },
       "items/line-breaks": {
-        "prompt": "40f85709612f677c2bd0a26b6c178434fc80848c812e89c8003c10f1cdf06d21",
+        "prompt": "1ce89c5da5962fe9f562cc8ed2bf199caca119473d944152d4009235ace4f67a",
         "omitted": [],
         "sources": []
       },
       "items/read-error/blob_corrupt/fit": {
-        "prompt": "8e22a7b0940c4a3af4c8fd11c39b4385f8290730685c6d67c1cadcfd9746e067",
+        "prompt": "346205745ec42b79a6a6ee7f37b7cb934d395e4416acacb37f5026d5859263b0",
         "omitted": [],
         "sources": ["artifact_golden_blob_corrupt"]
       },
@@ -455,14 +458,14 @@
         "error": "blob_not_found"
       }
     },
-    "experiment.execute@11": {
+    "experiment.execute@12": {
       "items/text": {
-        "prompt": "5f67df2f23455daf93f857d9a5a7087f9ae0cf65fb70fc11da548adb86c5cbf0",
+        "prompt": "8af4921b256fa636bfb46a6f6ccf40bf0b3136917340dbc60bb8d6d1bd7f10f0",
         "omitted": [],
         "sources": []
       },
       "items/artifacts": {
-        "prompt": "4bdea31b21b6ae8d30463102d6a32eefef6b5f81410a14aaf7c4584512a549f9",
+        "prompt": "d86912a1949f4763e12a4a494171fa0d69381bac206df744e943b581d083e1f4",
         "omitted": [],
         "sources": [
           "artifact_golden_text",
@@ -472,18 +475,21 @@
         ]
       },
       "items/duplicate": {
-        "prompt": "95a4ea3217e9c5956b6a8360f3698004a939ea51fadd5ddb19f52de16a8c9f6c",
+        "prompt": "87ccd9545e9310e987e176b43f69334a81bd11d305bf21210c9975495ccbdd71",
         "omitted": [],
         "sources": []
       },
       "items/not-fit": {
-        "prompt": "31585ad38c479f3b9d09e6cb66b4d2b798e35d483655eb3c65beb758c949c8af",
+        "prompt": "6ad41c3c523532cd6aabe29f2ad7d27790d9da88ea339463eff3c35fd67d5282",
         "omitted": ["experiment:long"],
         "sources": []
       },
       "items/overflow": {
-        "prompt": "09e6b2cb53a49ddf324584cee794c63f7e18e2a063b398d2bedceb1e8a211baf",
+        "prompt": "cde2c437832a218ce1737f741f415de58290193fbe926fa08b6543d0b7285fa7",
         "omitted": [
+          "experiment:many:970",
+          "experiment:many:971",
+          "experiment:many:972",
           "experiment:many:973",
           "experiment:many:974",
           "experiment:many:975",
@@ -582,12 +588,12 @@
         "sources": []
       },
       "items/line-breaks": {
-        "prompt": "5b736c55448c493f38c362d0b9527571ea1c30b2221950c36afcb299f379d491",
+        "prompt": "8638fb6ae9548302144d79918546ee261b5e96dce57737943e644b0b9432ada1",
         "omitted": [],
         "sources": []
       },
       "items/read-error/blob_corrupt/fit": {
-        "prompt": "06af02f269d6cbcbf1dcd419afa6924ad14a552f8924aa5c980cd72eec8a7670",
+        "prompt": "c783e19362a46d1692ba912e27574f61765422fc9ba79dd710547ab0c46aebbf",
         "omitted": [],
         "sources": ["artifact_golden_blob_corrupt"]
       },
@@ -1038,6 +1044,57 @@
       "items/read-error/blob_not_found/always": {
         "error": "blob_not_found"
       }
+    },
+    "task.work@5": {
+      "items/text": {
+        "prompt": "15d0043a2cc61aebe2a86d98d666865e1be3275cf44646c78e461700bebd2d60",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "1efbb24f0b9bebff417763c36772a9a9074a7809cc6297c5e4de90e061fed77b",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "880ce29f9a5e5e2e256e729700a9b46bce73166198c02819f54f85aa304616b4",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "627857bd4ff9219bee0d41b828fce34d38fb5daa7d067b0ac32ab88c96dfe4a0",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "b1252d7b01c777a1bdca6dbc6ad83e3840037f18ace2c9f24bccd372f0880991",
+        "omitted": [],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "e23a388282b53b13cabe25b30fce1fcdeb52ff459122591c38946f22f511fbcc",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "e3cb1ed9ebf50b60ccb6d31a5dbf50de34d6ba38b9d6b5633403d2410710a83e",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
     }
   },
   "historicalRecipes": {
@@ -1315,6 +1372,300 @@
       },
       "items/read-error/blob_corrupt/fit": {
         "prompt": "dcbd56b69f15bd3061f062067e850c1df7c80de9b22218eaacee656a1a0cd8c4",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "experiment.design@11": {
+      "items/text": {
+        "prompt": "cc3b3eba27ba0a245034dc82659e601cd8409bdd6e8e01d373355a601ae34fca",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "2c756b6a5c85407646b3167b969749cc4289c75e4f5c5f18e20bdeea41f1f830",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "4883ebbe03530526761db6ba6fbb02920cfe897db5e1aa4b0ea1b0a1b5f6d3b6",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "ccc22c4ffb8d46c0d20f570c84b997045df480842c65eea4c4abdc8536690319",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "dbe49c01314dbd1cd948ae7b7b7d6d34e411fdb84f0b8f2cfe31ec648fcf44e7",
+        "omitted": [
+          "experiment:many:971",
+          "experiment:many:972",
+          "experiment:many:973",
+          "experiment:many:974",
+          "experiment:many:975",
+          "experiment:many:976",
+          "experiment:many:977",
+          "experiment:many:978",
+          "experiment:many:979",
+          "experiment:many:980",
+          "experiment:many:981",
+          "experiment:many:982",
+          "experiment:many:983",
+          "experiment:many:984",
+          "experiment:many:985",
+          "experiment:many:986",
+          "experiment:many:987",
+          "experiment:many:988",
+          "experiment:many:989",
+          "experiment:many:990",
+          "experiment:many:991",
+          "experiment:many:992",
+          "experiment:many:993",
+          "experiment:many:994",
+          "experiment:many:995",
+          "experiment:many:996",
+          "experiment:many:997",
+          "experiment:many:998",
+          "experiment:many:999",
+          "experiment:many:1000",
+          "experiment:many:1001",
+          "experiment:many:1002",
+          "experiment:many:1003",
+          "experiment:many:1004",
+          "experiment:many:1005",
+          "experiment:many:1006",
+          "experiment:many:1007",
+          "experiment:many:1008",
+          "experiment:many:1009",
+          "experiment:many:1010",
+          "experiment:many:1011",
+          "experiment:many:1012",
+          "experiment:many:1013",
+          "experiment:many:1014",
+          "experiment:many:1015",
+          "experiment:many:1016",
+          "experiment:many:1017",
+          "experiment:many:1018",
+          "experiment:many:1019",
+          "experiment:many:1020",
+          "experiment:many:1021",
+          "experiment:many:1022",
+          "experiment:many:1023",
+          "experiment:many:1024",
+          "experiment:many:1025",
+          "experiment:many:1026",
+          "experiment:many:1027",
+          "experiment:many:1028",
+          "experiment:many:1029",
+          "experiment:many:1030",
+          "experiment:many:1031",
+          "experiment:many:1032",
+          "experiment:many:1033",
+          "experiment:many:1034",
+          "experiment:many:1035",
+          "experiment:many:1036",
+          "experiment:many:1037",
+          "experiment:many:1038",
+          "experiment:many:1039",
+          "experiment:many:1040",
+          "experiment:many:1041",
+          "experiment:many:1042",
+          "experiment:many:1043",
+          "experiment:many:1044",
+          "experiment:many:1045",
+          "experiment:many:1046",
+          "experiment:many:1047",
+          "experiment:many:1048",
+          "experiment:many:1049",
+          "experiment:many:1050",
+          "experiment:many:1051",
+          "experiment:many:1052",
+          "experiment:many:1053",
+          "experiment:many:1054",
+          "experiment:many:1055",
+          "experiment:many:1056",
+          "experiment:many:1057",
+          "experiment:many:1058",
+          "experiment:many:1059",
+          "experiment:many:1060",
+          "experiment:many:1061",
+          "experiment:many:1062",
+          "experiment:many:1063",
+          "experiment:many:1064",
+          "experiment:many:1065",
+          "experiment:many:1066"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "40f85709612f677c2bd0a26b6c178434fc80848c812e89c8003c10f1cdf06d21",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "8e22a7b0940c4a3af4c8fd11c39b4385f8290730685c6d67c1cadcfd9746e067",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "experiment.execute@11": {
+      "items/text": {
+        "prompt": "5f67df2f23455daf93f857d9a5a7087f9ae0cf65fb70fc11da548adb86c5cbf0",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "4bdea31b21b6ae8d30463102d6a32eefef6b5f81410a14aaf7c4584512a549f9",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "95a4ea3217e9c5956b6a8360f3698004a939ea51fadd5ddb19f52de16a8c9f6c",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "31585ad38c479f3b9d09e6cb66b4d2b798e35d483655eb3c65beb758c949c8af",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "09e6b2cb53a49ddf324584cee794c63f7e18e2a063b398d2bedceb1e8a211baf",
+        "omitted": [
+          "experiment:many:973",
+          "experiment:many:974",
+          "experiment:many:975",
+          "experiment:many:976",
+          "experiment:many:977",
+          "experiment:many:978",
+          "experiment:many:979",
+          "experiment:many:980",
+          "experiment:many:981",
+          "experiment:many:982",
+          "experiment:many:983",
+          "experiment:many:984",
+          "experiment:many:985",
+          "experiment:many:986",
+          "experiment:many:987",
+          "experiment:many:988",
+          "experiment:many:989",
+          "experiment:many:990",
+          "experiment:many:991",
+          "experiment:many:992",
+          "experiment:many:993",
+          "experiment:many:994",
+          "experiment:many:995",
+          "experiment:many:996",
+          "experiment:many:997",
+          "experiment:many:998",
+          "experiment:many:999",
+          "experiment:many:1000",
+          "experiment:many:1001",
+          "experiment:many:1002",
+          "experiment:many:1003",
+          "experiment:many:1004",
+          "experiment:many:1005",
+          "experiment:many:1006",
+          "experiment:many:1007",
+          "experiment:many:1008",
+          "experiment:many:1009",
+          "experiment:many:1010",
+          "experiment:many:1011",
+          "experiment:many:1012",
+          "experiment:many:1013",
+          "experiment:many:1014",
+          "experiment:many:1015",
+          "experiment:many:1016",
+          "experiment:many:1017",
+          "experiment:many:1018",
+          "experiment:many:1019",
+          "experiment:many:1020",
+          "experiment:many:1021",
+          "experiment:many:1022",
+          "experiment:many:1023",
+          "experiment:many:1024",
+          "experiment:many:1025",
+          "experiment:many:1026",
+          "experiment:many:1027",
+          "experiment:many:1028",
+          "experiment:many:1029",
+          "experiment:many:1030",
+          "experiment:many:1031",
+          "experiment:many:1032",
+          "experiment:many:1033",
+          "experiment:many:1034",
+          "experiment:many:1035",
+          "experiment:many:1036",
+          "experiment:many:1037",
+          "experiment:many:1038",
+          "experiment:many:1039",
+          "experiment:many:1040",
+          "experiment:many:1041",
+          "experiment:many:1042",
+          "experiment:many:1043",
+          "experiment:many:1044",
+          "experiment:many:1045",
+          "experiment:many:1046",
+          "experiment:many:1047",
+          "experiment:many:1048",
+          "experiment:many:1049",
+          "experiment:many:1050",
+          "experiment:many:1051",
+          "experiment:many:1052",
+          "experiment:many:1053",
+          "experiment:many:1054",
+          "experiment:many:1055",
+          "experiment:many:1056",
+          "experiment:many:1057",
+          "experiment:many:1058",
+          "experiment:many:1059",
+          "experiment:many:1060",
+          "experiment:many:1061",
+          "experiment:many:1062",
+          "experiment:many:1063",
+          "experiment:many:1064",
+          "experiment:many:1065",
+          "experiment:many:1066"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "5b736c55448c493f38c362d0b9527571ea1c30b2221950c36afcb299f379d491",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "06af02f269d6cbcbf1dcd419afa6924ad14a552f8924aa5c980cd72eec8a7670",
         "omitted": [],
         "sources": ["artifact_golden_blob_corrupt"]
       },
