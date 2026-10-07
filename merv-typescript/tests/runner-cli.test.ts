@@ -200,11 +200,11 @@ test('runner CLI rejects unsafe or missing configuration without disclosing inpu
   assert.equal(existsSync(join(directory, 'machine')), false);
 });
 
-test('runner CLI retains the default Code driver and supports explicit opt-in', async (t) => {
+test('runner CLI always composes the Code driver and ignores the old workspaceDrivers key', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-runner-cli-drivers-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const workspaceDrivers of [undefined, ['code']]) {
-    const machine = workspaceDrivers ? 'explicit' : 'default';
+  for (const workspaceDrivers of [undefined, ['code'], []]) {
+    const machine = workspaceDrivers ? `explicit-${workspaceDrivers.length}` : 'default';
     const path = join(directory, `${machine}.json`);
     writeFileSync(
       path,

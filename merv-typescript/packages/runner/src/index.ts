@@ -87,7 +87,7 @@ const configSchema = z
           ].includes(name),
       ),
     profiles: z.array(z.unknown()).max(32),
-    /** CLI composition: omit for the existing Code driver, or [] for work without Git. */
+    /** Ignored: the CLI always composes the Code driver. Older configurations still name it. */
     workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
     /** Existing image-provisioned scratch root outside the private ledger, for isolated Codex. */
     assignmentWorkspaceDirectory: z
@@ -1317,5 +1317,3 @@ export const runnerWith = (drivers: WorkspaceDriverFactory[]) => ({
     });
   },
 });
-export const runnerPlugin = runnerWith([]);
-export default runnerPlugin;

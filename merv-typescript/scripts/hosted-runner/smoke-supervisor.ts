@@ -97,7 +97,6 @@ async function main() {
       capacity: 1,
       workInstanceId: data.workInstanceId,
       assignmentWorkspaceDirectory: assignmentRoot,
-      workspaceDrivers: ['code'],
       profiles: [
         { ...hostedCodexPlatform, executable: codex, isolatedLauncher: launcher, hosted: true },
       ],

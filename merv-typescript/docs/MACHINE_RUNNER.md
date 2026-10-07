@@ -48,7 +48,7 @@ The CLI installs only the runner plugin and handles SIGINT/SIGTERM through its
 Cordis disposer. Readiness includes an offline state if the server is unavailable.
 
 A runner has no repository of its own: Git work comes through Code's `code.v2`
-driver, which `merv runner` composes unless `workspaceDrivers` is `[]`. Workflows
+driver, which `merv runner` always composes. Workflows
 must declare their Git policy; assignments without one still use scratch.
 
 Enable dispatch from the server's Sessions page. Default dispatch is off. Pause

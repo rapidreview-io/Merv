@@ -11,7 +11,8 @@ import { identityPlugin } from '@merv/identity';
 import { piPlugin } from '@merv/pi';
 import { paperPlugin } from '@merv/paper';
 import { reviewsPlugin } from '@merv/reviews';
-import { runnerPlugin } from '@merv/runner';
+import { codeWorkspaceDriver } from '@merv/code/driver/index';
+import { runnerWith } from '@merv/runner';
 import { scopePlugin } from '@merv/scope';
 import { sessionsPlugin } from '@merv/sessions';
 import { statePlugin } from '@merv/state';
@@ -1078,7 +1079,7 @@ test('each service boots with only its declared dependency closure and without A
     code: { plugin: codePlugin, config: { repositories: { root: join(directory, 'code') } } },
     codeWork: { plugin: codeWorkPlugin },
     runner: {
-      plugin: runnerPlugin,
+      plugin: runnerWith([codeWorkspaceDriver]),
       config: {
         directory: join(directory, 'machine'),
         baseUrl: 'http://127.0.0.1:1',
