@@ -673,6 +673,28 @@ export class ManagedRunnerBindings {
       new Date(this.clock()).toISOString(),
     );
   }
+  /**
+   * Whether every current host Fleet rented for this work item holds a live visit: a host takes
+   * one visit at a time, so a question to one of the item's agents (a short visit that holds no
+   * lease, and need not wait for the work's) needs a host of its own. False while it has none.
+   */
+  async hostsBusy(projectId: string, instanceId: string, tx: Transaction): Promise<boolean> {
+    const rows = await tx.all<ManagedBindingRow & { busy: boolean }>(
+      `SELECT r.*,EXISTS (SELECT 1 FROM session_managed_assignments a JOIN worker_sessions s ON s.id=a.session_id
+          WHERE a.allocation_id=r.allocation_id AND s.status IN ('offered','active')) AS busy
+        FROM session_managed_runners r WHERE r.project_id=? AND r.work_instance_id=? AND r.control_expires_at>?`,
+      projectId,
+      instanceId,
+      new Date(this.clock()).toISOString(),
+    );
+    let hosts = 0;
+    for (const row of rows) {
+      if (!this.validator || !(await this.validator.current(this.identity(row), tx))) continue;
+      if (!row.busy) return false;
+      hosts++;
+    }
+    return hosts > 0;
+  }
   async controlled(
     caller: Caller,
     sessionId: string,

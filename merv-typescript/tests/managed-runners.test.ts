@@ -631,6 +631,28 @@ test('a failure on one rented machine holds its target back on the next, and a w
   assert.ok(listed.includes(f.runnerId));
 });
 
+test('Sessions says when every current host of a work item holds a visit, so a question to it needs its own', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const busy = async () =>
+    await f.state.transaction((tx) =>
+      f.sessions.managed.hostsBusy(f.owner.projectId, f.workTarget.id, tx),
+    );
+  assert.equal(await busy(), false, 'its host is free');
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  assert.equal(await busy(), true, 'its only host runs the work’s visit');
+  f.current(false);
+  assert.equal(await busy(), false, 'a host Fleet no longer holds is none of its hosts');
+  f.current(true);
+  await f.sessions.release(f.caller, {
+    sessionId: bound.id,
+    runnerId: f.runnerId,
+    outcome: 'host_failed',
+  });
+  assert.equal(await busy(), false);
+});
+
 test('rented machines never exhaust a project’s own runners, and another project’s runner of the same name stays its own', async (t) => {
   const f = await fixture(t);
   const dispatcher = f.sessions.dispatch;

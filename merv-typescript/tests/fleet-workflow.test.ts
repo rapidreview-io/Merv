@@ -72,7 +72,7 @@ import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
-type Target = { instanceId: string; expectedRevision: number; since?: string; inquiry?: true };
+type Target = { instanceId: string; expectedRevision: number; since?: string; ownHost?: true };
 /** A machine was created for it, whether or not it ever launched. */
 const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
@@ -106,6 +106,8 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
   const refused = new Map<string, MervError>();
   const requests: string[] = [];
   const inspections = new Map<string, ManagedRunnerInspection>();
+  /** Each allocation Fleet asked Sessions to inspect, in order. */
+  const inspected: string[] = [];
   const allocations: FleetAllocation[] = [];
   /** While set, a reconcile waits at its first read. */
   let held: Promise<void> | undefined;
@@ -195,6 +197,7 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
         return { enrollmentToken: `me_${'a'.repeat(64)}` };
       },
       async inspect(id: string) {
+        inspected.push(id);
         return inspections.get(id) ?? null;
       },
     },
@@ -261,6 +264,7 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
     open: () =>
       allocations.filter((a) => a.phase !== 'released').map((a) => [a.projectId, a.owner.id]),
     inspections,
+    inspected,
     ensureInputs,
     owner: () => owner!,
     validator: () => validator!,
@@ -492,7 +496,7 @@ test('a running work host covers every revision of its work item, and another it
   assert.equal(f.allocations.length, 2, 'both items are covered');
 });
 
-test('a question to an agent rents a host of its own while its work item’s host is busy', async (t) => {
+test('a target Sessions says its item’s hosts cannot take rents a host of its own, read without inspecting them', async (t) => {
   const f = await fixture(t, { maxAgents: 3 });
   const a = { instanceId: 'task_a', expectedRevision: 0 };
   f.demand([a]);
@@ -500,35 +504,23 @@ test('a question to an agent rents a host of its own while its work item’s hos
   const first = f.allocations[0]!;
   first.phase = 'running';
   first.runtime = { launch: { deliveryState: 'launched' } } as FleetAllocation['runtime'];
-  // Its host runs the item's long visit; a person asks one of the item's agents meanwhile.
-  const busy = (status: 'active' | 'released') => ({
-    runnerId: 'managed-machine',
-    enrollmentExpiresAt,
-    session: {
-      id: 'session_a',
-      instanceId: 'task_a',
-      expectedRevision: 0,
-      status,
-      closedAt: status === 'active' ? null : new Date().toISOString(),
-      outcome: status === 'active' ? null : ('completed' as const),
-      releaseAcknowledged: status !== 'active',
-      capturePending: false,
-    },
-  });
-  f.inspections.set(first.id, busy('active'));
-  f.demand([{ ...a, inquiry: true }]);
+  // Its host runs the item's long visit; a person asks one of the item's agents meanwhile, and
+  // Sessions, which knows its hosts' visits, says the question needs a host of its own.
+  const inspected = f.inspected.length;
+  f.demand([{ ...a, ownHost: true }]);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2);
   assert.equal(f.allocations[1]?.owner.id, 'work:task_a');
   assert.notEqual(f.allocations[1]?.requestId, first.requestId);
-  // The new host is free for it: no third.
+  // The new host is still launching, which Sessions cannot know yet: it covers the target.
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2);
-  // A question while the item's host is free is that host's to take.
+  // Once Sessions says the item's hosts take it, the running host covers it.
   f.allocations[1]!.phase = 'released';
-  f.inspections.set(first.id, busy('released'));
+  f.demand([a]);
   await f.adapter.reconcile();
   assert.equal(f.allocations.filter((item) => item.phase !== 'released').length, 1);
+  assert.equal(f.inspected.length, inspected, 'Fleet reads no host’s visit to decide');
 });
 
 test('workflow bounds created but unclaimed retries across restart without blocking other work', async (t) => {

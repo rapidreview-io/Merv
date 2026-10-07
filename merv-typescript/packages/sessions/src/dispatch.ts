@@ -716,7 +716,10 @@ export class SessionDispatch {
             instanceId,
             expectedRevision: item.revision,
             since: item.updatedAt,
-            inquiry: true,
+            // Its own host while every host of the item is busy with another visit.
+            ...((await this.hooks.managed.hostsBusy(caller.projectId, instanceId, tx)) && {
+              ownHost: true as const,
+            }),
           });
       }
       return { candidates };
