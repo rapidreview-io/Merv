@@ -20,7 +20,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { WorkflowSnapshot } from '@merv/workflows/models';
+import type { ProcessGraph, WorkflowSnapshot } from '@merv/workflows/models';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
@@ -263,6 +263,16 @@ export class ReflectionService implements Reflections {
       );
     });
   }
+  async page(
+    caller: Caller,
+    id: string,
+  ): Promise<{ reflection: Reflection; process: ProcessGraph }> {
+    caller = structuredClone(caller);
+    return await this.state.snapshot(async () => ({
+      reflection: await this.get(caller, id),
+      process: await this.workflows.process(caller, id, { checks: false }),
+    }));
+  }
   async home(caller: Caller): Promise<ReflectionSummary[]> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, undefined, async (tx) => {
@@ -305,25 +315,23 @@ export class ReflectionService implements Reflections {
    */
   async authored(caller: Caller, tx: Transaction, reflectionId?: string) {
     if (!caller.session) return undefined;
-    const held = await leaseRows(tx, {
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-      workflows: [LENS_WORKFLOW.name],
-    });
-    if (!held.length) return undefined;
+    // The wave's lenses first: with no wave open, which is most of the time, that is all.
     const lenses = await tx.all<{ id: string; reflection_id: string; artifact: string | null }>(
       reflectionId
-        ? 'SELECT id,reflection_id,artifact FROM reflection_lenses WHERE reflection_id=? AND project_id=?'
+        ? 'SELECT id,reflection_id,artifact FROM reflection_lenses WHERE reflection_id=? AND project_id=? ORDER BY _merv_rowid'
         : 'SELECT l.id,l.reflection_id,l.artifact FROM reflection_lenses l JOIN reflections r ON r.id=l.reflection_id WHERE r.project_id=? AND r.approved IS NULL AND r.abandoned IS NULL ORDER BY l._merv_rowid',
       ...(reflectionId ? [reflectionId] : []),
       caller.projectId,
     );
-    const own = new Set(
-      held.map((lease) => lease.instance_id).filter((id) => lenses.some((lens) => lens.id === id)),
-    );
+    if (!lenses.length) return undefined;
+    const held = await leaseRows(tx, {
+      projectId: caller.projectId,
+      actorId: caller.actorId,
+      instanceIds: lenses.map((lens) => lens.id),
+    });
+    const own = new Set(held.map((lease) => lease.instance_id));
     if (!own.size) return undefined;
-    const waveId = lenses[0]!.reflection_id;
-    const wave = await this.workflows.get(caller, waveId, tx);
+    const wave = await this.workflows.get(caller, lenses[0]!.reflection_id, tx);
     return wave.state === 'reflecting'
       ? { own, others: lenses.filter((lens) => !own.has(lens.id)) }
       : undefined;
