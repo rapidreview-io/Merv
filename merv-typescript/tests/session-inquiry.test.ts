@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { CredentialStore } from '@merv/identity/credentials';
 import { MachineRunner } from '@merv/runner';
 import { codexModelRelay, hostedGrant } from '../packages/fleet/src/codex-relay.js';
 import { dormantMs } from '../packages/sessions/src/threads.js';
@@ -770,6 +771,36 @@ test('a refused question holds up no other, and a retried reply is told that it 
   await assert.rejects(f.app.ctx.tools.invoke('session.message.ack', worker, ack), {
     code: 'inquiry_answered',
   });
+});
+
+test('an inquiry visit refuses a secret another authority holds as the work offer does', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { threadId } = await f.worked();
+  await f.ask(threadId, 'Which seed?');
+  await f.present('runner-q');
+  const taken = secret();
+  const at = Date.now() + 3_600_000;
+  await f.app.ctx.state.transaction((tx) =>
+    new CredentialStore(f.app.ctx.state).issue(
+      {
+        owner: 'elsewhere',
+        subject: 'other',
+        kind: 'session-execution',
+        token: taken,
+        expiresAt: new Date(at).toISOString(),
+        hardDeadline: new Date(at).toISOString(),
+      },
+      tx,
+    ),
+  );
+  const leased = await f.http('POST', '/sessions/lease', f.token, {
+    runnerId: 'runner-q',
+    requestId: randomUUID(),
+    secret: taken,
+    platform: { name: 'claude', harness: 'claude' },
+  });
+  assert.deepEqual([leased.status, leased.body.error?.code], [409, 'session_secret_used']);
 });
 
 test('the live feed shows a thread’s work, and its inquiry visit only while no work visit is live', async (t) => {
