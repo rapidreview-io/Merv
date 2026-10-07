@@ -1,3 +1,4 @@
+import type { UiRowDescription } from '@merv/ui/rows';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
@@ -20,15 +21,16 @@ import {
 import { stepped } from './record-picker';
 import { useNow } from './views/needs-you';
 
-import type { Row, ShellData } from './shell-types';
-export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
+import type { ShellData } from './shell-types';
+export type { PluginState, ShellData, WorkflowShape } from './shell-types';
 
 const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 
 /** A row published by a remote service names its own glyph; every other row is its view kind. */
-const iconOf = (row: Row) => (typeof row.view.icon === 'string' ? row.view.icon : row.view.kind);
+const iconOf = (row: UiRowDescription) =>
+  typeof row.view.icon === 'string' ? row.view.icon : row.view.kind;
 
-const unwell = (row: Row) =>
+const unwell = (row: UiRowDescription) =>
   row.status.state === 'degraded' || row.status.state === 'unavailable' ? row : undefined;
 
 /**
@@ -51,8 +53,8 @@ function RailRow({
   icon: string;
   active: boolean;
   count?: number;
-  badge?: Row['status']['badge'];
-  sick?: Row;
+  badge?: UiRowDescription['status']['badge'];
+  sick?: UiRowDescription;
 }) {
   const counted = count !== undefined && count > 0;
   return (
@@ -197,8 +199,8 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   // The rail's one number is what Home lists as needing the reader, read exactly as Home reads
   // it; away from Home, as often as the rows beside it.
   const needsYou = useNow(rows, pathname === '/' ? undefined : 30000).count;
-  const holds = (row: Row) => held(row, pathname, rows);
-  const place = (row: Row) => (
+  const holds = (row: UiRowDescription) => held(row, pathname, rows);
+  const place = (row: UiRowDescription) => (
     <RailRow
       key={row.id}
       to={row.path}
@@ -282,7 +284,7 @@ export function usePageFacts(facts: PageFacts) {
  * siblings. A record's page names itself, so the line stands on a row's index route
  * alone — and over every room of a place that has rooms.
  */
-function TitleLine({ rows, facts }: { rows: Row[]; facts: PageFacts }) {
+function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts }) {
   const { pathname } = useLocation();
   const current =
     pathname === '/'
@@ -323,7 +325,7 @@ function TitleLine({ rows, facts }: { rows: Row[]; facts: PageFacts }) {
 }
 
 /** The line and the page under it, so what the page counts can reach the line. */
-export function PageLede({ rows, children }: { rows: Row[]; children: ReactNode }) {
+export function PageLede({ rows, children }: { rows: UiRowDescription[]; children: ReactNode }) {
   const [facts, setFacts] = useState<PageFacts>([]);
   return (
     <Counted.Provider value={setFacts}>

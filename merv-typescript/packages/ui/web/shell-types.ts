@@ -1,10 +1,5 @@
-import type { UiRowDescription, UiRowNeeds, UiRowStatus, UiStateWords } from '@merv/ui/rows';
+import type { UiRowDescription } from '@merv/ui/rows';
 
-/** A row as ui.shell describes it, and its parts: the server's own types. */
-export type Row = UiRowDescription;
-export type RowStatus = UiRowStatus;
-export type RowNeeds = UiRowNeeds;
-export type RowStateWords = UiStateWords;
 export interface PluginState {
   id: string;
   name: string;
@@ -21,7 +16,7 @@ export interface WorkflowShape {
   edges: { from: string; action: string; to: string; tool?: string | null }[];
 }
 export interface ShellData {
-  rows: Row[];
+  rows: UiRowDescription[];
   plugins: PluginState[];
   workflows?: WorkflowShape[];
 }

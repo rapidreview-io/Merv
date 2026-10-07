@@ -1,7 +1,7 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useRef, useState } from 'react';
 import type { LiveFeedFrame } from '@merv/sessions/models';
 import { NO_TIMELINE, mergeEvents, type AgentBlock } from './agent-stream';
-import { StreamError, readEventStream } from './event-stream';
+import { useEventStream } from './event-stream';
 
 /**
  * The project's live feed as the Agents page reads it: one connection (`/sessions/live`) for
@@ -51,62 +51,22 @@ export function applyFrame(
   return next;
 }
 
-const shown = () => document.visibilityState !== 'hidden';
-const onShown = (listener: () => void) => {
-  document.addEventListener('visibilitychange', listener);
-  return () => document.removeEventListener('visibilitychange', listener);
-};
-
 /**
- * The feed, read while `enabled` and the tab is shown, as one connection. A rotation reconnects
- * at once and starts over from the server's snapshot; a dropped one waits, doubling to half a
- * minute; a refusal stops.
+ * The feed, read while `enabled` (`useEventStream`). Each connection starts over from the
+ * server's snapshot.
  */
 export function useLiveFeed(enabled: boolean): LiveTails {
   const [tails, setTails] = useState(NO_TAILS);
-  const visible = useSyncExternalStore(onShown, shown);
-  useEffect(() => {
-    if (!enabled || !visible) return;
-    let stopped = false;
-    let failures = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let held = new Map<string, { threadId: string; timeline: Timeline }>();
-    const controller = new AbortController();
-    const connect = async () => {
-      const since = Date.now();
-      try {
-        const rotated = await readEventStream(
-          '/sessions/live',
-          controller.signal,
-          (event, value) => {
-            if (stopped || (event !== 'snapshot' && event !== 'tail')) return;
-            const frame = value as LiveFeedFrame;
-            if (!Array.isArray(frame.live) || !Array.isArray(frame.visits)) return;
-            failures = 0;
-            held = applyFrame(held, frame, event === 'snapshot');
-            const byThread = new Map<string, AgentBlock[]>();
-            for (const visit of held.values()) byThread.set(visit.threadId, visit.timeline.blocks);
-            setTails({ byThread });
-          },
-        );
-        if (stopped) return;
-        if (rotated && Date.now() - since > 5000) return void connect();
-      } catch (cause) {
-        if (stopped) return;
-        if (cause instanceof StreamError && [401, 403, 404].includes(cause.status)) return;
-      }
-      timer = setTimeout(
-        () => void (stopped || connect()),
-        Math.min(30_000, 1000 * 2 ** failures++),
-      );
-    };
-    void connect();
-    return () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [enabled, visible]);
+  const held = useRef(new Map<string, { threadId: string; timeline: Timeline }>());
+  useEventStream(enabled ? '/sessions/live' : null, (event, value) => {
+    if (event !== 'snapshot' && event !== 'tail') return;
+    const frame = value as LiveFeedFrame;
+    if (!Array.isArray(frame.live) || !Array.isArray(frame.visits)) return;
+    held.current = applyFrame(held.current, frame, event === 'snapshot');
+    const byThread = new Map<string, AgentBlock[]>();
+    for (const visit of held.current.values()) byThread.set(visit.threadId, visit.timeline.blocks);
+    setTails({ byThread });
+  });
   return enabled ? tails : NO_TAILS;
 }
 

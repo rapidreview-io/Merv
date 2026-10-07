@@ -1,5 +1,6 @@
+import type { UiRowDescription, UiStateWords } from '@merv/ui/rows';
 import { useTool } from './api';
-import type { PluginState, Row, RowStateWords, ShellData } from './shell-types';
+import type { PluginState, ShellData } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
@@ -11,29 +12,29 @@ import type { PluginState, Row, RowStateWords, ShellData } from './shell-types';
 interface NavSection {
   id: string;
   label: string;
-  rows: Row[];
+  rows: UiRowDescription[];
 }
 
 /**
  * Rows of the `lead` group stand under Home at the head of the rail, and a page the rail does
  * not show is reached from them.
  */
-export const leadRows = (rows: Row[]) => rows.filter((row) => row.group === 'lead');
+export const leadRows = (rows: UiRowDescription[]) => rows.filter((row) => row.group === 'lead');
 
 /**
  * Where a page the rail does not show goes back to, and where what is running opens: the lead
  * row (Work), or Home in a composition without one.
  */
-export const homeOf = (rows: Row[]) => {
+export const homeOf = (rows: UiRowDescription[]) => {
   const lead = leadRows(rows)[0];
   return lead ? { to: lead.path, label: lead.label } : { to: '/', label: 'Home' };
 };
 /** Where the records of a view kind open in this composition, if any row lists them. */
-export const pathOf = (rows: readonly Pick<Row, 'path' | 'view'>[], kind: string) =>
+export const pathOf = (rows: readonly Pick<UiRowDescription, 'path' | 'view'>[], kind: string) =>
   rows.find((row) => row.view.kind === kind)?.path;
 
 /** The row whose page opens a record of this workflow: the row listing it, or one holding it. */
-export const rowOf = <R extends Pick<Row, 'workflow' | 'holds'>>(
+export const rowOf = <R extends Pick<UiRowDescription, 'workflow' | 'holds'>>(
   rows: readonly R[],
   workflow: string,
 ) => rows.find((row) => row.workflow === workflow || row.holds?.includes(workflow));
@@ -42,7 +43,7 @@ export const rowOf = <R extends Pick<Row, 'workflow' | 'holds'>>(
  * Places this app retired, and where their work is now. The shell answers each address itself,
  * so it goes there whether or not a plugin still registers the row.
  */
-export const MOVED: Record<string, (rows: Row[]) => string> = {
+export const MOVED: Record<string, (rows: UiRowDescription[]) => string> = {
   // What a project is connected to is a setting.
   connections: () => '/settings/connections',
   // What is running is drawn on the Work page, and without one Home is where the reader goes.
@@ -51,12 +52,12 @@ export const MOVED: Record<string, (rows: Row[]) => string> = {
   now: () => '/',
 };
 
-const NO_ROWS: Row[] = [];
+const NO_ROWS: UiRowDescription[] = [];
 /**
  * The rows the shell polls, for whatever on the page links to a row's records: the shell's
  * own read, shared, so asking for them costs no request of its own.
  */
-export const useRows = (): Row[] =>
+export const useRows = (): UiRowDescription[] =>
   useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
 
 /**
@@ -67,7 +68,7 @@ export const useRows = (): Row[] =>
 export interface StateWords {
   working: ReadonlySet<string>;
   gates: ReadonlySet<string>;
-  said: ReadonlyMap<string, RowStateWords>;
+  said: ReadonlyMap<string, UiStateWords>;
 }
 const WORDS = new WeakMap<object, StateWords>();
 export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>> = {}) {
@@ -87,22 +88,24 @@ export const useStateWords = (): StateWords =>
   stateWords(useTool<ShellData>('ui.shell', {}, { every: 30000 }).data);
 
 /** Rows of the `top` group stand with Home and the lead rows rather than inside a section. */
-export const topRows = (rows: Row[]) => rows.filter((row) => row.group === 'top');
+export const topRows = (rows: UiRowDescription[]) => rows.filter((row) => row.group === 'top');
 
 /**
  * Whether the rail draws a row at all, as its owner placed it. A row of the `hidden` group is
  * still registered and still serves its record routes and its ui.read: the page that absorbed
  * it reaches it.
  */
-const shows = (row: Row) => row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
+const shows = (row: UiRowDescription) =>
+  row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
 
 /**
  * The rail row an address lights: the row it stands under, and — for a page the rail does
  * not show, a record of the work or the agents and machines behind it — the lead row, where
  * it is reached from, so no page is ever nowhere.
  */
-export function holds(row: Row, pathname: string, rows: Row[]): boolean {
-  const under = (other: Row) => pathname === other.path || pathname.startsWith(`${other.path}/`);
+export function holds(row: UiRowDescription, pathname: string, rows: UiRowDescription[]): boolean {
+  const under = (other: UiRowDescription) =>
+    pathname === other.path || pathname.startsWith(`${other.path}/`);
   return under(row) || (row.group === 'lead' && rows.some((o) => under(o) && !shows(o)));
 }
 
@@ -128,7 +131,7 @@ export const humanizeGroup = (group: string) =>
  * order, and unknown sections follow in the order their first row appears.
  * Every non-settings row the rail shows under a heading lands in exactly one section.
  */
-export function buildNavigation(rows: Row[]): NavSection[] {
+export function buildNavigation(rows: UiRowDescription[]): NavSection[] {
   const sorted = rows
     .filter((row) => !['settings', 'lead', 'top'].includes(row.group) && shows(row))
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
@@ -189,7 +192,7 @@ export const documentTitle = (heading: string | undefined, project: string): str
 export function dormantOwner(
   pathname: string,
   kinds: readonly string[],
-  rows: Row[],
+  rows: UiRowDescription[],
   plugins: PluginState[],
 ): PluginState | undefined {
   const place = pathname.split('/')[1] ?? '';

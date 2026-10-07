@@ -6404,14 +6404,13 @@ ul.unit-rows {
 .unit-columns:not(.unit-columns--wide) .unit-row--file {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
-.unit-columns:not(.unit-columns--wide) :is(.unit-row-stage, .unit-row-by) {
+.unit-columns:not(.unit-columns--wide) .unit-row-by {
   display: none;
 }
 .unit-row:hover .unit-row-name {
   color: var(--active);
 }
-.unit-row-name,
-.unit-row-stage {
+.unit-row-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

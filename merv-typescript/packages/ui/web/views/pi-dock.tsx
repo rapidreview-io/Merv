@@ -7,11 +7,11 @@
  * inactivity, by the server's clock, the window closes itself and the conversation ends with it.
  * It is not drawn on a phone.
  */
+import type { UiRowDescription } from '@merv/ui/rows';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CloseIcon, ExpandIcon } from '../icons';
 import type { PiSnapshot } from '@merv/pi/models';
-import type { Row } from '../shell-types';
 import { Composer, Standing, Transcript, useAgent } from './pi';
 import type { Conversation } from './pi-conversation';
 
@@ -38,7 +38,7 @@ function releasedAt({ host }: PiSnapshot, skew: number): number | null {
   return Number.isNaN(at) ? null : at - skew;
 }
 
-export function PiDock({ rows }: { rows: Row[] }) {
+export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   const agent = useAgent();
   const { pathname } = useLocation();
   const roomy = useRoomy();

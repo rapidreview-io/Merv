@@ -1,11 +1,10 @@
+import type { UiRowDescription, UiRowNeeds } from '@merv/ui/rows';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { WorkflowDecision, WorkflowDependency } from '@merv/workflows/models';
 import { refreshTools, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
-import type { Row } from '../shell';
-import type { RowNeeds } from '../shell-types';
 import {
   Ago,
   Failure,
@@ -99,14 +98,14 @@ interface Open {
   name: string;
   owner: string;
   workflow: Flow;
-  row: Row;
-  needs: RowNeeds;
+  row: UiRowDescription;
+  needs: UiRowNeeds;
 }
 /**
  * The records of every row that declares how Home reads them, from the row's own home part, and
  * the records inside each that the row names (`parts`), such as a wave's lenses, under its name.
  */
-const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
+const openWork = (rows: UiRowDescription[], home: HomeData | undefined): Open[] =>
   rows.flatMap(({ needs, ...row }) => {
     const items = (home as Record<string, unknown> | undefined)?.[row.id];
     if (!needs || !Array.isArray(items)) return [];
@@ -132,7 +131,7 @@ const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
  * them, are what their rows declare (`needs`).
  */
 export function needsYou(
-  rows: Row[],
+  rows: UiRowDescription[],
   home: HomeData | undefined,
   /** Who is reading: whose move each record is, the server has already said for them. */
   viewer: { id: string },
@@ -388,11 +387,11 @@ export function Part({
 }
 
 /** A row that cannot speak for itself needs someone, and says so in its own state. */
-const unwellOf = (rows: Row[]) =>
+const unwellOf = (rows: UiRowDescription[]) =>
   rows.filter((row) => row.status.state === 'degraded' || row.status.state === 'unavailable');
 
 /** What needs the reader, from the one home the whole page shares; the rail counts exactly this. */
-export function useNow(rows: Row[], every?: number) {
+export function useNow(rows: UiRowDescription[], every?: number) {
   const session = useSession();
   const home = useHome(every);
   const lines = needsYou(rows, home.data, session.actor, namesOf(home.data?.actors));
@@ -405,7 +404,7 @@ export function NeedsYou({
   lines,
   load,
 }: {
-  rows: Row[];
+  rows: UiRowDescription[];
   lines: Line[];
   load: Pick<Loaded<HomeData>, 'loading' | 'error' | 'data' | 'loadedAt'>;
 }) {

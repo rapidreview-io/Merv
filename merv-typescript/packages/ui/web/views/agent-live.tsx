@@ -1,12 +1,7 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
-import {
-  NO_TIMELINE,
-  mergeEvents,
-  useAgentStream,
-  type AgentBlock,
-  type AgentStreamState,
-} from '../agent-stream';
+import { NO_TIMELINE, mergeEvents, useAgentStream, type AgentBlock } from '../agent-stream';
+import type { EventStreamState } from '../event-stream';
 import { CodeBlock } from '../code-block';
 import { Summary, cx } from '../components';
 import { JsonView, readJson } from '../json-view';
@@ -141,7 +136,7 @@ const Block = memo(function Block({ block, live }: { block: AgentBlock; live: bo
   }
 });
 
-const SAID: Record<AgentStreamState, string> = {
+const SAID: Record<EventStreamState, string> = {
   connecting: 'Connecting…',
   open: 'Nothing yet.',
   retrying: 'Reconnecting…',
