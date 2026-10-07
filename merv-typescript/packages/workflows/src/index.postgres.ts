@@ -247,4 +247,31 @@ BEGIN RAISE EXCEPTION USING MESSAGE='Lease provenance is immutable', ERRCODE='23
   CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
   CREATE TRIGGER wf_leases_retained BEFORE DELETE ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
 `,
+  // Every lease check compares receipts, and a receipt can carry a frozen paper context, so each
+  // lease keeps its receipt's digest() and checks compare that. The backfill rebuilds digest()'s
+  // canonical JSON from the stored text: keys sorted, every scalar token kept as written, which is
+  // JSON.stringify's own spelling (every writer of a receipt used it). A receipt PostgreSQL cannot
+  // read (one escaping NUL or a lone surrogate) keeps no digest, and its read digests it instead.
+  // Read-only prod counts: SELECT count(*), count(*) FILTER (WHERE released_at IS NULL) FROM wf_leases;
+  13: String.raw`
+ALTER TABLE wf_leases ADD COLUMN receipt_digest TEXT;
+CREATE FUNCTION wf_receipt_canonical(v json) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $merv$
+BEGIN
+  RETURN CASE json_typeof(v)
+    WHEN 'object' THEN '{' || COALESCE((SELECT string_agg(to_json(k)::text || ':' || wf_receipt_canonical(v -> k), ',' ORDER BY k COLLATE "C") FROM json_object_keys(v) k), '') || '}'
+    WHEN 'array' THEN '[' || COALESCE((SELECT string_agg(wf_receipt_canonical(a.value), ',' ORDER BY a.n) FROM json_array_elements(v) WITH ORDINALITY a(value, n)), '') || ']'
+    ELSE v::text END;
+END $merv$;
+CREATE FUNCTION wf_receipt_digest(receipt text) RETURNS text LANGUAGE plpgsql IMMUTABLE AS $merv$
+BEGIN
+  IF receipt ~ '\\u(0000|[dD][89a-fA-F])' THEN RETURN NULL; END IF;
+  RETURN encode(sha256(convert_to(wf_receipt_canonical(receipt::json), 'UTF8')), 'hex');
+EXCEPTION WHEN others THEN RETURN NULL;
+END $merv$;
+UPDATE wf_leases SET receipt_digest=wf_receipt_digest(receipt);
+DROP FUNCTION wf_receipt_digest(text);
+DROP FUNCTION wf_receipt_canonical(json);
+DROP TRIGGER wf_leases_immutable ON wf_leases;
+CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,receipt_digest,details ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
+`,
 };

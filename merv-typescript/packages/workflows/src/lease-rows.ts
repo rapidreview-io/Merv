@@ -30,8 +30,9 @@ export interface LeaseRow<D = Data> {
   source_actor_id: string | null;
   review_id: string | null;
   claim_id: string | null;
-  /** The ownership receipt as JSON text: a lease is held only by presenting it exactly. */
-  receipt: string;
+  /** The digest() of the ownership receipt: a lease is held only by presenting it exactly. The
+   * receipt itself, which can carry a frozen paper context, is read only by `leaseReceipt`. */
+  receipt_digest: string;
   /** What the owning program pinned with the lease, as it wrote it. */
   details: D;
   released_at: string | null;
@@ -54,7 +55,7 @@ export async function insertLease(
   },
 ): Promise<void> {
   await tx.run(
-    'INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+    'INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,receipt_digest,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
     lease.id,
     lease.projectId,
     lease.snapshot.id,
@@ -66,14 +67,17 @@ export async function insertLease(
     lease.reviewId,
     lease.claimId,
     JSON.stringify(lease.receipt),
+    digest(lease.receipt),
     JSON.stringify(lease.details),
   );
 }
 
-/** A lease without its receipt and details, which can carry a frozen paper context. */
-export type LeaseSummary = Omit<LeaseRow, 'receipt' | 'details'>;
+/** A lease without its receipt digest and details. */
+export type LeaseSummary = Omit<LeaseRow, 'receipt_digest' | 'details'>;
 const SUMMARY =
   'id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,released_at';
+// A row workflows@13 could not digest carries its receipt, to be digested here instead.
+const FULL = `${SUMMARY},receipt_digest,details,CASE WHEN receipt_digest IS NULL THEN receipt END AS receipt`;
 /** Which of a project's leases a read takes; an empty list matches none. */
 export interface LeaseWhere {
   projectId: string;
@@ -88,7 +92,7 @@ export interface LeaseWhere {
 /**
  * A project's leases, newest last, narrowed by whichever of these are given. `active` keeps
  * only those not yet released. A read takes the shared columns only, unless it asks for one
- * top-level `detail` by name or for the `full` row with its receipt and details.
+ * top-level `detail` by name or for the `full` row with its receipt digest and details.
  */
 export async function leaseRows(tx: Transaction, where: LeaseWhere): Promise<LeaseSummary[]>;
 export async function leaseRows(
@@ -126,15 +130,21 @@ export async function leaseRows(
   among('workflow', where.workflows);
   if (where.active) clauses.push('released_at IS NULL');
   const columns =
-    read === 'full' ? '*' : read ? `${SUMMARY},(details::jsonb ->> ?) AS detail` : SUMMARY;
-  const rows = await tx.all<LeaseSummary & { details?: string }>(
+    read === 'full' ? FULL : read ? `${SUMMARY},(details::jsonb ->> ?) AS detail` : SUMMARY;
+  const rows = await tx.all<
+    LeaseSummary & { details?: string; receipt_digest?: string | null; receipt?: string | null }
+  >(
     `SELECT ${columns} FROM wf_leases WHERE ${clauses.join(' AND ')} ORDER BY _merv_rowid`,
     ...(read && read !== 'full' ? [read.detail] : []),
     where.projectId,
     ...values,
   );
   return read === 'full'
-    ? rows.map((row) => ({ ...row, details: JSON.parse(row.details!) as Data }) as LeaseRow)
+    ? rows.map(({ receipt, ...row }) => ({
+        ...row,
+        receipt_digest: row.receipt_digest ?? digest(JSON.parse(receipt!)),
+        details: JSON.parse(row.details!) as Data,
+      }))
     : rows;
 }
 
@@ -151,18 +161,28 @@ export async function latestReleases(
   );
 }
 
-/** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
-export function checkReceipt<T extends { receipt: string }>(
+/** A lease's ownership receipt as it was frozen, for the worker context that shows it. */
+export async function leaseReceipt(
+  tx: Transaction,
+  lease: Pick<LeaseRow, 'id' | 'project_id'>,
+): Promise<Data> {
+  const row = await tx.get<{ receipt: string }>(
+    'SELECT receipt FROM wf_leases WHERE id=? AND project_id=?',
+    lease.id,
+    lease.project_id,
+  );
+  check(row, 'stale_lease', 'The lease is no longer stored', 409);
+  return JSON.parse(row.receipt) as Data;
+}
+
+/** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale:
+ * the digest stored with it is compared, so the stored receipt is never read to check it. */
+export function checkReceipt<T extends { receipt_digest: string }>(
   lease: T | undefined,
   receipt: unknown,
   message: string,
 ): asserts lease is T {
-  check(
-    !!lease && digest(JSON.parse(lease.receipt)) === digest(receipt),
-    'stale_lease',
-    message,
-    409,
-  );
+  check(!!lease && lease.receipt_digest === digest(receipt), 'stale_lease', message, 409);
 }
 
 /**
@@ -235,8 +255,8 @@ export const leaseReleaseConsumer = (
   types: ['session.closed'],
   from: 'beginning',
   handle: async (event, tx) => {
-    const row = await tx.get<LeaseRow<string>>(
-      'SELECT * FROM wf_leases WHERE id=? AND released_at IS NULL',
+    const row = await tx.get<LeaseSummary>(
+      `SELECT ${SUMMARY} FROM wf_leases WHERE id=? AND released_at IS NULL`,
       event.subjectId,
     );
     if (row)
