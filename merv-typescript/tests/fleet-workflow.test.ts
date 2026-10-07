@@ -48,7 +48,6 @@ import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   fleetWorkflowPlugin,
   FleetWorkflowAdapter,
-  machineGone,
   type FleetWorkflowConfig,
 } from '../packages/fleet/src/workflow.js';
 import {
@@ -1251,38 +1250,6 @@ test('a release’s hold rents nothing and stops each work host whose step has s
   await f.adapter.reconcile();
   assert.ok(f.requests.length > requested);
   assert.ok(f.open().length > 0);
-});
-
-test('Fleet’s word that a work machine is gone for good reaches Sessions, and only that word', async () => {
-  const told: string[] = [];
-  const handle = machineGone({
-    managed: {
-      machineGone: async (allocationId: string) => void told.push(allocationId),
-    },
-  } as unknown as Sessions);
-  const tx = {} as Transaction;
-  const event = (subjectId: string, data: Record<string, unknown>) => ({ subjectId, data });
-  await handle(
-    event('flt_gone', {
-      phase: 'released',
-      owner: { kind: 'workflow', id: 'work:wf_1' },
-      machineGone: true,
-    }),
-    tx,
-  );
-  await handle(
-    event('flt_stopping', { phase: 'releasing', owner: { kind: 'workflow', id: 'work:wf_2' } }),
-    tx,
-  );
-  await handle(
-    event('flt_chat', {
-      phase: 'released',
-      owner: { kind: 'pi-host', id: 'pih_1' },
-      machineGone: true,
-    }),
-    tx,
-  );
-  assert.deepEqual(told, ['flt_gone']);
 });
 
 test('a missing model key serves nothing, and the adapter still starts', async (t) => {

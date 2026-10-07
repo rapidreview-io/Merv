@@ -366,27 +366,6 @@ export class ManagedRunnerBindings {
       return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
     });
   }
-  /** This allocation's machine is gone for good: each session that ran on it is told so
-   *  (session.machine_gone), so whatever waits on a handover from that machine stops waiting. */
-  async machineGone(allocationId: string, tx: Transaction): Promise<void> {
-    this.available();
-    this.state.assertTransaction(tx);
-    for (const row of await tx.all<{ id: string; project_id: string }>(
-      `SELECT id,project_id FROM worker_sessions WHERE id IN (
-         SELECT bound_session_id FROM session_managed_runners WHERE allocation_id=? AND bound_session_id IS NOT NULL
-         UNION SELECT session_id FROM session_managed_assignments WHERE allocation_id=?)
-       ORDER BY id`,
-      allocationId,
-      allocationId,
-    ))
-      await this.state.appendEvent(tx, {
-        projectId: row.project_id,
-        actorId: 'system:sessions',
-        type: 'session.machine_gone',
-        subjectId: row.id,
-        data: { sessionId: row.id, allocationId },
-      });
-  }
   /** The session a managed runner holds, by its bearer or, when a relay checks again, its id:
    *  live, or closed by its own handoff, which says when so Fleet may honour a closing turn.
    *  Reading it never activates an offered session. */
