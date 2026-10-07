@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { githubGitEnv, type GitResult } from '../git.js';
-import { RequestJournal } from '../request-journal.js';
+import { OperationJournal } from '../request-journal.js';
 import {
   canonical,
   check,
@@ -317,7 +317,13 @@ export class CodeMirrorService {
       );
       const { requestId, ...body } = input;
       const principal = `actor:${caller.actorId}`;
-      const journal = new RequestJournal(tx, caller.projectId, principal, requestId, digest(body));
+      const journal = new OperationJournal(
+        tx,
+        caller.projectId,
+        principal,
+        requestId,
+        digest(body),
+      );
       const previous = await journal.previous<{ input_hash: string }>('input_hash');
       if (previous) {
         return;

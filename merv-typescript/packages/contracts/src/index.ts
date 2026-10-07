@@ -298,8 +298,8 @@ export function parsed<T>(
   );
   return result.data;
 }
-/** Where a domain keeps its receipts and how it compares and replays them; see receipted(). */
-interface Receipt<T> {
+/** Where a domain keeps its receipts: the table and its column names. */
+export interface ReceiptTable {
   table: string;
   /** Column names; the defaults are actor_id, input_hash and result. */
   actor?: string;
@@ -310,10 +310,72 @@ interface Receipt<T> {
   /** An older hash recipe whose receipts still replay. */
   legacyHash?: string;
   conflict?: string;
+}
+/** How receipted() compares and replays a table's receipts. */
+interface Receipt<T> extends ReceiptTable {
   /** Runs between the work and its record, for a domain that rechecks authority after yielding. */
   after?: () => Promise<unknown>;
   /** Runs on a replayed answer: a recheck, or defaults for fields older answers lack. */
   replay?: (result: T) => T | Promise<T>;
+}
+/**
+ * One request's receipt in a domain's table, keyed by (project, actor, requestId): a retry with
+ * the same hash finds what it answered, a different one conflicts. receipted() runs a command
+ * through it; a domain whose request outlives one transaction (prepared, then completed) reads
+ * and records its receipt itself, adding the columns its own table carries.
+ */
+export class RequestJournal {
+  constructor(
+    private readonly tx: Sql,
+    private readonly receipt: ReceiptTable,
+    private readonly projectId: string,
+    private readonly actor: string,
+    private readonly requestId: string,
+    private readonly hash: string,
+  ) {}
+
+  /** The receipt's `columns` (by default its result), or nothing when none was kept. */
+  async previous<T extends object = Record<string, string>>(
+    columns = this.receipt.result ?? 'result',
+  ): Promise<T | undefined> {
+    const { table, actor = 'actor_id', operation } = this.receipt;
+    const found = await this.tx.get<T & { receipt_hash: string; receipt_operation?: string }>(
+      `SELECT ${this.receipt.hash ?? 'input_hash'} AS receipt_hash${operation === undefined ? '' : ',operation AS receipt_operation'},${columns} FROM ${table} WHERE project_id=? AND ${actor}=? AND request_id=?`,
+      this.projectId,
+      this.actor,
+      this.requestId,
+    );
+    if (!found) return undefined;
+    const { receipt_hash: hash, receipt_operation: kept, ...previous } = found;
+    check(
+      (operation === undefined || kept === operation) &&
+        (hash === this.hash ||
+          (this.receipt.legacyHash !== undefined && hash === this.receipt.legacyHash)),
+      'request_conflict',
+      this.receipt.conflict ?? 'requestId was already used with different input',
+      409,
+    );
+    return previous as unknown as T;
+  }
+
+  /** Keeps `result`, already serialized, with any further columns the table carries. */
+  record(result: string, columns: Record<string, SqlValue> = {}) {
+    const { actor = 'actor_id', operation } = this.receipt;
+    const values: Record<string, SqlValue> = {
+      project_id: this.projectId,
+      [actor]: this.actor,
+      request_id: this.requestId,
+      ...(operation === undefined ? {} : { operation }),
+      [this.receipt.hash ?? 'input_hash']: this.hash,
+      [this.receipt.result ?? 'result']: result,
+      ...columns,
+    };
+    const names = Object.keys(values);
+    return this.tx.run(
+      `INSERT INTO ${this.receipt.table}(${names.join(',')}) VALUES(${names.map(() => '?').join(',')})`,
+      ...Object.values(values),
+    );
+  }
 }
 /**
  * One durable answer per (project, actor, requestId): a retry with the same hash replays it, a
@@ -334,39 +396,22 @@ export async function receipted<T>(
   execute: () => T | Promise<T>,
   receipt: Receipt<T>,
 ): Promise<T> {
-  const { table, actor = 'actor_id', operation } = receipt;
-  const hashColumn = receipt.hash ?? 'input_hash';
-  const resultColumn = receipt.result ?? 'result';
-  const previous = await tx.get<{ hash: string; result: string; operation?: string }>(
-    `SELECT ${hashColumn} AS hash,${resultColumn} AS result${operation === undefined ? '' : ',operation'} FROM ${table} WHERE project_id=? AND ${actor}=? AND request_id=?`,
+  const journal = new RequestJournal(
+    tx,
+    receipt,
     caller.projectId,
     caller.actorId,
     requestId,
+    hash,
   );
+  const previous = await journal.previous();
   if (previous) {
-    check(
-      (operation === undefined || previous.operation === operation) &&
-        (previous.hash === hash ||
-          (receipt.legacyHash !== undefined && previous.hash === receipt.legacyHash)),
-      'request_conflict',
-      receipt.conflict ?? 'requestId was already used with different input',
-      409,
-    );
-    const result = JSON.parse(previous.result) as T;
+    const result = JSON.parse(previous[receipt.result ?? 'result']) as T;
     return receipt.replay ? await receipt.replay(result) : result;
   }
   const result = await execute();
   await receipt.after?.();
-  const columns = [actor, 'request_id', ...(operation === undefined ? [] : ['operation'])];
-  await tx.run(
-    `INSERT INTO ${table}(project_id,${[...columns, hashColumn, resultColumn].join(',')}) VALUES(?,?,?,?,?${operation === undefined ? '' : ',?'})`,
-    caller.projectId,
-    caller.actorId,
-    requestId,
-    ...(operation === undefined ? [] : [operation]),
-    hash,
-    JSON.stringify(result),
-  );
+  await journal.record(JSON.stringify(result));
   return result;
 }
 /**

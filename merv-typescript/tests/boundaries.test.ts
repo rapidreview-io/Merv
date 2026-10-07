@@ -278,7 +278,6 @@ const codeUtilityExports = new Set([
   'github-client',
   'input',
   'pending-merge',
-  'request-journal',
   'service',
   'store/mirror',
   'store/operations',

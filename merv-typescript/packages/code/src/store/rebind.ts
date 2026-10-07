@@ -1,4 +1,4 @@
-import { RequestJournal } from '../request-journal.js';
+import { OperationJournal } from '../request-journal.js';
 import {
   canonical,
   check,
@@ -72,7 +72,7 @@ export class CodeRebinder {
     // the read below enforces inside this transaction rather than an index.
     const prepared = await this.core.state.transaction(async (tx) => {
       await this.humanAdministrator(caller, tx);
-      const journal = new RequestJournal(tx, caller.projectId, principal, requestId, inputHash);
+      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
       if (previous) {
         // A finished rebind replays its own answer; the refusals below are about work in

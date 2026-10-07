@@ -1,15 +1,11 @@
 import { canonical, RequestJournal, type Sql } from '@merv/contracts';
 
-/**
- * Code's operations are its request journal: a request replayed by its id answers what it
- * answered, other input is refused. A completed operation also carries its status and
- * completion time. Completion runs in the caller's transaction.
- */
-export class OperationJournal extends RequestJournal {
+/** An administrator's replayable request to Code Work, kept with what it asked in its receipts. */
+export class CodeWorkReceipt extends RequestJournal {
   constructor(tx: Sql, projectId: string, principal: string, requestId: string, inputHash: string) {
     super(
       tx,
-      { table: 'code_operations', actor: 'principal_scope', result: 'result_json' },
+      { table: 'code_work_receipts', actor: 'principal_scope', result: 'result_json' },
       projectId,
       principal,
       requestId,
@@ -23,8 +19,6 @@ export class OperationJournal extends RequestJournal {
       kind,
       payload_json: canonical(payload),
       created_at: at,
-      status: 'completed',
-      completed_at: at,
     });
   }
 }

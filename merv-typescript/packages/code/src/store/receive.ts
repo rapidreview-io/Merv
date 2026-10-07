@@ -1,4 +1,4 @@
-import { RequestJournal } from '../request-journal.js';
+import { OperationJournal } from '../request-journal.js';
 import {
   canonical,
   check,
@@ -123,7 +123,7 @@ export class CodeReceiver {
           'Bind this project with code.local.bind before importing its repository',
           409,
         );
-        const journal = new RequestJournal(tx, caller.projectId, principal, requestId, inputHash);
+        const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
         const previous = await journal.previous<OperationRow>(columns);
         if (previous || !insert) return previous;
         await this.assertReceiving(tx, caller.projectId);
@@ -234,7 +234,7 @@ export class CodeReceiver {
     ))
       await this.start(row).catch(() => {});
     const journal = (sql: Sql) =>
-      new RequestJournal(sql, caller.projectId, principal, requestId, inputHash);
+      new OperationJournal(sql, caller.projectId, principal, requestId, inputHash);
     // A replayed begin takes no more room: its bytes already count.
     if (input.bundle && !(await this.core.state.read((sql) => journal(sql).previous())))
       await this.core.repositories.assertRoom(caller.projectId, input.bundle.bytes);
