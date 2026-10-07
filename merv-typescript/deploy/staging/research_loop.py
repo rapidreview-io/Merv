@@ -8,6 +8,8 @@
 #  3. design review, execution, results review: independent agents, as in production.
 # Asserts structure only: the states reached in order, the reviews, the result artifact and its
 # accuracy above a floor, Modal work recorded, and nothing stuck, held or still running.
+# A producer may end its visit with session.ask_owner; the script answers as the owner with
+# session.message to its thread (at most 3 answers) and asserts the work moves on within 10 min.
 # Hard caps: 45 minutes and $2 (model tokens estimated, plus Modal); past either the script ends
 # the work (abandon / mark_failed / halt) and fails.
 import uuid
@@ -19,6 +21,11 @@ CAP_SECONDS = int(os.environ.get("STG_T1_CAP_SECONDS", 45 * 60))
 CAP_USD = float(os.environ.get("STG_T1_CAP_USD", 2.0))
 ACCURACY_FLOOR = 0.80
 EXPERIMENT_PATH = ["planned", "design_review", "running", "experiment_review", "complete"]
+ANSWER_CAP = 3
+RESUME_SECONDS = 10 * 60
+ANSWER_NO_SANDBOXES = ("Proceed on the workspace CPU and record machine='workspace'. This staging project has no "
+                       "Sandboxes connection; the check reports that step separately.")
+ANSWER_DEFAULT = "Proceed with your best judgement within the experiment's caps; record any deviation in the report."
 run = Run("research-loop")
 run.facts["project"] = WHO
 started = time.monotonic()
@@ -38,6 +45,18 @@ def live_sessions(ids):
 
 def stuck_for(ids):
     return [i for i in tool("session.stuck", {}, WHO)["items"] if i.get("instanceId") in ids]
+
+
+def open_questions(ids):
+    """Questions the loop's agents asked with session.ask_owner and nobody answered yet: (id, thread, instance, text).
+    The agent_question blocker in session.stuck names no thread, so the thread comes from Sessions' own rows."""
+    inl = ",".join(f"'{ident(i)}'" for i in ids)
+    return sql("SELECT id, thread_id, instance_id, translate(left(question, 600), E'\\t\\n\\r', '   ') FROM session_questions "
+               f"WHERE instance_id IN ({inl}) AND answered_at IS NULL ORDER BY _merv_rowid;")
+
+
+def answer_for(question):
+    return ANSWER_NO_SANDBOXES if re.search(r"sandbox|machine", question, re.I) else ANSWER_DEFAULT
 
 
 # --- preflight -------------------------------------------------------------------------------
@@ -98,7 +117,23 @@ except ApiError as exc:
 seen = {task: [], exp_id: []}
 reached = {}
 stuck_seen = {}
+answered = {}  # thread -> question ids answered there
+pending = {}  # instance -> {"at", "state", "thread", "n"}: answered, not yet moved on
+answers = 0
 reason = None
+
+
+def label(iid):
+    return "task" if iid == task else "experiment"
+
+
+def resume_evidence(iid, p):
+    left_open = [q[0] for q in open_questions([iid])]
+    blockers = [(i["kind"], i.get("code")) for i in stuck_for({iid})]
+    return (f"{label(iid)} {iid} still {state_of(iid)} {round(time.monotonic() - p['at'])}s after answer {p['n']} "
+            f"on thread {p['thread']}; open questions {left_open}, live sessions {live_sessions([iid])}, stuck {blockers}")
+
+
 while True:
     for iid in (task, exp_id):
         s = state_of(iid)
@@ -111,6 +146,39 @@ while True:
         if key not in stuck_seen:
             stuck_seen[key] = item
             log(f"  stuck: {item['kind']} {item.get('code')} on {item['instanceId']}: {str(item.get('why'))[:200]}")
+    # --- answer the agents' questions as the owner, one message per thread ---
+    threads = {}
+    for qid, thread, iid, text in open_questions([task, exp_id]):
+        if qid not in answered.get(thread, set()):
+            threads.setdefault(thread, (iid, text, []))[2].append(qid)
+    for thread, (iid, text, qids) in threads.items():
+        if answers >= ANSWER_CAP:
+            reason = f"agent question cap reached ({ANSWER_CAP} answers): {text[:200]}"
+            break
+        answers += 1
+        body = answer_for(text)
+        log(f"  question on {label(iid)} {iid} (thread {thread}): {text[:200]}")
+        try:
+            tool("session.message", {"threadId": thread, "body": body, "requestId": f"t1-{TAG}-answer-{answers}"}, WHO)
+        except ApiError as exc:
+            run.ok("agent question answered and the work resumed", False, f"session.message to {thread}: {exc}")
+            answered.setdefault(thread, set()).update(qids)
+            continue
+        answered.setdefault(thread, set()).update(qids)
+        log(f"  answered ({'no Sandboxes' if body == ANSWER_NO_SANDBOXES else 'default'}): {body}")
+        pending[iid] = {"at": time.monotonic(), "state": state_of(iid), "thread": thread, "n": answers}
+    if reason:
+        break
+    # --- the answered work must move on within RESUME_SECONDS ---
+    for iid, p in list(pending.items()):
+        now = state_of(iid)
+        if now != p["state"]:
+            run.ok("agent question answered and the work resumed", True,
+                   f"{label(iid)} {p['state']} > {now} {round(time.monotonic() - p['at'])}s after answer {p['n']}")
+            del pending[iid]
+        elif time.monotonic() - p["at"] > RESUME_SECONDS:
+            run.ok("agent question answered and the work resumed", False, resume_evidence(iid, p))
+            del pending[iid]
     u = usage(exp_id, WHO)
     spent = token_cost(u)
     if seen[exp_id] and seen[exp_id][-1] in ("complete", "abandoned", "failed"):
@@ -126,6 +194,10 @@ while True:
         break
     time.sleep(15)
 
+for iid, p in pending.items():  # the loop ended before an answered item was seen moving on
+    now = state_of(iid)
+    run.ok("agent question answered and the work resumed", now != p["state"],
+           f"{label(iid)} {p['state']} > {now} after answer {p['n']}" if now != p["state"] else resume_evidence(iid, p))
 if reason:
     log(f"ending the work: {reason}")
     for iid, end in ((exp_id, "experiment"), (task, "task")):
@@ -178,7 +250,9 @@ if MODAL:
     works = int(sql(f"SELECT count(*) FROM sandbox_native_work w WHERE row_to_json(w)::text LIKE '%{ident(exp_id)}%';")[0][0])
     run.ok("training ran on Modal through the Sandboxes connection",
            works > 0 and "sbx_" in str(metrics and metrics.get("machine")), f"native work rows {works}, machine {metrics and metrics.get('machine')}")
-left = stuck_for({task, exp_id})
+# A question seen and answered is not stuck work; one still open at the end is.
+asking = {q[2] for q in open_questions([task, exp_id])}
+left = [i for i in stuck_for({task, exp_id}) if i.get("code") != "agent_question" or i["instanceId"] in asking]
 run.ok("nothing stuck or held at the end", not left and not any(k[1] == "dispatch_held" for k in stuck_seen),
        f"now {[(i['kind'], i.get('code')) for i in left]}, seen {[k[1:] for k in stuck_seen]}")
 run.ok("no session still running", live_sessions([task, exp_id]) == 0)
@@ -186,6 +260,6 @@ u = usage(exp_id, WHO)
 run.add_cost(token_cost(u), f"model tokens {u.get('inputTokens', 0)} in / {u.get('outputTokens', 0)} out over {u.get('sessions')} sessions")
 run.ok(f"inside the caps ({CAP_SECONDS // 60} min, ${CAP_USD})", elapsed <= CAP_SECONDS and run.cost <= CAP_USD,
        f"{elapsed / 60:.1f} min, est ${run.cost:.2f}")
-run.facts.update(tag=TAG, sessions=u.get("sessions"), tokens_in=u.get("inputTokens"), tokens_out=u.get("outputTokens"),
+run.facts.update(tag=TAG, questions_answered=answers, sessions=u.get("sessions"), tokens_in=u.get("inputTokens"), tokens_out=u.get("outputTokens"),
                  reached=";".join(f"{k}@{v}s" for k, v in reached.items()))
 sys.exit(run.finish())
