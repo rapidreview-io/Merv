@@ -228,12 +228,29 @@ export class CodeStore {
           this.core.hooks.changed,
         );
         await this.core.hooks.maintained?.();
-        const rows = await this.core.state.read(
-          async (sql) =>
-            await sql.all<OperationRow>(
-              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL ORDER BY created_at,id`,
-            ),
-        );
+        const { rows, closing } = await this.core.state.read(async (sql) => ({
+          rows: await sql.all<OperationRow>(
+            `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL ORDER BY created_at,id`,
+          ),
+          closing: await sql.all<{ project_id: string; unit_id: string }>(
+            "SELECT project_id,unit_id FROM code_workspaces WHERE writer_state='closing'",
+          ),
+        }));
+        // An upload whose every byte reached Main before its session closed needs nothing more
+        // from its machine, which may be gone: Main asks for its admission itself.
+        const ended = new Set(closing.map((row) => `${row.project_id}/${row.unit_id}`));
+        const whole = (row: OperationRow) => {
+          const bytes = (JSON.parse(row.payload_json) as { bundle?: { bytes?: number } }).bundle
+            ?.bytes;
+          const { received } = JSON.parse(row.progress_json ?? '{}') as { received?: number };
+          return (
+            row.kind === 'upload' &&
+            row.phase === 'receiving' &&
+            ended.has(`${row.project_id}/${row.unit_id}`) &&
+            typeof bytes === 'number' &&
+            (received ?? 0) >= bytes
+          );
+        };
         const stale = new Date(Date.now() - this.config.abandonSeconds * 1000).toISOString();
         // Each project in its own order; a slow admission in one holds up no other.
         const projects = new Map<string, OperationRow[]>();
@@ -242,7 +259,8 @@ export class CodeStore {
         await Promise.all(
           [...projects.values()].map(async (rows) => {
             for (const row of rows)
-              if (journalled.includes(row.phase!)) await this.receiver.start(row).catch(() => {});
+              if (journalled.includes(row.phase!) || whole(row))
+                await this.receiver.start(row).catch(() => {});
               else if (
                 row.kind === 'upload' &&
                 !this.receiver.jobs.has(row.id) &&

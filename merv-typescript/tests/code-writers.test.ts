@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 import { CodeWriterService } from '@merv/code/writers';
-import { faultAt, git } from './fixtures/code-store.js';
+import { faultAt, git, maintainStore } from './fixtures/code-store.js';
 
 const fixture = writerFixture;
 
@@ -395,6 +395,24 @@ test('an upload fully on Main when its session closed is admitted within the gra
   assert.equal(admitted.status, 'completed');
   const unit = await f.unit();
   assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', last]);
+  assert.equal((await f.lease('ses_2')).generation, 2);
+});
+
+test('an upload fully on Main when its machine is gone is admitted by Main itself', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  // Every byte arrived, then the host was lost before the machine asked for admission.
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  const bundle = f.source.bundle(first, [f.root]);
+  const inFlight = await f.begin('checkpoint', 'ses_1', 1, f.root, bundle);
+  await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
+  f.end('ses_1', 'managed_revoked');
+  await f.event('session.closed', 'ses_1');
+  assert.equal((await f.unit()).writerState, 'closing');
+  await maintainStore(f.code);
+  const unit = await f.unit();
+  assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
   assert.equal((await f.lease('ses_2')).generation, 2);
 });
 
