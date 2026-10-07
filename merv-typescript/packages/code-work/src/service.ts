@@ -2,14 +2,9 @@ import { configureWorkRepository, projectCheck } from './check-configuration.js'
 import type { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
-import {
-  enqueueMirror,
-  type CodeMirrorService,
-  type MirrorTransport,
-} from '@merv/code/store/mirror';
+import { enqueueMirror, type CodeMirrorService } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { Caller, Reviews, Scope, State, Transaction, Workflows } from '@merv/contracts';
-import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
   check,
@@ -18,7 +13,6 @@ import {
   createService,
   digest,
   MervError,
-  now,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import { CodeBaseService } from './bases.js';
@@ -40,9 +34,6 @@ import type {
 import { CodeUnitService } from './units.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
-
-/** How many times verification imports one merge commit before an operator imports it. */
-const PUBLICATION_IMPORT_ATTEMPTS = 3;
 
 export type { CodeStoreOptions };
 
@@ -78,12 +69,11 @@ export class CodeService implements Code {
   // Set by initialize(); close() also runs after an initialization that failed half-way.
   private store!: CodeStore;
   private mirrorStore!: CodeMirrorService;
-  private transport!: MirrorTransport;
   private baseStore!: CodeBaseService;
   private protocol!: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
-  private publicationStore: CodePublicationService;
-  private publicationHost: PublicationHost;
+  private publicationStore!: CodePublicationService;
+  private publicationHost!: PublicationHost;
   private readonly board: CodeRunningReader;
   private publicationClosed = false;
   private releaseProvenance?: () => void;
@@ -115,53 +105,6 @@ export class CodeService implements Code {
     this.commands = new CodeCommandService(state, scope, sessions);
     this.github = utility.github;
     this.writerStore = utility.writers;
-    this.publicationHost = new PublicationHost(
-      state,
-      scope,
-      reviews,
-      utility.repositories,
-      () => this.transport,
-      async (caller, ref, oid) => {
-        const store = this.store;
-        if (await store.contains(caller.projectId, oid)) return;
-        // A failed import is final under its request id, so each call past one starts the next
-        // attempt. Code's operation journal holds every attempt, and so the bound.
-        const started = now();
-        let operation: CodeStoreOperation | undefined;
-        for (let attempt = 1; attempt <= PUBLICATION_IMPORT_ATTEMPTS; attempt++) {
-          operation = await store.importRepository(caller, {
-            source: 'github',
-            ref,
-            requestId: `publication-import:${oid}${attempt > 1 ? `:${attempt}` : ''}`,
-          });
-          if (operation.status !== 'failed' || operation.createdAt >= started) break;
-        }
-        check(
-          operation!.status !== 'failed' || operation!.createdAt >= started,
-          'code_publication_import_failed',
-          `Importing the merge commit failed ${PUBLICATION_IMPORT_ATTEMPTS} times; read code.status and import ${ref} with code-import`,
-          409,
-        );
-        check(
-          operation!.status === 'completed' && (await store.contains(caller.projectId, oid)),
-          'code_publication_import_pending',
-          'The publication commit must finish Code admission before verification; retry this same request',
-          409,
-        );
-      },
-      (caller, tx) => this.github.publicationBinding(caller, tx),
-      this.writerStore,
-      (caller, oid, tx, expectedOid) =>
-        this.unitStore.records.moveMain(caller, oid, tx, expectedOid),
-      (projectId, tx) => this.unitStore.imported(tx, projectId),
-    );
-    this.publicationStore = new CodePublicationService(
-      state,
-      scope,
-      this.github,
-      utility.units,
-      this.publicationHost,
-    );
     this.board = new CodeRunningReader(state, scope, workflows, {
       unit: (caller, unitId, tx) => this.unitStore.records.unit(caller, unitId, tx),
       bases: () => this.baseStore,
@@ -198,7 +141,6 @@ export class CodeService implements Code {
         .register((projectId, subjectId, tx) =>
           this.unitStore.reviewProvenance(projectId, subjectId, tx),
         );
-      this.unitStore.publications = this.publicationStore;
       // Bases come first: what the store's start finishes may derive units, which merge.
       const bases = new CodeBaseService(state, utility.repositories, {
         changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
@@ -222,7 +164,23 @@ export class CodeService implements Code {
       );
       this.store = opened.store;
       this.mirrorStore = opened.mirror;
-      this.transport = opened.transport;
+      this.publicationHost = new PublicationHost(
+        state,
+        scope,
+        this.reviews,
+        utility.repositories,
+        this.github,
+        this.writerStore,
+        { store: opened.store, transport: opened.transport, units: this.unitStore },
+      );
+      this.publicationStore = new CodePublicationService(
+        state,
+        scope,
+        this.github,
+        utility.units,
+        this.publicationHost,
+      );
+      this.unitStore.publications = this.publicationStore;
       this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, opened.store);
       bases.start();
       await this.publicationStore.initialize();
@@ -469,15 +427,6 @@ export class CodeService implements Code {
         operation,
       ),
     );
-  }
-  /** The binding and hosting a preparation compares; status() reads far more than these. */
-  async repositoryState(caller: Caller) {
-    const store = this.store;
-    return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const project = await this.utility.units.project(tx, caller.projectId);
-      return { project, store: { hosted: !!(await store.stored(tx, caller.projectId)) } };
-    });
   }
   rebindRepository = async (caller: Caller, input: unknown) =>
     this.store.rebindRepository(caller, input);

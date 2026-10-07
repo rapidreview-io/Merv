@@ -920,9 +920,10 @@ test('a sync that keeps failing before its pull request opens waits on an operat
   await f.pin(work);
   await f.accept(work, f.feature);
   // Reviews cannot answer, so every check of the reviewed facts fails.
-  const host = (f.code as unknown as { publicationHost: { review(): Promise<unknown> } })
-    .publicationHost;
-  const unavailable = t.mock.method(host, 'review', async () => {
+  const { reviews } = (
+    f.code as unknown as { publicationHost: { reviews: { get(): Promise<unknown> } } }
+  ).publicationHost;
+  const unavailable = t.mock.method(reviews, 'get', async () => {
     throw new MervError('reviews_unavailable', 'Publication requires Reviews', 503);
   });
   await f.sync();
