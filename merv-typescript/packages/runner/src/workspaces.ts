@@ -4,7 +4,6 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   effectiveWorkspace,
-  WorkspaceDeferred,
   type SessionWorkspace,
   type WorkflowWorkspacePolicy,
   type WorkspaceDriver,
@@ -25,16 +24,15 @@ export const assignmentUser = {
 /** A hosted work host's scratch root, kept for exactly this one work item across its phases. */
 export type RunnerAssignment = { directory: string; workInstanceId: string };
 /** One launch's claim of a scratch directory, with the workspace row it opens. */
-interface CheckoutSlotClaim {
+interface ScratchClaim {
   launchId: string;
-  slotId: string;
   path: string;
   policy: WorkflowWorkspacePolicy;
   readOnly: boolean;
 }
-type SlotOwner = { launch_id: string; slot_id: string; epoch: number };
-/** A launch's workspace row in the runner's slot ledger. */
-interface WorkspaceRow extends SlotOwner {
+/** A launch's workspace row in the runner's ledger. */
+interface WorkspaceRow {
+  launch_id: string;
   path: string;
   policy_json: string;
   read_only: number;
@@ -58,20 +56,18 @@ const statIfPresent = (path: string) => {
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /**
- * The runner's checkout-slot ledger: which launch owns each scratch path, at which epoch, and
- * each launch's workspace row. Earlier runners kept checkouts of their own repository here too,
- * so the tables keep those columns.
+ * Each launch's workspace row in the runner's ledger. A path is occupied while a row for it is
+ * not closed. Earlier runners kept checkouts of their own repository and a slot table here too,
+ * so the row keeps those columns (`slot_id`, `epoch`, `base_oid`, `branch`, `repository_id`)
+ * and the slot table is dropped.
  */
-class CheckoutSlots {
+class WorkspaceRows {
   private readonly db: DatabaseSync;
-  constructor(private readonly ledger: LocalLedger) {
+  constructor(ledger: LocalLedger) {
     this.db = new DatabaseSync(ledger.path);
     this.db
       .exec(`PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA fullfsync=ON;
-      CREATE TABLE IF NOT EXISTS runner_checkout_slots (
-        slot_id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,branch TEXT,base_oid TEXT NOT NULL,
-        owner_launch_id TEXT UNIQUE,epoch INTEGER NOT NULL
-      );
+      DROP TABLE IF EXISTS runner_checkout_slots;
       CREATE TABLE IF NOT EXISTS runner_workspaces (
         launch_id TEXT PRIMARY KEY REFERENCES launches(id),slot_id TEXT NOT NULL,
         epoch INTEGER NOT NULL,path TEXT NOT NULL,policy_json TEXT NOT NULL,read_only INTEGER NOT NULL,
@@ -88,41 +84,32 @@ class CheckoutSlots {
         WHEN OLD.result_json IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable workspace result'); END;
     `);
   }
-  /** `adoptable`: whether a directory at the path that no slot records may be taken over. */
-  claim(claim: CheckoutSlotClaim, adoptable?: () => boolean): void {
-    this.transaction(() => {
-      const slot = this.db
-        .prepare('SELECT * FROM runner_checkout_slots WHERE slot_id=?')
-        .get(claim.slotId);
-      // An owner that is running or settling frees the slot by itself, within the capture
-      // bound; one whose process is uncertain needs an operator, so that refusal counts.
-      if (slot?.owner_launch_id)
-        throw this.ledger.get(String(slot.owner_launch_id))?.status === 'uncertain'
-          ? new WorkspaceError('workspace_owned_by_another_launch')
-          : new WorkspaceDeferred('checkout_busy', 'workspace_owned_by_another_launch');
-      if (!slot && statIfPresent(claim.path) && !adoptable?.())
-        throw new WorkspaceError('workspace_foreign_checkout');
-      const epoch = Number(slot?.epoch ?? 0) + 1;
-      this.db
+  /**
+   * Opens the launch's row. A path another launch has not closed is refused; `adoptable` says
+   * whether an existing directory no row records may be taken over.
+   */
+  claim(claim: ScratchClaim, adoptable: () => boolean): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db
         .prepare(
-          `INSERT INTO runner_checkout_slots VALUES(?,?,?,?,?,?)
-          ON CONFLICT(slot_id) DO UPDATE SET owner_launch_id=excluded.owner_launch_id,epoch=excluded.epoch`,
+          "SELECT count(*) AS known, count(*) FILTER (WHERE status<>'closed') AS open FROM runner_workspaces WHERE path=?",
         )
-        .run(claim.slotId, claim.path, null, '', claim.launchId, epoch);
+        .get(claim.path) as { known: number; open: number };
+      if (rows.open) throw new WorkspaceError('workspace_owned_by_another_launch');
+      if (!rows.known && statIfPresent(claim.path) && !adoptable())
+        throw new WorkspaceError('workspace_foreign_checkout');
       this.db
         .prepare(
           `INSERT INTO runner_workspaces(launch_id,slot_id,epoch,path,policy_json,read_only,base_oid,branch,repository_id,status)
-          VALUES(?,?,?,?,?,?,'',NULL,NULL,'preparing')`,
+          VALUES(?,'',0,?,?,?,'',NULL,NULL,'preparing')`,
         )
-        .run(
-          claim.launchId,
-          claim.slotId,
-          epoch,
-          claim.path,
-          JSON.stringify(claim.policy),
-          Number(claim.readOnly),
-        );
-    });
+        .run(claim.launchId, claim.path, JSON.stringify(claim.policy), Number(claim.readOnly));
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
   workspace(launchId: string): WorkspaceRow | undefined {
     return this.db.prepare('SELECT * FROM runner_workspaces WHERE launch_id=?').get(launchId) as
@@ -133,39 +120,8 @@ class CheckoutSlots {
       .prepare('UPDATE runner_workspaces SET status=? WHERE launch_id=?')
       .run(status, launchId);
   }
-  requireOwnership(row: SlotOwner): void {
-    const slot = this.db
-      .prepare('SELECT owner_launch_id,epoch FROM runner_checkout_slots WHERE slot_id=?')
-      .get(row.slot_id);
-    if (slot?.owner_launch_id !== row.launch_id || Number(slot.epoch) !== row.epoch)
-      throw new WorkspaceError('workspace_ownership_changed');
-  }
-  /** Frees the slot its owner still holds and closes the launch's workspace row. */
-  release(row: SlotOwner): void {
-    this.transaction(() => {
-      this.requireOwnership(row);
-      this.db
-        .prepare(
-          'UPDATE runner_checkout_slots SET owner_launch_id=NULL WHERE slot_id=? AND owner_launch_id=? AND epoch=?',
-        )
-        .run(row.slot_id, row.launch_id, row.epoch);
-      this.db
-        .prepare("UPDATE runner_workspaces SET status='closed' WHERE launch_id=?")
-        .run(row.launch_id);
-    });
-  }
   close(): void {
     this.db.close();
-  }
-  private transaction(work: () => void): void {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      work();
-      this.db.exec('COMMIT');
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
   }
 }
 
@@ -175,7 +131,7 @@ class CheckoutSlots {
  * always a named driver's.
  */
 export class RunnerWorkspaces implements WorkspaceDriver {
-  private readonly slots: CheckoutSlots;
+  private readonly rows: WorkspaceRows;
   private serial: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
@@ -201,7 +157,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       )
         throw new WorkspaceError('workspace_assignment_root_invalid');
     }
-    this.slots = new CheckoutSlots(ledger);
+    this.rows = new WorkspaceRows(ledger);
   }
   get(launchId: string): WorkspaceHandle | undefined {
     const row = this.row(launchId);
@@ -236,10 +192,9 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       const path = this.assignment
         ? join(this.assignment.directory, hash(this.assignment.workInstanceId))
         : join(realpathSync(record.runDirectory), 'workspace');
-      this.slots.claim(
+      this.rows.claim(
         {
           launchId: record.id,
-          slotId: `scratch:${this.assignment?.workInstanceId ?? record.id}`,
           path,
           policy,
           readOnly: session.execution.policy.readOnly,
@@ -264,8 +219,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
       const row = this.row(record.id);
       if (!row || row.status === 'captured' || row.status === 'closed') return undefined;
-      this.slots.requireOwnership(row);
-      this.slots.update(record.id, 'captured');
+      this.rows.update(record.id, 'captured');
       return undefined;
     });
   }
@@ -276,15 +230,14 @@ export class RunnerWorkspaces implements WorkspaceDriver {
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
       const row = this.row(record.id);
       if (!row || row.status === 'closed') return;
-      this.slots.requireOwnership(row);
       if (!['captured', 'closing'].includes(row.status))
         throw new WorkspaceError('workspace_capture_required');
-      this.slots.release(row);
+      this.rows.update(record.id, 'closed');
     });
   }
   dispose(): void {
     this.disposed = true;
-    this.slots.close();
+    this.rows.close();
   }
 
   private async run<Input, T>(input: Input, action: (input: Input) => Promise<T>): Promise<T> {
@@ -297,7 +250,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
     return operation;
   }
   private row(id: string): WorkspaceRow | undefined {
-    return this.slots.workspace(id);
+    return this.rows.workspace(id);
   }
   private requireLaunch(record: WorkspaceLaunch): void {
     const actual = this.ledger.get(record.id);
@@ -312,7 +265,6 @@ export class RunnerWorkspaces implements WorkspaceDriver {
     return this.assignment?.directory ?? realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
   }
   private prepareScratch(row: WorkspaceRow): void {
-    this.slots.requireOwnership(row);
     this.within(this.parent(row), row.path);
     const info = statIfPresent(row.path);
     // On a retained hosted machine the preceding phase handed this same leaf to the
@@ -326,7 +278,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       )
         throw new WorkspaceError('workspace_foreign_checkout');
     } else privateDirectory(row.path);
-    this.slots.update(row.launch_id, 'ready');
+    this.rows.update(row.launch_id, 'ready');
   }
   private validate(row: WorkspaceRow): void {
     this.within(this.parent(row), row.path);
