@@ -192,6 +192,8 @@ const view = (s: Session) => {
     ...(s.workspace ? { workspace: s.workspace } : {}),
     ...(s.continuity ? { continuity: s.continuity } : {}),
     ...(s.inquiry ? { inquiry: s.inquiry } : {}),
+    // The budget check reads it from here on, since a running launch polls only the control view.
+    ...(s.tokenBudget !== undefined ? { tokenBudget: s.tokenBudget } : {}),
     execution: { policy: { readOnly, workspace, tools: tools.map(({ name }) => ({ name })) } },
   };
 };

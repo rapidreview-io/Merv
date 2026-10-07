@@ -573,14 +573,17 @@ export class LeasedSessions implements Sessions {
   private decode(row: Row): Session {
     // The thread is the column's: the JSON never holds it.
     const stored = { ...JSON.parse(row.session_json), threadId: row.thread_id };
-    // An inquiry visit stored before visits named their kind carried a lease and a binding.
+    // An inquiry visit stored before visits named their kind carried a lease and a binding. A
+    // control read (CONTROL) has no execution to strip.
     const session: Session = stored.inquiry
       ? (({ lease: _lease, ...rest }) => ({
           ...rest,
           kind: 'inquiry',
-          execution: (({ policyHash: _p, registrationId: _r, references: _f, ...step }) => step)(
-            rest.execution,
-          ),
+          ...(rest.execution && {
+            execution: (({ policyHash: _p, registrationId: _r, references: _f, ...step }) => step)(
+              rest.execution,
+            ),
+          }),
         }))(stored)
       : { kind: 'work', ...stored };
     if (row.attachment_json !== null)

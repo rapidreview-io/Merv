@@ -405,9 +405,8 @@ export function buildLaunch(
         ]
       : []),
     request.prompt,
-    ...(profile.harness === 'command' ? [] : [searching(internet(profile, session))]),
-    ...(profile.harness === 'codex' &&
-    profile.hosted &&
+    ...(launcher.agent ? [searching(internet(profile, session))] : []),
+    ...(launcher.huggingface(profile) &&
     !sealed(session) &&
     request.hfToken &&
     request.hfEndpoint
