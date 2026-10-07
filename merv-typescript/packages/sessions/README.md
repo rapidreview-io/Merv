@@ -6,7 +6,7 @@ registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenev
 authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Session and
 managed-runner credentials live in Identity's credential store (`@merv/identity/credentials`). What a runner
 advertises (`RUNNER_HARNESSES`, the platform and capability schemas, session statuses) is the pure-rules module
-`@merv/sessions/rules`, which the runner imports too. The registry refuses session callers while no policy is registered. A policy decision or
+`@merv/sessions/rules`, which the runner imports too, as it does `@merv/sessions/agent-stream`: the `AgentEvent` stream, the Claude Code and Codex output readers, and both halves of how Claude Code names a Merv tool (`mcp__merv__…`). The registry refuses session callers while no policy is registered. A policy decision or
 prepared invocation belongs to the registration that admitted it: withdrawing or replacing that registration,
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
 already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
@@ -57,11 +57,11 @@ flowchart LR
   sessions -- "injects" --> state
   sessions -- "injects; drains before an offer" --> domainEvents
   sessions -- "injects; HF grant authority" --> secrets
-  runner -- "imports @merv/sessions/rules" --> sessions
+  runner -- "imports @merv/sessions/rules, agent-stream" --> sessions
   sessions -- "injects" --> blobs
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
-  ui -- "imports @merv/sessions/models, rules" --> sessions
+  ui -- "imports @merv/sessions/models, rules, agent-stream" --> sessions
   sessions -- "ui adapter injects; registers Agents page and Running lane" --> ui
   sandboxes -- "injects" --> sessions
   sessions -- "emits session.closed" --> tasks

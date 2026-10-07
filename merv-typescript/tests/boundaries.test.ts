@@ -240,7 +240,7 @@ const sharedContract = (specifier: string) =>
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
  * artifact as a context item, the retirement ledger text every retirement migration embeds, what
- * a runner advertises, hosted Codex's profile and handoff grace, and the lease rows every leased
+ * a runner advertises, the agent stream and its harness readers, hosted Codex's profile and handoff grace, and the lease rows every leased
  * step keeps. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
@@ -259,6 +259,7 @@ const pureRules = new Set([
   '@merv/paper/rules',
   '@merv/context-builder/artifact-item',
   '@merv/sessions/rules',
+  '@merv/sessions/agent-stream',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */

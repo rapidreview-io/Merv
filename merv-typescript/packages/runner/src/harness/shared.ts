@@ -1,5 +1,9 @@
 import { readdirSync } from 'node:fs';
-import { readLine as read, type AgentEvent, type HarnessLine as Line } from '@merv/contracts';
+import {
+  readLine as read,
+  type AgentEvent,
+  type HarnessLine as Line,
+} from '@merv/sessions/agent-stream';
 import type { SessionUsageReport } from '@merv/sessions/types';
 import { conversationIdPattern, type RunnerProfile } from '../profiles.js';
 

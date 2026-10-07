@@ -1,14 +1,6 @@
 import { z } from 'zod';
-import {
-  AGENT_EVENT_TEXT,
-  check,
-  type AgentEvent,
-  type AgentStreamEvent,
-  type Caller,
-  type Scope,
-  type State,
-  type Transaction,
-} from '@merv/contracts';
+import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
+import { AGENT_EVENT_TEXT, type AgentEvent, type AgentStreamEvent } from './agent-stream.js';
 import { isoNow, live, readFirst } from './common.js';
 import { postgresMigrations } from './stream.postgres.js';
 import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';

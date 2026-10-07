@@ -1,4 +1,5 @@
-import type { AgentEvent, AgentStreamEvent, NativeMcpConnection } from '@merv/contracts';
+import type { NativeMcpConnection } from '@merv/contracts';
+import type { AgentEvent, AgentStreamEvent } from '@merv/sessions/agent-stream';
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type {

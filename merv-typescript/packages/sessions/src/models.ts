@@ -5,7 +5,7 @@ import type {
   WorkflowDispatchCandidate,
 } from '@merv/contracts/types';
 import type { RunningPhrase } from '@merv/contracts/running';
-import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
+import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 
 export interface SessionWorkspaceRecord {
   attachment: SessionWorkspace;

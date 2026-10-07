@@ -31,7 +31,7 @@ flowchart LR
   runner -- "uses driver" --> code
   runner -- "launches" --> workerAgent
   runner -- "HTTP /sessions/*" --> sessions
-  runner -- "imports @merv/sessions/rules" --> sessions
+  runner -- "imports @merv/sessions/rules, agent-stream" --> sessions
   runner -- "HTTP /code/commands" --> codeWork
   runner -- "PUT signed upload" --> blobStore
   runner -- "imports hosted-codex" --> fleet

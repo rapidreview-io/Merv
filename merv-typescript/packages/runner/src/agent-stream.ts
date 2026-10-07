@@ -1,6 +1,6 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
-import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/contracts';
+import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import type { SessionStreamBatch } from '@merv/sessions/types';
 import { RunnerControlError } from './client.js';
 import { harnesses, type HarnessName } from './harness/index.js';
