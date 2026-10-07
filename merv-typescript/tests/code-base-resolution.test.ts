@@ -1465,6 +1465,12 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       (item) => item.instanceId === waiter.id && item.why.includes('suspended'),
     ),
   );
+  // The suspended task carries the admin's move on its card, though its limit leaves in_progress.
+  const escalated = await f.workflows.escalated(f.admin);
+  assert.deepEqual(
+    [escalated.admin, escalated.items.map((item) => [item.instanceId, item.limit.name])],
+    [true, [[taskId, 'review_rounds']]],
+  );
   const grant = {
     instanceId: taskId,
     limit: 'review_rounds',

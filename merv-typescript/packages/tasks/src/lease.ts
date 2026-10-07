@@ -1,5 +1,5 @@
 import { directsIndependently, excludedFromReview, NOT_INDEPENDENT } from '@merv/reviews/rules';
-import { insertLease, leaseRows, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
+import { heldLease, insertLease, leaseRows, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
 import {
   check,
   newId,
@@ -58,11 +58,8 @@ export async function leasedClaim(
 ) {
   ctx.registration(snapshot.version);
   if (caller.session) return;
-  const limit = (await ctx.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)).get(
-    snapshot.id,
-  )!;
   check(
-    limit.from === snapshot.state && limit.exhausted,
+    !!(await ctx.workflows.exhaustedLimit(caller, snapshot.id, tx)),
     'leased_review_required',
     'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task',
     403,
@@ -111,22 +108,12 @@ export async function currentLease(
   revision: number,
   tx: Transaction,
 ): Promise<TaskLeaseRow> {
-  check(caller.session, 'stale_lease', 'This task operation requires its lease worker', 403);
-  const where = {
-    projectId: caller.projectId,
-    id: caller.session.id,
-    instanceIds: [taskId],
-    revision,
-    actorId: caller.actorId,
-    active: true,
-  };
-  // Every lease hook of one check asks for it: read once per snapshot, or per write transaction
-  // until it writes, and each caller gets a copy.
-  const [lease] = await ctx.state.remember(`tasks:lease:${JSON.stringify(where)}`, () =>
-    leaseRows<TaskLeaseRow['details']>(tx, where, 'full'),
+  return await heldLease<TaskLeaseRow['details']>(
+    ctx.state,
+    tx,
+    { projectId: caller.projectId, instanceId: taskId, revision },
+    caller,
   );
-  check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
-  return structuredClone(lease);
 }
 
 export async function acquireLease(

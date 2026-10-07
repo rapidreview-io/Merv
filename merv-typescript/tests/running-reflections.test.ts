@@ -259,7 +259,7 @@ test('a lens with an agent makes the wave solid and its row the way to that sess
   ]);
 });
 
-test('synthesis and review read as the wave stands, used-up returns turn it red with the way to its review, and approval takes it off the board', async (t) => {
+test('synthesis and review read as the wave stands, used-up returns turn it red with the admin’s control, and approval takes it off the board', async (t) => {
   const f = await fixture(t);
   const reviewer = await f.actor('Reviewer', 'reviewer');
   let wave = await f.lenses(
@@ -341,13 +341,12 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
       content: JSON.stringify(plan),
     }),
   );
+  // Workflows' mark says it, with the admin's control, in the words every owner's work shares.
   const red = {
-    says: ['Review returns used up'],
-    who: 'An independent reviewer reviews it by hand, or its owner or an operator ends it.',
-    to: { route: `/reviews/${wave.review!.id}`, text: 'Open the review' },
+    says: ['Every round of ', { mono: 'review_returns' }, ' is used · ', { count: 2 }],
+    who: 'A project admin allows another round, or a person takes the next step by hand or ends it',
   };
   const answer = await f.board(f.owner);
-  // Workflows' mark lends the card the admin's control.
   const allow = {
     label: 'Allow another round',
     verb: 'extend',
@@ -363,7 +362,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   assert.equal(answer.lanes.work.nodes[0]!.key, keyOf(wave.id));
   assert.ok(answer.lanes.work.needsYou >= 1);
   sidebar = await f.panel(f.owner, keyOf(wave.id));
-  assert.deepEqual(sidebar.header.attention, red);
+  assert.equal(sidebar.header.attention, undefined);
   assert.deepEqual(section(sidebar, 'Result', 'facts').rows[1], {
     label: 'Plan',
     value: ['Continue · 1 task · 1 experiment'],
@@ -378,7 +377,10 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   // Its rounds are still used up, which only a project admin changes.
   assert.deepEqual(
     [node.attention?.who, node.attention?.action?.tool],
-    ['A project admin can allow another round', 'workflow.extend_limit'],
+    [
+      'A project admin allows another round, or a person takes the next step by hand or ends it',
+      'workflow.extend_limit',
+    ],
   );
 
   // Approved, the wave has left the board, unless another owner holds it there.
@@ -407,7 +409,6 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
         plan: { ...wave.plan!, next: { decision: 'stop', reason: 'goal_met', rationale: 'Done.' } },
       },
       leases: [],
-      exhausted: false,
     },
     graph,
   );
@@ -418,7 +419,6 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   const long = waveNode({
     wave: { ...wave, title: 'x'.repeat(300) },
     leases: [],
-    exhausted: false,
   });
   assert.equal(long.title.length, 200);
   assert.ok(long.title.endsWith('…'));
@@ -513,7 +513,7 @@ test('a review no eligible reviewer can take turns the wave red until an operato
     waiting:
       'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.',
   };
-  const facts = { wave: { ...wave, review: waiting }, leases: [], exhausted: false };
+  const facts = { wave: { ...wave, review: waiting }, leases: [] };
   const red = {
     says: ['No independent reviewer can take it'],
     who: 'An operator provides one.',
@@ -526,10 +526,7 @@ test('a review no eligible reviewer can take turns the wave red until an operato
   ]);
   const graph = await f.app.ctx.workflows.process(f.owner, wave.id);
   assert.deepEqual(wavePanel(facts, graph).header.attention, red);
-  // Returns used up name the move that ends both waits; with no signal there is no red.
-  assert.deepEqual(waveNode({ ...facts, exhausted: true }).attention!.says, [
-    'Review returns used up',
-  ]);
+  // Returns used up are Workflows' mark on the card; with no signal there is no red.
   assert.equal(waveNode({ ...facts, wave }).attention, undefined);
   // Only a wave still in review waits for a reviewer.
   const approved = { ...wave.workflow, state: 'approved' };

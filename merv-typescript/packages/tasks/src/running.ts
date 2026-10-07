@@ -20,13 +20,13 @@ import {
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
-import type { ProcessGraph, WorkflowDependency, WorkflowLimitStatus } from '@merv/workflows/models';
+import type { ProcessGraph, WorkflowDependency } from '@merv/workflows/models';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
-import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
+import { TASK_WORKFLOW, taskVersions } from './workflow.js';
 
 /**
  * A task on the Running page: its card in the work lane and its sidebar, composed from facts
@@ -47,8 +47,6 @@ export interface TaskStanding {
   /** The current review, while the task is in review. `waiting` is told to operators only. */
   review: Pick<ReviewRequest, 'id' | 'status' | 'reviewerId' | 'createdAt' | 'waiting'> | null;
   dependencies: WorkflowDependency[];
-  /** Every return review_rounds allows from the current state has been used. */
-  roundsUsed: boolean;
   /** Another plugin published why the task cannot go on. */
   blocked: boolean;
   /** When the task was created: the live card counts from it. */
@@ -110,18 +108,8 @@ function need(task: TaskStanding): RunningAttention | undefined {
       says: [short(failed.name), ' failed'],
       who: 'The producer ends this task, or its cycle replans it',
     };
-  // A producer can never review its own work, so the hand review is an independent one, and it
-  // can only fail the task. Once a reviewer has claimed it by hand the move is made, and the card
-  // says who has it.
-  const byHand = task.review?.status === 'started' && task.lease === null;
-  if (task.roundsUsed && !byHand)
-    return {
-      says: ['Every review round is used'],
-      who: 'An operator allows another round, or an independent reviewer fails it by hand',
-      ...(review ? { to: review } : {}),
-    };
-  if (task.state === 'suspended')
-    return { says: ['Suspended'], who: 'A signed-in operator allows another review round' };
+  // Rounds used up, and a suspended task waiting for another round, are Workflows' mark on the
+  // card, in the words every owner's work shares.
   if (task.state === 'in_review' && task.review?.waiting)
     return {
       says: ['No independent reviewer can take it'],
@@ -525,14 +513,6 @@ export async function running(
           rows.map((row) => row.id),
           tx,
         );
-        const rounds = await ctx.workflows.limitStatusOf(
-          caller,
-          rows
-            .filter((row) => taskVersions[row.version] && row.state === roundsFrom(row.version))
-            .map((row) => row.id),
-          'review_rounds',
-          tx,
-        );
         return await mapAsync(
           rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
           async (row) =>
@@ -545,7 +525,6 @@ export async function running(
                 leases,
                 blocked.has(row.id),
                 tx,
-                rounds,
               ),
             ),
         );
@@ -629,9 +608,8 @@ export async function liveLeases(
 }
 
 /**
- * One task's facts. `counted` is the board's one read of review rounds for every task; the
- * sidebar, reading one task, counts its own. A review the task names and Reviews does not
- * hold leaves the task drawn without it, rather than taking every other task with it.
+ * One task's facts. A review the task names and Reviews does not hold leaves the task drawn
+ * without it, rather than taking every other task with it.
  */
 export async function standing(
   ctx: TasksContext,
@@ -641,15 +619,7 @@ export async function standing(
   leases: Awaited<ReturnType<typeof liveLeases>>,
   blocked: boolean,
   tx: Transaction,
-  counted?: ReadonlyMap<string, WorkflowLimitStatus>,
 ): Promise<TaskStanding> {
-  // Only the limit leaving the current state stops anything, as the gate reads it.
-  const rounds =
-    !taskVersions[row.version] || row.state !== roundsFrom(row.version)
-      ? null
-      : counted
-        ? (counted.get(row.id) ?? null)
-        : (await ctx.workflows.limitStatusOf(caller, [row.id], 'review_rounds', tx)).get(row.id)!;
   const review =
     row.state === 'in_review' && row.review_id
       ? await ctx.reviews.get(caller, row.review_id, tx).catch(absent)
@@ -668,7 +638,6 @@ export async function standing(
       ...(review.waiting ? { waiting: review.waiting } : {}),
     },
     dependencies,
-    roundsUsed: !!rounds?.exhausted,
     blocked,
     ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
   };

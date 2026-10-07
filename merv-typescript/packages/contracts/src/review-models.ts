@@ -50,6 +50,11 @@ export interface ReviewGuide {
   gate?: string;
   /** What the delivery under review claimed of each check, where the owner keeps such claims. */
   claims?: ReviewClaim[];
+  /**
+   * The reader may hand the claim back (review.release), as its claimer or a project admin,
+   * and no leased worker holds it.
+   */
+  releasable?: true;
 }
 export interface ReviewRequest {
   provenance?: ReviewProvenance;

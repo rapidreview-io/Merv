@@ -192,10 +192,7 @@ export class TaskService implements Tasks {
             caller.session || review.override
               ? REVIEW_VERDICTS
               : (['needs_changes', 'fail'] as const);
-          const rounds = (
-            await this.workflows.limitStatusOf(caller, [review.subjectId], 'review_rounds', tx)
-          ).get(review.subjectId);
-          return rounds?.from === 'in_review' && rounds.exhausted
+          return (await this.workflows.exhaustedLimit(caller, review.subjectId, tx))
             ? open.filter((verdict) => verdict !== 'needs_changes')
             : open;
         },

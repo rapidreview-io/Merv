@@ -79,11 +79,7 @@ interface StandingContext {
   waitsOn?: ReadonlyMap<string, WorkflowDependency[]>;
   /** Experiments back in a producing state they were in before. */
   again: ReadonlySet<string>;
-  /** Experiments in review whose review rounds are used up. */
-  exhausted: ReadonlySet<string>;
 }
-/** The limit on returns from the review of each stage. */
-const ROUNDS: Record<string, string> = { design: 'design_rounds', results: 'result_rounds' };
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** Where a rejected design or results review may send the experiment, by the stage it read. */
@@ -173,19 +169,10 @@ export class ExperimentService implements Experiments {
         },
         // Both rejecting verdicts return the experiment, so once the gate's rounds are used up
         // only a pass is left.
-        verdicts: async (caller, review, tx) => {
-          const row = await tx.get<{ stage: string }>(
-            'SELECT stage FROM experiment_submissions WHERE review_id=?',
-            review.id,
-          );
-          const limit = row ? ROUNDS[row.stage] : undefined;
-          const rounds = limit
-            ? (await this.workflows.limitStatusOf(caller, [review.subjectId], limit, tx)).get(
-                review.subjectId,
-              )
-            : undefined;
-          return rounds?.exhausted ? ['pass'] : REVIEW_VERDICTS;
-        },
+        verdicts: async (caller, review, tx) =>
+          (await this.workflows.exhaustedLimit(caller, review.subjectId, tx))
+            ? ['pass']
+            : REVIEW_VERDICTS,
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
         // An experiment is reviewed twice, so each review is named by the gate it read.
@@ -360,39 +347,23 @@ export class ExperimentService implements Experiments {
         ended.set(release.instance_id, release.released_at);
     return ended;
   }
-  /**
-   * Which cards are back where they were, counted from their moves without the moves' data, and
-   * which reviews have used every round, in a fixed number of reads however many cards.
-   */
+  /** Which cards are back where they were, counted from their moves without the moves' data. */
   private async counted(
     caller: Caller,
     rows: StandingRow[],
     tx: Transaction,
-  ): Promise<Pick<StandingContext, 'again' | 'exhausted'>> {
+  ): Promise<Pick<StandingContext, 'again'>> {
     const producers = rows.filter((row) => producing(row.state));
     const moves = await this.workflows.transitionCounts(
       caller.projectId,
       producers.map((row) => row.id),
       tx,
     );
-    const exhausted = new Set<string>();
-    for (const [state, limit] of [
-      ['design_review', 'design_rounds'],
-      ['experiment_review', 'result_rounds'],
-    ] as const) {
-      const ids = rows
-        .filter((row) => row.state === state && currentExperiment(row.version))
-        .map((row) => row.id);
-      if (ids.length)
-        for (const [id, status] of await this.workflows.limitStatusOf(caller, ids, limit, tx))
-          if (status.exhausted) exhausted.add(id);
-    }
     return {
       // A new attempt is not a return by itself, so the record's own arrivals say it.
       again: new Set(
         producers.filter((row) => enteredAgain(moves.get(row.id)!, row.state)).map((row) => row.id),
       ),
-      exhausted,
     };
   }
   /** One card's facts, read without evaluating a gate; a review state's only in one. */
@@ -432,7 +403,6 @@ export class ExperimentService implements Experiments {
             throw error;
           })
         : null,
-      exhausted: context.exhausted.has(row.id),
       ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
     };
   }

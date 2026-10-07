@@ -1485,8 +1485,9 @@ export interface Workflows {
     options?: { open?: boolean },
   ): Promise<WorkflowOverview>;
   /**
-   * Open work whose current state's loop limit is used up, with that limit, and whether this
-   * reader may allow another round (a project admin who is not a leased worker).
+   * Open work whose current state's loop limit is used up, or that waits in a state only
+   * another round moves on (a rule there whose tool is workflow.extend_limit), with that limit,
+   * and whether this reader may allow another round (a project admin who is not a leased worker).
    */
   escalated(
     caller: Caller,
@@ -1531,6 +1532,15 @@ export interface Workflows {
     name: string,
     tx?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>>;
+  /**
+   * The used-up limit leaving the instance's current state, if any: where nothing returns the
+   * work again, so an owner rules out what would (a review's rejecting verdicts).
+   */
+  exhaustedLimit(
+    caller: Caller,
+    instanceId: string,
+    tx?: Transaction,
+  ): Promise<WorkflowLimitStatus | undefined>;
   /**
    * The instance, everything it transitively depends on, and the children their policies
    * declare: the grouping a research cycle's usage and budget are read over.

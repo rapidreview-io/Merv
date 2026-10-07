@@ -283,10 +283,11 @@ export class ReviewService implements Reviews {
         : structuredClone(reviewOrId),
     );
     const read = async (tx: Transaction) => {
+      const release = await this.releasable(caller, review, tx);
       const matches: Readonly<ReviewSubmitOwner>[] = [];
       for (const owner of [...this.owners.values()])
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
-      if (matches.length !== 1) return {};
+      if (matches.length !== 1) return release;
       const [{ guidance, returns, verdicts, overrides = [], claims }] = matches;
       const open = verdicts && [...(await verdicts(caller, review, tx))];
       // A return route is a rejecting verdict's; with none left, there is nowhere to send it.
@@ -297,6 +298,7 @@ export class ReviewService implements Reviews {
       const gate = (await this.gatesOf([review.id], tx)).get(review.id);
       const claimed = claims ? [...(await claims(caller, review, tx))] : [];
       return {
+        ...release,
         ...(guidance === undefined ? {} : { guidance }),
         ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
         ...(open ? { verdicts: REVIEW_VERDICTS.filter((verdict) => open.includes(verdict)) } : {}),
@@ -315,6 +317,23 @@ export class ReviewService implements Reviews {
       return await read(tx);
     }
     return await this.state.snapshotTransaction(read);
+  }
+
+  /** review.release's own rule, said to a reader it would take the hand-back from. */
+  private async releasable(
+    caller: Caller,
+    review: Readonly<ReviewRequest>,
+    tx: Transaction,
+  ): Promise<{ releasable?: true }> {
+    if (review.status !== 'started' || !review.reviewerId || caller.session) return {};
+    const row = await this.row(tx, caller, review.id);
+    return row.status === 'started' &&
+      row.reviewer_id &&
+      !row.claimed_by_agent &&
+      (row.reviewer_id === caller.actorId ||
+        (await this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)))
+      ? { releasable: true }
+      : {};
   }
 
   close(): void {
