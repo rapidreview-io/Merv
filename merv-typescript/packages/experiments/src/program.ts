@@ -57,30 +57,28 @@ export const reviewing = (state: string) =>
   state === 'design_review' || state === 'experiment_review';
 export const producing = (state: string) => state === 'planned' || state === 'running';
 
-/** The executable contracts: new work selects one by its uploads, live work keeps its own. */
-const programVersions: Record<number, { largeUploads: boolean }> = {
-  36: { largeUploads: false },
-  40: { largeUploads: true },
-};
+/**
+ * The executable contracts. Each grants the large-upload tools, which refuse where the blob
+ * store cannot sign uploads; the twin without them (experiment@36) is retired.
+ */
+const programVersions: readonly number[] = [40];
 function programContract(version: number) {
-  const contract = programVersions[version];
-  check(contract, 'workflow_version_retired', `Experiment workflow ${version} is retired`, 409);
-  return contract;
+  check(
+    programVersions.includes(version),
+    'workflow_version_retired',
+    `Experiment workflow ${version} is retired`,
+    409,
+  );
 }
-export const currentExperiment = (version: number) => Object.hasOwn(programVersions, version);
+export const currentExperiment = (version: number) => programVersions.includes(version);
 /** The workflow node an experiment's Git work is captured from. */
 export const runningNode = {
   name: 'experiment',
-  versions: Object.keys(programVersions).map(Number),
+  versions: [...programVersions],
   state: 'running',
 };
 /** The contract a new experiment runs on. */
-export const programVersion = (largeUploads = false): number =>
-  Number(
-    Object.entries(programVersions).find(
-      ([, contract]) => contract.largeUploads === largeUploads,
-    )![0],
-  );
+export const programVersion = 40;
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
  * Every registered version submits a design with a feasibility statement, and its review cannot
@@ -416,13 +414,9 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
           ]
         : [
             grant('artifact.create', {}),
-            ...(programContract(version).largeUploads
-              ? [
-                  grant('artifact.upload_begin', {}),
-                  grant('artifact.upload_resume', {}),
-                  grant('artifact.upload_complete', {}),
-                ]
-              : []),
+            grant('artifact.upload_begin', {}),
+            grant('artifact.upload_resume', {}),
+            grant('artifact.upload_complete', {}),
             grant(
               'experiment.attach',
               ...rolesFor(state).map((role) => ({
@@ -461,7 +455,7 @@ export async function register(ctx: ExperimentsContext): Promise<void> {
         activeStates.find((state) => recipeNames[state] === recipe.name)!,
         await ctx.contextBuilder.register(recipe),
       );
-    for (const version of Object.keys(programVersions).map(Number))
+    for (const version of programVersions)
       ctx.handles.set(
         version,
         await ctx.workflows.register({ ...EXPERIMENT_WORKFLOW, version }, policy(ctx, version)),

@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers two current contracts, `experiment@36`/`40` (small/large uploads), on which Sandboxes attaches native compute. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
+independent review gates. It registers one current contract, `experiment@40`, on which Sandboxes attaches native compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 ## Where it sits
 

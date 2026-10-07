@@ -34,7 +34,7 @@ async function app(t: TestContext, s3: boolean) {
   return { app: started, owner };
 }
 
-test('without signed uploads, new tasks keep the version that grants none', async (t) => {
+test('without signed uploads, new work is granted the upload tools, which refuse', async (t) => {
   const { app: disk, owner } = await app(t, false);
   const ordinary = await disk.ctx.tasks.create(owner, {
     title: 'Original',
@@ -42,7 +42,23 @@ test('without signed uploads, new tasks keep the version that grants none', asyn
     checks: ['Result retained'],
     requestId: 'original',
   });
-  assert.equal(ordinary.workflow.version, 39);
+  assert.equal(ordinary.workflow.version, 43);
+  const experiment = await disk.ctx.experiments.create(owner, {
+    name: 'disk_experiment',
+    intent: 'Analyze retained rows',
+    requestId: 'experiment',
+  });
+  assert.equal(experiment.workflow.version, 40);
+  assert.equal(disk.ctx.artifacts.largeUploadAvailable, false);
+  await assert.rejects(
+    disk.ctx.artifacts.uploadBegin(owner, {
+      title: 'rows.csv',
+      mediaType: 'text/csv',
+      size: 1,
+      sha256: 'a'.repeat(64),
+    }),
+    { code: 'storage_unavailable', status: 503 },
+  );
 });
 
 test('S3 blobs give new producers upload grants while reviewers stay read-only', async (t) => {

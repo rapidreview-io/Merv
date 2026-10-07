@@ -1466,7 +1466,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 36);
+  assert.equal(created.workflow.version, 40);
   assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 

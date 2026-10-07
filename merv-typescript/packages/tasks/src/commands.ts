@@ -197,7 +197,7 @@ export async function createTask(
         'The pinned brief must contain the task goal and every Done-when check',
       );
       // Once Code keeps the project's history, new Git work lives there and nowhere else.
-      const version = taskVersion(ctx.artifacts.largeUploadAvailable, !!service);
+      const version = taskVersion(!!service);
       const workflow = await (
         await ctx.registration(version)
       ).start(

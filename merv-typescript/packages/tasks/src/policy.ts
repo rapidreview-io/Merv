@@ -14,14 +14,7 @@ import {
 import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';
-import {
-  GIT_CLAIM,
-  producing,
-  roundsFrom,
-  serviceOwned,
-  taskContract,
-  taskWorkspace,
-} from './workflow.js';
+import { GIT_CLAIM, producing, roundsFrom, serviceOwned, taskWorkspace } from './workflow.js';
 import { checkDelivery, checkFailure, checkReissue } from './commands.js';
 import {
   workflowAssignment,
@@ -97,11 +90,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
         },
         build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy(
-          'work',
-          taskWorkspace(version),
-          taskContract(version).largeUploads,
-        ),
+        execution: taskExecutionPolicy('work', taskWorkspace(version)),
         references: async (context) => await workflowExecutionReferences(ctx, context),
         lease: leaseHooks(ctx),
       },
@@ -111,11 +100,7 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           await workflowAssignmentFacts(ctx, context);
         },
         build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy(
-          'review',
-          taskWorkspace(version),
-          taskContract(version).largeUploads,
-        ),
+        execution: taskExecutionPolicy('review', taskWorkspace(version)),
         references: async (context) => await workflowExecutionReferences(ctx, context),
         lease: leaseHooks(ctx),
       },

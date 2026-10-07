@@ -54,7 +54,7 @@ context recipe, and the task UI displays it. Delivery/reissue/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@39`/`43` (small/large uploads), on which Sandboxes attaches native compute, and conflict-resolution service work at `task@6`/`11`. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
+Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@43`, on which Sandboxes attaches native compute, and conflict-resolution service work at `task@11`. Both grant the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twins `task@39` and `task@6` are retired. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
 
 Other stored versions remain read-only history: records, evidence, verdicts, context packages and pinned graphs are retained. Their runtime implementations are not registered, so they cannot dispatch or accept new contexts, checkpoints, claims or submissions. No old record is upgraded into another contract. The program retains private registration handles; generic workflow tools cannot bypass task gates.
 

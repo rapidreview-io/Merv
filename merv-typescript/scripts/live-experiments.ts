@@ -198,7 +198,7 @@ try {
     'Every offered worker must receive the frozen Project Introduction',
   );
   // Ask the program for its current version rather than pinning the frozen history.
-  assert.equal(final.workflow.version, programVersion());
+  assert.equal(final.workflow.version, programVersion);
   assert.equal(new Set(sessions.map((session) => session.actorId)).size, 4);
   assert.deepEqual(
     sessions.map((session) => session.expectedRevision),
