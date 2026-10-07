@@ -6,7 +6,7 @@ import { type ActiveState, designCheckout, reviewing, rolesFor } from './program
 // The fixed tools each assignment of an experiment is granted.
 
 /** Whether an assignment changes nothing in Git: every review, and from experiment@41 a design,
- *  which reads its pinned base in a checkout it keeps nothing of. */
+ *  which reads the code execution will start from in a checkout it keeps nothing of. */
 export const readsOnly = (state: ActiveState, version: number) =>
   reviewing(state) || (state === 'planned' && designCheckout(version));
 

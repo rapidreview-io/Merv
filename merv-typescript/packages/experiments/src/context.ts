@@ -277,6 +277,14 @@ export async function pinnedBase(
   return pin ? { base: pin.reference } : {};
 }
 
+async function resumesFrom(
+  ctx: ExperimentsContext,
+  { caller, snapshot, tx }: WorkflowCheckContext,
+): Promise<{ base?: string }> {
+  const head = await ctx.code.resumesFrom(caller, snapshot.id, tx);
+  return head ? { base: head } : {};
+}
+
 export async function references(
   ctx: ExperimentsContext,
   context: WorkflowCheckContext,
@@ -288,11 +296,12 @@ export async function references(
   return {
     // The native Sandboxes work kind an experiment binds compute under.
     computeKind: 'experiment',
-    // Execution works on its pinned base; from experiment@41 the design and its review read it.
-    ...(context.snapshot.state === 'running' ||
-    (['planned', 'design_review'].includes(context.snapshot.state) &&
-      designCheckout(context.snapshot.version))
-      ? await pinnedBase(ctx, context)
+    // Execution works on its pinned base. From experiment@41 the design and its review read the
+    // code execution will start from: that base, with an earlier attempt's commits on it.
+    ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),
+    ...(['planned', 'design_review'].includes(context.snapshot.state) &&
+    designCheckout(context.snapshot.version)
+      ? await resumesFrom(ctx, context)
       : {}),
     ...(context.snapshot.state === 'experiment_review'
       ? {
@@ -450,7 +459,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       : state === 'experiment_review'
         ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
         : designCheckout(context.snapshot.version)
-          ? '\nThe read-only checkout holds this experiment’s pinned base: project main with the accepted code of the tasks it depends on, the code execution will start from. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution runs in a configured private Git workspace on the same base.'
+          ? '\nThe read-only checkout holds the code execution will start from: this experiment’s pinned base (project main with the accepted code of the tasks it depends on) and, after an earlier attempt, that attempt’s commits on it. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution resumes in a configured private Git workspace from the same commit.'
           : '\nThis experiment will execute in a configured private Git workspace on its pinned base; planning and design review have no checkout. Read the accepted code’s delivery evidence (task.get, artifact.read) instead, design against what it reports, and leave verifying the code itself to execution, which starts from that base.';
   const needsClaim = review?.status === 'requested';
   const instruction = needsClaim

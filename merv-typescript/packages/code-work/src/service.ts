@@ -316,6 +316,7 @@ export class CodeService implements Code {
     return pin;
   }
   basePin: Code['basePin'] = (...args) => this.unitStore.records.basePin(...args);
+  resumesFrom: Code['resumesFrom'] = (...args) => this.unitStore.records.resumesFrom(...args);
   /** Plugin wiring, not part of the Code contract: no other plugin reconciles Code's view. */
   reconcileAll = () => this.unitStore.reconcileAll();
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
