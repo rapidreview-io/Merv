@@ -176,7 +176,7 @@ test('a task whose review rounds are used up is offered only what ends it, and i
   const home = async (token: string) => (await f.tool('ui.home', token)).body.result;
   const gateOf = (read: any) =>
     read.workflows.workflows.find((gate: any) => gate.instanceId === task.id);
-  assert.deepEqual(gateOf(await home(f.boot.token)).yours, { ask: LIMIT_ASK });
+  assert.deepEqual(gateOf(await home(f.boot.token)).yours, { ask: LIMIT_ASK, limit: 'exhausted' });
   assert.equal(gateOf(await home(f.producer.token)).yours, undefined);
 
   // The Running card carries the admin's control.
@@ -354,7 +354,7 @@ test('an experiment whose design rounds are used up is offered only a pass, with
   const open = (await desk()).body.result;
   assert.deepEqual(
     [open.verdicts, open.returns?.map(({ value }: { value: string }) => value), open.limit],
-    [['pass', 'needs_changes', 'fail'], ['planned'], undefined],
+    [undefined, ['planned'], undefined],
   );
   for (let round = 0; round < 4; round++) {
     const claim = await f.app.ctx.reviews.start(reviewer.caller, experiment.reviewId!);

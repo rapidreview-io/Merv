@@ -154,15 +154,12 @@ export function needsYou(
       decision.providerBlockers.find(
         (each) => each.provider === yours.blocker!.provider && each.key === yours.blocker!.key,
       );
-    const capped = decision.currentGate === 'loop_limit_reached';
-    // Suspended where only an admin's allowance moves it on, as a failed service task waits.
-    const suspended =
-      !capped && decision.actions.some((action) => action.tool === 'workflow.extend_limit');
+    // At a used-up limit, or suspended where only an admin's allowance moves it on, as the gate
+    // says (`limit`): a project admin's move, and nothing more happens by itself.
+    const limit = yours.limit;
     // A record that only names the reviews of it is never a move of its own, nor is one out
-    // for review, unless a blocker, its used-up rounds or its suspension make it the reader's:
-    // then nothing more happens by itself.
-    if (!blocker && !capped && !suspended && (needs.subjectOnly || underReview.has(item.id)))
-      continue;
+    // for review, unless a blocker or an admin's move at its limit makes it the reader's.
+    if (!blocker && !limit && (needs.subjectOnly || underReview.has(item.id))) continue;
     if (blocker) {
       // Whose move it is and whether this app can make it are two questions: a move no page
       // here carries out is still the reader's, with no control at all. Code words its own.
@@ -198,11 +195,11 @@ export function needsYou(
     // A move a used-up limit asks of an admin is not the producer's changes.
     const sentence = recordSentence(
       { ask: yours.ask, dependencies },
-      returned.has(item.id) && !capped && !suspended,
+      returned.has(item.id) && !limit,
     );
     // Another round is allowed, and suspended work resumed, on the work's own card on the Work
     // map, so such a line goes there; the record's own page holds no such control.
-    const work = (capped || suspended) && pathOf(rows, 'work');
+    const work = limit && pathOf(rows, 'work');
     lines.push({
       id: item.id,
       kind,
@@ -213,7 +210,7 @@ export function needsYou(
       ...(work
         ? {
             desk: {
-              label: capped ? 'Allow another round' : 'Resume',
+              label: limit === 'exhausted' ? 'Allow another round' : 'Resume',
               to: `${work}?key=work:${item.id}`,
             },
           }

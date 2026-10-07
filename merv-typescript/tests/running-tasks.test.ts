@@ -208,7 +208,7 @@ test('a current task card moves from ready through its leased review and leaves 
   const pending = await f.deliver(task);
   assert.ok(await f.card(task));
   const held = await f.work.lease(pending, f.reviewer.caller);
-  assert.deepEqual((await f.card(task))?.lines, [['In review']]);
+  assert.deepEqual((await f.card(task))?.lines, [['In review · with an agent']]);
   const review = await f.app.ctx.reviews.get(held.worker, pending.reviewId!);
   const done = await f.work.run(
     held,
@@ -708,7 +708,7 @@ test('a task that needs a person says so in the order that decides it', () => {
     attention({ review: { ...task.review!, waiting: 'Every eligible reviewer contributed.' } }),
     {
       says: ['No independent reviewer can take it'],
-      who: 'An operator provides one',
+      who: 'An operator provides one.',
       to: { route: '/reviews/review_1', text: 'Open the review' },
     },
   );

@@ -517,6 +517,9 @@ DROP TRIGGER wf_success_states_pinned ON wf_success_states;
 DROP FUNCTION wf_pinned_guard();
 DROP INDEX wf_instances_kind;
 DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
+    // research@9 moved an outage's first sighting out of blocker_json; the column returns.
+    await client.query(`ALTER TABLE research_automation ADD COLUMN blocker_json TEXT, DROP COLUMN unavailable_since;
+DELETE FROM component_migrations WHERE component='research' AND version=9;`);
     // research@8 dropped three always-empty child columns from research cycles; they return.
     await client.query(`ALTER TABLE research_cycles ADD COLUMN consolidation_id TEXT, ADD COLUMN methods_update_id TEXT, ADD COLUMN results_update_id TEXT;
 DELETE FROM component_migrations WHERE component='research' AND version=8;`);

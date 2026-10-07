@@ -1,5 +1,10 @@
 import { check } from '@merv/contracts';
-import type { Transaction, WorkflowCheckContext, WorkflowExecutionBinding } from '@merv/contracts';
+import type {
+  Transaction,
+  WorkflowCheckContext,
+  WorkflowExecutionBinding,
+  WorkflowPolicy,
+} from '@merv/contracts';
 import type { WorkflowDependency } from './models.js';
 
 // Workflow rules other units apply themselves: pure, so they import it without the service.
@@ -7,6 +12,15 @@ import type { WorkflowDependency } from './models.js';
 /** What an instance is called: its title, else its name, else the workflow it runs. */
 export const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
   [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
+
+/**
+ * Whether work waiting in this state is moved on by a project admin's allowance: a rule here
+ * whose tool is workflow.extend_limit, as a failed service task waits suspended.
+ */
+export const extendsAt = (policy: Pick<WorkflowPolicy, 'actions'> | undefined, state: string) =>
+  !!policy?.actions.some(
+    (rule) => rule.tool === 'workflow.extend_limit' && rule.states.includes(state),
+  );
 
 /**
  * Failure is judged over every edge, so a failed declared edge is reported even where a

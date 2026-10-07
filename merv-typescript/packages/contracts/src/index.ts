@@ -1543,10 +1543,14 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus | undefined>;
   /**
-   * The instance, everything it transitively depends on, and the children their policies
-   * declare: the grouping a research cycle's usage and budget are read over.
+   * The instance (or each of several), everything it transitively depends on, and the children
+   * their policies declare: the grouping a research cycle's usage and budget are read over.
    */
-  dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
+  dependencyClosure(
+    caller: Caller,
+    instanceIds: string | readonly string[],
+    tx?: Transaction,
+  ): Promise<string[]>;
   /** Roots whose current dependency or child closure contains this work, frozen by its provider. */
   sponsoringRoots(projectId: string, instanceIds: string[], tx: Transaction): Promise<string[]>;
   /**
@@ -1677,10 +1681,12 @@ export interface ReviewSubmitOwner {
   /** The codes of `claim`'s refusals that the project's owner, deciding as owner, lifts. */
   overrides?: readonly string[];
   /**
-   * The verdicts this caller may submit on an owned review, where the owner's rules rule some
-   * out. An owner rules needs_changes out only once its rounds (`limitStatusOf`) are used up:
-   * the reviewer is then told so, and offered no return route if no rejecting verdict is left.
+   * The verdicts that return the owned work to its producer. Once the limit leaving the work's
+   * gate is used up (`Workflows.exhaustedLimit`), Reviews rules them out itself: the reviewer
+   * is then told so, and offered no return route if no rejecting verdict is left.
    */
+  returning?: readonly Verdict[];
+  /** The verdicts this caller may submit on an owned review, where the owner's rules rule some out. */
   verdicts?(
     caller: Caller,
     review: Readonly<ReviewRequest>,

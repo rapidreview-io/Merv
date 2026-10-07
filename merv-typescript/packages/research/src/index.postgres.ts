@@ -122,4 +122,16 @@ END;
 $merv$;
 ALTER TABLE research_cycles DROP COLUMN consolidation_id, DROP COLUMN methods_update_id, DROP COLUMN results_update_id;
 `,
+  // (unpublished) What a cycle asks of somebody lives only in the blocker Workflows holds, so
+  // blocker_json keeps no copy (`asked`); the one thing kept beside a cycle is when the outage
+  // it reports was first seen, now a column of its own. Read-only prod counts first:
+  //   SELECT count(*) FILTER (WHERE blocker_json::jsonb->>'unavailableSince' IS NOT NULL) AS outages,
+  //          count(*) FILTER (WHERE blocker_json::jsonb->'asked' IS NOT NULL) AS asked,
+  //          count(*) FILTER (WHERE blocker_json IS NOT NULL) AS stored
+  //   FROM research_automation;
+  9: `
+ALTER TABLE research_automation ADD COLUMN unavailable_since TEXT;
+UPDATE research_automation SET unavailable_since=blocker_json::jsonb->>'unavailableSince' WHERE blocker_json IS NOT NULL;
+ALTER TABLE research_automation DROP COLUMN blocker_json;
+`,
 };

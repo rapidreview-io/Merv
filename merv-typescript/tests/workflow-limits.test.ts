@@ -307,7 +307,7 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
 
   // Nothing more happens by itself, so it is a project admin's move whoever produced it, and
   // its card carries the admin's control. Anyone else reads neither.
-  assert.deepEqual(decision.yours, { ask: LIMIT_ASK });
+  assert.deepEqual(decision.yours, { ask: LIMIT_ASK, limit: 'exhausted' });
   const { actor: producer } = await f.scope.credentials.issueActor(f.owner, {
     name: 'Producer',
     role: 'producer',

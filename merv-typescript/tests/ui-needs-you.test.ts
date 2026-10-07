@@ -23,7 +23,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { WorkflowsService } from '@merv/workflows';
-import { LIMIT_ASK, RESUME_ASK, yoursOf } from '@merv/workflows/evaluation';
+import { LIMIT_ASK, RESUME_ASK, limitOf, yoursOf } from '@merv/workflows/evaluation';
 import { firstPersonMove, whoseOf } from '@merv/code-work/blockers';
 import { UiRegistry } from '@merv/ui';
 import { homeRead } from '@merv/ui/home';
@@ -152,15 +152,26 @@ test('the gate says a record is its owner’s move by the rule Needs you used to
     currentGate: 'loop_limit_reached',
     blockers: [blocker('loop_limit_reached')],
   });
-  assert.equal(yoursOf(capped, owner, me), undefined);
-  assert.deepEqual(yoursOf(capped, owner, 'actor_ada', admin), { ask: LIMIT_ASK });
-  assert.equal(yoursOf({ ...capped, terminal: true }, owner, 'actor_ada', admin), undefined);
-  // Work suspended where only an admin's allowance resumes it is a project admin's move too.
-  const suspended = gate({
-    currentGate: 'suspended',
-    actions: [{ ...action('resume', 'ready'), tool: 'workflow.extend_limit' }],
+  const exhausted = limitOf(capped, undefined);
+  assert.equal(exhausted, 'exhausted');
+  assert.equal(yoursOf(capped, owner, me, {}, exhausted), undefined);
+  assert.deepEqual(yoursOf(capped, owner, 'actor_ada', admin, exhausted), {
+    ask: LIMIT_ASK,
+    limit: 'exhausted',
   });
-  assert.deepEqual(yoursOf(suspended, owner, 'actor_ada', admin), { ask: RESUME_ASK });
+  assert.equal(limitOf({ ...capped, terminal: true }, undefined), undefined);
+  // Work suspended where only an admin's allowance resumes it is a project admin's move too:
+  // its state's rule moves it on by workflow.extend_limit (`extendsAt`).
+  const suspended = gate({ currentGate: 'suspended', state: 'suspended' });
+  const policy = {
+    actions: [{ name: 'resume', tool: 'workflow.extend_limit', states: ['suspended'] }],
+  } as never;
+  assert.equal(limitOf(suspended, undefined), undefined);
+  assert.equal(limitOf(suspended, policy), 'suspended');
+  assert.deepEqual(yoursOf(suspended, owner, 'actor_ada', admin, 'suspended'), {
+    ask: RESUME_ASK,
+    limit: 'suspended',
+  });
 });
 
 test('work at a used-up limit, though out for review or only naming its reviews, and work a blocker holds for an admin, though out for review, are an admin’s line', () => {
@@ -254,7 +265,7 @@ test('work at a used-up limit, though out for review or only naming its reviews,
           blockers: [
             { code: 'loop_limit_reached', message: 'review_rounds is exhausted', status: 409 },
           ],
-          yours: { ask: LIMIT_ASK },
+          yours: { ask: LIMIT_ASK, limit: 'exhausted' },
         }),
         gate('held', {
           currentGate: 'launch_held',
@@ -271,14 +282,14 @@ test('work at a used-up limit, though out for review or only naming its reviews,
         gate('suspended', {
           currentGate: 'suspended',
           actions: [{ action: 'resume', tool: 'workflow.extend_limit', status: 'ready' }],
-          yours: { ask: RESUME_ASK },
+          yours: { ask: RESUME_ASK, limit: 'suspended' },
         }),
         gate('wave', {
           currentGate: 'loop_limit_reached',
           blockers: [
             { code: 'loop_limit_reached', message: 'review_returns is exhausted', status: 409 },
           ],
-          yours: { ask: LIMIT_ASK },
+          yours: { ask: LIMIT_ASK, limit: 'exhausted' },
         }),
       ],
     },

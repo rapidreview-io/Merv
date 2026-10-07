@@ -27,6 +27,7 @@ import {
   type UnitFile,
   type UnitStateWords,
 } from '@merv/reviews/unit-history';
+import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import type { Experiment, ExperimentSubmission } from './models.js';
 import { roleRank } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
@@ -117,22 +118,9 @@ function face(standing: ExperimentStanding): {
     };
   const gate = GATE[standing.state];
   if (gate) {
-    const review = standing.review;
     // A lease in a review state is a reviewer agent's; a person's claim is named by the shell.
-    if (standing.lease) return { line: [`${gate} · with an agent`], look: 'solid', rank: 1 };
-    if (review?.status === 'started' && review.reviewerId)
-      return {
-        line: [`${gate} · `, { actor: review.reviewerId, prefix: 'with ', unnamed: 'claimed' }],
-        look: 'solid',
-        rank: 1,
-      };
-    if (review?.status === 'requested')
-      return {
-        line: [`${gate} · unclaimed · `, { since: review.createdAt }],
-        look: 'dashed',
-        rank: 2,
-      };
-    return { line: [gate], look: 'solid', rank: 2 };
+    const card = reviewCard(standing.review, { gate, leased: !!standing.lease });
+    return { line: card.line, look: card.look, rank: card.held ? 1 : 2 };
   }
   const work = `${WORK[standing.state] ?? standing.state}${standing.again ? ' again' : ''}`;
   if (standing.lease)
@@ -166,9 +154,7 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
       says: ['Stopped: ', failed.name, ' failed'],
       who: 'The owner ends the experiment, or its cycle replans it.',
     };
-  if (standing.review?.waiting)
-    return { says: ['No independent reviewer can take it'], who: 'An operator provides one.' };
-  return undefined;
+  return reviewAttention(standing.review);
 }
 
 /**

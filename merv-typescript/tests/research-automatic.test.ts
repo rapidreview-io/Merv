@@ -28,6 +28,9 @@ import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, providersOf, type Main } from './fixtures/research.js';
 import { publicationBlockers, type PublicationStanding } from '@merv/code-work/unit-store';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { openState } from './fixtures/state.js';
+import { postgresMigrations } from '../packages/research/src/index.postgres.js';
+import { postgresMigrations as workflowMigrations } from '../packages/workflows/src/index.postgres.js';
 
 const stop: ChangeSpec = {
   version: 3,
@@ -1249,4 +1252,140 @@ test('each owner closes only its own work that nobody started', async (t) => {
   // Ended work is not closed again.
   assert.equal(await close('tasks', task.id), false);
   assert.equal(await close('experiments', experiment.id), false);
+});
+
+test('a run stopped for its owner, then ended, leaves Home once a later cycle ends', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const work = await f.task();
+  const cycle = await f.create([work.id]);
+  await f.pump();
+  await f.define();
+  await f.failTask(work.id);
+  await f.pump();
+  await f.approve(cycle.id, next('changed'));
+  const successor = await f.research.get(
+    f.owner,
+    (await f.research.get(f.owner, cycle.id)).successorId!,
+  );
+  assert.equal(successor.automation!.blocker!.code, 'research_definition_changed');
+  // The owner stops the run instead of accepting the definition.
+  await f.research.end(f.owner, {
+    researchId: successor.id,
+    expectedRevision: successor.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'The owner stopped automatic research.',
+    requestId: f.id(),
+  });
+  await f.pump();
+  const later = await f.research.create(f.owner, { name: 'Later', requestId: f.id() });
+  await f.research.end(f.owner, {
+    researchId: later.id,
+    expectedRevision: later.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Ended after the stopped run.',
+    requestId: f.id(),
+  });
+  const home = (await f.research.home(f.owner)).map((item) => item.id);
+  assert.ok(home.includes(later.id), 'the newest ended cycle is on Home');
+  assert.ok(!home.includes(successor.id), 'an ended cycle that asks nothing leaves Home');
+});
+
+test('an owner’s move stays the owner’s when they leave, and a lapsed run says so at once', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const source = await f.issue('producer');
+  const work = await f.task([], source);
+  const cycle = await f.create([work.id], {}, source);
+  await f.pump();
+  const published = async () =>
+    (await f.app.ctx.workflows.blockers(f.owner, cycle.id)).find(
+      (item) => item.provider === 'research',
+    );
+  assert.equal((await published())?.whose, undefined);
+  // No other event follows the departure: hearing it is what reports the lapse.
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, source.actorId);
+  await f.pump();
+  const lapsed = await published();
+  assert.equal(lapsed?.whose, 'owner', JSON.stringify(lapsed));
+  // Workflows gives an owner's move to a project admin too.
+  assert.match((await yoursOn(f, f.owner, cycle.id))?.ask ?? '', /delegation/);
+});
+
+test('closing blocked work reads a selection of any size in the same statements while nothing failed', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const counted = async (n: number) => {
+    const tasks: string[] = [];
+    for (let i = 0; i < n; i++) tasks.push((await f.task()).id);
+    const cycle = await f.create(tasks, { automatic: false });
+    const record = await f.research.get(f.owner, cycle.id);
+    let statements = 0;
+    await f.app.ctx.state.transaction(async (tx) => {
+      for (const key of ['get', 'all', 'run'] as const) {
+        const read = tx[key].bind(tx) as (...args: unknown[]) => unknown;
+        Object.assign(tx, { [key]: (...args: unknown[]) => (statements++, read(...args)) });
+      }
+      await closeBlockedWork(f.research as never, f.owner, record, tx);
+    });
+    await f.research.end(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: record.workflow.revision,
+      outcome: 'abandoned',
+      reason: 'Counted.',
+      requestId: f.id(),
+    });
+    return statements;
+  };
+  const few = await counted(3);
+  assert.equal(await counted(12), few);
+});
+
+test('research@9 keeps an outage’s first sighting as a column and drops the asked copy', async (t) => {
+  const state = await openState(':memory:');
+  t.after(async () => await state.close());
+  const steps = (migrations: Record<number, string>, upTo: number) =>
+    Object.entries(migrations)
+      .filter(([version]) => Number(version) <= upTo)
+      .map(([version, sql]) => ({ version: Number(version), sql }));
+  await state.migrate('workflows', workflowMigrations);
+  await state.migrate('research', steps(postgresMigrations, 8));
+  const since = '2026-10-07T01:02:03.000Z';
+  await state.transaction(async (tx) => {
+    for (const [id, blocker] of [
+      ['res_outage', JSON.stringify({ unavailableSince: since })],
+      ['res_asked', JSON.stringify({ asked: { code: 'research_needs_owner' } })],
+      ['res_none', null],
+    ] as const) {
+      await tx.run(
+        'INSERT INTO research_cycles(id,project_id,record) VALUES(?,?,?)',
+        id,
+        'project',
+        '{}',
+      );
+      await tx.run(
+        'INSERT INTO research_automation(research_id,project_id,source_json,root_id,cycle_index,max_cycles,blocker_json) VALUES(?,?,?,?,?,?,?)',
+        id,
+        'project',
+        '{}',
+        id,
+        0,
+        1,
+        blocker,
+      );
+    }
+  });
+  await state.migrate('research', steps(postgresMigrations, 9));
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all('SELECT research_id,unavailable_since FROM research_automation ORDER BY research_id'),
+    ),
+    [
+      { research_id: 'res_asked', unavailable_since: null },
+      { research_id: 'res_none', unavailable_since: null },
+      { research_id: 'res_outage', unavailable_since: since },
+    ],
+  );
 });

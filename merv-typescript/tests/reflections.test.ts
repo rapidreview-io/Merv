@@ -932,7 +932,8 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   // A lens has nothing to return to, and carries no limit of its own.
   assert.deepEqual((await f.app.ctx.workflows.evaluate(f.owner, wave.lenses[0]!.id)).limits, []);
   const open = await f.app.ctx.reviews.guide(reviewer, wave.review!.id);
-  assert.deepEqual([open.verdicts?.length, open.returns?.length, open.limit], [3, 2, undefined]);
+  // Nothing is ruled out while returns remain, so the desk offers every verdict.
+  assert.deepEqual([open.verdicts, open.returns?.length, open.limit], [undefined, 2, undefined]);
   wave = await f.verdict(wave, reviewer, false, 'reflecting');
   assert.equal(wave.attempt, 2);
   wave = await f.synthesize(await f.lenses(wave));

@@ -277,7 +277,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   node = drawn(await f.board(f.owner), wave)!;
   assert.deepEqual(
     [node.lines, node.look],
-    [[['Review · waiting for a reviewer ', { since: wave.workflow.updatedAt }]], 'dashed'],
+    [[['Review · unclaimed · ', { since: wave.workflow.updatedAt }]], 'dashed'],
   );
   let sidebar = await f.panel(f.owner, keyOf(wave.id));
   assert.deepEqual(titles(sidebar), ['Stages', 'Holds up', 'Result']);
@@ -463,7 +463,7 @@ test('a review leased to an agent says so rather than naming the agent, and lett
   const node = drawn(await f.board(f.owner), wave)!;
   assert.deepEqual(
     [node.lines, node.look],
-    [[['Review · waiting for a reviewer ', { since: released }]], 'dashed'],
+    [[['Review · unclaimed · ', { since: released }]], 'dashed'],
   );
   sidebar = await f.panel(f.owner, keyOf(wave.id));
   assert.equal(sidebar.live, false);
@@ -489,7 +489,7 @@ test('a wave naming a review Reviews does not hold is drawn without it, and the 
   const answer = await f.board(f.owner);
   assert.deepEqual(answer.lanes.work.failed, []);
   const node = drawn(answer, wave);
-  assert.equal(node?.lines[0]?.[0], 'Review · waiting for a reviewer ');
+  assert.equal(node?.lines[0]?.[0], 'Review');
   assert.equal(node?.attention, undefined);
   assert.ok(
     answer.lanes.work.nodes.some(({ key }) => key === keyOf(task.id)),
@@ -521,9 +521,7 @@ test('a review no eligible reviewer can take turns the wave red until an operato
   };
   const node = waveNode(facts);
   assert.deepEqual(node.attention, red);
-  assert.deepEqual(node.lines, [
-    ['Review · waiting for a reviewer ', { since: wave.workflow.updatedAt }],
-  ]);
+  assert.deepEqual(node.lines, [['Review · unclaimed · ', { since: wave.workflow.updatedAt }]]);
   const graph = await f.app.ctx.workflows.process(f.owner, wave.id);
   assert.deepEqual(wavePanel(facts, graph).header.attention, red);
   // Returns used up are Workflows' mark on the card; with no signal there is no red.

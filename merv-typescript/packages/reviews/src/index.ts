@@ -31,6 +31,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  type Workflows,
 } from '@merv/contracts';
 import { EARLIER, reviewSections } from './running.js';
 import { freeze, hydrate, type ReviewRow } from './rows.js';
@@ -96,6 +97,18 @@ export class ReviewService implements Reviews {
     readonly scope: Scope,
     readonly artifacts: Artifacts,
   ) {}
+  /** Where a subject's rounds stand, so a used-up limit rules out what would return it. */
+  private limits?: Pick<Workflows, 'exhaustedLimit'>;
+  /**
+   * Reads used-up limits from Workflows while it is loaded. Every owner that declares
+   * `returning` runs on Workflows, so none is routed to while it is not.
+   */
+  bindLimits(workflows: Pick<Workflows, 'exhaustedLimit'>): () => void {
+    this.limits = workflows;
+    return () => {
+      if (this.limits === workflows) this.limits = undefined;
+    };
+  }
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('reviews', postgresMigrations);
@@ -288,8 +301,11 @@ export class ReviewService implements Reviews {
       for (const owner of [...this.owners.values()])
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
       if (matches.length !== 1) return release;
-      const [{ guidance, returns, verdicts, overrides = [], claims }] = matches;
-      const open = verdicts && [...(await verdicts(caller, review, tx))];
+      const [{ guidance, returns, returning, verdicts, overrides = [], claims }] = matches;
+      let open = verdicts && [...(await verdicts(caller, review, tx))];
+      // Once the limit leaving the subject's gate is used up, nothing may return it again.
+      if (returning?.length && (await this.limits?.exhaustedLimit(caller, review.subjectId, tx)))
+        open = (open ?? [...REVIEW_VERDICTS]).filter((verdict) => !returning.includes(verdict));
       // A return route is a rejecting verdict's; with none left, there is nowhere to send it.
       const routes =
         returns && (!open || open.some((verdict) => verdict !== 'pass'))
@@ -629,6 +645,10 @@ export const reviewsPlugin = {
     await ctx.effect(async function* () {
       const reviews = await createService(new ReviewService(ctx.state, ctx.scope, ctx.artifacts));
       yield () => reviews.close();
+      // Optional, so Reviews outlives Workflows' unload while its owners withdraw.
+      ctx.inject(['workflows'], (ctx) => {
+        ctx.effect(() => reviews.bindLimits(ctx.workflows));
+      });
       yield await ctx.domainEvents.subscribe({
         id: 'reviews.actor-revoked.v1',
         types: ['actor.revoked'],

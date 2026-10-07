@@ -171,6 +171,9 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['sandboxes'],
   experiments: ['sandboxes'],
+  // A used-up limit rules out the verdicts that would return the work; every owner that says
+  // which verdicts do runs on Workflows, so Reviews outlives its unload.
+  reviews: ['workflows'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
@@ -250,6 +253,7 @@ const pureRules = new Set([
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/reviews/unit-history',
+  '@merv/reviews/running',
   '@merv/scope/rules',
   '@merv/reflections/names',
   '@merv/workflows/execution',
