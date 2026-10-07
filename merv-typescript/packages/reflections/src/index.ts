@@ -49,6 +49,10 @@ import type {
 } from './types.js';
 export type * from './types.js';
 
+/** A lens row's report, if it has one. */
+const artifactOf = (lens: { artifact: string | null }): string[] =>
+  lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [];
+
 /** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
 const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
@@ -335,7 +339,12 @@ export class ReflectionService implements Reflections {
     if (!own.size) return undefined;
     const wave = await this.workflows.get(caller, lenses[0]!.reflection_id, tx);
     return wave.state === 'reflecting'
-      ? { wave: wave.id, own, others: lenses.filter((lens) => !own.has(lens.id)) }
+      ? {
+          wave: wave.id,
+          own,
+          mine: lenses.filter((lens) => own.has(lens.id)).flatMap((lens) => artifactOf(lens)),
+          others: lenses.filter((lens) => !own.has(lens.id)),
+        }
       : undefined;
   }
   /**
@@ -346,18 +355,27 @@ export class ReflectionService implements Reflections {
     const authored = await this.authored(caller, tx);
     if (!authored) return null;
     const others = authored.others;
-    const wave = await tx.get<Pick<WaveRow, 'submission'>>(
-      'SELECT submission FROM reflections WHERE id=? AND project_id=?',
+    const wave = await tx.get<Pick<WaveRow, 'submission' | 'feedback'>>(
+      'SELECT submission,feedback FROM reflections WHERE id=? AND project_id=?',
       authored.wave,
       caller.projectId,
     );
     const submission = wave ? submitted(wave) : null;
+    // Every earlier round's synthesis too, whoever made it: each review that sent the wave back
+    // names what it reviewed. The worker's own lens reports stay its own.
+    const reviewed = wave
+      ? (JSON.parse(wave.feedback) as { artifactIds?: string[] }[]).flatMap(
+          (review) => review.artifactIds ?? [],
+        )
+      : [];
+    const mine = new Set(authored.mine);
     return {
       artifacts: [
-        ...others.flatMap((lens) =>
-          lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [],
-        ),
-        ...(submission ? [submission.report.id, submission.changeSpec.id] : []),
+        ...new Set([
+          ...others.flatMap((lens) => artifactOf(lens)),
+          ...(submission ? [submission.report.id, submission.changeSpec.id] : []),
+          ...reviewed.filter((id) => !mine.has(id)),
+        ]),
       ],
       // What those lenses' sessions, and the wave's synthesis sessions, made on the way.
       sessions: (
