@@ -563,6 +563,36 @@ test('an address naming a thread opens Agents on it, a thread of a record inside
   assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · reflecting/);
 });
 
+test('a thread a later record inside the unit resumed is listed once, under the record it is on', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  // A lens's author takes up the next attempt's lens: its thread has visits on both records.
+  const resumed = {
+    id: 'thr_author',
+    instanceId: 'wf_lens_2',
+    state: 'reflecting',
+    role: 'producer',
+    status: 'dormant',
+    visits: [visit('ses_a1', at(3)), visit('ses_a2', at(4))],
+  };
+  serve('/sessions/threads?instanceId=wf_lens_1', { body: { threads: [resumed] } });
+  serve('/sessions/threads?instanceId=wf_lens_2', { body: { threads: [resumed] } });
+  await sidebar(
+    panel({
+      ...unitOf(),
+      instances: ['wf_lens_1', 'wf_lens_2'],
+      names: { wf_lens_1: 'Evidence lens, attempt 1', wf_lens_2: 'Evidence lens' },
+    }),
+  );
+  assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
+  await press(tab('Agents'));
+  assert.deepEqual(
+    all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
+    ['Producer', 'Reviewer', 'Evidence lens'],
+  );
+});
+
 test('a reader who is not an operator reads a thread’s visits in place, never its conversation', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());

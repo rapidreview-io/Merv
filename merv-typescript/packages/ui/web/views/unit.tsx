@@ -421,7 +421,16 @@ export function UnitView({
     [],
   );
   const inside = unit.instances ?? [];
-  const agents = [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])];
+  // A thread a later record took up (a lens's author on the next attempt's lens) has visits on
+  // both, and is listed once.
+  const agents = [
+    ...new Map(
+      [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])].map((item) => [
+        item.id,
+        item,
+      ]),
+    ).values(),
+  ];
   const [opened, setOpened] = useState<string>();
   const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();

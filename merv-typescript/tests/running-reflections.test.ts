@@ -105,7 +105,12 @@ async function fixture(t: TestContext) {
       expectedRevision: wave.workflow.revision,
       requestId: `synthesis-${wave.workflow.revision}`,
     });
-  const verdict = async (wave: Reflection, reviewer: Caller, pass: boolean) => {
+  const verdict = async (
+    wave: Reflection,
+    reviewer: Caller,
+    pass: boolean,
+    returnTo = 'synthesizing',
+  ) => {
     const open = await app.ctx.reviews.get(reviewer, wave.review!.id);
     const review =
       open.status === 'started' ? open : await app.ctx.reviews.start(reviewer, open.id);
@@ -114,7 +119,7 @@ async function fixture(t: TestContext) {
       claimId: review.claimId!,
       expectedRevision: wave.workflow.revision,
       verdict: pass ? 'pass' : 'needs_changes',
-      ...(pass ? {} : { returnTo: 'synthesizing' }),
+      ...(pass ? {} : { returnTo }),
       notes: 'Verified the frozen sources and lens outputs.',
       synopsis: pass
         ? 'The synthesis holds against every lens report after independent verification.'
@@ -422,6 +427,31 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   });
   assert.equal(long.title.length, 200);
   assert.ok(long.title.endsWith('…'));
+});
+
+test('a wave sent back to its lenses keeps every attempt’s lenses in its history and its Agents tab', async (t) => {
+  const f = await fixture(t);
+  const reviewer = await f.actor('Reviewer', 'reviewer');
+  let wave = await f.lenses(
+    await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' }),
+  );
+  const first = wave.lenses.map((lens) => lens.id);
+  wave = await f.synthesize(wave, await f.text(f.owner, 'Changes'));
+  wave = await f.verdict(wave, reviewer, false, 'reflecting');
+  assert.equal(wave.attempt, 2);
+  const second = wave.lenses.map((lens) => lens.id);
+  const unit = (await f.panel(f.owner, keyOf(wave.id))).unit!;
+  // The five reports the reviewed synthesis was built on stay in its history, by their attempt.
+  assert.deepEqual(
+    unit.history!.filter((entry) => entry.instance).map((entry) => [entry.instance, entry.said]),
+    wave.lenses.map((lens, index) => [
+      first[index],
+      `${lens.perspective[0]!.toUpperCase()}${lens.perspective.slice(1).replaceAll('_', ' ')} lens, attempt 1`,
+    ]),
+  );
+  // Every attempt's lenses are records inside the unit, so their agents are on its Agents tab.
+  assert.deepEqual(unit.instances, [...first, ...second]);
+  assert.equal(unit.names![first[0]!], `${unit.names![second[0]!]}, attempt 1`);
 });
 
 test('a review leased to an agent says so rather than naming the agent, and letting it go restarts its wait', async (t) => {
