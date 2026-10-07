@@ -237,12 +237,15 @@ function Ask({ attention }: { attention: RunningAttention }) {
 /** Each stage's threads under it, in the program's order, one opened in place on a press. */
 function Agents({
   threads,
+  names = {},
   order,
   loadedAt,
   opened,
   onOpen,
 }: {
   threads: readonly ThreadView[];
+  /** What the owner calls each record inside the unit, by its id. */
+  names?: Readonly<Record<string, string>>;
   order: readonly string[];
   loadedAt?: string;
   opened?: string;
@@ -287,7 +290,9 @@ function Agents({
                       onClick={() => onOpen(item.id)}
                     >
                       <RoleMark role={item.role} />
-                      <span className="unit-row-name">{capital(words(item.role))}</span>
+                      <span className="unit-row-name">
+                        {names[item.instanceId] ?? capital(words(item.role))}
+                      </span>
                       <span className="unit-row-stage faint">{words(stage)}</span>
                       <span className={cx('unit-row-status', !live && 'faint')}>
                         {live && <span className="live-dot live-dot--live" aria-hidden="true" />}
@@ -494,6 +499,7 @@ export function UnitView({
           {tab === 'agents' ? (
             <Agents
               threads={agents}
+              names={unit.names}
               order={order}
               loadedAt={loadedAt}
               opened={agent}

@@ -254,9 +254,12 @@ export function waveUnit(
       : state === 'approved'
         ? (plan ?? report ?? parts)
         : (report ?? parts);
-  // Each lens is a record of its own, and its agents are the wave's too.
+  // Each lens is a record of its own, and its agents are the wave's too, named by their lens.
   const instances = wave.lenses.map((lens) => lens.id);
-  return { key, history, ...(instances.length ? { instances } : {}) };
+  const names = Object.fromEntries(
+    wave.lenses.map((lens) => [lens.id, `${capital(lensName(lens.perspective))} lens`]),
+  );
+  return { key, history, ...(instances.length ? { instances, names } : {}) };
 }
 
 function lensTable({ wave, leases }: WaveFacts): RunningSection {

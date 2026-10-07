@@ -595,5 +595,7 @@ export const runningUnit = z
     artifacts: kept(runningUnitArtifact, 160).optional(),
     /** The records inside the unit whose agents are its own too, as a wave's lenses are. */
     instances: z.array(z.string().min(1).max(200)).max(24).optional(),
+    /** What the owner calls each of them, which names its agents' rows: 'Evidence lens'. */
+    names: lenient(z.record(z.string().min(1).max(200), words(80)).optional()),
   })
   .transform(lean);

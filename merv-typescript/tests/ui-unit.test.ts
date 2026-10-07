@@ -510,12 +510,19 @@ test('Agents also lists the threads of the records its owner names inside the un
       ],
     },
   });
-  await sidebar(panel({ ...unitOf(), instances: ['wf_lens'] }));
+  await sidebar(
+    panel({ ...unitOf(), instances: ['wf_lens'], names: { wf_lens: 'Evidence lens' } }),
+  );
   assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
   await press(tab('Agents'));
   assert.deepEqual(
     all('.unit-group-head').map((head) => head.textContent),
     ['Planned', 'Design review', 'Reflecting'],
+  );
+  // A lens's agent is named by its lens, as its owner names it in the unit.
+  assert.deepEqual(
+    all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
+    ['Producer', 'Reviewer', 'Evidence lens'],
   );
 });
 
@@ -1014,6 +1021,12 @@ test('a reflection reads its lenses, then its synthesis, then the next wave’s 
   assert.deepEqual(
     [lensEntry.role, lensEntry.stage, lensEntry.instance, lensEntry.artifact?.id],
     ['producer', 'reflecting', 'l1', 'art_l1'],
+  );
+  // Each lens is a record inside the wave, named for its agents' rows.
+  const inside = waveUnit(wave('reflecting') as never, process('reflecting', [], states) as never);
+  assert.deepEqual(
+    [inside.instances, inside.names],
+    [['l1', 'l2'], { l1: 'Evidence lens', l2: 'Data quality lens' }],
   );
 });
 
