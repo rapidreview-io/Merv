@@ -142,6 +142,8 @@ export interface CodeUnits {
   ): Promise<CodeBasePin>;
   /** The pin alone, never a derivation, for an owner's references(). */
   basePin(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBasePin | null>;
+  /** The commit a writer of this unit starts from now: its newest admitted, else its pin. */
+  resumesFrom(caller: Caller, unitId: string, tx: Transaction): Promise<string | null>;
   bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
   /**

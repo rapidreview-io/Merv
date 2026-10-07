@@ -66,13 +66,19 @@ export interface Experiments {
   running(caller: Caller, include?: ReadonlySet<string>): Promise<RunningNode[]>;
   /** The sidebar of `work:<experimentId>`; null for any other key. */
   runningPanel(caller: Caller, key: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
-  /** What its record page polls: the record, its graph read without checks, its history. */
+  /**
+   * What its record page polls: the record, its graph read without checks, its history, and
+   * what the optional Code plugin holds for it (null without it).
+   */
   page(
     caller: Caller,
     experimentId: string,
-  ): Promise<{ experiment: Experiment; process: ProcessGraph; history: RunningUnitEntry[] }>;
-  /** What the optional Code plugin holds for a Git experiment; null without it. */
-  codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
+  ): Promise<{
+    experiment: Experiment;
+    process: ProcessGraph;
+    history: RunningUnitEntry[];
+    codeUnit: CodeUnit | null;
+  }>;
   /** A verdict on this experiment's review, through Reviews.apply and every check it makes first. */
   submitReview(caller: Caller, input: ExperimentReview, tx?: Transaction): Promise<Experiment>;
   /** Withdraw generic review routing before the provider's dependent consumers drain. */

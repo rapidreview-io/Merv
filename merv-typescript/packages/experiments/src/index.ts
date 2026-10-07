@@ -1,5 +1,6 @@
 import { absent, mapAsync } from '@merv/contracts';
-import { unitFiles } from '@merv/reviews/unit-history';
+import { unitFiles } from '@merv/artifacts/unit-files';
+import { recordUnit } from '@merv/code-work/record-unit';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -10,7 +11,6 @@ import {
   inTransaction,
   keyId,
   keyKind,
-  MervError,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -65,8 +65,7 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
-import type { CodeUnit } from '@merv/code-work/models';
-import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
+import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type { Paper } from '@merv/paper/types';
 export type * from './types.js';
 
@@ -77,6 +76,8 @@ interface StandingRow extends Omit<WorkflowSnapshot, 'data'> {
   review_id: string | null;
   created_at?: string;
   lease_id: string | null;
+  /** Whether that lease's own worker has taken it up: a later visit starts afresh. */
+  lease_started: boolean;
 }
 /** What one board read knows beside an experiment's own row. */
 interface StandingContext {
@@ -94,7 +95,7 @@ interface StandingContext {
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers ${PAPER_REVIEW_GUIDANCE} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
 /** What the modules (policy.ts, lease.ts, context.ts, commands.ts) read of the service. */
 export type ExperimentsContext = Pick<
@@ -307,10 +308,7 @@ export class ExperimentService implements Experiments {
    * check (a submission's checks read the bytes it would submit, and the page draws no action),
    * and its history as its sidebar tells it, from that same graph and its reviews.
    */
-  async page(
-    caller: Caller,
-    experimentId: string,
-  ): Promise<{ experiment: Experiment; process: ProcessGraph; history: RunningUnitEntry[] }> {
+  async page(caller: Caller, experimentId: string): ReturnType<Experiments['page']> {
     this.open();
     caller = structuredClone(caller);
     const read = await inTransaction(this.state, undefined, async (tx) => {
@@ -327,6 +325,7 @@ export class ExperimentService implements Experiments {
       experiment: read.experiment,
       process: graph,
       history: experimentHistory(read.experiment, graph, read.reviews),
+      codeUnit: await recordUnit(this.code, caller, experimentId),
     };
   }
   private async standingRows(
@@ -350,7 +349,9 @@ export class ExperimentService implements Experiments {
     return rows.flatMap((row) => {
       const w = at.get(row.id);
       const lease = live.find((l) => l.instance_id === row.id && l.revision === w?.revision);
-      return w ? [{ ...w, ...row, lease_id: lease?.id ?? null }] : [];
+      return w
+        ? [{ ...w, ...row, lease_id: lease?.id ?? null, lease_started: !!lease?.started_at }]
+        : [];
     });
   }
   /**
@@ -444,13 +445,7 @@ export class ExperimentService implements Experiments {
       idleSince: released && released > row.updatedAt ? released : row.updatedAt,
       again: context.again.has(row.id),
       blocked: context.blocked.has(row.id),
-      lease: row.lease_id
-        ? {
-            started: (await this.workflows.workStarts(caller, row.id, tx)).some(
-              (start) => start.revision === row.revision,
-            ),
-          }
-        : null,
+      lease: row.lease_id ? { started: row.lease_started } : null,
       dependencies: ended
         ? []
         : (context.waitsOn?.get(row.id) ??
@@ -591,21 +586,6 @@ export class ExperimentService implements Experiments {
           : {}),
       };
     });
-  }
-  /**
-   * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
-   * Null while Code is unavailable or knows no such unit. It is kept off the experiment record,
-   * which leases freeze.
-   */
-  async codeUnit(caller: Caller, id: string): Promise<CodeUnit | null> {
-    this.open();
-    caller = structuredClone(caller);
-    try {
-      return await this.code.unit(caller, id);
-    } catch (error) {
-      if (error instanceof MervError && [404, 503].includes(error.status)) return null;
-      throw error;
-    }
   }
   async list(caller: Caller, transaction?: Transaction): Promise<Experiment[]> {
     this.open();

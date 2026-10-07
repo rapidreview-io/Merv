@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { ResearchAnswer, ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/workflows/models';
@@ -415,7 +415,17 @@ function WaveList({ shell }: { shell: ShellData }) {
       load={load}
       // The cycle stands where every other page's title line stands, its one move beside
       // it, and after that the one word that narrows the map and the one that starts work.
-      lede={(ends) => <CycleHead shell={shell} cycle={cycle} onSaved={home.reload} ends={ends} />}
+      lede={(ends) => (
+        <CycleHead
+          shell={shell}
+          cycle={cycle}
+          pulse={JSON.stringify(
+            items.filter((item) => item.named).map((item) => [item.id, item.state]),
+          )}
+          onSaved={home.reload}
+          ends={ends}
+        />
+      )}
       reset={
         only || chosen
           ? () => {
@@ -563,19 +573,36 @@ export function CycleMove({
   cycle,
   shell,
   listed = false,
+  pulse,
   onSaved,
 }: {
   cycle: MapCycle;
   shell: ShellData;
   listed?: boolean;
+  /** Where the work the cycle names stands, as the page's own check-free read says it. */
+  pulse?: string;
   onSaved(): void;
 }) {
   const open = !ended(shell.workflows, cycle.workflow);
-  const read = useTool<WorkflowDecision>(
-    open ? 'workflow.status_and_next' : null,
-    { instanceId: cycle.id },
-    { every: 10000 },
-  ).data;
+  // The gate runs every action's check, so it is read as the move opens and again only when the
+  // page's check-free read shows the cycle moved (`pulse`: the work it names), or after a move.
+  const checked = useTool<WorkflowDecision>(open ? 'workflow.status_and_next' : null, {
+    instanceId: cycle.id,
+  });
+  const read = checked.data;
+  const moved = JSON.stringify([
+    cycle.workflow.revision,
+    cycle.progress,
+    cycle.automation?.blocker?.code ?? null,
+    pulse ?? null,
+  ]);
+  const seen = useRef(moved);
+  const { reload } = checked;
+  useEffect(() => {
+    if (seen.current === moved) return;
+    seen.current = moved;
+    reload();
+  }, [moved, reload]);
   // A gate read at another revision is not this cycle's, and leaves the plain move.
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
@@ -676,11 +703,13 @@ export function CycleMove({
 function CycleHead({
   shell,
   cycle,
+  pulse,
   onSaved,
   ends,
 }: {
   shell: ShellData;
   cycle?: MapCycle;
+  pulse: string;
   onSaved(): void;
   /** What the page hangs at the end of its title line: its filter, and what it can start. */
   ends: ReactNode;
@@ -694,7 +723,9 @@ function CycleHead({
       actions={
         <>
           <StatusPill value={cycle.workflow.state} />
-          {cycle.writable && <CycleMove cycle={cycle} shell={shell} onSaved={onSaved} />}
+          {cycle.writable && (
+            <CycleMove cycle={cycle} shell={shell} pulse={pulse} onSaved={onSaved} />
+          )}
           {ends}
         </>
       }

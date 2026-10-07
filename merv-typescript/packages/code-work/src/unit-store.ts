@@ -338,6 +338,17 @@ export class WorkUnitRecords {
   }
 
   /**
+   * The commit a writer of this unit starts from now: the newest Code admitted for it, else its
+   * pinned base; null before a pin. A pure read too, so a step that only reads, such as a design
+   * written against the code that will run, is shown exactly that.
+   */
+  async resumesFrom(caller: Caller, unitId: string, tx: Transaction): Promise<string | null> {
+    const base = await this.basePin(caller, unitId, tx);
+    if (!base) return null;
+    return (await this.writers.facts(tx, caller.projectId, unitId)).canonicalHead ?? base.reference;
+  }
+
+  /**
    * Every accepted commit this repository holds, with the unit it belongs to and the main to
    * compare them against. Whether main already contains one is a question for Git, which is
    * asked once, outside every transaction, by whoever holds the repository. A pull request

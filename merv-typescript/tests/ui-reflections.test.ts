@@ -190,6 +190,19 @@ test('before its report a wave opens on its first lens, and an address it cannot
   assert.deepEqual(read(), ['The evidence lens']);
 });
 
+test('a wave sent back to its lenses opens on its first lens, not on the earlier report', async (t) => {
+  t.after(async () => await unmount());
+  await mount(
+    page(
+      '/reflections/wf_wave',
+      wave({ attempt: 2, workflow: { workflow: 'reflection', state: 'reflecting', revision: 6 } }),
+    ),
+  );
+  await settle(20);
+  assert.equal(tabs()[0]?.textContent, 'Report', 'the earlier report is still a tab');
+  assert.deepEqual(pressed(), ['Evidence']);
+});
+
 test('an address naming a lens, as a lens lease opens, lands on its wave at that lens', async (t) => {
   t.after(async () => await unmount());
   const element = page('/reflections/wf_lens_2');

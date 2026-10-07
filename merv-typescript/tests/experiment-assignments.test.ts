@@ -7,7 +7,7 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
@@ -517,7 +517,7 @@ test('a design and its review read the accepted code they depend on in a read-on
   assert.equal(planner.session.assignment.execution.readOnly, true);
   assert.match(
     planner.session.assignment.brief,
-    /read-only checkout holds this experiment’s pinned base/,
+    /read-only checkout holds the code execution will start from: this experiment’s pinned base/,
   );
   // It still writes and submits its design; the checkout keeps nothing.
   for (const [role, content, mediaType] of [
@@ -1980,4 +1980,122 @@ test('a resumed visit attaches a result its cut visit made at the same revision,
     ['execution_arguments_forbidden', 'invalid_evidence_author'].includes(error.code ?? ''),
   );
   await f.work.release(later);
+});
+
+test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.running();
+  assert.equal(experiment.workflow.version, 41);
+  // Attempt 1 runs, commits its implementation, and submits.
+  const r1 = await f.work.lease(experiment);
+  await f.work.commit(r1, { 'attempt1_impl.py': 'print("attempt 1")\n' });
+  for (const [role, content] of [
+    ['result', 'Attempt 1 observations.'],
+    ['report', report],
+  ] as const) {
+    const artifact = await f.work.run(
+      r1,
+      'artifact.create',
+      { title: role, content, mediaType: 'text/markdown' },
+      (c, i) => f.artifacts.create(c, i as any),
+    );
+    await f.work.run(
+      r1,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (c, i) => f.experiments.attach(c, i as unknown as ExperimentAttach),
+    );
+  }
+  experiment = (await f.work.run(
+    r1,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (c, i) => f.experiments.transition(c, i as unknown as ExperimentTransition),
+  )) as Experiment;
+  await f.work.release(r1);
+  // The results review sends it back for a new design: attempt 2.
+  experiment = await f.verdict(experiment, 'needs_changes', 'planned');
+  assert.equal(experiment.workflow.state, 'planned');
+  assert.equal(experiment.attempt.index, 2);
+  const planner = await f.work.lease(experiment);
+  const plannerSees = existsSync(join(planner.workspace.path, 'attempt1_impl.py'));
+  const brief = planner.session.assignment.brief;
+  for (const [role, content, mediaType] of [
+    ['feasibility', feasibilityStatement(), 'application/json'],
+    ['plan', plan, 'text/markdown'],
+  ] as const) {
+    const artifact = await f.work.run(
+      planner,
+      'artifact.create',
+      { title: role, content, mediaType },
+      (c, i) => f.artifacts.create(c, i as never),
+    );
+    await f.work.run(
+      planner,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: role === 'plan' ? 'plan.md' : 'feasibility.json',
+        attemptIndex: 2,
+        requestId: f.request(),
+      },
+      (c, i) => f.experiments.attach(c, i as never),
+    );
+  }
+  experiment = (await f.work.run(
+    planner,
+    'experiment.transition',
+    { transition: 'submit_design', requestId: f.request() },
+    (c, i) => f.experiments.transition(c, i as never),
+  )) as Experiment;
+  await f.work.release(planner);
+  experiment = await f.verdict(experiment, 'pass');
+  assert.equal(experiment.workflow.state, 'running');
+  const r2 = await f.work.lease(experiment);
+  const executorSees = existsSync(join(r2.workspace.path, 'attempt1_impl.py'));
+  await f.work.release(r2);
+  assert.equal(executorSees, true, 'execution resumes the earlier attempt’s head');
+  assert.equal(plannerSees, true, 'and the attempt-2 design reads that same tree');
+  assert.match(brief, /after an earlier attempt, that attempt’s commits on it/);
+});
+
+test('the card says starting for each visit until its own worker takes it up', async (t) => {
+  const f = await fixture(t);
+  const offerOnly = async (experiment: Experiment) => {
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    return await f.sessions.offer(f.source, {
+      instanceId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      runnerId: 'assignment-test',
+      requestId: f.request(),
+      secret,
+    });
+  };
+  const line = async (experiment: Experiment) =>
+    JSON.stringify(
+      (await f.experiments.running(f.source)).find((n) => n.title === experiment.name)!.lines,
+    );
+  const fresh = await f.running();
+  await offerOnly(fresh);
+  const firstLine = await line(fresh);
+  let experiment = await f.running();
+  const v1 = await f.work.lease(experiment); // attaches: the visit begins
+  const begun = await line(experiment);
+  await f.work.release(v1); // cut before it submitted
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const between = await line(experiment);
+  await offerOnly(experiment);
+  const second = await line(experiment);
+  assert.equal(begun, JSON.stringify([['Running']]));
+  assert.notEqual(between, JSON.stringify([['Running · starting']]), 'no visit, nothing starting');
+  assert.equal(firstLine, JSON.stringify([['Running · starting']]));
+  assert.equal(second, JSON.stringify([['Running · starting']]), 'a second visit not yet begun');
 });

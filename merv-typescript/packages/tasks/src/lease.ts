@@ -177,7 +177,7 @@ export async function acquireLease(
     reviewId: review?.id ?? null,
     claimId: review?.claimId ?? null,
     receipt,
-    details: { purpose, pinnedArtifacts, checkpoints },
+    details: { pinnedArtifacts, checkpoints },
   });
   return receipt;
 }

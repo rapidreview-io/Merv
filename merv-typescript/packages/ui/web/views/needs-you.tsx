@@ -176,13 +176,15 @@ export function needsYou(
       const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
       // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
       const thread = blocker.related?.find((each) => each.kind === 'thread');
-      const work = thread && pathOf(rows, 'work');
+      // Any other blocker with no move of its own here, such as a held launch, is acted on from
+      // the work's card on the Work map, where its owner draws its marks; the record page is not.
+      const work = (thread || !move) && pathOf(rows, 'work');
       lines.push({
         id: item.id,
         kind,
         name: item.name,
         to: work
-          ? `${work}?key=work:${item.page}&thread=${encodeURIComponent(thread.id)}`
+          ? `${work}?key=work:${item.page}${thread ? `&thread=${encodeURIComponent(thread.id)}` : ''}`
           : `${row.path}/${item.page}`,
         at: blocker.since,
         sentence,

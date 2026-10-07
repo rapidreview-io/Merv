@@ -582,13 +582,22 @@ test('a task’s record page reads its history alone, never the whole sidebar', 
   t.after(() => void (tasks.runningPanel = panel));
   // One graph, read without running a check: the page draws where it stands, not its actions.
   const graphs = t.mock.method(f.app.ctx.workflows, 'process');
+  // The task, its stage, its history and its Code unit are the one page read Tasks serves.
+  const gets = t.mock.method(f.app.ctx.tasks, 'get');
   const read = await f.tool('ui.read', f.boot.token, { rowId: 'tasks', params: { id: task.id } });
   assert.equal(read.status, 200, JSON.stringify(read.body));
   assert.deepEqual(
     graphs.mock.calls.map((call) => call.arguments.slice(1)),
     [[task.id, { checks: false }]],
   );
+  assert.equal(gets.mock.callCount(), 0, 'no second read of the task');
+  assert.equal(read.body.result.task.id, task.id);
+  assert.ok('codeUnit' in read.body.result);
   assert.deepEqual(read.body.result.history, told);
+  // The UI foundation checks the id once for every owner's page.
+  const unnamed = await f.tool('ui.read', f.boot.token, { rowId: 'tasks', params: {} });
+  assert.equal(unnamed.status, 400);
+  assert.equal(unnamed.body.error.code, 'invalid_input');
   assert.equal(told?.length, 3);
 });
 

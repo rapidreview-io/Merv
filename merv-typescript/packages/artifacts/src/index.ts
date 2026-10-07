@@ -454,12 +454,20 @@ export class ArtifactStore implements Artifacts {
   }
   async list(
     caller: Caller,
-    { before, limit = 1000, session }: { before?: string; limit?: number; session?: string } = {},
+    {
+      before,
+      limit = 1000,
+      sessions,
+    }: { before?: string; limit?: number; sessions?: readonly string[] } = {},
     tx?: Transaction,
   ): Promise<Artifact[]> {
     caller = structuredClone(caller);
     check(before === undefined || named(before), 'invalid_artifact', 'Invalid before artifact id');
-    check(session === undefined || named(session), 'invalid_artifact', 'Invalid session id');
+    check(
+      sessions === undefined || (Array.isArray(sessions) && sessions.every(named)),
+      'invalid_artifact',
+      'Invalid session id',
+    );
     check(
       Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000,
       'invalid_artifact',
@@ -468,9 +476,13 @@ export class ArtifactStore implements Artifacts {
     return await this.one(caller, tx, async (tx, visible) => {
       const where = ['project_id=?', visible.sql];
       const params: string[] = [caller.projectId, ...visible.params];
-      if (session !== undefined) {
+      // One session walks its own index in order; several are one bounded read, sorted.
+      if (sessions?.length === 1) {
         where.push('session_id=?');
-        params.push(session);
+        params.push(sessions[0]!);
+      } else if (sessions !== undefined) {
+        where.push('session_id IN (SELECT jsonb_array_elements_text(?::jsonb))');
+        params.push(JSON.stringify(sessions));
       }
       if (before !== undefined) {
         const cursor = await tx.get<{ created_at: string; id: string }>(
@@ -505,7 +517,7 @@ export class ArtifactStore implements Artifacts {
     let page: Artifact[] = [];
     do {
       const before = page.at(-1)?.id;
-      page = await this.list(caller, { session: caller.session.id, before, limit }, tx);
+      page = await this.list(caller, { sessions: [caller.session.id], before, limit }, tx);
       outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
     } while (page.length === limit);
     return outputs.reverse();

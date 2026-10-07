@@ -949,11 +949,11 @@ export interface Artifacts {
     tx?: Transaction,
   ): Promise<ArtifactContent>;
   /** Newest first, at most `limit` (1-1000, default 1000). `before` is an artifact id of this
-   * project (`not_found` if it is not) and the page starts after it; `session` keeps only the
-   * artifacts created by that session. */
+   * project (`not_found` if it is not) and the page starts after it; `sessions` keeps only the
+   * artifacts created by those sessions. */
   list(
     caller: Caller,
-    query?: { before?: string; limit?: number; session?: string },
+    query?: { before?: string; limit?: number; sessions?: readonly string[] },
     tx?: Transaction,
   ): Promise<Artifact[]>;
   /** The outputs of the calling session worker's execution: the artifacts its session created

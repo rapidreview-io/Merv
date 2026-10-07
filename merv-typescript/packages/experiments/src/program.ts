@@ -17,14 +17,16 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
 /**
  * The executable contracts. Each grants the large-upload tools, which refuse where the blob
  * store cannot sign uploads; the twin without them (experiment@36) is retired. experiment@41
- * gives the design and its review a read-only checkout of the pinned base (designCheckout);
+ * gives the design and its review a read-only checkout of the code execution starts from
+ * (designCheckout);
  * experiment@40 stays registered for the experiments that run on it.
  */
 export const programVersions: readonly number[] = [40, 41];
 
 /**
- * Whether a design and its review read the experiment's pinned base, project main with its
- * accepted prerequisites' code, in a read-only checkout. Before experiment@41 they had none, and
+ * Whether a design and its review read, in a read-only checkout, the code execution will start
+ * from: the experiment's pinned base, project main with its accepted prerequisites' code, with
+ * an earlier attempt's commits on it. Before experiment@41 they had none, and
  * a planner told to write against that code could not open it (prod, 2026-10-07).
  */
 export const designCheckout = (version: number) => version >= 41;

@@ -1,4 +1,5 @@
 import { leaseRows } from '@merv/workflows/lease-rows';
+import { reviewReturn } from '@merv/reviews/returns';
 import {
   visible,
   childRequest,
@@ -357,15 +358,7 @@ export async function submitReview(
       'Only the exact current reflection review can be submitted',
       409,
     );
-    const route =
-      input.verdict === 'pass' ? 'approved' : (input.returnTo ?? REVIEW_RETURNS[0].value);
-    check(
-      input.verdict === 'pass'
-        ? input.returnTo === undefined
-        : REVIEW_RETURNS.some((each) => each.value === route),
-      'invalid_review_return',
-      'Pass accepts no returnTo; rejections return to synthesizing or reflecting',
-    );
+    const route = reviewReturn(input.verdict, input.returnTo, REVIEW_RETURNS) ?? 'approved';
     const action =
       route === 'approved'
         ? 'approve'

@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { check, keyId, type Caller, type Json } from '@merv/contracts';
+import { keyId } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
 import { WAVE_STATES } from './running.js';
@@ -32,15 +32,7 @@ export const reflectionUiPlugin = {
         needs: { name: 'title', owner: 'ownerId', subjectOnly: true, parts: 'lenses' },
         // One wave and the stage it stands at, read without running an action's check: its
         // page polls this and draws no action.
-        read: async (caller: Caller, params) => {
-          const id = params?.id;
-          check(
-            typeof id === 'string' && id.length > 0,
-            'invalid_input',
-            'params.id names the record',
-          );
-          return JSON.parse(JSON.stringify(await reflections.page(caller, id))) as Json;
-        },
+        page: (caller, id) => reflections.page(caller, id),
       }),
     );
     // The open wave heads the Running page's work lane with its lenses folded into it.

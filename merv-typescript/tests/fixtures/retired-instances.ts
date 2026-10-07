@@ -431,7 +431,10 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
-    // sessions@18 (inquiry visits) came last of all.
+    // workflows@17 (when each lease's worker took it up) came last of all.
+    await client.query(`ALTER TABLE wf_leases DROP COLUMN started_at;
+DELETE FROM component_migrations WHERE component='workflows' AND version=17;`);
+    // sessions@18 (inquiry visits) came before it.
     await client.query(rewindInquiries());
     // sessions@17 (a thread may move to the work item that resumed it) came before it; its
     // guard goes with the threads table below.

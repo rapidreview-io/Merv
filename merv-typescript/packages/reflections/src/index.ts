@@ -26,7 +26,7 @@ import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import type { Paper } from '@merv/paper/types';
-import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
+import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type {} from '@merv/sessions/types';
 import * as running from './running.js';
 import * as program from './program.js';
@@ -50,7 +50,7 @@ import type {
 export type * from './types.js';
 
 /** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers ${PAPER_REVIEW_GUIDANCE} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
 /**
  * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting
@@ -231,7 +231,8 @@ export class ReflectionService implements Reflections {
    */
   async wave(caller: Caller, id: string, tx: Transaction, lenient = false): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
-    const submission = submitted(row);
+    // A lens's worker sent back to look again does not see the synthesis it would reconcile.
+    const submission = (await this.authored(caller, tx, id)) ? null : submitted(row);
     const review = (id: string) => this.reviews.get(caller, id, tx);
     return {
       id,
@@ -309,9 +310,10 @@ export class ReflectionService implements Reflections {
   /**
    * The lenses of a reflecting wave (`reflectionId`, else the open one) that the calling worker's
    * thread wrote: its actor held their leases, on this visit or an earlier one. Such a worker
-   * reads no other lens's output, so the five stay independent; an inquiry visit to its thread,
-   * which holds no lease, is held to the same. Undefined for any other caller, or once the wave
-   * synthesizes: synthesis and review sessions, leased the wave itself, read them all.
+   * reads no other lens's output, nor an earlier attempt's synthesis of them all, so the five stay
+   * independent; an inquiry visit to its thread, which holds no lease, is held to the same.
+   * Undefined for any other caller, or once the wave synthesizes: synthesis and review sessions,
+   * leased the wave itself, read them all.
    */
   async authored(caller: Caller, tx: Transaction, reflectionId?: string) {
     if (!caller.session) return undefined;
@@ -333,23 +335,35 @@ export class ReflectionService implements Reflections {
     if (!own.size) return undefined;
     const wave = await this.workflows.get(caller, lenses[0]!.reflection_id, tx);
     return wave.state === 'reflecting'
-      ? { own, others: lenses.filter((lens) => !own.has(lens.id)) }
+      ? { wave: wave.id, own, others: lenses.filter((lens) => !own.has(lens.id)) }
       : undefined;
   }
-  /** Artifacts' read rule: a lens's worker reads no report another lens of its wave made. */
+  /**
+   * Artifacts' read rule: a lens's worker reads no report another lens of its wave made, nor the
+   * wave's synthesis of an earlier attempt, which reconciles them all.
+   */
   async withheldReports(caller: Caller, tx: Transaction) {
     const authored = await this.authored(caller, tx);
     if (!authored) return null;
     const others = authored.others;
+    const wave = await tx.get<Pick<WaveRow, 'submission'>>(
+      'SELECT submission FROM reflections WHERE id=? AND project_id=?',
+      authored.wave,
+      caller.projectId,
+    );
+    const submission = wave ? submitted(wave) : null;
     return {
-      artifacts: others.flatMap((lens) =>
-        lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [],
-      ),
-      // What those lenses' sessions made on the way to their reports.
+      artifacts: [
+        ...others.flatMap((lens) =>
+          lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [],
+        ),
+        ...(submission ? [submission.report.id, submission.changeSpec.id] : []),
+      ],
+      // What those lenses' sessions, and the wave's synthesis sessions, made on the way.
       sessions: (
         await leaseRows(tx, {
           projectId: caller.projectId,
-          instanceIds: others.map((lens) => lens.id),
+          instanceIds: [...others.map((lens) => lens.id), authored.wave],
         })
       ).map((lease) => lease.id),
     };

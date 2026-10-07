@@ -75,7 +75,7 @@ export type LeaseRow = WorkflowLeaseRow<{
 /** Every step is named as its record is: a wave by its title, a lens by its wave and perspective in words. */
 const named = ({ wave, lens }: Current) =>
   lens ? `${wave.title}: ${lensName(lens.perspective)}` : wave.title;
-export const submitted = (wave: WaveRow) =>
+export const submitted = (wave: Pick<WaveRow, 'submission'>) =>
   wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
 export const summarized = (content: string) =>
   check(

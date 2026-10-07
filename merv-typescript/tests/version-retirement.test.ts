@@ -178,6 +178,8 @@ function movedLeases(before: Record<string, string[]>): string[] {
         claim_id: row.claim_id,
         receipt: row.receipt,
         released_at: row.released_at,
+        // workflows@17 adds it; a released lease's start is never backfilled.
+        started_at: null,
         ...extra,
       }),
     );

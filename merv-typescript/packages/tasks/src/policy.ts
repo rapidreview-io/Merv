@@ -1,4 +1,5 @@
 import { reviewActions } from '@merv/reviews/rules';
+import { reviewReturn } from '@merv/reviews/returns';
 import { types as nodeTypes } from 'node:util';
 import {
   check,
@@ -7,6 +8,7 @@ import {
   type Data,
   type ReviewRequest,
   type Transaction,
+  type Verdict,
   type WorkflowCheckContext,
   type WorkflowPolicy,
 } from '@merv/contracts';
@@ -14,7 +16,14 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';
-import { GIT_CLAIM, producing, roundsFrom, serviceOwned, taskWorkspace } from './workflow.js';
+import {
+  GIT_CLAIM,
+  producing,
+  purposeOf,
+  roundsFrom,
+  serviceOwned,
+  taskWorkspace,
+} from './workflow.js';
 import { checkDelivery, checkFailure } from './commands.js';
 import {
   workflowAssignment,
@@ -26,7 +35,10 @@ import { currentLease, leaseHooks, leasedClaim, prepareTasks, unleased } from '.
 // The task workflow's policy and the checks its review actions run. Each runs on TaskService
 // (index.ts) as its TasksContext.
 
-/** Tasks have fixed routes; inspect only an ordinary optional data property. */
+/**
+ * Tasks have fixed routes, so by Reviews' one rule (`reviewReturn`) no verdict names one; inspect
+ * only an ordinary optional data property.
+ */
 export function rejectReviewReturn(input: object): void {
   const message = 'Task reviews have fixed return routes and do not accept returnTo';
   check(
@@ -37,11 +49,8 @@ export function rejectReviewReturn(input: object): void {
   const prototype = Object.getPrototypeOf(input);
   check(prototype === Object.prototype || prototype === null, 'invalid_review_return', message);
   const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(
-    !descriptor || ('value' in descriptor && descriptor.value === undefined),
-    'invalid_review_return',
-    message,
-  );
+  check(!descriptor || 'value' in descriptor, 'invalid_review_return', message);
+  reviewReturn((input as { verdict: Verdict }).verdict, descriptor?.value, []);
 }
 
 export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPolicy {
@@ -397,7 +406,7 @@ export async function checkoutReviewer(
   );
   const lease = await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
   check(
-    lease.details.purpose === 'review' && lease.review_id === review.id,
+    purposeOf(lease) === 'review' && lease.review_id === review.id,
     'stale_lease',
     'This worker does not hold the lease of the current review',
     409,

@@ -52,7 +52,8 @@ Artifacts is the evidence layer under research work: the research plugins and Re
 
 ## Surface
 
-- Service `ctx.artifacts`: `create`, `get`, `getMany`, `getAll` (any number of ids), `list`, `executionOutputs` (what the calling session worker created), `read`, `download`, `createCollection`, the `upload*` steps, `registerFileProvider`, and `registerReadRule`: an owner's rule over what a session worker may read (Reflections withholds the other lenses' reports from a lens's agent while its wave reflects).
+- Service `ctx.artifacts`: `create`, `get`, `getMany`, `getAll` (any number of ids), `list` (optionally by `sessions`), `executionOutputs` (what the calling session worker created), `read`, `download`, `createCollection`, the `upload*` steps, `registerFileProvider`, and `registerReadRule`: an owner's rule over what a session worker may read (Reflections withholds the other lenses' reports from a lens's agent while its wave reflects).
 - Tools (`@merv/artifacts/tools`): `artifact.create`, `artifact.upload_begin`, `artifact.upload_resume`, `artifact.upload_complete`, `artifact.get`, `artifact.read`, `artifact.list` and `artifact.storage_status`.
 - Row (`@merv/artifacts/ui`): Files, at `/artifacts`.
+- A unit's Artifacts tab (`@merv/artifacts/unit-files`, pure): `unitFiles` reads the files a record names and the newest its sessions made in two statements; `unitFileList` lists each once under the role its owner (Tasks, Experiments) names, at the stage the record stood in.
 - Client (`@merv/artifacts/upload-client`): the `artifact-upload` CLI command's uploader.

@@ -1,11 +1,10 @@
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { Link, useParams } from 'react-router-dom';
-import { useTool } from '../api';
 import { LoadState, RecordPage } from '../components';
 import { recordRoutes } from '../list-filters';
 import { homeOf, pathOf } from '../navigation';
-import { Gate, Relations, StageMark } from '../process';
+import { Gate, Relations, StageMark, useRecordRead } from '../process';
 import type { ViewProps } from './index';
 import { CycleMove } from './work';
 
@@ -14,11 +13,7 @@ function CycleDetail({ row, shell }: ViewProps) {
   const back = homeOf(shell.rows);
   // The cycle and the stage it stands at, from one read that runs no action's check; an ended
   // cycle changes no more, so it is not polled.
-  const read = useTool<{ record: ResearchRecord; process: ProcessGraph }>(
-    'ui.read',
-    { rowId: row.id, params: { id } },
-    { every: (data) => (data?.process.terminal ? undefined : 8000) },
-  );
+  const read = useRecordRead<{ record: ResearchRecord; process: ProcessGraph }>(row, id);
   if (!read.data)
     return (
       <div className="page-stage">
@@ -48,7 +43,13 @@ function CycleDetail({ row, shell }: ViewProps) {
           {record.writable && (
             // The stack would stretch the one control to the pane's width.
             <div className="cluster">
-              <CycleMove cycle={record} shell={shell} listed onSaved={() => read.reload()} />
+              <CycleMove
+                cycle={record}
+                shell={shell}
+                listed
+                pulse={JSON.stringify(relations.map((item) => [item.id, item.state]))}
+                onSaved={() => read.reload()}
+              />
             </div>
           )}
         </Gate>
