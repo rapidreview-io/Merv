@@ -680,6 +680,8 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     const next = new URLSearchParams(params);
     if (key) next.set('key', key);
     else next.delete('key');
+    // The thread an address opened the card on is that card's: another key, or none, drops it.
+    if (key !== absorber?.key) next.delete('thread');
     if (how === 'push') pushed.current = true;
     setParams(next, { replace: how === 'replace', state: route ? { route } : undefined });
   };

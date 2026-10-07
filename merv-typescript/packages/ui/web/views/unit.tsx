@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type {
   RunningAttention,
   RunningUnit,
@@ -419,7 +420,16 @@ export function UnitView({
     [],
   );
   const inside = unit.instances ?? [];
-  const agents = [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])];
+  // A thread a later record took up (a lens's author on the next attempt's lens) has visits on
+  // both, and is listed once.
+  const agents = [
+    ...new Map(
+      [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])].map((item) => [
+        item.id,
+        item,
+      ]),
+    ).values(),
+  ];
   const [opened, setOpened] = useState<string>();
   const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();
@@ -428,6 +438,15 @@ export function UnitView({
   const chosen = made?.kind === kind ? made.tab : remembered(kind);
   const [agent, setAgent] = useState<string>();
   const [file, setFile] = useState<string>();
+  // An address naming a thread, as a question on Needs you does, opens Agents on it, for this
+  // visit only: the kind's remembered tab stays the reader's own choice.
+  const asked = useSearchParams()[0].get('thread');
+  useEffect(() => {
+    if (!asked) return;
+    setMade({ kind, tab: 'agents' });
+    setAgent(asked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
   const thread = threads.find((item) => item.id === opened);
   const open = (reference: Reference, threadId?: string) => {
     if (threadId) setOpened(threadId);

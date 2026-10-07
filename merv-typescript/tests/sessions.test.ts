@@ -1700,7 +1700,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
   });
   const before = await f.sessions.get(f.source, live.id);
   const sha256 = 'a'.repeat(64);
-  // Back to the tables production holds before sessions@13 (and @14, @15): agentId in each session's JSON, the
+  // Back to the tables production holds before sessions@13 (and @14 to @17): agentId in each session's JSON, the
   // key's latest closed session in session_conversations, no thread anywhere.
   await f.state.transaction(async (tx) => {
     await tx.run(`
@@ -1728,7 +1728,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       ALTER TABLE worker_sessions DROP COLUMN thread_id;
       DROP TABLE session_threads;
       INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
-      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14,15,16);`);
+      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14,15,16,17);`);
     // A message sent to one visit, as every message was before threads.
     await tx.run(
       "INSERT INTO session_messages(id,project_id,session_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES('session_message_visit',?,?,?,'to-the-visit','fingerprint','Use the smaller model.',?)",

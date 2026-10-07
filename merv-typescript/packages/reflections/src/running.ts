@@ -26,7 +26,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { ProcessGraph, WorkflowSnapshot } from '@merv/workflows/models';
-import type { ChangeSpec, Reflection } from './types.js';
+import type { ChangeSpec, Reflection, ReflectionLens } from './types.js';
 import type { ReflectionsContext } from './index.js';
 import { lensName } from './names.js';
 
@@ -53,6 +53,8 @@ export interface WaveFacts {
   reviews?: readonly ReviewRequest[];
   /** The files those reviews pinned, by id: which of them is the synthesis. */
   pinned?: ReadonlyMap<string, Pick<Artifact, 'id' | 'title' | 'mediaType'>>;
+  /** The lenses of the attempts before the current one, a review sent back; for its history. */
+  earlier?: readonly ReflectionLens[];
 }
 
 /** Where one step stands: the wave's own synthesis or review, or one lens. */
@@ -175,9 +177,14 @@ export const WAVE_STATES: Readonly<Record<string, UnitStateWords>> = {
  * item by item where it is structured.
  */
 export function waveUnit(
-  { wave, reviews = [], pinned = new Map() }: WaveFacts,
+  { wave, reviews = [], pinned = new Map(), earlier = [] }: WaveFacts,
   graph: ProcessGraph,
 ): RunningUnit {
+  // Every attempt's lenses: a review that sent the wave back to them keeps the reports the
+  // synthesis it read was built on, each named by its attempt.
+  const all = [...earlier, ...wave.lenses];
+  const named = (lens: ReflectionLens) =>
+    `${capital(lensName(lens.perspective))} lens${lens.attempt === wave.attempt ? '' : `, attempt ${lens.attempt}`}`;
   // What a synthesis handed in: the report, never the change specification beside it.
   const synthesis = (review: ReviewRequest) => {
     const handed = review.artifactIds.map((id) => pinned.get(id)).filter((item) => !!item);
@@ -186,7 +193,7 @@ export function waveUnit(
       handed.find((item) => /^text\/(markdown|plain)/.test(item.mediaType));
     return report && document(report);
   };
-  const lenses: RunningUnitEntry[] = wave.lenses
+  const lenses: RunningUnitEntry[] = all
     .filter((lens) => lens.artifact)
     .map((lens) => ({
       role: 'producer',
@@ -195,7 +202,7 @@ export function waveUnit(
       instance: lens.id,
       ...(lens.producerId ? { actor: lens.producerId } : {}),
       at: lens.artifact!.createdAt,
-      said: `${capital(lensName(lens.perspective))} lens`,
+      said: named(lens),
       artifact: document(lens.artifact!),
     }));
   const own = unitHistory({
@@ -245,10 +252,8 @@ export function waveUnit(
         ? (plan ?? report ?? parts)
         : (report ?? parts);
   // Each lens is a record of its own, and its agents are the wave's too, named by their lens.
-  const instances = wave.lenses.map((lens) => lens.id);
-  const names = Object.fromEntries(
-    wave.lenses.map((lens) => [lens.id, `${capital(lensName(lens.perspective))} lens`]),
-  );
+  const instances = all.map((lens) => lens.id);
+  const names = Object.fromEntries(all.map((lens) => [lens.id, named(lens)]));
   return { key, history, ...(instances.length ? { instances, names } : {}) };
 }
 
@@ -416,7 +421,19 @@ export async function runningPanel(
         id,
         caller.projectId,
       );
-      return wave ? await runningFacts(ctx, caller, id, tx) : null;
+      if (!wave) return null;
+      const facts = await runningFacts(ctx, caller, id, tx);
+      // The lenses of earlier attempts, for the unit's history and Agents tab.
+      const earlier = await mapAsync(
+        await tx.all<{ id: string }>(
+          'SELECT id FROM reflection_lenses WHERE reflection_id=? AND project_id=? AND attempt<? ORDER BY attempt,_merv_rowid',
+          id,
+          caller.projectId,
+          facts.wave.attempt,
+        ),
+        async (lens) => await ctx.lens(caller, lens.id, tx),
+      );
+      return { ...facts, earlier };
     });
     if (!facts) return null;
     // Workflows reads the ladder, where the wave stands, so no action's check runs to draw it,

@@ -211,14 +211,16 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   await f.events.drain();
   const writes = countWrites(f.state);
   const before = writes();
-  assert.deepEqual(await demand(), { candidates: [{ instanceId: first.id, expectedRevision: 0 }] });
+  assert.deepEqual(await demand(), {
+    candidates: [{ instanceId: first.id, expectedRevision: 0, since: first.updatedAt }],
+  });
   assert.equal(writes(), before, 'prospective demand does not reserve or write');
   assert.deepEqual(
     await f.sessions.dispatch.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
     {
       candidates: [
-        { instanceId: first.id, expectedRevision: 0 },
-        { instanceId: driven.id, expectedRevision: 0 },
+        { instanceId: first.id, expectedRevision: 0, since: first.updatedAt },
+        { instanceId: driven.id, expectedRevision: 0, since: driven.updatedAt },
       ],
     },
   );
@@ -237,7 +239,7 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
     requestId: 'finish-first',
   });
   assert.deepEqual(await demand(), {
-    candidates: [{ instanceId: blocked.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: blocked.id, expectedRevision: 0, since: blocked.updatedAt }],
   });
 });
 
@@ -253,7 +255,7 @@ test('prospective demand respects offer failure backoff without a runner-specifi
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   f.advance(30_001);
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
-    candidates: [{ instanceId: target.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: target.id, expectedRevision: 0, since: target.updatedAt }],
   });
 });
 
@@ -264,7 +266,7 @@ test('prospective demand applies budgets, live leases, and durable holds', async
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.sessions.dispatch.setBudget(f.owner, { instanceId: first.id, maxTokens: 1 });
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
-    candidates: [{ instanceId: first.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: first.id, expectedRevision: 0, since: first.updatedAt }],
   });
   await f.sessions.dispatch.setBudget(f.owner, { instanceId: first.id, maxTokens: null });
   await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 1 });
@@ -292,12 +294,12 @@ test('prospective demand applies budgets, live leases, and durable holds', async
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   f.advance(30_001);
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
-    candidates: [{ instanceId: first.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: first.id, expectedRevision: 0, since: first.updatedAt }],
   });
   await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: null, maxTokens: 1 });
   // The only close never ran a process, so it has no usage to report: the bound is judged.
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
-    candidates: [{ instanceId: first.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: first.id, expectedRevision: 0, since: first.updatedAt }],
   });
 });
 
@@ -308,7 +310,7 @@ test('a project on its own machines shows Fleet no demand, and its own runner st
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: false });
   assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
-    candidates: [{ instanceId: target.id, expectedRevision: 0 }],
+    candidates: [{ instanceId: target.id, expectedRevision: 0, since: target.updatedAt }],
   });
   await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: true });
   await f.runner();

@@ -406,11 +406,16 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
-    // sessions@16 (every message to a thread, no pending index by visit) came last of all.
+    // sessions@17 (a thread may move to the work item that resumed it) came last of all; its
+    // guard goes with the threads table below.
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='sessions' AND version=17",
+    );
+    // sessions@16 (every message to a thread, no pending index by visit) came before it.
     await client.query(`ALTER TABLE session_messages ALTER COLUMN thread_id DROP NOT NULL;
 CREATE INDEX session_messages_pending ON session_messages(project_id,session_id,_merv_rowid) WHERE acknowledged_at IS NULL;
 DELETE FROM component_migrations WHERE component='sessions' AND version=16;`);
-    // workflows@15 and sessions@15 (a wider whose, and two indexes) came before it.
+    // workflows@15 and sessions@15 (a wider whose, and two indexes) came before them.
     await client.query(`DROP INDEX session_threads_continuity, session_questions_asked;
 DELETE FROM component_migrations WHERE (component='workflows' OR component='sessions') AND version=15;`);
     // workflows@14 (whose move a blocker is, and the revision it names) came before them.

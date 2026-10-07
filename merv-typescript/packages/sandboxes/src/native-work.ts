@@ -84,7 +84,10 @@ export const workflowName = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/.test(value);
 /** A launch or close never waits on a session that ended longer ago than any lease can run. */
 const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
-/** Open work at rest under a live assignment is looked at this often, not on every pass. */
+/**
+ * Open work at rest under a live assignment is looked at this often, not on every pass, and so
+ * is work whose only unfinished business is evidence that failed to register.
+ */
 const RESTING_MS = 30_000;
 type Instance = { workflow: string; revision: number; data: Record<string, unknown> };
 const workflowTerminal = (state: string) => ['completed', 'failed', 'cancelled'].includes(state);
@@ -609,11 +612,13 @@ export class NativeWorkService {
       sql.all<NativeWorkRow>(
         `SELECT w.* FROM sandbox_native_work w JOIN sandbox_native_connections c ON c.id=w.connection_id AND c.project_id=w.project_id
       WHERE c.revoked_at IS NULL AND c.revoke_pending=FALSE
-      AND (w.transition_pending=TRUE OR w.evidence_checked_at IS NULL OR (w.evidence_checked_at<? AND EXISTS (SELECT 1 FROM sandbox_native_assignments a WHERE a.project_id=w.project_id AND a.work_kind=w.work_kind AND a.work_id=w.work_id AND a.revoked_at IS NULL)))
-      ORDER BY w.transition_pending DESC,w.evidence_checked_at ASC NULLS FIRST,w.project_id,w.work_kind,w.work_id LIMIT 20`,
+      AND (w.transition_pending=TRUE OR w.evidence_checked_at IS NULL OR (w.evidence_checked_at<? AND (w.last_error IS NOT NULL OR EXISTS (SELECT 1 FROM sandbox_native_assignments a WHERE a.project_id=w.project_id AND a.work_kind=w.work_kind AND a.work_id=w.work_id AND a.revoked_at IS NULL))))
+      ORDER BY (w.transition_pending AND w.last_error IS NULL) DESC,w.evidence_checked_at ASC NULLS FIRST,w.project_id,w.work_kind,w.work_id LIMIT 20`,
         new Date(Date.now() - RESTING_MS).toISOString(),
       ),
     );
+    // A pending move goes first, then whatever has waited longest: work whose last pass failed
+    // takes its turn by age, so twenty that fail on every pass never starve the rest.
     for (const row of rows) {
       try {
         await this.reconcileWork(row);
@@ -758,7 +763,9 @@ export class NativeWorkService {
       tx.run(
         `UPDATE sandbox_native_work SET transition_pending=?,evidence_checked_at=?,last_error=?
       WHERE project_id=? AND work_kind=? AND work_id=? AND desired_attempt IS NOT DISTINCT FROM ? AND closed_at IS NOT DISTINCT FROM ?`,
-        pending || evidencePending ? 'true' : 'false',
+        // Evidence that failed to register, with nothing else in flight, is retried as resting
+        // work is: one that never registers, such as a capture too large, is not polled every pass.
+        pending ? 'true' : 'false',
         now(),
         evidencePending ? 'Native evidence registration is pending' : null,
         work.project_id,

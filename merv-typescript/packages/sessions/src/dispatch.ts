@@ -472,7 +472,8 @@ export class SessionDispatch {
     const all = await this.workflows.dispatchCandidates(caller, tx);
     // The revision an agent asked its owner at waits for the answer (`session.ask_owner`), and
     // then for the asking visit's conversation, which the next visit resumes: until its runner
-    // declares it, or a later visit of the thread ran, or `declaredWithinMs` has passed.
+    // has uploaded it (declared only, the next visit could not fetch it), or a later visit of the
+    // thread ran, or `declaredWithinMs` has passed.
     const asking = new Set(
       (
         await tx.all<{ instance_id: string; revision: number | string }>(
@@ -480,7 +481,7 @@ export class SessionDispatch {
             AND (q.answered_at IS NULL OR (q.asked_at>? AND EXISTS (
               SELECT 1 FROM session_threads t JOIN worker_sessions a ON a.id=q.session_id
                WHERE t.id=q.thread_id AND t.status<>'retired'
-                 AND (t.latest_session_id IS DISTINCT FROM q.session_id OR t.sha256 IS NULL)
+                 AND (t.latest_session_id IS DISTINCT FROM q.session_id OR t.uploaded_at IS NULL)
                  AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s._merv_rowid>a._merv_rowid))))`,
           caller.projectId,
           new Date(this.clock() - declaredWithinMs).toISOString(),
@@ -633,9 +634,10 @@ export class SessionDispatch {
         this.passing(owner),
       );
       return {
-        candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
+        candidates: selected.candidates.map(({ instanceId, expectedRevision, updatedAt }) => ({
           instanceId,
           expectedRevision,
+          since: updatedAt,
         })),
       };
     });

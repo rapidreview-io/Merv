@@ -185,7 +185,7 @@ const artifact = (id: string) => ({
 });
 const names: Record<string, string> = { actor_codex: 'Codex producer', actor_claude: 'Claude' };
 
-async function sidebar(sent: unknown, full = true, role = 'operator') {
+async function sidebar(sent: unknown, full = true, role = 'operator', address = '/') {
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   serve('/auth/config', { body: { enabled: false } });
@@ -226,7 +226,7 @@ async function sidebar(sent: unknown, full = true, role = 'operator') {
   await mount(
     createElement(
       MemoryRouter,
-      null,
+      { initialEntries: [address] },
       createElement(
         SessionProvider,
         null,
@@ -520,6 +520,73 @@ test('Agents also lists the threads of the records its owner names inside the un
     ['Planned', 'Design review', 'Reflecting'],
   );
   // A lens's agent is named by its lens, as its owner names it in the unit.
+  assert.deepEqual(
+    all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
+    ['Producer', 'Reviewer', 'Evidence lens'],
+  );
+});
+
+test('an address naming a thread opens Agents on it, a thread of a record inside the unit too', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()), true, 'operator', '/work?key=work:wf_1&thread=thr_plan');
+  assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
+  await settle(30);
+  assert.match(reading().textContent!, /Drafted the warmup plan\./);
+  // The address chose the tab for this visit only: the kind's remembered tab is unchanged.
+  assert.equal(localStorage.getItem('merv:unit-tab:experiment'), null);
+  await unmount();
+  serve('/sessions/threads?instanceId=wf_lens', {
+    body: {
+      threads: [
+        {
+          id: 'thr_lens',
+          instanceId: 'wf_lens',
+          state: 'reflecting',
+          role: 'producer',
+          status: 'dormant',
+          visits: [visit('ses_l1', at(3))],
+        },
+      ],
+    },
+  });
+  serve('/sessions/threads/thr_lens/conversation', { body: { threadId: 'thr_lens', visits: [] } });
+  await sidebar(
+    panel({ ...unitOf(), instances: ['wf_lens'], names: { wf_lens: 'Evidence lens' } }),
+    true,
+    'operator',
+    '/work?key=work:wf_1&thread=thr_lens',
+  );
+  assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · reflecting/);
+});
+
+test('a thread a later record inside the unit resumed is listed once, under the record it is on', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  // A lens's author takes up the next attempt's lens: its thread has visits on both records.
+  const resumed = {
+    id: 'thr_author',
+    instanceId: 'wf_lens_2',
+    state: 'reflecting',
+    role: 'producer',
+    status: 'dormant',
+    visits: [visit('ses_a1', at(3)), visit('ses_a2', at(4))],
+  };
+  serve('/sessions/threads?instanceId=wf_lens_1', { body: { threads: [resumed] } });
+  serve('/sessions/threads?instanceId=wf_lens_2', { body: { threads: [resumed] } });
+  await sidebar(
+    panel({
+      ...unitOf(),
+      instances: ['wf_lens_1', 'wf_lens_2'],
+      names: { wf_lens_1: 'Evidence lens, attempt 1', wf_lens_2: 'Evidence lens' },
+    }),
+  );
+  assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
+  await press(tab('Agents'));
   assert.deepEqual(
     all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
     ['Producer', 'Reviewer', 'Evidence lens'],

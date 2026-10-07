@@ -175,6 +175,13 @@ test('direct core writer changes and research blockers commit or roll back toget
   });
   await f.ctx.code.writers.expire();
   assert.equal((await f.blockers())[0]?.code, 'code_recovery_required');
+  // A writer stuck in recovery is an operator's move: the project admin signed in reads it as
+  // theirs on the unit's gate, so it reaches Needs you.
+  assert.equal((await f.blockers())[0]?.whose, 'operator');
+  const gate = (await f.ctx.workflows.overview(f.caller, undefined, { open: true })).workflows.find(
+    (item) => item.instanceId === f.unitId,
+  );
+  assert.deepEqual(gate?.yours?.blocker, { provider: 'code', key: 'writer' });
   const replace = f.ctx.workflows.replaceBlockers.bind(f.ctx.workflows);
   f.ctx.workflows.replaceBlockers = async () => {
     throw new Error('projection rejected');

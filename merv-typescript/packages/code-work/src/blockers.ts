@@ -3,10 +3,10 @@
  *
  * The standing line speaks to the person (docs/UI_DESIGN.md ruling 11), and the ruling of
  * 2026-09-22 narrows the older "no blocker is printed" to exactly the codes whose next
- * move is a person's: somebody merges, binds, imports, releases, extends a limit, or acts
- * on the project's publication. Every other code Code publishes is work waiting on the
- * server, and the node's state word and the Act ladder already say that, so nothing here
- * prints it.
+ * move is a person's: somebody merges, binds, imports, releases, extends a limit, fences a
+ * stuck writer, or acts on the project's publication. Every other code Code publishes is work
+ * waiting on the server, and the node's state word and the Act ladder already say that, so
+ * nothing here prints it.
  *
  * A sentence is made from the blocker's own facts and never from the server's words, which
  * are written for the agent holding the tool and stay folded behind `Agent instructions`
@@ -185,6 +185,21 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
             whose: 'admin',
           }
         : null;
+    case 'code_recovery_required':
+      // The fence is drawn where the writer is read, on the unit's code card.
+      return {
+        sentence: 'The last writer never handed over its final capture; an operator fences it',
+        who: 'An operator',
+        whose: 'operator',
+        control: { label: 'Fence the writer', to: CANVAS },
+      };
+    case 'code_capture_quarantined':
+      return {
+        sentence:
+          'The final capture was refused; an operator fences the writer at the last admitted commit',
+        who: 'An operator',
+        whose: 'operator',
+      };
     case 'code_quarantined':
       // Both producers of this code agree the retained base is spent; only the capture
       // quarantine has a release at all, and then only for a false alarm. What ends the
@@ -203,9 +218,11 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
 /**
  * Whose move Code tells Workflows a blocker of its own is (`whose`), from the move it asks; a
  * wait on the server is nobody's. Workflows then answers it as that reader's move, so Needs you
- * reads it from the record's gate.
+ * reads it from the record's gate. A suspended resolution names nobody on the units waiting on
+ * it: the resolution task's own gate asks a project admin to resume it, once, however many wait.
  */
-export const whoseOf = (blocker: CodeBlocker) => personMove(blocker)?.whose;
+export const whoseOf = (blocker: CodeBlocker) =>
+  blocker.code === 'code_merge_conflict' ? undefined : personMove(blocker)?.whose;
 
 /** The first blocker of a list whose next move is a person's, with that move. */
 export function firstPersonMove(

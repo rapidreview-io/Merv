@@ -94,25 +94,35 @@ const said = ({ instruction, blockers }: WorkflowDecision) =>
 /** An open record of a row that says how Home reads it, before its gate is read. */
 interface Open {
   id: string;
+  /** The record whose page and card it stands on: itself, or the record it is a part of. */
+  page: string;
   name: string;
   owner: string;
   workflow: Flow;
   row: Row;
   needs: RowNeeds;
 }
-/** The records of every row that declares how Home reads them, from the row's own home part. */
+/**
+ * The records of every row that declares how Home reads them, from the row's own home part, and
+ * the records inside each that the row names (`parts`), such as a wave's lenses, under its name.
+ */
 const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
   rows.flatMap(({ needs, ...row }) => {
     const items = (home as Record<string, unknown> | undefined)?.[row.id];
     if (!needs || !Array.isArray(items)) return [];
-    return (items as Record<string, unknown>[]).map((item) => ({
-      id: item.id as string,
-      name: item[needs.name] as string,
-      owner: item[needs.owner] as string,
-      workflow: item.workflow as Flow,
-      row,
-      needs,
-    }));
+    return (items as Record<string, unknown>[]).flatMap((item) => {
+      const record = {
+        page: item.id as string,
+        name: item[needs.name] as string,
+        owner: item[needs.owner] as string,
+        row,
+        needs,
+      };
+      const parts = needs.parts ? item[needs.parts] : undefined;
+      return [item, ...(Array.isArray(parts) ? (parts as Record<string, unknown>[]) : [])].map(
+        (each) => ({ ...record, id: each.id as string, workflow: each.workflow as Flow }),
+      );
+    });
   });
 
 /**
@@ -166,12 +176,15 @@ export function needsYou(
       const move = personMove(blocker);
       const sentence = move?.sentence ?? yours.ask ?? 'Needs your input';
       // A blocker that names a thread is answered in that thread's box, on the work's Agents tab.
-      const work = blocker.related?.some((item) => item.kind === 'thread') && pathOf(rows, 'work');
+      const thread = blocker.related?.find((each) => each.kind === 'thread');
+      const work = thread && pathOf(rows, 'work');
       lines.push({
         id: item.id,
         kind,
         name: item.name,
-        to: work ? `${work}?key=work:${item.id}` : `${row.path}/${item.id}`,
+        to: work
+          ? `${work}?key=work:${item.page}&thread=${encodeURIComponent(thread.id)}`
+          : `${row.path}/${item.page}`,
         at: blocker.since,
         sentence,
         ...(move ? { who: move.who } : {}),
@@ -204,14 +217,14 @@ export function needsYou(
       id: item.id,
       kind,
       name: item.name,
-      to: `${row.path}/${item.id}`,
+      to: `${row.path}/${item.page}`,
       at: item.workflow.updatedAt,
       sentence,
       ...(work
         ? {
             desk: {
               label: limit === 'exhausted' ? 'Allow another round' : 'Resume',
-              to: `${work}?key=work:${item.id}`,
+              to: `${work}?key=work:${item.page}`,
             },
           }
         : {}),

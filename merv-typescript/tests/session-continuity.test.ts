@@ -504,6 +504,34 @@ test('a provider keys a workflow: across instances, or never', async (t) => {
   assert.equal(c.session.continuity?.resume?.sessionId, a.session.id);
 });
 
+test('a thread a later work item resumes is that item’s: it takes messages once the first has ended', async (t) => {
+  const f = await fixture(t);
+  t.after(f.sessions.threads.register('continuity-test', () => 'shared'));
+  const first = await f.start();
+  const a = await f.offer(first.id);
+  await f.keep(a.session, a.control);
+  await f.release(a.session);
+  // The first item ends; a second, keyed the same, resumes its thread.
+  await f.move(first.id, 'submit');
+  await f.move(first.id, 'approve');
+  const second = await f.start();
+  const b = await f.offer(second.id);
+  assert.equal(b.session.threadId, a.session.threadId);
+  const thread = (await f.sessions.threads.list(f.owner, second.id)).find(
+    (item) => item.id === b.session.threadId,
+  )!;
+  assert.deepEqual(
+    [thread.instanceId, thread.status, thread.takesMessage],
+    [second.id, 'live', true],
+  );
+  const sent = await f.http('POST', `/sessions/threads/${b.session.threadId}/messages`, f.token, {
+    body: 'Mind the 2025 cohort.',
+    requestId: 'resumed',
+  });
+  assert.equal(sent.status, 200, sent.text);
+  assert.equal(sent.body.message.instanceId, second.id);
+});
+
 test('research keys: a lens by wave and perspective across restarts, an experiment across attempts', async (t) => {
   const f = await fixture(t);
   const { threads } = f.sessions as unknown as LeasedSessions;
@@ -1345,6 +1373,57 @@ test('an answer that arrives before the asking visit declares its conversation w
     await tx.run('ALTER TABLE session_questions ENABLE TRIGGER session_questions_immutable');
   });
   assert.equal(await queued(), true);
+});
+
+test('an answer waits for the asking visit’s conversation to be uploaded, not only declared', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const asking = await f.offer(unit.id, 'runner-a');
+  const worker = await f.sessions.authenticate(asking.input.secret);
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Which cohort?' });
+  const path = `/sessions/threads/${asking.session.threadId}/messages`;
+  await f.ok('POST', path, f.token, { body: '2025', requestId: 'answer' });
+  const queued = async () =>
+    await f.app.ctx.state.transaction(async (tx) =>
+      (await leased.dispatch.candidates(f.owner, tx)).queue.some(
+        (item) => item.instanceId === unit.id,
+      ),
+    );
+  // Its runner declares the conversation as it releases, and uploads it only after its capture:
+  // offered in between, the next visit could not fetch it and would start without the question.
+  const bytes = Buffer.from('{"type":"user","text":"asked"}\n');
+  const facts = {
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555666',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  };
+  const conversation = `/sessions/${asking.session.id}/conversation`;
+  const declared = (await f.ok('POST', conversation, f.token, { ...asking.control, ...facts }))
+    .conversation;
+  assert.equal(declared.uploadedAt, null);
+  assert.equal(await queued(), false);
+  const { upload } = (
+    await f.ok('POST', conversation, f.token, { ...asking.control, ...facts, deliver: true })
+  ).conversation;
+  const put = await fetch(upload.url, {
+    method: 'PUT',
+    headers: upload.headers,
+    body: new Uint8Array(bytes),
+  });
+  assert.equal(put.status, 200);
+  await f.ok('POST', conversation, f.token, { ...asking.control, ...facts, deliver: true });
+  assert.equal(await queued(), true);
+  const next = await f.offer(unit.id, 'runner-b');
+  assert.equal(next.session.continuity?.resume?.sessionId, asking.session.id);
+  const resumed = await f.http(
+    'POST',
+    `/sessions/${next.session.id}/resume`,
+    f.token,
+    next.control,
+  );
+  assert.equal(resumed.status, 200, resumed.text);
 });
 
 test('only a visit that keeps a conversation is offered session.ask_owner, in its tools and its prompt', async (t) => {

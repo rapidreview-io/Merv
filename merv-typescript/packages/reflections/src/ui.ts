@@ -22,8 +22,10 @@ export const reflectionUiPlugin = {
         states: WAVE_STATES,
         view: { kind: 'reflections' },
         home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
-        // A wave names the review of it, which is asked for as work: a wave is no delivery.
-        needs: { name: 'title', owner: 'ownerId', subjectOnly: true },
+        // A wave names the review of it, which is asked for as work: a wave is no delivery. A
+        // lens's agent may ask its owner, and the wave waits on the answer, so a lens's gate may
+        // name the reader's move too, on the wave's card.
+        needs: { name: 'title', owner: 'ownerId', subjectOnly: true, parts: 'lenses' },
         read: async (caller: Caller) =>
           JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
       }),

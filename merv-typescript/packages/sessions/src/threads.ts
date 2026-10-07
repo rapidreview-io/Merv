@@ -167,8 +167,11 @@ export class SessionThreads {
         !visits[0]!.live
       ) {
         await this.scope.setThreadRole(owner.source, held.actor_id, unit.role, tx);
+        // A key may span work items: the thread is now on this one, and takes its messages.
         await tx.run(
-          "UPDATE session_threads SET status='open',updated_at=? WHERE id=?",
+          "UPDATE session_threads SET status='open',instance_id=?,state=?,updated_at=? WHERE id=?",
+          unit.instanceId,
+          unit.state,
           at,
           held.id,
         );
