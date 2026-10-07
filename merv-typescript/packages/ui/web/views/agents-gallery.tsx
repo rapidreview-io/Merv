@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { ProjectThread, ProjectThreads } from '@merv/sessions/models';
 import { accountRequest, refreshTools, useTool } from '../api';
 import { LoadState, cx, kindOf, words } from '../components';
@@ -68,7 +69,13 @@ export function AgentsGallery() {
   const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
   const [busy, setBusy] = useState(false);
   const [recent, showRecent] = useState(false);
-  const [opened, setOpened] = useState<string>();
+  // An address naming a thread, as a question's card on the Work map does, opens it.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('thread');
+  const [opened, setOpened] = useState<string | undefined>(asked ?? undefined);
+  useEffect(() => {
+    if (asked) setOpened(asked);
+  }, [asked]);
   const shown = [...(first.data?.threads ?? []), ...(older?.threads ?? [])];
   // The newest page's own read of a thread comes first; one it has moved off stays as shown.
   const seen = new Set<string>();
@@ -129,7 +136,7 @@ export function AgentsGallery() {
   return (
     <section className="stack agents-gallery" aria-label="Agents">
       <p className="agents-count muted">
-        {live} working · {waiting.length} waiting on you
+        {live} working · {waiting.length} waiting on an answer
       </p>
       {(!first.data || first.error) && <LoadState {...first} />}
       {waiting.length + working.length > 0 && (
@@ -174,7 +181,10 @@ export function AgentsGallery() {
           thread={thread}
           title={workOf(rows, thread)}
           loadedAt={first.loadedAt}
-          onClose={() => setOpened(undefined)}
+          onClose={() => {
+            setOpened(undefined);
+            if (params.has('thread')) setParams({}, { replace: true });
+          }}
         />
       )}
     </section>

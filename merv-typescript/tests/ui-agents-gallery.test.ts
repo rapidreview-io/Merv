@@ -94,7 +94,7 @@ const retired = thread('old', { status: 'retired', takesMessage: false, seq: '7'
 const page = { threads: [pending, lapsedC, liveB, asking, liveA, retired], next: '7' };
 
 /** The page as a reader of `role` opens it, the project's threads as Sessions sends them. */
-async function open(role: string, threads: unknown = page) {
+async function open(role: string, threads: unknown = page, at = '/sessions') {
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   const rows = [
@@ -122,7 +122,7 @@ async function open(role: string, threads: unknown = page) {
   await mount(
     createElement(
       MemoryRouter,
-      null,
+      { initialEntries: [at] },
       createElement(SessionProvider, null, createElement(AgentsGallery)),
     ),
   );
@@ -170,7 +170,7 @@ test('cards stand waiting on you first, then at work, then folded under Recent',
   await open('operator');
   assert.equal(
     document.querySelector('.agents-count')!.textContent,
-    '3 working · 1 waiting on you',
+    '3 working · 1 waiting on an answer',
   );
   // Titled by the stage its work stands at, in its owner's word; under it, its kind and name.
   assert.deepEqual(
@@ -221,7 +221,7 @@ test('a thread whose lease is offered and not yet taken up is at work: its dot, 
   await open('operator', { threads: [offered], next: null });
   assert.equal(
     document.querySelector('.agents-count')!.textContent,
-    '1 working · 0 waiting on you',
+    '1 working · 0 waiting on an answer',
   );
   assert.ok(
     cards()[0]!.querySelector('.live-dot--live'),
@@ -279,7 +279,7 @@ test('the waiting card answers its question through the thread, and its card say
   assert.match(after.querySelector('.agent-card-said')!.textContent!, /^Sent The held-out split\./);
   assert.equal(
     document.querySelector('.agents-count')!.textContent,
-    '0 working · 0 waiting on you',
+    '0 working · 0 waiting on an answer',
   );
 });
 
@@ -375,6 +375,18 @@ test('a press on a card opens its thread: its conversation and the box that spea
   // The title is a control too, and a card's answer box is not: typing in it opens nothing.
   await press(cards()[0]!.querySelector('textarea')!);
   assert.equal(document.querySelector('dialog'), null);
+});
+
+test('an address naming a thread, as a question’s card on the Work map does, opens that thread', async (t) => {
+  t.after(unmount);
+  serve('/sessions/live', () => ({ stream: eventStream().stream }));
+  serve('/sessions/threads/a/messages', { body: { threadId: 'a', messages: [], questions: [] } });
+  serve('/sessions/threads/a/conversation', { body: { threadId: 'a', visits: [] } });
+  serve('/sessions/ses_a/events', () => ({ stream: eventStream().stream }));
+  await open('operator', page, '/sessions?thread=a');
+  const dialog = document.querySelector('dialog')!;
+  assert.ok(dialog.hasAttribute('open'));
+  assert.match(dialog.textContent!, /Experiment · work-a/);
 });
 
 test('the feed keeps each visit to its newest blocks, starts a visit over on reset, and lets one go', () => {

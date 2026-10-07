@@ -463,7 +463,9 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
   const read = useTool<ThreadMessages>(path, {}, { every: isLive(thread) ? 5000 : 15_000 });
   const said = read.data;
-  const open = said?.questions.filter((question) => !question.answeredAt).at(-1);
+  // The question that still stands, as Sessions says: one about work that ended is answered by
+  // nothing, so the box does not offer to.
+  const open = said?.questions.filter((question) => question.open).at(-1);
   const lines = said
     ? [
         ...said.questions

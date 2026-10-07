@@ -2,6 +2,7 @@ import {
   check,
   ellipsis,
   mapAsync,
+  MervError,
   runningKey,
   workLink,
   type Caller,
@@ -354,19 +355,38 @@ function dispatchMarks(reading: DispatchReading): RunningMark[] {
   ];
 }
 
+/** Where an agent's question is answered: its thread's box, on Sessions' own Agents page. */
+export const questionRoute = (threadId: string) =>
+  `/sessions?thread=${encodeURIComponent(threadId)}`;
 /**
  * An agent that asked its owner a question, on the work it asked about, while Workflows holds
  * the blocker Sessions published for it: work that ended, or moved on by another hand, waits on
- * it no more, whichever visit or attempt its thread is on now.
+ * it no more, whichever visit or attempt its thread is on now. It is the reader's own ("you", and
+ * counted as needing them) only on the work items in `answers`, where the work's gate names it
+ * the reader's move, as Needs you does; to any other reader it is a quiet line. Either way it
+ * links to the thread (its blocker's key).
  */
-export function questionMarks(blockers: readonly WorkflowProvidedBlocker[]): RunningMark[] {
+export function questionMarks(
+  blockers: readonly WorkflowProvidedBlocker[],
+  answers: ReadonlySet<string>,
+): RunningMark[] {
   return blockers
     .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
-    .map((blocker) => ({
-      key: runningKey('work', blocker.instanceId),
-      says: ['Asked you a question'],
-      who: 'Its owner answers it with a message to its agent’s thread',
-    }));
+    .map((blocker) =>
+      answers.has(blocker.instanceId)
+        ? {
+            key: runningKey('work', blocker.instanceId),
+            says: ['Asked you a question'],
+            who: 'You answer it with a message to its agent’s thread',
+            to: { route: questionRoute(blocker.key), text: 'Answer it' },
+          }
+        : {
+            key: runningKey('work', blocker.instanceId),
+            says: ['Its agent asked its owner a question'],
+            to: { route: questionRoute(blocker.key), text: 'Open its thread' },
+            quiet: true as const,
+          },
+    );
 }
 
 /** The brief as the sidebar carries it: whole, or cut at the last line end within the cap. */
@@ -533,8 +553,26 @@ export class SessionRunning {
     return await this.state.snapshotTransaction(async (tx) => {
       const reading = await this.dispatcher.running(caller, tx);
       const asked = await this.dispatcher.workflows.blockers(caller, undefined, tx);
+      // Whose move each question is, as the work's gate says it to Needs you (a blocker the
+      // gate names as the reader's: the record's owner's, which a project admin makes too). A
+      // gate that cannot be read (its program away) names nobody.
+      const answers = new Set<string>();
+      for (const instanceId of new Set(
+        asked.filter((item) => item.provider === QUESTION_PROVIDER).map((item) => item.instanceId),
+      ))
+        try {
+          const { yours } = await this.dispatcher.workflows.evaluate(
+            caller,
+            instanceId,
+            undefined,
+            tx,
+          );
+          if (yours?.blocker) answers.add(instanceId);
+        } catch (error) {
+          if (!(error instanceof MervError)) throw error;
+        }
       return {
-        marks: [...questionMarks(asked), ...dispatchMarks(reading)],
+        marks: [...questionMarks(asked, answers), ...dispatchMarks(reading)],
         summary: laneSummary(reading),
       };
     });

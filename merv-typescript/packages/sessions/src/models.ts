@@ -435,6 +435,11 @@ export interface ThreadQuestion {
   askedAt: string;
   answeredAt: string | null;
   answerMessageId: string | null;
+  /**
+   * It still waits on an answer: unanswered, and about work that has not ended. A message to its
+   * thread answers it; one that no longer stands is answered by nothing.
+   */
+  open: boolean;
 }
 /** What passed between a thread and the people over it, oldest first. */
 export interface ThreadMessages {

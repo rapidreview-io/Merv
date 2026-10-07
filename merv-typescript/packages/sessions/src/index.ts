@@ -456,7 +456,7 @@ export class LeasedSessions implements Sessions {
       controlled: (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
       stream: (sessionId) => this.streams.snapshot(sessionId),
-      ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
+      standing: (tx, projectId, read) => this.messaging.standing(tx, projectId, read),
       unaskable: (projectId, threadIds, tx) => this.inquiries.refusals(tx, projectId, threadIds),
       available,
     });
