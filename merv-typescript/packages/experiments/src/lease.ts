@@ -141,7 +141,7 @@ export async function resumedOutputs(
   ).filter((lease) => lease.released_at && lease.id !== caller.session!.id);
   const found: string[] = [];
   for (const lease of earlier)
-    for (const artifact of await ctx.artifacts.list(caller, { session: lease.id }, tx))
+    for (const artifact of await ctx.artifacts.list(caller, { sessions: [lease.id] }, tx))
       if (artifact.createdBy === lease.actor_id) found.push(artifact.id);
   return found;
 }
