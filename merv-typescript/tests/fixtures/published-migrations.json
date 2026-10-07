@@ -1067,6 +1067,12 @@
       "version": 19,
       "hash": "d1f550d19a608d446fc9307bb978492dfc012d0127df6628483a383a8f72ca9d",
       "published": false
+    },
+    {
+      "component": "sessions",
+      "version": 20,
+      "hash": "d2c7b62543d3e007126e0ef58d6c7b0d99eaf55d356dc0f6c256a09c45a25907",
+      "published": false
     }
   ]
 }

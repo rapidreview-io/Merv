@@ -304,6 +304,46 @@ test('work that comes back resumes its producer: same agent actor, new session, 
   assert.deepEqual([stale.status, stale.body.error.code], [409, 'conversation_superseded']);
 });
 
+test('a conversation declared and never delivered leaves the last delivered one to resume', async (t) => {
+  // Audit 15: a runner that abandons its upload (ten PUTs) had already overwritten the delivered
+  // conversation, so the next visit's download failed and its agent started from nothing.
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.release(first.session);
+  const kept = await f.keep(first.session, first.control);
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.continuity?.resume?.sha256, kept.facts.sha256);
+  await f.release(second.session);
+  // The second visit declares its own conversation; its upload never arrives.
+  const bytes = Buffer.from('{"type":"user","text":"never delivered"}\n');
+  await f.ok('POST', `/sessions/${second.session.id}/conversation`, f.token, {
+    ...second.control,
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555777',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  });
+  const third = await f.offer(unit.id);
+  assert.equal(third.session.threadId, first.session.threadId);
+  assert.deepEqual(third.session.continuity?.resume, {
+    sessionId: first.session.id,
+    ...kept.facts,
+  });
+  const { download } = await f.ok('POST', `/sessions/${third.session.id}/resume`, f.token, {
+    ...third.control,
+  });
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), kept.bytes);
+  // Once a newer one is delivered, it is the one resumed.
+  await f.release(third.session);
+  const newer = await f.keep(third.session, third.control);
+  const fourth = await f.offer(unit.id);
+  assert.deepEqual(fourth.session.continuity?.resume, {
+    sessionId: third.session.id,
+    ...newer.facts,
+  });
+});
+
 test('a key without a delivered conversation offers a new agent; the one it replaced is retired', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();

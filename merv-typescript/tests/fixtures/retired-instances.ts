@@ -395,14 +395,17 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 }
 
 /**
- * sessions@18 (inquiry visits) and @19 (their usage rows) undone, back to the release before
- * them: no inquiries, no session or usage kinds (the live indexes and the usage guard as they
- * were), and messages guarded as sessions@14 left them.
+ * sessions@18 (inquiry visits), @19 (their usage rows) and @20 (a thread's delivered
+ * conversation) undone, back to the release before them: no inquiries, no session or usage kinds
+ * (the live indexes and the usage guard as they were), and messages guarded as sessions@14 left
+ * them.
  */
 export function rewindInquiries(): string {
   const threads = sessionMigrations[14]!;
   const usage = sessionMigrations[4]!;
-  return `ALTER TABLE session_usage DROP COLUMN kind;
+  return `ALTER TABLE session_threads DROP COLUMN delivered_json;
+DELETE FROM component_migrations WHERE component='sessions' AND version=20;
+ALTER TABLE session_usage DROP COLUMN kind;
 ${usage.slice(usage.indexOf('CREATE OR REPLACE FUNCTION session_usage_write_once_guard'), usage.indexOf('CREATE TRIGGER session_usage_write_once'))}
 DELETE FROM component_migrations WHERE component='sessions' AND version=19;
 DROP TABLE session_inquiries;

@@ -749,4 +749,10 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   18: inquiriesMigration,
   // (unpublished) Inquiry spend in session_usage; prod counts in `usageKindMigration`'s comment.
   19: usageKindMigration,
+  // (unpublished) A thread keeps its last delivered conversation, as the resume it names, while a
+  // newer one is declared and not yet delivered: an abandoned upload no longer loses it. Existing
+  // rows keep none, as before. Read-only prod count first (threads that would resume nothing):
+  //   SELECT count(*) AS undelivered FROM session_threads
+  //    WHERE status <> 'retired' AND sha256 IS NOT NULL AND uploaded_at IS NULL;
+  20: `ALTER TABLE session_threads ADD COLUMN delivered_json TEXT;`,
 };

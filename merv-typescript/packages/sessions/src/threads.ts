@@ -54,6 +54,8 @@ type Row = {
   size: number | string | null;
   uploaded_at: string | null;
   latest_session_id: string | null;
+  /** The last delivered conversation (`SessionResume`), kept while a newer one is undelivered. */
+  delivered_json: string | null;
 };
 type Facts = Omit<SessionConversationDeclaration, 'hostRef' | 'deliver'>;
 /** A question its agent asked that nobody has answered, and the work it asked about. */
@@ -280,7 +282,7 @@ export class SessionThreads {
       return await this.scope.retireSessionActor(thread.actor_id, reason, tx);
     const failed = session.deferral?.cause === 'resume_failed' && session.continuity?.resume;
     if (!session.continuity) return await this.retire(thread, reason, tx);
-    if (failed && thread.sha256 === failed.sha256)
+    if (failed && thread.sha256 !== null && resumeOf(thread).sha256 === failed.sha256)
       return await this.retire(thread, 'superseded', tx);
     await tx.run(
       "UPDATE session_threads SET status='dormant',updated_at=?,latest_session_id=COALESCE(latest_session_id,?) WHERE id=?",
@@ -344,13 +346,15 @@ export class SessionThreads {
         )
       )
         superseded();
+      // The conversation delivered last stays resumable until this one is delivered.
       await tx.run(
-        'UPDATE session_threads SET latest_session_id=?,harness=?,conversation_id=?,sha256=?,size=?,uploaded_at=NULL,updated_at=? WHERE id=?',
+        'UPDATE session_threads SET latest_session_id=?,harness=?,conversation_id=?,sha256=?,size=?,uploaded_at=NULL,delivered_json=?,updated_at=? WHERE id=?',
         session.id,
         facts.harness,
         facts.conversationId,
         facts.sha256,
         facts.size,
+        found.uploaded_at === null ? found.delivered_json : JSON.stringify(resumeOf(found)),
         isoNow(this.clock),
         found.id,
       );
@@ -376,7 +380,7 @@ export class SessionThreads {
     return await deliver(blobs, 'conversation', namespace(row.project_id), view(row), () =>
       this.state.transaction(async (tx) => {
         await tx.run(
-          "UPDATE session_threads SET uploaded_at=? WHERE id=? AND latest_session_id=? AND sha256=? AND uploaded_at IS NULL AND status<>'retired'",
+          "UPDATE session_threads SET uploaded_at=?,delivered_json=NULL WHERE id=? AND latest_session_id=? AND sha256=? AND uploaded_at IS NULL AND status<>'retired'",
           isoNow(this.clock),
           row.id,
           row.latest_session_id,
@@ -928,13 +932,18 @@ type Said = {
   declared_at: string | null;
   streamed: boolean;
 };
-const resumeOf = (row: Row): SessionResume => ({
-  sessionId: row.latest_session_id!,
-  harness: row.harness!,
-  conversationId: row.conversation_id!,
-  sha256: row.sha256!,
-  size: Number(row.size),
-});
+/** What a thread resumes: its latest conversation once delivered, else the last delivered one
+ *  where it kept one, else the latest declared (a runner that cannot fetch it starts fresh). */
+const resumeOf = (row: Row): SessionResume =>
+  row.uploaded_at === null && row.delivered_json !== null
+    ? (JSON.parse(row.delivered_json) as SessionResume)
+    : {
+        sessionId: row.latest_session_id!,
+        harness: row.harness!,
+        conversationId: row.conversation_id!,
+        sha256: row.sha256!,
+        size: Number(row.size),
+      };
 /** A text an event holds, cut where it is longer, saying how much was dropped. */
 const fit = (event: AgentEvent): AgentEvent => {
   const field =
