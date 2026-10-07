@@ -81,8 +81,8 @@ newest others, a page at a time) and a thread's Merv calls from
 
 `session.find` resolves a work item's current session and its thread. `session.message` queues
 an operator message for a thread (`threadId`), which its live or next visit reads;
-`session.messages` and the worker-only `session.message.ack` retain receipt and an optional
-reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
+the worker-only `session.messages` (its own queue) and `session.message.ack` retain receipt and
+an optional reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
 A worker that needs its owner's decision ends its visit with `session.ask_owner`: uncounted,
 its work withheld from dispatch and shown in Needs you until a message to its thread answers. Pending messages are surfaced at the next Merv tool
 interaction and fence worker writes until acknowledged. See [session steering](../../docs/SESSION_LEASES.md#steering-an-assigned-agent)

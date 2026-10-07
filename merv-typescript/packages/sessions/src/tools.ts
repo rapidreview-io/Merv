@@ -134,7 +134,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.messages',
         description:
-          'Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.',
+          "Assigned worker only: read your queue, the durable messages to your thread with their acknowledgements. sessionId, if given, must be your own. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
         inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
         handler: async (caller: Caller, input: { sessionId?: string }) =>
@@ -145,7 +145,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.thread_messages',
         description:
-          'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
+          'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
         readOnly: true,
         inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { threadId: string }) =>

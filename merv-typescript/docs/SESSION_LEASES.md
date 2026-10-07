@@ -185,8 +185,8 @@ message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
 them with `session.messages` and acknowledges them with `session.message.ack`,
-optionally including a reply. Pi reads that history to see the acknowledgment and
-response. Acknowledgment means the worker received the message; it does not prove
+optionally including a reply. People, and Pi, read the thread's history with
+`session.thread_messages` to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
 that the requested correction was incorporated or independently reviewed.
 
 Pending messages fence worker writes, including submission. The write's authority

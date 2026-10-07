@@ -561,4 +561,20 @@ FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
   //   SELECT count(*) AS questions FROM session_questions;
   15: `CREATE INDEX session_threads_continuity ON session_threads(project_id,continuity_key) WHERE continuity_key IS NOT NULL;
 CREATE INDEX session_questions_asked ON session_questions(project_id,asked_at);`,
+  // (unpublished) Every message is to a thread: one sent to a visit before threads goes to that
+  // visit's thread, which its next visit reads, so no read asks by visit any longer and the
+  // pending index by visit goes. Read-only prod counts first (2026-10-07: 93 visit messages,
+  // 2 unacknowledged, both on retired threads):
+  //   SELECT count(*) AS visit_messages, count(*) FILTER (WHERE m.acknowledged_at IS NULL) AS pending,
+  //          count(*) FILTER (WHERE m.acknowledged_at IS NULL AND t.status <> 'retired') AS pending_live
+  //     FROM session_messages m JOIN worker_sessions s ON s.id = m.session_id
+  //     JOIN session_threads t ON t.id = s.thread_id;
+  16: `${withoutTriggers(
+    'session_messages',
+    ['session_messages_immutable'],
+    `UPDATE session_messages m SET thread_id = s.thread_id, session_id = NULL
+  FROM worker_sessions s WHERE s.id = m.session_id;`,
+  )}
+ALTER TABLE session_messages ALTER COLUMN thread_id SET NOT NULL;
+DROP INDEX session_messages_pending;`,
 };
