@@ -656,11 +656,10 @@ export function buildLaunch(
     'An inquiry visit runs only on the conversation it asks',
   );
   const stdin = [
-    ...(request.resume
+    // An inquiry visit's own prompt, Sessions', says what it is.
+    ...(request.resume && !inquiry
       ? [
-          inquiry
-            ? 'A person is asking you about your earlier work in this conversation. This is a short, read-only inquiry, not a return to the work: answer as the assignment below says, and stop.'
-            : 'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
+          'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
         ]
       : []),
     request.prompt,
@@ -675,7 +674,7 @@ export function buildLaunch(
         ]
       : []),
     inquiry
-      ? 'The local filesystem is read-only, and nothing you do here is kept: Merv’s read tools and your one reply are all this visit has.'
+      ? 'The local filesystem is read-only, and nothing you write to it is kept.'
       : sealed(session)
         ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
         : session.execution.policy.readOnly

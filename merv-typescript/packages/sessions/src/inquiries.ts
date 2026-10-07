@@ -145,12 +145,10 @@ export function inquirySession(input: {
       role: 'reader',
       label: `Inquiry: ${name}`,
       name,
-      brief: inquiryBrief(candidate.messageId, candidate.body),
+      // What an inquiry is, and how it is answered, its worker prompt says (workerPrompt).
+      brief: `The question: ${candidate.body}`,
       references: [],
-      handoff: {
-        instruction: `Answer with session.message.ack {messageId: "${candidate.messageId}", reply, requestId}; the reply ends this visit.`,
-        tools: ['session.message.ack'],
-      },
+      handoff: { instruction: '', tools: ['session.message.ack'] },
       execution: { readOnly: true, tools: [] },
       context: null,
     },
@@ -160,15 +158,6 @@ export function inquirySession(input: {
     inquiry: { id: candidate.id, messageId: candidate.messageId, askedBy: candidate.askedBy },
   };
 }
-
-/** What an inquiry visit's assignment tells its agent: the question, and that it only answers. */
-const inquiryBrief = (messageId: string, body: string) =>
-  [
-    'A person over this project is asking you a question about your work. This is an inquiry: a short, read-only visit that resumes your conversation as you left it, to answer them and stop.',
-    'Nothing you do here is part of your work. You hold no lease on it: make no workflow moves, no commits and no writes; the read tools of this project are yours, the local filesystem is read-only, and this conversation is not kept for your work afterwards (your next work visit is told of the question and your answer).',
-    `Answer once, plainly and from what you know, with session.message.ack {messageId: "${messageId}", reply, requestId}. That reply is the answer the person reads, and it ends this visit: stop after it.`,
-    `The question: ${body}`,
-  ].join('\n\n');
 
 /** What the thread's next work visit reads of an inquiry it did not take part in. */
 export const inquiryContext = (question: string, reply: string) =>
