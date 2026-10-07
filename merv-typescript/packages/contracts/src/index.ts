@@ -78,8 +78,8 @@ export type { Artifact, ArtifactContent } from './artifact-models.js';
 import type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 import { clip, visible } from './text.js';
-import type { Role } from './scope-models.js';
-export type { Role } from './scope-models.js';
+import type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
+export type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
 import type {
   WorkflowDispatchCandidate,
   WorkflowExecutionTarget,
@@ -672,47 +672,6 @@ export interface Blobs {
   /** The stored object's size (HEAD), or null when none is stored. */
   stored?(namespace: string, hash: string): Promise<number | null>;
 }
-export type Permission = 'read' | 'write' | 'review' | 'admin';
-/**
- * Who a call acts as. At most one authority field may be set. A bare `{ actorId, projectId }`
- * names an independent machine actor or a producing service actor directly: it is trusted
- * in-process authority, carries that actor's full role and checks no credential's liveness, so
- * transports never build one (they attach `credentialId`, `human`, `key`, `session`,
- * `conversation` or `managed`). A member actor still needs its person's `human` or `key`
- * authority, and a worker its session.
- */
-export interface Caller {
-  actorId: string;
-  projectId: string;
-  /** Transport-authenticated credential identity; never accepted from tool arguments. */
-  credentialId?: string;
-  /** Verified human authority attached by the transport, never by tool arguments. */
-  human?: {
-    issuer: string;
-    subject: string;
-    expiresAt: string;
-    membershipId: string;
-  };
-  /** User-owned machine authority, distinct from human login and actor credentials. */
-  key?: { id: string; membershipId: string };
-  /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
-  session?: {
-    id: string;
-    /** The thread this visit belongs to, whose actor the worker acts as. */
-    threadId?: string;
-    invocationId?: string;
-  };
-  conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
-  /** Server-authenticated supervisor; the binding is rechecked on every control. */
-  managed?: {
-    allocationId: string;
-    epoch: number;
-    credentialHash: string;
-    boundSessionId?: string;
-  };
-  /** A project's credential-free service acting for a person, never set by a transport. */
-  service?: { vouchedBy: DelegationSource };
-}
 /**
  * The person themself, signed in: human authority and no other. Never a key, which agents and
  * workers hold, a leased worker, a runner, a conversation, a service or an actor credential.
@@ -737,14 +696,6 @@ export function requireHuman(
 ): asserts caller is Caller & { human: NonNullable<Caller['human']> } {
   check(isDirectHuman(caller), code, message, 403);
 }
-/** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
-export type DelegationSource = { actorId: string; projectId: string } & (
-  | { kind: 'actor'; credentialId: string; expiresAt: string | null }
-  | { kind: 'human'; issuer: string; subject: string; membershipId: string }
-  | { kind: 'key'; keyId: string; membershipId: string; expiresAt: string | null }
-  /** Valid only while the person who vouched for it may still write in its project. */
-  | { kind: 'service'; vouchedBy: DelegationSource }
-);
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
   require(caller: Caller, tx: Transaction, permission: Permission): Promise<DelegationSource>;

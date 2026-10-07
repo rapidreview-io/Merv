@@ -18,6 +18,7 @@ import {
 import { isoNow, live, ordinary, readFirst, safeError, text } from './common.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
+import { readsAgents } from './rules.js';
 import { deliver, uploads } from './transcripts.js';
 import type {
   ContinuityProvider,
@@ -541,7 +542,7 @@ export class SessionThreads {
     const visits = await this.state.snapshotTransaction(async (tx) => {
       const actor = await this.scope.require(caller, 'read', tx);
       check(
-        actor.role === 'operator',
+        readsAgents(actor.role),
         'forbidden',
         'Only an operator reads an agent’s conversation',
         403,

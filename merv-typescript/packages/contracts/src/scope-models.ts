@@ -39,3 +39,53 @@ export interface IssuedUserKey {
   /** Returned once; only its digest is stored. */
   token: string;
 }
+
+export type Permission = 'read' | 'write' | 'review' | 'admin';
+/**
+ * Who a call acts as. At most one authority field may be set. A bare `{ actorId, projectId }`
+ * names an independent machine actor or a producing service actor directly: it is trusted
+ * in-process authority, carries that actor's full role and checks no credential's liveness, so
+ * transports never build one (they attach `credentialId`, `human`, `key`, `session`,
+ * `conversation` or `managed`). A member actor still needs its person's `human` or `key`
+ * authority, and a worker its session.
+ */
+export interface Caller {
+  actorId: string;
+  projectId: string;
+  /** Transport-authenticated credential identity; never accepted from tool arguments. */
+  credentialId?: string;
+  /** Verified human authority attached by the transport, never by tool arguments. */
+  human?: {
+    issuer: string;
+    subject: string;
+    expiresAt: string;
+    membershipId: string;
+  };
+  /** User-owned machine authority, distinct from human login and actor credentials. */
+  key?: { id: string; membershipId: string };
+  /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
+  session?: {
+    id: string;
+    /** The thread this visit belongs to, whose actor the worker acts as. */
+    threadId?: string;
+    invocationId?: string;
+  };
+  conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
+  /** Server-authenticated supervisor; the binding is rechecked on every control. */
+  managed?: {
+    allocationId: string;
+    epoch: number;
+    credentialHash: string;
+    boundSessionId?: string;
+  };
+  /** A project's credential-free service acting for a person, never set by a transport. */
+  service?: { vouchedBy: DelegationSource };
+}
+/** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
+export type DelegationSource = { actorId: string; projectId: string } & (
+  | { kind: 'actor'; credentialId: string; expiresAt: string | null }
+  | { kind: 'human'; issuer: string; subject: string; membershipId: string }
+  | { kind: 'key'; keyId: string; membershipId: string; expiresAt: string | null }
+  /** Valid only while the person who vouched for it may still write in its project. */
+  | { kind: 'service'; vouchedBy: DelegationSource }
+);
