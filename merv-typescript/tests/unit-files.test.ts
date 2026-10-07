@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { UNIT_MADE_LIMIT, unitFiles } from '@merv/reviews/unit-history';
+import { UNIT_MADE_LIMIT, unitFiles } from '@merv/artifacts/unit-files';
 import { experimentFileIds } from '../packages/experiments/src/running.js';
 
 test('a unit made by forty visits lists what they made in one bounded read', async () => {

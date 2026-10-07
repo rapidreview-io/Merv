@@ -244,8 +244,8 @@ const sharedContract = (specifier: string) =>
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
  * artifact as a context item, the retirement ledger text every retirement migration embeds, what
  * a runner advertises, the agent stream and its harness readers, the remote-row manifest, hosted Codex's profile and handoff
- * grace, the lease rows every leased step keeps, a record's Code unit, and a unit's history as its
- * owner tells it on the Work page. */
+ * grace, the lease rows every leased step keeps, a record's Code unit, a unit's history as its
+ * owner tells it on the Work page, and its Artifacts tab. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/workflows/rules',
@@ -253,6 +253,7 @@ const pureRules = new Set([
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/reviews/unit-history',
+  '@merv/artifacts/unit-files',
   '@merv/reviews/running',
   '@merv/scope/rules',
   '@merv/reflections/names',

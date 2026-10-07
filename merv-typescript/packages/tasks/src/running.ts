@@ -29,14 +29,8 @@ import {
   prerequisiteNames,
 } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
-import {
-  reviewWord,
-  unitFileList,
-  unitFiles,
-  unitHistory,
-  type UnitFile,
-  type UnitStateWords,
-} from '@merv/reviews/unit-history';
+import { reviewWord, unitHistory, type UnitStateWords } from '@merv/reviews/unit-history';
+import { unitFileList, unitFiles, type UnitFile } from '@merv/artifacts/unit-files';
 import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
