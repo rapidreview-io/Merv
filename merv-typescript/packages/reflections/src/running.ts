@@ -1,4 +1,5 @@
 import { leaseRows } from '@merv/workflows/lease-rows';
+import { unitHistory } from '@merv/workflows/unit-history';
 import {
   ellipsis,
   inTransaction,
@@ -7,8 +8,10 @@ import {
   mapAsync,
   MervError,
   runningKey,
+  type Artifact,
   type Caller,
   type ProcessGraph,
+  type ReviewRequest,
   type RunningAttention,
   type RunningKey,
   type RunningNode,
@@ -16,6 +19,9 @@ import {
   type RunningPhrase,
   type RunningRow,
   type RunningSection,
+  type RunningUnit,
+  type RunningUnitEntry,
+  type RunningUnitKey,
   type Transaction,
   type WorkflowSnapshot,
   type WorkRoute,
@@ -45,6 +51,10 @@ export interface WaveFacts {
   leases: WaveLease[];
   /** In review again after as many returns as its limit allows: nothing will lease a reviewer. */
   exhausted: boolean;
+  /** Every review of the wave, for its history; read for its sidebar only. */
+  reviews?: readonly ReviewRequest[];
+  /** The files those reviews pinned, by id: which of them is the synthesis. */
+  pinned?: ReadonlyMap<string, Pick<Artifact, 'id' | 'title' | 'mediaType'>>;
 }
 
 /** Where one step stands: the wave's own synthesis or review, or one lens. */
@@ -160,7 +170,96 @@ export function waveNode(facts: WaveFacts): RunningNode {
     aliases: lensKeys(facts.wave),
     // An open wave pauses every new task and experiment, so it heads the lane.
     rank: -1,
+    started: facts.wave.createdAt,
   };
+}
+
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const document = (artifact: Pick<Artifact, 'id' | 'title'>) => ({
+  id: artifact.id,
+  title: ellipsis(artifact.title, 200),
+});
+/** What a structured plan's item is called: a task's title, an experiment's name. */
+const itemTitle = (item: ChangeSpec['items'][number]) =>
+  item.kind === 'task' ? item.title : item.name;
+
+/**
+ * The wave as a unit: each lens's report and every round of its synthesis's review as its
+ * history, and the one thing to read now. While it reflects that is its lenses, one opened at
+ * a time; from its synthesis on, the synthesis report; once approved, the next wave's plan,
+ * item by item where it is structured.
+ */
+export function waveUnit(
+  { wave, reviews = [], pinned = new Map() }: WaveFacts,
+  graph: ProcessGraph,
+): RunningUnit {
+  // What a synthesis handed in: the report, never the change specification beside it.
+  const synthesis = (review: ReviewRequest) => {
+    const handed = review.artifactIds.map((id) => pinned.get(id)).filter((item) => !!item);
+    const report =
+      handed.find((item) => item.id === wave.report?.id) ??
+      handed.find((item) => /^text\/(markdown|plain)/.test(item.mediaType));
+    return report && document(report);
+  };
+  const lenses: RunningUnitEntry[] = wave.lenses
+    .filter((lens) => lens.artifact)
+    .map((lens) => ({
+      role: 'producer',
+      // A lens is written in its own program's one working state.
+      stage: 'reflecting',
+      instance: lens.id,
+      ...(lens.producerId ? { actor: lens.producerId } : {}),
+      at: lens.artifact!.createdAt,
+      said: `${capital(lensName(lens.perspective))} lens`,
+      artifact: document(lens.artifact!),
+    }));
+  const own = unitHistory({
+    graph,
+    reviews,
+    gates: { in_review: { submitted: 'Submitted the synthesis' } },
+    document: synthesis,
+  });
+  // The lenses' reports stand among the wave's own moves by when each was written.
+  const history = [...lenses, ...own.filter((entry) => entry.at)]
+    .sort((a, b) => a.at!.localeCompare(b.at!))
+    .concat(own.filter((entry) => !entry.at));
+  const verdict = wave.review?.verdict ?? (wave.review ? 'in_review' : undefined);
+  const parts: RunningUnitKey = {
+    label: 'Lenses',
+    parts: wave.lenses.map((lens) => ({
+      title: capital(lensName(lens.perspective)),
+      ...(lens.artifact ? { state: 'submitted' } : {}),
+      ...(lens.producerId ? { actor: lens.producerId } : {}),
+      ...(lens.artifact ? { artifact: document(lens.artifact) } : {}),
+    })),
+  };
+  const report = wave.report && {
+    label: 'Synthesis',
+    ...(verdict ? { state: verdict } : {}),
+    artifact: document(wave.report),
+  };
+  const plan: RunningUnitKey | undefined = wave.plan
+    ? {
+        label: 'Next-wave plan',
+        state: wave.plan.next.decision,
+        items: wave.plan.items.map((item) => ({
+          key: item.key,
+          kind: item.kind,
+          title: ellipsis(itemTitle(item), 300),
+          dependsOn: item.dependsOn,
+        })),
+      }
+    : wave.changeSpec
+      ? { label: 'Next-wave plan', artifact: document(wave.changeSpec) }
+      : undefined;
+  const { state } = wave.workflow;
+  const key =
+    state === 'reflecting'
+      ? parts
+      : state === 'approved'
+        ? (plan ?? report ?? parts)
+        : (report ?? parts);
+  return { key, history };
 }
 
 function lensTable({ wave, leases }: WaveFacts): RunningSection {
@@ -250,6 +349,7 @@ export function wavePanel(
       (workflow) => stepOf(facts.leases, workflow).held,
     ),
     aliases: lensKeys(wave),
+    ...(facts.reviews ? { unit: waveUnit(facts, graph) } : {}),
   };
 }
 
@@ -330,6 +430,14 @@ export async function runningPanel(
     );
     return wave ? await runningFacts(ctx, caller, id, tx) : null;
   });
-  // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process.
-  return facts && wavePanel(facts, await ctx.workflows.process(caller, id), route);
+  if (!facts) return null;
+  // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process, and
+  // Reviews every round of the synthesis's review, with the files each one pinned.
+  const graph = await ctx.workflows.process(caller, id);
+  const reviews = await ctx.reviews.list(caller, { subjectId: id });
+  const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
+  const pinned = ids.length
+    ? await ctx.state.transaction(async (tx) => await ctx.artifacts.find(caller, ids, tx))
+    : new Map<string, Artifact>();
+  return wavePanel({ ...facts, reviews, pinned }, graph, route);
 }

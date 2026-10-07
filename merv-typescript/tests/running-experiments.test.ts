@@ -234,6 +234,7 @@ test('an open experiment is a work card that says where it stands and what it wa
     look: 'dashed',
     links: [{ to: work(prerequisite.id), verb: 'waits on', waiting: true }],
     rank: 3,
+    started: waiting.createdAt,
     owner: 'experiments',
   });
   assert.deepEqual(board.edges, [
@@ -362,6 +363,7 @@ test('an open experiment is a work card that says where it stands and what it wa
       lines: [['Abandoned']],
       look: 'quiet',
       rank: 4,
+      started: waiting.createdAt,
     },
   );
   assert.equal(await f.app.ctx.experiments.runningPanel(f.operator, work(prerequisite.id)), null);

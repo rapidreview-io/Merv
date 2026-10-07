@@ -8,6 +8,7 @@ import {
   runningKey,
   type Caller,
   type ProcessGraph,
+  type Artifact,
   type ReviewRequest,
   type RunningAttention,
   type RunningLinkRow,
@@ -15,6 +16,7 @@ import {
   type RunningPanelPart,
   type RunningPhrase,
   type RunningSection,
+  type RunningUnit,
   type Transaction,
   type WorkflowDependency,
   type WorkflowLimitStatus,
@@ -22,6 +24,7 @@ import {
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
+import { unitHistory } from '@merv/workflows/unit-history';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
 import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
@@ -49,6 +52,8 @@ export interface TaskStanding {
   roundsUsed: boolean;
   /** Another plugin published why the task cannot go on. */
   blocked: boolean;
+  /** When the task was created: the live card counts from it. */
+  started?: string;
 }
 
 const ENDED: Record<string, string> = { done: 'Done', failed: 'Failed' };
@@ -218,6 +223,60 @@ export function taskNode(task: TaskStanding): RunningNode {
         }
       : {}),
     rank: attention ? 0 : RANK[at.at],
+    ...(task.started ? { started: task.started } : {}),
+  };
+}
+
+/** What a delivery says it did, and the review that answered it, by the review gate. */
+const GATES = { in_review: { submitted: 'Delivered' } };
+
+/**
+ * The task as a unit: its history, and the one thing to read. Before anything is delivered
+ * that is the goal, with the checks still open under it; once something is, the report the
+ * producer delivered, with each check met or not as the newest verdict found it, or as the
+ * delivery claimed it until a verdict has.
+ */
+export function taskUnit(
+  record: TaskRecord,
+  graph: ProcessGraph,
+  reviews: readonly ReviewRequest[],
+  artifacts: ReadonlyMap<string, Pick<Artifact, 'id' | 'title' | 'mediaType'>>,
+): RunningUnit {
+  // What a delivery handed in: its report, not the brief it was pinned beside or its code record.
+  const document = (review: ReviewRequest) => {
+    const handed = review.artifactIds
+      .filter((id) => id !== record.briefId)
+      .map((id) => artifacts.get(id))
+      .filter((artifact) => artifact !== undefined);
+    const report =
+      handed.find((artifact) => /^text\/(markdown|plain)/.test(artifact.mediaType)) ?? handed[0];
+    return report && { id: report.id, title: short(report.title) };
+  };
+  const history = unitHistory({ graph, reviews, gates: GATES, document });
+  const delivered = [...history].reverse().find((entry) => entry.artifact);
+  const newest = [...reviews]
+    .filter((review) => review.subjectId === record.id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .at(-1);
+  const judged = newest?.verdict ? newest : undefined;
+  const found = new Map(judged?.findings.map((item) => [item.criterionNumber, item.status]));
+  const claimed = new Map(
+    record.deliveryConfirmations.map((item) => [item.checkNumber, item.status]),
+  );
+  const checks = record.acceptanceChecks.map(({ number, text }) => {
+    const status = delivered ? (judged ? found.get(number) : claimed.get(number)) : undefined;
+    return { text: short(text, 1000), ...(status ? { met: status === 'met' } : {}) };
+  });
+  return {
+    key: delivered?.artifact
+      ? {
+          label: 'Delivery',
+          state: newest?.verdict ?? (newest ? 'in_review' : graph.state),
+          artifact: delivered.artifact,
+        }
+      : { label: 'Goal', text: record.goal },
+    checks,
+    history,
   };
 }
 
@@ -232,6 +291,7 @@ export function taskPanel(
   graph: ProcessGraph,
   brief: { id: string; title: string } | null,
   route: WorkRoute,
+  unit?: RunningUnit,
 ): RunningPanelPart {
   const at = holding(task);
   const attention = need(task);
@@ -279,7 +339,18 @@ export function taskPanel(
           },
         ]
       : []),
-    { title: 'Goal', place: 'content', kind: 'text', text: record.goal, clamp: 4 },
+    // A unit says its goal and its checks itself, so they are sections only without one.
+    ...(unit
+      ? []
+      : [
+          {
+            title: 'Goal',
+            place: 'content' as const,
+            kind: 'text' as const,
+            text: record.goal,
+            clamp: 4,
+          },
+        ]),
     // A brief somebody wrote can say more than the goal and the checks; the one the server
     // composes only repeats them, so it is not offered.
     ...(brief && !composedBrief(brief)
@@ -297,18 +368,24 @@ export function taskPanel(
           },
         ]
       : []),
-    {
-      title: 'Checks',
-      place: 'content',
-      kind: 'table',
-      columns: claimed ? ['Check', 'Claim'] : ['Check'],
-      rows: record.acceptanceChecks.map(({ number, text }) => {
-        const claim = claims.get(number);
-        const check: RunningPhrase = [short(`${number} · ${text}`, 1000)];
-        return { cells: claimed ? [check, claim ? [{ state: claim }] : []] : [check] };
-      }),
-      ...(claimed && delivered ? { aside: ['Delivered ', { ago: delivered }] } : {}),
-    },
+    ...(unit
+      ? []
+      : [
+          {
+            title: 'Checks',
+            place: 'content' as const,
+            kind: 'table' as const,
+            columns: claimed ? ['Check', 'Claim'] : ['Check'],
+            rows: record.acceptanceChecks.map(({ number, text }) => {
+              const claim = claims.get(number);
+              const check: RunningPhrase = [short(`${number} · ${text}`, 1000)];
+              return { cells: claimed ? [check, claim ? [{ state: claim }] : []] : [check] };
+            }),
+            ...(claimed && delivered
+              ? { aside: ['Delivered ', { ago: delivered }] as RunningPhrase }
+              : {}),
+          },
+        ]),
     {
       title: 'Details',
       place: 'details',
@@ -331,6 +408,7 @@ export function taskPanel(
     actions: [],
     ...(page ? { route: page } : {}),
     live: task.lease !== null,
+    ...(unit ? { unit } : {}),
   };
 }
 
@@ -347,6 +425,7 @@ interface RunningTaskRow {
   id: string;
   title: string;
   review_id: string | null;
+  created_at?: string;
   version: number;
   state: string;
   revision: number;
@@ -376,8 +455,8 @@ export async function running(
         ];
         const at = await ctx.workflows.revisions(caller.projectId, ids, tx);
         const rows = (
-          await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id'>>(
-            `SELECT id,title,review_id FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
+          await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id' | 'created_at'>>(
+            `SELECT id,title,review_id,created_at FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
             caller.projectId,
             ...ids,
           )
@@ -461,7 +540,14 @@ export async function runningPanel(
     if (!read) return null;
     // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
     const graph = await ctx.process(caller, taskId);
-    return taskPanel(read.standing, read.record, graph, read.brief, route);
+    // Every round of review, and the files each one pinned, for the history and its documents.
+    const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
+    const pinned = [...new Set(reviews.flatMap((review) => review.artifactIds))];
+    const artifacts = pinned.length
+      ? await ctx.state.transaction(async (tx) => await ctx.artifacts.find(caller, pinned, tx))
+      : new Map<string, Artifact>();
+    const unit = taskUnit(read.record, graph, reviews, artifacts);
+    return taskPanel(read.standing, read.record, graph, read.brief, route, unit);
   });
 }
 
@@ -528,5 +614,6 @@ export async function standing(
     dependencies,
     roundsUsed: !!rounds?.exhausted,
     blocked,
+    ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
   };
 }

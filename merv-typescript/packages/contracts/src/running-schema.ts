@@ -272,6 +272,11 @@ export const runningNode = z
       .transform((aliases) => (aliases?.length ? [...new Set(aliases)] : undefined)),
     /** Order within one owner's nodes, lowest first. Attention sorts ahead of any rank. */
     rank: z.number().finite().optional(),
+    /**
+     * Work only: when the work began, as its owner records it (its record's creation). The
+     * card counts the time since it while the board draws the work live, and never otherwise.
+     */
+    started: lenient(instant.optional()),
   })
   .transform(lean);
 
@@ -477,5 +482,97 @@ export const runningHeader = z
     title: words(200),
     says: runningPhrase,
     attention: runningAttention.optional(),
+  })
+  .transform(lean);
+
+// ─── A unit of work, as its owner reads it ──────────────────────────────────────────────
+
+/** A document of the unit's, by its artifact id and its title. */
+const runningDocument = z.object({ id: z.string().min(1).max(200), title: words(200) });
+/**
+ * One entry of a unit's history, oldest first: a submission, a verdict, a return, a move, or
+ * what is still open. `role` and `stage` name the thread that did it (Sessions' thread stands at
+ * `stage`, a state of `instance`, the unit's own unless named), so its mark opens that thread.
+ * `artifact` is the document the entry submitted, which opens in the reading area.
+ */
+export const runningUnitEntry = z
+  .object({
+    role: z.enum(['producer', 'reviewer']).optional(),
+    stage: words(64).optional(),
+    instance: z.string().min(1).max(200).optional(),
+    actor: z.string().min(1).max(200).optional(),
+    at: lenient(instant.optional()),
+    said: words(200).optional(),
+    artifact: lenient(runningDocument.optional()),
+    /** The verdict a reviewer posted: its word, how many checks it found met, and its sentence. */
+    verdict: lenient(
+      z
+        .object({
+          word: words(40),
+          met: count(),
+          of: count(),
+          text: z.string().max(4000).optional(),
+        })
+        .transform(lean)
+        .optional(),
+    ),
+    /** The review the entry is the way to. */
+    review: z.string().min(1).max(200).optional(),
+    /** What a person has to do: drawn in the refusal's colour. */
+    attention: flag,
+  })
+  .transform(lean);
+/** One lens, perspective or part of a unit, listed with one opened at a time. */
+const runningUnitPart = z
+  .object({
+    title: words(200),
+    state: words(64).optional(),
+    actor: z.string().min(1).max(200).optional(),
+    artifact: lenient(runningDocument.optional()),
+  })
+  .transform(lean);
+/** One item of a structured plan: what it is, its kind, its title, and what it waits on. */
+const runningUnitItem = z
+  .object({
+    key: words(80),
+    kind: words(40),
+    title: words(300),
+    dependsOn: z.array(words(80)).max(24).default([]),
+  })
+  .transform(lean);
+/**
+ * The unit's key artifact, as its owner says it is now: what it is called ('Current plan',
+ * 'Report'), its state's word, and exactly one body — a document, a short markdown text, a
+ * list of parts with one opened at a time, or the items of a structured plan.
+ */
+export const runningUnitKey = z
+  .object({
+    label: words(40),
+    state: words(64).optional(),
+    artifact: lenient(runningDocument.optional()),
+    text: z.string().max(16_000).optional(),
+    parts: kept(runningUnitPart, 24).optional(),
+    items: kept(runningUnitItem, 40).optional(),
+  })
+  .transform(lean)
+  .refine(
+    (body) =>
+      [body.artifact, body.text, body.parts, body.items].filter((part) => part !== undefined)
+        .length === 1,
+    'A key artifact has exactly one body',
+  );
+/**
+ * What the unit's page draws beside its stages: its history on the left, its key artifact on
+ * the right, and for work judged against checks, those checks under it. Only the owner knows
+ * which artifact matters in which state, so it is said here, per record.
+ */
+export const runningUnit = z
+  .object({
+    key: lenient(runningUnitKey.optional()),
+    checks: kept(
+      z.object({ text: words(1000), met: z.boolean().optional() }).transform(lean),
+      40,
+    ).optional(),
+    history: kept(runningUnitEntry, 80).default([]),
   })
   .transform(lean);

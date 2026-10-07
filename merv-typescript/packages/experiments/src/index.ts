@@ -122,6 +122,7 @@ const terminal = new Set<string>(TERMINAL);
 interface StandingRow extends Omit<WorkflowSnapshot, 'data'> {
   name: string;
   review_id: string | null;
+  created_at?: string;
   lease_id: string | null;
 }
 /** What one board read knows beside an experiment's own row. */
@@ -340,7 +341,17 @@ export class ExperimentService implements Experiments {
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
         ),
       };
-      return { standing: await this.standing(caller, row, context, tx), experiment };
+      // Every submission's review, for the history and the verdict on what it handed in.
+      const reviews = await this.reviews.find(
+        caller,
+        experiment.submissions.map((item) => item.reviewId),
+        tx,
+      );
+      return {
+        standing: await this.standing(caller, row, context, tx),
+        experiment,
+        reviews: [...reviews.values()],
+      };
     });
     if (!read) return null;
     // The ladder is where the record stands, so no action's check runs to draw it.
@@ -353,8 +364,8 @@ export class ExperimentService implements Experiments {
     where: string,
     ...params: (string | number)[]
   ): Promise<StandingRow[]> {
-    const rows = await tx.all<Pick<StandingRow, 'id' | 'name' | 'review_id'>>(
-      `SELECT e.id,e.name,e.review_id FROM experiments e WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
+    const rows = await tx.all<Pick<StandingRow, 'id' | 'name' | 'review_id' | 'created_at'>>(
+      `SELECT e.id,e.name,e.review_id,e.created_at FROM experiments e WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
       caller.projectId,
       ...params,
     );
@@ -465,6 +476,7 @@ export class ExperimentService implements Experiments {
           })
         : null,
       exhausted: context.exhausted.has(row.id),
+      ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
