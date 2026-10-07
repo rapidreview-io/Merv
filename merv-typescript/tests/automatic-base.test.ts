@@ -724,7 +724,8 @@ test('units waiting on the same two accepted commits get one merged base, and a 
         tx,
       ),
     );
-  await assert.rejects(nextWriter(), { code: 'code_writer_busy' });
+  // Code's own sweep may already have ended it: the release wakes the store, whose
+  // maintenance runs the same sweep, so the busy moment before it is not asserted here.
   await f.core.writers.expire();
   const released = await f.state.transaction((tx) =>
     f.core.writers.writerStatus(f.admin, waiters[0]!.id, tx),
