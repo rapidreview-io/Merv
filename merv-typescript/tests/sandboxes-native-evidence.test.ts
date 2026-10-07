@@ -340,9 +340,12 @@ for (const flaw of ['namespace', 'producer', 'hold', 'traversal', 'conflict', 's
     if (flaw === 'conflict') f.receipts.set('capture', [{ name: 'safe', object_id: 'obj_other' }]);
     await assert.rejects(f.publish(), { code: 'sandbox_evidence_invalid' });
     assert.deepEqual(await f.artifacts.list(f.caller), []);
-    assert.equal(
-      (await f.state.read((sql) => sql.all('SELECT * FROM sandbox_native_captures'))).length,
-      0,
+    // Its row only counts the failure: nothing is registered or refused yet.
+    assert.deepEqual(
+      await f.state.read((sql) =>
+        sql.all('SELECT artifact_id,error,failures FROM sandbox_native_captures'),
+      ),
+      [{ artifact_id: null, error: null, failures: 1 }],
     );
   });
 
@@ -481,7 +484,9 @@ test('a capture that can never register is refused after five failed passes over
   f.objects.set('kept', file('kept'));
   const rows = () =>
     f.state.read((sql) =>
-      sql.all('SELECT node_id,artifact_id,error FROM sandbox_native_captures ORDER BY node_id'),
+      sql.all(
+        'SELECT node_id,artifact_id,error FROM sandbox_native_captures WHERE artifact_id IS NOT NULL OR error IS NOT NULL ORDER BY node_id',
+      ),
     );
   // An unreachable service says nothing about the capture: those passes never count.
   for (let pass = 0; pass < 6; pass++)

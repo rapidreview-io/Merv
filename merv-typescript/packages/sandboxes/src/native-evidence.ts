@@ -105,11 +105,6 @@ const REFUSE_AFTER_MS = 30 * 60_000;
 export class NativeEvidence {
   /** Ended workflows whose every Capture is registered: a later pass has nothing to read. */
   private readonly settled = new Set<string>();
-  /**
-   * Lasting failures by Capture, and when the first of them was, since this process started or
-   * the Capture last registered.
-   */
-  private readonly failures = new Map<string, { count: number; since: number }>();
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -165,20 +160,24 @@ export class NativeEvidence {
       )?.attempt_ref;
     if (!attempt) return;
     await this.connections.get(connection.id);
-    for (const node of await this.captures(work, connection, workflow.id)) {
-      const registered = await this.state.read((sql) =>
-        sql.get(
-          'SELECT 1 FROM sandbox_native_captures WHERE connection_id=? AND namespace=? AND workflow_id=? AND node_id=?',
-          connection.id,
-          workflow.namespace,
-          workflow.id,
-          node.id,
-        ),
-      );
-      if (registered) continue;
+    const nodes = await this.captures(work, connection, workflow.id);
+    // A Capture registered or refused is settled; one still failing only counts its failures.
+    const done = new Set(
+      (
+        await this.state.read((sql) =>
+          sql.all<{ node_id: string }>(
+            'SELECT node_id FROM sandbox_native_captures WHERE connection_id=? AND namespace=? AND workflow_id=? AND (artifact_id IS NOT NULL OR error IS NOT NULL)',
+            connection.id,
+            workflow.namespace,
+            workflow.id,
+          ),
+        )
+      ).map((row) => row.node_id),
+    );
+    for (const node of nodes) {
+      if (done.has(node.id)) continue;
       try {
         await this.register(work, connection, workflow, attempt, node);
-        this.failures.delete(this.captureKey(connection, workflow, node.id));
       } catch (error) {
         await this.refuse(connection, workflow, attempt, node.id, error);
       }
@@ -336,8 +335,10 @@ export class NativeEvidence {
         tx,
       );
       await tx.run(
-        `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,artifact_id,attempt_ref)
-       VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+        `INSERT INTO sandbox_native_captures AS c(connection_id,namespace,workflow_id,node_id,artifact_id,attempt_ref)
+       VALUES(?,?,?,?,?,?) ON CONFLICT(connection_id,namespace,workflow_id,node_id) DO UPDATE
+       SET artifact_id=excluded.artifact_id,attempt_ref=excluded.attempt_ref,failures=0,failing_since=NULL
+       WHERE c.artifact_id IS NULL AND c.error IS NULL`,
         connection.id,
         workflow.namespace,
         workflow.id,
@@ -347,23 +348,17 @@ export class NativeEvidence {
       );
     });
   }
-  private captureKey(
-    connection: NativeConnectionRow,
-    workflow: { namespace: string; id: string },
-    node: string,
-  ) {
-    return JSON.stringify([connection.id, workflow.namespace, workflow.id, node]);
-  }
   /**
    * A Capture that fails in a lasting way on REFUSE_AFTER passes over REFUSE_AFTER_MS is recorded
    * as refused, with its error and no collection, so its work rests instead of being polled for
-   * ever. An unreachable service, a disconnection, a binding that moved or a rate limit says
-   * nothing about the Capture and never counts.
+   * ever. Its row keeps the count, so a restart does not begin it again. An unreachable service,
+   * a disconnection, a binding that moved or a rate limit says nothing about the Capture and
+   * never counts.
    */
   private async refuse(
     connection: NativeConnectionRow,
     workflow: { namespace: string; id: string },
-    attempt: string,
+    attempt: string | null,
     node: string,
     error: unknown,
   ): Promise<void> {
@@ -375,26 +370,33 @@ export class NativeEvidence {
       error.status !== 429 &&
       error.status < 503;
     if (!lasting) throw error;
-    const key = this.captureKey(connection, workflow, node);
     const now = this.clock();
-    const { count, since } = this.failures.get(key) ?? { count: 0, since: now };
-    if (count + 1 < REFUSE_AFTER || now - since < REFUSE_AFTER_MS) {
-      this.failures.set(key, { count: count + 1, since });
-      throw error;
-    }
-    this.failures.delete(key);
-    await this.state.transaction((tx) =>
-      tx.run(
-        `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,attempt_ref,error)
-         VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-        connection.id,
-        workflow.namespace,
-        workflow.id,
-        node,
+    const refused = await this.state.transaction(async (tx) => {
+      const key = [connection.id, workflow.namespace, workflow.id, node];
+      const counted = await tx.get<{ failures: number; failing_since: string }>(
+        `INSERT INTO sandbox_native_captures AS c(connection_id,namespace,workflow_id,node_id,attempt_ref,failures,failing_since)
+         VALUES(?,?,?,?,?,1,?) ON CONFLICT(connection_id,namespace,workflow_id,node_id) DO UPDATE
+         SET failures=c.failures+1,failing_since=COALESCE(c.failing_since,excluded.failing_since)
+         WHERE c.artifact_id IS NULL AND c.error IS NULL RETURNING failures,failing_since`,
+        ...key,
         attempt,
+        new Date(now).toISOString(),
+      );
+      if (
+        !counted ||
+        Number(counted.failures) < REFUSE_AFTER ||
+        now - Date.parse(counted.failing_since) < REFUSE_AFTER_MS
+      )
+        return false;
+      await tx.run(
+        `UPDATE sandbox_native_captures SET error=?,failures=0,failing_since=NULL
+         WHERE connection_id=? AND namespace=? AND workflow_id=? AND node_id=?`,
         clip(`${error.code}: ${error.message}`, 500),
-      ),
-    );
+        ...key,
+      );
+      return true;
+    });
+    if (!refused) throw error;
   }
   private async captures(work: NativeWorkRow, connection: NativeConnectionRow, workflowId: string) {
     const captures: z.infer<typeof captureSchema>[] = [];

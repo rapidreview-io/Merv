@@ -119,15 +119,19 @@ UPDATE sandbox_native_work SET native_kind=CASE WHEN work_kind IN ('task','exper
   },
   {
     // A Capture that can never register is recorded as refused, with its error and no collection,
-    // so its work rests. Every existing row is a registered collection. Read-only prod check, before
+    // so its work rests. Until it registers or is refused, its row counts its lasting failures and
+    // when the first was, so a restart does not start the count again; node '*' is the workflow
+    // as a whole. Every existing row is a registered collection. Read-only prod check, before
     // (expect 0) and the work this lets rest after five passes:
     //   SELECT count(*) FROM sandbox_native_captures WHERE artifact_id IS NULL;
     //   SELECT count(*) FROM sandbox_native_work WHERE last_error='Native evidence registration is pending';
     version: 6,
     sql: `ALTER TABLE sandbox_native_captures ALTER COLUMN artifact_id DROP NOT NULL;
 ALTER TABLE sandbox_native_captures ADD COLUMN error TEXT;
+ALTER TABLE sandbox_native_captures ADD COLUMN failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sandbox_native_captures ADD COLUMN failing_since TEXT;
 ALTER TABLE sandbox_native_captures ADD CONSTRAINT sandbox_native_captures_outcome
-  CHECK ((artifact_id IS NULL) <> (error IS NULL));`,
+  CHECK (artifact_id IS NULL OR error IS NULL);`,
   },
 ];
 
