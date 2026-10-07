@@ -29,7 +29,11 @@ type Close = Failure & Pick<Session, 'id' | 'deferral'>;
  * work's history lives was away, busy or full. No hold can form from them; they only space the
  * attempts out, exactly as a failure's backoff does.
  */
-export const deferredReasons = new Set(['preparation_deferred', 'machine_retired']);
+export const deferredReasons = new Set([
+  'preparation_deferred',
+  'machine_retired',
+  'model_interrupted',
+]);
 /** How long three deferred closes in a row must run before an operator is told about them. */
 const deferredRun = 3;
 const deferredSinceMs = 7 * 24 * 3600_000;
@@ -367,10 +371,18 @@ async function attention(
       sessionId: newest.id,
       label: item.label,
       since: last[last.length - 1].closedAt!,
-      code: newest.deferral?.cause ?? 'preparation_deferred',
       attempts: last.length,
-      why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
-      next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
+      ...(newest.outcome === 'model_interrupted'
+        ? {
+            code: 'model_interrupted',
+            why: `The last ${last.length} visits of this work lost their model calls to the model relay or its provider (an outage, or a release of Main). Nothing counts that against the work, so it is offered again and again.`,
+            next: 'Look at the model relay and its provider: Main’s codex_relay_failure log lines say how its calls failed. Nothing here is held; the offers resume by themselves once it answers.',
+          }
+        : {
+            code: newest.deferral?.cause ?? 'preparation_deferred',
+            why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
+            next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
+          }),
     });
   }
   for (const { item, code } of quiet) {

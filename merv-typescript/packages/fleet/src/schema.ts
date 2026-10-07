@@ -115,13 +115,21 @@ export const workflowRetryMigration = {
     FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
 };
 /** What each session with a budget of its own (a grant's `tokenBudget`) has spent, charged call
- *  by call beside its person's day. A new table: no prod count. */
+ *  by call beside its person's day; and the relay's own faults, by session (or `*` for Main's
+ *  restart), so a visit they cut is not counted as its work's failure. New tables: no prod
+ *  count. */
 export const grantTokensMigration = {
   version: 5,
   sql: `CREATE TABLE fleet_grant_tokens (
     grant_id TEXT PRIMARY KEY,
     tokens BIGINT NOT NULL CHECK (tokens >= 0)
-  );`,
+  );
+  CREATE TABLE fleet_relay_faults (
+    subject TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX fleet_relay_faults_at ON fleet_relay_faults(at);`,
 };
 export const modelMigrations = [
   usageMigration,

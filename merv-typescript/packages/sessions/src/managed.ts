@@ -714,6 +714,18 @@ export class ManagedRunnerBindings {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     return row ? await this.modelWait(row, tx) : null;
   }
+  /** Whether the relay failed the calls of a visit a machine of the validator's ran. */
+  async relayFault(session: Session, tx: Transaction): Promise<boolean> {
+    const row = await tx.get<ManagedBindingRow>(boundTo, session.id, session.id);
+    return (
+      !!row &&
+      !!(await this.validator?.relayFault?.(
+        this.identity(row),
+        { sessionId: session.id, since: session.createdAt },
+        tx,
+      ))
+    );
+  }
   async inspect(
     allocationId: string,
     epoch: number,

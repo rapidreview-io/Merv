@@ -248,6 +248,7 @@ async function fixture(
     admits = true,
     retired = false,
     huggingFace = true,
+    relayFault = false,
     modelBudget: { resetsAt: string } | null = null;
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
@@ -256,6 +257,7 @@ async function fixture(
     retired: async () => retired,
     huggingFace: () => huggingFace,
     modelBudget: async () => modelBudget,
+    relayFault: async () => relayFault,
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -331,6 +333,10 @@ async function fixture(
     },
     huggingFace: (value: boolean) => {
       huggingFace = value;
+    },
+    /** Whether Fleet's relay failed the visit's model calls (an outage, a Main restart). */
+    relayFault: (value: boolean) => {
+      relayFault = value;
     },
     /** The person's model budget as Fleet reports it: when it resets while spent, else null. */
     modelBudget: (value: { resetsAt: string } | null) => {
@@ -760,6 +766,51 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     outcome: 'crash_loop',
   });
   assert.equal((await f.sessions.get(f.source, resumed!.id)).outcome, 'crash_loop');
+});
+
+test('a visit the model relay failed counts against nothing and is offered again after the backoff', async (t) => {
+  // Audit 15: a Main release or a relay or provider outage cuts a hosted Codex call, Codex exits
+  // 1, and five such closes held the work for an operator.
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  for (let visit = 0; visit < 6; visit++) {
+    f.relayFault(false);
+    await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+    const leased = await f.sessions.dispatch.lease(f.caller, f.lease());
+    const bound = leased.session;
+    assert.ok(bound, `visit ${visit} is offered: ${leased.reason}`);
+    f.relayFault(true);
+    await f.sessions.release(f.caller, {
+      sessionId: bound.id,
+      runnerId: f.runnerId,
+      outcome: visit % 2 ? 'host_failed' : 'crash_loop',
+      reason: 'local_process_exit_code_1',
+    });
+    const closed = await f.sessions.get(f.source, bound.id);
+    assert.equal(closed.outcome, 'model_interrupted');
+    // Promptly, but not at once: the backoff spaces the visits while the relay recovers.
+    assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).session, null);
+    now += 31_000;
+  }
+  const hold = await f.state.read((sql) =>
+    sql.get<{ attempts: number }>(
+      'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+      f.workTarget.id,
+    ),
+  );
+  assert.equal(Number(hold?.attempts ?? 0), 0, 'a relay fault is no failed launch');
+  // A failure while the relay is sound is the work's own, and counts.
+  f.relayFault(false);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  const sound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  await f.sessions.release(f.caller, {
+    sessionId: sound.id,
+    runnerId: f.runnerId,
+    outcome: 'crash_loop',
+  });
+  assert.equal((await f.sessions.get(f.source, sound.id)).outcome, 'crash_loop');
 });
 
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {

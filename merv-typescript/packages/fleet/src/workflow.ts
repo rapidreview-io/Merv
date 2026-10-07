@@ -27,7 +27,9 @@ import {
   budgetIn,
   codexModelRelay,
   hostedGrant,
+  markRelayStart,
   modelBudgetStatus,
+  relayFaulted,
   setDailyTokens,
 } from './codex-relay.js';
 import { modelMigrations } from './schema.js';
@@ -169,6 +171,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async start(): Promise<void> {
     await this.state.migrate('fleet_workflow', modelMigrations);
+    // Main, and the relay with it, starts: the visits it cut by stopping are told so.
+    await markRelayStart(this.state);
     check(
       !this.closed && !this.timer,
       'fleet_workflow_started',
@@ -204,6 +208,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
             const budget = await budgetIn(tx, person, this.config.dailyTokensPerPerson);
             return budget.blocked ? { resetsAt: budget.resetsAt } : null;
           },
+          // A visit whose calls the relay or its provider failed, or that Main's restart cut.
+          relayFault: async (_binding, visit, tx) =>
+            await relayFaulted(tx, visit.sessionId, visit.since),
         }),
       );
       // Fleet's sections of system.status: the project's, and a leased worker's own budget.

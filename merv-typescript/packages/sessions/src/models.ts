@@ -45,6 +45,11 @@ export type SessionOutcome =
    * nothing about the work was wrong, and it waits for the reset or a raised limit.
    */
   | 'budget_exhausted'
+  /**
+   * The model relay or its provider failed the visit's calls (an outage, or Main's release cut
+   * them), so its process ended: nothing about the work was wrong, and it is offered again.
+   */
+  | 'model_interrupted'
   | 'crash_loop';
 
 /** What a machine may report a launch ended as; only a worker's own handoff records completion. */

@@ -38,6 +38,15 @@ export type ManagedRunnerValidator = {
     binding: ManagedRunnerBindingIdentity,
     tx: Transaction,
   ): Promise<{ resetsAt: string } | null>;
+  /**
+   * Whether the validator's model relay, or its provider, failed this visit's calls lately (an
+   * outage, or Main restarting while it was live): its failed close is then nobody's fault.
+   */
+  relayFault?(
+    binding: ManagedRunnerBindingIdentity,
+    visit: { sessionId: string; since: string },
+    tx: Transaction,
+  ): Promise<boolean>;
 };
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];

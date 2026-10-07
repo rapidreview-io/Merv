@@ -803,6 +803,13 @@ export class LeasedSessions implements Sessions {
         ? await this.managed.sessionModelWait(session.id, tx)
         : null;
     if (budget) outcome = 'budget_exhausted';
+    // One the relay or its provider failed (an outage, Main's release) is nobody's either: it is
+    // offered again after the backoff, and never held.
+    else if (
+      (outcome === 'host_failed' || outcome === 'crash_loop') &&
+      (await this.managed.relayFault(session, tx))
+    )
+      outcome = 'model_interrupted';
     session.status = status;
     session.closedAt = isoNow(this.clock);
     session.closeReason = reason;

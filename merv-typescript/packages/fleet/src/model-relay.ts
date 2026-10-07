@@ -518,7 +518,7 @@ export class ModelRelay<
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
       // A Codex client can close after the terminal frame. Usage was already settled in keep().
       if (admitted && !(failure.code === 'disconnected' && completed))
-        report(this.config.onFailure, {
+        report((record) => this.config.onFailure?.(record, admitted!), {
           event: `${this.config.name}_relay_failure` as const,
           phase,
           code: failure.code,
