@@ -1,4 +1,5 @@
 import { reviewActions } from '@merv/reviews/rules';
+import { reviewReturn } from '@merv/reviews/returns';
 import { types as nodeTypes } from 'node:util';
 import {
   check,
@@ -7,6 +8,7 @@ import {
   type Data,
   type ReviewRequest,
   type Transaction,
+  type Verdict,
   type WorkflowCheckContext,
   type WorkflowPolicy,
 } from '@merv/contracts';
@@ -26,7 +28,10 @@ import { currentLease, leaseHooks, leasedClaim, prepareTasks, unleased } from '.
 // The task workflow's policy and the checks its review actions run. Each runs on TaskService
 // (index.ts) as its TasksContext.
 
-/** Tasks have fixed routes; inspect only an ordinary optional data property. */
+/**
+ * Tasks have fixed routes, so by Reviews' one rule (`reviewReturn`) no verdict names one; inspect
+ * only an ordinary optional data property.
+ */
 export function rejectReviewReturn(input: object): void {
   const message = 'Task reviews have fixed return routes and do not accept returnTo';
   check(
@@ -37,11 +42,8 @@ export function rejectReviewReturn(input: object): void {
   const prototype = Object.getPrototypeOf(input);
   check(prototype === Object.prototype || prototype === null, 'invalid_review_return', message);
   const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(
-    !descriptor || ('value' in descriptor && descriptor.value === undefined),
-    'invalid_review_return',
-    message,
-  );
+  check(!descriptor || 'value' in descriptor, 'invalid_review_return', message);
+  reviewReturn((input as { verdict: Verdict }).verdict, descriptor?.value, []);
 }
 
 export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPolicy {

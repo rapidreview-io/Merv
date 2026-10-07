@@ -23,6 +23,8 @@ export interface ReviewProvenance {
 export interface ReviewReturn {
   value: string;
   label: string;
+  /** The route a rejection that names none takes; at most one per owner and stage. */
+  default?: true;
 }
 /** What the work under review claimed of one of its checks, as the owning domain kept it. */
 export interface ReviewClaim {

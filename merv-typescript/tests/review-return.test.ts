@@ -755,3 +755,24 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('every reviewing owner routes a verdict back by one rule, its default its own', async () => {
+  const { reviewReturn } = await import('@merv/reviews/returns');
+  const { REVIEW_RETURNS: experiment } = await import('../packages/experiments/src/definitions.js');
+  const { REVIEW_RETURNS: wave } = await import('../packages/reflections/src/definitions.js');
+  const refused = (run: () => unknown) =>
+    assert.throws(run, (error: { code?: string }) => error.code === 'invalid_review_return');
+  // A pass names no route, whoever owns the review.
+  assert.equal(reviewReturn('pass', undefined, wave), undefined);
+  refused(() => reviewReturn('pass', 'synthesizing', wave));
+  // A rejection naming none takes the owner's default, where it marks one; else it must name one.
+  assert.equal(reviewReturn('needs_changes', undefined, wave), 'synthesizing');
+  assert.equal(reviewReturn('fail', 'reflecting', wave), 'reflecting');
+  assert.equal(reviewReturn('fail', undefined, experiment.design), 'planned');
+  refused(() => reviewReturn('needs_changes', undefined, experiment.results));
+  assert.equal(reviewReturn('needs_changes', 'running', experiment.results), 'running');
+  refused(() => reviewReturn('needs_changes', 'running', experiment.design));
+  // An owner with fixed routes (Tasks) accepts none.
+  assert.equal(reviewReturn('fail', undefined, []), undefined);
+  refused(() => reviewReturn('needs_changes', 'in_progress', []));
+});

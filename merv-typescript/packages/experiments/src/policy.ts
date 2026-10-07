@@ -1,5 +1,6 @@
 import { requireDependencies } from '@merv/workflows/rules';
 import { reviewActions, REVIEW_VERDICTS } from '@merv/reviews/rules';
+import { reviewReturn } from '@merv/reviews/returns';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
@@ -129,21 +130,8 @@ export function route(
     'invalid_verdict',
     'A supported review verdict is required',
   );
-  if (input.verdict === 'pass') {
-    check(
-      input.returnTo === undefined,
-      'invalid_review_return',
-      'Passing reviews do not accept returnTo',
-    );
-    return stage === 'design' ? 'approve_design' : 'accept_results';
-  }
-  const routes: readonly { value: string }[] = REVIEW_RETURNS[stage];
-  const to = input.returnTo ?? (routes.length === 1 ? routes[0]!.value : undefined);
-  check(
-    routes.some((each) => each.value === to),
-    'invalid_review_return',
-    `A rejected ${stage} review returns to ${routes.map((each) => each.value).join(' or ')}`,
-  );
+  const to = reviewReturn(input.verdict, input.returnTo, REVIEW_RETURNS[stage]);
+  if (input.verdict === 'pass') return stage === 'design' ? 'approve_design' : 'accept_results';
   return stage === 'design'
     ? 'revise_design'
     : to === 'planned'

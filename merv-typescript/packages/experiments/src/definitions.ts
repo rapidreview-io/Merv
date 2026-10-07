@@ -218,7 +218,7 @@ export const resultsCriteria = [
  * design has one route, taken when none is named; a results review must choose.
  */
 export const REVIEW_RETURNS = {
-  design: [{ value: 'planned', label: 'Planning, for a new design' }],
+  design: [{ value: 'planned', label: 'Planning, for a new design', default: true }],
   results: [
     { value: 'planned', label: 'Planning, for a new design and attempt' },
     { value: 'running', label: 'Running, to repair under the approved plan' },

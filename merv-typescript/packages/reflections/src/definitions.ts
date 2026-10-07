@@ -138,6 +138,6 @@ export const ITEM_RECIPES: ContextRecipeDefinition[] = ['lens', 'synthesis', 're
  * lenses), or to the lenses for five new reports.
  */
 export const REVIEW_RETURNS = [
-  { value: 'synthesizing', label: 'Synthesis, for a revised report' },
+  { value: 'synthesizing', label: 'Synthesis, for a revised report', default: true },
   { value: 'reflecting', label: 'Lenses, for five new reports' },
 ] as const;
