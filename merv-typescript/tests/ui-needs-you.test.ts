@@ -333,6 +333,13 @@ test('work at a used-up limit, though out for review or only naming its reviews,
     label: 'Resume',
     to: '/work?key=work:suspended',
   });
+  // A held launch is released from the work's card too, where Sessions draws the release: the
+  // line goes there, not to the record page, which has no such control.
+  assert.equal(
+    desked.find((line: { id: string }) => line.id === 'held')!.to,
+    '/work?key=work:held',
+  );
+  assert.equal(lines.find((line: { id: string }) => line.id === 'held')!.to, '/tasks/held');
 });
 
 /** A chore: worked, then done, or ended. Its owner submits it; a review may send it back. */
