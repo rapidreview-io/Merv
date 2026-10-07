@@ -425,64 +425,52 @@ test(
   },
 );
 
-test('GitHub publication and transport HTTP routes enforce authentication, project scope, closed inputs and adapter withdrawal', async (t) => {
+test('GitHub HTTP routes enforce authentication, project scope and adapter withdrawal; retired publication, pull and transport routes are gone', async (t) => {
   const f = await fixture(t);
   let calls = 0;
-  f.provider.publications = async (caller) => {
-    assert.equal(caller.projectId, f.caller.projectId);
-    calls++;
-    return [];
-  };
-  f.provider.syncPublications = async () => {
-    calls++;
-    return [];
-  };
-  f.provider.publicationDetails = async () => {
-    throw new Error('unused');
-  };
-  f.provider.mergePublication = async () => {
-    throw new Error('unused');
-  };
-  const dispose = f.register(f.provider);
+  const github = {
+    async status(caller: Caller) {
+      assert.equal(caller.projectId, f.caller.projectId);
+      calls++;
+      return { revision: 0 };
+    },
+  } as unknown as CodeRoutes['github'];
+  const dispose = f.register({ ...f.provider, github });
   t.after(dispose);
   const headers = { authorization: `Bearer ${f.boot.token}`, 'content-type': 'application/json' };
-  assert.equal((await fetch(`${f.url}/code/publications`)).status, 401);
-  assert.equal((await fetch(`${f.url}/code/publications`, { headers })).status, 200);
+  assert.equal((await fetch(`${f.url}/code/github`)).status, 401);
+  assert.equal((await fetch(`${f.url}/code/github`, { headers })).status, 200);
   assert.equal(
     (
-      await fetch(`${f.url}/code/publications`, {
+      await fetch(`${f.url}/code/github`, {
         headers: { ...headers, 'x-merv-project-id': 'other' },
       })
     ).status,
     403,
   );
-  assert.equal(
-    (await fetch(`${f.url}/code/publications/sync`, { method: 'POST', headers, body: '{}' }))
-      .status,
-    200,
-  );
-  assert.equal(
-    (
-      await fetch(`${f.url}/code/publications/sync`, {
-        method: 'POST',
-        headers,
-        body: '{"repository":"evil/other"}',
-      })
-    ).status,
-    400,
-  );
-  assert.equal(
-    (await fetch(`${f.url}/code/publications/merge`, { method: 'POST', headers, body: '{}' }))
-      .status,
-    400,
-  );
-  // The GitHub checkpoint transport is retired; its routes are gone.
-  assert.equal(
-    (await fetch(`${f.url}/code/transport/grant`, { method: 'POST', headers, body: '{}' })).status,
-    404,
-  );
-  assert.equal(calls, 2);
+  // Merv's pages call the code.publication.* tools; the parallel routes and GitHub browsing are gone.
+  for (const [path, method] of [
+    ['/code/publications', 'GET'],
+    ['/code/publications/codeprop_x', 'GET'],
+    ['/code/publications/sync', 'POST'],
+    ['/code/publications/merge', 'POST'],
+    ['/code/github/pulls', 'GET'],
+    ['/code/github/pulls/1', 'GET'],
+    ['/code/transport/grant', 'POST'],
+  ] as const)
+    assert.equal(
+      (
+        await fetch(`${f.url}${path}`, {
+          method,
+          headers,
+          ...(method === 'POST' ? { body: '{}' } : {}),
+        })
+      ).status,
+      404,
+      `${method} ${path}`,
+    );
+  assert.equal(calls, 1);
   dispose();
-  assert.equal((await fetch(`${f.url}/code/publications`, { headers })).status, 503);
-  assert.equal(calls, 2);
+  assert.equal((await fetch(`${f.url}/code/github`, { headers })).status, 503);
+  assert.equal(calls, 1);
 });

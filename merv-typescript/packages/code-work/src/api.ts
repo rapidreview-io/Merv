@@ -10,22 +10,11 @@ import {
 } from '@merv/contracts';
 import { CODE_PART_MAX_BYTES } from '@merv/code/store/protocol';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
-import { codePublicationMergeSchema } from './publications.js';
 import type { Code } from './types.js';
 import { unknownEndpoint } from '@merv/api/errors';
 
 /** What Code's HTTP routes use of Code. */
-export type CodeRoutes = Pick<
-  Code,
-  | 'github'
-  | 'nextCommand'
-  | 'completeCommand'
-  | 'publications'
-  | 'syncPublications'
-  | 'publicationDetails'
-  | 'mergePublication'
-  | 'v2'
->;
+export type CodeRoutes = Pick<Code, 'github' | 'nextCommand' | 'completeCommand' | 'v2'>;
 
 const emptyObject = (body: unknown) =>
   !!body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0;
@@ -86,9 +75,6 @@ async function githubRequest(
     return { repositories: await github.repositories(caller) };
   if (req.method === 'GET' && action === '/branches')
     return { branches: await github.branches(caller) };
-  if (req.method === 'GET' && action === '/pulls') return { pulls: await github.pulls(caller) };
-  if (req.method === 'GET' && /^\/pulls\/[1-9][0-9]*$/.test(action))
-    return await github.pullDetails(caller, Number(action.split('/')[2]));
   if (req.method === 'POST') {
     const body = await r.json(undefined, 8192);
     if (action === '/automation') {
@@ -125,34 +111,8 @@ async function githubRequest(
   throw new MervError('not_found', 'Unknown GitHub route or method', 404);
 }
 
-async function publicationRequest(req: IncomingMessage, r: ApiRequest, code: CodeRoutes) {
-  const caller = await r.caller();
-  check(!r.url.search, 'invalid_input', 'Publication controls do not accept query parameters');
-  const action = r.url.pathname.slice('/code/publications'.length);
-  if (req.method === 'GET' && !action) return { publications: await code.publications(caller) };
-  if (req.method === 'GET' && /^\/codeprop_[A-Za-z0-9_-]+$/.test(action))
-    return await code.publicationDetails(caller, action.slice(1));
-  if (req.method === 'POST') {
-    const body = await r.json(undefined, 8192);
-    if (action === '/sync') {
-      check(emptyObject(body), 'invalid_input', 'Sync expects an empty object');
-      return { publications: await code.syncPublications(caller) };
-    }
-    if (action === '/merge') {
-      const parsed = codePublicationMergeSchema.safeParse(body);
-      check(
-        parsed.success,
-        'invalid_input',
-        'An exact proposal, head, base and merge request identifier are required',
-      );
-      return { publication: await code.mergePublication(caller, parsed.data) };
-    }
-  }
-  throw new MervError('not_found', 'Unknown publication route or method', 404);
-}
-
 /**
- * `/code`: GitHub's OAuth callback (public), then the authenticated GitHub, publication,
+ * `/code`: GitHub's OAuth callback (public), then the authenticated GitHub,
  * workspace (`/code/v2/`) and command controls. Each decides its caller once before
  * its body; Code parses every body it is handed and authorizes each effect itself. A managed
  * runner's credential already confines it to the routes its protocol uses.
@@ -164,8 +124,6 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       if (path !== '/code/github/callback' || req.method !== 'GET') throw unknownEndpoint();
       return await githubCallback(req, res, r.url, code.github);
     }
-    if (path === '/code/publications' || path.startsWith('/code/publications/'))
-      return await publicationRequest(req, r, code);
     if (path === '/code/github' || path.startsWith('/code/github/'))
       return await githubRequest(req, res, r, code.github);
     if (path.startsWith('/code/v2/')) {

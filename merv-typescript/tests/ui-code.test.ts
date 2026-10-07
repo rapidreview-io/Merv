@@ -609,9 +609,9 @@ test('one Code snapshot refreshes integrations and the selected graph, retaining
           },
         };
   });
-  serve('/code/publications/sync', () => {
+  serve('/tools/code.publication.sync', () => {
     publications = [published({ proposalId: 'p2', title: 'Wave two', headOid: 'g2' }), published()];
-    return { body: { publications } };
+    return { body: { result: publications } };
   });
   await mount(page([row], { at: '/code/unit/p1' }));
   const integrationNames = () =>
@@ -1740,8 +1740,8 @@ test('a clean consolidated proposal is not warned about its internal integration
   t.after(unmount);
   const pull = openPull('c0', '2026-09-05T00:00:00Z');
   const proposal = published({ pull, merge: null, baseOid: 'merged-dependencies-and-main' });
-  serve('/code/publications/p1', {
-    body: { publication: proposal, details: publicationDetails(pull) },
+  serve('/tools/code.publication.read', {
+    body: { result: { publication: proposal, details: publicationDetails(pull) } },
   });
   await mount(publicationWidget([proposal]));
   await settle(10);
@@ -1753,8 +1753,8 @@ test('a publication still shows GitHub reporting that its branch is behind', asy
   t.after(unmount);
   const pull = { ...openPull('new-main', '2026-09-05T00:00:00Z'), mergeState: 'behind' };
   const proposal = published({ pull, merge: null });
-  serve('/code/publications/p1', {
-    body: { publication: proposal, details: publicationDetails(pull) },
+  serve('/tools/code.publication.read', {
+    body: { result: { publication: proposal, details: publicationDetails(pull) } },
   });
   await mount(publicationWidget([proposal]));
   await settle(10);
@@ -1766,20 +1766,17 @@ test('an uncertain reviewed merge retries its original request and pins', async 
   t.after(unmount);
   const pull = openPull('c0', '2026-09-05T00:00:00Z');
   const proposal = published({ pull });
-  serve('/code/publications/p1', {
-    body: { publication: proposal, details: publicationDetails(pull) },
+  serve('/tools/code.publication.read', {
+    body: { result: { publication: proposal, details: publicationDetails(pull) } },
   });
   const sent: Record<string, unknown>[] = [];
-  serve('/code/publications/merge', (_call, body) => {
+  serve('/tools/code.publication.merge', (_call, body) => {
     sent.push(body);
     return sent.length === 1
       ? { network: true }
       : {
           body: {
-            publication: {
-              ...proposal,
-              pull: { ...pull, merged: true, mergeCommitSha: 'merged' },
-            },
+            result: { ...proposal, pull: { ...pull, merged: true, mergeCommitSha: 'merged' } },
           },
         };
   });
@@ -1800,20 +1797,17 @@ test('a changed merge base or reviewed head starts a new request intent', async 
   t.after(unmount);
   let pull = openPull('c0', '2026-09-05T00:00:00Z');
   let proposal = published({ pull });
-  serve('/code/publications/p1', () => ({
-    body: { publication: proposal, details: publicationDetails(pull) },
+  serve('/tools/code.publication.read', () => ({
+    body: { result: { publication: proposal, details: publicationDetails(pull) } },
   }));
   const sent: Record<string, unknown>[] = [];
-  serve('/code/publications/merge', (_call, body) => {
+  serve('/tools/code.publication.merge', (_call, body) => {
     sent.push(body);
     return sent.length < 3
       ? { network: true }
       : {
           body: {
-            publication: {
-              ...proposal,
-              pull: { ...pull, merged: true, mergeCommitSha: 'merged' },
-            },
+            result: { ...proposal, pull: { ...pull, merged: true, mergeCommitSha: 'merged' } },
           },
         };
   });

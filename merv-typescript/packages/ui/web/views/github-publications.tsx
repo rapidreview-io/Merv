@@ -1,7 +1,7 @@
 import type { GitHubPullDetails } from '@merv/contracts/types';
 import type { CodePublication, CodeProjectStatus } from '@merv/code-work/models';
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, useScopeVersion } from '../api';
+import { call, useScopeVersion } from '../api';
 import {
   Ago,
   Area,
@@ -23,13 +23,6 @@ import { useCommand, useCurrent } from '../mutations';
  * and the commit list are GitHub's and stay there, one link away; Details holds
  * the machine text and is the only place an identifier is printed.
  */
-
-const request = <T,>(path = '', body?: unknown) =>
-  accountRequest<T>(`/code/publications${path}`, {
-    scoped: true,
-    credentials: 'same-origin',
-    ...(body === undefined ? {} : { method: 'POST', body }),
-  });
 
 type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
 
@@ -115,12 +108,10 @@ function MergeGuard({
   onMerged(): void;
 }) {
   const [confirm, setConfirm] = useState(false);
-  const command = useCommand<{ publication: CodePublication }>({
+  const command = useCommand<CodePublication>({
     tool: 'code.publication.merge',
-    send: (input) => request('/merge', input),
     validate: (value) =>
-      value?.publication?.proposalId === publication.proposalId &&
-      !!(value.publication.pull?.merged || value.publication.stale),
+      value?.proposalId === publication.proposalId && !!(value.pull?.merged || value.stale),
     onSuccess: () => {
       setConfirm(false);
       onMerged();
@@ -197,7 +188,9 @@ export function GitHubPublications({
       const key = p.pull?.updatedAt;
       if (!key || seen.current.get(p.proposalId) === key) continue;
       seen.current.set(p.proposalId, key);
-      void request<{ details: GitHubPullDetails | null }>(`/${encodeURIComponent(p.proposalId)}`)
+      void call<{ details: GitHubPullDetails | null }>('code.publication.read', {
+        proposalId: p.proposalId,
+      })
         .then((value) => {
           if (current()) setDetails((all) => ({ ...all, [p.proposalId]: value.details }));
         })
@@ -377,7 +370,7 @@ export function GitHubPublications({
             disabled={busy}
             onClick={() =>
               void act(async () => {
-                await request('/sync', {});
+                await call('code.publication.sync');
                 onDone();
               })
             }

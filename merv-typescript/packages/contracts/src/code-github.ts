@@ -7,8 +7,6 @@ import type {
   GitHubStatus,
   GitHubAutomationInput,
   GitHubBranch,
-  GitHubPullRequest,
-  GitHubPullDetails,
 } from './github-models.js';
 export type { GitHubRepository, GitHubRepositoryInput, GitHubStatus } from './github-models.js';
 
@@ -49,6 +47,4 @@ export interface CodeGitHub {
   disconnect(caller: Caller, input: { expectedRevision: number }): Promise<GitHubStatus>;
   configureAutomation(caller: Caller, input: GitHubAutomationInput): Promise<GitHubStatus>;
   branches(caller: Caller): Promise<GitHubBranch[]>;
-  pulls(caller: Caller): Promise<GitHubPullRequest[]>;
-  pullDetails(caller: Caller, number: number): Promise<GitHubPullDetails>;
 }
