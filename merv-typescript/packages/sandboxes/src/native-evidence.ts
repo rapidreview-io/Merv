@@ -93,20 +93,29 @@ const referenceSchema = z.tuple([
   z.number().int().nonnegative().safe(),
 ]);
 
-/** The passes a Capture may fail in a lasting way before it is refused. */
+/**
+ * A Capture is refused once it has failed in a lasting way on REFUSE_AFTER passes spanning at
+ * least REFUSE_AFTER_MS: a pass runs every few seconds while its work moves, and a 404 from a
+ * deploy or an object not yet visible must not refuse real evidence within the minute.
+ */
 const REFUSE_AFTER = 5;
+const REFUSE_AFTER_MS = 30 * 60_000;
 
 /** Registers immutable native receipts, never downloads/reuploads captured bytes. */
 export class NativeEvidence {
   /** Ended workflows whose every Capture is registered: a later pass has nothing to read. */
   private readonly settled = new Set<string>();
-  /** Lasting failures by Capture, since this process started or the Capture last registered. */
-  private readonly failures = new Map<string, number>();
+  /**
+   * Lasting failures by Capture, and when the first of them was, since this process started or
+   * the Capture last registered.
+   */
+  private readonly failures = new Map<string, { count: number; since: number }>();
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly artifacts: Artifacts,
     private readonly connections: NativeConnections,
+    private readonly clock: () => number = Date.now,
   ) {}
 
   async publish(
@@ -346,10 +355,10 @@ export class NativeEvidence {
     return JSON.stringify([connection.id, workflow.namespace, workflow.id, node]);
   }
   /**
-   * A Capture that fails in a lasting way on REFUSE_AFTER passes is recorded as refused, with its
-   * error and no collection, so its work rests instead of being polled for ever. An unreachable
-   * service, a disconnection or a binding that moved says nothing about the Capture and never
-   * counts.
+   * A Capture that fails in a lasting way on REFUSE_AFTER passes over REFUSE_AFTER_MS is recorded
+   * as refused, with its error and no collection, so its work rests instead of being polled for
+   * ever. An unreachable service, a disconnection, a binding that moved or a rate limit says
+   * nothing about the Capture and never counts.
    */
   private async refuse(
     connection: NativeConnectionRow,
@@ -363,12 +372,14 @@ export class NativeEvidence {
       error.code !== 'sandbox_unavailable' &&
       error.status !== 403 &&
       error.status !== 409 &&
+      error.status !== 429 &&
       error.status < 503;
     if (!lasting) throw error;
     const key = this.captureKey(connection, workflow, node);
-    const failures = (this.failures.get(key) ?? 0) + 1;
-    if (failures < REFUSE_AFTER) {
-      this.failures.set(key, failures);
+    const now = this.clock();
+    const { count, since } = this.failures.get(key) ?? { count: 0, since: now };
+    if (count + 1 < REFUSE_AFTER || now - since < REFUSE_AFTER_MS) {
+      this.failures.set(key, { count: count + 1, since });
       throw error;
     }
     this.failures.delete(key);

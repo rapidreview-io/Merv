@@ -139,7 +139,8 @@ async function fixture(t: TestContext) {
   const work = (await state.read((sql) =>
     sql.get<NativeWorkRow>("SELECT * FROM sandbox_native_work WHERE work_id='task_work'"),
   ))!;
-  const evidence = new NativeEvidence(state, scope, artifacts, connections);
+  const time = { now: Date.parse('2026-10-01T00:00:00Z') };
+  const evidence = new NativeEvidence(state, scope, artifacts, connections, () => time.now);
   artifacts.registerFileProvider('sandboxes-native', {
     download: (project, reference) => evidence.download(project, reference),
   });
@@ -166,6 +167,7 @@ async function fixture(t: TestContext) {
     return row!.file_refs_json[0]!.reference;
   };
   return {
+    time,
     state,
     scope,
     artifacts,
@@ -469,7 +471,7 @@ test('a capture title cut at its limit never ends in half a character', async (t
   assert.equal(collection?.title, `${prefix}${'x'.repeat(200 - prefix.length - 1)}`);
 });
 
-test('a capture that can never register is refused after five failed passes, and the rest register', async (t) => {
+test('a capture that can never register is refused after five failed passes over half an hour, and the rest register', async (t) => {
   const f = await fixture(t);
   f.captures.push(
     { id: 'broken', state: 'succeeded', result: { outputs: { safe: 'obj' }, output_state: null } },
@@ -485,9 +487,13 @@ test('a capture that can never register is refused after five failed passes, and
   for (let pass = 0; pass < 6; pass++)
     await assert.rejects(f.publish(), { code: 'sandbox_unavailable' });
   f.objects.set('obj', file('obj'));
-  for (let pass = 0; pass < 4; pass++)
+  // Five quick passes are not enough: a failure must last half an hour before it refuses.
+  for (let pass = 0; pass < 5; pass++)
     await assert.rejects(f.publish(), { code: 'sandbox_evidence_invalid' });
+  f.time.now += 29 * 60_000;
+  await assert.rejects(f.publish(), { code: 'sandbox_evidence_invalid' });
   assert.deepEqual(await rows(), []);
+  f.time.now += 60_000;
   await f.publish();
   const [refused, good] = (await rows()) as {
     node_id: string;
