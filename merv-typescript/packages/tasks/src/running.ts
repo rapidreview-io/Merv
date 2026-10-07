@@ -31,6 +31,7 @@ import {
   type UnitFile,
   type UnitStateWords,
 } from '@merv/reviews/unit-history';
+import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
 import { TASK_WORKFLOW, taskVersions } from './workflow.js';
@@ -68,8 +69,7 @@ type Holding =
   | { at: 'ended' }
   | { at: 'suspended' }
   | { at: 'producer' }
-  | { at: 'reviewing'; reviewerId: string | null }
-  | { at: 'unclaimed'; since: string }
+  | { at: 'review'; card: ReturnType<typeof reviewCard> }
   | { at: 'waits'; names: string[] }
   | { at: 'waiting' }
   | { at: 'ready' };
@@ -78,12 +78,9 @@ function holding(task: TaskStanding): Holding {
   if (ended(task.state)) return { at: 'ended' };
   if (task.state === 'suspended') return { at: 'suspended' };
   if (task.lease === 'work') return { at: 'producer' };
-  // A leased review names only that it is in review: the reviewer's session says who.
-  if (task.lease === 'review') return { at: 'reviewing', reviewerId: null };
-  if (task.state === 'in_review')
-    return task.review?.status === 'requested'
-      ? { at: 'unclaimed', since: task.review.createdAt }
-      : { at: 'reviewing', reviewerId: task.review?.reviewerId ?? null };
+  // How the review stands is said in Reviews' words, a leased reviewer's as an agent's.
+  if (task.lease === 'review' || task.state === 'in_review')
+    return { at: 'review', card: reviewCard(task.review, { leased: task.lease === 'review' }) };
   // Waiting is read from the prerequisites themselves, the same for every reader.
   const open = task.dependencies.filter((dependency) => !dependency.settled);
   if (open.length)
@@ -105,10 +102,6 @@ const failedPrerequisite = (task: TaskStanding) =>
 /** What needs a person, strongest first, and who ends the wait. */
 function need(task: TaskStanding): RunningAttention | undefined {
   if (ended(task.state)) return undefined;
-  const review = task.review && {
-    route: `/reviews/${encodeURIComponent(task.review.id)}`,
-    text: 'Open the review',
-  };
   const failed = failedPrerequisite(task);
   if (failed)
     return {
@@ -116,14 +109,8 @@ function need(task: TaskStanding): RunningAttention | undefined {
       who: 'The producer ends this task, or its cycle replans it',
     };
   // Rounds used up, and a suspended task waiting for an admin to resume it, are Workflows' mark
-  // on the card, in the words every owner's work shares.
-  if (task.state === 'in_review' && task.review?.waiting)
-    return {
-      says: ['No independent reviewer can take it'],
-      who: 'An operator provides one',
-      ...(review ? { to: review } : {}),
-    };
-  return undefined;
+  // on the card, in the words every owner's work shares; no reviewer left is Reviews'.
+  return task.state === 'in_review' ? reviewAttention(task.review) : undefined;
 }
 
 /** The card's one line. */
@@ -135,12 +122,8 @@ function face(at: Holding): RunningPhrase {
       return ['Suspended'];
     case 'producer':
       return ['Producer on it'];
-    case 'reviewing':
-      return at.reviewerId
-        ? ['In review · ', { actor: at.reviewerId, prefix: 'with ', unnamed: 'claimed' }]
-        : ['In review'];
-    case 'unclaimed':
-      return ['Review unclaimed · ', { since: at.since }];
+    case 'review':
+      return at.card.line;
     case 'waits':
       return ['Waits on ', ...more(at.names)];
     case 'waiting':
@@ -158,8 +141,9 @@ function clause(at: Holding): RunningPhrase {
   switch (at.at) {
     case 'producer':
       return [' · producer on it'];
-    case 'unclaimed':
-      return [' · unclaimed'];
+    case 'review':
+      // Only a review nobody has taken is dashed.
+      return at.card.look === 'dashed' ? [' · unclaimed'] : [];
     case 'waits':
       return [' · waits on ', ...more(at.names)];
     case 'waiting':
@@ -182,9 +166,8 @@ const short = (name: string, max = 200) => ellipsis(name, max);
 /** Needs a person, then held by a lease, then ready, then waiting; an ended task last. */
 const RANK: Record<Holding['at'], number> = {
   producer: 1,
-  reviewing: 1,
+  review: 1,
   suspended: 2,
-  unclaimed: 2,
   ready: 2,
   waits: 3,
   waiting: 3,
@@ -205,7 +188,13 @@ export function taskNode(task: TaskStanding): RunningNode {
     title: short(task.title),
     lines: at.at === 'ended' ? [[], [ENDED[task.state]!]] : [face(at)],
     look:
-      at.at === 'ended' ? 'quiet' : at.at === 'waits' || at.at === 'waiting' ? 'dashed' : 'solid',
+      at.at === 'ended'
+        ? 'quiet'
+        : at.at === 'review'
+          ? at.card.look
+          : at.at === 'waits' || at.at === 'waiting'
+            ? 'dashed'
+            : 'solid',
     ...(attention ? { attention } : {}),
     ...(task.dependencies.length
       ? {
@@ -216,7 +205,7 @@ export function taskNode(task: TaskStanding): RunningNode {
           })),
         }
       : {}),
-    rank: attention ? 0 : RANK[at.at],
+    rank: attention ? 0 : at.at === 'review' && !at.card.held ? 2 : RANK[at.at],
     ...(task.started ? { started: task.started } : {}),
   };
 }

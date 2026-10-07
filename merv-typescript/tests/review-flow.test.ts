@@ -354,7 +354,7 @@ test('an experiment whose design rounds are used up is offered only a pass, with
   const open = (await desk()).body.result;
   assert.deepEqual(
     [open.verdicts, open.returns?.map(({ value }: { value: string }) => value), open.limit],
-    [['pass', 'needs_changes', 'fail'], ['planned'], undefined],
+    [undefined, ['planned'], undefined],
   );
   for (let round = 0; round < 4; round++) {
     const claim = await f.app.ctx.reviews.start(reviewer.caller, experiment.reviewId!);

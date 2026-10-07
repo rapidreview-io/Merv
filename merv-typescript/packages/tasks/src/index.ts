@@ -194,16 +194,10 @@ export class TaskService implements Tasks {
         overrides: ['leased_review_required'],
         // A Git task passes only from a leased reviewer in a checkout of the delivered commit
         // (checkoutReviewer), unless its owner decides as owner.
-        // Once review_rounds is used up, nothing returns the task for changes.
-        verdicts: async (caller, review, tx) => {
-          const open =
-            caller.session || review.override
-              ? REVIEW_VERDICTS
-              : (['needs_changes', 'fail'] as const);
-          return (await this.workflows.exhaustedLimit(caller, review.subjectId, tx))
-            ? open.filter((verdict) => verdict !== 'needs_changes')
-            : open;
-        },
+        verdicts: async (caller, review) =>
+          caller.session || review.override ? REVIEW_VERDICTS : ['needs_changes', 'fail'],
+        // Only needs_changes returns a task: fail ends it, or suspends a service task.
+        returning: ['needs_changes'],
         // A task carries the claims of its newest delivery only, so they stand beside the
         // review of that delivery and beside no earlier one.
         claims: async (caller, review, tx) =>

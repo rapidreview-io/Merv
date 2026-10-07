@@ -2,6 +2,7 @@ import { firstSentence } from '@merv/contracts/text';
 import { reviewExceptions, reviewStanding } from './rules.js';
 import type {
   ReviewRequest,
+  RunningAttention,
   RunningFact,
   RunningLinkRow,
   RunningPhrase,
@@ -67,6 +68,52 @@ function standing({ current, gate, claim }: ReviewRounds): RunningPhrase {
           : [after(gate, 'Claimed')]
         : [{ state: current.verdict ?? current.status }];
   return gate ? [`${gate} · `, ...clause] : clause;
+}
+
+/**
+ * The line an owner's card stands on while its work waits at a review gate, in the words every
+ * owner's card shares: an agent holding the review lease (whose name is never drawn), the person
+ * who claimed it, or nobody yet, since the review was asked for (or since `since`, where the
+ * owner counts the wait from elsewhere). `held` says somebody has it.
+ */
+export function reviewCard(
+  review: Pick<ReviewRequest, 'status' | 'reviewerId' | 'createdAt'> | null | undefined,
+  {
+    gate = 'In review',
+    leased = false,
+    since,
+  }: { gate?: string; leased?: boolean; since?: string },
+): { line: RunningPhrase; look: 'solid' | 'dashed'; held: boolean } {
+  if (leased) return { line: [`${gate} · with an agent`], look: 'solid', held: true };
+  if (review?.status === 'started' && review.reviewerId)
+    return {
+      line: [`${gate} · `, { actor: review.reviewerId, prefix: 'with ', unnamed: 'claimed' }],
+      look: 'solid',
+      held: true,
+    };
+  if (review?.status === 'requested')
+    return {
+      line: [`${gate} · unclaimed · `, { since: since ?? review.createdAt }],
+      look: 'dashed',
+      held: false,
+    };
+  return { line: [gate], look: 'solid', held: false };
+}
+
+/**
+ * A card's red while no eligible reviewer may take its review: Reviews tells only an operator
+ * so (`waiting`), and the Review section says why in ink.
+ */
+export function reviewAttention(
+  review: Pick<ReviewRequest, 'id' | 'waiting'> | null | undefined,
+): RunningAttention | undefined {
+  return review?.waiting
+    ? {
+        says: ['No independent reviewer can take it'],
+        who: 'An operator provides one.',
+        to: { route: route(review.id), text: 'Open the review' },
+      }
+    : undefined;
 }
 
 /** What a verdict let through or held back, as a pass built on waivers must still say. */

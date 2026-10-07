@@ -1,4 +1,3 @@
-import { REVIEW_VERDICTS } from '@merv/reviews/rules';
 import { MAX_ARTIFACT_IDS, mapAsync } from '@merv/contracts';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -171,12 +170,8 @@ export class ExperimentService implements Experiments {
           );
           return (row && RETURNS[row.stage]) ?? [];
         },
-        // Both rejecting verdicts return the experiment, so once the gate's rounds are used up
-        // only a pass is left.
-        verdicts: async (caller, review, tx) =>
-          (await this.workflows.exhaustedLimit(caller, review.subjectId, tx))
-            ? ['pass']
-            : REVIEW_VERDICTS,
+        // Both rejecting verdicts return the experiment.
+        returning: ['needs_changes', 'fail'],
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
         // An experiment is reviewed twice, so each review is named by the gate it read.

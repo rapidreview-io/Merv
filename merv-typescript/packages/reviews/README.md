@@ -1,6 +1,6 @@
 # Reviews
 
-A Cordis service for independent assessment of immutable evidence. Requires `state`, `scope`, `artifacts`, and `domainEvents`; provides `reviews`. It has no dependency on the domains whose work it assesses, nor on workflows.
+A Cordis service for independent assessment of immutable evidence. Requires `state`, `scope`, `artifacts`, and `domainEvents`; provides `reviews`. It has no dependency on the domains whose work it assesses. While Workflows is loaded it reads from it only whether a subject's limit is used up (`exhaustedLimit`, an optional injection).
 
 ## Where it sits
 
@@ -38,7 +38,7 @@ flowchart LR
   reviews -- "injects" --> scope
   reviews -- "injects" --> domainEvents
   reviews -- "injects" --> state
-  reviews -- "imports retirement ledger, lease rows" --> workflows
+  reviews -- "optionally injects (used-up limits); imports lease rows" --> workflows
   scope -- "emits actor.revoked" --> reviews
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
   class reviews self
@@ -60,6 +60,8 @@ verdicts and destinations are permitted or required. The route participates in
 request replay and immutable verdict storage. An owner whose routes are fixed
 rejects it. Reads omit the field when absent, preserving old responses.
 See [explicit review return paths](../../docs/REVIEW_RETURN_PATHS.md).
+
+An owner names the verdicts that return its work (`returning`; Tasks `needs_changes`, Experiments and Reflections both rejecting verdicts). Once the limit leaving the subject's gate is used up, Reviews rules those out itself, and `review.get` says so (`limit`) and offers no return route if no rejecting verdict is left; an owner's own `verdicts` hook only narrows further (a Git task's leased reviewer). The Running cards of every owner say how their review stands in Reviews' words: `reviewCard` (an agent on it, the claimant, or unclaimed since when) and `reviewAttention` (no independent reviewer left, an operator provides one), beside `reviewSections`.
 
 The durable `reviews.actor-revoked.v1` consumer releases revoked actors’ unfinished claims. It preserves the review/evidence snapshot, retains claim history, and emits a causal `review.claim_released` event. Unloaded consumers catch up on reactivation. Submitted verdicts remain immutable. `start` returns a fresh `claimId` and generation; `submit` requires that claim ID. Existing started reviews migrate to stable legacy claim IDs. The row keeps the open claim's `review.started` event id, time and whether a leased agent took it (reviews@14 copied them for claims already open), and a submission asks Scope's `permissionLost` whether the reviewer lost review permission after that event, so Reviews never reads State's event log itself. See [the full recovery contract](../../docs/RECOVERY_AND_CONTEXT.md).
 

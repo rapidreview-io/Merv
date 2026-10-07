@@ -1,5 +1,6 @@
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { reviewWord, unitHistory, type UnitStateWords } from '@merv/reviews/unit-history';
+import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import {
   ellipsis,
   inTransaction,
@@ -108,18 +109,16 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
       return own.held
         ? { says: ['Synthesis · with an agent'], look: 'solid' }
         : { says: ['Synthesis · waiting ', { since: own.since }], look: 'dashed' };
-    case 'in_review':
+    case 'in_review': {
       // A leased reviewer is an agent, whose name is never drawn; a person claims it by hand.
-      if (own.held) return { says: ['Review · with an agent'], look: 'solid' };
-      return wave.review?.status === 'started' && wave.review.reviewerId
-        ? {
-            says: [
-              'Review · ',
-              { actor: wave.review.reviewerId, prefix: 'with ', unnamed: 'claimed' },
-            ],
-            look: 'solid',
-          }
-        : { says: ['Review · waiting for a reviewer ', { since: own.since }], look: 'dashed' };
+      // The wait counts from when the wave last moved or its reviewer let it go.
+      const card = reviewCard(wave.review, {
+        gate: 'Review',
+        leased: !!own.held,
+        since: own.since,
+      });
+      return { says: card.line, look: card.look };
+    }
     case 'approved':
       return { says: ['Approved'], look: 'quiet' };
     default:
@@ -134,16 +133,7 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
  * work shares.
  */
 function attention({ wave }: WaveFacts): RunningAttention | undefined {
-  const review = wave.review && {
-    to: { route: `/reviews/${encodeURIComponent(wave.review.id)}`, text: 'Open the review' },
-  };
-  if (wave.workflow.state === 'in_review' && wave.review?.waiting)
-    return {
-      says: ['No independent reviewer can take it'],
-      who: 'An operator provides one.',
-      ...review,
-    };
-  return undefined;
+  return wave.workflow.state === 'in_review' ? reviewAttention(wave.review) : undefined;
 }
 
 export function waveNode(facts: WaveFacts): RunningNode {

@@ -1681,10 +1681,12 @@ export interface ReviewSubmitOwner {
   /** The codes of `claim`'s refusals that the project's owner, deciding as owner, lifts. */
   overrides?: readonly string[];
   /**
-   * The verdicts this caller may submit on an owned review, where the owner's rules rule some
-   * out. An owner rules needs_changes out only once its rounds (`limitStatusOf`) are used up:
-   * the reviewer is then told so, and offered no return route if no rejecting verdict is left.
+   * The verdicts that return the owned work to its producer. Once the limit leaving the work's
+   * gate is used up (`Workflows.exhaustedLimit`), Reviews rules them out itself: the reviewer
+   * is then told so, and offered no return route if no rejecting verdict is left.
    */
+  returning?: readonly Verdict[];
+  /** The verdicts this caller may submit on an owned review, where the owner's rules rule some out. */
   verdicts?(
     caller: Caller,
     review: Readonly<ReviewRequest>,
