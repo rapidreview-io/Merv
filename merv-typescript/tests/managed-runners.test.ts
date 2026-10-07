@@ -247,13 +247,15 @@ async function fixture(
   let current = true,
     admits = true,
     retired = false,
-    huggingFace = true;
+    huggingFace = true,
+    modelBudget: { resetsAt: string } | null = null;
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
     serves: () => false,
     retired: async () => retired,
     huggingFace: () => huggingFace,
+    modelBudget: async () => modelBudget,
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -330,6 +332,11 @@ async function fixture(
     huggingFace: (value: boolean) => {
       huggingFace = value;
     },
+    /** The person's model budget as Fleet reports it: when it resets while spent, else null. */
+    modelBudget: (value: { resetsAt: string } | null) => {
+      modelBudget = value;
+    },
+    workflows,
     retire: () => {
       current = false;
       retired = true;
@@ -695,6 +702,64 @@ test('a machine a release retired mid-step closes its session as machine_retired
     ),
   );
   assert.equal(Number(hold?.attempts ?? 0), 0, 'a retired machine is no failed attempt');
+});
+
+test('a visit the model budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const resetsAt = '2099-01-02T00:00:00.000Z';
+  const blockers = () => f.workflows.blockers(f.owner, f.workTarget.id);
+  // Codex exits 1 the moment the relay refuses its call (403 fleet_model_ceiling): more often
+  // than the launches a hold allows, and none of them is the work's failure.
+  for (let visit = 0; visit < 6; visit++) {
+    f.modelBudget(null);
+    const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
+    assert.ok(bound, `visit ${visit} is offered`);
+    f.modelBudget({ resetsAt });
+    await f.sessions.release(f.caller, {
+      sessionId: bound.id,
+      runnerId: f.runnerId,
+      outcome: visit % 2 ? 'host_failed' : 'crash_loop',
+      reason: 'local_process_exit_code_1',
+    });
+    const closed = await f.sessions.get(f.source, bound.id);
+    assert.equal(closed.outcome, 'budget_exhausted');
+    assert.equal(closed.closeReason, 'local_process_exit_code_1');
+  }
+  const hold = await f.state.read((sql) =>
+    sql.get<{ attempts: number }>(
+      'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+      f.workTarget.id,
+    ),
+  );
+  assert.equal(Number(hold?.attempts ?? 0), 0, 'a spent budget is no failed launch');
+  const [waiting, ...others] = await blockers();
+  assert.deepEqual(others, []);
+  assert.equal(waiting?.code, 'model_budget_exhausted');
+  assert.equal(
+    waiting?.message,
+    'Daily model tokens used up; resumes at 00:00 UTC or raise your limit',
+  );
+  assert.equal(waiting?.whose, 'operator');
+  // The machine takes no new work while the person's day stays spent.
+  assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
+    session: null,
+    reason: 'model_budget_exhausted',
+  });
+  assert.equal((await blockers()).length, 1);
+  // The reset (or a raised limit): the same work is offered again, and the wait is withdrawn.
+  f.modelBudget(null);
+  const resumed = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
+  assert.equal(resumed?.instanceId, f.workTarget.id);
+  assert.deepEqual(await blockers(), []);
+  // A failure while the budget allows is the work's own, and counts.
+  await f.sessions.release(f.caller, {
+    sessionId: resumed!.id,
+    runnerId: f.runnerId,
+    outcome: 'crash_loop',
+  });
+  assert.equal((await f.sessions.get(f.source, resumed!.id)).outcome, 'crash_loop');
 });
 
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {

@@ -133,40 +133,43 @@ async function ceiling(sql: Sql, person: string, fallback: number) {
   );
   return Number(own?.tokens ?? fallback);
 }
-/** A refusal stops new Fleet rent while today's remaining tokens cannot fund that last request. */
+/** A refusal stops new Fleet rent, and new work on a machine already rented, while today's
+ *  remaining tokens cannot fund that last request. */
 export async function modelBudgetStatus(state: State, person: string, fallback: number) {
+  return await state.read((sql) => budgetIn(sql, person, fallback));
+}
+/** `modelBudgetStatus` read in the caller's own transaction. */
+export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const today = day();
-  return await state.read(async (sql) => {
-    const tokens = await ceiling(sql, person, fallback);
-    const used = await sql.get<{ tokens: number | string }>(
-      'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
-      person,
-      today,
-    );
-    const refusal = await sql.get<{ required_tokens: number | string }>(
-      'SELECT required_tokens FROM fleet_model_blockers WHERE person=? AND day=?',
-      person,
-      today,
-    );
-    const usedToday = Number(used?.tokens ?? 0);
-    const lastRefusedTokens = refusal ? Number(refusal.required_tokens) : null;
-    const remaining = Math.max(0, tokens - usedToday);
-    const blockReason =
-      remaining <= maxOutputTokens
-        ? 'minimum_reservation_unaffordable'
-        : lastRefusedTokens !== null && remaining < lastRefusedTokens
-          ? 'last_refused_reservation_unaffordable'
-          : null;
-    return {
-      tokens,
-      usedToday,
-      remaining,
-      lastRefusedTokens,
-      blocked: blockReason !== null,
-      blockReason,
-      resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
-    };
-  });
+  const tokens = await ceiling(sql, person, fallback);
+  const used = await sql.get<{ tokens: number | string }>(
+    'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
+    person,
+    today,
+  );
+  const refusal = await sql.get<{ required_tokens: number | string }>(
+    'SELECT required_tokens FROM fleet_model_blockers WHERE person=? AND day=?',
+    person,
+    today,
+  );
+  const usedToday = Number(used?.tokens ?? 0);
+  const lastRefusedTokens = refusal ? Number(refusal.required_tokens) : null;
+  const remaining = Math.max(0, tokens - usedToday);
+  const blockReason =
+    remaining <= maxOutputTokens
+      ? 'minimum_reservation_unaffordable'
+      : lastRefusedTokens !== null && remaining < lastRefusedTokens
+        ? 'last_refused_reservation_unaffordable'
+        : null;
+  return {
+    tokens,
+    usedToday,
+    remaining,
+    lastRefusedTokens,
+    blocked: blockReason !== null,
+    blockReason,
+    resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
+  };
 }
 export async function setDailyTokens(state: State, person: string, tokens: number) {
   await state.transaction((tx) =>

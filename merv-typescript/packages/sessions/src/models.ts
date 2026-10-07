@@ -40,6 +40,11 @@ export type SessionOutcome =
   | 'machine_retired'
   /** The worker ended its visit asking its owner a question (`session.ask_owner`). */
   | 'asked_owner'
+  /**
+   * The person the visit's model calls were charged to had no tokens left today, so it stopped:
+   * nothing about the work was wrong, and it waits for the reset or a raised limit.
+   */
+  | 'budget_exhausted'
   | 'crash_loop';
 
 /** What a machine may report a launch ended as; only a worker's own handoff records completion. */
@@ -106,6 +111,8 @@ export type DispatchDecision =
   | 'budget_exceeded'
   | 'usage_unavailable'
   | 'retries_exhausted'
+  /** The person a rented machine's work is charged to has no model tokens left today. */
+  | 'model_budget_exhausted'
   /** Everything left in the queue needs a workspace driver this runner does not advertise. */
   | 'runner_incompatible'
   | 'no_candidates';
