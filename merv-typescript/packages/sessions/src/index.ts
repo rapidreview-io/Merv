@@ -38,7 +38,6 @@ import { SessionRunning } from './running.js';
 import { tokenDigest } from '@merv/identity/credentials';
 import { AgentObservations } from './observations.js';
 import {
-  clone,
   isoNow,
   live,
   ordinary,
@@ -57,16 +56,10 @@ import { SessionStreams } from './stream.js';
 import { SessionThreads } from './threads.js';
 import { QUESTION_PROVIDER, SessionMessages } from './messages.js';
 import { SessionInvocations } from './invocations.js';
-import {
-  Inquiries,
-  INQUIRY_VISIT_SECONDS,
-  inquiryContext,
-  inquirySession,
-  type InquiryCandidate,
-} from './inquiries.js';
+import { Visits } from './visits.js';
+import { Inquiries } from './inquiries.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type {
-  InquirySession,
   Session,
   WorkSession,
   SessionContinuity,
@@ -353,6 +346,8 @@ export class LeasedSessions implements Sessions {
   messaging!: SessionMessages;
   /** A person's questions to any thread's agent, answered by read-only inquiry visits. */
   inquiries!: Inquiries;
+  /** How every visit is admitted and written. */
+  private visits!: Visits;
   /** The tool policy: each leased worker's MCP calls. */
   invocations!: SessionInvocations;
   /** Optional private account credential broker; never exposed through the tool registry. */
@@ -400,6 +395,22 @@ export class LeasedSessions implements Sessions {
     this.observations = await createService(
       new AgentObservations(state, scope, this.clock, available),
     );
+    this.visits = new Visits(
+      state,
+      () => this.credentials,
+      (row) => this.decode(row),
+    );
+    this.inquiries = new Inquiries(state, scope, this.clock, {
+      transaction: (fn) => this.transaction(fn),
+      readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
+      dispatching: (projectId, tx) => this.dispatch.dispatch(projectId, tx),
+      decode: (row) => this.decode({ ...row, attachment_json: null, result_json: null } as Row),
+      visits: this.visits,
+      close: (session, reason, tx) =>
+        this.closeSession(session, reason, tx, 'released', 'completed'),
+      ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
+      message: (tx, row) => this.messaging.insert(tx, row),
+    });
     this.dispatch = await createService(
       new SessionDispatch(
         state,
@@ -412,12 +423,7 @@ export class LeasedSessions implements Sessions {
           byDefault: config.dispatchByDefault,
           prepare: async (caller) => await this.prepareControl(caller),
           offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx, true),
-          inquiry: (tx, projectId, ownerHash, harness, workInstanceId, skip) =>
-            this.inquiries.candidate(tx, projectId, ownerHash, harness, workInstanceId, skip),
-          inquiryDemand: (tx, projectId, ownerHash, harness) =>
-            this.inquiries.demand(tx, projectId, ownerHash, harness),
-          inquire: async (caller, candidate, input, tx) =>
-            await this.inquireTransaction(caller, candidate, input, tx),
+          inquiries: this.inquiries,
           close: async (session, reason, tx) => {
             // A session whose record already moved is closed by what moved it, not by the halt;
             // a re-check that could not run (the program away) halts it all the same.
@@ -454,12 +460,6 @@ export class LeasedSessions implements Sessions {
       unaskable: (projectId, threadIds, tx) => this.inquiries.refusals(tx, projectId, threadIds),
       available,
     });
-    this.inquiries = new Inquiries(state, scope, this.clock, {
-      transaction: (fn) => this.transaction(fn),
-      readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
-      dispatching: (projectId, tx) => this.dispatch.dispatch(projectId, tx),
-      decode: (row) => this.decode({ ...row, attachment_json: null, result_json: null } as Row),
-    });
     this.messaging = new SessionMessages(state, scope, this.clock, {
       transaction: (fn) => this.transaction(fn),
       reading: (fn) => this.reading(fn),
@@ -468,8 +468,8 @@ export class LeasedSessions implements Sessions {
       asked: async (session, tx) => {
         await this.closeSession(session, 'asked_owner', tx, 'released', 'asked_owner');
       },
-      answered: async (session, question, reply, tx) =>
-        await this.inquiryAnswered(session, question, reply, tx),
+      answered: (session, question, reply, tx) =>
+        this.inquiries.answered(session, question, reply, tx),
       inquiryStatuses: (tx, ids) => this.inquiries.statuses(tx, ids),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
       ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
@@ -977,7 +977,7 @@ export class LeasedSessions implements Sessions {
       hardDeadlineSeconds: duration,
       tokenHash: tokenDigest(input.secret),
     });
-    const old = await this.admitVisit(owner, input, fingerprint, tx);
+    const old = await this.visits.admit(owner, input, fingerprint, tx);
     if (old) return working(old);
     // Authority first: a caller who may not offer learns nothing about live sessions or secrets.
     const role = await this.workflows.leaseRole(caller, input, tx);
@@ -1080,201 +1080,7 @@ export class LeasedSessions implements Sessions {
       ...(thread.continuity && { continuity: thread.continuity }),
       ...frozen,
     };
-    return await this.insertVisit(session, owner, input, fingerprint, caller, tx);
-  }
-  /** What every visit's offer checks first: a request it already made for this input answers the
-   *  visit it made, and one made for other input is refused. */
-  private async admitVisit(
-    owner: { hash: string },
-    input: { runnerId: string; requestId: string; secret: string },
-    fingerprint: string,
-    tx: Transaction,
-  ): Promise<Session | undefined> {
-    const old = await tx.get<Row>(
-      `${SESSION} WHERE owner_hash=? AND runner_id=? AND request_id=?`,
-      owner.hash,
-      input.runnerId,
-      input.requestId,
-    );
-    if (old) {
-      check(
-        old.fingerprint === fingerprint,
-        'request_conflict',
-        'Session request was already used for different input',
-        409,
-      );
-      return this.decode(old);
-    }
-    return undefined;
-  }
-  /**
-   * A visit admitted and built: its row, its credential and its offered event. Its secret is used
-   * once: historical rows retain their hashes even after their Identity credentials are revoked,
-   * and Identity holds every other authority's. Reuse is a malformed runner offer, never a failed
-   * launch of the target.
-   */
-  private async insertVisit<S extends Session>(
-    session: S,
-    owner: { hash: string },
-    input: { runnerId: string; requestId: string; secret: string },
-    fingerprint: string,
-    caller: Caller,
-    tx: Transaction,
-  ): Promise<S> {
-    const tokenHash = tokenDigest(input.secret);
-    check(
-      !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)),
-      'session_secret_used',
-      'Session secret was already used',
-      409,
-    );
-    const { threadId: _thread, ...stored } = session;
-    await tx.run(
-      'INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      session.id,
-      session.projectId,
-      session.actorId,
-      session.threadId,
-      session.instanceId,
-      session.expectedRevision,
-      owner.hash,
-      input.runnerId,
-      input.requestId,
-      tokenHash,
-      fingerprint,
-      session.status,
-      JSON.stringify(stored),
-      session.kind,
-    );
-    try {
-      await this.credentials.issue(
-        {
-          owner: 'sessions',
-          subject: session.id,
-          kind: 'session-execution',
-          token: input.secret,
-          expiresAt: session.expiresAt,
-          hardDeadline: session.hardDeadline,
-        },
-        tx,
-      );
-    } catch (error) {
-      if (error instanceof MervError && error.code === 'credential_conflict')
-        throw new MervError('session_secret_used', 'Session secret was already used', 409);
-      throw error;
-    }
-    await this.state.appendEvent(tx, {
-      projectId: session.projectId,
-      actorId: caller.actorId,
-      type: session.kind === 'inquiry' ? 'session.inquiry_offered' : 'session.offered',
-      subjectId: session.id,
-      data: {
-        sessionId: session.id,
-        workerActorId: session.actorId,
-        instanceId: session.instanceId,
-        revision: session.expectedRevision,
-        role: session.role,
-        source: session.source,
-        runnerId: session.runnerId,
-        ...(session.kind === 'inquiry' && {
-          inquiryId: session.inquiry.id,
-          threadId: session.threadId,
-        }),
-      },
-    });
-    return clone(session);
-  }
-  /**
-   * An inquiry visit for a machine of `caller`'s, which dispatch chose for it: the thread's actor
-   * and saved conversation, read-only, its own short deadline, and no lease on the work. Every
-   * check runs before the first write, and a refusal is answered rather than thrown, so the lease
-   * goes on to offer work instead.
-   */
-  private async inquireTransaction(
-    caller: Caller,
-    candidate: InquiryCandidate,
-    input: { runnerId: string; requestId: string; secret: string; hardDeadlineSeconds?: number },
-    tx: Transaction,
-  ): Promise<Session | { refused: MervError }> {
-    const owner = await ownerOf(this.scope, caller, tx);
-    const fingerprint = digest({
-      inquiryId: candidate.id,
-      runnerId: input.runnerId,
-      tokenHash: tokenDigest(input.secret),
-    });
-    const time = this.clock();
-    const seconds = Math.min(INQUIRY_VISIT_SECONDS, input.hardDeadlineSeconds ?? Infinity);
-    const hard = Math.min(time + seconds * 1000, delegationEnd(owner.source));
-    try {
-      // A lease's request makes one visit: dispatch answers a retried one from its receipt.
-      check(
-        !(await this.admitVisit(owner, input, fingerprint, tx)),
-        'request_conflict',
-        'Session request was already used',
-        409,
-      );
-      await this.scope.requireDelegation(owner.source, 'read', tx);
-      check(hard > time, 'session_expired', 'The delegation ends before the inquiry could', 409);
-    } catch (error) {
-      if (error instanceof MervError && error.status < 500) return { refused: error };
-      throw error;
-    }
-    const session = inquirySession({
-      id: newId('session'),
-      candidate,
-      projectId: caller.projectId,
-      source: owner.source,
-      runnerId: input.runnerId,
-      createdAt: new Date(time).toISOString(),
-      hardDeadline: new Date(hard).toISOString(),
-    });
-    // The writer read the question queued just now; nothing else takes it in between.
-    const offered = await this.insertVisit(session, owner, input, fingerprint, caller, tx);
-    await this.inquiries.started(tx, candidate.id, session.id);
-    return offered;
-  }
-  /**
-   * An inquiry visit replied: the visit ends by its own hand, and the thread's next work visit is
-   * told of the exchange as a message to the thread, unless no visit will take the work up again.
-   */
-  private async inquiryAnswered(
-    session: InquirySession,
-    question: string,
-    reply: string,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.closeSession(session, 'inquiry_answered', tx, 'released', 'completed');
-    const thread = (await tx.get<{ status: string; instance_id: string }>(
-      'SELECT status,instance_id FROM session_threads WHERE id=?',
-      session.threadId,
-    ))!;
-    if (
-      thread.status === 'retired' ||
-      (await this.endedWork(session.projectId, [thread.instance_id], tx)).size
-    )
-      return;
-    const ref = session.inquiry;
-    const id = newId('session_message');
-    const body = inquiryContext(question, reply);
-    await tx.run(
-      "INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,'context')",
-      id,
-      session.projectId,
-      session.threadId,
-      ref.askedBy,
-      `inquiry-context:${ref.id}`,
-      digest({ threadId: session.threadId, body }),
-      body,
-      isoNow(this.clock),
-      ref.id,
-    );
-    await this.state.appendEvent(tx, {
-      projectId: session.projectId,
-      actorId: 'system:sessions',
-      type: 'session.message_queued',
-      subjectId: session.threadId,
-      data: { messageId: id, threadId: session.threadId, instanceId: thread.instance_id },
-    });
+    return await this.visits.insert(session, owner, input, fingerprint, caller, tx);
   }
   /**
    * Every live session of the project that holds a workspace on `driver`, whoever offered it.

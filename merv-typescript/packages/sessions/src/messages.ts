@@ -86,6 +86,17 @@ const question = (row: QuestionRow): ThreadQuestion => ({
   answerMessageId: row.answer_message_id,
 });
 
+/** A row of `session_messages`, as its one writer (`SessionMessages.insert`) takes it. */
+export interface MessageInsert {
+  projectId: string;
+  threadId: string;
+  senderActorId: string;
+  requestId: string;
+  fingerprint: string;
+  body: string;
+  /** An inquiry's question (whose reply is its answer), or the context its answer left. */
+  inquiry?: { id: string; role: 'question' | 'context' };
+}
 /** What messaging uses of Sessions: its transactions, session rows, lease check and close. */
 export interface MessageHost {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
@@ -245,24 +256,22 @@ export class SessionMessages {
       return await this.toThread(caller, threadId, input, fingerprint, tx);
     });
   }
-  private async insert(
-    tx: Transaction,
-    caller: Caller,
-    input: SessionMessageInput,
-    fingerprint: string,
-    threadId: string,
-  ): Promise<string> {
+  /** The one writer of `session_messages`: a person's message, or an inquiry's question or the
+   *  context its answer leaves the thread's work. */
+  async insert(tx: Transaction, row: MessageInsert): Promise<string> {
     const id = newId('session_message');
     await tx.run(
-      'INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?)',
+      'INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,?)',
       id,
-      caller.projectId,
-      threadId,
-      caller.actorId,
-      input.requestId,
-      fingerprint,
-      input.body,
+      row.projectId,
+      row.threadId,
+      row.senderActorId,
+      row.requestId,
+      row.fingerprint,
+      row.body,
       isoNow(this.clock),
+      row.inquiry?.id ?? null,
+      row.inquiry?.role ?? null,
     );
     return id;
   }
@@ -306,7 +315,14 @@ export class SessionMessages {
       'This thread has ended and no visit will read a message to it',
       409,
     );
-    const id = await this.insert(tx, caller, input, fingerprint, thread.id);
+    const id = await this.insert(tx, {
+      projectId: caller.projectId,
+      threadId: thread.id,
+      senderActorId: caller.actorId,
+      requestId: input.requestId,
+      fingerprint,
+      body: input.body,
+    });
     await this.state.appendEvent(tx, {
       projectId: caller.projectId,
       actorId: caller.actorId,

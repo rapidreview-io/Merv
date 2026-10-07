@@ -10,7 +10,11 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { isoNow, ordinary, text, workName } from './common.js';
+import { delegationEnd } from '@merv/scope/rules';
+import { tokenDigest } from '@merv/identity/credentials';
+import { isoNow, ordinary, ownerOf, text, workName } from './common.js';
+import type { MessageInsert } from './messages.js';
+import type { VisitRequest, Visits } from './visits.js';
 import type {
   DispatchState,
   InquirySession,
@@ -214,6 +218,14 @@ export interface InquiryHost {
   /** The project's automatic dispatch, which launches inquiry visits too. */
   dispatching(projectId: string, tx: Transaction): Promise<DispatchState>;
   decode(row: { thread_id: string; session_json: string }): Session;
+  /** How every visit is admitted and written. */
+  visits: Visits;
+  /** Closes a visit as Sessions closes every one (which calls `closed` below). */
+  close(session: InquirySession, reason: string, tx: Transaction): Promise<unknown>;
+  /** Which of these work items of the project have ended. */
+  ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
+  /** Messages, the one writer of `session_messages`. */
+  message(tx: Transaction, row: MessageInsert): Promise<string>;
 }
 
 /**
@@ -298,20 +310,16 @@ export class Inquiries implements SessionInquiries {
       );
       const source = await this.scope.delegationSource(caller, tx);
       const id = newId('inquiry');
-      const messageId = newId('session_message');
       const at = new Date(now).toISOString();
-      await tx.run(
-        "INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at,inquiry_id,inquiry_role) VALUES(?,?,?,?,?,?,?,?,?,'question')",
-        messageId,
-        caller.projectId,
-        thread.id,
-        caller.actorId,
-        `inquiry:${input.requestId}`,
+      const messageId = await this.host.message(tx, {
+        projectId: caller.projectId,
+        threadId: thread.id,
+        senderActorId: caller.actorId,
+        requestId: `inquiry:${input.requestId}`,
         fingerprint,
-        input.body,
-        at,
-        id,
-      );
+        body: input.body,
+        inquiry: { id, role: 'question' },
+      });
       await tx.run(
         "INSERT INTO session_inquiries(id,project_id,thread_id,message_id,asker_actor_id,asker_source_json,request_id,fingerprint,status,asked_at,wait_until,token_budget) VALUES(?,?,?,?,?,?,?,?,'queued',?,?,?)",
         id,
@@ -485,14 +493,98 @@ export class Inquiries implements SessionInquiries {
   private takeable(projectId: string, ownerHash: string, harness: string) {
     return [projectId, isoNow(this.clock), harness, ownerHash];
   }
-  /** Its visit took the question: the inquiry runs, or another lease took it first. */
-  async started(tx: Transaction, inquiryId: string, sessionId: string): Promise<void> {
+  /**
+   * An inquiry visit for a machine of `caller`'s, which dispatch chose for it: the thread's actor
+   * and saved conversation, read-only, its own short deadline, and no lease on the work. Every
+   * check runs before the first write, and a refusal is answered rather than thrown, so the lease
+   * goes on to offer work instead. Its visit takes the question: the inquiry runs.
+   */
+  async offer(
+    caller: Caller,
+    candidate: InquiryCandidate,
+    input: VisitRequest & { hardDeadlineSeconds?: number },
+    tx: Transaction,
+  ): Promise<InquirySession | { refused: MervError }> {
+    const owner = await ownerOf(this.scope, caller, tx);
+    const fingerprint = digest({
+      inquiryId: candidate.id,
+      runnerId: input.runnerId,
+      tokenHash: tokenDigest(input.secret),
+    });
+    const time = this.clock();
+    const seconds = Math.min(INQUIRY_VISIT_SECONDS, input.hardDeadlineSeconds ?? Infinity);
+    const hard = Math.min(time + seconds * 1000, delegationEnd(owner.source));
+    try {
+      // A lease's request makes one visit: dispatch answers a retried one from its receipt.
+      check(
+        !(await this.host.visits.admit(owner, input, fingerprint, tx)),
+        'request_conflict',
+        'Session request was already used',
+        409,
+      );
+      await this.scope.requireDelegation(owner.source, 'read', tx);
+      check(hard > time, 'session_expired', 'The delegation ends before the inquiry could', 409);
+    } catch (error) {
+      if (error instanceof MervError && error.status < 500) return { refused: error };
+      throw error;
+    }
+    const session = inquirySession({
+      id: newId('session'),
+      candidate,
+      projectId: caller.projectId,
+      source: owner.source,
+      runnerId: input.runnerId,
+      createdAt: new Date(time).toISOString(),
+      hardDeadline: new Date(hard).toISOString(),
+    });
+    // The writer read the question queued just now; nothing else takes it in between.
+    const offered = await this.host.visits.insert(session, owner, input, fingerprint, caller, tx);
     const result = await tx.run(
       "UPDATE session_inquiries SET status='running',session_id=? WHERE id=? AND status='queued'",
-      sessionId,
-      inquiryId,
+      session.id,
+      candidate.id,
     );
     check(result.changes === 1, 'inquiry_taken', 'The question was taken by another machine', 409);
+    return offered;
+  }
+  /**
+   * An inquiry visit replied: the visit ends by its own hand, and the thread's next work visit is
+   * told of the exchange as a message to the thread, unless no visit will take the work up again.
+   */
+  async answered(
+    session: InquirySession,
+    question: string,
+    reply: string,
+    tx: Transaction,
+  ): Promise<void> {
+    await this.host.close(session, 'inquiry_answered', tx);
+    const thread = (await tx.get<{ status: string; instance_id: string }>(
+      'SELECT status,instance_id FROM session_threads WHERE id=?',
+      session.threadId,
+    ))!;
+    if (
+      thread.status === 'retired' ||
+      (await this.host.ended(session.projectId, [thread.instance_id], tx)).size
+    )
+      return;
+    const ref = session.inquiry;
+    const body = inquiryContext(question, reply);
+    const id = await this.host.message(tx, {
+      projectId: session.projectId,
+      threadId: session.threadId,
+      senderActorId: ref.askedBy,
+      requestId: `inquiry-context:${ref.id}`,
+      fingerprint: digest({ threadId: session.threadId, body }),
+      body,
+      inquiry: { id: ref.id, role: 'context' },
+    });
+    await this.state.appendEvent(tx, {
+      projectId: session.projectId,
+      actorId: 'system:sessions',
+      type: 'session.message_queued',
+      subjectId: session.threadId,
+      data: { messageId: id, threadId: session.threadId, instanceId: thread.instance_id },
+    });
   }
   /** Its visit closed: answered when the question's message carries the reply, else not. */
   async closed(tx: Transaction, session: InquirySession): Promise<void> {

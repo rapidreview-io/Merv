@@ -9,7 +9,6 @@ import {
   type Transaction,
   visible,
 } from '@merv/contracts';
-import type { Session } from './types.js';
 
 /** The provider Sessions reports dispatch holds as, beside any other opinion of its own. */
 export const HOLD_PROVIDER = 'session-dispatch';

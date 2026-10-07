@@ -955,15 +955,15 @@ test('a refused question holds up no other, and a retried reply is told that it 
   const first = await f.ask(a.threadId, 'First?');
   const second = await f.ask(b.threadId, 'Second?');
   // This machine is refused the oldest question (as it would be by a check on that one alone).
-  const leased = f.sessions as unknown as {
-    inquireTransaction(...args: unknown[]): Promise<unknown>;
+  const inquiries = f.sessions.inquiries as unknown as {
+    offer(...args: unknown[]): Promise<unknown>;
   };
-  const inquire = leased.inquireTransaction.bind(leased);
-  leased.inquireTransaction = async (...args: unknown[]) =>
+  const offer = inquiries.offer.bind(inquiries);
+  inquiries.offer = async (...args: unknown[]) =>
     (args[1] as { id: string }).id === first.id
       ? { refused: new MervError('inquiry_refused', 'Refused for the test', 409) }
-      : await inquire(...args);
-  t.after(() => void (leased.inquireTransaction = inquire));
+      : await offer(...args);
+  t.after(() => void (inquiries.offer = offer));
   await f.present('runner-q');
   const visit = await f.lease('runner-q');
   assert.equal(inquiryOf(visit.session)?.id, second.id);
