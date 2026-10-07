@@ -15,7 +15,9 @@ Markdown headings, with the Problem's revision (`Paper.introduction`). It is
 changed by changing the Problem with `paper.patch`. `project.get` returns only
 Scope's project identity (id, name, creation time); Scope holds no Introduction
 and has no tool to write one. Its old `summary`/`context_revision` columns and
-`project_context_commands` receipts stay until a later migration drops them.
+`project_context_commands` receipts are dropped by `scope@10`, after
+`deploy/problem-backfill.mjs` copied each summary that was a project's only
+description into its Problem as a draft.
 
 New Task and Experiment lease offers capture the Problem, in the paper input,
 and the Problem revision it was served at (`contextRevision`). An already offered worker keeps that input across
