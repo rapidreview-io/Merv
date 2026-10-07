@@ -5,7 +5,7 @@ import type {
   WorkflowDispatchCandidate,
 } from '@merv/contracts/types';
 import type { RunningPhrase } from '@merv/contracts/running';
-import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
+import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 
 export interface SessionWorkspaceRecord {
   attachment: SessionWorkspace;
@@ -41,6 +41,8 @@ export type SessionOutcome =
   | 'preparation_deferred'
   /** A release retired the machine's image mid-step: nothing about the work was wrong. */
   | 'machine_retired'
+  /** The worker ended its visit asking its owner a question (`session.ask_owner`). */
+  | 'asked_owner'
   | 'crash_loop';
 
 /** What a machine may report a launch ended as; only a worker's own handoff records completion. */
@@ -320,10 +322,70 @@ export interface ThreadConversation {
   threadId: string;
   visits: {
     sessionId: string;
-    /** `stream` while its live stream is kept; `transcript` once only its stored copy is. */
-    from: 'stream' | 'transcript' | 'none';
+    /**
+     * `stream` while its kept stream holds it; `transcript` once only its stored copy does; `none`
+     * when nothing was kept. A `live` visit is read from its own stream (`/events`), and an
+     * `unavailable` one could not be read just now. Events are sent newest visit first while the
+     * read has room, so an older visit's may be empty.
+     */
+    from: 'stream' | 'transcript' | 'none' | 'live' | 'unavailable';
     events: AgentStreamEvent[];
   }[];
+}
+
+/**
+ * A message to a worker: to one visit (`sessionId`), or to a thread (`threadId`), which its live
+ * or next visit reads. Either is acknowledged by the visit that reads it, with an optional reply.
+ */
+export interface SessionMessage {
+  id: string;
+  sessionId: string | null;
+  threadId: string | null;
+  instanceId: string;
+  /** The revision of the visit it was sent to; null for a message to a thread. */
+  expectedRevision: number | null;
+  senderActorId: string;
+  body: string;
+  createdAt: string;
+  acknowledgedAt: string | null;
+  reply: string | null;
+}
+/** A question a worker asked its owner as it ended its visit; a message to its thread answers it. */
+export interface ThreadQuestion {
+  id: string;
+  threadId: string;
+  /** The visit that asked. */
+  sessionId: string;
+  instanceId: string;
+  /** The revision it asked at. */
+  revision: number;
+  question: string;
+  askedAt: string;
+  answeredAt: string | null;
+  answerMessageId: string | null;
+}
+/** What passed between a thread and the people over it, oldest first. */
+export interface ThreadMessages {
+  threadId: string;
+  /** Messages to the thread and to each of its visits. */
+  messages: SessionMessage[];
+  questions: ThreadQuestion[];
+}
+/**
+ * A question still waiting for its answer, as Needs you reads it beside the blocker that
+ * withholds the work: the same shape as Code's moves.
+ */
+export interface QuestionMove {
+  instanceId: string;
+  provider: string;
+  key: string;
+  move: {
+    sentence: string;
+    who: string;
+    whose: 'operator';
+    /** No page here answers yet: the reader answers with session.message to the thread. */
+    control?: { label: string; to: string };
+  };
 }
 
 export interface UsageTotals {

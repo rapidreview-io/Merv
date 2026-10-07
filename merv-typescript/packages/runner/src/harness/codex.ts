@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { codexEvents } from '@merv/contracts';
+import { codexEvents } from '@merv/sessions/agent-stream';
 import { assignmentCodexHome, type RunnerProfile } from '../profiles.js';
 import { entries, firstId, type Harness, spent } from './shared.js';
 

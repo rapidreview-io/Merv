@@ -400,7 +400,19 @@ export class SessionDispatch {
   async candidates(caller: Caller, tx: Transaction) {
     const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
-    const queue = all.filter((item) => item.role !== 'operator' && !live.has(targetKey(item)));
+    // Work whose agent asked its owner waits for the answer (`session.ask_owner`).
+    const asking = new Set(
+      (
+        await tx.all<{ instance_id: string }>(
+          'SELECT DISTINCT instance_id FROM session_questions WHERE project_id=? AND answered_at IS NULL',
+          caller.projectId,
+        )
+      ).map((row) => row.instance_id),
+    );
+    const queue = all.filter(
+      (item) =>
+        item.role !== 'operator' && !live.has(targetKey(item)) && !asking.has(item.instanceId),
+    );
     // A target that keeps failing on one revision is not retried for ever: the backoff only
     // spaces the attempts, so the hold is what ends them. An expiry after activation never
     // counts, because that is also how long honest work ends. A hold names one revision, so a
@@ -446,6 +458,7 @@ export class SessionDispatch {
       live,
       spent,
       unaccounted,
+      asking,
     };
   }
   /** The same source-scoped candidate selection used by automatic leasing and prospective demand. */

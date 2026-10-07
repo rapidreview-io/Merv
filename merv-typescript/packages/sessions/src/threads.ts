@@ -1,11 +1,6 @@
 import {
-  AGENT_EVENT_TEXT,
   check,
-  claudeEvents,
-  codexEvents,
   newId,
-  type AgentEvent,
-  type AgentStreamEvent,
   type Blobs,
   type Caller,
   type DelegationSource,
@@ -13,6 +8,13 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
+import {
+  AGENT_EVENT_TEXT,
+  claudeEvents,
+  codexEvents,
+  type AgentEvent,
+  type AgentStreamEvent,
+} from './agent-stream.js';
 import { isoNow, live, ordinary, readFirst, safeError, text } from './common.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
@@ -58,6 +60,8 @@ const READ_EVENTS = 500;
 const READ_BYTES = 2_000_000;
 /** The end of a transcript read first; a longer one only while it holds too few events. */
 const TAIL_BYTES = 1_000_000;
+/** How long one ranged read of a transcript may take. */
+const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
 
 /**
@@ -73,8 +77,8 @@ type Room = { events: number; bytes: number };
  * that waited longer than `dormantMs`, or whose resume its harness could not take up, is retired.
  */
 export class SessionThreads {
-  /** Late-bound like transcripts'. */
-  blobs?: Blobs;
+  /** Bound once, as Sessions is provided. */
+  blobs!: Blobs;
   private readonly providers = new Map<string, ContinuityProvider>();
   constructor(
     private state: State,
@@ -341,7 +345,12 @@ export class SessionThreads {
   /** The signed GET of what a live session resumes, for the runner that attached it. */
   async download(caller: Caller, input: SessionControl & { hostRef: string }) {
     const blobs = this.blobs;
-    check(blobs?.download, 'blob_unavailable', 'Conversation storage is not loaded', 503);
+    check(
+      blobs.download,
+      'conversations_unsupported',
+      'Conversation storage takes no downloads',
+      409,
+    );
     const session = await readFirst(this.state, (tx) =>
       this.host.controlled(caller, input.sessionId, input.runnerId, tx),
     );
@@ -360,10 +369,15 @@ export class SessionThreads {
       'conversation.jsonl',
     );
   }
-  /** The sweep: threads whose work has not come back for `dormantMs`, a bounded batch a pass. */
+  /**
+   * The sweep: threads whose work has not come back for `dormantMs`, a bounded batch a pass. A
+   * thread waiting for the answer to its question waits as long as that takes.
+   */
   async expire(tx: Transaction): Promise<void> {
     const rows = await tx.all<Row>(
-      "SELECT * FROM session_threads WHERE status='dormant' AND updated_at<? ORDER BY updated_at LIMIT 100",
+      `SELECT * FROM session_threads t WHERE status='dormant' AND updated_at<?
+        AND NOT EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+        ORDER BY updated_at LIMIT 100`,
       isoNow(() => this.clock() - dormantMs),
     );
     for (const row of rows) await this.retire(row, 'dormant', tx);
@@ -519,40 +533,68 @@ export class SessionThreads {
         'Thread not found in this project',
         404,
       );
-      return await tx.all<{
-        id: string;
-        project_id: string;
-        sha256: string | null;
-        declared_at: string | null;
-      }>(
-        'SELECT s.id,s.project_id,t.sha256,t.declared_at FROM worker_sessions s LEFT JOIN session_transcripts t ON t.session_id=s.id AND t.uploaded_at IS NOT NULL WHERE s.thread_id=? ORDER BY s._merv_rowid',
+      return await tx.all<Said>(
+        `SELECT s.id,s.project_id,s.status,t.sha256,t.size,t.declared_at,
+            EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) AS streamed
+          FROM worker_sessions s LEFT JOIN session_transcripts t ON t.session_id=s.id AND t.uploaded_at IS NOT NULL
+          WHERE s.thread_id=? ORDER BY s._merv_rowid`,
         threadId,
       );
     });
     const out: ThreadConversation = { threadId, visits: [] };
-    // Newest visit first: an older visit's transcript is read only while the read has room left.
+    // Newest visit first: an older visit is read only while the read has room left.
     const room: Room = { events: READ_EVENTS, bytes: READ_BYTES };
     for (const visit of visits.reverse()) {
-      const streamed = await this.host.stream(visit.id);
-      if (streamed.length) {
-        out.visits.unshift({ sessionId: visit.id, from: 'stream', events: newest(streamed, room) });
-        continue;
+      let said: ThreadConversation['visits'][number];
+      try {
+        said = await this.said(visit, room);
+      } catch {
+        said = { sessionId: visit.id, from: 'unavailable', events: [] };
       }
-      if (visit.sha256 === null) {
-        out.visits.unshift({ sessionId: visit.id, from: 'none', events: [] });
-        continue;
-      }
-      let events: AgentStreamEvent[] = [];
-      if (room.events && room.bytes) {
-        check(this.blobs, 'blob_unavailable', 'Transcript storage is not loaded', 503);
-        const bytes = await this.blobs.get(`transcripts-${visit.project_id}`, visit.sha256);
-        events = transcriptEvents(bytes, visit.declared_at!, room);
-      }
-      out.visits.unshift({ sessionId: visit.id, from: 'transcript', events });
+      out.visits.unshift(said);
     }
     return out;
   }
+  /** One visit's part of a conversation read, which takes up `room`; none once it is spent. */
+  private async said(visit: Said, room: Room): Promise<ThreadConversation['visits'][number]> {
+    const sessionId = visit.id;
+    // A page reads a live visit from its own stream (`/events`), so it takes no room here.
+    if (live(visit)) return { sessionId, from: 'live', events: [] };
+    const from = visit.streamed ? 'stream' : visit.sha256 === null ? 'none' : 'transcript';
+    if (from === 'none' || !room.events || !room.bytes) return { sessionId, from, events: [] };
+    if (from === 'stream')
+      return { sessionId, from, events: newest(await this.host.stream(sessionId), room) };
+    const blobs = this.blobs;
+    check(blobs.download, 'transcripts_unsupported', 'Transcript storage takes no downloads', 409);
+    const size = Number(visit.size);
+    const { url } = await blobs.download(`transcripts-${visit.project_id}`, visit.sha256!, size);
+    // Only the transcript's end: a ranged GET of its signed download.
+    const tail = async (start: number) => {
+      const response = await fetch(url, {
+        headers: { range: `bytes=${start}-` },
+        signal: AbortSignal.timeout(TAIL_TIMEOUT_MS),
+      });
+      check(response.ok, 'blob_unavailable', 'The transcript could not be read', 503);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      // A store that ignores the range sends the whole object.
+      return response.status === 206 ? bytes : bytes.subarray(start);
+    };
+    return {
+      sessionId,
+      from,
+      events: await transcriptEvents(tail, size, visit.declared_at!, room),
+    };
+  }
 }
+type Said = {
+  id: string;
+  project_id: string;
+  status: SessionStatus;
+  sha256: string | null;
+  size: string | number | null;
+  declared_at: string | null;
+  streamed: boolean;
+};
 const resumeOf = (row: Row): SessionResume => ({
   sessionId: row.latest_session_id!,
   harness: row.harness!,
@@ -595,34 +637,31 @@ function newest(events: AgentStreamEvent[], room: Room): AgentStreamEvent[] {
   return events.slice(from);
 }
 /**
- * A stored transcript read as its stream would have been: each line through both harnesses'
- * readers (their line types do not overlap), its newest events within `room`, which they take up.
- * Only its end is read, from the first whole line in it, and a longer end only while that leaves
- * nothing out; a line keeps its index in the whole transcript, and `seq` counts from the first
- * line read. The runner kept whole messages only, so Claude's are read whole. Each event is
- * stamped with the transcript's declaration, as a line carries no time of its own.
+ * A stored transcript of `size` bytes read as its stream would have been: each line through both
+ * harnesses' readers (their line types do not overlap), its newest events within `room`, which
+ * they take up. `tail(start)` reads its bytes from `start` to its end. Only its end is read, from
+ * the first whole line in it, and a longer end only while that leaves nothing out; a line's index
+ * and `seq` count from the first line read. The runner kept whole messages only, so Claude's are
+ * read whole. Each event is stamped with the transcript's declaration, as a line carries no time
+ * of its own.
  */
-export function transcriptEvents(
-  transcript: Buffer,
+export async function transcriptEvents(
+  tail: (start: number) => Promise<Buffer>,
+  size: number,
   at: string,
   room: Room = { events: READ_EVENTS, bytes: READ_BYTES },
-): AgentStreamEvent[] {
-  for (let tail = TAIL_BYTES; ; tail *= 4) {
-    const start =
-      tail >= transcript.length ? 0 : transcript.indexOf(10, transcript.length - tail - 1) + 1;
-    let line = 0;
-    for (
-      let end = transcript.indexOf(10);
-      end !== -1 && end < start;
-      end = transcript.indexOf(10, end + 1)
-    )
-      line++;
+): Promise<AgentStreamEvent[]> {
+  for (let length = TAIL_BYTES; ; length *= 4) {
+    // One byte more than the end, so a line that starts the end is seen to be whole.
+    const start = Math.max(0, size - length - 1);
+    const bytes = await tail(start);
+    const first = start === 0 ? 0 : bytes.indexOf(10) + 1 || bytes.length;
     const readers = [claudeEvents(), codexEvents()];
-    const events = transcript
-      .subarray(start)
+    const events = bytes
+      .subarray(first)
       .toString('utf8')
       .split('\n')
-      .flatMap((text, index) => readers.flatMap((read) => read(text, line + index)))
+      .flatMap((text, index) => readers.flatMap((read) => read(text, index)))
       .map((event, index) => ({ seq: index + 1, at, event: fit(event) }));
     const left = { ...room };
     const kept = newest(events, left);

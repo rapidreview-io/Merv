@@ -38,8 +38,8 @@ const file = (text: string) => {
   };
 };
 
-/** The default composition over S3 blobs, disk blobs (which cannot sign) or none at all. */
-async function fixture(t: TestContext, store: 's3' | 'disk' | 'none' = 's3') {
+/** The default composition over S3 blobs or disk blobs (which cannot sign). */
+async function fixture(t: TestContext, store: 's3' | 'disk' = 's3') {
   const directory = await mkdtemp(join(tmpdir(), 'merv-transcripts-'));
   const env = `MERV_TRANSCRIPT_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = randomBytes(48).toString('hex');
@@ -47,23 +47,10 @@ async function fixture(t: TestContext, store: 's3' | 'disk' | 'none' = 's3') {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  // Without Blobs, only Sessions, its routes and what they need load.
-  const storeless = [
-    'state',
-    'domain-events',
-    'scope',
-    'workflows',
-    'identity',
-    'api',
-    'tools',
-    'sessions-api',
-  ];
   config.plugins = config.plugins.flatMap((plugin) => {
     if (plugin.id === 'sessions')
       return [{ ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }];
-    if (plugin.id === 'blobs')
-      return store === 's3' ? [s3.entry] : store === 'disk' ? [plugin] : [];
-    if (store === 'none' && !storeless.includes(plugin.id)) return [];
+    if (plugin.id === 'blobs') return store === 's3' ? [s3.entry] : [plugin];
     return [plugin];
   });
   const app = await createApp({ directory, config, port: 0 });
@@ -482,6 +469,7 @@ test('a managed runner declares and delivers for its bound session after release
   f.app.ctx.sessions.managed.registerValidator({
     current: async () => true,
     admits: async () => true,
+    serves: () => false,
     retired: async () => false,
     assignmentSources: async (binding) => [binding.source],
   });
@@ -525,10 +513,8 @@ test('a managed runner declares and delivers for its bound session after release
 });
 
 test('without a store that signs uploads a transcript is refused and nothing is recorded', async (t) => {
-  for (const [store, status, code] of [
-    ['none', 503, 'blob_unavailable'],
-    ['disk', 409, 'transcripts_unsupported'],
-  ] as const)
+  // Sessions requires Blobs: without it Sessions does not load at all.
+  for (const [store, status, code] of [['disk', 409, 'transcripts_unsupported']] as const)
     await t.test(store, async (subtest) => {
       const f = await fixture(subtest, store);
       const a = await f.project('Storeless');

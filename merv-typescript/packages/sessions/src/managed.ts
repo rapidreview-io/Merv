@@ -28,6 +28,7 @@ import type {
   ManagedBindingRow,
 } from './managed-types.js';
 import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
+import { ownEnd } from './common.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
 const huggingFaceBinding = z
@@ -92,7 +93,7 @@ export class ManagedRunnerBindings {
     return !!this.validator;
   }
   serves(projectId: string): boolean {
-    return !!this.validator?.serves?.(projectId);
+    return !!this.validator?.serves(projectId);
   }
   registerValidator(validator: ManagedRunnerValidator): () => void {
     this.available();
@@ -385,7 +386,7 @@ export class ManagedRunnerBindings {
           row &&
           (session.status === 'offered' || session.status === 'active'
             ? Date.parse(session.expiresAt) > this.clock()
-            : session.closeReason === 'handoff'),
+            : ownEnd(session.closeReason)),
         'unauthorized',
         'No live managed session holds this credential',
         401,
@@ -401,7 +402,7 @@ export class ManagedRunnerBindings {
         expiresAt: new Date(
           Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
         ).toISOString(),
-        ...(session.closeReason === 'handoff' ? { handedOffAt: session.closedAt! } : {}),
+        ...(ownEnd(session.closeReason) ? { handedOffAt: session.closedAt! } : {}),
       };
     });
   }
@@ -570,12 +571,7 @@ export class ManagedRunnerBindings {
     ));
   }
   async sources(row: ManagedBindingRow, tx: Transaction): Promise<Caller[]> {
-    check(
-      this.validator?.assignmentSources,
-      'managed_unavailable',
-      'Work host directors unavailable',
-      503,
-    );
+    check(this.validator, 'managed_unavailable', 'Work host directors unavailable', 503);
     const sources = await this.validator.assignmentSources(this.identity(row), tx);
     check(
       sources.length <= 2 && sources.every((source) => source.projectId === row.project_id),
@@ -668,7 +664,7 @@ export class ManagedRunnerBindings {
   async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
-    return !!(await this.validator.retired?.(this.identity(row), tx));
+    return await this.validator.retired(this.identity(row), tx);
   }
   async inspect(
     allocationId: string,

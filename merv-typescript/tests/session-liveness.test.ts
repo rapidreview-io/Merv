@@ -819,6 +819,8 @@ test('the stuck report leaves out no_live_runner while Fleet rents for the proje
       current: async () => false,
       admits: async () => false,
       serves: (projectId) => served && projectId === f.owner.projectId,
+      retired: async () => false,
+      assignmentSources: async (binding) => [binding.source],
     }),
   );
   const kinds = async () =>
@@ -1070,6 +1072,7 @@ test('the assembled application offers the stuck report as a read tool and the g
   assert.deepEqual(
     listed.map((tool) => [tool.name, 'readOnly' in tool && tool.readOnly === true]),
     [
+      ['session.ask_owner', false],
       ['session.dispatch', false],
       ['session.find', true],
       ['session.halt', false],
@@ -1079,6 +1082,7 @@ test('the assembled application offers the stuck report as a read tool and the g
       ['session.observe', true],
       ['session.release_hold', false],
       ['session.stuck', true],
+      ['session.thread_messages', true],
       ['session.threads', true],
     ],
   );

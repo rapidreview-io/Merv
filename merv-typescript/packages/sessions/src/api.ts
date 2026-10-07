@@ -17,6 +17,7 @@ export type SessionRoutes = Pick<
   | 'managed'
   | 'observations'
   | 'threads'
+  | 'messaging'
   | 'dispatch'
   | 'offer'
   | 'list'
@@ -38,6 +39,9 @@ type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
 // Sessions parses every other body. A project halt refuses a body sessionId, which would halt
 // one session and leave dispatch on.
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
+const messageInput = z
+  .object({ body: z.string().min(1).max(8000), requestId: z.string().min(1).max(200) })
+  .strict();
 
 /**
  * What a runner tells the worker it launches about the lease, sent with each attach: the runner
@@ -52,6 +56,7 @@ export const workerPrompt = [
   // then invent what the project already holds. The list binds writes; reads are open.
   'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
   'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
+  'If the work cannot go on without the owner’s decision and no tool can settle it, call session.ask_owner with one self-contained question and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
   'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
 ].join('\n');
 
@@ -92,6 +97,17 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   const conversationRoute = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
   if (conversationRoute && req.method === 'GET')
     return await sessions.threads.conversation(caller, pathSegment(conversationRoute[1]!));
+  // A thread's messages and questions; a person's message to it, which answers its questions.
+  const messagesRoute = /^\/sessions\/threads\/([^/]+)\/messages$/.exec(path);
+  if (messagesRoute && req.method === 'GET')
+    return await sessions.messaging.thread(caller, pathSegment(messagesRoute[1]!));
+  if (messagesRoute && req.method === 'POST')
+    return {
+      message: await sessions.messaging.message(
+        caller,
+        bound(await r.json(messageInput), 'threadId', pathSegment(messagesRoute[1]!)),
+      ),
+    };
   if (path === '/sessions/status' && req.method === 'GET')
     return await sessions.dispatch.projectStatus(caller);
   if (path === '/sessions/dispatch' && req.method === 'PUT')

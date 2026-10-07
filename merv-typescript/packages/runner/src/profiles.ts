@@ -8,6 +8,7 @@ import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { label, platformName } from '@merv/sessions/rules';
+import { claudeToolName } from '@merv/sessions/agent-stream';
 
 const common = {
   name: z.string().regex(platformName),
@@ -204,8 +205,6 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
  * network, or a sealed review, is not given them. Codex's own hosted web search stays disabled.
  */
 const INTERNET_READS = ['web.search', 'web.extract'] as const;
-/** How Claude Code names a Merv tool: MCP names keep only letters, digits, _ and -. */
-const claudeTool = (name: string) => `mcp__merv__${name.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';
 /** Claude's session ids and Codex's thread ids. */
@@ -476,7 +475,7 @@ function claudeArgs(
     '--allowedTools',
     [...builtIn, 'mcp__merv', ...servers.map((server) => `mcp__${server.name}`)].join(','),
     // A sealed review has no shell, so nothing else of it reaches the network.
-    ...(offline ? ['--disallowedTools', INTERNET_READS.map(claudeTool).join(',')] : []),
+    ...(offline ? ['--disallowedTools', INTERNET_READS.map(claudeToolName).join(',')] : []),
     '--dangerously-skip-permissions',
     '--model',
     profile.model ?? 'opus',

@@ -1,7 +1,7 @@
 import { lstatSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { claudeEvents } from '@merv/contracts';
+import { claudeEvents } from '@merv/sessions/agent-stream';
 import { entries, firstId, type Harness, spent } from './shared.js';
 
 /**

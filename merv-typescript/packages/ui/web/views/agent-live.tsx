@@ -1,5 +1,5 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
+import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 import {
   NO_TIMELINE,
   mergeEvents,

@@ -1,12 +1,12 @@
 # Sessions
 
 Agent identity, authenticated sessions, and assignment execution lifecycle. The provider injects
-`state`, `scope`, `workflows`, `domainEvents`, and registers its session tool policy with `tools` whenever a tool
-registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenever Blobs is loaded, and is Secrets'
+`state`, `scope`, `workflows`, `domainEvents` and `blobs`, and registers its session tool policy with `tools` whenever a tool
+registry is loaded. It stores [transcripts](#transcripts) and conversations through `blobs`, and is Secrets'
 authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Session and
 managed-runner credentials live in Identity's credential store (`@merv/identity/credentials`). What a runner
 advertises (`RUNNER_HARNESSES`, the platform and capability schemas, session statuses) is the pure-rules module
-`@merv/sessions/rules`, which the runner imports too. The registry refuses session callers while no policy is registered. A policy decision or
+`@merv/sessions/rules`, which the runner imports too, as it does `@merv/sessions/agent-stream`: the `AgentEvent` stream, the Claude Code and Codex output readers, and both halves of how Claude Code names a Merv tool (`mcp__merv__…`). The registry refuses session callers while no policy is registered. A policy decision or
 prepared invocation belongs to the registration that admitted it: withdrawing or replacing that registration,
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
 already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
@@ -57,11 +57,11 @@ flowchart LR
   sessions -- "injects" --> state
   sessions -- "injects; drains before an offer" --> domainEvents
   sessions -- "injects; HF grant authority" --> secrets
-  runner -- "imports @merv/sessions/rules" --> sessions
+  runner -- "imports @merv/sessions/rules, agent-stream" --> sessions
   sessions -- "injects" --> blobs
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
-  ui -- "imports @merv/sessions/models, rules" --> sessions
+  ui -- "imports @merv/sessions/models, rules, agent-stream" --> sessions
   sessions -- "ui adapter injects; registers Agents page and Running lane" --> ui
   sandboxes -- "injects" --> sessions
   sessions -- "emits session.closed" --> tasks
@@ -82,8 +82,11 @@ the optional Sessions tools adapter and keeps the same project-reader authorizat
 and leased-worker denial as the observation HTTP endpoint.
 
 `session.find` resolves a work item's current session. `session.message` queues an operator
-message for that session; `session.messages` and the worker-only `session.message.ack`
-retain receipt and an optional reply. Pending messages are surfaced at the next Merv tool
+message for that session, or for a thread (`threadId`), which its live or next visit reads;
+`session.messages` and the worker-only `session.message.ack` retain receipt and an optional
+reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
+A worker that needs its owner's decision ends its visit with `session.ask_owner`: uncounted,
+its work withheld from dispatch and shown in Needs you until a message to its thread answers. Pending messages are surfaced at the next Merv tool
 interaction and fence worker writes until acknowledged. See [session steering](../../docs/SESSION_LEASES.md#steering-an-assigned-agent)
 for delivery limits and the distinction between acknowledgment and incorporation.
 
@@ -117,7 +120,7 @@ A **thread** is the worker that owns one stage of one work item for one role; a 
 - An offer whose key's thread is dormant, belongs to the same source and declared a conversation (delivered or still on its way; a runner that cannot fetch it launches the same thread fresh) resumes it: the same actor, from any runner, with `continuity.resume` (`sessionId`, `harness`, `conversationId`, `sha256`, `size`) in the frozen session. Any other thread of the key is retired (`superseded`) and the offer opens a new one with an actor of its own. Fingerprints and replay are unchanged.
 - A visit without a key retires its thread at close. One with a key leaves it dormant, with no credential; a close that declared nothing (a lapsed offer, a failed launch, a lost machine) leaves the conversation in place. A close released `preparation_deferred` with cause `resume_failed` (its harness found no conversation to resume) retires the thread (`superseded`) when that is the conversation it was offered, so the key's next offer goes to a new thread, on whatever machine. The sweep retires a thread dormant for 14 days, and one whose live visit's source lost its delegation. Review independence still excludes a resumed thread: it is the same actor, a contributor under every visit.
 - `POST /sessions/:id/conversation` declares and delivers the redacted conversation file exactly as a transcript is declared and delivered, to `conversations-<projectId>/<sha256>`, answering `{conversation}`; 409 `conversation_unkept` for a session with no key, `conversation_superseded` once its thread is retired or a later visit holds the conversation. A visit may declare while it is live, while it is the thread's latest, or when it is newer than that one. `POST /sessions/:id/resume` (`runnerId`, `hostRef`, live and attached) answers `{download: {url, expiresAt}}`, a signed GET of the conversation the session resumes. A hosted machine waits for a declared conversation as for a transcript.
-- `GET /sessions/threads?instanceId=…` (tool `session.threads`) answers `{threads: ThreadView[]}`: every thread with a visit on the work item, oldest first, each with its visits (`VisitView`: status, offered/started/ended, outcome and close code, whether it launched or resumed, harness, runner, a live visit's liveness, whether it has a conversation to read). Anyone who may read the work item reads it; a leased worker cannot. `GET /sessions/threads/:id/conversation` is an operator's read, as the live stream is: each visit's events, from its live stream while it is kept (30 days) and otherwise from its stored transcript, read into the same events (its newest 500, at most 2 MB a visit). The types are in `@merv/sessions/models`.
+- `GET /sessions/threads?instanceId=…` (tool `session.threads`) answers `{threads: ThreadView[]}`: every thread with a visit on the work item, oldest first, each with its visits (`VisitView`: status, offered/started/ended, outcome and close code, whether it launched or resumed, harness, runner, a live visit's liveness, whether it has a conversation to read). Anyone who may read the work item reads it; a leased worker cannot. `GET /sessions/threads/:id/conversation` is an operator's read, as the live stream is: each ended visit's events, from its kept stream (30 days) and otherwise from the end of its stored transcript (a ranged read of its signed download), read into the same events: the newest 500 across visits, at most 2 MB, newest visit first, and nothing more is read once those are spent. A live visit is `from: 'live'` with no events, as a page reads it from `/events`; a visit whose transcript cannot be read just now is `unavailable`, and the rest are still read. The types are in `@merv/sessions/models`.
 
 ## Transcripts
 
@@ -126,7 +129,7 @@ The runner that held a session keeps one copy of what the agent process printed,
 - Only the runner that held the session may call it, live or closed: the source credential with the session's owner and `runnerId`, or the managed runner (`mr_`) bound to it. `hostRef` must be the attached host (409 `host_conflict`).
 - Without `deliver`, the call declares the file: the first declaration is recorded in `session_transcripts` and every later one must repeat it (409 `transcript_conflict`). It does no store I/O.
 - With `deliver: true`, one HEAD at `transcripts-<projectId>/<sha256>`: bytes of the declared size stamp `uploaded_at` once; nothing stored answers a signed PUT in `upload` (`url`, `headers`, `expiresAt`; 1 h, exact size, SHA-256 checksum, `If-None-Match: *`); another size is 409 `transcript_mismatch`. A stamped row is answered as it is.
-- Blobs not loaded, or a failed HEAD, is 503 `blob_unavailable`, which a runner retries. A store that cannot sign uploads (disk blobs) is 409 `transcripts_unsupported`, and nothing is recorded.
+- A failed HEAD is 503 `blob_unavailable`, which a runner retries. A store that cannot sign uploads (disk blobs) is 409 `transcripts_unsupported`, and nothing is recorded.
 
 Sessions trusts the runner for the four file facts only; every other column comes from the session it holds. `hostname` is the dispatching runner's presence at declaration (none for a hand offer). The row is write-once: a trigger refuses any delete and any change but the one stamp. Byte-identical transcripts in one project share one object. A caller with the same owner, runner and host could declare first; that is the same trust as a workspace result. Transcripts are kept forever; the per-project prefix allows a per-project purge or lifecycle rule. On AWS S3 the store credential needs `s3:ListBucket`, or a missing key HEADs as 403 and every delivery answers 503 (R2 answers 404). A retirement migration that deletes worker sessions must first delete their `session_transcripts` rows with `session_transcripts_immutable` disabled.
 

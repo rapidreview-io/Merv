@@ -1,4 +1,6 @@
 /**
+ * Sessions' agent stream, as pure rules the runner runs too (`@merv/sessions/agent-stream`).
+ *
  * What a worker agent is doing, as the runner reads it from the agent's own output and Sessions
  * keeps and relays it: its thinking, what it says, the tools it calls and what they answer. One
  * shape for every harness (Claude Code's stream-json, Codex's --json), so the page that draws it
@@ -58,10 +60,15 @@ const answer = (content: unknown): string =>
           .join('\n')
       : '';
 
+// ─── How Claude Code names a Merv tool, both ways ──────────────────────────────────────────
+const MERV_PREFIX = 'mcp__merv__';
+/** The name a runner allows a Merv tool under: MCP names keep only letters, digits, _ and -. */
+export const claudeToolName = (name: string) =>
+  `${MERV_PREFIX}${name.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 /** A Merv tool as its own name, another server's as `server.tool`, a built-in as itself. */
 const claudeTool = (name: string) =>
-  name.startsWith('mcp__merv__')
-    ? name.slice('mcp__merv__'.length)
+  name.startsWith(MERV_PREFIX)
+    ? name.slice(MERV_PREFIX.length)
     : name.replace(/^mcp__([^_]+(?:_[^_]+)*?)__/, '$1.');
 
 /**

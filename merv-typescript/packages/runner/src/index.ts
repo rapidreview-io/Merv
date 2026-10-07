@@ -1233,16 +1233,12 @@ export class MachineRunner implements Runner {
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {
     return this.ledger.list().map((r) => {
-      const session = r.metadata.session as unknown as
-        (SessionView & { agentId?: string }) | undefined;
+      const session = r.metadata.session as unknown as SessionView | undefined;
       const workspace = this.driverOf(r)?.get(r.id);
       return {
         id: r.id,
         sessionId: r.sessionId,
-        // A launch recorded before threads names its agent, which became its thread.
-        ...(session?.threadId || session?.agentId
-          ? { threadId: session.threadId ?? session.agentId! }
-          : {}),
+        ...(session?.threadId ? { threadId: session.threadId } : {}),
         status: r.status,
         platform: String(r.metadata.platform ?? ''),
         deadline: r.deadline,

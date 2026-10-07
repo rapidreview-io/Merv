@@ -561,6 +561,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'reflections',
     'research',
     'reviews',
+    'sessions',
     'tasks',
     'workflows',
   ]);

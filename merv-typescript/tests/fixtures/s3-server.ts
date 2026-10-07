@@ -134,14 +134,20 @@ export async function s3Server() {
         res.end();
       } else if (req.method === 'GET' || req.method === 'HEAD') {
         const stored = objects.get(key);
-        const content = req.method === 'HEAD' ? stored : (readOverride?.body ?? stored);
-        if (!content) return error(404, 'NoSuchKey');
-        if (req.headers['if-match'] && req.headers['if-match'] !== etag(content))
+        const whole = req.method === 'HEAD' ? stored : (readOverride?.body ?? stored);
+        if (!whole) return error(404, 'NoSuchKey');
+        // An open-ended range (`bytes=N-`), the only one Merv sends.
+        const range = req.method === 'GET' && /^bytes=(\d+)-$/.exec(req.headers.range ?? '');
+        const content = range ? whole.subarray(Number(range[1])) : whole;
+        if (req.headers['if-match'] && req.headers['if-match'] !== etag(whole))
           return error(412, 'PreconditionFailed');
-        res.writeHead(200, {
+        res.writeHead(range ? 206 : 200, {
+          ...(range && {
+            'content-range': `bytes ${range[1]}-${whole.byteLength - 1}/${whole.byteLength}`,
+          }),
           'content-type':
             url.searchParams.get('response-content-type') ?? 'application/octet-stream',
-          etag: etag(content),
+          etag: etag(whole),
           ...(url.searchParams.has('response-content-disposition')
             ? { 'content-disposition': url.searchParams.get('response-content-disposition')! }
             : {}),

@@ -22,7 +22,7 @@ import {
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
-import type { AgentEvent } from '@merv/contracts';
+import type { AgentEvent } from './agent-stream.js';
 import type { SessionDispatch } from './dispatch.js';
 import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';

@@ -96,6 +96,11 @@ export interface InvocationHost {
   acknowledged(sessionId: string, tx: Transaction): Promise<void>;
 }
 
+/**
+ * Tools every worker has whatever its assignment names, which need only its live lease:
+ * acknowledging a message, and ending its visit with a question for its owner.
+ */
+const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionInvocationPolicy {
   readonly instructions =
@@ -116,7 +121,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     ordinary(caller);
     caller = structuredClone(caller);
-    if (read || name === 'session.message.ack') return true;
+    if (read || workerTools.has(name)) return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
     if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
@@ -139,9 +144,9 @@ export class SessionInvocations implements SessionInvocationPolicy {
     read?: boolean,
   ) {
     const session = await this.host.session(caller, tx);
-    // Acknowledging a message is always admitted; it needs only a live lease. The lease
+    // A worker's own tools are always admitted; they need only a live lease. The lease
     // is checked before the input is bounded, so when both are bad the lease error wins.
-    const ack = tool === 'session.message.ack';
+    const ack = workerTools.has(tool);
     const current = await this.host.valid(session, tx, ack ? undefined : session.execution);
     if (registrationId !== undefined)
       check(

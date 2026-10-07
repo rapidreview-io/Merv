@@ -1,4 +1,5 @@
-import type { AgentEvent, AgentStreamEvent, NativeMcpConnection } from '@merv/contracts';
+import type { NativeMcpConnection } from '@merv/contracts';
+import type { AgentEvent, AgentStreamEvent } from '@merv/sessions/agent-stream';
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type {
@@ -34,13 +35,17 @@ import type {
   RunnerHeartbeat,
   RunnerPresence,
   RunnerSettings,
+  QuestionMove,
   SessionDeferral,
+  SessionMessage,
   SessionOutcome,
   SessionReleaseOutcome,
   SessionStatus,
   SessionsProjectStatus,
   StuckReport,
   ThreadConversation,
+  ThreadMessages,
+  ThreadQuestion,
   ThreadView,
   UsageRollup,
   SessionPlatform,
@@ -70,7 +75,11 @@ export type {
   StuckItem,
   StuckKind,
   StuckReport,
+  QuestionMove,
+  SessionMessage,
   ThreadConversation,
+  ThreadMessages,
+  ThreadQuestion,
   ThreadView,
   UsageRollup,
   UsageTotals,
@@ -193,19 +202,10 @@ export interface SessionTranscript {
   /** On a delivery with nothing stored: the store's signed PUT (1 h, exact size, x-amz-checksum-sha256, If-None-Match:*). */
   upload?: { url: string; headers: Record<string, string>; expiresAt: string };
 }
-export interface SessionMessage {
-  id: string;
-  sessionId: string;
-  instanceId: string;
-  expectedRevision: number;
-  senderActorId: string;
-  body: string;
-  createdAt: string;
-  acknowledgedAt: string | null;
-  reply: string | null;
-}
+/** A message to one visit (`sessionId`) or to a thread (`threadId`): exactly one of them. */
 export interface SessionMessageInput {
-  sessionId: string;
+  sessionId?: string;
+  threadId?: string;
   body: string;
   requestId: string;
 }
@@ -479,6 +479,12 @@ export interface ManagedRunners {
 export interface SessionMessaging {
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
   messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
+  /** A thread's messages and questions: anyone who may read its work, never a leased worker. */
+  thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
+  /** The worker ends its visit asking its owner; the work waits for the answer. */
+  ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion>;
+  /** Questions still waiting, as Needs you reads them. */
+  questionMoves(caller: Caller): Promise<QuestionMove[]>;
   acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },

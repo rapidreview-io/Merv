@@ -210,6 +210,8 @@ async function workHost(
   const validator = {
     current: async (binding: { allocationId: string }) => binding.allocationId === allocationId,
     admits: async () => true,
+    serves: () => false,
+    retired: async () => false,
     assignmentSources: async (binding: { source: DelegationSource }) => [binding.source],
   };
   const unregister = { dispose: f.app.ctx.sessions.managed.registerValidator(validator) };

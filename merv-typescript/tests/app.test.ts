@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 85);
+    assert.equal(catalog.length, 86);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,

@@ -11,6 +11,12 @@ import {
 } from '@merv/contracts';
 import type { Session } from './types.js';
 
+/**
+ * A visit its worker ended by its own hand: its handoff, or its question to its owner. Hosted
+ * Codex may finish the model call it had started for a minute after either.
+ */
+export const ownEnd = (reason: string | null | undefined) =>
+  reason === 'handoff' || reason === 'asked_owner';
 /** Offered or active: a session that still holds its lease. */
 export const live = (session: Pick<Session, 'status'>) =>
   session.status === 'offered' || session.status === 'active';

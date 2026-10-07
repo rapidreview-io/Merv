@@ -149,6 +149,78 @@ BEGIN
 END $threads$;
 `;
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
+/**
+ * sessions@14 (unpublished): messages to a thread, an agent's question to its owner, and stored
+ * sessions without the fields agents kept before threads.
+ *
+ * - `session_messages.thread_id`: a message to a thread, not to one visit (`session_id` NULL).
+ *   It waits for the thread's live or next visit, which must acknowledge it.
+ * - `session_questions`: a visit that ended asking the owner. Until it is answered, by a message to
+ *   its thread, dispatch withholds the revision it asked at.
+ * - `agentId`, `agentSessionId` and `contextEpoch` are stripped from `session_json` once, so a
+ *   read no longer strips them.
+ *
+ * Read-only counts to take on production first:
+ *   SELECT count(*) AS agent_era_sessions FROM worker_sessions
+ *    WHERE (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch') <> session_json::jsonb;
+ *   SELECT count(*) AS messages, count(*) FILTER (WHERE acknowledged_at IS NULL) AS pending
+ *     FROM session_messages;
+ */
+const threadMessagesMigration = `
+ALTER TABLE session_messages ADD COLUMN thread_id TEXT REFERENCES session_threads(id);
+ALTER TABLE session_messages ALTER COLUMN session_id DROP NOT NULL;
+ALTER TABLE session_messages ADD CONSTRAINT session_messages_addressed CHECK ((session_id IS NULL) <> (thread_id IS NULL));
+CREATE INDEX session_messages_thread ON session_messages(thread_id,_merv_rowid) WHERE thread_id IS NOT NULL;
+CREATE OR REPLACE FUNCTION session_messages_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR OLD.acknowledged_at IS NOT NULL OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.thread_id IS DISTINCT FROM OLD.thread_id OR
+     NEW.sender_actor_id IS DISTINCT FROM OLD.sender_actor_id OR
+     NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.fingerprint IS DISTINCT FROM OLD.fingerprint OR
+     NEW.body IS DISTINCT FROM OLD.body OR NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     NEW.acknowledged_at IS NULL OR NEW.ack_request_id IS NULL THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session messages are retained; acknowledgement is write-once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TABLE session_questions (
+  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  thread_id TEXT NOT NULL REFERENCES session_threads(id),
+  session_id TEXT NOT NULL UNIQUE REFERENCES worker_sessions(id),
+  instance_id TEXT NOT NULL,
+  revision BIGINT NOT NULL,
+  question TEXT NOT NULL,
+  asked_at TEXT NOT NULL,
+  answered_at TEXT,
+  answer_message_id TEXT REFERENCES session_messages(id),
+  CHECK ((answered_at IS NULL) = (answer_message_id IS NULL))
+);
+CREATE INDEX session_questions_open ON session_questions(project_id,instance_id) WHERE answered_at IS NULL;
+CREATE INDEX session_questions_thread ON session_questions(thread_id);
+CREATE FUNCTION session_questions_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR OLD.answered_at IS NOT NULL OR NEW.answered_at IS NULL OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.thread_id IS DISTINCT FROM OLD.thread_id OR NEW.session_id IS DISTINCT FROM OLD.session_id OR
+     NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.revision IS DISTINCT FROM OLD.revision OR
+     NEW.question IS DISTINCT FROM OLD.question OR NEW.asked_at IS DISTINCT FROM OLD.asked_at THEN
+    RAISE EXCEPTION USING MESSAGE = 'A question is retained; its answer is write-once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_questions_immutable BEFORE UPDATE OR DELETE ON session_questions
+FOR EACH ROW EXECUTE FUNCTION session_questions_guard();
+${withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_immutable'],
+  `UPDATE worker_sessions SET session_json = (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch')::text
+  WHERE (session_json::jsonb - 'agentId' - 'agentSessionId' - 'contextEpoch') <> session_json::jsonb;`,
+)}`;
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE worker_sessions (
@@ -480,4 +552,5 @@ FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
   // deferral window: both ask by close time, which no other index orders.
   12: `CREATE INDEX session_usage_closed ON session_usage(closed_at);`,
   13: threadsMigration,
+  14: threadMessagesMigration,
 };

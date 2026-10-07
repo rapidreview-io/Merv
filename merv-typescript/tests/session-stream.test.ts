@@ -13,7 +13,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { AgentEvent, Caller, WorkflowPolicy } from '@merv/contracts';
+import type { Caller, WorkflowPolicy } from '@merv/contracts';
+import type { AgentEvent } from '@merv/sessions/agent-stream';
 import { serveEvents } from '@merv/api/event-stream';
 import type { ApplicationConfig } from '../src/config.js';
 import { AgentStream } from '../packages/runner/src/agent-stream.js';
@@ -30,7 +31,16 @@ async function fixture(t: TestContext) {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  const keep = ['state', 'domain-events', 'scope', 'workflows', 'identity', 'api', 'tools'];
+  const keep = [
+    'state',
+    'domain-events',
+    'scope',
+    'workflows',
+    'identity',
+    'api',
+    'tools',
+    'blobs',
+  ];
   config.plugins = config.plugins.flatMap((plugin) =>
     plugin.id === 'sessions'
       ? [{ ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }]

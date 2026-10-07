@@ -16,6 +16,12 @@ export const sessionsUiPlugin = {
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
+        // Home's part: each question an agent asked its owner that is still open, as Needs you
+        // asks a person to answer it (the blocker withholding its work is Sessions' too).
+        home: {
+          keep: ['instanceId', 'provider', 'key', 'move'],
+          list: async (caller) => await ctx.sessions.messaging.questionMoves(caller),
+        },
         read: async (caller, params) => {
           if (params?.agentId !== undefined) {
             check(

@@ -8,7 +8,7 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/contracts';
+import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import type { SessionStreamBatch } from '@merv/sessions/types';
 import { AgentStream, coalesce, Scrubber } from '../packages/runner/src/agent-stream.js';
 import { harnesses } from '../packages/runner/src/harness/index.js';

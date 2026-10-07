@@ -224,6 +224,7 @@ function Conversation({ thread, label }: { thread: ThreadView; label: string }) 
             names.get(visit.sessionId),
             stamp(visit.startedAt ?? visit.offeredAt),
             !live && said?.from === 'none' && 'nothing kept',
+            !live && said?.from === 'unavailable' && 'unavailable',
           ]
             .filter(Boolean)
             .join(' · '),

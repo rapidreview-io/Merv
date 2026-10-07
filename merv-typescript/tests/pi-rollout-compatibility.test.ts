@@ -121,6 +121,9 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
     bindings.registerValidator({
       current: async () => true,
       admits: async () => true,
+      serves: () => false,
+      retired: async () => false,
+      assignmentSources: async (binding) => [binding.source],
     });
     await assert.rejects(bindings.authenticate(oldControl), errorCode('unauthorized'));
     await assert.rejects(
