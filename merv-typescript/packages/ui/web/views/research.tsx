@@ -48,7 +48,13 @@ function CycleDetail({ row, shell }: ViewProps) {
           {record.writable && (
             // The stack would stretch the one control to the pane's width.
             <div className="cluster">
-              <CycleMove cycle={record} shell={shell} listed onSaved={() => read.reload()} />
+              <CycleMove
+                cycle={record}
+                shell={shell}
+                listed
+                pulse={JSON.stringify(relations.map((item) => [item.id, item.state]))}
+                onSaved={() => read.reload()}
+              />
             </div>
           )}
         </Gate>

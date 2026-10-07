@@ -329,3 +329,49 @@ for (const [kind, view, name] of [
     for (const tool of ['workflow.process', 'research.get', 'reflection.get'])
       assert.equal(reads(`/tools/${tool}`), 0, `${tool} is not read`);
   });
+
+test('an open cycle page checks its gate as it opens and again only when the cycle moves', async (t) => {
+  t.after(unmount);
+  let revision = 4;
+  const cycle = () => ({
+    record: {
+      ...ended.research.record,
+      workflow: { workflow: 'research', state: 'planning', revision, updatedAt: now },
+      progress: { settled: 0, total: 0 },
+      writable: true,
+    },
+    process: { ...graph('planning', false), revision },
+  });
+  serve('/tools/ui.read', () => ({ body: { result: cycle() } }));
+  serve('/tools/workflow.status_and_next', () => ({
+    body: {
+      result: {
+        instanceId: 'wf_1',
+        revision,
+        terminal: false,
+        actions: [
+          {
+            action: 'advance',
+            tool: 'research.advance',
+            status: 'ready',
+            blockers: [],
+            requiredInput: [],
+          },
+        ],
+        blockers: [],
+        dependencies: [],
+      },
+    },
+  }));
+  await open('/research/wf_1', ResearchView);
+  assert.ok(document.body.textContent!.includes('Start next step'));
+  assert.equal(reads('/tools/workflow.status_and_next'), 1);
+  // The page's check-free read polls; the cycle stands still, so its gate is not checked again.
+  await settle(10_600);
+  assert.ok(reads('/tools/ui.read') >= 2, 'the page polls its check-free read');
+  assert.equal(reads('/tools/workflow.status_and_next'), 1, 'no check while nothing moved');
+  // The cycle moves: its gate is checked again.
+  revision = 5;
+  await settle(8_600);
+  assert.equal(reads('/tools/workflow.status_and_next'), 2);
+});
