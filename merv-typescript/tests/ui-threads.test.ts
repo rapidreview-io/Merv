@@ -18,6 +18,7 @@ await import('../packages/ui/web/components.js');
 const { ThreadStages } = await import('../packages/ui/web/views/threads.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { Reading } = await import('../packages/ui/web/views/running-phrase.js');
+const { useTool } = await import('../packages/ui/web/api.js');
 
 // jsdom has the element but not its modal methods: open sets the attribute, close clears it
 // and says so, as a browser's does.
@@ -189,6 +190,8 @@ async function open(role: string, list: unknown[] = threads) {
           SessionProvider,
           null,
           createElement(ThreadStages, { graph: graph as never, title: 'Grokking at scale' }),
+          // Home, read beside the card, as the shell's Needs you reads it.
+          createElement(() => (useTool('ui.home'), null)),
         ),
       ),
     ),
@@ -475,4 +478,40 @@ test('a thread that can take no message now, its work finished and nothing asked
   await open('producer');
   await press(chip('running'));
   assert.equal(!!document.querySelector('dialog .thread-messages textarea'), true);
+});
+
+test('an answer sent refreshes Home, and a send whose result is unknown keeps its words locked', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  let fails = false;
+  serve('/sessions/threads/thr_run/messages', (_call, sent) =>
+    !sent.body
+      ? { body: messages(false) }
+      : fails
+        ? { status: 503, body: { error: { code: 'state_unavailable', message: 'Busy.' } } }
+        : { body: { message: { ...messages(false).messages[0], id: 'm2', body: sent.body } } },
+  );
+  await open('producer');
+  await press(chip('running'));
+  const homes = () => requests.filter((request) => request === 'POST /tools/ui.home').length;
+  const before = homes();
+  const box = document.querySelector('dialog .thread-messages')!;
+  const area = box.querySelector('textarea')!;
+  const type = async (value: string) =>
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!;
+      set.set!.call(area, value);
+      area.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+  await type('The test split.');
+  await act(async () => void box.querySelector('form')!.requestSubmit());
+  await settle(10);
+  // The question it answered leaves Needs you at once.
+  assert.equal(homes(), before + 1);
+  fails = true;
+  await type('And the seed.');
+  await act(async () => void box.querySelector('form')!.requestSubmit());
+  await settle(10);
+  // Its result unknown, the same words are sent again: they cannot be changed meanwhile.
+  assert.equal(area.readOnly, true);
 });

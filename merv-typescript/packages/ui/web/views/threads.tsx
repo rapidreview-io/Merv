@@ -10,7 +10,7 @@ import type {
   ThreadView,
   VisitView,
 } from '@merv/sessions/models';
-import { accountRequest, useTool } from '../api';
+import { accountRequest, refreshTools, useTool } from '../api';
 import {
   Ago,
   Live,
@@ -388,6 +388,8 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
     onSuccess: () => {
       setDraft('');
       read.reload();
+      // An answer takes its question off Needs you.
+      refreshTools('ui.home');
     },
   });
   const said = read.data;
@@ -452,7 +454,7 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
             aria-label={open ? 'Answer' : 'Message to this thread'}
             placeholder={open ? 'Answer' : 'Message'}
             value={draft}
-            readOnly={send.busy}
+            readOnly={send.locked}
             onChange={(event) => setDraft(event.target.value)}
           />
           <Submit
