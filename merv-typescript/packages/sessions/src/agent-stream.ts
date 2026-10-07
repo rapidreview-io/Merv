@@ -413,7 +413,7 @@ export function toolFailure(result: { output: string; error?: boolean }): string
     value = JSON.parse(result.output);
   } catch {}
   const object = value && typeof value === 'object' ? (value as Record<string, any>) : undefined;
-  const refused = !!object && (object.error !== undefined || object.ok === false);
+  const refused = !!object && (object.error != null || object.ok === false);
   if (!result.error && !refused) return undefined;
   const error = object?.error;
   const message =
