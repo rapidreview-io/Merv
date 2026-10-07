@@ -13,6 +13,7 @@ import type {
   WorkflowPolicy,
 } from '@merv/contracts';
 
+import { admitUpload } from './fixtures/admitted-upload.js';
 import { createApp } from './fixtures/app.js';
 import { deferred } from './fixtures/deferred.js';
 import { openState } from './fixtures/state.js';
@@ -200,6 +201,7 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
   assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'pending');
   const source = { ...f.source };
+  await admitUpload(f.app.ctx.state, command, oid('b'));
   const completing = f.app.ctx.codeWork.completeCommand(source, {
     ...worker.control,
     commandId: command.id,
@@ -246,6 +248,7 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   assert.equal(expected.observedAt, event.createdAt);
   const second = await f.queue(worker, 'second', oid('b'));
   await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
+  await admitUpload(f.app.ctx.state, second, oid('d'));
   await f.app.ctx.codeWork.completeCommand(f.source, {
     ...worker.control,
     commandId: second.id,
@@ -344,6 +347,7 @@ test('Capture reads compose with an existing transaction and retain legacy final
     command = await f.queue(worker);
   const ref = { kind: 'code-commit' as const, commandId: command.id };
   await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
+  await admitUpload(f.app.ctx.state, command, oid('b'));
   const before = await f.snapshot();
   await assert.rejects(
     async () =>
@@ -444,6 +448,7 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
     worker = await f.offer(),
     command = await f.queue(worker);
   await f.app.ctx.codeWork.nextCommand(f.source, worker.control);
+  await admitUpload(f.app.ctx.state, command, oid('b'));
   await f.app.ctx.codeWork.completeCommand(f.source, {
     ...worker.control,
     commandId: command.id,
