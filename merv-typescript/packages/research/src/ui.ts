@@ -62,7 +62,7 @@ const answers = [
 ] satisfies ResearchAnswer[];
 export const researchUiPlugin = {
   name: 'merv-research-ui',
-  inject: ['research', 'ui', 'workflows'],
+  inject: ['research', 'ui'],
   apply(ctx: Context) {
     const research = ctx.research;
     // The wave of work, framed by its cycle: it stands under Home at the head of the rail.
@@ -118,12 +118,7 @@ export const researchUiPlugin = {
             'invalid_input',
             'params.id names the record',
           );
-          return JSON.parse(
-            JSON.stringify({
-              record: await research.get(caller, id),
-              process: await ctx.workflows.process(caller, id, { checks: false }),
-            }),
-          ) as Json;
+          return JSON.parse(JSON.stringify(await research.page(caller, id))) as Json;
         },
         // Open work: a cycle that has not yet completed, been abandoned or failed.
         status: async (caller) => ({ count: await research.active(caller) }),

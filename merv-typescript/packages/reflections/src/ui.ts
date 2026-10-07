@@ -5,7 +5,7 @@ import type {} from './types.js';
 import { WAVE_STATES } from './running.js';
 export const reflectionUiPlugin = {
   name: 'merv-reflection-ui',
-  inject: ['reflections', 'ui', 'workflows'],
+  inject: ['reflections', 'ui'],
   apply(ctx: Context) {
     const reflections = ctx.reflections;
     ctx.effect(() =>
@@ -39,12 +39,7 @@ export const reflectionUiPlugin = {
             'invalid_input',
             'params.id names the record',
           );
-          return JSON.parse(
-            JSON.stringify({
-              reflection: await reflections.get(caller, id),
-              process: await ctx.workflows.process(caller, id, { checks: false }),
-            }),
-          ) as Json;
+          return JSON.parse(JSON.stringify(await reflections.page(caller, id))) as Json;
         },
       }),
     );

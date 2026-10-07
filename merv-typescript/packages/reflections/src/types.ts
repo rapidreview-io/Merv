@@ -9,6 +9,7 @@ import type {
   WorkRoute,
 } from '@merv/contracts';
 import type {} from 'cordis';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type { PaperChanges } from '@merv/paper/types';
 import type { ChangeSpec, Reflection, ReflectionLens, ReflectionSummary } from './models.js';
 export type * from './models.js';
@@ -71,6 +72,11 @@ export interface Reflections {
   create(caller: Caller, input: ReflectionCreate, tx?: Transaction): Promise<Reflection>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<Reflection>;
   list(caller: Caller, tx?: Transaction): Promise<Reflection[]>;
+  /**
+   * What a wave's page polls: the wave, and the stage it stands at read without running an
+   * action's check (its page draws no action).
+   */
+  page(caller: Caller, id: string): Promise<{ reflection: Reflection; process: ProcessGraph }>;
   /** Every wave as Home reads it, newest first: three statements, however many waves. */
   home(caller: Caller): Promise<ReflectionSummary[]>;
   lens(caller: Caller, id: string, tx?: Transaction): Promise<ReflectionLens>;

@@ -21,6 +21,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { CheckedTransitions } from '@merv/workflows/rules';
+import type { ProcessGraph } from '@merv/workflows/models';
 import { permits } from '@merv/scope/rules';
 import type { Experiments } from '@merv/experiments/types';
 import { problemDefined } from '@merv/paper/rules';
@@ -143,6 +144,16 @@ export class ResearchService implements Research {
 
   open() {
     check(!this.closed, 'research_unavailable', 'Research is unavailable', 503);
+  }
+  async page(
+    caller: Caller,
+    id: string,
+  ): Promise<{ record: ResearchRecord; process: ProcessGraph }> {
+    caller = structuredClone(caller);
+    return await this.state.snapshot(async () => ({
+      record: await this.get(caller, id),
+      process: await this.workflows.process(caller, id, { checks: false }),
+    }));
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<ResearchRecord> {
     this.open();
