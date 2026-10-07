@@ -1,9 +1,14 @@
 import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { type WorkflowExecutionPolicy } from '@merv/contracts';
-import { type ActiveState, reviewing, rolesFor } from './program.js';
+import { type ActiveState, designCheckout, reviewing, rolesFor } from './program.js';
 
 // The fixed tools each assignment of an experiment is granted.
+
+/** Whether an assignment changes nothing in Git: every review, and from experiment@41 a design,
+ *  which reads its pinned base in a checkout it keeps nothing of. */
+export const readsOnly = (state: ActiveState, version: number) =>
+  reviewing(state) || (state === 'planned' && designCheckout(version));
 
 export function execution(state: ActiveState, version: number): WorkflowExecutionPolicy {
   const experiment = { experimentId: target('instanceId') };
@@ -13,13 +18,15 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
       ? ['submit_design', 'abandon', 'mark_failed']
       : ['submit_results', 'retry_running', 'abandon', 'mark_failed'];
   return {
-    readOnly: reviewing(state),
+    readOnly: readsOnly(state, version),
     workspace:
       state === 'running'
         ? codeWorkspace('work', 'experiments')
         : state === 'experiment_review'
           ? codeWorkspace('review', 'experiment-reviews')
-          : { mode: 'none' },
+          : designCheckout(version)
+            ? codeWorkspace('read', 'experiment-designs')
+            : { mode: 'none' },
     tools: [
       grant(
         'workflow.status_and_next',

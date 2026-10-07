@@ -34,6 +34,7 @@ import type {
 import type { AgentObservations } from './observations.js';
 import {
   HOLD_PROVIDER,
+  MODEL_BUDGET_PROVIDER,
   isoNow,
   liveTargets,
   ordinary as unmanaged,
@@ -42,6 +43,7 @@ import {
   targetKey,
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
+import type { ManagedBindingRow } from './managed-types.js';
 import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
 import { INQUIRY_VISIT_SECONDS, type InquiryCandidate } from './inquiries.js';
 import { withholds } from './budgets.js';
@@ -355,6 +357,52 @@ export class SessionDispatch {
               },
             ]
           : [],
+      },
+      tx,
+    );
+  }
+  /**
+   * The model budget's wait on a rented machine's work, said on the work so it reaches Needs you
+   * (an operator's move: only a person signed in raises their own limit), and withdrawn once the
+   * budget lets the machine take it. It names the revision that waits, so moving on withdraws it.
+   */
+  private async modelWaits(row: ManagedBindingRow, tx: Transaction): Promise<boolean> {
+    const wait = await this.hooks.managed.modelWait(row, tx);
+    const instanceId = row.work_instance_id;
+    if (!instanceId) return !!wait;
+    const revision = wait
+      ? (await this.workflows.revisions(row.project_id, [instanceId], tx)).get(instanceId)?.revision
+      : undefined;
+    await this.reportModelWait(row.project_id, instanceId, wait && revision, tx);
+    return !!wait;
+  }
+  /** The model budget's wait on `instanceId` at `revision`, or none: see `modelWaits`. */
+  async reportModelWait(
+    projectId: string,
+    instanceId: string,
+    revision: number | null | undefined,
+    tx: Transaction,
+  ): Promise<void> {
+    await this.workflows.replaceBlockers(
+      {
+        projectId,
+        instanceId,
+        provider: MODEL_BUDGET_PROVIDER,
+        blockers:
+          typeof revision === 'number'
+            ? [
+                {
+                  key: 'model_budget',
+                  code: 'model_budget_exhausted',
+                  cause: 'model_budget',
+                  status: 429,
+                  message: 'Daily model tokens used up; resumes at 00:00 UTC or raise your limit',
+                  next: 'Wait for the daily reset at 00:00 UTC, or raise your daily model token limit',
+                  whose: 'operator',
+                  revision,
+                },
+              ]
+            : [],
       },
       tx,
     );
@@ -879,6 +927,10 @@ export class SessionDispatch {
       };
       if (!(await open())) return { session: null, reason: await decided('dispatch_disabled') };
       if (managed) await this.hooks.managed.admits(managed.row, tx);
+      // A rented machine takes no work while its person has no model tokens left today: the
+      // relay would refuse the visit's calls. The wait is said on the work, and lifts with it.
+      if (managed && (await this.modelWaits(managed.row, tx)))
+        return { session: null, reason: await decided('model_budget_exhausted') };
       // A hosted machine stops at its allocation's end, so its step must end five minutes
       // before. A work host starts a step only with all of the step's time left (its owner rents
       // a fresh host for the next); another machine, with ten minutes. An inquiry needs only its

@@ -39,6 +39,7 @@ import type {
 } from '@merv/fleet/types';
 import type {
   Sessions,
+  ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
@@ -157,7 +158,7 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
     },
     async inspectOwned(_owner: FleetOwner, id: string) {
       const a = allocations.find((item) => item.id === id);
-      assert.ok(a);
+      if (!a) throw new MervError('fleet_allocation_not_found', 'Fleet allocation not found', 404);
       return a;
     },
     async listOwned(_owner: FleetOwner, wanted: string[]) {
@@ -328,6 +329,46 @@ test('a refused model reservation stops new Fleet rents until its payer has enou
   await f.adapter.reconcile();
   assert.deepEqual(f.requests, [f.caller.projectId]);
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
+});
+
+test('a rented machine’s person with a spent day gives it no work until their limit allows', async (t) => {
+  const f = await fixture(t);
+  const person = digest({ issuer, subject: 'founder' });
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  allocation.person = person;
+  const binding = { allocationId: allocation.id } as ManagedRunnerBindingIdentity;
+  const wait = () => f.state.transaction((tx) => f.validator().modelBudget!(binding, tx));
+  assert.equal(await wait(), null);
+  // The relay refused a call that today's remaining tokens cannot fund.
+  const today = new Date().toISOString().slice(0, 10);
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?)',
+      person,
+      today,
+      19_926_575,
+    );
+    await tx.run(
+      'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?)',
+      person,
+      today,
+      109_851,
+    );
+  });
+  assert.deepEqual(await wait(), {
+    resetsAt: new Date(Date.parse(`${today}T00:00:00.000Z`) + 86_400_000).toISOString(),
+  });
+  await setDailyTokens(f.state, person, 20_100_000);
+  assert.equal(await wait(), null);
+  // A machine Fleet no longer knows waits on nobody's budget.
+  assert.equal(
+    await f.state.transaction((tx) =>
+      f.validator().modelBudget!({ allocationId: 'flt_gone' } as ManagedRunnerBindingIdentity, tx),
+    ),
+    null,
+  );
 });
 
 test('a step’s payer is its person, read without a lookup; a voucher that cannot be read refuses', async (t) => {

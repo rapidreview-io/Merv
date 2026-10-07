@@ -16,9 +16,18 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
 
 /**
  * The executable contracts. Each grants the large-upload tools, which refuse where the blob
- * store cannot sign uploads; the twin without them (experiment@36) is retired.
+ * store cannot sign uploads; the twin without them (experiment@36) is retired. experiment@41
+ * gives the design and its review a read-only checkout of the pinned base (designCheckout);
+ * experiment@40 stays registered for the experiments that run on it.
  */
-export const programVersions: readonly number[] = [40];
+export const programVersions: readonly number[] = [40, 41];
+
+/**
+ * Whether a design and its review read the experiment's pinned base, project main with its
+ * accepted prerequisites' code, in a read-only checkout. Before experiment@41 they had none, and
+ * a planner told to write against that code could not open it (prod, 2026-10-07).
+ */
+export const designCheckout = (version: number) => version >= 41;
 
 export function programContract(version: number) {
   check(
@@ -39,7 +48,7 @@ export const runningNode = {
 };
 
 /** The contract a new experiment runs on. */
-export const programVersion = 40;
+export const programVersion = 41;
 
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.

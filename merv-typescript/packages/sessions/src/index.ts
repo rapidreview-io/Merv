@@ -782,6 +782,13 @@ export class LeasedSessions implements Sessions {
     outcome?: SessionOutcome,
   ): Promise<Session> {
     if (!live(session)) return session;
+    // A rented machine's visit that failed while its person had no model tokens left was cut off
+    // by the model relay: nothing about the work was wrong, so it counts against nothing.
+    const budget =
+      outcome && failureReasons.has(outcome)
+        ? await this.managed.sessionModelWait(session.id, tx)
+        : null;
+    if (budget) outcome = 'budget_exhausted';
     session.status = status;
     session.closedAt = isoNow(this.clock);
     session.closeReason = reason;
@@ -817,6 +824,13 @@ export class LeasedSessions implements Sessions {
         ? 'offer_expired'
         : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
+    if (budget)
+      await this.dispatch.reportModelWait(
+        session.projectId,
+        session.instanceId,
+        session.expectedRevision,
+        tx,
+      );
     // A session that may be continued leaves its thread dormant, its credential revoked above.
     await this.threads.closed(session, reason, tx);
     await this.state.appendEvent(tx, {

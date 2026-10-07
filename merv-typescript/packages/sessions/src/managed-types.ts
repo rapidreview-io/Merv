@@ -29,6 +29,15 @@ export type ManagedRunnerValidator = {
   retired(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
   /** Whether this machine's image brokers Hugging Face downloads; without it, none does. */
   huggingFace?(binding: ManagedRunnerBindingIdentity): boolean;
+  /**
+   * When the person this machine's work is charged to can spend no more model tokens today, the
+   * moment that ends; else null. The validator's budget, which Sessions only reads: before it
+   * offers the machine work, and when one of its visits fails.
+   */
+  modelBudget?(
+    binding: ManagedRunnerBindingIdentity,
+    tx: Transaction,
+  ): Promise<{ resetsAt: string } | null>;
 };
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];

@@ -23,7 +23,13 @@ import type {
 import type { Fleet, FleetAllocation, FleetOwner, ManagedModelGrant } from './types.js';
 import { personKey } from './model-ledger.js';
 import { hostedCodexCapabilities, hostedCodexPlatform } from './hosted-codex.js';
-import { codexModelRelay, hostedGrant, modelBudgetStatus, setDailyTokens } from './codex-relay.js';
+import {
+  budgetIn,
+  codexModelRelay,
+  hostedGrant,
+  modelBudgetStatus,
+  setDailyTokens,
+} from './codex-relay.js';
 import { modelMigrations } from './schema.js';
 
 /** Loading the adapter is the switch. Fleet still owns all machine limits and lifecycle. */
@@ -184,6 +190,20 @@ export class FleetWorkflowAdapter implements FleetOwner {
           retired: async (binding, tx) => await this.fleet.retired(binding.allocationId, tx),
           // Hosted Codex's image brokers Hugging Face downloads through HF_TOKEN/HF_ENDPOINT.
           huggingFace: (binding) => canonical(binding.platform) === canonical(hostedCodexPlatform),
+          // The person a machine is rented for pays its model calls: while they have no tokens
+          // left today, it takes no new work, and a visit the relay cut off waits too.
+          modelBudget: async (binding, tx) => {
+            let person: string | undefined;
+            try {
+              person = (await this.fleet.inspectOwned(this, binding.allocationId, tx)).person;
+            } catch (error) {
+              if (error instanceof MervError && [403, 404].includes(error.status)) return null;
+              throw error;
+            }
+            if (!person) return null;
+            const budget = await budgetIn(tx, person, this.config.dailyTokensPerPerson);
+            return budget.blocked ? { resetsAt: budget.resetsAt } : null;
+          },
         }),
       );
       // Fleet's sections of system.status: the project's, and a leased worker's own budget.

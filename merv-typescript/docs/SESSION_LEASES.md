@@ -83,6 +83,14 @@ the same thirty seconds a failure does; three such closes in a row are shown in 
 as `work_deferred`, with the cause. A `completed` outcome is still recorded only by the
 worker's own handoff, never by a release.
 
+A rented machine's person pays its model calls, and Fleet's relay refuses a call past their
+daily ceiling (`403 fleet_model_ceiling`), so Codex exits. A failed close of such a machine's
+visit while Fleet reports that person's day spent is recorded as `budget_exhausted` instead:
+it counts against nothing. While the day stays spent the machine is offered no work
+(`model_budget_exhausted`), and the work carries an operator's blocker, "Daily model tokens used
+up; resumes at 00:00 UTC or raise your limit", which the next offer once the budget allows
+withdraws. Sessions only reads the budget, through the managed validator's `modelBudget`.
+
 Work whose workspace policy names a driver is offered only to a machine whose heartbeat lists
 that driver among its `capabilities`; the automatic lease answers `runner_incompatible` when
 that is all that is left of the queue, and a hand offer to such a machine is refused when it

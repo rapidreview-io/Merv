@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers one current contract, `experiment@40`, on which Sandboxes attaches native compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
+independent review gates. It registers two current contracts, `experiment@41` for new experiments and `experiment@40` for those pinned to it, on which Sandboxes attaches native compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 ## Where it sits
 
@@ -142,4 +142,4 @@ terminal corpus capture. Reflection waves and code consolidation remain separate
 implementation work.
 This program does not publish code.
 
-New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). Planning and design review use scratch space; execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.
+New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). From `experiment@41`, planning and design review read a read-only checkout of the experiment's pinned base, project main with its accepted prerequisites' code, which the planner's lease pins (on `experiment@40` they use scratch space and are told to read the prerequisites' delivery evidence instead); execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.
