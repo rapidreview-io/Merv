@@ -183,13 +183,9 @@ test('under the map: how many are working, what needs a person in red, and each 
   );
   assert.ok(!card('work:wf_ablate').classList.contains('wmap-node--attn'));
   assert.ok(card('work:wf_ablate').textContent!.includes('Launch failed 2 times, retrying'));
-  // The line ends in the way to every agent and machine there has been: the page the rail
-  // no longer lists.
+  // The line ends in the way to every agent and machine there has been: the Agents page.
   const more = $('.live-head-line a.live-more')!;
-  assert.deepEqual(
-    [more.textContent, more.getAttribute('href')],
-    ['Agents and machines', '/sessions'],
-  );
+  assert.deepEqual([more.textContent, more.getAttribute('href')], ['Agents', '/sessions']);
   // The Sessions line carries dispatch and its one control, which never wears the accent.
   const pause = button('Pause dispatch')!;
   assert.ok(pause && !pause.classList.contains('btn--primary'));

@@ -33,8 +33,9 @@ const unwell = (row: Row) =>
 
 /**
  * One destination in the rail: a thin line glyph, its label, and, on the ground
- * pill, the place you are in. Only Home carries a count; a second dot appears
- * only when the row behind it is unwell.
+ * pill, the place you are in. Only Home carries a count; a row whose owner sets a
+ * badge (Agents: working·waiting) carries that; a second dot appears only when the
+ * row behind it is unwell.
  */
 function RailRow({
   to,
@@ -42,6 +43,7 @@ function RailRow({
   icon,
   active,
   count,
+  badge,
   sick,
 }: {
   to: string;
@@ -49,6 +51,7 @@ function RailRow({
   icon: string;
   active: boolean;
   count?: number;
+  badge?: Row['status']['badge'];
   sick?: Row;
 }) {
   const counted = count !== undefined && count > 0;
@@ -58,12 +61,23 @@ function RailRow({
       className={cx('rail-row', active && 'active')}
       aria-current={active ? 'page' : undefined}
       // A bare number beside a word is heard as one token; the count says what it counts.
-      aria-label={counted ? `${label}, ${count} ${count === 1 ? 'needs' : 'need'} you` : undefined}
+      aria-label={
+        counted
+          ? `${label}, ${count} ${count === 1 ? 'needs' : 'need'} you`
+          : badge
+            ? `${label}, ${badge.label}`
+            : undefined
+      }
       title={sick?.status.detail}
     >
       <RowIcon name={icon} />
       <span className="rail-row-label">{label}</span>
       {counted && <span className="rail-count">{count}</span>}
+      {!counted && badge && (
+        <span className="rail-badge" aria-hidden="true">
+          {badge.text}
+        </span>
+      )}
       {sick && (
         <span
           className={cx('rail-dot', sick.status.state)}
@@ -191,6 +205,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
       label={row.label}
       icon={iconOf(row)}
       active={holds(row)}
+      badge={row.status.badge}
       sick={unwell(row)}
     />
   );

@@ -1,5 +1,5 @@
 /**
- * The Sessions page, rendered. Each test states one thing the page must never do:
+ * The machines under the Agents page, rendered. Each test states one thing the page must never do:
  * blank a list that is still correct, call a lease lapsed on a clock its data
  * never saw, hide its own subject, or report a halt it cannot vouch for.
  */
@@ -11,7 +11,7 @@ import { leaseLiveness, type LeaseFacts } from '@merv/sessions/liveness';
 const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
-const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
+const { MachinesPanel } = await import('../packages/ui/web/views/sessions.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
 const { leaseLiveness: drawn } = await import('../packages/ui/web/views/threads.js');
 const { clock, clockOf } = await import('../packages/ui/web/liveness.js');
@@ -44,7 +44,7 @@ const page = () =>
     MemoryRouter,
     { initialEntries: ['/sessions'] },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    createElement(AgentsPage as any, { row, shell, me: 'actor_me' }),
+    createElement(MachinesPanel as any, { row, shell, me: 'actor_me' }),
   );
 
 /** One project's status, timed from whatever the clock reads when it is asked. */
@@ -109,49 +109,6 @@ const worded = <T extends { observedAt: string; sessions: unknown }>(read: T): T
   })),
 });
 const read = (over: Record<string, unknown> = {}) => ({ body: { result: status(over) } });
-/** A thread of the project as Sessions lists it: the work it is on, its stage and its visits. */
-const thread = (id: string, name: string, over: Record<string, unknown> = {}) => ({
-  id,
-  instanceId: `wf_${id}`,
-  state: 'running',
-  role: 'producer',
-  status: 'dormant',
-  name,
-  workflow: 'task',
-  visits: [
-    {
-      sessionId: `ses_${id}`,
-      status: 'released',
-      offeredAt: new Date(Date.now() - 600_000).toISOString(),
-      startedAt: new Date(Date.now() - 590_000).toISOString(),
-      endedAt: new Date(Date.now() - 60_000).toISOString(),
-      outcome: 'submitted',
-      launched: true,
-      resumed: false,
-      runnerId: 'lab-01',
-      hasConversation: true,
-    },
-  ],
-  ...over,
-});
-const live = thread('agent_1', 'Sweep weight decay', {
-  status: 'live',
-  visits: [
-    {
-      sessionId: 'sess_1',
-      status: 'active',
-      offeredAt: new Date(Date.now() - 600_000).toISOString(),
-      startedAt: new Date(Date.now() - 540_000).toISOString(),
-      launched: true,
-      resumed: false,
-      runnerId: 'lab-01',
-      hasConversation: true,
-      liveness: { verdict: 'active', tone: 'ok', rest: [] },
-    },
-  ],
-});
-// Every page reads the project's threads; a test that opens no row only needs them there.
-beforeEach(() => serve('/sessions/threads', { body: { threads: [live], next: null } }));
 
 const fixed = Date.parse('2026-09-16T12:00:00.000Z');
 const before = (seconds: number) => new Date(fixed - seconds * 1000).toISOString();
@@ -247,8 +204,6 @@ test('the page states its subject without a click, in one liveness vocabulary', 
     'Leases 1 · 1 live',
     'Sweep weight decay',
     'lab-01',
-    // The project's agents: Sessions' threads, the live one with the work it is on.
-    'Agents 1 · 1 live',
     // The runner says why its last lease request got nothing.
     'declined',
     'capacity full',
@@ -258,13 +213,13 @@ test('the page states its subject without a click, in one liveness vocabulary', 
   assert.equal(document.querySelector('.lease-row > span')!.textContent, 'lab-01');
   // What waits for an agent is on the Work page's map, and is not listed here a second time.
   assert.ok(!shown.includes('Ready to assign'));
-  // The rail does not list this page: it is a step under Work, and says the way back.
+  // The machines stand under the Agents page, which the rail lists: no way back is drawn.
   const links = () =>
     [...document.querySelectorAll('.sessions-ops > p a')].map((link) => [
       link.textContent,
       link.getAttribute('href'),
     ]);
-  assert.deepEqual(links(), [['← Work', '/work']]);
+  assert.deepEqual(links(), []);
   // Where Fleet serves, every machine it was asked for is one step further.
   await unmount();
   const fleet = { ...row, id: 'fleet', label: 'Fleet requests', path: '/fleet' };
@@ -273,17 +228,14 @@ test('the page states its subject without a click, in one liveness vocabulary', 
       MemoryRouter,
       { initialEntries: ['/sessions'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(AgentsPage as any, {
+      createElement(MachinesPanel as any, {
         row,
         shell: { ...shell, rows: [work, row, fleet] },
         me: 'x',
       }),
     ),
   );
-  assert.deepEqual(links(), [
-    ['← Work', '/work'],
-    ['Fleet requests', '/fleet'],
-  ]);
+  assert.deepEqual(links(), [['Fleet requests', '/fleet']]);
   assert.ok(!shown.includes('Operations'), 'the subject must not sit behind a fold');
   assert.ok(!shown.includes('Extend'), 'no control the system cannot honour');
 });
@@ -437,7 +389,7 @@ test('a lease opens on the row that lists its workflow, without reading any owne
       MemoryRouter,
       { initialEntries: ['/sessions'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(AgentsPage as any, { row, shell: { ...shell, rows }, me: 'actor_me' }),
+      createElement(MachinesPanel as any, { row, shell: { ...shell, rows }, me: 'actor_me' }),
     ),
   );
   const linkOf = async (name: string) => {
@@ -461,101 +413,6 @@ test('a lease opens on the row that lists its workflow, without reading any owne
     !requests.some((path) => /task\.list|experiment\.list/.test(path)),
     requests.join(', '),
   );
-});
-
-test('the Agents page lists threads, live first, and older ones a press further', async (t) => {
-  t.after(unmount);
-  serve('/tools/ui.read', () => read());
-  serve('/sessions/threads', {
-    body: { threads: [live, thread('agent_2', 'Check the config')], next: '7' },
-  });
-  serve('/sessions/threads?before=7', {
-    body: { threads: [thread('agent_3', 'An older task')], next: null },
-  });
-  await mount(page());
-  const names = () =>
-    [...document.querySelectorAll('.unit-row--thread .unit-row-name')].map((n) => n.textContent);
-  assert.deepEqual(names(), ['Sweep weight decay', 'Check the config']);
-  assert.ok(text().includes('Agents 2+ · 1 live'), text());
-  await click('Show older');
-  assert.deepEqual(names(), ['Sweep weight decay', 'Check the config', 'An older task']);
-  assert.equal(
-    [...document.querySelectorAll('button')].find((item) => item.textContent === 'Show older'),
-    undefined,
-  );
-  // One read of the threads, none of a whole agent history.
-  assert.ok(!requests.some((request) => request.includes('/sessions/agents/')));
-});
-
-test('after Show older, a thread a newer one pushes off the first page stays, and the next page follows the oldest shown', async (t) => {
-  t.after(unmount);
-  serve('/tools/ui.read', () => read());
-  const at = (id: string, name: string, seq: number) => thread(id, name, { seq: String(seq) });
-  serve('/sessions/threads', (call) =>
-    call === 1
-      ? { body: { threads: [live, at('a5', 'Five', 5), at('a4', 'Four', 4)], next: '4' } }
-      : // A newer thread a6 since: the first page now holds a6 and a5, and a4 has dropped off.
-        { body: { threads: [live, at('a6', 'Six', 6), at('a5', 'Five', 5)], next: '5' } },
-  );
-  serve('/sessions/threads?before=4', {
-    body: { threads: [at('a3', 'Three', 3)], next: '3' },
-  });
-  serve('/sessions/threads?before=3', {
-    body: { threads: [at('a2', 'Two', 2)], next: null },
-  });
-  await mount(page());
-  const names = () =>
-    [...document.querySelectorAll('.unit-row--thread .unit-row-name')].map((n) => n.textContent);
-  await click('Show older');
-  assert.deepEqual(names(), ['Sweep weight decay', 'Five', 'Four', 'Three']);
-  await settle(4600);
-  assert.deepEqual(names(), ['Sweep weight decay', 'Six', 'Five', 'Four', 'Three']);
-  await click('Show older');
-  assert.deepEqual(names(), ['Sweep weight decay', 'Six', 'Five', 'Four', 'Three', 'Two']);
-});
-
-test('a thread row opens the thread view: a failed visit shows its outcome and exit reason', async (t) => {
-  t.after(unmount);
-  // jsdom has the element but not its modal methods.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Dialog = (window as any).HTMLDialogElement.prototype;
-  Dialog.showModal ??= function (this: HTMLDialogElement) {
-    this.setAttribute('open', '');
-  };
-  serve('/tools/ui.read', () => read());
-  const crashed = thread('agent_2', 'Check the config', {
-    status: 'retired',
-    visits: [
-      {
-        ...thread('x', 'x').visits[0],
-        outcome: 'crash_loop',
-        why: 'local_process_exit_code_7',
-      },
-    ],
-  });
-  serve('/sessions/threads', { body: { threads: [crashed], next: null } });
-  serve('/sessions/threads/agent_2/calls', {
-    body: {
-      threadId: 'agent_2',
-      calls: [],
-      totals: { calls: 0, completed: 0, inputTokens: 0, outputTokens: 0 },
-    },
-  });
-  await mount(page());
-  await act(async () => document.querySelector<HTMLButtonElement>('.unit-row--thread')!.click());
-  await settle(20);
-  const dialog = document.querySelector('dialog')!;
-  assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · running · retired');
-  assert.ok(dialog.textContent!.includes('Check the config'));
-  assert.match(dialog.querySelector('.ruled-row')!.textContent!, /crash loop · exit 7/);
-  // Its calls are the view's other tab.
-  const calls = [...dialog.querySelectorAll('button')].find(
-    (item) => item.textContent === 'Calls',
-  )!;
-  await act(async () => calls.click());
-  await settle(20);
-  assert.ok(requests.includes('GET /sessions/threads/agent_2/calls'));
-  assert.match(dialog.textContent!, /0 calls/);
 });
 
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
@@ -594,12 +451,12 @@ test('a failed poll degrades to one line and never blanks rows that are correct'
       : { status: 500, body: { error: { code: 'server_error', message: 'Upstream failed' } } },
   );
   await mount(page());
-  assert.ok(text().includes('Agents 1 · 1 live'));
+  assert.ok(text().includes('Leases 1 · 1 live'));
   await settle(4_600);
   const shown = text();
   assert.ok(shown.includes('Could not refresh'), `the failure must be stated: ${shown}`);
   assert.ok(
-    shown.includes('Agents 1 · 1 live'),
+    shown.includes('Leases 1 · 1 live'),
     `the rows that are still correct must stay: ${shown}`,
   );
   assert.ok(shown.includes('Sweep weight decay'), shown);

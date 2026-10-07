@@ -295,15 +295,42 @@ export interface ProjectThread extends ThreadView {
   workflow: string;
   /**
    * Where a thread of a page stands among the project's threads; passed back as `before`, it
-   * reads the page older than it. A live thread listed first has none.
+   * reads the page older than it. A thread listed first for its attention has none.
    */
   seq?: string;
+  /** The question its agent asked that is still open, for a reader of its work. */
+  question?: { id: string; question: string; askedAt: string };
+  /** The newest message to it, and whether its agent has read it yet, for a reader of its work. */
+  message?: Pick<
+    SessionMessage,
+    'id' | 'senderActorId' | 'body' | 'createdAt' | 'acknowledgedAt' | 'reply'
+  >;
 }
-/** The project's threads: every live one, then the newest others, a page at a time. */
+/**
+ * The project's threads: on the first page every one that wants attention (live, asking its
+ * owner, or holding a message its agent has not read yet), then the newest others, a page at a
+ * time.
+ */
 export interface ProjectThreads {
   threads: ProjectThread[];
   /** Passed back as `before`, it reads the next older page; null at the oldest. */
   next: string | null;
+}
+/** How many of the project's threads are live, and how many ask their owner. */
+export interface ThreadCounts {
+  live: number;
+  waiting: number;
+}
+/**
+ * One frame of the project's live feed (`GET /sessions/live`), an operator's read: the visits
+ * live now, each with its thread, and for each visit that said something new, its events. A
+ * visit's first events, and those of one that said more than the feed keeps since the last
+ * frame, start its tail over (`reset`); the rest follow what the page holds. Long texts are cut
+ * to their ends and tool payloads to their starts: the feed is a glance, the thread the record.
+ */
+export interface LiveFeedFrame {
+  live: { sessionId: string; threadId: string }[];
+  visits: { sessionId: string; threadId: string; reset?: true; events: AgentStreamEvent[] }[];
 }
 /** A thread's conversation, an operator's read: each visit's events, oldest visit first. */
 export interface ThreadConversation {

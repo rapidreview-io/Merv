@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { runningKey } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/workflows/models';
@@ -52,8 +52,11 @@ export const leaseLiveness = ({ liveness }: { liveness: LeaseLiveness }, now: Cl
 export const holding = ({ liveness }: { liveness: LeaseLiveness }) =>
   liveness.verdict === 'offered' || liveness.verdict === 'active';
 
-const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+export const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+/** The visit whose agent runs now: the one whose stream a page reads. */
 const active = (visit: VisitView) => visit.status === 'active';
+/** A visit that holds its lease, offered or taken up, as Sessions calls its thread live. */
+const leased = (visit: VisitView) => visit.status === 'offered' || visit.status === 'active';
 /** A visit that ended before its agent ran. */
 const failed = (visit: VisitView) =>
   !visit.launched && (visit.status === 'released' || visit.status === 'expired');
@@ -80,7 +83,7 @@ function visitNames(visits: readonly VisitView[]): Map<string, string> {
 }
 /** The visit holding its lease, as Sessions words it, with the machine it runs on. */
 const liveLine = (thread: ThreadView, now: Clock) => {
-  const visit = thread.visits.find(active);
+  const visit = thread.visits.find(leased);
   return visit?.liveness
     ? [leaseLiveness({ liveness: visit.liveness }, now).phrase, visit.runnerId]
         .filter(Boolean)
@@ -91,7 +94,7 @@ const liveLine = (thread: ThreadView, now: Clock) => {
  * A live visit whose lease ran out: its machine went quiet or offline, and Sessions' liveness
  * says `lapsed`, the one verdict it calls bad.
  */
-const lapsed = (thread: ThreadView) =>
+export const lapsed = (thread: ThreadView) =>
   thread.visits.some((visit) => visit.liveness?.verdict === 'lapsed');
 export const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
@@ -101,8 +104,8 @@ export function visitCount(thread: ThreadView) {
   const launches = thread.visits.filter(failed).length;
   return { visits: thread.visits.length - launches, launches };
 }
-/** Whether a visit of the thread holds its lease now. */
-export const isLive = (thread: ThreadView) => thread.visits.some(active);
+/** Whether a visit of the thread holds its lease now, as Sessions says of the thread. */
+export const isLive = (thread: ThreadView) => thread.status === 'live';
 /** When the thread last did anything: the newest moment any of its visits records. */
 export const lastActive = (thread: ThreadView) =>
   thread.visits
@@ -369,33 +372,101 @@ function Calls({ thread, names }: { thread: ThreadView; names: Map<string, strin
   );
 }
 
+/** The tool that asks a thread that takes no message: a short visit that answers and stops. */
+const ASK = 'session.ask_thread';
+
 /**
- * What passed between the thread and the people over it, oldest first, and the box that sends
- * it a message, which its live or next visit reads. A question its agent asked stands over the
- * box, which answers it. Only someone who may write to the project is offered the box, and only
- * while the thread takes a message: live, dormant on open work, or answering its question.
+ * The box that speaks to a thread, for someone who may write to the project. A thread that takes
+ * a message now (live, dormant on open work, or answering its question) is sent one, which its
+ * live or next visit reads at its next tool call. Any other is asked, where Sessions offers
+ * `session.ask_thread`: a short visit resumes its conversation, answers and stops. Where it does
+ * not, the box stands disabled.
+ */
+export function ThreadCompose({
+  thread,
+  answering = false,
+  onSent,
+}: {
+  thread: ThreadView;
+  /** Its agent asked a question this answers. */
+  answering?: boolean;
+  onSent?(): void;
+}) {
+  const actor = useActor();
+  const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
+  const sends = thread.takesMessage || answering;
+  const may = !!actor && writes(actor);
+  const catalog = useTool<{ tools?: { name: string }[] }>(sends || !may ? null : '/tools');
+  const asks = !sends && !!catalog.data?.tools?.some((tool) => tool.name === ASK);
+  const [draft, setDraft] = useState('');
+  const send = useCommand<{ message?: { id?: unknown } } | null>({
+    tool: sends ? path : ASK,
+    send: sends
+      ? (body) => accountRequest(path, { method: 'POST', body, scoped: true })
+      : undefined,
+    validate: (result) =>
+      sends ? typeof result?.message?.id === 'string' : !!result && typeof result === 'object',
+    onSuccess: () => {
+      setDraft('');
+      // The thread's messages, the Agents page's cards, and Needs you, which an answer clears.
+      refreshTools(path, '/sessions/threads', 'ui.home');
+      onSent?.();
+    },
+  });
+  if (!may) return null;
+  const word = answering ? 'Answer' : sends ? 'Message' : 'Ask';
+  const off = !sends && !asks;
+  return (
+    <form
+      className="thread-compose"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const body = draft.trim();
+        if (!off && body) void send.submit(sends ? { body } : { threadId: thread.id, body });
+      }}
+    >
+      <textarea
+        className="textarea"
+        rows={2}
+        maxLength={8000}
+        aria-label={word}
+        placeholder={word}
+        value={draft}
+        disabled={off}
+        readOnly={send.locked}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <Submit
+        label={sends ? 'Send' : 'Ask'}
+        saving="Sending…"
+        busy={send.busy}
+        retry={send.retry}
+        disabled={off || !draft.trim()}
+      />
+      {send.error && (
+        <p className="error-message" role="alert">
+          {send.error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/** Whether a message has reached its agent: Sent until its agent acknowledges it, then Read. */
+export const delivery = (message: { acknowledgedAt: string | null }) =>
+  message.acknowledgedAt ? 'Read' : 'Sent';
+
+/**
+ * What passed between the thread and the people over it, oldest first, and the box that speaks
+ * to it. A question its agent asked stands over the box, which answers it.
  */
 export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
   const actor = useActor();
   const nameOf = namesOf(useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data);
   const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
   const read = useTool<ThreadMessages>(path, {}, { every: isLive(thread) ? 5000 : 15_000 });
-  const [draft, setDraft] = useState('');
-  const send = useCommand<{ message: { id: string } }>({
-    tool: path,
-    send: (body) => accountRequest(path, { method: 'POST', body, scoped: true }),
-    validate: (result) => typeof result.message?.id === 'string',
-    onSuccess: () => {
-      setDraft('');
-      read.reload();
-      // An answer takes its question off Needs you.
-      refreshTools('ui.home');
-    },
-  });
   const said = read.data;
   const open = said?.questions.filter((question) => !question.answeredAt).at(-1);
-  // Sessions says whether the thread takes a message now; an open question it asked always does.
-  const can = !!actor && writes(actor) && (thread.takesMessage || !!open);
   const lines = said
     ? [
         ...said.questions
@@ -404,7 +475,7 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
         ...said.messages.map((message) => ({ at: message.createdAt, key: message.id, message })),
       ].sort((a, b) => a.at.localeCompare(b.at))
     : [];
-  if (!lines.length && !open && !can) return null;
+  if (!lines.length && !open && !(actor && writes(actor))) return null;
   return (
     <section className="thread-messages" aria-label="Messages">
       {lines.length > 0 && (
@@ -423,8 +494,7 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
                   {line.message.senderActorId === actor?.id
                     ? 'You'
                     : (nameOf(line.message.senderActorId) ?? 'Someone')}{' '}
-                  · <Ago at={line.at} />
-                  {line.message.acknowledgedAt ? ' · read' : ' · queued'}
+                  · <Ago at={line.at} /> · {delivery(line.message)}
                 </span>
                 <p className="wrap">{line.message.body}</p>
                 {line.message.reply && <p className="wrap muted">↳ {line.message.reply}</p>}
@@ -439,39 +509,79 @@ export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
           <p className="wrap">{open.question}</p>
         </div>
       )}
-      {can && (
-        <form
-          className="thread-compose"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (draft.trim()) void send.submit({ body: draft.trim() });
-          }}
-        >
-          <textarea
-            className="textarea"
-            rows={2}
-            maxLength={8000}
-            aria-label={open ? 'Answer' : 'Message to this thread'}
-            placeholder={open ? 'Answer' : 'Message'}
-            value={draft}
-            readOnly={send.locked}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <Submit
-            label="Send"
-            saving="Sending…"
-            busy={send.busy}
-            retry={send.retry}
-            disabled={!draft.trim()}
-          />
-          {send.error && (
-            <p className="error-message" role="alert">
-              {send.error}
-            </p>
-          )}
-        </form>
-      )}
+      <ThreadCompose thread={thread} answering={!!open} onSent={read.reload} />
     </section>
+  );
+}
+
+/**
+ * One thread as a card, on the Agents page and in a unit's Agents tab alike: its title and the
+ * line under it, a green dot while a visit holds its lease (red once that lease lapsed), what
+ * the page sets inside it, and its role, visits and last activity at its foot. A press anywhere
+ * on it but a control inside it opens the thread.
+ */
+export function ThreadCard({
+  thread,
+  title,
+  subtitle,
+  label = threadName(thread),
+  waiting = false,
+  onOpen,
+  children,
+}: {
+  thread: ThreadView;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  label?: string;
+  /** Its agent waits on the reader's answer. */
+  waiting?: boolean;
+  onOpen(): void;
+  children?: ReactNode;
+}) {
+  const live = isLive(thread);
+  const bad = live && lapsed(thread);
+  const { visits } = visitCount(thread);
+  const last = lastActive(thread);
+  return (
+    <article
+      className={cx(
+        'agent-card',
+        waiting && 'agent-card--waiting',
+        bad && 'agent-card--bad',
+        thread.status === 'retired' && 'agent-card--retired',
+      )}
+      onClick={(event) => {
+        if (!(event.target as Element).closest('a, button, form')) onOpen();
+      }}
+    >
+      <button
+        type="button"
+        className="agent-card-open"
+        aria-haspopup="dialog"
+        aria-label={label}
+        onClick={onOpen}
+      >
+        <span className="agent-card-title">
+          {live && (
+            <span
+              className={cx('live-dot', bad ? 'live-dot--attn' : 'live-dot--live')}
+              role="img"
+              aria-label={bad ? 'Lapsed' : 'Live'}
+            />
+          )}
+          <span className="agent-card-word">{title}</span>
+        </span>
+        {subtitle && <span className="agent-card-sub">{subtitle}</span>}
+      </button>
+      {children}
+      <span className="agent-card-meta faint">
+        <RoleMark role={thread.role} />
+        <span className="tabular">
+          {visits} {visits === 1 ? 'visit' : 'visits'}
+        </span>
+        {last && <Ago at={last} />}
+      </span>
+    </article>
   );
 }
 
@@ -499,7 +609,7 @@ export function ThreadDialog({
     if (!dialog.current?.open) dialog.current?.showModal();
   }, []);
   const name = threadName(thread);
-  const lease = thread.visits.find(active);
+  const lease = thread.visits.find(leased);
   const now = clock(undefined, loadedAt, useNow(lease ? 1000 : 0), 20_000);
   return createPortal(
     <dialog

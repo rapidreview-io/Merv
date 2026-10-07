@@ -893,6 +893,17 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     [read.messages, read.questions.map((item) => [item.sessionId, item.answeredAt])],
     [[], [[first.session.id, null]]],
   );
+  // The Agents page lists it first, waiting, with its question, though no visit of it is live.
+  const listed = async () =>
+    (await f.ok('GET', '/sessions/threads', f.token)).threads.find(
+      (item: { id: string }) => item.id === threadId,
+    );
+  let card = await listed();
+  assert.deepEqual(
+    [card.seq, card.status, card.question?.question, card.message],
+    [undefined, 'dormant', question, undefined],
+  );
+  assert.deepEqual(await f.sessions.threads.counts(f.owner), { live: 0, waiting: 1 });
 
   // The answer: a message to the thread, which releases the work.
   const answer = 'Hold out the 2025 cohort.';
@@ -909,6 +920,13 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
   assert.deepEqual(await blockers(), []);
   assert.equal(await f.yours(unit.id), undefined);
   assert.equal(await queued(), true);
+  // Answered, it waits no more; until its agent reads the answer it stays first, which says Sent.
+  card = await listed();
+  assert.deepEqual(
+    [card.seq, card.question, card.message?.body, card.message?.acknowledgedAt],
+    [undefined, undefined, answer, null],
+  );
+  assert.deepEqual(await f.sessions.threads.counts(f.owner), { live: 0, waiting: 0 });
   // The work comes back to the same thread and conversation, and its next visit reads the
   // answer before anything else.
   const second = await f.offer(unit.id, 'runner-b');
@@ -916,6 +934,8 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
     [second.session.threadId, second.session.continuity?.resume?.sessionId],
     [threadId, first.session.id],
   );
+  assert.deepEqual(await f.sessions.threads.counts(f.owner), { live: 1, waiting: 0 });
+  assert.equal((await listed()).status, 'live');
   const next = await f.sessions.authenticate(second.input.secret);
   await assert.rejects(f.app.ctx.tools.invoke('session.ask_owner', next, { question: 'Again?' }), {
     code: 'session_message_pending',

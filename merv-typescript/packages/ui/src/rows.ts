@@ -10,6 +10,8 @@ export interface UiRowStatus {
   state?: 'ready' | 'degraded' | 'unavailable';
   count?: number;
   detail?: string;
+  /** A small mark the rail sets beside the row's label (`text`), heard as `label`. */
+  badge?: { text: string; label: string };
 }
 
 /** A sidebar row's data, as the browser reads it too: everything but the owner's reads. */

@@ -42,8 +42,10 @@ import type {
   SessionsProjectStatus,
   StuckReport,
   ProjectThreads,
+  LiveFeedFrame,
   ThreadCalls,
   ThreadConversation,
+  ThreadCounts,
   ThreadMessages,
   ThreadQuestion,
   ThreadView,
@@ -75,6 +77,8 @@ export type {
   SessionMessage,
   ProjectThread,
   ProjectThreads,
+  LiveFeedFrame,
+  ThreadCounts,
   ThreadCall,
   ThreadCalls,
   ThreadConversation,
@@ -319,8 +323,13 @@ export interface Sessions {
     register(workflow: string, provider: ContinuityProvider): () => void;
     /** Every thread with a visit on the work item, for anyone who may read it; never a worker. */
     list(caller: Caller, instanceId: string): Promise<ThreadView[]>;
-    /** The project's live threads, then its newest others, older than `before`, a page at a time. */
+    /**
+     * The project's threads that want attention, then its newest others, older than `before`, a
+     * page at a time.
+     */
     project(caller: Caller, before?: string): Promise<ProjectThreads>;
+    /** How many of the project's threads are live and how many ask their owner. */
+    counts(caller: Caller): Promise<ThreadCounts>;
     /** An operator's read of what the thread's agent did, visit by visit. */
     conversation(caller: Caller, threadId: string): Promise<ThreadConversation>;
   };
@@ -550,6 +559,15 @@ export interface SessionStreamReads {
   after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
   snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
   subscribe(sessionId: string, wake: () => void): () => void;
+  /** An operator's read of the project's live feed; refuses everyone else. */
+  authorizeFeed(caller: Caller): Promise<void>;
+  /** `wake` runs on each batch this process takes for any session of the project. */
+  subscribeFeed(projectId: string, wake: () => void): () => void;
+  /**
+   * The feed's next frame after what `held` says the page holds (each live visit's newest seq),
+   * which it updates; null when nothing changed.
+   */
+  feed(projectId: string, held: Map<string, number>): Promise<LiveFeedFrame | null>;
 }
 
 /** What a runner sends of its agent's output: the events read from the log's bytes [from, to). */

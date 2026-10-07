@@ -448,9 +448,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     ]),
     [
       ['Research', ['Files']],
-      // What is running, and the agents and machines it runs on, are reached from the Work
-      // page; their registrations are no places of their own.
-      ['Agents', ['Code']],
+      // What is running is reached from the Work page; the project's agents are a gallery of
+      // their own, with the machines folded under it.
+      ['Agents', ['Agents', 'Code']],
       ['Feed', ['Feed']],
     ],
   );

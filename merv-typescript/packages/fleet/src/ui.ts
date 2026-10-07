@@ -49,7 +49,7 @@ export const fleetUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'fleet',
-        // Not in the rail: reached from the Agents and machines page and a machine's sidebar.
+        // Not in the rail: reached from the Agents page's machines and a machine's sidebar.
         label: 'Fleet requests',
         group: 'hidden',
         order: 20,

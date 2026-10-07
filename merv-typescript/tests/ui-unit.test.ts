@@ -471,24 +471,30 @@ test('Agents lists every thread by stage in stage order, and reads one in place'
   localStorage.clear();
   await sidebar(panel(unitOf()));
   await press(tab('Agents'));
+  // Each thread is the card the Agents page draws: its name, its stage and standing, and at its
+  // foot its role, its visits and when it was last active.
   const groups = all('.unit-group').map((group) => [
     group.querySelector('.unit-group-head')!.textContent,
-    [...group.querySelectorAll('.unit-row')].map((row) =>
-      [...row.children].map((cell) => cell.textContent).slice(0, 5),
-    ),
+    [...group.querySelectorAll('.agent-card')].map((card) => [
+      card.querySelector('.agent-card-word')!.textContent,
+      card.querySelector('.agent-card-sub')!.textContent,
+      [...card.querySelector('.agent-card-meta')!.children]
+        .map((cell) => cell.textContent)
+        .slice(0, 2),
+    ]),
   ]);
   assert.deepEqual(groups, [
-    ['Planned', [['P', 'Producer', 'planned', 'dormant', '1 visit']]],
-    ['Design review', [['R', 'Reviewer', 'design review', 'retired', '1 visit']]],
+    ['Planned', [['Producer', 'planned · dormant', ['P', '1 visit']]]],
+    ['Design review', [['Reviewer', 'design review · retired', ['R', '1 visit']]]],
   ]);
-  assert.ok(all('.unit-row--agent time').length === 2, 'each row says when it was last active');
+  assert.ok(all('.agent-card-meta time').length === 2, 'each card says when it was last active');
   await press(button('Producer · planned · dormant'));
   assert.equal($('dialog[open]'), null, 'no dialog opens');
   await settle(30);
   assert.match(reading().textContent!, /Drafted the warmup plan\./);
   assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
   await press(button('← Agents'));
-  assert.equal(all('.unit-row--agent').length, 2);
+  assert.equal(all('.agent-card').length, 2);
 });
 
 test('Agents also lists the threads of the records its owner names inside the unit', async (t) => {
@@ -521,7 +527,7 @@ test('Agents also lists the threads of the records its owner names inside the un
   );
   // A lens's agent is named by its lens, as its owner names it in the unit.
   assert.deepEqual(
-    all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
+    all('.agent-card .agent-card-word').map((name) => name.textContent),
     ['Producer', 'Reviewer', 'Evidence lens'],
   );
 });

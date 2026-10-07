@@ -371,6 +371,17 @@ time,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A row's own small mark: the agents working and those waiting on you. */
+.rail-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-soft);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
 /* The only count in the rail: open work waiting on you, and only above zero. */
 .rail-count {
   flex: none;
@@ -6386,28 +6397,10 @@ ul.unit-rows {
   text-align: left;
   cursor: pointer;
 }
-.unit-row--agent {
-  grid-template-columns: auto minmax(0, 9rem) minmax(0, 1fr) 72px 64px 72px;
-}
 .unit-row--file {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 10rem) 64px 72px;
 }
-/* The Agents page's threads: the work each is on, then its role and stage. */
-.unit-row--thread {
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 14rem) 72px 64px 72px;
-}
-@media (max-width: 880px) {
-  .unit-row--thread {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-  }
-  .unit-row--thread :is(.unit-row-stage, .tabular) {
-    display: none;
-  }
-}
 /* Narrow, a row keeps its name and its quiet facts; the group head already says the stage. */
-.unit-columns:not(.unit-columns--wide) .unit-row--agent {
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-}
 .unit-columns:not(.unit-columns--wide) .unit-row--file {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
@@ -6424,7 +6417,6 @@ ul.unit-rows {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.unit-row-status,
 .unit-row-by {
   display: inline-flex;
   align-items: center;
@@ -6502,4 +6494,161 @@ ul.unit-rows {
 }
 .unit-details {
   gap: var(--space-4);
+}
+
+/* The Agents page: one card a thread, three across, one on a phone. A card waiting on its
+   owner is outlined in violet; a card at work streams its agent's last lines. */
+.agents-count {
+  font-variant-numeric: tabular-nums;
+}
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  list-style: none;
+}
+@media (max-width: 1100px) {
+  .agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .agent-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.agent-grid > li {
+  display: flex;
+  min-width: 0;
+}
+.agent-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.agent-card:hover {
+  border-color: var(--line-strong);
+}
+.agent-card--waiting,
+.agent-card--waiting:hover {
+  border-color: var(--kind-purple);
+  box-shadow: 0 0 0 1px var(--kind-purple);
+}
+.agent-card--bad {
+  border-color: var(--refutes);
+}
+.agent-card--retired {
+  border-style: dashed;
+}
+.agent-card-open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.agent-card-word,
+.agent-card-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-card-sub {
+  color: var(--muted);
+}
+.agent-card:hover .agent-card-word {
+  color: var(--active);
+}
+.agent-card--retired .agent-card-word {
+  color: var(--muted);
+}
+.agent-card-question {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--kind-purple);
+}
+.agent-card .thread-compose {
+  cursor: auto;
+}
+/* The agent's last lines: one row each, its words in ink, what it does in mono. */
+.agent-tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: calc(6 * 1.5em);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  list-style: none;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.agent-tail > li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tail--tool {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+.agent-tail--thinking,
+.agent-tail--status {
+  color: var(--faint);
+  font-style: italic;
+}
+.agent-card-said p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-said-state {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--supports);
+}
+.agent-said--sent {
+  color: var(--faint);
+}
+.agent-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  font-size: var(--text-xs);
+}
+.agents-recent {
+  font-weight: 600;
+}
+/* A unit's Agents tab: its threads' cards, one under another. */
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+}
+.agent-list > li {
+  display: flex;
 }

@@ -20,16 +20,14 @@ import { Reading, Target } from './running-phrase';
 import {
   RoleMark,
   StageThreads,
+  ThreadCard,
   ThreadDialog,
   groupOf,
   ThreadReading,
-  isLive,
-  lastActive,
   roleLetter,
   threadFor,
   threadName,
   useThreadList,
-  visitCount,
 } from './threads';
 
 /**
@@ -274,38 +272,19 @@ function Agents({
       {stages.map((stage) => (
         <section key={stage} className="unit-group" aria-label={capital(words(stage))}>
           <h3 className="unit-group-head">{capital(words(stage))}</h3>
-          <ul className="unit-rows">
+          <ul className="agent-list">
             {threads
               .filter((item) => item.state === stage)
-              .map((item) => {
-                const { visits } = visitCount(item);
-                const last = lastActive(item);
-                const live = isLive(item);
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className="unit-row unit-row--agent"
-                      aria-label={threadName(item)}
-                      onClick={() => onOpen(item.id)}
-                    >
-                      <RoleMark role={item.role} />
-                      <span className="unit-row-name">
-                        {names[item.instanceId] ?? capital(words(item.role))}
-                      </span>
-                      <span className="unit-row-stage faint">{words(stage)}</span>
-                      <span className={cx('unit-row-status', !live && 'faint')}>
-                        {live && <span className="live-dot live-dot--live" aria-hidden="true" />}
-                        {live ? 'live' : item.status}
-                      </span>
-                      <span className="faint tabular">
-                        {visits} {visits === 1 ? 'visit' : 'visits'}
-                      </span>
-                      <span className="faint">{last ? <Ago at={last} /> : ''}</span>
-                    </button>
-                  </li>
-                );
-              })}
+              .map((item) => (
+                <li key={item.id}>
+                  <ThreadCard
+                    thread={item}
+                    title={names[item.instanceId] ?? capital(words(item.role))}
+                    subtitle={`${words(stage)} · ${item.status}`}
+                    onOpen={() => onOpen(item.id)}
+                  />
+                </li>
+              ))}
           </ul>
         </section>
       ))}

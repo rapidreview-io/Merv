@@ -694,3 +694,24 @@ test('the rail counts what Home lists as needing you, an unwell row included', a
   assert.equal(document.querySelector('.ov-count')?.textContent, '1');
   assert.equal(rail().querySelector('.rail-count')?.textContent, '1');
 });
+
+test('the Agents row stands in the rail’s Agents section beside Pi, with its working·waiting badge', async (t) => {
+  t.after(async () => await unmount());
+  const pi = row('pi', 'pi', 'operations', 0, 'Agent');
+  const agents = {
+    ...row('sessions', 'sessions', 'operations', 1, 'Agents'),
+    status: { badge: { text: '3·1', label: '3 working, 1 waiting on you' } },
+  };
+  boot('Operator', { rows: [...rows, pi, agents] });
+  serve('/tools/ui.home', { body: { result: {} } });
+  await open('/');
+  const section = rail().querySelector('[role="group"][aria-label="Agents"]')!;
+  assert.deepEqual(
+    [...section.querySelectorAll('.rail-row-label')].map((label) => label.textContent),
+    ['Agent', 'Agents'],
+  );
+  const link = [...section.querySelectorAll('a')].find((a) => a.textContent!.startsWith('Agents'))!;
+  assert.equal(link.getAttribute('href'), '/sessions');
+  assert.equal(link.querySelector('.rail-badge')!.textContent, '3·1');
+  assert.equal(link.getAttribute('aria-label'), 'Agents, 3 working, 1 waiting on you');
+});

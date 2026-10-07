@@ -252,6 +252,36 @@ async function agentEvents(
   });
 }
 
+/**
+ * `GET /sessions/live`: the project's live feed for an operator's Agents page, one connection
+ * for every live visit, as server-sent events. `snapshot` carries each live visit's newest
+ * events (the page starts over), `tail` what changed since (LiveFeedFrame), and `rotate` asks the
+ * page to reconnect, which starts over. Authority is read once per connection, which rotates
+ * every 20 seconds; a batch this process takes wakes it, and it reads again every 2 seconds.
+ */
+async function liveFeed(
+  req: IncomingMessage,
+  res: ServerResponse,
+  r: ApiRequest,
+  streams: Sessions['streams'],
+): Promise<void> {
+  check(!r.url.search, 'invalid_input', 'The live feed takes no query');
+  const caller = await r.caller();
+  await streams.authorizeFeed(caller);
+  const held = new Map<string, number>();
+  let first = true;
+  await serveEvents(req, res, {
+    rotateMs: 20_000,
+    subscribe: (wake) => streams.subscribeFeed(caller.projectId, wake),
+    step: async (send) => {
+      const frame = await streams.feed(caller.projectId, held);
+      if (first) await send('snapshot', frame ?? { live: [], visits: [] });
+      else if (frame) await send('tail', frame);
+      first = false;
+    },
+  });
+}
+
 /** `/sessions`: runner enrollment authenticates itself; every other route is a source
  *  credential's or a managed runner's. */
 function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandler {
@@ -274,6 +304,8 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
       const enrolled = await sessions.managed.enroll(token, body, req.headers['x-merv-project-id']);
       return { controlToken: enrolled.controlToken };
     }
+    if (path === '/sessions/live' && req.method === 'GET')
+      return await liveFeed(req, res, r, sessions.streams);
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
     if (events && req.method === 'GET')
       return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
