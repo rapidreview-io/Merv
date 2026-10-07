@@ -2137,7 +2137,9 @@ test('a resolved base reaches the existing mirror journal and an outage never ch
     base.result!.commit,
   );
   await mirror.run();
-  assert.equal((await mirror.describe(f.admin.projectId)).pending, 0);
+  // Accepting the inputs also journalled their result refs, which Code's store retains on its
+  // own timer and then queues for the mirror; those may join at any point in these passes and
+  // wait for the next one, so only the base's own operation is this test's to count.
   const operations = await f.state.read((sql) =>
     sql.all<{ status: string }>("SELECT status FROM code_operations WHERE kind='mirror-base'"),
   );
