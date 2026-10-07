@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import { EXPERIMENT_ROLES, roleRank } from '@merv/experiments/rules';
@@ -107,7 +107,9 @@ function ExperimentRecord({
   const currentEvidence = e.evidence.filter(
     (item) => item.current && item.attemptIndex === e.attempt.index,
   );
-  const figures = e.submissions.at(-1)?.figureIds ?? [];
+  // The figures of this attempt's last submission: one a review sent back is an earlier attempt's.
+  const figures =
+    e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = e.failed;
   const states = useStateWords();
@@ -179,11 +181,24 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   settled.current = !!record.data?.process.terminal;
   const live = settled.current ? undefined : 8000;
   const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
-  const exhibit = useTool<ExperimentExhibit>(
-    state === 'running' ? 'experiment.exhibit' : null,
-    { experimentId: id },
-    { every: live },
-  );
+  // The exhibit is worked out from the attempt's results, parsing each: it is read again only
+  // when the evidence the record lists has changed, not on every poll of the record.
+  const exhibit = useTool<ExperimentExhibit>(state === 'running' ? 'experiment.exhibit' : null, {
+    experimentId: id,
+  });
+  const evidence = record.data?.experiment.evidence
+    .filter((item) => item.current && item.attemptIndex === record.data!.experiment.attempt.index)
+    .map((item) => item.id)
+    .join();
+  const { reload } = exhibit;
+  const read = useRef(evidence);
+  useEffect(() => {
+    if (read.current === evidence) return;
+    // The first read of the record starts the exhibit's; only a change after it reads again.
+    const had = read.current;
+    read.current = evidence;
+    if (had !== undefined) reload();
+  }, [evidence, reload]);
   const nameOf = useActorNames();
   if (!record.data)
     return (

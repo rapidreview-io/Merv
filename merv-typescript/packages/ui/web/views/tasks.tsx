@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
@@ -59,11 +60,14 @@ export function TaskChecks({ task: t, reviews }: { task: Task; reviews: Loaded<R
 /** The record and the gate it stands at arrive together, from the row that owns them. */
 function TaskDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
+  // An ended task changes no more: the read that brings it back ended stops the polling.
+  const settled = useRef(false);
   const record = useTool<{ task: Task; process: ProcessGraph; codeUnit: CodeUnit | null }>(
     'ui.read',
     { rowId: row.id, params: { id } },
-    { every: 8000 },
+    { every: settled.current ? undefined : 8000 },
   );
+  settled.current = !!record.data?.process.terminal;
   const nameOf = useActorNames();
   const back = homeOf(shell.rows);
   // The publication verbs answer a signed-in operator and nobody else, so the Code
