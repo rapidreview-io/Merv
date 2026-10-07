@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3c4c845a62b060c1b6888baa34ab5115bddc7308c934bda89167128b709dbdec",
-    "releaseId": "rt1_b797668778803e6774e7ee891cb9a3746bd69ced5da1e89253dcd59004f41086",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:b10ee91f6b9f2afa31d761484bbf08a9989e17c7e9fd697e4faf38fbe2b35ff1",
+    "releaseId": "rt1_2c36664e1fc21ed9d268a0b9c316273181195d8d515ef32ecb36246eac687d55",
     "releases": {
-      "cloudflare-fleet": "rt1_b797668778803e6774e7ee891cb9a3746bd69ced5da1e89253dcd59004f41086",
-      "cloudflare-fleet-large": "rt1_838688807988d300c63c83e97657da87176a2aa88ca1ddbc48df1afacc6c3ffd"
+      "cloudflare-fleet": "rt1_2c36664e1fc21ed9d268a0b9c316273181195d8d515ef32ecb36246eac687d55",
+      "cloudflare-fleet-large": "rt1_cb4f11955b3338f57ff2625f50acc92b0fcbee6f93c2f96a0dd7e1b9ffde8972"
     },
-    "localId": "sha256:91bde18d5c72d4a3c0a3f26a14dbf3b52bb760af16c166f065d0ab5edc0acba4",
-    "sourceCommit": "f8cdacf497ee975da7a05bf3ba7102bdc92fb66a",
+    "localId": "sha256:c48df2f5d26d07402a560ab3dee008e2a4c659699eb722e9f5d7012012cb4b3e",
+    "sourceCommit": "ae940ea62d18e94412abdd862a1a08679e68b611",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
@@ -20,7 +20,6 @@
     "packages/code/src/files.ts",
     "packages/code/src/merge-settings.ts",
     "packages/code/src/store/protocol.ts",
-    "packages/contracts/src/agent-stream.ts",
     "packages/contracts/src/async.ts",
     "packages/contracts/src/code-github.ts",
     "packages/contracts/src/code.ts",
@@ -57,6 +56,7 @@
     "packages/runner/src/profiles.ts",
     "packages/runner/src/transcript.ts",
     "packages/runner/src/workspaces.ts",
+    "packages/sessions/src/agent-stream.ts",
     "packages/sessions/src/rules.ts",
     "scripts/hosted-runner/smoke-supervisor.ts"
   ]
