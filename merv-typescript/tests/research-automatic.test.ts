@@ -18,7 +18,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ResearchService } from '../packages/research/src/index.js';
-import { bindAutomatic, wakeAutomatic } from '../packages/research/src/automatic.js';
+import {
+  bindAutomatic,
+  closeBlockedWork,
+  wakeAutomatic,
+} from '../packages/research/src/automatic.js';
 import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, providersOf, type Main } from './fixtures/research.js';
@@ -1188,6 +1192,41 @@ test('research_needs_owner goes to admins once its owner has left', async (t) =>
   await f.pump();
   assert.equal((await f.research.get(f.owner, first.id)).automation!.blocker, null);
   assert.equal(await yoursOn(f, f.owner, first.id), undefined);
+});
+
+test('closing the same stranded work again, after it moved on, is a request of its own', async () => {
+  // The cycle stands still while the work it closes moves: a suspended service task resumed.
+  let revision = 4;
+  const sent: string[] = [];
+  const ctx = {
+    providers: {
+      tasks: {
+        closeUnstarted: async (_c: unknown, _id: string, _r: string, requestId: string) => {
+          sent.push(requestId);
+          return true;
+        },
+      },
+      experiments: { closeUnstarted: async () => false },
+    },
+    workflows: {
+      dependencyClosure: async () => ['wf_work'],
+      prerequisites: async () =>
+        new Map([['wf_work', [{ id: 'wf_input', name: 'Input', state: 'failed', failed: true }]]]),
+      get: async () => ({ id: 'wf_work', revision }),
+    },
+    event: async () => {},
+  };
+  const record = {
+    id: 'wf_cycle',
+    name: 'Cycle',
+    workflow: { revision: 9 },
+    researchDependencies: ['wf_work'],
+  };
+  await closeBlockedWork(ctx as never, {} as never, record as never, {} as never);
+  revision = 7;
+  await closeBlockedWork(ctx as never, {} as never, record as never, {} as never);
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[0], sent[1], 'a replay of the first close would not close it again');
 });
 
 test('each owner closes only its own work that nobody started', async (t) => {

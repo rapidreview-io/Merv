@@ -494,7 +494,14 @@ export async function closeBlockedWork(
         `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. ${after}`,
         16000,
       );
-      const requestId = automaticRequest(record.id, record.workflow.revision, `close:${id}`);
+      // The work's own revision too: work closed, then moved on (a suspended service task
+      // resumed), is closed again by a request of its own, never a replay of the first.
+      const work = await ctx.workflows.get(caller, id, tx);
+      const requestId = automaticRequest(
+        record.id,
+        record.workflow.revision,
+        `close:${id}@${work.revision}`,
+      );
       if (
         !(await tasks.closeUnstarted(caller, id, reason, requestId, tx)) &&
         !(await experiments.closeUnstarted(caller, id, reason, requestId, tx))
