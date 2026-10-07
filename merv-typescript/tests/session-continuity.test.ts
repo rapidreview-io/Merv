@@ -1344,3 +1344,36 @@ test('an answer that arrives before the asking visit declares its conversation w
   });
   assert.equal(await queued(), true);
 });
+
+test('only a visit that keeps a conversation is offered session.ask_owner, in its tools and its prompt', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const attach = async (instanceId: string, runnerId: string) => {
+    const { revision } = await f.app.ctx.workflows.get(f.owner, instanceId);
+    const input = {
+      instanceId,
+      expectedRevision: revision,
+      runnerId,
+      requestId: randomUUID(),
+      secret: secret(),
+    };
+    const session = await f.sessions.offer(f.owner, input);
+    const attached = await f.ok('POST', `/sessions/${session.id}/attach`, f.token, {
+      runnerId,
+      hostRef: `launch-${randomUUID()}`,
+    });
+    const worker = await f.sessions.authenticate(input.secret);
+    const tools = (await f.app.ctx.tools.describe(worker)).map((tool) => tool.name);
+    return {
+      session,
+      offered: [tools.includes('session.ask_owner'), attached.prompt.includes('session.ask_owner')],
+    };
+  };
+  const producer = await attach(unit.id, 'runner-a');
+  assert.deepEqual(producer.offered, [true, true]);
+  await f.release(producer.session);
+  await f.move(unit.id, 'submit');
+  const reviewer = await attach(unit.id, 'runner-b');
+  assert.equal(reviewer.session.continuity, undefined);
+  assert.deepEqual(reviewer.offered, [false, false]);
+});
