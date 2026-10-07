@@ -23,11 +23,13 @@ export function allowedOrigin(value: string): boolean {
   }
 }
 
-/** A URL on an allowed origin, naming no credentials, query or fragment; any path. */
+/** An http(s) URL on an allowed origin, naming no credentials, query or fragment; any path. */
 export function allowedUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return (
+      // A blob: URL's origin is the URL inside it, so the scheme is checked on its own.
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
       !/[\x00-\x20\x7f?#]/.test(value) &&
       !url.username &&
       !url.password &&
