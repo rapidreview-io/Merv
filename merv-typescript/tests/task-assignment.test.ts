@@ -12,6 +12,7 @@ import { createApp } from './fixtures/app.js';
 import { countWrites } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { registerTaskType } from './fixtures/task-types.js';
 
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-assignment-'));
@@ -136,7 +137,7 @@ test('task assignments return full recipe context; begin records one activation 
       title: 'Constraints',
       content: 'Use the existing CPU budget.',
     });
-    await f.app.ctx.tasks.registerType(inputsTaskType);
+    await registerTaskType(f.app.ctx.tasks, inputsTaskType);
     const task = await f.create({
       type: 'fixture.inputs',
       contextInputs: { experiments: [research.id], projectKnowledge: [constraints.id] },
@@ -528,7 +529,7 @@ test('a task whose work context could never fit its recipe is refused when it is
         format: 2 as const,
       },
     };
-    await f.app.ctx.tasks.registerType(type);
+    await registerTaskType(f.app.ctx.tasks, type);
     const before = (await f.app.ctx.tasks.records(f.operator)).length;
     await assert.rejects(
       async () => await f.create({ type: type.name, goal: `Goal ${'g'.repeat(6000)}` }),
@@ -560,7 +561,7 @@ test('unavailable task recipes block begin while task reads and explicit closure
         format: 2 as const,
       },
     };
-    const dispose = await f.app.ctx.tasks.registerType(type);
+    const dispose = await registerTaskType(f.app.ctx.tasks, type);
     const task = await f.create({ type: type.name });
     dispose();
     const guidance = (await f.app.ctx.tasks.get(f.producer.caller, task.id)).guidance;
@@ -578,7 +579,7 @@ test('unavailable task recipes block begin while task reads and explicit closure
       code: 'task_type_unavailable',
     });
     assert.equal(await f.writes(), before);
-    await f.app.ctx.tasks.registerType(type);
+    await registerTaskType(f.app.ctx.tasks, type);
     const restored = await f.begin(f.producer.caller, task.id);
     assert.equal(restored.context!.type, type.name);
   } finally {

@@ -822,6 +822,22 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
   assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
   const unknown = await f.http('GET', `/sessions/threads?instanceId=${unit.id}&x=1`, f.token);
   assert.equal(unknown.status, 400);
+  // Several work items' threads are one read, each thread once; every item must be readable.
+  const once = await f.ok('GET', `/sessions/threads?instanceId=${unit.id}`, f.token);
+  const twice = await f.ok(
+    'GET',
+    `/sessions/threads?instanceId=${unit.id}&instanceId=${unit.id}`,
+    f.token,
+  );
+  assert.deepEqual(twice.threads, once.threads);
+  const absent = await f.http(
+    'GET',
+    `/sessions/threads?instanceId=${unit.id}&instanceId=wf_missing`,
+    f.token,
+  );
+  assert.equal(absent.status, 404);
+  const mixed = await f.http('GET', `/sessions/threads?instanceId=${unit.id}&before=1`, f.token);
+  assert.equal(mixed.status, 400);
 });
 
 test('an agent asks its owner: its visit ends uncounted, the work waits, and a message to its thread answers and brings it back', async (t) => {

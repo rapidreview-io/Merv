@@ -148,6 +148,14 @@ export const stateFault = (error: unknown): error is MervError =>
     'invalid_sql_parameters',
   ].includes(error.code) ||
     /^(transaction|state)_/.test(error.code));
+/**
+ * A read's refusal as "not there": a record another owner answers 404 for is simply not there
+ * to speak of, so `.catch(absent)` turns it into null and rethrows anything else.
+ */
+export const absent = (error: unknown): null => {
+  if (error instanceof MervError && error.status === 404) return null;
+  throw error;
+};
 /** Every role a member, an actor or a lease may hold. */
 export const ROLES = [
   'operator',
@@ -1019,11 +1027,25 @@ export interface ArtifactUploadStatus {
  * signed is enforced by the ToolRegistry, which reauthorises read tools after the handler; domain
  * callers act on bytes inside their own write transactions, which authorise again.
  */
+/**
+ * What an owner withholds from a session worker's reads: artifacts by id, and every artifact
+ * the named sessions made. Null withholds nothing.
+ */
+export type ArtifactReadRule = (
+  caller: Caller,
+  tx: Transaction,
+) => Promise<{ artifacts: readonly string[]; sessions: readonly string[] } | null>;
 export interface Artifacts {
   readonly downloadAvailable: boolean;
   readonly largeUploadAvailable: boolean;
   /** Backend-only provider registration; the disposer removes only this registration. */
   registerFileProvider(name: string, provider: ArtifactFileProvider): () => void;
+  /**
+   * An owner's rule over what a session worker (an inquiry visit too) may read, one per name,
+   * until disposed. Every read by a session caller asks each rule; what one withholds is not
+   * found and not listed.
+   */
+  registerReadRule(name: string, rule: ArtifactReadRule): () => void;
   /** Database-only immutable manifest. The caller must verify and pin every referenced file first.
    * One row per project/sourceKey; a retry with different content is refused. */
   createCollection(

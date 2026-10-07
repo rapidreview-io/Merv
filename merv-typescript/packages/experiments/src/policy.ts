@@ -33,6 +33,7 @@ import {
   handoff,
   EXPERIMENT_RECIPES,
   feasibilityCriterion,
+  REVIEW_RETURNS,
 } from './definitions.js';
 import { execution } from './execution-policy.js';
 import { approvedPlan, references, build } from './context.js';
@@ -136,20 +137,18 @@ export function route(
     );
     return stage === 'design' ? 'approve_design' : 'accept_results';
   }
-  if (stage === 'design') {
-    check(
-      input.returnTo === undefined || input.returnTo === 'planned',
-      'invalid_review_return',
-      'A rejected design returns only to planned',
-    );
-    return 'revise_design';
-  }
+  const routes: readonly { value: string }[] = REVIEW_RETURNS[stage];
+  const to = input.returnTo ?? (routes.length === 1 ? routes[0]!.value : undefined);
   check(
-    input.returnTo === 'planned' || input.returnTo === 'running',
+    routes.some((each) => each.value === to),
     'invalid_review_return',
-    'Both negative attempt verdicts require returnTo planned or running',
+    `A rejected ${stage} review returns to ${routes.map((each) => each.value).join(' or ')}`,
   );
-  return input.returnTo === 'planned' ? 'revise_plan' : 'revise_execution';
+  return stage === 'design'
+    ? 'revise_design'
+    : to === 'planned'
+      ? 'revise_plan'
+      : 'revise_execution';
 }
 
 /** The checked experiment. Guidance's callbacks each ask; one snapshot reads it once. */

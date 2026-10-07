@@ -1,4 +1,5 @@
 import {
+  absent,
   bound,
   mapAsync,
   childRequest,
@@ -7,8 +8,8 @@ import {
   replayed,
   check,
   inTransaction,
-  MervError,
   now,
+  type Artifact,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -19,7 +20,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { WorkflowSnapshot } from '@merv/workflows/models';
+import type { ProcessGraph, WorkflowSnapshot } from '@merv/workflows/models';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
@@ -31,12 +32,19 @@ import * as running from './running.js';
 import * as program from './program.js';
 import * as commands from './commands.js';
 import { submitted, type LensRow, type WaveRow } from './program.js';
-import { LENSES, LENS_WORKFLOW, ITEM_RECIPES, REFLECTION_WORKFLOW } from './definitions.js';
+import {
+  LENSES,
+  LENS_WORKFLOW,
+  ITEM_RECIPES,
+  REFLECTION_WORKFLOW,
+  REVIEW_RETURNS,
+} from './definitions.js';
 import type {
   ApprovedReflection,
   Reflection,
   ReflectionCreate,
   ReflectionLens,
+  ReflectionSummary,
   Reflections,
 } from './types.js';
 export type * from './types.js';
@@ -60,6 +68,7 @@ export type ReflectionsContext = Pick<
   | 'contexts'
   | 'createLenses'
   | 'get'
+  | 'hydrated'
   | 'lens'
   | 'lensRow'
   | 'lensRows'
@@ -118,11 +127,7 @@ export class ReflectionService implements Reflections {
             review.projectId,
           )),
         submit: async (caller, input, tx) => await commands.submitReview(this, caller, input, tx),
-        // A rejected report goes back to synthesis, or to the lenses for five new reports.
-        returns: async () => [
-          { value: 'synthesizing', label: 'Synthesis, for a revised report' },
-          { value: 'reflecting', label: 'Lenses, for five new reports' },
-        ],
+        returns: async () => REVIEW_RETURNS,
         // Both rejecting verdicts return the wave.
         returning: ['needs_changes', 'fail'],
         guidance: REVIEW_GUIDANCE,
@@ -183,21 +188,34 @@ export class ReflectionService implements Reflections {
       ),
     );
   }
-  private async hydrateLens(
-    caller: Caller,
-    row: LensRow,
-    tx: Transaction,
-  ): Promise<ReflectionLens> {
-    return {
-      id: row.id,
-      reflectionId: row.reflection_id,
-      attempt: row.attempt,
-      perspective: row.perspective,
-      instructions: row.instructions,
-      producerId: row.producer_id,
-      artifact: row.artifact ? JSON.parse(row.artifact) : null,
-      workflow: await this.workflows.get(caller, row.id, tx),
-    };
+  /**
+   * These lenses, with every workflow read at once. A lens's worker, while its wave reflects,
+   * reads no other lens's report (`authored`).
+   */
+  async hydrated(caller: Caller, rows: LensRow[], tx: Transaction): Promise<ReflectionLens[]> {
+    const own = rows.length
+      ? (await this.authored(caller, tx, rows[0]!.reflection_id))?.own
+      : undefined;
+    const flows = await this.workflows.find(
+      caller,
+      rows.map((row) => row.id),
+      tx,
+    );
+    return rows.map((row) => {
+      const workflow = flows.get(row.id);
+      check(workflow, 'not_found', 'Workflow instance not found', 404);
+      const artifact = row.artifact ? (JSON.parse(row.artifact) as Artifact) : null;
+      return {
+        id: row.id,
+        reflectionId: row.reflection_id,
+        attempt: row.attempt,
+        perspective: row.perspective,
+        instructions: row.instructions,
+        producerId: row.producer_id,
+        artifact: !own || own.has(row.id) ? artifact : null,
+        workflow,
+      };
+    });
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Reflection> {
     caller = structuredClone(caller);
@@ -214,7 +232,7 @@ export class ReflectionService implements Reflections {
   async wave(caller: Caller, id: string, tx: Transaction, lenient = false): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
     const submission = submitted(row);
-    const own = await this.ownLens(caller, id, tx);
+    const review = (id: string) => this.reviews.get(caller, id, tx);
     return {
       id,
       projectId: row.project_id,
@@ -222,15 +240,10 @@ export class ReflectionService implements Reflections {
       ownerId: row.owner_id,
       createdAt: row.created_at,
       attempt: row.attempt,
-      lenses: await mapAsync(await this.lensRows(row, tx), async (lens) =>
-        this.withheld(await this.hydrateLens(caller, lens, tx), own),
-      ),
+      lenses: await this.hydrated(caller, await this.lensRows(row, tx), tx),
       workflow: await this.workflows.get(caller, id, tx),
       review: row.review_id
-        ? await this.reviews.get(caller, row.review_id, tx).catch((error: unknown) => {
-            if (lenient && error instanceof MervError && error.status === 404) return null;
-            throw error;
-          })
+        ? await (lenient ? review(row.review_id).catch(absent) : review(row.review_id))
         : null,
       report: submission?.report ?? null,
       changeSpec: submission?.changeSpec ?? null,
@@ -250,35 +263,96 @@ export class ReflectionService implements Reflections {
       );
     });
   }
+  async page(
+    caller: Caller,
+    id: string,
+  ): Promise<{ reflection: Reflection; process: ProcessGraph }> {
+    caller = structuredClone(caller);
+    return await this.state.snapshot(async () => ({
+      reflection: await this.get(caller, id),
+      process: await this.workflows.process(caller, id, { checks: false }),
+    }));
+  }
+  async home(caller: Caller): Promise<ReflectionSummary[]> {
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, undefined, async (tx) => {
+      await this.read(caller, tx);
+      const waves = await tx.all<{ id: string; title: string; ownerId: string }>(
+        'SELECT id,title,owner_id AS "ownerId" FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC',
+        caller.projectId,
+      );
+      const lenses = await tx.all<{ id: string; wave: string; written: boolean }>(
+        'SELECT l.id,l.reflection_id AS wave,l.artifact IS NOT NULL AS written FROM reflection_lenses l JOIN reflections r ON r.id=l.reflection_id AND r.attempt=l.attempt WHERE r.project_id=? ORDER BY l._merv_rowid',
+        caller.projectId,
+      );
+      const flows = await this.workflows.find(
+        caller,
+        [...waves, ...lenses].map((row) => row.id),
+        tx,
+      );
+      return waves.map((wave) => ({
+        ...wave,
+        workflow: flows.get(wave.id)!,
+        lenses: lenses
+          .filter((lens) => lens.wave === wave.id)
+          .map((lens) => ({ id: lens.id, workflow: flows.get(lens.id)!, written: lens.written })),
+      }));
+    });
+  }
   async lens(caller: Caller, id: string, transaction?: Transaction): Promise<ReflectionLens> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const row = await this.lensRow(caller, id, tx);
-      const own = await this.ownLens(caller, row.reflection_id, tx);
-      return this.withheld(await this.hydrateLens(caller, row, tx), own);
+      const [lens] = await this.hydrated(caller, [await this.lensRow(caller, id, tx)], tx);
+      return lens!;
     });
   }
   /**
-   * The lens a worker session was leased in this wave while the wave reflects, or undefined for
-   * any other caller. Such a worker reads no other lens's output, so the five stay independent;
-   * synthesis and review sessions, leased the wave itself, read them all.
+   * The lenses of a reflecting wave (`reflectionId`, else the open one) that the calling worker's
+   * thread wrote: its actor held their leases, on this visit or an earlier one. Such a worker
+   * reads no other lens's output, so the five stay independent; an inquiry visit to its thread,
+   * which holds no lease, is held to the same. Undefined for any other caller, or once the wave
+   * synthesizes: synthesis and review sessions, leased the wave itself, read them all.
    */
-  private async ownLens(caller: Caller, reflectionId: string, tx: Transaction) {
+  async authored(caller: Caller, tx: Transaction, reflectionId?: string) {
     if (!caller.session) return undefined;
-    const [held] = await leaseRows(tx, { projectId: caller.projectId, id: caller.session.id });
-    const lease =
-      held &&
-      (await tx.get<{ id: string }>(
-        'SELECT id FROM reflection_lenses WHERE id=? AND reflection_id=?',
-        held.instance_id,
-        reflectionId,
-      ));
-    if (!lease) return undefined;
-    const wave = await this.workflows.get(caller, reflectionId, tx);
-    return wave.state === 'reflecting' ? lease.id : undefined;
+    // The wave's lenses first: with no wave open, which is most of the time, that is all.
+    const lenses = await tx.all<{ id: string; reflection_id: string; artifact: string | null }>(
+      reflectionId
+        ? 'SELECT id,reflection_id,artifact FROM reflection_lenses WHERE reflection_id=? AND project_id=? ORDER BY _merv_rowid'
+        : 'SELECT l.id,l.reflection_id,l.artifact FROM reflection_lenses l JOIN reflections r ON r.id=l.reflection_id WHERE r.project_id=? AND r.approved IS NULL AND r.abandoned IS NULL ORDER BY l._merv_rowid',
+      ...(reflectionId ? [reflectionId] : []),
+      caller.projectId,
+    );
+    if (!lenses.length) return undefined;
+    const held = await leaseRows(tx, {
+      projectId: caller.projectId,
+      actorId: caller.actorId,
+      instanceIds: lenses.map((lens) => lens.id),
+    });
+    const own = new Set(held.map((lease) => lease.instance_id));
+    if (!own.size) return undefined;
+    const wave = await this.workflows.get(caller, lenses[0]!.reflection_id, tx);
+    return wave.state === 'reflecting'
+      ? { own, others: lenses.filter((lens) => !own.has(lens.id)) }
+      : undefined;
   }
-  private withheld(lens: ReflectionLens, own: string | undefined): ReflectionLens {
-    return own === undefined || lens.id === own ? lens : { ...lens, artifact: null };
+  /** Artifacts' read rule: a lens's worker reads no report another lens of its wave made. */
+  async withheldReports(caller: Caller, tx: Transaction) {
+    const authored = await this.authored(caller, tx);
+    if (!authored) return null;
+    const others = authored.others;
+    return {
+      artifacts: others.flatMap((lens) =>
+        lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [],
+      ),
+      // What those lenses' sessions made on the way to their reports.
+      sessions: (
+        await leaseRows(tx, {
+          projectId: caller.projectId,
+          instanceIds: others.map((lens) => lens.id),
+        })
+      ).map((lease) => lease.id),
+    };
   }
   async command<T>(
     caller: Caller,
@@ -456,6 +530,9 @@ export const reflectionsPlugin = {
         ),
       );
       yield () => service.close();
+      yield ctx.artifacts.registerReadRule('reflections', (caller, tx) =>
+        service.withheldReports(caller, tx),
+      );
       // A restart makes new lens instances: each perspective's author still takes its own up again.
       yield ctx.sessions.threads.register(LENS_WORKFLOW.name, ({ data, role }) =>
         JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),

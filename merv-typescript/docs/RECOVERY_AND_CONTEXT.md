@@ -34,7 +34,7 @@ The registered versions, `task.work@4` and `task.review@5`, are format 2, the it
 
 Experiments are planned in the experiment program, not as tasks. The `experiment.plan` task type was retired with its tasks (version 1 on 2026-09-22, version 2 on 2026-09-25; see [version retirement](VERSION_RETIREMENT.md)); a new task asking for it is refused with `task_type_unavailable`. The experiment program's own recipes are format 2: `experiment.design`, `experiment.design_review` and `experiment.execute` at version 11 and `experiment.attempt_review` at version 12 (see [experiments](EXPERIMENTS.md)). Earlier versions are no longer registered and stay only as `context_recipes` rows. Every registered experiment version requires a feasibility statement and holds its review to the feasibility criterion.
 
-The brief must still contain the goal and each Done-when check. Required recipe inputs must be present and accessible at creation. The task pins its type version and context references. Additional types register directly through `ctx.tasks.registerType(definition)`; disposal withdraws that type's recipe handle. Work recipes must require `task` and `brief` sections. There is no separate plugin per recipe.
+The brief must still contain the goal and each Done-when check. Required recipe inputs must be present and accessible at creation. The task pins its type version and context references. Tasks registers its own types at start; it offers no registration call to other plugins (only tests add a type, through the service itself), and disposal withdraws that type's recipe handle. Work recipes must require `task` and `brief` sections. There is no separate plugin per recipe.
 
 ## Rework history
 

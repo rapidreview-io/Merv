@@ -1,5 +1,6 @@
 import type { Caller, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
+import type { ProcessGraph } from '@merv/workflows/models';
 import type {
   ResearchCreate,
   ResearchAdvance,
@@ -13,6 +14,11 @@ export type * from './models.js';
 export interface Research {
   create(caller: Caller, input: ResearchCreate, tx?: Transaction): Promise<ResearchRecord>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<ResearchRecord>;
+  /**
+   * What a cycle's page polls: the cycle, and the stage it stands at read without running an
+   * action's check (its page draws no action; its move reads its own gate).
+   */
+  page(caller: Caller, id: string): Promise<{ record: ResearchRecord; process: ProcessGraph }>;
   list(caller: Caller, tx?: Transaction): Promise<ResearchRecord[]>;
   /** What Home and the rail poll: every open cycle and the newest that ended, oldest first. */
   home(caller: Caller): Promise<ResearchRecord[]>;

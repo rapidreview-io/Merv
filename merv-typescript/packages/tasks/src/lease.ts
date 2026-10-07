@@ -17,7 +17,7 @@ import {
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { TaskCheckpoint, TaskCheckpointInput } from './types.js';
 import type { TaskLeaseRow, TaskRow, TasksContext } from './index.js';
-import { serviceOwned } from './workflow.js';
+import { purposeOf, serviceOwned } from './workflow.js';
 import { assignment, contextType } from './context.js';
 import { reviewCommit } from './policy.js';
 
@@ -124,7 +124,7 @@ export async function acquireLease(
   // workflows.offerLease ran lease.role(source) in this transaction just before this hook,
   // matched the worker's role to it and checked worker.session.id === leaseId.
   const row = await ctx.row(tx, caller, snapshot.id);
-  const purpose = snapshot.state === 'in_review' ? 'review' : 'work';
+  const purpose = purposeOf(snapshot);
   // The base is fixed with the lease it serves: Workflows reads references() right after
   // this hook in the same transaction, and a refused offer takes the pin back with it.
   if (purpose === 'work') {
@@ -218,14 +218,8 @@ export async function prepareTasks(
     await ctx.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
   if (caller.session) return;
   const held = new Set(
-    (
-      await leaseRows(
-        tx,
-        { projectId: caller.projectId, instanceIds: ids, active: true },
-        { detail: 'purpose' },
-      )
-    )
-      .filter((lease) => lease.detail === 'work')
+    (await leaseRows(tx, { projectId: caller.projectId, instanceIds: ids, active: true }))
+      .filter((lease) => purposeOf(lease) === 'work')
       .map((lease) => `${lease.instance_id}:${lease.revision}`),
   );
   for (const { id, revision } of snapshots)
@@ -247,12 +241,13 @@ export async function unleased(
   check(
     !(await ctx.state.remember(key, async () =>
       (
-        await leaseRows(
-          tx,
-          { projectId: caller.projectId, instanceIds: [taskId], revision, active: true },
-          { detail: 'purpose' },
-        )
-      ).some((lease) => lease.detail === 'work'),
+        await leaseRows(tx, {
+          projectId: caller.projectId,
+          instanceIds: [taskId],
+          revision,
+          active: true,
+        })
+      ).some((lease) => purposeOf(lease) === 'work'),
     )),
     'task_leased',
     'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
@@ -268,9 +263,7 @@ export async function isProducer(
   tx: Transaction,
 ): Promise<boolean> {
   if (!caller.session) return row.producer_id === caller.actorId;
-  return (
-    (await currentLease(ctx, caller, row.id, snapshot.revision, tx)).details.purpose === 'work'
-  );
+  return purposeOf(await currentLease(ctx, caller, row.id, snapshot.revision, tx)) === 'work';
 }
 
 export async function producerOrAdmin(

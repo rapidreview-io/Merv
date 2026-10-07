@@ -37,6 +37,7 @@ flowchart LR
   reflections -- "imports @merv/experiments/rules" --> experiments
   reflections -- "reads reports" --> artifacts
   reflections -- "registers lens continuity" --> sessions
+  reflections -- "registers a read rule: a lens agent reads no other lens's report" --> artifacts
   reflections -- "injects" --> scope
   reflections -- "registers /reflections page" --> ui
   reflections -- "injects" --> state
@@ -49,6 +50,6 @@ Reflections is the judging step of each research cycle, built from two workflows
 
 ## Surface
 
-- `@merv/reflections`: the `reflections` service. It registers `reflection@4` and `reflection.lens@3` with Workflows, the lens, synthesis and review recipes with Context Builder, and the synthesis review owner with Reviews.
+- `@merv/reflections`: the `reflections` service. It registers `reflection@4` and `reflection.lens@3` with Workflows, the lens, synthesis and review recipes with Context Builder, the synthesis review owner with Reviews, and a read rule with Artifacts: while a wave reflects, a lens's agent (on a work visit or an inquiry visit to its thread) reads no report another lens made, nor anything those lenses' sessions made.
 - `@merv/reflections/tools`: `reflection.create`, `reflection.list`, `reflection.get`, `reflection.lens`, `reflection.submit_lens`, `reflection.submit` and `reflection.end`.
 - `@merv/reflections/ui`: the `/reflections` page, and the open wave at the head of the Running page's work lane.

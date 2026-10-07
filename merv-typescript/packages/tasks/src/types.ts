@@ -89,7 +89,6 @@ export interface ServiceTaskCreator {
   ): Promise<{ id: string }>;
 }
 export interface Tasks {
-  registerType(definition: ContextRecipeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;
   create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task>;
@@ -99,13 +98,12 @@ export interface Tasks {
   list(caller: Caller): Promise<TaskRecord[]>;
   /** How many tasks are still open, for the navigation badge, without reading each one. */
   active(caller: Caller): Promise<number>;
-  /** The derived process graph, so a record page reads its gate with the record. */
-  process(caller: Caller, taskId: string): Promise<ProcessGraph>;
   /** What the optional Code plugin holds for a Git task; null without it. */
   codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
+  /** A verdict on this task's review, through Reviews.apply and every check it makes first. */
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;
   markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
   /**

@@ -93,15 +93,10 @@ export interface LeaseWhere {
 
 /**
  * A project's leases, newest last, narrowed by whichever of these are given. `active` keeps
- * only those not yet released. A read takes the shared columns only, unless it asks for one
- * top-level `detail` by name or for the `full` row with its receipt digest and details.
+ * only those not yet released. A read takes the shared columns only, unless it asks for the
+ * `full` row with its receipt digest and details.
  */
 export async function leaseRows(tx: Transaction, where: LeaseWhere): Promise<LeaseSummary[]>;
-export async function leaseRows(
-  tx: Transaction,
-  where: LeaseWhere,
-  read: { detail: string },
-): Promise<(LeaseSummary & { detail: string | null })[]>;
 export async function leaseRows<D = Data>(
   tx: Transaction,
   where: LeaseWhere,
@@ -110,7 +105,7 @@ export async function leaseRows<D = Data>(
 export async function leaseRows(
   tx: Transaction,
   where: LeaseWhere,
-  read?: 'full' | { detail: string },
+  read?: 'full',
 ): Promise<(LeaseSummary | LeaseRow)[]> {
   if (where.instanceIds?.length === 0 || where.workflows?.length === 0) return [];
   const clauses = ['project_id=?'];
@@ -131,13 +126,11 @@ export async function leaseRows(
   equal('actor_id', where.actorId);
   among('workflow', where.workflows);
   if (where.active) clauses.push('released_at IS NULL');
-  const columns =
-    read === 'full' ? FULL : read ? `${SUMMARY},(details::jsonb ->> ?) AS detail` : SUMMARY;
+  const columns = read === 'full' ? FULL : SUMMARY;
   const rows = await tx.all<
     LeaseSummary & { details?: string; receipt_digest?: string | null; receipt?: string | null }
   >(
     `SELECT ${columns} FROM wf_leases WHERE ${clauses.join(' AND ')} ORDER BY _merv_rowid`,
-    ...(read && read !== 'full' ? [read.detail] : []),
     where.projectId,
     ...values,
   );

@@ -22,8 +22,10 @@ import {
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
+import type { WorkflowProvidedBlocker } from '@merv/workflows/models';
 import type { AgentEvent } from './agent-stream.js';
 import type { SessionDispatch } from './dispatch.js';
+import { QUESTION_PROVIDER } from './messages.js';
 import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
@@ -352,6 +354,21 @@ function dispatchMarks(reading: DispatchReading): RunningMark[] {
   ];
 }
 
+/**
+ * An agent that asked its owner a question, on the work it asked about, while Workflows holds
+ * the blocker Sessions published for it: work that ended, or moved on by another hand, waits on
+ * it no more, whichever visit or attempt its thread is on now.
+ */
+export function questionMarks(blockers: readonly WorkflowProvidedBlocker[]): RunningMark[] {
+  return blockers
+    .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
+    .map((blocker) => ({
+      key: runningKey('work', blocker.instanceId),
+      says: ['Asked you a question'],
+      who: 'Its owner answers it with a message to its agent’s thread',
+    }));
+}
+
 /** The brief as the sidebar carries it: whole, or cut at the last line end within the cap. */
 export function briefText(brief: string): { text: string; truncated: boolean } {
   if (brief.length <= briefCap) return { text: brief, truncated: false };
@@ -515,7 +532,11 @@ export class SessionRunning {
     caller = structuredClone(caller);
     return await this.state.snapshotTransaction(async (tx) => {
       const reading = await this.dispatcher.running(caller, tx);
-      return { marks: dispatchMarks(reading), summary: laneSummary(reading) };
+      const asked = await this.dispatcher.workflows.blockers(caller, undefined, tx);
+      return {
+        marks: [...questionMarks(asked), ...dispatchMarks(reading)],
+        summary: laneSummary(reading),
+      };
     });
   }
 

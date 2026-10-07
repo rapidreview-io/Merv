@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type {
   RunningAttention,
@@ -10,6 +10,7 @@ import type {
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
 import { Ago, StatusPill, capital, cx, words } from '../components';
+import { useTool } from '../api';
 import { Icon } from '../icons';
 import { Markdown } from '../markdown';
 import { stagesOfGraph } from '../process';
@@ -98,21 +99,21 @@ function marker(
 }
 
 /**
- * The threads of the records inside the unit (a wave's lenses), each read on its own and
- * handed up as it arrives.
+ * The threads of the unit and of the records inside it (a wave's lenses), in one read: every
+ * 4 s while one of them is live, every 10 s otherwise. A thread a later record took up (a lens's
+ * author on the next attempt's lens) has visits on both, and is listed once.
  */
-function InnerThreads({
-  instance,
-  onThreads,
-}: {
-  instance: string;
-  onThreads(instance: string, threads: ThreadView[]): void;
-}) {
-  const { threads, loaded } = useThreadList(instance);
-  useEffect(() => {
-    if (loaded) onThreads(instance, threads);
-  }, [loaded, instance, threads, onThreads]);
-  return null;
+function useUnitThreads(instances: readonly string[]) {
+  const list = useTool<{ threads: ThreadView[] }>(
+    instances.length
+      ? `/sessions/threads?${instances.map((id) => `instanceId=${encodeURIComponent(id)}`).join('&')}`
+      : null,
+    {},
+    {
+      every: (data) => (data?.threads.some((thread) => thread.status === 'live') ? 4000 : 10_000),
+    },
+  );
+  return { threads: list.data?.threads ?? [], loadedAt: list.loadedAt };
 }
 
 /** Lenses, perspectives, parts: a line each, and the one pressed opened under the list. */
@@ -388,27 +389,13 @@ export function UnitView({
   details?: ReactNode;
 }) {
   const { nameOf } = useContext(Reading);
-  const { threads, loadedAt } = useThreadList(graph?.instanceId);
-  // The records inside the unit have agents of their own, which its Agents tab lists too.
-  const [inner, setInner] = useState<ReadonlyMap<string, ThreadView[]>>(new Map());
-  const held = useCallback(
-    (instance: string, found: ThreadView[]) =>
-      setInner((known) =>
-        known.get(instance) === found ? known : new Map(known).set(instance, found),
-      ),
-    [],
-  );
+  // The records inside the unit have agents of their own, which its Agents tab lists too; the
+  // unit's own stages draw the threads that are not theirs.
   const inside = unit.instances ?? [];
-  // A thread a later record took up (a lens's author on the next attempt's lens) has visits on
-  // both, and is listed once.
-  const agents = [
-    ...new Map(
-      [...threads, ...inside.flatMap((instance) => inner.get(instance) ?? [])].map((item) => [
-        item.id,
-        item,
-      ]),
-    ).values(),
-  ];
+  const { threads: agents, loadedAt } = useUnitThreads(
+    graph ? [graph.instanceId, ...inside] : inside,
+  );
+  const threads = agents.filter((item) => !inside.includes(item.instanceId));
   const [opened, setOpened] = useState<string>();
   const [elsewhere, setElsewhere] = useState<Reference & { instance: string }>();
   const [document, setDocument] = useState<Handed>();
@@ -552,9 +539,6 @@ export function UnitView({
         </section>
       </div>
       {details}
-      {inside.map((instance) => (
-        <InnerThreads key={instance} instance={instance} onThreads={held} />
-      ))}
       {thread && (
         <ThreadDialog
           thread={thread}

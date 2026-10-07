@@ -23,6 +23,7 @@ import { executionFingerprint, validateExecution } from '@merv/workflows/executi
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { countWrites, openState } from './fixtures/state.js';
+import { registerTaskType } from './fixtures/task-types.js';
 
 const definition = (name: string, version = 1): WorkflowDefinition => ({
   name,
@@ -572,7 +573,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
       format: 2 as const,
     },
   };
-  const disposeType = await app.ctx.tasks.registerType(type);
+  const disposeType = await registerTaskType(app.ctx.tasks, type);
   const custom = await currentTask(app.ctx, producer, {
     title: 'Unavailable recipe',
     goal: 'Verify.',

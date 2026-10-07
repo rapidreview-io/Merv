@@ -59,6 +59,14 @@ export interface ReflectionLens {
   artifact: Artifact | null;
   workflow: WorkflowSnapshot;
 }
+/** A wave as Home and the rail read it: where it and each current lens stand. */
+export interface ReflectionSummary {
+  id: string;
+  title: string;
+  ownerId: string;
+  workflow: WorkflowSnapshot;
+  lenses: { id: string; workflow: WorkflowSnapshot; written: boolean }[];
+}
 export interface Reflection {
   id: string;
   projectId: string;

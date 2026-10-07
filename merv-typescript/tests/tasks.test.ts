@@ -298,16 +298,15 @@ test('task reads, context and failure keep their original caller and inputs', as
   const task = await f.create();
   const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const foreign = { projectId: other.project.id, actorId: other.actor.id };
-  for (const method of ['get', 'record', 'records', 'list', 'process'] as const) {
+  for (const method of ['get', 'record', 'records', 'list'] as const) {
     await t.test(method, async () => {
-      const caller = { ...(method === 'process' ? f.producer : foreign) };
+      const caller = { ...foreign };
       const reading =
         method === 'list' || method === 'records'
           ? f.tasks[method](caller)
           : f.tasks[method](caller, task.id);
-      Object.assign(caller, method === 'process' ? foreign : f.producer);
+      Object.assign(caller, f.producer);
       if (method === 'list' || method === 'records') assert.deepEqual(await reading, []);
-      else if (method === 'process') await reading;
       else await assert.rejects(reading, code('not_found'));
     });
   }

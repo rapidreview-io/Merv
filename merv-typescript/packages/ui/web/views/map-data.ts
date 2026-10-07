@@ -3,7 +3,7 @@ import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { useTool, type Actor, type Project } from '../api';
 import type { ReviewRequest } from '@merv/contracts/types';
-import type { Reflection } from '@merv/reflections/models';
+import type { ReflectionSummary } from '@merv/reflections/models';
 import type { Task } from '@merv/tasks/models';
 
 /**
@@ -61,7 +61,6 @@ type MapReview = Pick<
   | 'open'
   | 'returned'
 >;
-type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
 /**
  * What Home and the rail read, as the server composes it (`ui.home`): the project's
  * records, under the id of the row that lists them, and the gate of every open workflow in it,
@@ -75,7 +74,7 @@ export interface HomeData {
   reviews: MapReview[] | null;
   research: MapCycle[] | null;
   workflows: { workflows: WorkflowDecision[] } | null;
-  reflections: MapReflection[] | null;
+  reflections: ReflectionSummary[] | null;
 }
 /** One read for the rail and Home; asking twice joins one request. */
 export const useHome = (every = 10000) => useTool<HomeData>('ui.home', {}, { every });

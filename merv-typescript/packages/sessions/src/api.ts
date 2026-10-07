@@ -334,20 +334,21 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
     if (events && req.method === 'GET')
       return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
-    // A work item's threads by instanceId; else the project's, a page older than `before`.
+    // The threads of work items by instanceId, one or more (a wave and its lenses are read at
+    // once); else the project's, a page older than `before`.
     if (path === '/sessions/threads' && req.method === 'GET') {
       const query = [...r.url.searchParams.keys()];
       check(
-        query.length <= 1 && (!query.length || ['instanceId', 'before'].includes(query[0]!)),
+        query.every((key) => key === 'instanceId') || (query.length === 1 && query[0] === 'before'),
         'invalid_input',
-        'The threads route takes instanceId=<id>, before=<cursor> or nothing',
+        'The threads route takes instanceId=<id> (repeated for several), before=<cursor> or nothing',
       );
-      const instanceId = r.url.searchParams.get('instanceId');
+      const instanceIds = r.url.searchParams.getAll('instanceId');
       const before = r.url.searchParams.get('before') ?? undefined;
       const caller = await r.caller();
-      return instanceId === null
-        ? await read(() => sessions.threads.project(caller, before))
-        : { threads: await read(() => sessions.threads.list(caller, instanceId)) };
+      return instanceIds.length
+        ? { threads: await read(() => sessions.threads.list(caller, instanceIds)) }
+        : await read(() => sessions.threads.project(caller, before));
     }
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');

@@ -1,11 +1,9 @@
 import {
   clip,
   runningKey,
-  type Artifact,
   type ReviewRequest,
   type RunningAttention,
   type RunningNode,
-  type RunningNodeLink,
   type RunningPanelPart,
   type RunningPhrase,
   type RunningSection,
@@ -19,12 +17,16 @@ import type {
   WorkflowDependency,
   WorkflowHistoryEntry,
 } from '@merv/workflows/models';
-import { dependencyRows } from '@merv/workflows/dependency-rows';
+import {
+  dependencyLinks,
+  dependencySections,
+  prerequisiteNames,
+} from '@merv/workflows/dependency-rows';
 import {
   reviewWord,
-  unitArtifacts,
+  unitFileList,
+  type UnitFiles,
   unitHistory,
-  type UnitFile,
   type UnitStateWords,
 } from '@merv/reviews/unit-history';
 import { reviewAttention, reviewCard } from '@merv/reviews/running';
@@ -108,11 +110,7 @@ function face(standing: ExperimentStanding): {
   const open = standing.dependencies.filter((item) => !item.settled && !item.failed);
   if (open.length)
     return {
-      line: [
-        'Waits on ',
-        open[0]!.name,
-        ...(open.length > 1 ? [` and ${open.length - 1} more`] : []),
-      ],
+      line: ['Waits on ', ...prerequisiteNames(open.map((item) => item.name))],
       look: 'dashed',
       rank: 3,
     };
@@ -164,13 +162,7 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
 export function experimentNode(standing: ExperimentStanding): RunningNode {
   const { line, look, rank } = face(standing);
   const red = attention(standing);
-  const links: RunningNodeLink[] = ENDED[standing.state]
-    ? []
-    : standing.dependencies.map((item) => ({
-        to: runningKey('work', item.id),
-        verb: 'waits on',
-        ...(!item.settled && !item.failed ? { waiting: true } : {}),
-      }));
+  const links = ENDED[standing.state] ? [] : dependencyLinks(standing.dependencies);
   return {
     key: runningKey('work', standing.id),
     lane: 'work',
@@ -205,10 +197,7 @@ const named = (item: { artifactId: string; path: string }) => ({
 });
 
 /** The files an experiment's panel read: those it names by id, and those its sessions made. */
-export interface ExperimentFiles {
-  found: ReadonlyMap<string, UnitFile['artifact']>;
-  made?: readonly UnitFile['artifact'][];
-}
+export type ExperimentFiles = UnitFiles;
 
 /** Every file an experiment's record names: its evidence, its figures, and what its reviews cite. */
 export function experimentFileIds(
@@ -303,26 +292,21 @@ export function experimentUnit(
       : experiment.workflow.state === 'running'
         ? (of('Current plan', newest('design', true), 'approved') ?? plan())
         : (of('Report', newest('results')) ?? plan());
-  const file = (id: string, role?: UnitFile['role']): UnitFile[] => {
-    const artifact = files.found.get(id);
-    return artifact ? [{ artifact, ...(role ? { role } : {}) }] : [];
-  };
   const evidence = [
     ...experiment.evidence,
     ...experiment.submissions.flatMap((item) => item.evidence),
   ];
-  const artifacts = unitArtifacts(graph, [
-    ...evidence.flatMap((item) =>
-      file(item.artifactId, item.systemGenerated ? undefined : 'producer'),
+  // What the system generated (an exhibit) is nobody's own.
+  const artifacts = unitFileList(graph, files, {
+    producer: [
+      ...evidence.filter((item) => !item.systemGenerated).map((item) => item.artifactId),
+      ...[...evidence, ...experiment.submissions].flatMap((item) => item.figureIds),
+    ],
+    reviewer: reviews.flatMap((review) =>
+      review.findings.flatMap((finding) => finding.evidenceIds),
     ),
-    ...[...evidence, ...experiment.submissions]
-      .flatMap((item) => item.figureIds)
-      .flatMap((id) => file(id, 'producer')),
-    ...(files.made ?? []).map((artifact): UnitFile => ({ artifact, role: 'producer' })),
-    ...reviews
-      .flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds))
-      .flatMap((id) => file(id, 'reviewer')),
-  ]);
+    other: evidence.filter((item) => item.systemGenerated).map((item) => item.artifactId),
+  });
   return {
     key: key ?? { label: 'Question', text: experiment.intent },
     history,
@@ -353,11 +337,6 @@ export function experimentPanel(input: {
     : timed(line)
       ? line
       : [...line, ' · ', { since: standing.updatedAt }];
-  const { waitsOn, unblocks } = dependencyRows(
-    graph.dependencies.filter((item) => item.direction === 'depends_on'),
-    graph.dependencies.filter((item) => item.direction === 'required_by'),
-    route,
-  );
   const evidence = experiment.evidence
     .filter((item) => item.current && item.attemptIndex === experiment.attempt.index)
     .sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.sequence - b.sequence);
@@ -366,21 +345,13 @@ export function experimentPanel(input: {
     drawn < total ? [{ count: drawn, of: total }] : [{ count: total }];
   const sections: RunningSection[] = [
     { title: 'Stage', place: 'progress', kind: 'ladder', graph },
-    ...(waitsOn.length
-      ? [
-          {
-            title: 'Waits on',
-            place: 'relations' as const,
-            kind: 'links' as const,
-            rows: waitsOn,
-            // A failed prerequisite is why the card is red, so its section leads.
-            ...(waitsOn.some((row) => row.attention) ? { attention: true } : {}),
-          },
-        ]
-      : []),
-    ...(unblocks.length
-      ? [{ title: 'Unblocks', place: 'relations' as const, kind: 'links' as const, rows: unblocks }]
-      : []),
+    // A failed prerequisite is why the card is red, so its section leads.
+    ...dependencySections(
+      graph.dependencies.filter((item) => item.direction === 'depends_on'),
+      graph.dependencies.filter((item) => item.direction === 'required_by'),
+      route,
+      true,
+    ),
     { title: 'Question', place: 'content', kind: 'text', text: experiment.intent, clamp: 4 },
     ...(files.length
       ? [

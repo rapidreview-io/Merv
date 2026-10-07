@@ -81,3 +81,10 @@ export const SOURCE_VERIFICATION =
  * and not part of the published graph, so it covers every live task of every version.
  */
 export const TASK_LIMITS = { reviewRounds: 3 };
+
+/**
+ * What a lease of a task holds it for, read from the step it holds: its review while the task
+ * is in review, else its work. Acquisition pins the same word in the lease's details.
+ */
+export const purposeOf = (step: { state: string }): 'work' | 'review' =>
+  step.state === 'in_review' ? 'review' : 'work';

@@ -379,8 +379,11 @@ export interface Sessions {
   readonly threads: {
     /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
     register(workflow: string, provider: ContinuityProvider): () => void;
-    /** Every thread with a visit on the work item, for anyone who may read it; never a worker. */
-    list(caller: Caller, instanceId: string): Promise<ThreadView[]>;
+    /**
+     * Every thread with a visit on the work item, or on any of up to 100 of them, oldest first,
+     * for anyone who may read each; never a worker.
+     */
+    list(caller: Caller, instanceIds: string | readonly string[]): Promise<ThreadView[]>;
     /**
      * The project's threads that want attention, then its newest others, older than `before`, a
      * page at a time.

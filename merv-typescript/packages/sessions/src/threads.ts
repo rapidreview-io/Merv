@@ -56,6 +56,8 @@ type Row = {
   latest_session_id: string | null;
 };
 type Facts = Omit<SessionConversationDeclaration, 'hostRef' | 'deliver'>;
+/** A question its agent asked that nobody has answered, and the work it asked about. */
+type OpenQuestion = { thread_id: string; instance_id: string };
 /** One prefix per project, as transcripts have. */
 const namespace = (projectId: string) => `conversations-${projectId}`;
 /** How long a thread waits, dormant, for its work to come back to it. */
@@ -70,6 +72,8 @@ const TAIL_MAX_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
+/** The most work items one read of their threads names: a wave and every attempt's lenses. */
+const LIST_INSTANCES = 100;
 /** How many threads that want no attention a page of the project's threads holds. */
 const PAGE = 50;
 /** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
@@ -478,15 +482,20 @@ export class SessionThreads {
   }
 
   /** Every thread with a visit on the work item, oldest first, each with all of its visits. */
-  async list(caller: Caller, instanceId: string): Promise<ThreadView[]> {
-    check(text(instanceId), 'invalid_input', 'instanceId names a work item');
+  async list(caller: Caller, instanceIds: string | readonly string[]): Promise<ThreadView[]> {
+    const ids = [...new Set(typeof instanceIds === 'string' ? [instanceIds] : instanceIds)];
+    check(
+      ids.length >= 1 && ids.length <= LIST_INSTANCES && ids.every((id) => text(id)),
+      'invalid_input',
+      `instanceId names a work item, or up to ${LIST_INSTANCES} of them`,
+    );
     return await this.reading(caller, async (tx) => {
-      await this.host.readable(caller, instanceId, tx);
+      for (const id of ids) await this.host.readable(caller, id, tx);
       const threads = await tx.all<Row>(
-        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id=?) ORDER BY _merv_rowid',
+        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
         caller.projectId,
         caller.projectId,
-        instanceId,
+        JSON.stringify(ids),
       );
       return (await this.viewed(tx, threads)).map(
         ({ name: _name, workflow: _workflow, ...view }) => view,
@@ -530,10 +539,14 @@ export class SessionThreads {
       const marks = ids.map(() => '?').join(',');
       const asked = new Map(
         (page.length
-          ? await tx.all<{ thread_id: string; id: string; question: string; asked_at: string }>(
-              `SELECT DISTINCT ON (thread_id) thread_id,id,question,asked_at FROM session_questions
-                WHERE answered_at IS NULL AND thread_id IN (${marks}) ORDER BY thread_id,_merv_rowid DESC`,
-              ...ids,
+          ? await this.standing(
+              tx,
+              caller.projectId,
+              await tx.all<OpenQuestion & { id: string; question: string; asked_at: string }>(
+                `SELECT DISTINCT ON (thread_id) thread_id,instance_id,id,question,asked_at FROM session_questions
+                  WHERE answered_at IS NULL AND thread_id IN (${marks}) ORDER BY thread_id,_merv_rowid DESC`,
+                ...ids,
+              ),
             )
           : []
         ).map((row) => [row.thread_id, row]),
@@ -633,14 +646,40 @@ export class SessionThreads {
   /** How many of the project's threads are live, and how many ask their owner a question. */
   async counts(caller: Caller): Promise<ThreadCounts> {
     return await this.reading(caller, async (tx) => {
-      const row = await tx.get<{ live: number | string; waiting: number | string }>(
-        `SELECT (SELECT count(*) FROM session_threads t WHERE t.project_id=? AND ${LIVE}) AS live,
-          (SELECT count(DISTINCT q.thread_id) FROM session_questions q WHERE q.project_id=? AND q.answered_at IS NULL) AS waiting`,
-        caller.projectId,
+      const row = await tx.get<{ live: number | string }>(
+        `SELECT count(*) AS live FROM session_threads t WHERE t.project_id=? AND ${LIVE}`,
         caller.projectId,
       );
-      return { live: Number(row?.live ?? 0), waiting: Number(row?.waiting ?? 0) };
+      const asking = await this.standing(
+        tx,
+        caller.projectId,
+        await tx.all<OpenQuestion>(
+          'SELECT DISTINCT thread_id,instance_id FROM session_questions WHERE project_id=? AND answered_at IS NULL',
+          caller.projectId,
+        ),
+      );
+      return {
+        live: Number(row?.live ?? 0),
+        waiting: new Set(asking.map((question) => question.thread_id)).size,
+      };
     });
+  }
+  /**
+   * The open questions that still stand: a question's work that ended took its blocker with it,
+   * so its thread, whichever work item it is on now, no longer waits on the answer.
+   */
+  private async standing<T extends OpenQuestion>(
+    tx: Transaction,
+    projectId: string,
+    questions: T[],
+  ): Promise<T[]> {
+    if (!questions.length) return questions;
+    const ended = await this.host.ended(
+      projectId,
+      [...new Set(questions.map((question) => question.instance_id))],
+      tx,
+    );
+    return questions.filter((question) => !ended.has(question.instance_id));
   }
   /** A read of the project's threads by a person or their key, never a worker. */
   private async reading<T>(caller: Caller, read: (tx: Transaction) => Promise<T>): Promise<T> {

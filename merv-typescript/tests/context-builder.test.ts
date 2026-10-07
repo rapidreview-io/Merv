@@ -13,6 +13,7 @@ import { createApp } from './fixtures/app.js';
 import type { ContextInput, ContextRecipeDefinition } from '@merv/contracts';
 import { buildContext } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
+import { registerTaskType } from './fixtures/task-types.js';
 
 const definition: ContextRecipeDefinition = {
   name: 'test.context',
@@ -192,7 +193,7 @@ test('additional task types register recipes directly and retire without retaini
         format: 2,
       },
     };
-    const unregister = await app.ctx.tasks.registerType(definition);
+    const unregister = await registerTaskType(app.ctx.tasks, definition);
     const brief = await app.ctx.artifacts.create(caller, {
       title: 'Brief',
       content: 'Plan. Has steps.',
@@ -227,7 +228,7 @@ test('additional task types register recipes directly and retire without retaini
       /unavailable/,
     );
     assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
-    await app.ctx.tasks.registerType(definition);
+    await registerTaskType(app.ctx.tasks, definition);
     assert.deepEqual(await app.ctx.tasks.context(caller, packageInput), context);
   } finally {
     await app.stop();
