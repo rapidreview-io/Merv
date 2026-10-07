@@ -1173,6 +1173,40 @@ test('a capture Sandboxes refused is on the experiment, its card and its sidebar
   assert.ok(JSON.stringify(panel).includes(said[0]!));
 });
 
+test('experiments.list reads Sandboxes captures once for every experiment', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  const calls = { captures: 0, evidence: 0 };
+  t.after(
+    f.experiments.bindSandboxes({
+      captures: (...args) => (calls.captures++, native.service.captures(...args)),
+      evidence: (...args) => (calls.evidence++, native.service.evidence(...args)),
+    }),
+  );
+  for (let index = 0; index < 4; index++) await f.create(`Batched-${index}`);
+  Object.assign(calls, { captures: 0, evidence: 0 });
+  assert.equal((await f.experiments.list(f.reader)).length, 4);
+  assert.deepEqual(calls, { captures: 0, evidence: 1 });
+});
+
+test('a result attach reads only the result it adds', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const bytes = t.mock.method(f.artifacts, 'bytes');
+  const reads: number[] = [];
+  for (let seed = 1; seed <= 12; seed++) {
+    const before = bytes.mock.callCount();
+    await f.attach(experiment, 'result', `{"seed":${seed},"score":0.5}`, {
+      path: `seeds/${seed}.json`,
+    });
+    reads.push(bytes.mock.callCount() - before);
+  }
+  assert.deepEqual(reads, Array(12).fill(1));
+  // The exhibit still pins every one of them.
+  const exhibit = await f.experiments.exhibit(f.producer, experiment.id);
+  assert.equal(JSON.parse(exhibit.content).resultFiles.length, 12);
+});
+
 test('an attempt refuses its 101st result file when it is attached', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();

@@ -72,7 +72,7 @@ const captureSchema = z.object({
   }),
 });
 const capturePageSchema = z.object({
-  captures: z.array(captureSchema).max(10),
+  captures: z.array(captureSchema).max(128),
   next: id.nullable(),
 });
 const filesPageSchema = z.object({
@@ -451,7 +451,7 @@ export class NativeEvidence {
         await this.connections.call<unknown>(
           connection,
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures`,
-          { query: { limit: '1', ...(after ? { after } : {}) } },
+          { query: { limit: '128', ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture page', 502);

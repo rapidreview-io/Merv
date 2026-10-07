@@ -137,6 +137,8 @@ test('a workflow that fails as a whole is refused like a capture, and then rests
       .publish(h.work, h.connection, h.workflow)
       .catch((e: Error & { code?: string }) => errors.add(`${e.code}: ${e.message}`));
   assert.deepEqual([...errors], ['sandbox_evidence_invalid: Too many native capture nodes']);
+  // Receipts are paged 128 at a time, so a pass costs two calls, not one per capture node.
+  assert.ok(h.calls() <= 2 * 70, `${h.calls()} native calls`);
   assert.deepEqual(await h.refused(), [
     { node_id: '*', error: 'sandbox_evidence_invalid: Too many native capture nodes' },
   ]);

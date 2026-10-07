@@ -79,7 +79,7 @@ async function fixture(t: TestContext) {
     assert.ok(url.pathname.startsWith('/v1/delegations/works/grant_work/'));
     let value: unknown;
     if (url.pathname.endsWith('/captures')) {
-      assert.equal(url.searchParams.get('limit'), '1');
+      assert.equal(url.searchParams.get('limit'), '128');
       const start = url.searchParams.has('after')
         ? captures.findIndex((c) => c.id === url.searchParams.get('after')) + 1
         : 0;

@@ -11,6 +11,7 @@ import {
   type Artifact,
   type Caller,
   type Data,
+  type Json,
   type Transaction,
   type WorkflowCheckContext,
 } from '@merv/contracts';
@@ -225,7 +226,6 @@ export async function attach(
       );
       const text = await evidenceText(ctx, caller, artifact.id, tx);
       if (input.role === 'result') {
-        parseResult(text, input.resultFormat ?? 'json');
         // The exhibit pins every current result, so one past its limits could never be submitted.
         const kept = currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path);
         const added = {
@@ -236,6 +236,7 @@ export async function attach(
           resultFormat: input.resultFormat,
           sequence: 0,
         } as ExperimentEvidence;
+        parsed(added, text);
         await buildExhibit(ctx, caller, experiment, [...kept, added], tx).catch((error) => {
           throw error instanceof MervError && error.code === 'invalid_experiment_evidence'
             ? new MervError(
@@ -359,6 +360,39 @@ async function figures(
   return ids;
 }
 
+/**
+ * Each result's parsed data, by the hash of its bytes and its format: retained bytes never change,
+ * so an attach parses only the result it adds, not every one the attempt holds. The least recently
+ * used go first past RESULT_CACHE_BYTES of their text.
+ */
+const parsedResults = new Map<string, { data: Json | null; size: number }>();
+const RESULT_CACHE_BYTES = 32 * 1024 * 1024;
+let cached = 0;
+const resultKey = (source: Pick<ExperimentEvidence, 'hash' | 'resultFormat'>) =>
+  `${source.hash}:${source.resultFormat ?? 'json'}`;
+/** A kept result's data, now the most recently used. */
+function kept(source: Pick<ExperimentEvidence, 'hash' | 'resultFormat'>) {
+  const key = resultKey(source);
+  const entry = parsedResults.get(key)!;
+  parsedResults.delete(key);
+  parsedResults.set(key, entry);
+  return entry.data;
+}
+/** The result's data, parsed from its retained text and kept for the next exhibit. */
+function parsed(source: Pick<ExperimentEvidence, 'hash' | 'resultFormat'>, text: string) {
+  const data = parseResult(text, source.resultFormat ?? 'json');
+  const key = resultKey(source);
+  cached += text.length - (parsedResults.get(key)?.size ?? 0);
+  parsedResults.delete(key);
+  parsedResults.set(key, { data, size: text.length });
+  for (const [old, { size }] of parsedResults) {
+    if (cached <= RESULT_CACHE_BYTES) break;
+    parsedResults.delete(old);
+    cached -= size;
+  }
+  return data;
+}
+
 /** The metrics exhibit of the selected `result` evidence. */
 async function buildExhibit(
   ctx: ExperimentsContext,
@@ -376,10 +410,9 @@ async function buildExhibit(
     sha256: source.hash,
     submittedAt: source.createdAt,
     resultFormat: source.resultFormat ?? 'json',
-    data: parseResult(
-      await evidenceText(ctx, caller, source.artifactId, tx),
-      source.resultFormat ?? 'json',
-    ),
+    data: parsedResults.has(resultKey(source))
+      ? kept(source)
+      : parsed(source, await evidenceText(ctx, caller, source.artifactId, tx)),
   }));
   const exhibit = buildMetricsExhibit({
     projectId: experiment.projectId,
