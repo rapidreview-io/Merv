@@ -232,6 +232,70 @@ test('every boundary image must prove it can be a work host before its release s
   ]);
 });
 
+test("the workflow gate's Main answers every call a step settles through, so its host leases again", () => {
+  // The runner holds a work host until its visit settled: a stream, transcript or conversation
+  // call answered with a bodiless 404 is retried for minutes, so the inquiry the gate offers next
+  // is never leased (2026-10-07, run 20261007T104952Z-f3e7c72a). The gate's own fake Main, as
+  // the runner calls it in order, must answer each as Sessions does and the runner's client reads.
+  const gate = new URL('../scripts/hosted-runner/linux-workflow-gate.py', import.meta.url).pathname;
+  const r = spawnSync(
+    'python3',
+    [
+      '-c',
+      `import ast, json, threading, time
+tree = ast.parse(open(${JSON.stringify(gate)}).read())
+g = {'json': json, 'time': time, 'base': 'http://127.0.0.1:9', 'work_instance': 'gate_work_x',
+     'step_id': 'session_gate_x', 'inquiry_id': 'session_gate_inquiry_x', 'step_secret': [],
+     'inquiry_secret': [], 'control_calls': [], 'inquiry_calls': [], 'kept': {}, 'printed': {},
+     'streams': {}, 'step_state': {}, 'inquiry_state': {}, 'step_released': threading.Event(),
+     'inquiry_released': threading.Event(), 'inquiry_ready': threading.Event()}
+fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('step_session', 'control_reply')]
+exec(compile(ast.Module(body=fns, type_ignores=[]), 'gate', 'exec'), g)
+class H:
+    pass
+def call(path, body=None):
+    h = H()
+    h.path = path
+    return g['control_reply'](h, 'POST', body)
+out = {}
+out['lease'] = call('/sessions/lease', {'runnerId': 'r', 'secret': 's1'})['session']['id']
+call('/sessions/session_gate_x/attach', {'runnerId': 'r', 'hostRef': 'launch_1'})
+batch = {'runnerId': 'r', 'hostRef': 'launch_1', 'from': 0, 'to': 120, 'events': [{'kind': 'status'}]}
+out['stream'] = call('/sessions/session_gate_x/stream', batch)
+out['restream'] = call('/sessions/session_gate_x/stream', batch)
+log = {'runnerId': 'r', 'hostRef': 'launch_1', 'sha256': 'a' * 64, 'size': 120, 'logBytes': 120, 'truncated': False}
+chat = {'runnerId': 'r', 'hostRef': 'launch_1', 'harness': 'codex', 'conversationId': 'c', 'sha256': 'b' * 64, 'size': 9}
+out['transcript'] = call('/sessions/session_gate_x/transcript', log)
+out['conversation'] = call('/sessions/session_gate_x/conversation', chat)
+call('/sessions/session_gate_x/release', {'runnerId': 'r', 'outcome': 'completed'})
+out['transcriptUpload'] = call('/sessions/session_gate_x/transcript', {**log, 'deliver': True})
+out['conversationUpload'] = call('/sessions/session_gate_x/conversation', {**chat, 'deliver': True})
+g['inquiry_ready'].set()
+out['next'] = call('/sessions/lease', {'runnerId': 'r', 'secret': 's2'})['session']['id']
+print(json.dumps(out))`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.lease, 'session_gate_x');
+  // How far Sessions holds the stream; a batch sent again is held, not taken twice.
+  assert.deepEqual(out.stream, { stream: { until: 120 } });
+  assert.deepEqual(out.restream, { stream: { until: 120 } });
+  // Declared, then delivered: each names this session and file, with a PUT to this Main.
+  for (const [kind, sha256, size] of [
+    ['transcript', 'a'.repeat(64), 120],
+    ['conversation', 'b'.repeat(64), 9],
+  ]) {
+    assert.deepEqual(out[kind], {
+      [kind]: { sessionId: 'session_gate_x', sha256, size, uploadedAt: null },
+    });
+    const upload = out[`${kind}Upload`]?.[kind]?.upload;
+    assert.match(upload?.url ?? '', /^http:\/\/127\.0\.0\.1:9\/gate-/, kind);
+  }
+  assert.equal(out.next, 'session_gate_inquiry_x');
+});
+
 test('release ids match the live Sandboxes catalog and require a digest', () => {
   // The release of 2026-09-25T02:00Z as Sandboxes derived it; the seed moves on with each release.
   const live = `registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3ca9ef18a5fe95d65b0277963098cc938b0908bbb61e80cf6185bfc1d10720a6`;

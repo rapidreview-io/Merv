@@ -36,6 +36,9 @@ step_relayed, step_released = threading.Event(), threading.Event()
 inquiry_id = 'session_gate_inquiry_' + secrets.token_hex(8)
 inquiry_secret, inquiry_calls = [], []
 kept = {}
+# Each visit's printed log, declared then delivered as the conversation is; and how far into each
+# visit's live stream this Main holds.
+printed, streams = {}, {}
 conversation_stored, inquiry_ready, inquiry_released = threading.Event(), threading.Event(), threading.Event()
 LAUNCHER = Path('/opt/merv/runtime/assignment-probed.py')
 LAUNCH_RECORD = Path('/run/merv-runtime/gate-launch.json')
@@ -113,21 +116,35 @@ def control_reply(handler, method, body):
     action = parts[3] if len(parts) > 3 else None
     if inquiry:
         inquiry_calls.append(action)
-    if action == 'conversation' and not inquiry:
-        # The step's conversation, declared then delivered through one PUT to this Main.
-        facts = {k: body[k] for k in ('harness', 'conversationId', 'sha256', 'size')}
-        kept.setdefault('facts', facts)
-        stored = kept.get('bytes') is not None
-        reply = {'sessionId': step_id, 'sha256': facts['sha256'], 'size': facts['size'],
+    # A visit settles, and its work host leases its next one, only once each of these is answered
+    # as Sessions answers it: a route left a bodiless 404 is retried for minutes (2026-10-07: the
+    # step's transcript held the work host, so no inquiry was ever leased).
+    if action == 'stream':
+        held = streams.get(parts[2], 0)
+        if body['from'] >= held and body['events']:
+            streams[parts[2]] = held = body['to']
+        return {'stream': {'until': held}}
+    if action == 'transcript' or (action == 'conversation' and not inquiry):
+        # What the visit printed, and the step's conversation: each declared, then delivered
+        # through one PUT to this Main.
+        if action == 'conversation':
+            file = kept
+            kept.setdefault('facts', {k: body[k] for k in ('harness', 'conversationId', 'sha256', 'size')})
+        else:
+            file = printed.setdefault(parts[2], {'facts': {k: body[k] for k in ('sha256', 'size')}})
+        facts = file['facts']
+        stored = file.get('bytes') is not None
+        reply = {'sessionId': parts[2], 'sha256': facts['sha256'], 'size': facts['size'],
                  'uploadedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ') if stored else None}
         if body.get('deliver') and not stored:
-            reply['upload'] = {'url': base + '/gate-conversation', 'headers': {},
+            target = '/gate-conversation' if action == 'conversation' else '/gate-transcript/' + parts[2]
+            reply['upload'] = {'url': base + target, 'headers': {},
                                'expiresAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))}
-        return {'conversation': reply}
+        return {action: reply}
     if action == 'resume' and inquiry:
         return {'download': {'url': base + '/gate-conversation',
                              'expiresAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))}}
-    if action in ('transcript', 'conversation', 'huggingface-access', 'stream', 'resume'):
+    if action in ('conversation', 'huggingface-access', 'resume'):
         return None
     if action == 'launch-connections':
         return {'connections': []}
@@ -289,15 +306,19 @@ class Main(http.server.BaseHTTPRequestHandler):
         self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
 
     def do_PUT(self):
-        # The store's signed PUT of the step's conversation, which the inquiry's resume reads.
+        # The store's signed PUTs: the step's conversation, which the inquiry's resume reads, and
+        # each visit's printed log.
         raw = self.rfile.read(int(self.headers.get('content-length', '0')))
-        if self.path != '/gate-conversation' or 'facts' not in kept or \
-                hashlib.sha256(raw).hexdigest() != kept['facts']['sha256']:
+        file = (kept if self.path == '/gate-conversation' else
+                printed.get(self.path.removeprefix('/gate-transcript/'), {})
+                if self.path.startswith('/gate-transcript/') else {})
+        if 'facts' not in file or hashlib.sha256(raw).hexdigest() != file['facts']['sha256']:
             self.send_response(400)
             self.end_headers()
             return
-        kept['bytes'] = raw
-        conversation_stored.set()
+        file['bytes'] = raw
+        if file is kept:
+            conversation_stored.set()
         self.send_response(200)
         self.end_headers()
 
@@ -397,6 +418,8 @@ try:
     inquiry_ready.set()
     assert inquiry_released.wait(180), 'the work host ran no inquiry through to its release: ' + json.dumps(
         [(m, p) for m, p, _ in control_calls][-12:])
+    # The step settled before its host leased again: its printed log was delivered too.
+    assert printed.get(step_id, {}).get('bytes') is not None, "the step's transcript was never stored"
     launches = [json.loads(line) for line in LAUNCH_RECORD.read_text().splitlines()]
     assert len(launches) == 2, launches
     asked = launches[1]
