@@ -205,6 +205,43 @@ test('get rejects a same-project response for any different session or runner', 
   );
 });
 
+test('a server that predates the control route is read the whole session, for a work host too', async () => {
+  // An older server answers a work host's bearer for an unknown route with its route refusal
+  // (403), and anyone else's with 404: either way the session is read whole, never halted.
+  for (const refusal of [
+    { status: 404, code: 'not_found' },
+    { status: 403, code: 'managed_runner_forbidden' },
+  ]) {
+    const paths: string[] = [];
+    const old = new RunnerClient(
+      'https://merv.example',
+      'project_fixture',
+      bearer,
+      async (input) => {
+        const path = new URL(String(input)).pathname;
+        paths.push(path);
+        return path.endsWith('/control')
+          ? Response.json(
+              { error: { code: refusal.code, message: 'no' } },
+              { status: refusal.status },
+            )
+          : Response.json({ session: session({ closeReason: null }) });
+      },
+    );
+    const control = await old.control('session_fixture', heartbeat.runnerId);
+    assert.deepEqual([control.status, control.hostRef], ['active', 'launch_fixture'], refusal.code);
+    assert.deepEqual(paths, ['/sessions/session_fixture/control', '/sessions/session_fixture']);
+  }
+  // The whole session's own refusal is the answer.
+  const gone = new RunnerClient('https://merv.example', 'project_fixture', bearer, async () =>
+    Response.json({ error: { code: 'session_not_found', message: 'no' } }, { status: 404 }),
+  );
+  await assert.rejects(gone.control('session_fixture', heartbeat.runnerId), {
+    code: 'session_not_found',
+    status: 404,
+  });
+});
+
 test('attach requires the requested session, runner and immutable host reference, and the worker prompt', async () => {
   assert.deepEqual(
     await client({ session: session({ status: 'offered' }), prompt: 'Worker prompt.' }).attach(

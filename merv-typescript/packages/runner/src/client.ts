@@ -315,13 +315,15 @@ export class RunnerClient {
     });
   }
   /** What a tick reads of a session: its status, deadlines and end. A server too old to answer
-   *  that route is read the whole session, of which the same fields are kept. */
+   *  that route is read the whole session, of which the same fields are kept: it refuses the
+   *  route (a 404, or a work host's 403 for a route it does not list), and the whole read's own
+   *  answer stands, so no refusal of the route alone ever halts a launch. */
   async control(id: string, runnerId: string): Promise<SessionControlView> {
     const path = `/sessions/${encodeURIComponent(id)}`;
     const value = await this.request(`${path}/control`).then(
       (reply) => reply?.control,
       async (error: unknown) => {
-        if (!(error instanceof RunnerControlError && error.code === 'not_found')) throw error;
+        if (!(error instanceof RunnerControlError && error.final)) throw error;
         return (await this.request(path))?.session;
       },
     );
