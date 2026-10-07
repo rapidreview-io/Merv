@@ -95,7 +95,11 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
       label: lensName(lens.perspective).replace(/^./, (first) => first.toUpperCase()),
     })),
   ];
-  const open = tabs.find((tab) => tab.value === params.get('lens'))?.value ?? tabs[0]?.value;
+  // A wave sent back to its lenses opens on them: its report is the earlier attempt's.
+  const open =
+    tabs.find((tab) => tab.value === params.get('lens'))?.value ??
+    (wave.workflow.state === 'reflecting' ? wave.lenses[0]?.id : undefined) ??
+    tabs[0]?.value;
   const lens = wave.lenses.find((item) => item.id === open);
   const choose = (value: string) => {
     const next = new URLSearchParams(params);
