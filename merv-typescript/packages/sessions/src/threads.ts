@@ -53,9 +53,12 @@ type Facts = Omit<SessionConversationDeclaration, 'hostRef' | 'deliver'>;
 const namespace = (projectId: string) => `conversations-${projectId}`;
 /** How long a thread waits, dormant, for its work to come back to it. */
 export const dormantMs = 14 * 86_400_000;
-/** What a conversation read sends of one visit: its newest events, at most this many or bytes. */
-const VISIT_EVENTS = 500;
-const VISIT_BYTES = 2_000_000;
+/** What a conversation read sends: its newest events across visits, at most this many or bytes. */
+const READ_EVENTS = 500;
+const READ_BYTES = 2_000_000;
+/** The end of a transcript read first; a longer one only while it holds too few events. */
+const TAIL_BYTES = 1_000_000;
+type Room = { events: number; bytes: number };
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -527,23 +530,25 @@ export class SessionThreads {
       );
     });
     const out: ThreadConversation = { threadId, visits: [] };
-    for (const visit of visits) {
+    // Newest visit first: an older visit's transcript is read only while the read has room left.
+    const room: Room = { events: READ_EVENTS, bytes: READ_BYTES };
+    for (const visit of visits.reverse()) {
       const streamed = await this.host.stream(visit.id);
       if (streamed.length) {
-        out.visits.push({ sessionId: visit.id, from: 'stream', events: streamed });
+        out.visits.unshift({ sessionId: visit.id, from: 'stream', events: newest(streamed, room) });
         continue;
       }
       if (visit.sha256 === null) {
-        out.visits.push({ sessionId: visit.id, from: 'none', events: [] });
+        out.visits.unshift({ sessionId: visit.id, from: 'none', events: [] });
         continue;
       }
-      check(this.blobs, 'blob_unavailable', 'Transcript storage is not loaded', 503);
-      const bytes = await this.blobs.get(`transcripts-${visit.project_id}`, visit.sha256);
-      out.visits.push({
-        sessionId: visit.id,
-        from: 'transcript',
-        events: transcriptEvents(bytes.toString('utf8'), visit.declared_at!),
-      });
+      let events: AgentStreamEvent[] = [];
+      if (room.events && room.bytes) {
+        check(this.blobs, 'blob_unavailable', 'Transcript storage is not loaded', 503);
+        const bytes = await this.blobs.get(`transcripts-${visit.project_id}`, visit.sha256);
+        events = transcriptEvents(bytes, visit.declared_at!, room);
+      }
+      out.visits.unshift({ sessionId: visit.id, from: 'transcript', events });
     }
     return out;
   }
@@ -573,24 +578,57 @@ const fit = (event: AgentEvent): AgentEvent => {
     ...(event.kind !== 'status' && { cut: value.length - AGENT_EVENT_TEXT }),
   } as AgentEvent;
 };
-/**
- * A stored transcript read as its stream would have been: each line through both harnesses'
- * readers (their line types do not overlap), its newest events within what a page is sent.
- * The runner kept whole messages only, so Claude's are read whole. Each event is stamped with
- * the transcript's declaration, as a line carries no time of its own.
- */
-export function transcriptEvents(transcript: string, at: string): AgentStreamEvent[] {
-  const readers = [claudeEvents(), codexEvents()];
-  const events = transcript
-    .split('\n')
-    .flatMap((line, index) => readers.flatMap((read) => read(line, index)))
-    .map((event, index) => ({ seq: index + 1, at, event: fit(event) }));
-  let bytes = 0,
-    from = events.length;
-  while (from > 0 && events.length - from < VISIT_EVENTS) {
-    bytes += JSON.stringify(events[from - 1]!.event).length + 64;
-    if (bytes > VISIT_BYTES) break;
+/** The newest of `events` that fit `room`, which they then take up. Once one does not fit, no
+ * older one is sent. */
+function newest(events: AgentStreamEvent[], room: Room): AgentStreamEvent[] {
+  let from = events.length;
+  while (from > 0 && room.events > 0) {
+    const size = JSON.stringify(events[from - 1]!.event).length + 64;
+    if (size > room.bytes) {
+      room.bytes = 0;
+      break;
+    }
+    room.bytes -= size;
+    room.events--;
     from--;
   }
   return events.slice(from);
+}
+/**
+ * A stored transcript read as its stream would have been: each line through both harnesses'
+ * readers (their line types do not overlap), its newest events within `room`, which they take up.
+ * Only its end is read, from the first whole line in it, and a longer end only while that leaves
+ * nothing out; a line keeps its index in the whole transcript, and `seq` counts from the first
+ * line read. The runner kept whole messages only, so Claude's are read whole. Each event is
+ * stamped with the transcript's declaration, as a line carries no time of its own.
+ */
+export function transcriptEvents(
+  transcript: Buffer,
+  at: string,
+  room: Room = { events: READ_EVENTS, bytes: READ_BYTES },
+): AgentStreamEvent[] {
+  for (let tail = TAIL_BYTES; ; tail *= 4) {
+    const start =
+      tail >= transcript.length ? 0 : transcript.indexOf(10, transcript.length - tail - 1) + 1;
+    let line = 0;
+    for (
+      let end = transcript.indexOf(10);
+      end !== -1 && end < start;
+      end = transcript.indexOf(10, end + 1)
+    )
+      line++;
+    const readers = [claudeEvents(), codexEvents()];
+    const events = transcript
+      .subarray(start)
+      .toString('utf8')
+      .split('\n')
+      .flatMap((text, index) => readers.flatMap((read) => read(text, line + index)))
+      .map((event, index) => ({ seq: index + 1, at, event: fit(event) }));
+    const left = { ...room };
+    const kept = newest(events, left);
+    if (start === 0 || kept.length < events.length) {
+      Object.assign(room, left);
+      return kept;
+    }
+  }
 }

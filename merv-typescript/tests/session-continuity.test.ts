@@ -10,10 +10,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, WorkflowPolicy } from '@merv/contracts';
+import type { Blobs, Caller, Scope, State, WorkflowPolicy } from '@merv/contracts';
 import { excludedFromReview } from '@merv/reviews/rules';
 import { MachineRunner } from '@merv/runner';
-import { dormantMs } from '../packages/sessions/src/threads.js';
+import { dormantMs, SessionThreads } from '../packages/sessions/src/threads.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import type {
   Session,
@@ -773,4 +773,103 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
   assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
   const unknown = await f.http('GET', `/sessions/threads?instanceId=${unit.id}&x=1`, f.token);
   assert.equal(unknown.status, 400);
+});
+
+test('a conversation read parses only the newest transcripts, from their end, to 500 events in all', async () => {
+  // Codex lines of one answer each, padded: `count` of them, ids `${name}0`…
+  const transcript = (name: string, count: number, pad = 0) =>
+    Buffer.from(
+      Array.from(
+        { length: count },
+        (_, index) =>
+          `${JSON.stringify({
+            type: 'item.completed',
+            item: { id: `${name}${index}`, type: 'agent_message', text: `${name} ${index}` },
+            pad: 'x'.repeat(pad),
+          })}\n`,
+      ).join(''),
+    );
+  const read = async (stored: Record<string, Buffer>) => {
+    const gets: string[] = [];
+    const threads = new SessionThreads(
+      {
+        snapshotTransaction: async (run: (tx: unknown) => unknown) =>
+          run({
+            get: async () => ({}),
+            all: async () =>
+              Object.keys(stored).map((hash) => ({
+                id: `ses_${hash}`,
+                project_id: 'prj_1',
+                sha256: hash,
+                declared_at: '2026-10-06T00:00:00.000Z',
+              })),
+          }),
+      } as unknown as State,
+      { require: async () => ({ role: 'operator' }) } as unknown as Scope,
+      Date.now,
+      {
+        controlled: async () => assert.fail(),
+        readable: async () => assert.fail(),
+        stream: async () => [],
+        available: () => {},
+      },
+    );
+    threads.blobs = {
+      get: async (_namespace: string, hash: string) => (gets.push(hash), stored[hash]!),
+    } as unknown as Blobs;
+    const parse = JSON.parse;
+    let parsed = 0;
+    JSON.parse = ((...args: Parameters<typeof parse>) => (
+      parsed++,
+      parse(...args)
+    )) as typeof parse;
+    try {
+      const out = await threads.conversation({ actorId: 'act_op', projectId: 'prj_1' }, 'thr_1');
+      return { out, gets, parsed };
+    } finally {
+      JSON.parse = parse;
+    }
+  };
+  const ids = (out: ThreadConversation) =>
+    out.visits.map(({ sessionId, from, events }) => [
+      sessionId,
+      from,
+      events.length,
+      events[0]?.event.id,
+      events.at(-1)?.event.id,
+    ]);
+
+  // The newest visit's 20 MB transcript alone fills the read: its end is parsed, nothing older.
+  const large = await read({
+    a: transcript('a', 300),
+    b: transcript('b', 300),
+    c: transcript('c', 60_000, 250),
+  });
+  assert.ok(large.gets.length === 1 && large.gets[0] === 'c');
+  assert.ok(large.parsed < 15_000, String(large.parsed));
+  assert.deepEqual(ids(large.out), [
+    ['ses_a', 'transcript', 0, undefined, undefined],
+    ['ses_b', 'transcript', 0, undefined, undefined],
+    ['ses_c', 'transcript', 500, 'c59500', 'c59999'],
+  ]);
+  const events = large.out.visits[2]!.events;
+  assert.deepEqual(events.at(-1), {
+    seq: events.at(-1)!.seq,
+    at: '2026-10-06T00:00:00.000Z',
+    event: { kind: 'text', id: 'c59999', delta: 'c 59999', done: true },
+  });
+  assert.ok(events.every((event, index) => index === 0 || event.seq > events[index - 1]!.seq));
+
+  // Newest first until 500: the newest visit whole, the one before it its newest 300.
+  const spread = await read({
+    a: transcript('a', 300),
+    b: transcript('b', 400),
+    c: transcript('c', 200),
+  });
+  assert.deepEqual(spread.gets, ['c', 'b']);
+  assert.deepEqual(ids(spread.out), [
+    ['ses_a', 'transcript', 0, undefined, undefined],
+    ['ses_b', 'transcript', 300, 'b100', 'b399'],
+    ['ses_c', 'transcript', 200, 'c0', 'c199'],
+  ]);
 });
