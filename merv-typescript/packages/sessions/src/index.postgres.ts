@@ -329,7 +329,27 @@ FOR EACH ROW EXECUTE FUNCTION session_inquiries_guard();
  *   SELECT count(*) AS usage_rows FROM session_usage;
  *   SELECT count(*) AS inquiries, COALESCE(sum(tokens),0) AS tokens FROM session_inquiries;
  */
+/**
+ * A live inquiry visit sessions@18 stored carried a lease and a workflow binding of its own, with
+ * its budget on the inquiry. Sessions now reads it as the inquiry kind of Session, with neither,
+ * and the session's immutability guard would refuse every later write of it (its attach, its
+ * close): it is written in that shape once. A closed one is never written again.
+ *
+ * Read-only prod count first (the rows rewritten):
+ *   SELECT count(*) FROM worker_sessions WHERE kind='inquiry' AND status IN ('offered','active');
+ */
+export const legacyInquiryVisits = withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_immutable'],
+  `UPDATE worker_sessions SET session_json = ((session_json::jsonb - 'lease')
+    || jsonb_build_object('kind', 'inquiry',
+      'execution', (session_json::jsonb->'execution') - 'policyHash' - 'registrationId' - 'references',
+      'inquiry', (session_json::jsonb->'inquiry') - 'tokenBudget')
+    || jsonb_strip_nulls(jsonb_build_object('tokenBudget', session_json::jsonb #> '{inquiry,tokenBudget}')))::text
+  WHERE kind='inquiry' AND status IN ('offered','active') AND session_json::jsonb->'lease' IS NOT NULL;`,
+);
 const usageKindMigration = `
+${legacyInquiryVisits}
 ALTER TABLE session_usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','inquiry'));
 CREATE OR REPLACE FUNCTION session_usage_write_once_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN

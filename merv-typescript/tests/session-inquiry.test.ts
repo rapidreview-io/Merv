@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { MervError, withoutTriggers, type Caller, type WorkflowPolicy } from '@merv/contracts';
 import { CredentialStore } from '@merv/identity/credentials';
 import { MachineRunner } from '@merv/runner';
 import { codexModelRelay, hostedGrant } from '../packages/fleet/src/codex-relay.js';
@@ -23,6 +23,7 @@ import {
   INQUIRY_VISIT_SECONDS,
 } from '../packages/sessions/src/inquiries.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
+import { legacyInquiryVisits } from '../packages/sessions/src/index.postgres.js';
 import type {
   Session,
   SessionMessage,
@@ -709,6 +710,66 @@ test('an inquiry to a long conversation is budgeted for that conversation, resen
       reserved,
     );
   }
+});
+
+test('a live inquiry visit stored before visits named their kind is converted by sessions@19, and runs to its answer', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const { threadId } = await f.worked();
+  const asked = await f.ask(threadId, 'Which seed?');
+  await f.present('runner-q');
+  const leased = await f.lease('runner-q');
+  const visit = leased.session!;
+  // The row as sessions@18 stored it: a lease and a workflow binding of its own, and its budget
+  // on the inquiry.
+  await f.app.ctx.state.transaction(async (tx) => {
+    const row = await tx.get<{ session_json: string }>(
+      'SELECT session_json FROM worker_sessions WHERE id=?',
+      visit.id,
+    );
+    const { kind: _kind, tokenBudget, ...stored } = JSON.parse(row!.session_json);
+    const binding = { policyHash: 'inquiry', registrationId: 'inquiry' };
+    const legacy = {
+      ...stored,
+      inquiry: { ...stored.inquiry, tokenBudget },
+      execution: { ...stored.execution, ...binding, references: {} },
+      lease: {
+        leaseId: visit.id,
+        projectId: visit.projectId,
+        instanceId: visit.instanceId,
+        workflow: visit.execution.workflow,
+        version: visit.execution.version,
+        state: visit.execution.state,
+        expectedRevision: visit.expectedRevision,
+        actorId: visit.actorId,
+        role: 'reader',
+        ...binding,
+      },
+    };
+    await tx.run(
+      withoutTriggers(
+        'worker_sessions',
+        ['worker_sessions_immutable'],
+        `UPDATE worker_sessions SET session_json='${JSON.stringify(legacy).replaceAll("'", "''")}' WHERE id='${visit.id}';`,
+      ),
+    );
+  });
+  await f.app.ctx.state.transaction((tx) => tx.run(legacyInquiryVisits));
+  const control = { runnerId: 'runner-q', hostRef: `launch-${randomUUID()}` };
+  const attached = (await f.ok('POST', `/sessions/${visit.id}/attach`, f.token, control))
+    .session as Session;
+  assert.deepEqual(
+    [attached.kind, attached.lease, attached.tokenBudget, attached.inquiry?.id],
+    ['inquiry', undefined, asked.tokenBudget, asked.id],
+  );
+  const inquirer = await f.sessions.authenticate(leased.input.secret);
+  await f.app.ctx.tools.invoke('session.message.ack', inquirer, {
+    messageId: asked.messageId,
+    reply: 'Seed 3.',
+    requestId: 'r',
+  });
+  assert.equal((await f.sessions.get(f.owner, visit.id)).status, 'released');
+  assert.equal((await f.inquiry(asked.id)).status, 'answered');
 });
 
 test('a long saved conversation is budgeted for what one call can resend, so it leaves room in the day', async (t) => {
