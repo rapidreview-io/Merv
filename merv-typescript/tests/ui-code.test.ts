@@ -2035,7 +2035,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
   assert.deepEqual(said('code_base_pending', { key: 'main' }), {
     sentence: 'Main is not in this project’s repository yet',
     who: 'An administrator',
-    whose: 'administrator',
+    whose: 'admin',
   });
   assert.equal(said('code_base_pending', { key: 'acceptance:wf_1' }), null);
 
@@ -2055,7 +2055,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
       sentence:
         'The resolution “Merge A with B” is suspended; an administrator extends its review limit',
       who: 'An administrator',
-      whose: 'administrator',
+      whose: 'admin',
     },
   );
   // The record is named the way this app names it wherever it knows the name itself.

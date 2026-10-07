@@ -403,7 +403,7 @@ function before(
     if (held) {
       if (
         viewer.role === 'operator' &&
-        (held.move.whose === 'administrator' || (held.move.whose === 'operator' && viewer.signedIn))
+        (held.move.whose === 'admin' || (held.move.whose === 'operator' && viewer.signedIn))
       )
         lines.push([item.id, held.move.sentence]);
       continue;

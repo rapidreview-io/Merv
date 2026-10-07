@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
   oidPattern,
+  sha256Hex,
   type CodeCommitCommand,
   type CodeCommitReceipt,
   type SessionWorkspace,
@@ -25,7 +25,7 @@ export class WorkspaceError extends Error {
     this.name = 'WorkspaceError';
   }
 }
-export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+export const hash = sha256Hex;
 export const oid = (value: string): string => {
   const result = value.trim();
   if (!oidPattern.test(result)) throw new WorkspaceError('workspace_invalid_oid');

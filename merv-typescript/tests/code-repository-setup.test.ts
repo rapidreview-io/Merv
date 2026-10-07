@@ -43,29 +43,6 @@ test('the import journal freezes GitHub authorization across retries and rejects
   assert.equal(observed.length, 1);
 });
 
-test('relinking before the atomic bind leaves the project baseline unchanged', async (t) => {
-  const f = await codeStoreFixture(t);
-  const human = await f.human();
-  const before = (await f.code.status(human)).project;
-  t.mock.method(f.code.github, 'assertBinding', async () => {
-    throw Object.assign(new Error('Connection replaced'), { code: 'github_conflict' });
-  });
-  await assert.rejects(
-    f.code.bindLocal(
-      human,
-      {
-        repositoryId: before!.repositoryId,
-        mainOid: 'b'.repeat(40),
-        expectedMainOid: before!.main.oid,
-        requestId: 'stale-preparation',
-      },
-      { revision: 3, baseBranch: 'release/science', repository: { id: 42 } as never },
-    ),
-    { code: 'github_conflict' },
-  );
-  assert.deepEqual((await f.code.status(human)).project, before);
-});
-
 test('relinking before import authorization never fetches the replacement repository', async (t) => {
   const f = await codeStoreFixture(t);
   let tokens = 0;

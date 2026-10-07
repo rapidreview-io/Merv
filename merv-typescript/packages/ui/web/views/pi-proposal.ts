@@ -5,12 +5,12 @@
  * and never as something the person typed. Pure: names, inputs and messages in, words out.
  */
 import type { PiCommand, PiProposal } from '@merv/pi/models';
+import { capital } from '../liveness';
 
 type Input = Record<string, unknown>;
 const fields = (value: unknown): Input =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Input) : {};
 const spaced = (name: string) => name.replaceAll('_', ' ');
-const sentence = (words: string) => words.charAt(0).toUpperCase() + words.slice(1);
 
 /** What the product calls a record a tool names otherwise. */
 const NOUN: Record<string, string> = {
@@ -31,7 +31,7 @@ export function actOf({ name, act }: Pick<PiProposal, 'name' | 'act'>): string {
   if (act) return act.title;
   const [action = name, object] = name.split('.').reverse();
   if (object && action === 'create') return `New ${noun(object)}`;
-  return sentence(object && !action.includes('_') ? `${action} ${noun(object)}` : spaced(action));
+  return capital(object && !action.includes('_') ? `${action} ${noun(object)}` : spaced(action));
 }
 
 /** What makes a request safe to send twice: machinery, never a fact the person reads. */
@@ -65,7 +65,7 @@ export function labelOf(name: string, key: string): string {
   const [, words, many = ''] = /^(.*?)(?: id(s?))?$/.exec(
     said === 'id' && object ? `${object} id` : said,
   )!;
-  return sentence(noun(words!) + many);
+  return capital(noun(words!) + many);
 }
 
 /** The input as facts in its own order, without its machinery, what the act said, or anything empty. */

@@ -13,14 +13,23 @@ import {
 import { Link } from 'react-router-dom';
 import { useTool, type ApiError } from './api';
 import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
-import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
+import {
+  capital,
+  clockOf,
+  duration,
+  elapsed,
+  term,
+  words,
+  type Liveness,
+  type Now,
+} from './liveness';
 import { shortId } from './markdown';
 import { useCommand } from './mutations';
 import { useStateWords, type StateWords } from './navigation';
 import type { ArtifactListing as Artifact } from '@merv/contracts/artifact-models';
 import { ArtifactBody, bytes, fileType } from './views/artifacts';
 
-export { term, words };
+export { capital, term, words };
 
 export const cx = (...names: (string | false | null | undefined)[]) =>
   names.filter(Boolean).join(' ');

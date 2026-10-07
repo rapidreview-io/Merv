@@ -1,5 +1,5 @@
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
-import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
+import type { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
 import {
@@ -404,22 +404,14 @@ export class CodeService implements Code {
     await store.maintain();
     return status;
   }
-  async bindLocal(
-    caller: Caller,
-    input: Parameters<CodeUtility['units']['bindLocal']>[1],
-    binding?: GitHubBinding,
-  ) {
+  async bindLocal(caller: Caller, input: Parameters<CodeUtility['units']['bindLocal']>[1]) {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
     const named = (input as { mainOid?: unknown } | null)?.mainOid;
     const stored =
       typeof named === 'string' &&
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
-    if (!binding) return await this.utility.units.bindLocal(caller, input, stored);
-    return await this.state.transaction(async (tx) => {
-      await this.github.assertBinding(caller, binding, tx, 'read');
-      return await this.utility.units.bindLocal(caller, input, stored, tx);
-    });
+    return await this.utility.units.bindLocal(caller, input, stored);
   }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
   runningHolds: Code['runningHolds'] = (caller) => this.board.holds(caller);

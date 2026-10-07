@@ -20,6 +20,8 @@
 export const words = (value: string) => value.replaceAll('_', ' ');
 /** The reader's form of an enum or id: its words, or the em dash the server left. */
 export const term = (value: string | null | undefined) => (value ? words(value) : '—');
+/** Words that begin a sentence or a heading: the first letter capitalized. */
+export const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** A countdown, counting to 0s rather than to a euphemism: 0s, 41s, 6m 21s, 3h 5m. */
 export function duration(ms: number): string {

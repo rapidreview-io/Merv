@@ -277,16 +277,13 @@ export interface UnitReadPolicy {
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
   closed = false;
-  /**
-   * `code` is Code's own unit store, already initialized; it outlives this owner. Without a
-   * `policy` a unit reads as stored: a publication as it says of itself, a base only once pinned.
-   */
+  /** `code` is Code's own unit store, already initialized; it outlives this owner. */
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly writers: CodeWriterService,
     private readonly code: CodeUnitStore,
-    private readonly policy?: UnitReadPolicy,
+    private readonly policy: UnitReadPolicy,
   ) {}
 
   /** Complete storage migrations before publishing this service. */
@@ -466,7 +463,7 @@ export class WorkUnitRecords {
     row: UnitRow,
   ): Promise<PublicationStanding | null> {
     const stored = await this.storedPublicationOf(sql, projectId, row);
-    return this.policy ? await this.policy.publication(sql, projectId, stored) : stored;
+    return await this.policy.publication(sql, projectId, stored);
   }
   /** What the sealed publication of this unit says of itself; null while nothing declared one. */
   private async storedPublicationOf(
@@ -503,11 +500,7 @@ export class WorkUnitRecords {
       declaredAt: row.declared_at,
       branch: workBranch(row.unit_id),
       base,
-      baseStatus: this.policy
-        ? await this.policy.baseStatus(tx, row, base)
-        : base
-          ? { status: 'pinned', pin: base }
-          : null,
+      baseStatus: await this.policy.baseStatus(tx, row, base),
       acceptance: acceptance(row),
       publication: publication && {
         ...publication,

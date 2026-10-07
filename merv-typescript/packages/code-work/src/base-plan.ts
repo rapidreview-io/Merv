@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { oidPattern } from '@merv/contracts';
+import { oidPattern, sha256Hex } from '@merv/contracts';
 
 /**
  * The plan of a base: how the record for one set of accepted commits is built from two
@@ -22,9 +21,7 @@ export const members = (commits: Iterable<string>): string[] => {
  * dependencies waits on, and then starts from, the same record.
  */
 export const baseKey = (commits: Iterable<string>): string =>
-  createHash('sha256')
-    .update(JSON.stringify(members(commits)))
-    .digest('hex');
+  sha256Hex(JSON.stringify(members(commits)));
 
 /** A record the planner may build on: its set, and whether it may be used at all. */
 export interface PlannedBase {

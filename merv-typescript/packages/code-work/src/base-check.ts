@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { check } from '@merv/contracts';
+import { check, sha256Hex } from '@merv/contracts';
 import type {
   SandboxCheckHandle,
   SandboxCheckPlan,
@@ -51,7 +50,7 @@ export async function archiveCommit(
     `The merged tree is larger than the ${CODE_CHECK_SOURCE_MAX_BYTES} bytes one check may ship`,
     413,
   );
-  return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+  return { bytes, sha256: sha256Hex(bytes) };
 }
 
 /** The machine and command the sandbox plugin is asked for; the bytes join it on the first step. */

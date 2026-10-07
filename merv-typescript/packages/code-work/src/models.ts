@@ -413,7 +413,7 @@ export interface PersonMove {
    * page that makes it: a move nothing here can carry out is still the reader's, and a
    * wait on the server is nobody's however well a person may read why it waits.
    */
-  whose: 'operator' | 'administrator' | 'nobody';
+  whose: 'operator' | 'admin' | 'nobody';
   /** Where a page of this app makes the move; absent where none of them does. */
   control?: { label: string; to: string };
 }

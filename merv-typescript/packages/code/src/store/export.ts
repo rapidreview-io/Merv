@@ -1,5 +1,4 @@
-import { check, digest, type Caller } from '@merv/contracts';
-import { createHash } from 'node:crypto';
+import { check, digest, sha256Hex, type Caller } from '@merv/contracts';
 import { chmod, lstat, mkdir, open, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashFile } from '../files.js';
@@ -46,7 +45,7 @@ export class CodeExporter {
     this.core.assertOpen();
     await this.core.managedRead(caller, input.sessionId);
     // The session's one bundle path is cut, or swept, by one job at a time; one asked again waits.
-    const exportId = `exp${createHash('sha256').update(`${caller.projectId}\0${input.sessionId}`).digest('hex').slice(0, 32)}`;
+    const exportId = `exp${sha256Hex(`${caller.projectId}\0${input.sessionId}`).slice(0, 32)}`;
     return await serial(this.exporting, exportId, () =>
       this.core.owned(() => this.writeExport(caller, input, exportId)),
     );

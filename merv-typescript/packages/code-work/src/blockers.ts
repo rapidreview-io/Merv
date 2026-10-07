@@ -156,7 +156,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
           (admissionCause(blocker.cause) && CAP[blocker.cause]) ||
           'A limit somebody set is holding this merge',
         who: 'An administrator',
-        whose: 'administrator',
+        whose: 'admin',
       };
     case 'code_merge_conflict': {
       // A conflict waits on the resolution task, which is work already in flight and
@@ -166,7 +166,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
       return {
         sentence: `The resolution ${task ? `“${task}” ` : ''}is suspended; an administrator extends its review limit`,
         who: 'An administrator',
-        whose: 'administrator',
+        whose: 'admin',
       };
     }
     case 'code_base_pending':
@@ -182,7 +182,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
         ? {
             sentence: 'Main is not in this project’s repository yet',
             who: 'An administrator',
-            whose: 'administrator',
+            whose: 'admin',
           }
         : null;
     case 'code_quarantined':
@@ -201,14 +201,11 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
 }
 
 /**
- * Whose move Code tells Workflows a blocker of its own is (`whose`), from the move it asks: an
- * administrator's is a project admin's, and a wait on the server is nobody's. Workflows then
- * answers it as that reader's move, so Needs you reads it from the record's gate.
+ * Whose move Code tells Workflows a blocker of its own is (`whose`), from the move it asks; a
+ * wait on the server is nobody's. Workflows then answers it as that reader's move, so Needs you
+ * reads it from the record's gate.
  */
-export function whoseOf(blocker: CodeBlocker): 'admin' | 'operator' | 'nobody' | undefined {
-  const whose = personMove(blocker)?.whose;
-  return whose === 'administrator' ? 'admin' : whose;
-}
+export const whoseOf = (blocker: CodeBlocker) => personMove(blocker)?.whose;
 
 /** The first blocker of a list whose next move is a person's, with that move. */
 export function firstPersonMove(

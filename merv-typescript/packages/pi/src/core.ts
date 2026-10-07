@@ -1,9 +1,10 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
   plain,
   MervError,
+  sha256Hex,
   type Blobs,
   type Caller,
   type DelegationSource,
@@ -36,7 +37,7 @@ import type {
 } from './types.js';
 
 export const active = new Set(['waiting', 'starting', 'working', 'saving']);
-export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+export const hash = sha256Hex;
 export const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */

@@ -750,12 +750,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
 }
 
-declare module 'cordis' {
-  interface Context {
-    fleetWorkflow: FleetWorkflowAdapter;
-  }
-}
-
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
@@ -831,7 +825,6 @@ export const fleetWorkflowPlugin = {
         handler: async (caller: Caller, input: RetryInput) => await adapter.retry(caller, input),
       }),
     );
-    ctx.provide('fleetWorkflow', adapter);
   },
 };
 export default fleetWorkflowPlugin;
