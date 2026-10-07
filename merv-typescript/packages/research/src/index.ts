@@ -285,16 +285,19 @@ export class ResearchService implements Research {
       const open = (await this.workflows.open('research', caller.projectId, tx)).map(
         (item) => item.id,
       );
+      // What a cycle asks of somebody is the blocker Research published to Workflows, and
+      // nothing kept beside it: an ending clears it there.
+      const asking = (await this.workflows.blockers(caller, undefined, tx))
+        .filter((item) => item.provider === AUTOMATIC_PROVIDER && item.whose)
+        .map((item) => item.instanceId);
       const rows = await tx.all<Row>(
         `SELECT * FROM research_cycles WHERE project_id=? AND (id IN (SELECT jsonb_array_elements_text(?::jsonb))
-          OR _merv_rowid=(SELECT MAX(_merv_rowid) FROM research_cycles WHERE project_id=? AND id NOT IN (SELECT jsonb_array_elements_text(?::jsonb)))
-          OR id IN (SELECT research_id FROM research_automation WHERE project_id=? AND (blocker_json::jsonb->'asked') IS NOT NULL))
+          OR _merv_rowid=(SELECT MAX(_merv_rowid) FROM research_cycles WHERE project_id=? AND id NOT IN (SELECT jsonb_array_elements_text(?::jsonb))))
           ORDER BY _merv_rowid`,
         caller.projectId,
-        JSON.stringify(open),
+        JSON.stringify([...open, ...asking]),
         caller.projectId,
         JSON.stringify(open),
-        caller.projectId,
       );
       return await mapAsync(rows, async (row) => await this.record(caller, row, tx, actor));
     });
@@ -473,6 +476,14 @@ export class ResearchService implements Research {
           );
           return await this.get(caller, record.id, tx);
         }
+        // Ending forgets whatever the run said of the cycle, an outage's first sighting too.
+        if (record.automation)
+          await publishBlocker(
+            this.workflows,
+            { project_id: caller.projectId, research_id: record.id },
+            null,
+            tx,
+          );
         const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
         const moved = await this.checked.take(
           tx,

@@ -633,11 +633,15 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
    * read open. A closure past it is refused rather than cut short: every caller would act on
    * the part it was given as if it were the whole.
    */
-  async dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]> {
+  async dependencyClosure(
+    caller: Caller,
+    instanceIds: string | readonly string[],
+    tx?: Transaction,
+  ): Promise<string[]> {
+    const roots = [...new Set(typeof instanceIds === 'string' ? [instanceIds] : instanceIds)];
     return await this.reading(caller, tx, async (tx, caller) => {
-      await this.readSnapshot(tx, caller.projectId, instanceId);
       const seen = new Set<string>();
-      let frontier = [instanceId];
+      let frontier = roots;
       while (frontier.length) {
         // A name with no instance here, gone or another project's, is no part of the closure.
         const level: { id: string; workflow: string; version: number }[] = [];
@@ -656,6 +660,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
             409,
           );
         }
+        // Every root is this project's own; past them, a name it does not hold is skipped.
+        if (!seen.size)
+          check(level.length === roots.length, 'not_found', 'Workflow instance not found', 404);
         if (!level.length) break;
         for (const row of level) seen.add(row.id);
         const next = (

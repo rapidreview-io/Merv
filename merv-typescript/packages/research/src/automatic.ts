@@ -17,8 +17,8 @@ import { definition } from './policy.js';
 import type { ResearchAdvance, ResearchRecord } from './types.js';
 
 /**
- * A row of research_automation. Its blocker_json column holds `{unavailableSince}`, when the
- * outage the cycle's blocker reports was first seen, whatever codes it has reported since.
+ * A row of research_automation. Its unavailable_since column holds when the outage the cycle's
+ * blocker reports was first seen, whatever codes it has reported since.
  */
 export interface AutomaticRow {
   research_id: string;
@@ -30,72 +30,40 @@ export interface AutomaticRow {
 }
 /**
  * Why automatic progress waits, as Research publishes it to Workflows; null when it does not.
- * One that only the cycle's owner ends says so, with its own way on: the owner's move while
- * they may still write to the project, and a project admin's once they have left.
+ * One that only a person ends is the cycle owner's move, with its own way on: Workflows gives an
+ * owner's move to a project admin too, so it still reaches somebody once the owner has left.
  */
 export type AutomaticBlocker = {
   code: string;
   message: string;
   status: number;
   next?: string;
-  whose?: 'owner' | 'admin';
+  whose?: 'owner';
 } | null;
 /** The provider Research's automation blockers are published as. */
 export const AUTOMATIC_PROVIDER = 'research';
 const NEXT =
   'Automatic research tries again when this project next changes; research.advance moves the cycle by hand, and research.end stops it.';
 
-/** When the outage a cycle's blocker reports was first seen, or NaN when it reports none. */
-export const unavailableSince = (blockerJson: string | null): number => {
-  try {
-    return Date.parse(
-      (JSON.parse(blockerJson ?? 'null') as { unavailableSince?: string })?.unavailableSince ?? '',
-    );
-  } catch {
-    return NaN;
-  }
-};
-
-/** The cycle owner's move while they may write to the project; a project admin's once not. */
-export async function whoseMove(
-  scope: Pick<Scope, 'eligible'>,
-  researchId: string,
-  tx: Transaction,
-): Promise<'owner' | 'admin'> {
-  const row = await tx.get<{ project_id: string; record: string }>(
-    'SELECT project_id,record FROM research_cycles WHERE id=?',
-    researchId,
-  );
-  const ownerId = row && (JSON.parse(row.record) as { ownerId: string }).ownerId;
-  return ownerId && (await scope.eligible(row.project_id, ownerId, 'write', tx))
-    ? 'owner'
-    : 'admin';
-}
-
-/**
- * Research's whole opinion of a cycle, written over whatever it said before. A blocker that is
- * somebody's move is kept beside the cycle (`asked`), so it can go to admins when its owner leaves.
- */
+/** Research's whole opinion of a cycle, written over whatever it said before. */
 export async function publishBlocker(
   workflows: Pick<Workflows, 'replaceBlockers'>,
   row: Pick<AutomaticRow, 'project_id' | 'research_id'>,
   blocker: AutomaticBlocker,
   tx: Transaction,
 ): Promise<void> {
-  const held = await tx.get<{ blocker_json: string | null }>(
-    'SELECT blocker_json FROM research_automation WHERE research_id=?',
-    row.research_id,
-  );
-  const since = unavailableSince(held?.blocker_json ?? null);
-  await tx.run(
-    'UPDATE research_automation SET blocker_json=? WHERE research_id=?',
-    blocker?.status === 503
-      ? JSON.stringify({ unavailableSince: new Date(since || Date.now()).toISOString() })
-      : blocker?.whose
-        ? JSON.stringify({ asked: blocker })
-        : null,
-    row.research_id,
-  );
+  // An outage keeps when it was first seen; anything else forgets it.
+  if (blocker?.status === 503)
+    await tx.run(
+      'UPDATE research_automation SET unavailable_since=COALESCE(unavailable_since,?) WHERE research_id=?',
+      new Date().toISOString(),
+      row.research_id,
+    );
+  else
+    await tx.run(
+      'UPDATE research_automation SET unavailable_since=NULL WHERE research_id=?',
+      row.research_id,
+    );
   await workflows.replaceBlockers(
     {
       projectId: row.project_id,
@@ -107,35 +75,7 @@ export async function publishBlocker(
   );
 }
 
-/**
- * Whose move what each ended cycle of this project asks of its owner is, judged again: an open
- * cycle is reconciled, and judged, by the event that calls this.
- */
-async function rejudge(
-  scope: Pick<Scope, 'eligible'>,
-  workflows: Pick<Workflows, 'replaceBlockers'>,
-  projectId: string,
-  tx: Transaction,
-) {
-  const rows = await tx.all<{ research_id: string; blocker_json: string }>(
-    'SELECT research_id,blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
-    projectId,
-  );
-  for (const row of rows) {
-    const asked = (JSON.parse(row.blocker_json) as { asked?: AutomaticBlocker }).asked;
-    if (asked?.code !== 'research_needs_owner') continue;
-    const whose = await whoseMove(scope, row.research_id, tx);
-    if (whose !== asked.whose)
-      await publishBlocker(
-        workflows,
-        { project_id: projectId, research_id: row.research_id },
-        { ...asked, whose },
-        tx,
-      );
-  }
-}
-
-/** A refusal that only the cycle's owner, or an admin, can move past, and how. */
+/** A refusal that only the cycle's owner, or a project admin, can move past, and how. */
 const OWNERS: Record<string, string> = {
   research_definition_changed:
     'Accept the changed definition with research.advance, or stop the run with research.end',
@@ -144,7 +84,8 @@ const OWNERS: Record<string, string> = {
 const LAPSED =
   'The delegation this automatic run acts under no longer holds: research.advance moves the cycle by hand, and research.end stops it';
 
-// v4 also hears a member leave, so what a cycle asks of its owner goes to admins.
+// A member who leaves, or whose role changes, may take the delegation a run acts under with
+// them: hearing it reports the lapse at once, not on the project's next change.
 const CONSUMER = 'research.automatic.v4';
 /** Retries of one event while the database answers 503: about 25 seconds of backoff in all. */
 const UNAVAILABLE_RETRIES = 8;
@@ -176,7 +117,6 @@ export async function automaticResearch(
       'actor.revoked',
     ],
     handle: async (event, tx) => {
-      if (event.type.startsWith('actor.')) await rejudge(scope, workflows, event.projectId, tx);
       // Startup asks for a resume, as does a retry; a later one still to come answers this.
       const later = { projectId: event.projectId, type: 'research.resume', after: event.id };
       if (event.type === 'research.resume' && (await state.findEvents(later, 1, tx)).length) return;
@@ -219,8 +159,7 @@ export async function automaticResearch(
           blocker = automaticBlocker(error);
           // A lapsed delegation, or a refusal only a person moves past, is somebody's move.
           const next = delegated ? OWNERS[error.code] : error.status !== 503 && LAPSED;
-          if (next)
-            blocker = { ...blocker, next, whose: await whoseMove(scope, row.research_id, tx) };
+          if (next) blocker = { ...blocker, next, whose: 'owner' };
           if (error.status === 503) unavailable(row);
         }
         await publishBlocker(workflows, row, blocker, tx);
@@ -283,14 +222,12 @@ export function retryUnavailable(
     if (ctx.closed) return;
     const source = JSON.parse(row.source_json) as DelegationSource;
     await ctx.state.transaction(async (tx) => {
-      const out = await tx.all<{ blocker_json: string | null }>(
-        'SELECT blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
+      const out = await tx.all<{ unavailable_since: string }>(
+        'SELECT unavailable_since FROM research_automation WHERE project_id=? AND unavailable_since IS NOT NULL',
         row.project_id,
       );
       if (
-        !out.some(
-          (item) => Date.now() - unavailableSince(item.blocker_json) <= ctx.unavailableForMs,
-        )
+        !out.some((item) => Date.now() - Date.parse(item.unavailable_since) <= ctx.unavailableForMs)
       )
         return;
       await ctx.state.appendEvent(tx, {
@@ -422,7 +359,7 @@ export async function needsOwner(
         message: clip(`The approved plan stops for the owner: ${next.rationale}`, 2000),
         status: 409,
         next: 'Decide what comes next: start a research cycle that follows this one, or stop here with research.end',
-        whose: await whoseMove(ctx.scope, record.id, tx),
+        whose: 'owner',
       }
     : null;
 }
@@ -475,15 +412,17 @@ export async function closeBlockedWork(
   tx: Transaction,
 ) {
   const { tasks, experiments } = ctx.providers;
-  const remaining = new Set<string>();
-  for (const id of record.researchDependencies)
-    for (const item of await ctx.workflows.dependencyClosure(caller, id, tx)) remaining.add(item);
+  if (!record.researchDependencies.length) return;
+  // The whole closure in one walk, then each pass reads every prerequisite at once: a pass that
+  // finds nothing failed ends the walk, as the first does on every event while nothing has.
+  const remaining = new Set(
+    await ctx.workflows.dependencyClosure(caller, record.researchDependencies, tx),
+  );
   for (let pass = 0, passes = remaining.size; remaining.size && pass < passes; pass++) {
+    const prerequisites = await ctx.workflows.prerequisites(caller, [...remaining], tx);
     let changed = false;
     for (const id of [...remaining]) {
-      const failed = (await ctx.workflows.prerequisites(caller, [id], tx))
-        .get(id)!
-        .filter((item) => item.failed);
+      const failed = prerequisites.get(id)!.filter((item) => item.failed);
       if (!failed.length) continue;
       remaining.delete(id);
       // Work between the selection and the failed input is not the cycle's own to reflect on.

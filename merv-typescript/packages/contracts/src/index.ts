@@ -1543,10 +1543,14 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus | undefined>;
   /**
-   * The instance, everything it transitively depends on, and the children their policies
-   * declare: the grouping a research cycle's usage and budget are read over.
+   * The instance (or each of several), everything it transitively depends on, and the children
+   * their policies declare: the grouping a research cycle's usage and budget are read over.
    */
-  dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]>;
+  dependencyClosure(
+    caller: Caller,
+    instanceIds: string | readonly string[],
+    tx?: Transaction,
+  ): Promise<string[]>;
   /** Roots whose current dependency or child closure contains this work, frozen by its provider. */
   sponsoringRoots(projectId: string, instanceIds: string[], tx: Transaction): Promise<string[]>;
   /**
