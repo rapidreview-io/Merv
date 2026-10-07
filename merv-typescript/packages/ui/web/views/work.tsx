@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { ResearchAnswer, ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/workflows/models';
@@ -383,7 +383,7 @@ function WaveList({ shell }: { shell: ShellData }) {
   const only =
     filter.state !== OPEN || !!filter.query || filter.scope !== 'everyone' || kind !== ALL;
   const kept = new Set(filter.rows);
-  const wave: Wave = {
+  const read: Wave = {
     only,
     items: items.map((item) => ({
       id: item.id,
@@ -406,6 +406,10 @@ function WaveList({ shell }: { shell: ShellData }) {
       })),
     ]),
   };
+  // The same wave read again is the same wave, so the map is not worked out again on each poll.
+  const same = JSON.stringify(read);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const wave = useMemo(() => read, [same]);
   return (
     <ListPage
       load={load}

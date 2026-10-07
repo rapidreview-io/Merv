@@ -24,6 +24,7 @@ const {
   WorkPlane,
   absorberOf,
   cadenceOf,
+  liveLookup,
   liveOf,
   mapOf,
   staleLane,
@@ -1546,4 +1547,40 @@ test('every control reads from the verb table, and a machine without a heartbeat
   assert.equal(runnerLiveness({ live: false }, now)?.verdict, 'offline');
   const machines = [...board(now).lanes.hardware.nodes, board(now).lanes.sessions.nodes[3]!];
   assert.doesNotMatch(JSON.stringify(machines), /[Qq]uiet/);
+});
+
+test('a wide wave is worked out in well under a frame: what each unit reaches is found once', () => {
+  // 400 tasks, each waiting on up to three earlier ones, as a research wave grows.
+  const ids = Array.from({ length: 400 }, (_, index) => `t${index}`);
+  const items = ids.map((id, index) => ({
+    id,
+    kind: 'tasks',
+    name: id,
+    flow: { state: 'planned', updatedAt: '' },
+    at: String(index).padStart(4, '0'),
+    held: true,
+  }));
+  const edges = ids.flatMap((id, index) =>
+    [1, 2, 5]
+      .filter((back) => index - back >= 0)
+      .map((back) => ({ from: ids[index - back]!, to: id, waiting: true })),
+  );
+  const started = performance.now();
+  const map = mapOf(undefined, { items, edges });
+  const took = performance.now() - started;
+  // Each task's line from two back is said through the one before it; five back, likewise.
+  assert.equal(map.edges.length, 399);
+  assert.ok(took < 100, `the map took ${took.toFixed(0)} ms`);
+});
+
+test('who is on each card is looked up from one index of the board', () => {
+  const given = board(Date.now());
+  const keys = given.lanes.work.nodes.map((node) => node.key);
+  const lookup = liveLookup(given);
+  for (const key of keys)
+    assert.deepEqual(
+      lookup(key).map((node) => node.key),
+      liveOf(given, key).map((node) => node.key),
+    );
+  assert.deepEqual(liveLookup(undefined)('work:wf_index'), []);
 });
