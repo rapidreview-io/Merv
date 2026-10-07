@@ -23,7 +23,7 @@
       "component": "fleet",
       "version": 3,
       "hash": "9ed74efc61c79c787de08e4a64afc43d05d6678fbdf7b93a3eaf3fcf54d93055",
-      "published": false
+      "published": true
     },
     {
       "component": "fleet_workflow",
@@ -615,7 +615,7 @@
       "component": "fleet_workflow",
       "version": 5,
       "hash": "e1fe53ba3d62222440337174667c499921c4a208c15c68c2db9e39502288a397",
-      "published": false
+      "published": true
     },
     {
       "component": "session_service_work",
@@ -928,7 +928,7 @@
       "component": "sandboxes-native",
       "version": 6,
       "hash": "fc963917ab44e49d124a94248fcd293a0e1e107b5b0bd75024e24049e7a550b4",
-      "published": false
+      "published": true
     },
     {
       "component": "code_repository_sync",
@@ -1066,7 +1066,7 @@
       "component": "sessions",
       "version": 19,
       "hash": "d1f550d19a608d446fc9307bb978492dfc012d0127df6628483a383a8f72ca9d",
-      "published": false
+      "published": true
     }
   ]
 }
