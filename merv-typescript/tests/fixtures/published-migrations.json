@@ -983,6 +983,12 @@
       "version": 5,
       "hash": "933a736527b5dc112047dacba533effe693850e74e487f470e78ba9446383dee",
       "published": true
+    },
+    {
+      "component": "tasks",
+      "version": 11,
+      "hash": "fa77bc1aaf8033648631b9ce81bb33351ea57d1c15aa92277fe3795e0ce4f6b0",
+      "published": false
     }
   ]
 }

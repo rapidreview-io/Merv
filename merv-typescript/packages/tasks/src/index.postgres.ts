@@ -156,4 +156,14 @@ FROM task_leases l ORDER BY l.id;
 DROP TABLE task_leases;
 DROP FUNCTION task_lease_identity_immutable_guard(), task_lease_no_delete_guard();
 `,
+  // Retires the project.reflection task type: Reflections reflects in lens waves, and no flow
+  // creates one. Production held none on 2026-10-07, so the ledger would gain no row and nothing
+  // is deleted; the release is refused while one remains, since its recipe is gone. Read-only
+  // count first: SELECT COUNT(*) FROM tasks WHERE type_name='project.reflection';
+  11: `DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM tasks WHERE type_name='project.reflection') THEN
+    RAISE EXCEPTION USING MESSAGE = 'Retirement refused: a project.reflection task remains and its recipe is retired', ERRCODE = '23514';
+  END IF;
+END $check$;`,
 };

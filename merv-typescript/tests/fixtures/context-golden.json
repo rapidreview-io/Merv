@@ -601,57 +601,6 @@
         "error": "blob_not_found"
       }
     },
-    "project.reflection@2": {
-      "items/text": {
-        "prompt": "6ede9d7d4816d9135bf30e4b350fd872655a580f480a67e89020501d8c609602",
-        "omitted": [],
-        "sources": []
-      },
-      "items/artifacts": {
-        "prompt": "fa1ebe1b100ea7c2c4c15aa47238b04c7e82d22458040206bd79c41de6090048",
-        "omitted": [],
-        "sources": [
-          "artifact_golden_text",
-          "artifact_golden_json",
-          "artifact_golden_png",
-          "artifact_golden_latin1"
-        ]
-      },
-      "items/duplicate": {
-        "prompt": "a263ecd42b0f4a21231a683f50181f898a8531dad8357c298e0ee596b12e7204",
-        "omitted": [],
-        "sources": []
-      },
-      "items/not-fit": {
-        "prompt": "925272bc92e092fb04d7d196fa334822e17ebe7083bec0eff6e91ccf10f3cb82",
-        "omitted": ["task:long"],
-        "sources": []
-      },
-      "items/overflow": {
-        "prompt": "ebdc9cd9acc215a96405c52faf6d6a82b9005cebe37502f5f3b702af4d4d1de4",
-        "omitted": [],
-        "sources": []
-      },
-      "items/line-breaks": {
-        "prompt": "747e41c442884af3101f08abda7ca550225695f4e2db112a5033bc9fc2a6941a",
-        "omitted": [],
-        "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "8df6dd05c081c60ad559cb54397a761e9660ebfaedddad4a23a02bead444d38d",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
-      "items/read-error/blob_not_found/fit": {
-        "error": "blob_not_found"
-      },
-      "items/read-error/blob_not_found/always": {
-        "error": "blob_not_found"
-      }
-    },
     "reflection.lens@12": {
       "items/text": {
         "prompt": "a41c10a2643834a818aef034449c4c11843ecbd36a91f068f2a0a2ecf288ac11",
@@ -1315,6 +1264,57 @@
       },
       "items/read-error/blob_corrupt/fit": {
         "prompt": "dcbd56b69f15bd3061f062067e850c1df7c80de9b22218eaacee656a1a0cd8c4",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "project.reflection@2": {
+      "items/text": {
+        "prompt": "6ede9d7d4816d9135bf30e4b350fd872655a580f480a67e89020501d8c609602",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "fa1ebe1b100ea7c2c4c15aa47238b04c7e82d22458040206bd79c41de6090048",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "a263ecd42b0f4a21231a683f50181f898a8531dad8357c298e0ee596b12e7204",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "925272bc92e092fb04d7d196fa334822e17ebe7083bec0eff6e91ccf10f3cb82",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "ebdc9cd9acc215a96405c52faf6d6a82b9005cebe37502f5f3b702af4d4d1de4",
+        "omitted": [],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "747e41c442884af3101f08abda7ca550225695f4e2db112a5033bc9fc2a6941a",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "8df6dd05c081c60ad559cb54397a761e9660ebfaedddad4a23a02bead444d38d",
         "omitted": [],
         "sources": ["artifact_golden_blob_corrupt"]
       },

@@ -1,4 +1,5 @@
 import type { TaskCheckpoint, TaskCreate } from '@merv/tasks/types';
+import { inputsTaskType } from './fixtures/input-task-type.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test } from 'node:test';
@@ -135,15 +136,16 @@ test('task assignments return full recipe context; begin records one activation 
       title: 'Constraints',
       content: 'Use the existing CPU budget.',
     });
+    await f.app.ctx.tasks.registerType(inputsTaskType);
     const task = await f.create({
-      type: 'project.reflection',
+      type: 'fixture.inputs',
       contextInputs: { experiments: [research.id], projectKnowledge: [constraints.id] },
     });
     assert.equal(task.guidance.nextAction?.tool, 'workflow.begin');
     const before = await f.writes();
     const preview = await f.app.ctx.workflows.assignment(f.producer.caller, task.id);
     assert.equal(await f.writes(), before, 'Assignment lookup must be read-only');
-    assert.equal(preview.context?.type, 'project.reflection');
+    assert.equal(preview.context?.type, 'fixture.inputs');
     assert.match(preview.context!.prompt, /Control the input distribution/);
     assert.match(preview.context!.prompt, /existing CPU budget/);
     assert.match(preview.brief, /Verify addition/);
