@@ -740,6 +740,8 @@ function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; ba
 export function splitRoutes<P extends { row: UiRowDescription; shell: ShellData }>(
   Index: ComponentType<P>,
   Detail: ComponentType<P>,
+  /** False where the record is read rather than worked through: it takes the whole page. */
+  beside = true,
 ) {
   return function Routed(props: P) {
     return (
@@ -749,7 +751,7 @@ export function splitRoutes<P extends { row: UiRowDescription; shell: ShellData 
           path=":id"
           element={
             <Split
-              list={<Index {...props} />}
+              list={beside && <Index {...props} />}
               record={<Detail {...props} />}
               back={props.row.path}
             />

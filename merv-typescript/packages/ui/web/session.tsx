@@ -30,7 +30,7 @@ import {
   type Account,
   type AccountSession,
 } from './api';
-import { Failure, Field, SearchField, Summary, relativeTime } from './components';
+import { Failure, Field, SearchField, relativeTime } from './components';
 import { browserAuth, setAuthMode, signedInEmail, type AuthConfiguration } from './auth';
 
 export type { Actor, Project, Account } from './api';
@@ -98,6 +98,8 @@ function SignIn({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [shown, setShown] = useState(false);
+  // A key is how machines and local actors come in; a person is offered it only on asking.
+  const [keyed, setKeyed] = useState(false);
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
   const refusal = useId();
@@ -189,7 +191,7 @@ function SignIn({
       <section className="signin-card">
         <div className="signin-wordmark">merv</div>
         <h1 className="signin-title">Sign in</h1>
-        {client && (
+        {client && !keyed && (
           <>
             <form onSubmit={passwordSignIn} className="identity-form">
               <Field
@@ -240,17 +242,16 @@ function SignIn({
             </button>
           </>
         )}
-        {/* Where a credential is the only way in it is the form; beside an account it folds away. */}
-        {client ? (
-          <details className="identity-local">
-            <Summary>Use a bearer credential</Summary>
-            {local}
-          </details>
-        ) : (
-          local
-        )}
+        {(!client || keyed) && local}
         <Failure message={error} id={refusal} />
-        <SigninHost />
+        <footer className="signin-foot">
+          <SigninHost />
+          {client && (
+            <button type="button" className="signin-switch" onClick={() => setKeyed(!keyed)}>
+              {keyed ? 'Use email' : 'Use a key'}
+            </button>
+          )}
+        </footer>
       </section>
     </main>
   );
@@ -288,6 +289,7 @@ function Projects({
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(account.projects.length === 0);
   const [active, setActive] = useState(0);
+  const [copied, setCopied] = useState(false);
   const receipt = useRef({ name: '', id: '' });
   const list = useRef<HTMLDivElement>(null);
   const box = useId();
@@ -441,16 +443,24 @@ function Projects({
           </div>
         )}
         <Failure message={error} />
-        {account.kind === 'user' && (
-          <details className="identity-local">
-            <Summary>Account details</Summary>
-            <p className="signin-help">
-              Share this account ID with a project administrator to be added to their project.
-            </p>
-            <code>{account.user.subject}</code>
-          </details>
-        )}
-        <SigninHost />
+        <footer className="signin-foot">
+          <SigninHost />
+          {/* What a project administrator needs to add this person to a project. */}
+          {account.kind === 'user' && (
+            <button
+              type="button"
+              className="signin-switch"
+              title={account.user.subject}
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(account.user.subject)
+                  .then(() => setCopied(true));
+              }}
+            >
+              {copied ? 'Account ID copied' : 'Copy account ID'}
+            </button>
+          )}
+        </footer>
       </section>
     </main>
   );

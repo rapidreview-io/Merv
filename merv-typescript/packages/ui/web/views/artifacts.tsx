@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
-import { Ago, ErrorBoundary, KV, LoadState, RecordPage, Short, timeRows } from '../components';
+import { Ago, ErrorBoundary, LoadState, Short } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { CodeBlock } from '../code-block';
@@ -574,9 +574,11 @@ interface FileProps {
   metadata?: Artifact;
   /** Who has already said the title: the file's own `page`, or the disclosure that `cited` it. */
   named?: 'page' | 'cited';
+  /** On the file's own page: who made it and when, said on the one line under its title. */
+  facts?: ReactNode;
 }
 
-function FileBody({ artifactId, metadata, named }: FileProps) {
+function FileBody({ artifactId, metadata, named, facts }: FileProps) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
   const [unread, setUnread] = useState(false);
@@ -592,47 +594,61 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
       : type.reads === 'image'
         ? type.image === 'image/svg+xml'
         : type.reads !== 'code' && type.reads !== 'text' && !unread;
+  // Past the length a document is read at, for code and text, and where a file does
+  // not parse, the source is already what is shown.
+  const sourceToggle = inline && sourced && (
+    <button
+      type="button"
+      className="btn-icon"
+      aria-pressed={source}
+      aria-label="View source"
+      title="View source"
+      onClick={() => setSource(!source)}
+    >
+      <SourceIcon />
+    </button>
+  );
   return (
-    <div className="doc-frame">
-      <div className="doc-head">
-        <span className="doc-name">
-          <TypeGlyph type={type} />
-          {named ? (
-            <span className="muted" title={artifact.mediaType}>
-              {type.label}
-            </span>
-          ) : (
-            <Link to={`/artifacts/${artifact.id}`}>{artifact.title}</Link>
-          )}
-        </span>
-        <span className="doc-tools">
-          <span className="faint tabular">{bytes(artifact.size)}</span>
-          {/* Past the length a document is read at, for code and text, and where a file
-              does not parse, the source is already what is shown. */}
-          {inline && sourced && (
-            <button
-              type="button"
-              className="btn-icon"
-              aria-pressed={source}
-              aria-label="View source"
-              title="View source"
-              onClick={() => setSource(!source)}
-            >
-              <SourceIcon />
-            </button>
-          )}
-          {named === 'cited' && (
-            <Link
-              className="btn-icon"
-              to={`/artifacts/${artifact.id}`}
-              aria-label={`Open ${artifact.title}`}
-              title="Open file"
-            >
-              <ArrowRightIcon />
-            </Link>
-          )}
-        </span>
-      </div>
+    <div className={named === 'page' ? 'file-page' : 'doc-frame'}>
+      {named === 'page' ? (
+        // The file's own page is the file: its name, one quiet line of what it is, then it.
+        <header className="file-page-head">
+          <h1 className="file-page-title">{artifact.title}</h1>
+          <div className="file-page-meta">
+            <span title={artifact.mediaType}>{type.label}</span>
+            <span className="tabular">{bytes(artifact.size)}</span>
+            {facts}
+            <span className="file-page-tools">{sourceToggle}</span>
+          </div>
+        </header>
+      ) : (
+        <div className="doc-head">
+          <span className="doc-name">
+            <TypeGlyph type={type} />
+            {named ? (
+              <span className="muted" title={artifact.mediaType}>
+                {type.label}
+              </span>
+            ) : (
+              <Link to={`/artifacts/${artifact.id}`}>{artifact.title}</Link>
+            )}
+          </span>
+          <span className="doc-tools">
+            <span className="faint tabular">{bytes(artifact.size)}</span>
+            {sourceToggle}
+            {named === 'cited' && (
+              <Link
+                className="btn-icon"
+                to={`/artifacts/${artifact.id}`}
+                aria-label={`Open ${artifact.title}`}
+                title="Open file"
+              >
+                <ArrowRightIcon />
+              </Link>
+            )}
+          </span>
+        </div>
+      )}
       {inline && (
         // A file that fails to draw is still the file: its head, its source and its copy stand.
         <ErrorBoundary key={scope} reset={source}>
@@ -786,26 +802,24 @@ function ArtifactDetail({ row }: ViewProps) {
       </div>
     );
   const a = meta.data;
-  const author = nameOf(a.createdBy);
   return (
-    <RecordPage
-      back={<Link to={row.path}>← {row.label}</Link>}
-      kind={row.view.kind}
-      name={a.title}
-      title="Document"
-      content={<ArtifactBody artifactId={a.id} metadata={a} named="page" />}
-      // What the file is and what it weighs stand on the head of the document above.
-      details={
-        <KV
-          rows={[
-            !!author && ['Author', author],
-            ...timeRows(a.createdAt),
-            ['Hash', <Short value={a.hash} copy="Copy hash" />],
-          ]}
-        />
-      }
-    />
+    <div className="page-stage">
+      <ArtifactBody
+        artifactId={a.id}
+        metadata={a}
+        named="page"
+        facts={
+          <>
+            {nameOf(a.createdBy) && <span>{nameOf(a.createdBy)}</span>}
+            <Ago at={a.createdAt} />
+            <span>
+              <Short value={a.hash} copy="Copy hash" />
+            </span>
+          </>
+        }
+      />
+    </div>
   );
 }
 
-export const ArtifactsView = splitRoutes(ArtifactList, ArtifactDetail);
+export const ArtifactsView = splitRoutes(ArtifactList, ArtifactDetail, false);
