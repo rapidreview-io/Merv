@@ -1720,63 +1720,80 @@ select.input,
   padding-bottom: 60vh;
 }
 .file-page-head {
-  margin-bottom: var(--space-5);
-}
-.file-page-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--muted);
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-5);
 }
-.file-page-bar > a:hover {
-  color: var(--text);
+.file-page-sep {
+  color: var(--ghost);
 }
 .file-page-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: var(--text-xl);
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--text-lg);
   font-weight: 600;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
 }
-.file-page-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 0;
-  margin-top: 6px;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-.file-page-meta > :not(.file-page-tools) + :not(.file-page-tools)::before {
-  content: '·';
-  margin: 0 8px;
-  color: var(--ghost);
+.file-page-title > .file-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .file-page-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-left: auto;
 }
-/* Go to file: a floating search hung from its button, over whatever file is open. */
-.finder {
+/* What a file is beyond its name — who, when, type, weight, hash — waits behind Info. */
+.file-info {
   position: relative;
 }
-.finder kbd {
-  margin-left: 6px;
-  padding: 0 5px;
+.file-info > summary {
+  list-style: none;
+}
+.file-info > summary::-webkit-details-marker {
+  display: none;
+}
+.file-info-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--faint);
+  white-space: nowrap;
+  color: var(--muted);
+}
+/* The way back to Files, which drops the finder over the open file while the pointer rests on it. */
+.finder {
+  position: relative;
+  flex: none;
+}
+.finder-back {
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  color: var(--muted);
+}
+.finder-back:hover {
+  color: var(--text);
 }
 .finder-panel {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   z-index: 30;
   width: min(560px, calc(100vw - 32px));
   padding: var(--space-2);

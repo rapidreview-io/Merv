@@ -202,12 +202,20 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
 }
 
 /**
- * Go to file, as GitHub's `t` and an editor's quick open: a floating search over the
- * project's files, opened from a file's page by its button or the `t` key. The search
- * keeps the cursor, the arrows move the row in hand, Enter opens it, Escape shuts it.
+ * The way back to Files, and the way to any other file: a pointer resting on the link
+ * (or the `t` key) drops a floating search over the project's files, as GitHub's `t`
+ * and an editor's quick open do. The search keeps the cursor, the arrows move the row
+ * in hand, Enter opens it; Escape, a click away or the pointer leaving shuts it.
  */
 function FileFinder() {
   const [open, setOpen] = useState(false);
+  const hover = useRef<ReturnType<typeof setTimeout>>();
+  // The pointer has to rest a moment, so passing over the link on the way elsewhere opens nothing.
+  const rest = (next: boolean) => {
+    clearTimeout(hover.current);
+    hover.current = setTimeout(() => setOpen(next), next ? 150 : 250);
+  };
+  useEffect(() => () => clearTimeout(hover.current), []);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
@@ -249,15 +257,16 @@ function FileFinder() {
     navigate(`/artifacts/${file.id}`);
   };
   return (
-    <div className="finder" ref={box}>
-      <button
-        type="button"
-        className="btn btn--quiet"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        Go to file <kbd>t</kbd>
-      </button>
+    <div
+      className="finder"
+      ref={box}
+      onMouseEnter={() => rest(true)}
+      // What was typed keeps the finder open; a pointer only passing by does not.
+      onMouseLeave={() => !query && rest(false)}
+    >
+      <Link to="/artifacts" className="finder-back" title="Files · t finds a file">
+        ← Files
+      </Link>
       {open && (
         <div className="finder-panel" role="dialog" aria-label="Go to file">
           <SearchField
@@ -712,20 +721,30 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
     <div className={named === 'page' ? 'file-page' : 'doc-frame'}>
       {named === 'page' ? (
         // The file's own page is the file: its name, one quiet line of what it is, then it.
+        // One line: the way back, the file's name, and what more there is to say behind Info.
         <header className="file-page-head">
-          <div className="file-page-bar">
-            <Link to="/artifacts">← Files</Link>
-            <FileFinder />
-          </div>
-          <h1 className="file-page-title">
-            <TypeGlyph type={type} size={18} />
-            {artifact.title}
+          <FileFinder />
+          <span className="file-page-sep" aria-hidden="true">
+            /
+          </span>
+          <h1 className="file-page-title" title={artifact.title}>
+            <TypeGlyph type={type} size={16} />
+            <span className="file-title">{artifact.title}</span>
           </h1>
-          <div className="file-page-meta">
-            {facts}
-            <span className="tabular">{bytes(artifact.size)}</span>
-            <span className="file-page-tools">{sourceToggle}</span>
-          </div>
+          <span className="file-page-tools">
+            {sourceToggle}
+            <details className="file-info">
+              <summary className="btn btn--quiet">Info</summary>
+              <div className="file-info-panel">
+                {facts}
+                <span title={artifact.mediaType}>{type.label}</span>
+                <span className="tabular">{bytes(artifact.size)}</span>
+                <span>
+                  <Short value={artifact.hash} copy="Copy hash" />
+                </span>
+              </div>
+            </details>
+          </span>
         </header>
       ) : (
         <div className="doc-head">
