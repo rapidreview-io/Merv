@@ -99,6 +99,34 @@ test('an Alt-press opens or closes everything beneath a node, and a plain press 
   assert.equal(toggle('c').getAttribute('aria-expanded'), 'false');
 });
 
+test('a file’s tree opens and shuts whole from its corner, its root and entries still standing', async (t) => {
+  t.after(async () => await unmount());
+  const button = (label: string) =>
+    all('.json-folds button').find((b) => b.textContent === label) as HTMLButtonElement;
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(JsonView, { value: { a: { b: { c: { d: [1] } } }, n: 1 }, folds: true }),
+    ),
+  );
+  await press(button('Expand all'));
+  assert.ok(all('.json-toggle').every((toggle) => toggle.getAttribute('aria-expanded') === 'true'));
+  assert.match(text(), /d/);
+  await press(button('Collapse all'));
+  assert.deepEqual(
+    all('.json-toggle').map((toggle) => toggle.getAttribute('aria-expanded')),
+    ['true', 'false'],
+    'the root keeps its entries in view',
+  );
+  await unmount();
+  // A shallow tree, or one not shown as a file, has no such corner.
+  await mount(
+    createElement(MemoryRouter, null, createElement(JsonView, { value: { n: 1 }, folds: true })),
+  );
+  assert.equal(all('.json-folds').length, 0);
+});
+
 test('a hash is its two ends with all of it in the title; a long string is cut until asked for', async (t) => {
   t.after(async () => await unmount());
   let copied = '';

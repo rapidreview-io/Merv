@@ -136,7 +136,8 @@ function Node({
   const [shown, setShown] = useState(PAGE);
   if (sweep && sweep.at !== obeyed) {
     setObeyed(sweep.at);
-    if (sweep.open !== undefined) setOpen(sweep.open);
+    // The root stays open, so a tree shut whole is still its entries, not one line.
+    if (sweep.open !== undefined) setOpen(sweep.open || depth === 0);
   }
   const label = name !== undefined && (
     <span
@@ -218,18 +219,43 @@ function Node({
   );
 }
 
+/** True where a tree holds something below its first two levels, so there is more to open. */
+const deep = (value: unknown): boolean =>
+  isBranch(value) &&
+  Object.values(value).some((item) => isBranch(item) && Object.keys(item).length);
+
 /**
  * A parsed JSON value as a tree of folds; `names` are the records its ids may name, and a tree
- * given none reads its own.
+ * given none reads its own. A file's tree (`folds`) can be opened or shut whole from its corner.
  */
-export function JsonView({ value, names }: { value: unknown; names?: RecordNames }) {
+export function JsonView({
+  value,
+  names,
+  folds,
+}: {
+  value: unknown;
+  names?: RecordNames;
+  folds?: boolean;
+}) {
   const text = useMemo(() => (names ? '' : (JSON.stringify(value) ?? '')), [names, value]);
   const own = useRecordNames(text);
+  const [sweep, setSweep] = useState<Sweep>();
   names ??= own;
+  const all = (open: boolean) => setSweep({ at: (sweeps += 1), open });
   return (
     <div className="json">
+      {folds && deep(value) && (
+        <div className="json-folds">
+          <button type="button" className="btn-text" onClick={() => all(true)}>
+            Expand all
+          </button>
+          <button type="button" className="btn-text" onClick={() => all(false)}>
+            Collapse all
+          </button>
+        </div>
+      )}
       <ul className="json-list json-list--root">
-        <Node value={value} depth={0} names={names} />
+        <Node value={value} depth={0} names={names} sweep={sweep} />
       </ul>
     </div>
   );

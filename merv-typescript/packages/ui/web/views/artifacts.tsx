@@ -759,7 +759,7 @@ function InlineArtifact({
     );
   if (reads === 'mermaid') return <Mermaid source={content} />;
   if (reads === 'jsonl') return <JsonLines content={content} names={names} />;
-  if (parsed?.json) return <JsonView value={parsed.json.value} names={names} />;
+  if (parsed?.json) return <JsonView value={parsed.json.value} names={names} folds />;
   if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
   return parsed?.notebook ? <NotebookView notebook={parsed.notebook} /> : null;
 }
