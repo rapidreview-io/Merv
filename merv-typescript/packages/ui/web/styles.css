@@ -1726,9 +1726,6 @@ select.input,
   min-width: 0;
   margin-bottom: var(--space-5);
 }
-.file-page-sep {
-  color: var(--ghost);
-}
 .file-page-title {
   display: flex;
   align-items: center;
@@ -1742,40 +1739,56 @@ select.input,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-page-tools {
+/* Everything on a file's page that is not the file waits behind ⋯ at the line's end. */
+.file-menu {
+  position: relative;
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
   margin-left: auto;
 }
-/* What a file is beyond its name — who, when, type, weight, hash — waits behind Info. */
-.file-info {
-  position: relative;
+.file-menu-open {
+  font-size: var(--text-lg);
+  line-height: 1;
 }
-.file-info > summary {
-  list-style: none;
-}
-.file-info > summary::-webkit-details-marker {
-  display: none;
-}
-.file-info-panel {
+.file-menu-panel {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
   z-index: 30;
   display: grid;
-  gap: 6px;
-  min-width: 220px;
-  padding: 10px 12px;
+  width: max-content;
+  min-width: 200px;
+  padding: 4px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
   box-shadow: var(--shadow-md);
+}
+.file-menu-facts {
+  padding: 6px 8px 8px;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  white-space: nowrap;
-  color: var(--muted);
+  color: var(--faint);
+}
+.file-menu-facts > * + *::before {
+  content: ' · ';
+  color: var(--ghost);
+}
+.file-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.file-menu-item:hover {
+  background: var(--bg-soft);
 }
 /* The way back to Files, which drops the finder over the open file while the pointer rests on it. */
 .finder {

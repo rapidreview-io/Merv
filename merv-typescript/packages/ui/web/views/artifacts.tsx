@@ -201,6 +201,92 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
   );
 }
 
+/** Everything on a file's page that is not the file: its facts, its raw text, a download, its hash. */
+function FileMenu({
+  artifact,
+  facts,
+  raw,
+}: {
+  artifact: Artifact;
+  facts?: ReactNode;
+  raw?: { on: boolean; flip(): void };
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const take = useDownload(artifact.id);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+      } else if (box.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', away, true);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', away, true);
+    };
+  }, [open]);
+  const item = (label: string, act: () => void) => (
+    <button type="button" role="menuitem" className="file-menu-item" onClick={act}>
+      {label}
+    </button>
+  );
+  return (
+    <div className="file-menu" ref={box}>
+      <button
+        type="button"
+        className="btn-icon file-menu-open"
+        aria-label="More"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="file-menu-panel" role="menu">
+          <p className="file-menu-facts">
+            {facts}
+            <span>{fileType(artifact).label}</span>
+            <span className="tabular">{bytes(artifact.size)}</span>
+          </p>
+          {raw &&
+            item(raw.on ? 'Rendered view' : 'Raw view', () => {
+              raw.flip();
+              setOpen(false);
+            })}
+          {artifact.downloadAvailable &&
+            !artifact.files &&
+            (take.download ? (
+              <a
+                role="menuitem"
+                className="file-menu-item"
+                href={take.download.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerPolicy="no-referrer"
+                onClick={() => setOpen(false)}
+              >
+                Save file ↗
+              </a>
+            ) : (
+              item(take.busy ? 'Preparing download…' : 'Download', () => void take.prepare())
+            ))}
+          {take.error && <p className="file-menu-facts">{take.error}</p>}
+          {item('Copy hash', () => {
+            void navigator.clipboard?.writeText(artifact.hash);
+            setOpen(false);
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The way back to Files, and the way to any other file: a pointer resting on the link
  * (or the `t` key) drops a floating search over the project's files, as GitHub's `t`
@@ -311,7 +397,7 @@ function FileFinder() {
 }
 
 /** URLs are issued on demand and discarded when their account/project or artifact changes. */
-function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileName?: string }) {
+function useDownload(artifactId: string, fileName?: string) {
   const [download, setDownload] = useState<{ url: string; expiresAt: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -343,6 +429,11 @@ function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileNa
       if (current()) setBusy(false);
     }
   };
+  return { download, busy, error, prepare };
+}
+
+function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileName?: string }) {
+  const { download, busy, error, prepare } = useDownload(artifactId, fileName);
   return (
     <div className="empty">
       <button className="btn btn--sm" disabled={busy} onClick={() => void prepare()}>
@@ -721,30 +812,18 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
     <div className={named === 'page' ? 'file-page' : 'doc-frame'}>
       {named === 'page' ? (
         // The file's own page is the file: its name, one quiet line of what it is, then it.
-        // One line: the way back, the file's name, and what more there is to say behind Info.
+        // One line: the way back, the file's name, and everything else behind ⋯.
         <header className="file-page-head">
           <FileFinder />
-          <span className="file-page-sep" aria-hidden="true">
-            /
-          </span>
           <h1 className="file-page-title" title={artifact.title}>
             <TypeGlyph type={type} size={16} />
             <span className="file-title">{artifact.title}</span>
           </h1>
-          <span className="file-page-tools">
-            {sourceToggle}
-            <details className="file-info">
-              <summary className="btn btn--quiet">Info</summary>
-              <div className="file-info-panel">
-                {facts}
-                <span title={artifact.mediaType}>{type.label}</span>
-                <span className="tabular">{bytes(artifact.size)}</span>
-                <span>
-                  <Short value={artifact.hash} copy="Copy hash" />
-                </span>
-              </div>
-            </details>
-          </span>
+          <FileMenu
+            artifact={artifact}
+            facts={facts}
+            raw={inline && sourced ? { on: source, flip: () => setSource(!source) } : undefined}
+          />
         </header>
       ) : (
         <div className="doc-head">
@@ -786,7 +865,8 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
           />
         </ErrorBoundary>
       )}
-      <Take artifact={artifact} />
+      {/* On its own page a single file is downloaded from ⋯; a collection lists its files. */}
+      {(named !== 'page' || artifact.files) && <Take artifact={artifact} />}
     </div>
   );
 }
