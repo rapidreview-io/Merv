@@ -251,7 +251,6 @@ function FileMenu({
         <div className="file-menu-panel" role="menu">
           <p className="file-menu-facts">
             {facts}
-            <span>{fileType(artifact).label}</span>
             <span className="tabular">{bytes(artifact.size)}</span>
           </p>
           {raw &&
@@ -816,7 +815,6 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
         <header className="file-page-head">
           <FileFinder />
           <h1 className="file-page-title" title={artifact.title}>
-            <TypeGlyph type={type} size={16} />
             <span className="file-title">{artifact.title}</span>
           </h1>
           <FileMenu
