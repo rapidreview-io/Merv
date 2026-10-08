@@ -47,6 +47,25 @@ const lastProject = (who: string): string | null => {
     return null;
   }
 };
+/** When an account last opened each of its projects in this browser, so the chooser leads with them. */
+const RECENT_KEY = 'merv:recent-projects';
+export const recentProjects = (who: string): Record<string, number> => {
+  try {
+    const recent = JSON.parse(localStorage.getItem(RECENT_KEY) ?? 'null');
+    return recent?.who === who && recent.at && typeof recent.at === 'object' ? recent.at : {};
+  } catch {
+    return {};
+  }
+};
+const opened = (who: string, project: string) => {
+  try {
+    const at = { ...recentProjects(who), [project]: Date.now() };
+    localStorage.setItem(LAST_KEY, JSON.stringify({ who, project }));
+    localStorage.setItem(RECENT_KEY, JSON.stringify({ who, at }));
+  } catch {
+    /* this tab alone remembers it */
+  }
+};
 let memoryToken: string | null = readToken();
 let selectedProject = storedProject();
 let scopeEpoch = 0;
@@ -223,12 +242,20 @@ export type AccountSession =
   | { phase: 'projects'; account: Account; epoch: number }
   | { phase: 'ready'; account: Account; actor: Actor; project: Project; epoch: number };
 
+/** Whose choices this browser remembers: a person, or an account-wide key. */
+export const whoOf = (account: Account) =>
+  account.kind === 'user'
+    ? `${account.user.issuer} ${account.user.subject}`
+    : account.kind === 'key' && account.key.grantScope === 'account'
+      ? `key ${account.key.id}`
+      : '';
+
 /** Resolve account discovery before project-scoped reads, including a user's first empty account. */
 export async function resolveAccountSession(): Promise<AccountSession> {
   const epoch = scopeEpoch;
   const account = await accountRequest<Account>('/account');
   requireScope(epoch);
-  const who = account.kind === 'user' ? `${account.user.issuer} ${account.user.subject}` : '';
+  const who = whoOf(account);
   const selected =
     account.kind === 'actor'
       ? account.actor.projectId
@@ -240,11 +267,7 @@ export async function resolveAccountSession(): Promise<AccountSession> {
     return { phase: 'projects', account, epoch: scopeEpoch };
   }
   setProject(selected);
-  try {
-    if (who) localStorage.setItem(LAST_KEY, JSON.stringify({ who, project: selected }));
-  } catch {
-    /* this tab alone remembers it */
-  }
+  if (who) opened(who, selected);
   const selectedEpoch = scopeEpoch;
   // The shell answers who and where with the rows the page needs anyway; a
   // composition without it still answers those two questions on their own tools.

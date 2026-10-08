@@ -643,16 +643,18 @@ export const SearchField = ({
   onChange,
   placeholder = 'Search',
   title,
+  ...rest
 }: {
   label: string;
   value: string;
   onChange(value: string): void;
   placeholder?: string;
   title?: string;
-}) => (
+} & Pick<InputHTMLAttributes<HTMLInputElement>, 'autoFocus' | 'onKeyDown'>) => (
   <span className="search" title={title}>
     <Icon name="search" />
     <input
+      {...rest}
       className="input"
       type="search"
       aria-label={label}

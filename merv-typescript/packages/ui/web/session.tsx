@@ -3,9 +3,11 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -17,17 +19,19 @@ import {
   accountRequest,
   hasToken,
   onAccessLost,
+  recentProjects,
   resolveAccountSession,
   setProject,
   setToken,
   useScopeVersion,
+  whoOf,
   type Actor,
   type Project,
   type Account,
   type AccountSession,
 } from './api';
-import { Failure, Field, SearchField, Summary } from './components';
-import { browserAuth, setAuthMode, type AuthConfiguration } from './auth';
+import { Failure, Field, SearchField, Summary, relativeTime } from './components';
+import { browserAuth, setAuthMode, signedInEmail, type AuthConfiguration } from './auth';
 
 export type { Actor, Project, Account } from './api';
 interface Session {
@@ -93,9 +97,11 @@ function SignIn({
   const [value, setValue] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [shown, setShown] = useState(false);
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
   const refusal = useId();
+  const secret = useId();
   const credential = useRef<HTMLFormElement>(null);
   // A refused credential brings the page back with its field emptied: the cursor goes
   // back into it, and the field names the refusal as what is wrong with it.
@@ -184,26 +190,46 @@ function SignIn({
         <div className="signin-wordmark">merv</div>
         <h1 className="signin-title">Sign in</h1>
         {client && (
-          <form onSubmit={passwordSignIn} className="identity-form">
-            <Field
-              label="Email"
-              type="email"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={setEmail}
-            />
-            <Field
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={setPassword}
-            />
-            <button className="btn btn--primary" disabled={busy} type="submit">
-              Sign in
-            </button>
+          <>
+            <form onSubmit={passwordSignIn} className="identity-form">
+              <Field
+                label="Email"
+                type="email"
+                autoComplete="username"
+                autoFocus
+                required
+                value={email}
+                onChange={setEmail}
+              />
+              <label htmlFor={secret}>
+                Password
+                <span className="input-end">
+                  <input
+                    id={secret}
+                    className="input"
+                    type={shown ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="input-end-btn"
+                    aria-pressed={shown}
+                    onClick={() => setShown(!shown)}
+                  >
+                    {shown ? 'Hide' : 'Show'}
+                  </button>
+                </span>
+              </label>
+              <button className="btn btn--primary" disabled={busy} type="submit">
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+            <div className="signin-or" role="separator">
+              or
+            </div>
             <button
               className="btn"
               disabled={busy}
@@ -212,7 +238,7 @@ function SignIn({
             >
               Continue with Google
             </button>
-          </form>
+          </>
         )}
         {/* Where a credential is the only way in it is the form; beside an account it folds away. */}
         {client ? (
@@ -224,10 +250,24 @@ function SignIn({
           local
         )}
         <Failure message={error} id={refusal} />
+        <SigninHost />
       </section>
     </main>
   );
 }
+
+/** Which deployment this page signs in to: production and staging look alike otherwise. */
+const SigninHost = () => <p className="signin-host">{window.location.host}</p>;
+
+/** A date a person reads at a glance: the year only when it is not this one. */
+const day = (iso: string) => {
+  const at = new Date(iso);
+  return at.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(at.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+  });
+};
 
 function Projects({
   account,
@@ -246,12 +286,40 @@ function Projects({
   const [search, setSearch] = useState('');
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(account.projects.length === 0);
+  const [active, setActive] = useState(0);
   const receipt = useRef({ name: '', id: '' });
+  const list = useRef<HTMLDivElement>(null);
   const box = useId();
+  const recent = useMemo(() => recentProjects(whoOf(account)), [account]);
   const query = search.trim().toLocaleLowerCase();
+  // What this browser opened last leads, then the newest; the name settles a tie.
   const projects = account.projects
     .filter((project) => `${project.name}\n${project.id}`.toLocaleLowerCase().includes(query))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    .sort(
+      (a, b) =>
+        (recent[b.id] ?? 0) - (recent[a.id] ?? 0) ||
+        b.createdAt.localeCompare(a.createdAt) ||
+        a.name.localeCompare(b.name),
+    );
+  const opened = query ? 0 : projects.filter((project) => recent[project.id]).length;
+  const at = Math.min(active, projects.length - 1);
+  useEffect(() => setActive(0), [query]);
+  useEffect(() => {
+    list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [at]);
+  // The search keeps the cursor and the arrows move the row in hand, so a project is
+  // found and opened without leaving the keyboard.
+  const keys = (event: KeyboardEvent<HTMLInputElement>) => {
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+    if (step) {
+      event.preventDefault();
+      setActive(Math.max(0, Math.min(projects.length - 1, at + step)));
+    } else if (event.key === 'Enter' && projects[at]) {
+      event.preventDefault();
+      choose(projects[at].id);
+    }
+  };
   const create = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -270,65 +338,109 @@ function Projects({
       setBusy(false);
     }
   };
+  const row = (project: Project, index: number) => {
+    const last = recent[project.id];
+    return (
+      <button
+        key={project.id}
+        type="button"
+        role="option"
+        aria-selected={index === at}
+        className="chooser-row"
+        onMouseMove={() => index !== at && setActive(index)}
+        onClick={() => choose(project.id)}
+      >
+        <span className="chooser-name">{project.name}</span>
+        <span className="chooser-when">
+          {last ? `opened ${relativeTime(new Date(last).toISOString())}` : day(project.createdAt)}
+        </span>
+        <kbd className="chooser-enter" aria-hidden="true">
+          ↵
+        </kbd>
+      </button>
+    );
+  };
   return (
     <main className="signin signin--projects">
       <section className="signin-card">
-        <div className="signin-wordmark">merv</div>
-        <h1 className="signin-title">Choose a project</h1>
+        <header className="chooser-top">
+          <span className="signin-wordmark">merv</span>
+          <span className="chooser-who" title={signedInEmail() ?? undefined}>
+            {signedInEmail()}
+          </span>
+          <button type="button" className="btn btn--quiet" onClick={signOut}>
+            Sign out
+          </button>
+        </header>
+        <div className="chooser-head">
+          <h1 className="signin-title">Projects</h1>
+          {account.projects.length > 0 && (
+            <span className="chooser-count">{account.projects.length}</span>
+          )}
+          <span className="chooser-head-end">
+            <button type="button" className="btn btn--quiet" onClick={reload}>
+              Refresh
+            </button>
+            {account.kind === 'user' && (
+              <button
+                type="button"
+                className="btn btn--quiet"
+                aria-expanded={creating}
+                onClick={() => setCreating(!creating)}
+              >
+                New project
+              </button>
+            )}
+          </span>
+        </div>
+        {account.kind === 'user' && creating && (
+          <form onSubmit={create} className="chooser-create">
+            <label htmlFor={box} className="sr-only">
+              New project
+            </label>
+            <input
+              id={box}
+              className="input"
+              placeholder="Project name"
+              value={name}
+              maxLength={200}
+              required
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setCreating(false)}
+            />
+            <button className="btn btn--primary" disabled={busy}>
+              Create
+            </button>
+          </form>
+        )}
         {account.projects.length === 0 && (
-          <p>
+          <p className="signin-help">
             {account.kind === 'user'
               ? 'You do not belong to a project yet. Create one or ask a project administrator to add you.'
               : 'This credential cannot currently access a project. Ask its owner to check membership or provide another credential.'}
           </p>
         )}
         {account.projects.length > 0 && (
-          <SearchField label="Find a project by name or ID" value={search} onChange={setSearch} />
+          <SearchField
+            label="Find a project by name or ID"
+            placeholder="Search projects"
+            value={search}
+            onChange={setSearch}
+            onKeyDown={keys}
+            autoFocus={!creating}
+          />
         )}
-        <div className="identity-form project-choices" aria-label="Available projects">
-          {projects.map((project) => (
-            <button className="btn" key={project.id} onClick={() => choose(project.id)}>
-              {project.name}
-            </button>
-          ))}
-        </div>
         {account.projects.length > 0 && (
-          <p className="signin-help" role="status">
-            {projects.length === 0
-              ? 'No projects match your search.'
-              : `${projects.length} of ${account.projects.length} projects`}
-          </p>
-        )}
-        {account.kind === 'user' && (
-          <details className="identity-local" open={account.projects.length === 0}>
-            <Summary>Create a project</Summary>
-            <form onSubmit={create} className="identity-form">
-              <label htmlFor={box}>
-                New project
-                <input
-                  id={box}
-                  className="input"
-                  value={name}
-                  maxLength={200}
-                  required
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </label>
-              <button className="btn btn--primary" disabled={busy}>
-                Create project
-              </button>
-            </form>
-          </details>
+          <div className="chooser-list" role="listbox" aria-label="Projects" ref={list}>
+            {opened > 0 && <h2 className="chooser-group">Recent</h2>}
+            {projects.slice(0, opened).map(row)}
+            {opened > 0 && opened < projects.length && <h2 className="chooser-group">All</h2>}
+            {projects.slice(opened).map((project, index) => row(project, opened + index))}
+            {projects.length === 0 && <p className="chooser-none">No projects match.</p>}
+          </div>
         )}
         <Failure message={error} />
-        <div className="signin-actions">
-          <button className="btn" onClick={reload}>
-            Refresh projects
-          </button>
-          <button className="btn" onClick={signOut}>
-            Sign out
-          </button>
-        </div>
         {account.kind === 'user' && (
           <details className="identity-local">
             <Summary>Account details</Summary>
@@ -338,6 +450,7 @@ function Projects({
             <code>{account.user.subject}</code>
           </details>
         )}
+        <SigninHost />
       </section>
     </main>
   );

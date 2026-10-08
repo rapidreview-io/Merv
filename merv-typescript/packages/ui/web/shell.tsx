@@ -2,10 +2,10 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
-import { useTool } from './api';
+import { useTool, type Account } from './api';
 import { useSession } from './session';
 import { cx } from './components';
-import { ChevronsIcon, RowIcon, SidebarIcon, SwitchIcon } from './icons';
+import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
 import { initials, personName } from './views/people';
@@ -91,8 +91,12 @@ function RailRow({
   );
 }
 
+/** Whether this sign-in reaches more than the one project it is in. */
+const switchable = (account: Account) =>
+  account.kind === 'user' || (account.kind === 'key' && account.key.grantScope === 'account');
+
 function AccountFoot() {
-  const { actor, signOut } = useSession();
+  const { actor, account, signOut, chooseProject } = useSession();
   // A person is named, never identified: a directory name that is an id names nobody.
   const who = personName(actor.name) ?? signedInEmail();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -170,6 +174,17 @@ function AccountFoot() {
           >
             Theme · {theme}
           </button>
+          {switchable(account) && (
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className="account-menu-item"
+              onClick={chooseProject}
+            >
+              Switch project
+            </button>
+          )}
           <div className="account-menu-sep" role="separator" />
           {/* Keys are a setting, and live under Settings › Keys with the rest. */}
           <button
@@ -225,21 +240,22 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           <SidebarIcon size={18} />
         </button>
       </div>
-      <div className="rail-project">
-        <h2 className="rail-project-name">{project.name}</h2>
-        {(account.kind === 'user' ||
-          (account.kind === 'key' && account.key.grantScope === 'account')) && (
-          <button
-            type="button"
-            className="rail-switch"
-            onClick={chooseProject}
-            title="Switch project"
-            aria-label="Switch project"
-          >
-            <SwitchIcon />
-          </button>
-        )}
-      </div>
+      {switchable(account) ? (
+        // The project's name is the switch, so where to change it is where it is named.
+        <button
+          type="button"
+          className="rail-project rail-project--switch"
+          onClick={chooseProject}
+          title="Switch project"
+        >
+          <span className="rail-project-name">{project.name}</span>
+          <ChevronsIcon className="rail-project-caret" />
+        </button>
+      ) : (
+        <div className="rail-project">
+          <h2 className="rail-project-name">{project.name}</h2>
+        </div>
+      )}
       <nav className="rail-nav">
         <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
         {leadRows(rows).map(place)}
@@ -295,8 +311,9 @@ function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts
         );
   if (!current) return null;
   return (
-    // Agent gives the window to its conversation, whose bar says which one: the place is heard.
-    <header className={cx('page-lede', current.view.kind === 'pi' && 'sr-only')}>
+    // Agent and Work title themselves (the conversation's bar, the cycle's head), so the
+    // place is heard here and seen only once.
+    <header className={cx('page-lede', ['pi', 'work'].includes(current.view.kind) && 'sr-only')}>
       <h1 className="lede-line">
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that

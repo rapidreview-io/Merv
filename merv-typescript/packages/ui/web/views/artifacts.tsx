@@ -665,9 +665,57 @@ function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
         {type.label}
       </span>
       <span className="tabular">{bytes(file.size)}</span>
-      {keeper && <span className="file-keeper">{keeper}</span>}
+      {/* Drawn empty where nobody is named, so the columns of a wide list stay in line. */}
+      <span className="file-keeper">{keeper}</span>
       <Ago at={file.createdAt} />
     </span>
+  );
+}
+
+/** What a wide list of files is ordered by: a column's head, pressed once more to turn it round. */
+type Order = { by: 'name' | 'type' | 'size' | 'added'; up: boolean };
+const COLUMNS: [Order['by'] | undefined, string][] = [
+  ['name', 'Name'],
+  ['type', 'Type'],
+  ['size', 'Size'],
+  [undefined, 'Author'],
+  ['added', 'Added'],
+];
+let chosenOrder: Order = { by: 'added', up: false };
+const ordered = (files: Artifact[], { by, up }: Order) => {
+  const sign = up ? 1 : -1;
+  const key = (a: Artifact, b: Artifact) =>
+    by === 'name'
+      ? a.title.localeCompare(b.title)
+      : by === 'type'
+        ? fileType(a).label.localeCompare(fileType(b).label)
+        : by === 'size'
+          ? a.size - b.size
+          : a.createdAt.localeCompare(b.createdAt);
+  return [...files].sort((a, b) => sign * key(a, b) || b.createdAt.localeCompare(a.createdAt));
+};
+/** The heads of a wide list's columns, which order it; a list a column wide has none. */
+function FileHead({ order, onOrder }: { order: Order; onOrder(order: Order): void }) {
+  return (
+    <div className="file-head">
+      {COLUMNS.map(([by, label]) =>
+        by ? (
+          <button
+            key={label}
+            type="button"
+            aria-pressed={order.by === by}
+            onClick={() =>
+              onOrder({ by, up: order.by === by ? !order.up : by === 'name' || by === 'type' })
+            }
+          >
+            {label}
+            {order.by === by && <span aria-hidden="true">{order.up ? ' ↑' : ' ↓'}</span>}
+          </button>
+        ) : (
+          <span key={label}>{label}</span>
+        ),
+      )}
+    </div>
   );
 }
 
@@ -689,13 +737,17 @@ function ArtifactList() {
     labels: (a) => [a.title, fileType(a).label, a.mediaType, nameOf(a.createdBy)],
     ids: (a) => [a.id, a.createdBy],
   });
+  // The order outlives opening a file, which mounts this list again beside it.
+  const [order, setOrder] = useState(chosenOrder);
+  const choose = (next: Order) => setOrder((chosenOrder = next));
   return (
     <ListPage
       load={list}
       noun="files"
       placeholder="Title, type or person"
       filter={filter}
-      rows={filter.rows}
+      rows={ordered(filter.rows, order)}
+      drawn={filter.rows.length > 0 && <FileHead order={order} onOrder={choose} />}
       opens
       create={{
         label: 'Upload file',

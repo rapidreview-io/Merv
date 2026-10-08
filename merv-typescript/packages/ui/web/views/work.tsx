@@ -426,8 +426,13 @@ function WaveList({ shell }: { shell: ShellData }) {
           ends={ends}
         />
       )}
+      // Reset is offered only once the reader has narrowed the page away from how it opened.
       reset={
-        only || chosen
+        filter.state !== filter.initial ||
+        filter.query ||
+        filter.scope !== 'everyone' ||
+        kind !== ALL ||
+        chosen
           ? () => {
               filter.reset();
               setKind(ALL);

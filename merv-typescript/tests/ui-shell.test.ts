@@ -578,7 +578,7 @@ test('a new tab opens the project this account chose last, and choosing one keep
   };
   account();
   await open('/settings/session');
-  assert.ok(text().includes('Choose a project'));
+  assert.equal(document.querySelector('h1')!.textContent, 'Projects');
   await click('Grokking replication');
   await settle(20);
   assert.equal(document.querySelector('h1')!.textContent, 'Settings');
@@ -586,7 +586,16 @@ test('a new tab opens the project this account chose last, and choosing one keep
   account();
   await open('/settings/session');
   assert.equal(document.querySelector('h1')!.textContent, 'Settings');
-  assert.ok(!text().includes('Choose a project'));
+  assert.ok(!text().includes('Search projects'));
+  // The rail's project name is the switch, and choosing again lists the project this
+  // browser opened first, under Recent.
+  await click('Grokking replication');
+  await settle(20);
+  const rows = [...document.querySelectorAll('[role="option"]')].map(
+    (row) => row.querySelector('.chooser-name')!.textContent,
+  );
+  assert.deepEqual(rows, ['Grokking replication', 'Second project']);
+  assert.ok(text().includes('Recent'));
 });
 
 test('the box that names a new project is named by its label, as every reader finds it', async (t) => {
@@ -599,7 +608,7 @@ test('the box that names a new project is named by its label, as every reader fi
   serve('/account', { body: { kind: 'user', user, projects: [] } });
   setToken('fixture-token');
   await open('/');
-  assert.ok(text().includes('Choose a project'), text().slice(0, 300));
+  assert.equal(document.querySelector('h1')?.textContent, 'Projects', text().slice(0, 300));
   const box = document.querySelector<HTMLInputElement>('.signin form input')!;
   // Named explicitly: a label that only wraps its box is read as a bare textbox by some readers.
   const name =

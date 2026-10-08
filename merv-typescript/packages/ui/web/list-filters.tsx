@@ -104,6 +104,8 @@ export interface Filter<T> {
   setScope(value: Scope): void;
   state: string;
   setState(value: string): void;
+  /** The state the list opens on, so a page can tell narrowed from as it opened. */
+  initial: string;
   states: StateCount[];
   /** True where this kind has an owner, so whose work it is can be asked. */
   owned: boolean;
@@ -148,7 +150,8 @@ export function useListFilter<T extends { id: string }>(
   const states = stateOf ? stateCounts(held, stateOf, shape.isOpen, within.filter(also)) : [];
   // A list opens on its open work wherever it holds any, whatever is narrowed later.
   const open = !!stateOf && (!!shape.history || held.some((item) => shape.isOpen?.(stateOf(item))));
-  const state = chosen ?? (open ? OPEN : '');
+  const initial = open ? OPEN : '';
+  const state = chosen ?? initial;
   const holds = (item: T) =>
     !state || !stateOf
       ? true
@@ -167,6 +170,7 @@ export function useListFilter<T extends { id: string }>(
     setScope,
     state,
     setState: setChosen,
+    initial,
     states,
     owned: !!shape.mine,
     items: held,
