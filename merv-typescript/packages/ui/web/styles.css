@@ -1716,6 +1716,8 @@ select.input,
 .file-page {
   width: min(100%, 1040px);
   margin-inline: auto;
+  /* The end of a file can be scrolled up to the middle of the screen, not left at its foot. */
+  padding-bottom: 60vh;
 }
 .file-page-head {
   margin-bottom: var(--space-5);
