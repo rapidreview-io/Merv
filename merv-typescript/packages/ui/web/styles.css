@@ -130,6 +130,11 @@ html[data-theme='dark'] {
   margin: 0;
   padding: 0;
 }
+/* The page keeps the scrollbar's room whether it scrolls or not, so a list that grows or
+   shrinks under a filter never changes the width of what is beside it. */
+html {
+  scrollbar-gutter: stable;
+}
 html,
 body,
 #root {
@@ -1693,6 +1698,19 @@ select.input,
   font-size: var(--text-sm);
   border-bottom: 1px solid var(--line);
 }
+/* A file is named by its glyph and its title together, wherever it is listed. */
+.file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.file-name > .file-glyph {
+  flex: none;
+}
+.file-title {
+  min-width: 0;
+}
 /* A file's own page is the file, centred: its name, one quiet line of what it is
    and who made it, and the one control that shows its source; then the file. */
 .file-page {
@@ -1702,7 +1720,21 @@ select.input,
 .file-page-head {
   margin-bottom: var(--space-5);
 }
+.file-page-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.file-page-bar > a:hover {
+  color: var(--text);
+}
 .file-page-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: var(--text-xl);
   font-weight: 600;
   line-height: 1.3;
@@ -1726,6 +1758,75 @@ select.input,
 .file-page-tools {
   margin-left: auto;
 }
+/* Go to file: a floating search hung from its button, over whatever file is open. */
+.finder {
+  position: relative;
+}
+.finder kbd {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.finder-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: min(560px, calc(100vw - 32px));
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-md);
+}
+.finder-panel > .search {
+  display: flex;
+  width: 100%;
+}
+.finder-list {
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+  margin-top: var(--space-2);
+}
+.finder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 4px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.finder-row[aria-selected='true'] {
+  background: var(--bg-soft);
+}
+.finder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.finder-when,
+.finder-none {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.finder-none {
+  padding: var(--space-2);
+}
 /* What the file is, as a glyph, then its name; its weight and the one control at
    the far end, which never wrap and never shrink. */
 .doc-name {
@@ -1741,15 +1842,10 @@ select.input,
   flex: none;
   white-space: nowrap;
 }
-.file-glyph,
-.file-type {
+.file-glyph {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   flex: none;
-}
-.file-glyph,
-.file-type > svg {
   color: var(--faint);
 }
 /* A file's standing on a row is one line that never breaks inside a fact. Each
@@ -1793,7 +1889,7 @@ select.input,
   .file-head,
   .row > .row-link:has(> .file-meta) {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 132px 76px 132px 72px;
+    grid-template-columns: minmax(0, 1fr) 76px 132px 72px;
     align-items: center;
     column-gap: var(--space-4);
   }
@@ -1822,8 +1918,9 @@ select.input,
     padding-block: 9px;
   }
   .row-link:has(> .file-meta) > .row-name {
-    display: block;
     font-weight: 500;
+  }
+  .row-link:has(> .file-meta) .file-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1847,7 +1944,7 @@ select.input,
   .row-link:has(> .file-meta) strong {
     font-weight: inherit;
   }
-  .file-head > :nth-child(3),
+  .file-head > :nth-child(2),
   .row-link > .file-meta > .tabular {
     text-align: right;
   }

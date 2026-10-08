@@ -73,7 +73,7 @@ export function stateCounts<T>(
   return [{ value: OPEN, count: counted.filter((item) => isOpen(stateOf(item))).length }, ...held];
 }
 
-const typing = (target: EventTarget | null) =>
+export const typing = (target: EventTarget | null) =>
   target instanceof HTMLElement && !!target.closest('input, textarea, select, [contenteditable]');
 
 /**

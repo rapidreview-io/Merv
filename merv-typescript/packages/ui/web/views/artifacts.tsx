@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Hash } from 'fast-sha256';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
-import { Ago, ErrorBoundary, LoadState, Short } from '../components';
+import { Ago, ErrorBoundary, LoadState, SearchField, Short } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
-import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ListPage, splitRoutes, typing, useListFilter } from '../list-filters';
 import { CodeBlock } from '../code-block';
 import { DelimitedTable, parseDelimited } from '../csv';
 import { languageOf } from '../highlight';
@@ -198,6 +198,106 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
       {busy && <progress max={1} value={fraction} aria-label="Upload progress" />}
       {message && <p role="status">{message}</p>}
     </form>
+  );
+}
+
+/**
+ * Go to file, as GitHub's `t` and an editor's quick open: a floating search over the
+ * project's files, opened from a file's page by its button or the `t` key. The search
+ * keeps the cursor, the arrows move the row in hand, Enter opens it, Escape shuts it.
+ */
+function FileFinder() {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const navigate = useNavigate();
+  const box = useRef<HTMLDivElement>(null);
+  const list = useTool<Artifact[]>(open ? 'artifact.list' : null, { limit: FILE_PAGE });
+  const search = query.trim().toLowerCase();
+  const files = (list.data ?? [])
+    .filter((file) => file.title.toLowerCase().includes(search))
+    .slice(0, 50);
+  const at = Math.min(active, files.length - 1);
+  useEffect(() => setActive(0), [search]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 't' && !open && !typing(event.target) && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        setOpen(true);
+      } else if (event.key === 'Escape' && open) {
+        // Shutting the finder is all this Escape means: the file stays open.
+        event.preventDefault();
+        setOpen(false);
+      }
+    };
+    const away = (event: MouseEvent) => {
+      if (open && !box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', away);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', away);
+    };
+  }, [open]);
+  useEffect(() => {
+    box.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [at]);
+  const go = (file: Artifact) => {
+    setOpen(false);
+    setQuery('');
+    navigate(`/artifacts/${file.id}`);
+  };
+  return (
+    <div className="finder" ref={box}>
+      <button
+        type="button"
+        className="btn btn--quiet"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        Go to file <kbd>t</kbd>
+      </button>
+      {open && (
+        <div className="finder-panel" role="dialog" aria-label="Go to file">
+          <SearchField
+            label="Find a file by name"
+            placeholder="Go to file"
+            value={query}
+            onChange={setQuery}
+            autoFocus
+            onKeyDown={(event) => {
+              const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+              if (step) {
+                event.preventDefault();
+                setActive(Math.max(0, Math.min(files.length - 1, at + step)));
+              } else if (event.key === 'Enter' && files[at]) {
+                event.preventDefault();
+                go(files[at]);
+              }
+            }}
+          />
+          <div className="finder-list" role="listbox" aria-label="Files">
+            {files.map((file, index) => (
+              <button
+                key={file.id}
+                type="button"
+                role="option"
+                aria-selected={index === at}
+                className="finder-row"
+                onMouseMove={() => index !== at && setActive(index)}
+                onClick={() => go(file)}
+              >
+                <TypeGlyph type={fileType(file)} size={14} />
+                <span className="finder-name">{file.title}</span>
+                <Ago at={file.createdAt} className="finder-when" />
+              </button>
+            ))}
+            {list.data && files.length === 0 && <p className="finder-none">No files match.</p>}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -613,11 +713,17 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
       {named === 'page' ? (
         // The file's own page is the file: its name, one quiet line of what it is, then it.
         <header className="file-page-head">
-          <h1 className="file-page-title">{artifact.title}</h1>
+          <div className="file-page-bar">
+            <Link to="/artifacts">← Files</Link>
+            <FileFinder />
+          </div>
+          <h1 className="file-page-title">
+            <TypeGlyph type={type} size={18} />
+            {artifact.title}
+          </h1>
           <div className="file-page-meta">
-            <span title={artifact.mediaType}>{type.label}</span>
-            <span className="tabular">{bytes(artifact.size)}</span>
             {facts}
+            <span className="tabular">{bytes(artifact.size)}</span>
             <span className="file-page-tools">{sourceToggle}</span>
           </div>
         </header>
@@ -673,13 +779,8 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
  * each separator belongs to the fact after it, so none is ever left hanging.
  */
 function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
-  const type = fileType(file);
   return (
     <span className="file-meta">
-      <span className="file-type" title={file.mediaType}>
-        <Icon name={type.icon} size={14} />
-        {type.label}
-      </span>
       <span className="tabular">{bytes(file.size)}</span>
       {/* Drawn empty where nobody is named, so the columns of a wide list stay in line. */}
       <span className="file-keeper">{keeper}</span>
@@ -688,11 +789,17 @@ function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
   );
 }
 
+const FileName = ({ file }: { file: Artifact }) => (
+  <strong className="file-name">
+    <TypeGlyph type={fileType(file)} size={15} />
+    <span className="file-title">{file.title}</span>
+  </strong>
+);
+
 /** What a wide list of files is ordered by: a column's head, pressed once more to turn it round. */
-type Order = { by: 'name' | 'type' | 'size' | 'added'; up: boolean };
+type Order = { by: 'name' | 'size' | 'added'; up: boolean };
 const COLUMNS: [Order['by'] | undefined, string][] = [
   ['name', 'Name'],
-  ['type', 'Type'],
   ['size', 'Size'],
   [undefined, 'Author'],
   ['added', 'Added'],
@@ -703,11 +810,9 @@ const ordered = (files: Artifact[], { by, up }: Order) => {
   const key = (a: Artifact, b: Artifact) =>
     by === 'name'
       ? a.title.localeCompare(b.title)
-      : by === 'type'
-        ? fileType(a).label.localeCompare(fileType(b).label)
-        : by === 'size'
-          ? a.size - b.size
-          : a.createdAt.localeCompare(b.createdAt);
+      : by === 'size'
+        ? a.size - b.size
+        : a.createdAt.localeCompare(b.createdAt);
   return [...files].sort((a, b) => sign * key(a, b) || b.createdAt.localeCompare(a.createdAt));
 };
 /** The heads of a wide list's columns, which order it; a list a column wide has none. */
@@ -720,9 +825,7 @@ function FileHead({ order, onOrder }: { order: Order; onOrder(order: Order): voi
             key={label}
             type="button"
             aria-pressed={order.by === by}
-            onClick={() =>
-              onOrder({ by, up: order.by === by ? !order.up : by === 'name' || by === 'type' })
-            }
+            onClick={() => onOrder({ by, up: order.by === by ? !order.up : by === 'name' })}
           >
             {label}
             {order.by === by && <span aria-hidden="true">{order.up ? ' ↑' : ' ↓'}</span>}
@@ -772,7 +875,8 @@ function ArtifactList() {
       emptyTitle="No files"
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({
-        name: <strong>{a.title}</strong>,
+        // The glyph says the type, beside the name it belongs to; no word repeats it.
+        name: <FileName file={a} />,
         standing: <FileMeta file={a} keeper={nameOf(a.createdBy)} />,
       })}
       after={
@@ -812,9 +916,6 @@ function ArtifactDetail({ row }: ViewProps) {
           <>
             {nameOf(a.createdBy) && <span>{nameOf(a.createdBy)}</span>}
             <Ago at={a.createdAt} />
-            <span>
-              <Short value={a.hash} copy="Copy hash" />
-            </span>
           </>
         }
       />
