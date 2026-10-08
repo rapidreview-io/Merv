@@ -1688,7 +1688,6 @@ select.input,
 }
 .doc-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-3);
   overflow-wrap: anywhere;
@@ -1790,6 +1789,64 @@ select.input,
 .file-menu-item:hover {
   background: var(--bg-soft);
 }
+.file-menu-check {
+  float: right;
+  color: var(--faint);
+}
+/* Upload file: one press opens the chooser; what is happening is said to its left. */
+.upload {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.upload-pick {
+  cursor: pointer;
+}
+.upload-pick:focus-within {
+  outline: 2px solid var(--active);
+  outline-offset: 2px;
+}
+.upload-pick[aria-disabled] {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.upload-note {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.upload-note--bad {
+  color: var(--refutes);
+}
+.upload-note > .btn-text {
+  font-size: inherit;
+}
+.upload-name {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+/* A file dragged over the page: the whole page is where it lands. */
+.upload-drop {
+  position: fixed;
+  inset: 12px;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--active);
+  border-radius: var(--radius-md);
+  background: rgba(var(--active-rgb), 0.06);
+  font-size: var(--text-md);
+  color: var(--active);
+  pointer-events: none;
+}
 /* The way back to Files, which drops the finder over the open file while the pointer rests on it. */
 .finder {
   position: relative;
@@ -1859,20 +1916,29 @@ select.input,
 .finder-none {
   padding: var(--space-2);
 }
-/* What the file is, as a glyph, then its name; its weight and the one control at
-   the far end, which never wrap and never shrink. */
-.doc-name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+/* A file shown inside a page is named the way a row names it: glyph and title, then ⋯.
+   Where a disclosure above already named it, ⋯ stands alone at the corner, with no bar. */
+.doc-head:not(:has(> .file-name)) {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
 }
-.doc-tools {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
+.doc-head:not(:has(> .file-name)) > .file-menu {
+  top: 6px;
+}
+.doc-head > .file-name {
+  overflow: hidden;
+}
+.doc-head > .file-name .file-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.doc-head > .file-name:hover {
+  color: var(--active);
 }
 .file-glyph {
   display: inline-flex;

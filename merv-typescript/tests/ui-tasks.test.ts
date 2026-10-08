@@ -121,14 +121,17 @@ test('before a delivery a row is the check alone, and a brief somebody wrote is 
   const brief = document.querySelector<HTMLDetailsElement>('details.crit-file')!;
   assert.ok(brief.open, 'the brief is what there is to read');
   assert.equal(document.querySelector('.md h3')?.textContent, 'Goal');
-  // The disclosure has said the file's title, so the head it opens says the type instead
-  // and keeps the way to the file's own page as a named glyph.
+  // The disclosure has said the file's title, so the head it opens is ⋯ alone, which
+  // still holds the way to the file's own page.
   assert.equal(times('Brief: reproduce grokking'), 1, 'the title is said once');
-  assert.equal(brief.querySelector('.doc-name')!.textContent, 'Markdown');
-  const way = brief.querySelector<HTMLAnchorElement>('.doc-tools a.btn-icon')!;
-  assert.deepEqual(
-    [way.getAttribute('href'), way.getAttribute('aria-label'), way.title],
-    [`/artifacts/${BRIEF}`, 'Open Brief: reproduce grokking', 'Open file'],
+  assert.equal(brief.querySelector('.doc-head .file-name'), null);
+  await act(async () =>
+    brief.querySelector<HTMLButtonElement>('button[aria-label="More"]')!.click(),
+  );
+  assert.ok(
+    [...brief.querySelectorAll('[role="menuitem"]')].some(
+      (item) => item.textContent === 'Open file',
+    ),
   );
 });
 

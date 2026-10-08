@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
-import { useSession, type Actor } from '../session';
+import { useActor, useSession, type Actor } from '../session';
 import { EmptyState, Submit, term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
@@ -28,8 +28,9 @@ export const namesOf = (actors: Actor[] | null | undefined) => {
 };
 /** The same names, for a page that has no directory of its own. */
 export function useActorNames() {
-  const { actor } = useSession();
-  return namesOf(useTool<Actor[]>(actor.role === 'operator' ? 'actor.list' : null).data);
+  // A file read outside a session (a test, a preview) names nobody rather than failing.
+  const actor = useActor();
+  return namesOf(useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data);
 }
 
 type Role = Actor['role'];

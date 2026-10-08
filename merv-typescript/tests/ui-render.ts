@@ -265,3 +265,17 @@ export function eventStream() {
     close: () => controller.close(),
   };
 }
+
+/** Opens the ⋯ menu of the first file shown and reads its Raw view: 'none' where it offers none. */
+export async function rawView(press = false): Promise<'on' | 'off' | 'none'> {
+  const more = host?.querySelector<HTMLButtonElement>('button[aria-label="More"]');
+  if (!more) return 'none';
+  await act(async () => more.click());
+  await settle(0);
+  const item = host?.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]');
+  const was = !item ? 'none' : item.getAttribute('aria-checked') === 'true' ? 'on' : 'off';
+  // Pressing it shuts the menu; only reading it shuts the menu by its own button.
+  await act(async () => (press && item ? item.click() : more.click()));
+  await settle(0);
+  return was;
+}

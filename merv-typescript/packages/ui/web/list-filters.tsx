@@ -382,6 +382,7 @@ export function ListPage<T extends { id: string }>({
   narrow,
   create,
   aside,
+  end,
   cards,
   emptyTitle,
   emptyHint,
@@ -413,6 +414,8 @@ export function ListPage<T extends { id: string }>({
   create?: Creation;
   /** A second control on the same row that opens something other than a record. */
   aside?: Creation;
+  /** A control of the page's own that does its work in place, at the row's end. */
+  end?: ReactNode;
   /** Where the row is a designed card of its own: the class its stack takes. */
   cards?: { className: string; render(item: T): ReactNode };
   emptyTitle: string;
@@ -527,6 +530,7 @@ export function ListPage<T extends { id: string }>({
     <>
       {/* A quiet control beside nothing at all would be the page's only element. */}
       {aside && (!vacant || open === 'aside') && control('aside', aside)}
+      {end}
       {create && !offered && !load.loading && control('create', create)}
     </>
   );

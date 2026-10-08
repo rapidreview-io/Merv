@@ -7,7 +7,7 @@
  */
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mount, serve, settle, text, unmount } from './ui-render.js';
+import { mount, rawView, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
@@ -950,19 +950,15 @@ test('a Markdown file is read as a document, and one control shows its source', 
     ),
   );
   await settle(10);
-  // The head says the type as a glyph and the weight as a number; the media type is not printed.
+  // The head names the file by its glyph and title; the media type is never printed.
   assert.doesNotMatch(text(), /text\/markdown/);
-  assert.match(text(), /457 B/);
   assert.equal(document.querySelector('.file-glyph')?.getAttribute('aria-label'), 'Markdown');
   assert.equal(document.querySelector('.md h3')?.textContent, 'Result');
   assert.equal(all('.md td').length, 2);
 
-  const toggle = document.querySelector('button[aria-label="View source"]') as HTMLButtonElement;
-  assert.deepEqual([toggle.title, toggle.getAttribute('aria-pressed')], ['View source', 'false']);
-  const { act } = await import('react-dom/test-utils');
-  await act(async () => toggle.click());
-  await settle(0);
-  assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+  // Raw view, behind ⋯, shows the text its author typed.
+  assert.equal(await rawView(true), 'off');
+  assert.equal(await rawView(), 'on');
   assert.equal(document.querySelector('.md'), null);
   assert.match(
     document.querySelector('.code-block pre')?.textContent ?? '',

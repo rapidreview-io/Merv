@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
-import { mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
-const { UploadForm } = await import('../packages/ui/web/views/artifacts.js');
+const { UploadControl } = await import('../packages/ui/web/views/artifacts.js');
 
-/** Only the storage transport is simulated; the form hashes and sends the actual File. */
+/** Only the storage transport is simulated; the control hashes and sends the actual File. */
 async function uploading(t: TestContext, replies: (number | 'network')[]) {
   t.after(unmount);
   const original = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
@@ -67,22 +67,27 @@ async function uploading(t: TestContext, replies: (number | 'network')[]) {
     completedParts: [],
     nextPart: null,
   });
-  let closed = 0;
-  await mount(createElement(UploadForm, { available: true, close: () => closed++ }));
+  await mount(createElement(UploadControl, { available: true }));
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-  Object.defineProperty(input, 'files', { value: [file], configurable: true });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  const submit = async () => {
-    await act(async () =>
-      document.querySelector('form')!.dispatchEvent(new window.Event('submit', { bubbles: true })),
-    );
+  const settled = async () => {
     for (let attempt = 0; attempt < 250; attempt++) {
       await settle(10);
-      if (!document.querySelector('fieldset')!.disabled) return;
+      if (!input.disabled) return;
     }
     assert.fail('Upload did not settle');
   };
-  return { file, hash, headers, plan, puts, submit, closed: () => closed };
+  // The first press chooses the file and sends it; each later one is Retry.
+  let chosen = false;
+  const submit = async () => {
+    if (!chosen) {
+      chosen = true;
+      Object.defineProperty(input, 'files', { value: [file], configurable: true });
+      await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
+    } else await click('Retry');
+    await settled();
+  };
+  const closed = () => (text().includes('Uploaded') ? 1 : 0);
+  return { file, hash, headers, plan, puts, submit, closed };
 }
 
 test('Files sends one whole file with its signed checksum headers before completing', async (t) => {
@@ -185,43 +190,28 @@ test('Files follows a conditional PUT refusal with server verification and retri
   assert.equal(f.closed(), 1);
 });
 
-test('Files permits small uploads without Sandboxes and disables large uploads with a reason', async (t) => {
+/** Chooses one file in a freshly mounted control, as the chooser or a drop would. */
+async function choose(t: TestContext, available: boolean, file: File) {
   t.after(unmount);
-  await mount(createElement(UploadForm, { available: false, close() {} }));
+  await mount(createElement(UploadControl, { available }));
   const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-  const button = document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-  assert.match(text(), /Files over 2 MB need project storage, which is unavailable/);
-  Object.defineProperty(input, 'files', {
-    value: [new File(['small'], 'small.txt')],
-    configurable: true,
-  });
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
   await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  await settle(5);
-  assert.equal(button.disabled, false);
-  Object.defineProperty(input, 'files', {
-    value: [new File([new Uint8Array(2_000_001)], 'large.csv')],
-    configurable: true,
+  await settle(20);
+}
+
+test('Files sends a small file without project storage and says so once it is stored', async (t) => {
+  const created: unknown[] = [];
+  serve('/tools/artifact.create', (_count, input) => {
+    created.push(input);
+    return { body: { result: { id: 'art_small' } } };
   });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  await settle(5);
-  assert.equal(button.disabled, true);
+  await choose(t, false, new File(['small'], 'small.txt'));
+  assert.equal(created.length, 1);
+  assert.match(text(), /small\.txt\s*Uploaded/);
 });
 
-test('Files enables large uploads when project storage is configured', async (t) => {
-  t.after(unmount);
-  await mount(createElement(UploadForm, { available: true, close() {} }));
-  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
-  Object.defineProperty(input, 'files', {
-    value: [new File([new Uint8Array(2_000_001)], 'large.csv')],
-    configurable: true,
-  });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  await settle(5);
-  assert.equal(document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled, false);
-});
-
-test('Files refuses a file over 512 MiB before hashing or calling Main', async (t) => {
-  t.after(unmount);
+test('Files refuses a large file without project storage before sending anything', async (t) => {
   const fetches: unknown[] = [];
   const real = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -231,17 +221,25 @@ test('Files refuses a file over 512 MiB before hashing or calling Main', async (
   t.after(() => {
     globalThis.fetch = real;
   });
-  await mount(createElement(UploadForm, { available: true, close() {} }));
-  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await choose(t, false, new File([new Uint8Array(2_000_001)], 'large.csv'));
+  assert.match(text(), /Files over 2 MB need project storage, which is unavailable/);
+  assert.doesNotMatch(text(), /Retry/, 'nothing about a retry would change the answer');
+  assert.deepEqual(fetches, []);
+});
+
+test('Files refuses a file over 512 MiB before hashing or calling Main', async (t) => {
+  const fetches: unknown[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    fetches.push(input);
+    return assert.fail('unused');
+  };
+  t.after(() => {
+    globalThis.fetch = real;
+  });
   const file = new File(['huge'], 'huge.bin');
   Object.defineProperty(file, 'size', { value: 512 * 1024 * 1024 + 1 });
-  Object.defineProperty(input, 'files', { value: [file], configurable: true });
-  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
-  await settle(5);
-  await act(async () =>
-    document.querySelector('form')!.dispatchEvent(new window.Event('submit', { bubbles: true })),
-  );
-  await settle(5);
+  await choose(t, true, file);
   assert.match(text(), /Files up to 512 MiB can be uploaded/);
   assert.doesNotMatch(text(), /Hashing/);
   assert.deepEqual(fetches, []);

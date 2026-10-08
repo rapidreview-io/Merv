@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, serve, settle, unmount } from './ui-render.js';
+import { click, mount, rawView, serve, settle, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
@@ -316,8 +316,8 @@ test('a CSV file is a table with a head, numbered rows, numbers set right and ro
   await press('.table-file > .btn-text');
   assert.equal(all('.table-file tbody tr').length, 400);
   assert.equal(one('.table-file > .btn-text')?.textContent, 'Show 50 more');
-  // The one control on the head turns the table back into its text.
-  await press('button[aria-label="View source"]');
+  // Raw view, behind ⋯, turns the table back into its text.
+  await rawView(true);
   assert.equal(one('.table-file'), null);
   assert.match(one('.code-block pre')?.textContent ?? '', /^name,loss,note\nrun 0,0,"note, 0"/);
 });
@@ -327,7 +327,7 @@ test('a ragged CSV stays its text, with no source to turn to', async (t) => {
   await file({ title: 'bad.csv', mediaType: 'text/csv' }, 'a,b\n1,2,3');
   assert.equal(one('.table-file'), null);
   assert.equal(one('.code-block pre')?.textContent, 'a,b\n1,2,3');
-  assert.equal(one('button[aria-label="View source"]'), null);
+  assert.equal(await rawView(), 'none');
 });
 
 test('a long cell that is nearly a number is read at once, not tried every way it could be cut', async (t) => {
@@ -404,7 +404,7 @@ test('a notebook reads as its cells; HTML and scripts it holds are text, and its
   );
   assert.equal(one('.nb-image')?.getAttribute('src'), `data:image/png;base64,${PNG}`);
   assert.equal(one('.nb-output--error .ansi-fg1')?.textContent, 'ValueError');
-  await press('button[aria-label="View source"]');
+  await rawView(true);
   assert.equal(one('.notebook'), null);
   assert.equal(one('.code-block pre')?.textContent, JSON.stringify(notebook));
 });
@@ -424,14 +424,14 @@ test('an SVG is an image from its own bytes, never inline, and a picture opens a
   assert.equal((window as unknown as { ran?: boolean }).ran, undefined);
   await press('.file-image');
   assert.equal(one('.file-image')?.getAttribute('aria-pressed'), 'true');
-  await press('button[aria-label="View source"]');
+  await rawView(true);
   assert.equal(one('.file-image'), null);
   assert.equal(one('.code-block pre')?.textContent, svg);
   await unmount();
 
   await file({ title: 'plot.png', mediaType: 'image/png' }, 'iVBORw0KGgo=', 'base64');
   assert.equal(one('.file-image img')?.getAttribute('src'), 'data:image/png;base64,iVBORw0KGgo=');
-  assert.equal(one('button[aria-label="View source"]'), null);
+  assert.equal(await rawView(), 'none');
 });
 
 test('code is numbered with its language, and a log keeps its colours', async (t) => {
@@ -440,7 +440,7 @@ test('code is numbered with its language, and a log keeps its colours', async (t
   assert.ok(one('.code-block--numbered'));
   assert.equal(one('.code-lang')?.textContent, 'Python');
   assert.equal(all('.code-line').length, 2);
-  assert.equal(one('button[aria-label="View source"]'), null);
+  assert.equal(await rawView(), 'none');
   await unmount();
 
   await file({ title: 'run.log', mediaType: 'text/plain' }, 'step 1\n\x1b[33mwarn\x1b[0m slow\n');
@@ -575,11 +575,11 @@ test('how one file is read, its source shown, does not carry over to the next', 
   };
   await mount(createElement(Reader));
   await settle(10);
-  await press('button[aria-label="View source"]');
+  await rawView(true);
   assert.equal(one('.notebook'), null);
   await act(async () => open(second));
   await settle(10);
-  assert.equal(one('button[aria-label="View source"]')?.getAttribute('aria-pressed'), 'false');
+  assert.equal(await rawView(), 'off');
   assert.ok(one('.notebook'));
 });
 

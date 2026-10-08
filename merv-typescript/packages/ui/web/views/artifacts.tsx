@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
 import { Ago, ErrorBoundary, LoadState, SearchField, Short } from '../components';
-import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
+import { Icon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, typing, useListFilter } from '../list-filters';
 import { CodeBlock } from '../code-block';
 import { DelimitedTable, parseDelimited } from '../csv';
@@ -106,30 +106,52 @@ function putFile(
   });
 }
 
-export function UploadForm({ available, close }: { available: boolean; close(): void }) {
+/**
+ * Upload file is one press: it opens the chooser, and the chosen file is sent at once,
+ * as is a file dropped anywhere on the page. What is happening is said beside the
+ * button — hashing, uploading, verifying, then the file is the newest row — and a
+ * failure is said there too, with Retry, which resumes the same upload where it can.
+ */
+export function UploadControl({ available }: { available: boolean }) {
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [note, setNote] = useState('');
   const [fraction, setFraction] = useState(0);
+  const [failed, setFailed] = useState<'retry' | 'refused'>();
+  const [over, setOver] = useState(false);
   const pending = useRef<{ file: File; uploadId: string }>();
   const requestId = useRef(crypto.randomUUID());
-  const submit = async () => {
-    if (!file || file.size < 1) return;
+  const done = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(done.current), []);
+  const send = async (file: File) => {
+    clearTimeout(done.current);
+    setFailed(undefined);
+    setFraction(0);
+    // What cannot be stored is said before anything is hashed or sent.
+    const refusal =
+      file.size > MAX_FILE && !available
+        ? 'Files over 2 MB need project storage, which is unavailable'
+        : file.size > MAX_UPLOAD
+          ? 'Files up to 512 MiB can be uploaded'
+          : '';
+    if (refusal) {
+      setNote(refusal);
+      setFailed('refused');
+      return;
+    }
     setBusy(true);
-    setMessage('');
+    setNote('Uploading');
     try {
       if (file.size <= MAX_FILE) {
         await call('artifact.create', await fileInput(file));
       } else {
-        if (!available) throw new Error('Large-file storage is unavailable for this project');
-        if (file.size > MAX_UPLOAD) throw new Error('Files up to 512 MiB can be uploaded');
         let plan: UploadPlan;
         if (pending.current?.file === file) {
           plan = await call<UploadPlan>('artifact.upload_resume', {
             uploadId: pending.current.uploadId,
           });
         } else {
-          setMessage('Hashing file…');
+          setNote('Hashing');
           const sha256 = await fileHash(file, (value) => setFraction(value * 0.1));
           const said = file.type.toLowerCase().split(';')[0]!.trim();
           plan = await call<UploadPlan>('artifact.upload_begin', {
@@ -146,71 +168,124 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
         }
         const upload = plan.parts[0];
         if (upload) {
-          setMessage('Uploading file…');
+          setNote('Uploading');
           await putFile(upload, file, (loaded) => setFraction(0.1 + 0.9 * (loaded / file.size)));
         }
-        setFraction(1);
-        setMessage('Verifying file…');
+        setNote('Verifying');
         await call('artifact.upload_complete', { uploadId: plan.uploadId });
       }
+      pending.current = undefined;
       refreshTools('artifact.list');
-      close();
+      setNote('Uploaded');
+      done.current = setTimeout(() => setFile(undefined), 2500);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Upload failed');
+      setNote(error instanceof Error ? error.message : 'Upload failed');
+      setFailed('retry');
     } finally {
       setBusy(false);
     }
   };
+  const choose = (chosen?: File) => {
+    if (!chosen || chosen.size < 1 || busy) return;
+    // A new file is a new upload; the same one again resumes what was begun.
+    if (chosen !== file) {
+      pending.current = undefined;
+      requestId.current = crypto.randomUUID();
+    }
+    setFile(chosen);
+    void send(chosen);
+  };
+  const latest = useRef(choose);
+  latest.current = choose;
+  useEffect(() => {
+    const files = (event: DragEvent) => !!event.dataTransfer?.types.includes('Files');
+    const enter = (event: DragEvent) => {
+      if (!files(event)) return;
+      event.preventDefault();
+      setOver(true);
+    };
+    // The pointer leaving the window, or a drop anywhere, ends the drag.
+    const leave = (event: DragEvent) => {
+      if (!event.relatedTarget) setOver(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!files(event)) return;
+      event.preventDefault();
+      setOver(false);
+      latest.current(event.dataTransfer?.files[0]);
+    };
+    document.addEventListener('dragover', enter);
+    document.addEventListener('dragleave', leave);
+    document.addEventListener('drop', drop);
+    return () => {
+      document.removeEventListener('dragover', enter);
+      document.removeEventListener('dragleave', leave);
+      document.removeEventListener('drop', drop);
+    };
+  }, []);
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
-      <fieldset disabled={busy}>
-        <label>
-          File{' '}
-          <input
-            type="file"
-            onChange={(event) => {
-              setFile(event.target.files?.[0]);
-              pending.current = undefined;
-              requestId.current = crypto.randomUUID();
-              setFraction(0);
-              setMessage('');
-            }}
-          />
-        </label>
-        <p className="muted">
-          {available
-            ? 'Large files upload directly to project storage.'
-            : 'Files over 2 MB need project storage, which is unavailable.'}
-        </p>
-        <button
-          className="btn btn--primary"
-          type="submit"
-          disabled={!file || (file.size > MAX_FILE && !available)}
-        >
-          {pending.current ? 'Resume upload' : 'Upload file'}
-        </button>
-      </fieldset>
-      {busy && <progress max={1} value={fraction} aria-label="Upload progress" />}
-      {message && <p role="status">{message}</p>}
-    </form>
+    <span className="upload">
+      {file && (
+        <span className={failed ? 'upload-note upload-note--bad' : 'upload-note'} role="status">
+          <span className="upload-name">{file.name}</span>
+          <span>{busy && fraction > 0 ? `${note} ${Math.round(fraction * 100)}%` : note}</span>
+          {failed === 'retry' && (
+            <button type="button" className="btn-text" onClick={() => void send(file)}>
+              Retry
+            </button>
+          )}
+          {failed && (
+            <button type="button" className="btn-text" onClick={() => setFile(undefined)}>
+              Dismiss
+            </button>
+          )}
+        </span>
+      )}
+      <label className="btn btn--primary upload-pick" aria-disabled={busy || undefined}>
+        Upload file
+        <input
+          type="file"
+          className="sr-only"
+          disabled={busy}
+          onChange={(event) => {
+            choose(event.target.files?.[0]);
+            event.target.value = '';
+          }}
+        />
+      </label>
+      {over && (
+        <span className="upload-drop" aria-hidden="true">
+          Drop to upload
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Who made a file, when, and its weight: read only once ⋯ is open, inside a session. */
+function MenuFacts({ artifact }: { artifact: Artifact }) {
+  const author = useActorNames()(artifact.createdBy);
+  return (
+    <p className="file-menu-facts">
+      {author && <span>{author}</span>}
+      <Ago at={artifact.createdAt} />
+      <span className="tabular">{bytes(artifact.size)}</span>
+    </p>
   );
 }
 
 /** Everything on a file's page that is not the file: its facts, its raw text, a download, its hash. */
 function FileMenu({
   artifact,
-  facts,
+  opens,
   raw,
 }: {
   artifact: Artifact;
-  facts?: ReactNode;
+  /** Where the file is shown inside something else: the way to its own page. */
+  opens?: boolean;
   raw?: { on: boolean; flip(): void };
 }) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const take = useDownload(artifact.id);
@@ -249,15 +324,23 @@ function FileMenu({
       </button>
       {open && (
         <div className="file-menu-panel" role="menu">
-          <p className="file-menu-facts">
-            {facts}
-            <span className="tabular">{bytes(artifact.size)}</span>
-          </p>
-          {raw &&
-            item(raw.on ? 'Rendered view' : 'Raw view', () => {
-              raw.flip();
-              setOpen(false);
-            })}
+          <MenuFacts artifact={artifact} />
+          {opens && item('Open file', () => navigate(`/artifacts/${artifact.id}`))}
+          {raw && (
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={raw.on}
+              className="file-menu-item"
+              onClick={() => {
+                raw.flip();
+                setOpen(false);
+              }}
+            >
+              Raw view
+              {raw.on && <span className="file-menu-check">✓</span>}
+            </button>
+          )}
           {artifact.downloadAvailable &&
             !artifact.files &&
             (take.download ? (
@@ -773,11 +856,9 @@ interface FileProps {
   metadata?: Artifact;
   /** Who has already said the title: the file's own `page`, or the disclosure that `cited` it. */
   named?: 'page' | 'cited';
-  /** On the file's own page: who made it and when, said on the one line under its title. */
-  facts?: ReactNode;
 }
 
-function FileBody({ artifactId, metadata, named, facts }: FileProps) {
+function FileBody({ artifactId, metadata, named }: FileProps) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
   const [unread, setUnread] = useState(false);
@@ -794,61 +875,36 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
         ? type.image === 'image/svg+xml'
         : type.reads !== 'code' && type.reads !== 'text' && !unread;
   // Past the length a document is read at, for code and text, and where a file does
-  // not parse, the source is already what is shown.
-  const sourceToggle = inline && sourced && (
-    <button
-      type="button"
-      className="btn-icon"
-      aria-pressed={source}
-      aria-label="View source"
-      title="View source"
-      onClick={() => setSource(!source)}
-    >
-      <SourceIcon />
-    </button>
+  // not parse, the source is already what is shown, so there is no raw view to offer.
+  const menu = (
+    <FileMenu
+      artifact={artifact}
+      opens={named !== 'page'}
+      raw={inline && sourced ? { on: source, flip: () => setSource(!source) } : undefined}
+    />
   );
   return (
     <div className={named === 'page' ? 'file-page' : 'doc-frame'}>
+      {/* Wherever a file is shown it has the same head: its name, then ⋯ for everything
+          else. On its own page the name is the heading and Files is the way back; where a
+          disclosure above already named it, the head is ⋯ alone. */}
       {named === 'page' ? (
-        // The file's own page is the file: its name, one quiet line of what it is, then it.
-        // One line: the way back, the file's name, and everything else behind ⋯.
         <header className="file-page-head">
           <FileFinder />
           <h1 className="file-page-title" title={artifact.title}>
             <span className="file-title">{artifact.title}</span>
           </h1>
-          <FileMenu
-            artifact={artifact}
-            facts={facts}
-            raw={inline && sourced ? { on: source, flip: () => setSource(!source) } : undefined}
-          />
+          {menu}
         </header>
       ) : (
         <div className="doc-head">
-          <span className="doc-name">
-            <TypeGlyph type={type} />
-            {named ? (
-              <span className="muted" title={artifact.mediaType}>
-                {type.label}
-              </span>
-            ) : (
-              <Link to={`/artifacts/${artifact.id}`}>{artifact.title}</Link>
-            )}
-          </span>
-          <span className="doc-tools">
-            <span className="faint tabular">{bytes(artifact.size)}</span>
-            {sourceToggle}
-            {named === 'cited' && (
-              <Link
-                className="btn-icon"
-                to={`/artifacts/${artifact.id}`}
-                aria-label={`Open ${artifact.title}`}
-                title="Open file"
-              >
-                <ArrowRightIcon />
-              </Link>
-            )}
-          </span>
+          {named !== 'cited' && (
+            <Link className="file-name" to={`/artifacts/${artifact.id}`} title={artifact.title}>
+              <TypeGlyph type={type} />
+              <span className="file-title">{artifact.title}</span>
+            </Link>
+          )}
+          {menu}
         </div>
       )}
       {inline && (
@@ -863,8 +919,8 @@ function FileBody({ artifactId, metadata, named, facts }: FileProps) {
           />
         </ErrorBoundary>
       )}
-      {/* On its own page a single file is downloaded from ⋯; a collection lists its files. */}
-      {(named !== 'page' || artifact.files) && <Take artifact={artifact} />}
+      {/* A single file is downloaded from ⋯; a collection lists its files under it. */}
+      {artifact.files && <Take artifact={artifact} />}
     </div>
   );
 }
@@ -965,10 +1021,7 @@ function ArtifactList() {
       rows={ordered(filter.rows, order)}
       drawn={filter.rows.length > 0 && <FileHead order={order} onOrder={choose} />}
       opens
-      create={{
-        label: 'Upload file',
-        form: (close) => <UploadForm available={!!storage.data?.available} close={close} />,
-      }}
+      end={<UploadControl available={!!storage.data?.available} />}
       emptyTitle="No files"
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({
@@ -995,27 +1048,15 @@ function ArtifactList() {
 function ArtifactDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   const meta = useTool<Artifact>('artifact.get', { artifactId: id });
-  const nameOf = useActorNames();
   if (!meta.data)
     return (
       <div className="page-stage">
         <LoadState {...meta} back={{ to: row.path, label: row.label }} />
       </div>
     );
-  const a = meta.data;
   return (
     <div className="page-stage">
-      <ArtifactBody
-        artifactId={a.id}
-        metadata={a}
-        named="page"
-        facts={
-          <>
-            {nameOf(a.createdBy) && <span>{nameOf(a.createdBy)}</span>}
-            <Ago at={a.createdAt} />
-          </>
-        }
-      />
+      <ArtifactBody artifactId={meta.data.id} metadata={meta.data} named="page" />
     </div>
   );
 }

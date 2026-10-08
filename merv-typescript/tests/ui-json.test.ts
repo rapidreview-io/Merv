@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, rawView, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
@@ -224,13 +224,11 @@ test('a JSON file is read as a tree, names its records, and one control shows it
   assert.match(text(), /seed7/);
   assert.equal(document.querySelector('.json a')?.textContent, 'Reproduce grokking');
 
-  const source = document.querySelector('button[aria-label="View source"]') as HTMLButtonElement;
-  assert.equal(source.getAttribute('aria-pressed'), 'false');
-  await press(source);
-  assert.equal(source.getAttribute('aria-pressed'), 'true');
+  assert.equal(await rawView(true), 'off');
+  assert.equal(await rawView(), 'on');
   assert.equal(document.querySelector('.json'), null);
   assert.equal(document.querySelector('.code-block pre')?.textContent, content);
-  await press(source);
+  await rawView(true);
   assert.equal(document.querySelector('.code-block pre'), null);
   assert.ok(document.querySelector('.json'));
 });
@@ -244,7 +242,7 @@ test('JSON that does not parse stays the text it was, with no source to turn to'
   await settle(10);
   assert.equal(document.querySelector('.json'), null);
   assert.equal(document.querySelector('.code-block pre')?.textContent, content);
-  assert.equal(document.querySelector('button[aria-label="View source"]'), null);
+  assert.equal(await rawView(), 'none');
 });
 
 test('failed partial captures disclose their status while retained files stay downloadable', async (t) => {

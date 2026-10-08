@@ -136,7 +136,8 @@ const pressed = () =>
     .filter((tab) => tab.getAttribute('aria-pressed') === 'true')
     .map((tab) => tab.textContent);
 /** The files the panel reads in place, by the names their heads give them. */
-const read = () => [...document.querySelectorAll('.doc-head .doc-name')].map((n) => n.textContent);
+const read = () =>
+  [...document.querySelectorAll('.doc-head .file-title')].map((n) => n.textContent);
 
 test('a wave opens on its report with the change specification under it, then a tab per lens', async (t) => {
   t.after(async () => await unmount());
