@@ -18,6 +18,7 @@ import type { ViewProps } from './index';
 import { receiptOf } from './pi-proposal';
 import { changed, Context, Machine, Model, Outcome, Proposal, Seconds, useMenu } from './pi-cards';
 import { useConversation, type Conversation } from './pi-conversation';
+import { useVoice, VoicePanel, type Voice } from './pi-voice';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -249,7 +250,7 @@ export function Transcript({ pi }: { pi: Conversation }) {
 }
 
 /** Where the next question is written: Enter sends it, and Stop ends an answer under way. */
-export function Composer({ pi, rows }: { pi: Conversation; rows: number }) {
+export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; voice?: Voice }) {
   const { draft, setDraft, busy, blocked, unavailable, active, send, stop, warmUp } = pi;
   return (
     <form
@@ -294,7 +295,13 @@ export function Composer({ pi, rows }: { pi: Conversation; rows: number }) {
       />
       {/* Beside the box: audio mode (not yet built) over Send, which is Stop while an answer runs. */}
       <div className="pi-compose-actions">
-        <button className="btn" type="button" disabled title="Audio mode">
+        <button
+          className="btn"
+          type="button"
+          disabled={!voice || blocked || unavailable || !pi.snapshot}
+          title="Talk with your agent"
+          onClick={voice?.start}
+        >
           Audio
         </button>
         {/* While an answer runs, Stop stands where Send was: nothing can be sent until it ends. */}
@@ -460,8 +467,25 @@ function PiConversationPage() {
           Retry opening Agent
         </button>
       )}
-      {listed && <Composer pi={pi} rows={3} />}
+      {listed && <Speak pi={pi} />}
     </div>
+  );
+}
+
+/** The page's composer, or, while voice is on, the voice panel in its place. */
+function Speak({ pi }: { pi: Conversation }) {
+  const voice = useVoice(pi);
+  return voice.state === 'off' ? (
+    <>
+      {voice.problem && (
+        <p className="pi-error" role="alert">
+          {voice.problem}
+        </p>
+      )}
+      <Composer pi={pi} rows={3} voice={voice} />
+    </>
+  ) : (
+    <VoicePanel voice={voice} progress={pi.visible?.progress || pi.standing[0]} />
   );
 }
 

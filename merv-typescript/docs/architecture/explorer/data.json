@@ -1523,6 +1523,11 @@
           "readOnly": false
         },
         {
+          "name": "pi.voice",
+          "description": "Open a voice session for this conversation from your browser's WebRTC offer: GPT-Live listens and speaks, and your agent does the work.",
+          "readOnly": false
+        },
+        {
           "name": "pi.warm",
           "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
           "readOnly": false
@@ -1614,6 +1619,11 @@
         {
           "name": "pi.stop",
           "description": "Interrupt this conversation's turn; your agent machine keeps serving your other conversations.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.voice",
+          "description": "Open a voice session for this conversation from your browser's WebRTC offer: GPT-Live listens and speaks, and your agent does the work.",
           "readOnly": false
         },
         {

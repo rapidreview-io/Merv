@@ -9,6 +9,7 @@ import {
   modelInput,
   runInput,
   sendInput,
+  voiceInput,
   warmInput,
 } from './schema.js';
 
@@ -65,6 +66,14 @@ export const piToolsPlugin = {
         inputSchema: warmInput,
         handler: (caller: Parameters<typeof ctx.pi.warm>[0], input: unknown) =>
           ctx.pi.warm(caller, input),
+      },
+      {
+        name: 'pi.voice',
+        description:
+          "Open a voice session for this conversation from your browser's WebRTC offer: GPT-Live listens and speaks, and your agent does the work.",
+        inputSchema: voiceInput,
+        handler: (caller: Parameters<typeof ctx.pi.voice>[0], input: unknown) =>
+          ctx.pi.voice(caller, input),
       },
       {
         name: 'pi.stop',

@@ -202,6 +202,8 @@ export interface Pi {
   /** See pi.prompt. */
   prompt(caller: Caller, id: string): Promise<PiPrompt>;
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
+  /** pi.voice {id, sdp}: open a GPT-Live voice session for this conversation; see voice.ts. */
+  voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }>;
   /** Make sure the person's host exists before their first message; see pi.warm. */
   warm(caller: Caller, input: unknown): Promise<PiSnapshot>;
   /** Interrupt this conversation's turn only; the host keeps serving the others. */

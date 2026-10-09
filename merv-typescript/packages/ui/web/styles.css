@@ -5454,6 +5454,107 @@ html:has(.pi-page) body {
   color: var(--refutes);
   overflow-wrap: anywhere;
 }
+/* Voice (views/pi-voice.tsx): where the composer stood, one orb that is the conversation's
+   voice, lit by who is speaking and swelling with how loud; under it the state in a word and the
+   last thing said; Mute and End at its sides. Blue listens, violet speaks, amber is Pi at work. */
+.voice {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) 5rem;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) 0 var(--space-2);
+  border-top: 1px solid var(--line);
+  --orb: var(--ghost);
+}
+.voice[data-state='listening'] {
+  --orb: var(--active);
+}
+.voice[data-state='speaking'] {
+  --orb: var(--stage-done);
+}
+.voice[data-state='working'] {
+  --orb: var(--stage-work);
+}
+.voice-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  text-align: center;
+}
+.voice-orb {
+  --level: 0;
+  width: 64px;
+  height: 64px;
+  margin-bottom: var(--space-2);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 30%,
+    color-mix(in srgb, var(--orb) 30%, white) 0%,
+    var(--orb) 48%,
+    color-mix(in srgb, var(--orb) 55%, black) 100%
+  );
+  box-shadow: 0 0 calc(12px + var(--level) * 48px) calc(var(--level) * 10px)
+    color-mix(in srgb, var(--orb) 40%, transparent);
+  transform: scale(calc(1 + var(--level) * 0.28));
+  transition:
+    transform 90ms linear,
+    box-shadow 90ms linear,
+    background 600ms ease;
+}
+.voice:is([data-state='working'], [data-state='connecting'], [data-state='closing']) .voice-orb {
+  animation: voice-breathe 1.8s ease-in-out infinite;
+}
+@keyframes voice-breathe {
+  50% {
+    transform: scale(0.88);
+    opacity: 0.75;
+  }
+}
+.voice-state {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.voice-caption {
+  display: -webkit-box;
+  min-height: 2.6em;
+  max-width: 60ch;
+  overflow: hidden;
+  font-size: var(--text-md);
+  line-height: 1.3;
+  color: var(--text);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.voice-control {
+  justify-self: center;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.voice-control:hover:not(:disabled),
+.voice-control[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+.voice-end {
+  color: var(--refutes);
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb {
+    transform: none;
+    animation: none !important;
+    transition: background 600ms ease;
+  }
+}
+
 /* The Agent beside another page (views/pi-dock.tsx): a window over the page, at the lower right
    until its head drags it elsewhere, holding the conversation, how its turn stands and a
    composer. It stands above the page and under every menu and list that opens over it. */

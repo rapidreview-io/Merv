@@ -18,12 +18,14 @@ import {
   piMigrations,
   runInput,
   sendInput,
+  voiceInput,
   warmInput,
 } from './schema.js';
 import { piModelRelay } from './relay.js';
 import { conversationRules } from './conversation-rules.js';
 import { piInstructions } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
+import { openVoice, voiceHistory } from './voice.js';
 import type {
   Pi,
   PiCommand,
@@ -454,6 +456,24 @@ export class PiService implements Pi {
     this.core.announce();
     if (hostId) this.core.streams.wake(hostId);
     return command;
+  }
+
+  /** pi.voice {id, sdp}: a GPT-Live session for this conversation, opened here with the model
+   *  key and seeded with its last turns; the browser gets back only the WebRTC answer. */
+  async voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }> {
+    this.core.ready();
+    const { id, sdp } = parse(voiceInput, input);
+    const { commands, userId } = await this.core.read(async (tx) => {
+      const conversation = await this.owned(caller, id, tx);
+      const rows = await tx.all<{ data_json: string }>(
+        'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
+        id,
+      );
+      return { commands: rows.map(decode<PiCommandRecord>), userId: conversation.userId };
+    });
+    const key = process.env[this.config.modelApiKeyEnv];
+    check(key, 'pi_voice_unavailable', 'Voice is unavailable', 503);
+    return openVoice(this.config.voice, key, sdp, voiceHistory(commands), hash(userId));
   }
 
   async warm(caller: Caller, input: unknown): Promise<PiSnapshot> {

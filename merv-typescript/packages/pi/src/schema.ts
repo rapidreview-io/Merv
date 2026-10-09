@@ -17,6 +17,8 @@ const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
   .strict();
+/** pi.voice: the conversation, and the browser's WebRTC offer. */
+export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
 /** pi.model.set */
 export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
@@ -131,6 +133,15 @@ export const piConfig = z
       .default([{ key: 'standard', label: 'Standard', slots: 3, agent: false }]),
     /** MERV_PI_AGENT_MOVES: offer switch_machine at all. */
     agentMoves: z.boolean().default(false),
+    /** Voice: the GPT-Live session Main opens for a person's browser, on the model key. */
+    voice: z
+      .object({
+        url: z.string().url().default('https://api.openai.com/v1/live/sessions'),
+        model: z.string().min(1).default('gpt-live-1'),
+        voice: z.string().min(1).default('marin'),
+      })
+      .strict()
+      .default({}),
   })
   .strict();
 export type PiConfig = z.input<typeof piConfig>;
