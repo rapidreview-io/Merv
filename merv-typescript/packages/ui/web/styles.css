@@ -577,14 +577,8 @@ time,
 .page-stage {
   padding: var(--page-pad-top) var(--page-pad-x) 60px;
 }
-/* The measure. A block read as sentences carries its own reading line wherever
-   it sits; a list, a table and the map take the width the page gives them. */
-p,
-.page-summary,
-.exceptions,
-.kv dd {
-  max-width: 68ch;
-}
+/* Text runs the width of the column it is in (founder, 2026-10-08), except where a
+   page keeps a reading line of its own: Paper's sections and the Agent's column. */
 /* The title line the shell renders above a row's index route: the name of the place,
    and what the page counted beside it on the same line. The row is the shell's own
    header alone — the class is shared with a page that puts a whole header inside it,
@@ -1716,12 +1710,8 @@ select.input,
   /* The end of a file can be scrolled up to the middle of the screen, not left at its foot. */
   padding-bottom: 60vh;
 }
-/* A file read on its own page uses the page: prose, trees and text run its full width. */
-.file-page .md {
-  --md-measure: 100vw;
-}
-.file-page :is(.json, .doc) {
-  max-width: none;
+/* A file read on its own page is not cut short: its text scrolls with the page. */
+.file-page .doc {
   max-height: none;
 }
 .file-page-head {
@@ -2066,8 +2056,6 @@ select.input,
   white-space: pre-wrap;
   word-break: break-word;
   padding: 14px 0;
-  /* Machine text gets a longer line than prose, and still stops before the page. */
-  max-width: 96ch;
   max-height: 480px;
   overflow: auto;
 }
@@ -2084,7 +2072,6 @@ select.input,
    tree too deep for a phone scrolls inside its own block and never moves the page. */
 .json {
   padding: 10px 0;
-  max-width: 96ch;
   overflow-x: auto;
   font-size: var(--text-sm);
   line-height: 20px;
@@ -2594,8 +2581,8 @@ pre.math--source {
   line-height: 1.6;
   overflow-wrap: break-word;
 }
-/* Sentences keep the measure; a table or a block of code may use the page it is on.
-   The measure is one length, counted once in the document's own sans: `ch` in a
+/* A document's measure is the column it stands in; a page that keeps a reading line
+   sets one here. It is one length, counted once in the document's own sans: `ch` in a
    block set in the mono is a different width, and a registered property is how a
    length is computed where it is declared rather than where it is used. */
 @property --md-measure {
@@ -2604,7 +2591,7 @@ pre.math--source {
   initial-value: 640px;
 }
 .md {
-  --md-measure: 72ch;
+  --md-measure: 100vw;
 }
 .md > * {
   max-width: var(--md-measure);
@@ -3648,7 +3635,6 @@ a.home-live:hover .home-live-unit {
   margin-right: 0;
 }
 .crit-says dd > span:last-child {
-  max-width: 68ch;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -3904,7 +3890,6 @@ a.home-live:hover .home-live-unit {
    the first disc to the last entry, under the discs and through the dots, so a
    loop reads as one line of conversation. */
 .thread {
-  max-width: 72ch;
   list-style: none;
 }
 .thread > li {
@@ -5307,12 +5292,6 @@ del.cut {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-/* Everything in the transcript is as wide as the column the bar and the composer keep
-   (founder, 2026-10-02: an answer fills the width it is given, not a messaging bubble's):
-   a measure wider than any column leaves the column itself as the only limit. */
-.pi-messages .md {
-  --md-measure: 100vw;
 }
 /* Where the machine changed between two turns: one quiet line across the transcript. */
 .pi-divider {
