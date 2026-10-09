@@ -131,9 +131,23 @@ const Live = memo(function Live({ publish }: { publish(pi: Conversation | null):
   return null;
 });
 
-/** How the turn stands: its dot, its words, and the seconds a wait has lasted. */
-export function Standing({ pi }: { pi: Conversation }) {
+/**
+ * How the turn stands: its dot, its words, and the seconds a wait has lasted. In a header
+ * (`dot`) only the dot is drawn — green once the agent is ready, amber and breathing while
+ * it gets there, grey when it cannot — and the words are its hover title and what a screen
+ * reader hears.
+ */
+export function Standing({ pi, dot }: { pi: Conversation; dot?: boolean }) {
   const [words, tone, since] = pi.standing;
+  if (dot)
+    return (
+      <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} title={words}>
+        <span className="sr-only">
+          {words}
+          {since && <Seconds since={since} skew={pi.skew.current} />}
+        </span>
+      </span>
+    );
   return (
     <>
       <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
@@ -393,7 +407,7 @@ function PiConversationPage() {
           )}
           {!blocked && snapshot && (
             <div className="pi-state" role="status">
-              <Standing pi={pi} />
+              <Standing pi={pi} dot />
             </div>
           )}
           {snapshot && (

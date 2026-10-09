@@ -138,7 +138,7 @@ function Floating({ pi, to, hide }: { pi: Conversation; to: string; hide(): void
           {pi.title}
         </span>
         <span className="pi-state" role="status">
-          <Standing pi={pi} />
+          <Standing pi={pi} dot />
         </span>
         <button
           type="button"
