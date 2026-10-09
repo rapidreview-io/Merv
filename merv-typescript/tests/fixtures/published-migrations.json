@@ -327,7 +327,7 @@
       "component": "board",
       "version": 1,
       "hash": "9bc5ffcde4369d8af8fd19d64d2b05d1547f906bb48f930de58cf69b9b48d291",
-      "published": false
+      "published": true
     },
     {
       "component": "paper",
