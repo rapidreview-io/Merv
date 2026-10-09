@@ -54,6 +54,7 @@
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
         "members": [
           "paper",
+          "board",
           "reviews",
           "codeWork",
           "pi"
@@ -130,6 +131,7 @@
         "purpose": "Expose a domain through the shared Tools registry, which lives in layer 2.",
         "members": [
           "merv-artifact-tools",
+          "merv-board-tools",
           "merv-code-tools",
           "merv-experiments-tools",
           "merv-feed-tools",
@@ -159,6 +161,7 @@
         "members": [
           "ui",
           "merv-artifact-ui",
+          "merv-board-ui",
           "merv-code-ui",
           "merv-experiments-ui",
           "merv-feed-ui",
@@ -189,7 +192,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-07",
+  "snapshot": "2026-10-09",
   "groups": [
     {
       "id": "front",
@@ -232,6 +235,7 @@
         "experiments",
         "knowledge",
         "paper",
+        "board",
         "reflections",
         "research",
         "legacyHistory"
@@ -484,6 +488,117 @@
       "owner": "blobs",
       "label": "Blobs",
       "purpose": "Stores and reads file bytes by content hash. It has no State dependency; Artifacts owns the associated file metadata.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-board",
+      "source": "packages/board/src/index.ts",
+      "provides": [
+        "board"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "board",
+      "group": "research",
+      "owner": "board",
+      "label": "Board",
+      "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins.",
+      "exposedTools": [
+        {
+          "name": "board.draw",
+          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area; holds lists shapes to put inside it), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near or in), delete (ids). New shapes go near a shape, in a frame, or with neither in the next free place: never give coordinates. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
+          "readOnly": false
+        },
+        {
+          "name": "board.read",
+          "description": "Read the project's whiteboards. Without board: every board, newest first. With board: its frames, its shapes (notes, boxes, text, link cards with the record or address they open, freehand drawings) with their ids, text and rough place, and its arrows with the shapes they join. Shape ids are what board.draw's operations name.",
+          "readOnly": true
+        },
+        {
+          "name": "board.save",
+          "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
+          "readOnly": false
+        },
+        {
+          "name": "board.scene",
+          "description": "A board's shapes as Excalidraw draws them, or those changed after a revision (the page itself reads this).",
+          "readOnly": true
+        },
+        {
+          "name": "board.set",
+          "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-board-tools",
+      "source": "packages/board/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "board",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-board-tools",
+      "group": "front",
+      "owner": "board",
+      "label": "Board · tools adapter",
+      "purpose": "Connects Board to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "board.draw",
+          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area; holds lists shapes to put inside it), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near or in), delete (ids). New shapes go near a shape, in a frame, or with neither in the next free place: never give coordinates. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
+          "readOnly": false
+        },
+        {
+          "name": "board.read",
+          "description": "Read the project's whiteboards. Without board: every board, newest first. With board: its frames, its shapes (notes, boxes, text, link cards with the record or address they open, freehand drawings) with their ids, text and rough place, and its arrows with the shapes they join. Shape ids are what board.draw's operations name.",
+          "readOnly": true
+        },
+        {
+          "name": "board.save",
+          "description": "Save the shapes drawn on a board in the page; each is kept where it is newer than the stored one.",
+          "readOnly": false
+        },
+        {
+          "name": "board.scene",
+          "description": "A board's shapes as Excalidraw draws them, or those changed after a revision (the page itself reads this).",
+          "readOnly": true
+        },
+        {
+          "name": "board.set",
+          "description": "Rename a board, or archive it (archived boards leave the list and stay retained).",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-board-ui",
+      "source": "packages/board/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "board",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-board-ui",
+      "group": "front",
+      "owner": "board",
+      "label": "Board · ui adapter",
+      "purpose": "Connects Board to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1539,7 +1654,7 @@
         },
         {
           "name": "screen.look",
-          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them. For a record's contents, its own tool reads it exactly.",
           "readOnly": true
         },
         {
@@ -1653,7 +1768,7 @@
         },
         {
           "name": "screen.look",
-          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them. For a record's contents, its own tool reads it exactly.",
           "readOnly": true
         },
         {
@@ -3072,6 +3187,36 @@
       "optional": false
     },
     {
+      "from": "board",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "board",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-board-tools",
+      "to": "board",
+      "optional": false
+    },
+    {
+      "from": "merv-board-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-board-ui",
+      "to": "board",
+      "optional": false
+    },
+    {
+      "from": "merv-board-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "code",
       "to": "state",
       "optional": false
@@ -4008,10 +4153,10 @@
     }
   ],
   "counts": {
-    "plugins": 71,
-    "providers": 31,
-    "adapters": 40,
-    "dependencies": 197
+    "plugins": 74,
+    "providers": 32,
+    "adapters": 42,
+    "dependencies": 203
   },
   "network": [
     {

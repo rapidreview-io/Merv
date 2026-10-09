@@ -27,6 +27,19 @@
       "name": "@merv/paper"
     },
     {
+      "id": "board-tools",
+      "name": "@merv/board/tools"
+    },
+    {
+      "id": "board-ui",
+      "name": "@merv/board/ui",
+      "required": false
+    },
+    {
+      "id": "board",
+      "name": "@merv/board"
+    },
+    {
       "id": "reflections-tools",
       "name": "@merv/reflections/tools"
     },

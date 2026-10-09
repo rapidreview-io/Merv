@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { postgresUrl, schemaFor } from './fixtures/state.js';
 import { postgresMigrations as migrations0 } from '../packages/artifacts/src/index.postgres.js';
+import { postgresMigrations as migrations1 } from '../packages/board/src/storage.postgres.js';
 import { postgresMigrations as migrations2 } from '../packages/code-work/src/commands.postgres.js';
 import { postgresMigrations as migrations5 } from '../packages/context-builder/src/index.postgres.js';
 import { postgresMigrations as migrations6 } from '../packages/domain-events/src/index.postgres.js';
@@ -39,6 +40,7 @@ type DomainMigration = { owner: string; version: number; postgres: string };
 /** Every native migration file (`<owner>.postgres.ts`), keyed by the owner that registers it. */
 const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/artifacts/src/index.ts': migrations0,
+  'packages/board/src/storage.ts': migrations1,
   'packages/code-work/src/commands.ts': migrations2,
   'packages/context-builder/src/index.ts': migrations5,
   'packages/domain-events/src/index.ts': migrations6,
@@ -106,7 +108,7 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 127);
+  assert.equal(all.length, 128);
   all.push(
     ...[
       { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },

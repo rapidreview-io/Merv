@@ -87,16 +87,16 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   };
   const readerMcp = await connect(reader.token),
     otherMcp = await connect(b.token);
-  assert.equal((await httpList(reader.token)).body.tools.length, 100);
+  assert.equal((await httpList(reader.token)).body.tools.length, 105);
   // Over MCP a reader's agent is offered its reads alone, as a reader's Pi conversation is.
-  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await readerMcp.listTools()).tools.length, 39);
   assert.equal(
     (await httpList(producer.token)).body.tools.filter((tool: { name: string }) =>
       tool.name.startsWith('_'),
     )[0].name,
     '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 87);
+  assert.equal((await otherMcp.listTools()).tools.length, 89);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
     99,
@@ -143,7 +143,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   );
   assert.equal(admitted.length, count);
   app.ctx.scope.toolPolicy.replace([grant]);
-  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await readerMcp.listTools()).tools.length, 39);
   await app.ctx.scope.credentials.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());

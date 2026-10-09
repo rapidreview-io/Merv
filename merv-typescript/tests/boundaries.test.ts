@@ -140,6 +140,8 @@ const capabilities: Record<string, readonly string[]> = {
     'paper',
   ],
   feed: ['state', 'scope', 'artifacts'],
+  // Whiteboards: shapes and their versions; a card names a record by id and reads nothing of it.
+  board: ['state', 'scope'],
   // The read-only archive of research imported from the previous server.
   legacyHistory: ['state', 'scope'],
   identity: [],
@@ -892,6 +894,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
   const expected: Record<keyof typeof adapterKinds, string[]> = {
     tools: [
       'artifacts',
+      'board',
       'code-work',
 
       'experiments',
@@ -913,6 +916,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
     ],
     ui: [
       'artifacts',
+      'board',
       'code-work',
 
       'experiments',

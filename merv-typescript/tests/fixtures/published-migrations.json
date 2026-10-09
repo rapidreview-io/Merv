@@ -324,6 +324,12 @@
       "published": true
     },
     {
+      "component": "board",
+      "version": 1,
+      "hash": "9bc5ffcde4369d8af8fd19d64d2b05d1547f906bb48f930de58cf69b9b48d291",
+      "published": false
+    },
+    {
       "component": "paper",
       "version": 1,
       "hash": "0138c55b5ed2879cd24fae1264739e1339cb4e7f8f0038c5c81dcc3db80b52b0",

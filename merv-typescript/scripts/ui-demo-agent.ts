@@ -23,7 +23,8 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  * The script reads the person's words: `pause` and `start` propose the dispatch switch, `claim`
  * proposes a call that will be refused, `status` and `tasks` read first, `file` proposes a read
  * whose result only the person sees, `screen` looks at the person's screen, `open` or `pull up`
- * puts the newest file (or a named page) on it, `new task` creates one,
+ * puts the newest file (or a named page) on it, `board` draws ideas on a new board and opens it
+ * (`look at the board` sees the newest one drawn), `new task` creates one,
  * and anything else reads the project
  * and answers at length.
  */
@@ -60,6 +61,59 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
       },
     ];
   if (/pause/i.test(asked)) return dispatch(false);
+  if (/\bboard\b/i.test(asked) && /\b(look|see)\b/i.test(asked)) {
+    const board = (read('board.read') as { boards?: { id: string }[] } | undefined)?.boards?.[0];
+    const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;
+    return [
+      { call: 'board.read', input: {} },
+      { call: 'screen.look', input: { question: asked, at: { record: board?.id ?? 'none' } } },
+      { say: seen ?? 'I could not see the board.' },
+    ];
+  }
+  if (/\bboard\b/i.test(asked)) {
+    const drawn = read('board.draw') as { board?: { id: string; title: string } } | undefined;
+    return [
+      {
+        call: 'board.draw',
+        input: {
+          title: 'Calibration ideas',
+          ops: [
+            { op: 'text', key: 'h', text: 'Keep the LEDGAR gain, lose no calibration', size: 'l' },
+            { op: 'note', key: 'a', text: 'Temperature per head, fit on dev only', near: 'h' },
+            {
+              op: 'note',
+              key: 'b',
+              text: 'KL to the base on general replay',
+              color: 'blue',
+              near: 'a',
+            },
+            {
+              op: 'note',
+              key: 'c',
+              text: 'LoRA instead of last-block updates',
+              color: 'green',
+              near: 'b',
+            },
+            { op: 'frame', key: 'f', title: 'Methods to try', holds: ['a', 'b', 'c'] },
+            {
+              op: 'flow',
+              nodes: [
+                { key: 'base', text: 'Base model' },
+                { key: 'adapt', text: 'Adapt on LEDGAR' },
+                { key: 'eval', text: 'Fresh holdouts', shape: 'diamond' },
+              ],
+              edges: [
+                { from: 'base', to: 'adapt' },
+                { from: 'adapt', to: 'eval', label: 'then' },
+              ],
+            },
+          ],
+        },
+      },
+      ...(drawn?.board ? [{ call: 'screen.show', input: { record: drawn.board.id } }] : []),
+      { say: drawn?.board ? `I drew our ideas on ${drawn.board.title}.` : 'I could not draw it.' },
+    ];
+  }
   if (/screen|looking at/i.test(asked)) {
     const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;
     return [

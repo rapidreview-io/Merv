@@ -472,11 +472,14 @@ export class PiService implements Pi {
    *  of its tabs, or by none before the wait is over. */
   private readonly asks = new Map<
     string,
-    { asked: { id: string; show?: PiShow }; settle(answer: ScreenAnswer | null): void }
+    { asked: { id: string; show?: PiShow; at?: PiShow }; settle(answer: ScreenAnswer | null): void }
   >();
 
   /** Asks the page the person has open, only for the agent in a turn, and waits for its answer. */
-  private ask(caller: Caller, show?: PiShow): Promise<ScreenAnswer | null> {
+  private ask(
+    caller: Caller,
+    asked: { show?: PiShow; at?: PiShow } = {},
+  ): Promise<ScreenAnswer | null> {
     const at = caller.conversation;
     check(at, 'pi_forbidden', "Only the person's own agent can use their screen", 403);
     this.asks.get(at.id)?.settle(null);
@@ -489,7 +492,7 @@ export class PiService implements Pi {
         this.core.streams.changed(at.id, at.commandId);
         resolve(answer);
       };
-      this.asks.set(at.id, { asked: { id, ...(show && { show }) }, settle });
+      this.asks.set(at.id, { asked: { id, ...asked }, settle });
       this.core.streams.changed(at.id, at.commandId);
     });
   }
@@ -498,8 +501,16 @@ export class PiService implements Pi {
    *  it, and the conversation's model says what it shows. */
   async look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }> {
     this.core.ready();
-    const { question } = parse(lookInput, input);
-    const shot = (await this.ask(caller))?.shot;
+    const { question, at } = parse(lookInput, input);
+    check(
+      !at || !at.record !== !at.page,
+      'invalid_input',
+      'Name one record or one page to look at',
+      400,
+    );
+    const answer = await this.ask(caller, at ? { at } : {});
+    if (answer?.missing) return { seen: answer.missing };
+    const shot = answer?.shot;
     if (!shot) return { seen: `The person's screen could not be seen: ${UNANSWERED}` };
     const conversation = await this.core.read((tx) =>
       this.core.conversation(tx, caller.conversation!.id),
@@ -521,7 +532,7 @@ export class PiService implements Pi {
     this.core.ready();
     const { record, page } = parse(showInput, input);
     check(!record !== !page, 'invalid_input', 'Name one record or one page', 400);
-    const answer = await this.ask(caller, record ? { record } : { page: page! });
+    const answer = await this.ask(caller, { show: record ? { record } : { page: page! } });
     if (answer?.opened) return { opened: answer.opened.path, title: answer.opened.title };
     return { said: answer?.missing ?? `Nothing was shown: ${UNANSWERED}` };
   }

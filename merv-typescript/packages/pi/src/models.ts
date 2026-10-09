@@ -140,8 +140,9 @@ export interface PiSnapshot {
   sequence: number;
   tail: PiEvent[];
   /** The agent asked something of the screen, which the person's page answers with pi.screen:
-   * to put a record or a page on it (`show`), or else to see it. */
-  screen?: { id: string; show?: PiShow };
+   * to put a record or a page on it (`show`), or else to see it: the page it is on, or the
+   * record or page `at` names, drawn out of the person's sight. */
+  screen?: { id: string; show?: PiShow; at?: PiShow };
 }
 
 /** Who began a move: the person (picker), their agent (switch_machine) or a slot's deadline. */

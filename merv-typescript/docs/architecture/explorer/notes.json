@@ -30,6 +30,7 @@
         "experiments",
         "knowledge",
         "paper",
+        "board",
         "reflections",
         "research",
         "legacyHistory"
@@ -200,12 +201,16 @@
     "secrets": {
       "label": "Secrets",
       "purpose": "Stores encrypted third-party credentials and supplies scoped credential access, including the authorized Hugging Face proxy."
+    },
+    "board": {
+      "label": "Board",
+      "purpose": "Keeps the project's whiteboards: shapes at their newest version, merged shape by shape as people and agents draw at once. A link card keeps only a record's id, which the page names and opens through project.references, so Board reads nothing of other plugins."
     }
   },
   "hierarchy": {
     "root": {
       "label": "System composition root",
-      "purpose": "src/cli.ts \u2192 src/app.ts + configuration assemble the deployment. Cordis resolves dependencies and owns plugin lifecycle. The root wires capabilities together; it does not own research decisions.",
+      "purpose": "src/cli.ts → src/app.ts + configuration assemble the deployment. Cordis resolves dependencies and owns plugin lifecycle. The root wires capabilities together; it does not own research decisions.",
       "source": "src/app.ts"
     },
     "layers": [
@@ -237,7 +242,7 @@
         "id": "domain",
         "label": "Domain & agent capabilities",
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
-        "members": ["paper", "reviews", "codeWork", "pi"]
+        "members": ["paper", "board", "reviews", "codeWork", "pi"]
       },
       {
         "id": "work",

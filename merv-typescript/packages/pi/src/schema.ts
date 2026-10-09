@@ -20,7 +20,19 @@ export const sendInput = z
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
 /** screen.look: what the agent wants to know about the person's screen. */
-export const lookInput = z.object({ question: z.string().max(1_000).default('') }).strict();
+export const lookInput = z
+  .object({
+    question: z.string().max(1_000).default(''),
+    /** A record or page the person is not on: their page draws it out of sight to look at it. */
+    at: z
+      .object({
+        record: z.string().trim().min(1).max(200).optional(),
+        page: z.string().trim().min(1).max(100).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 /** screen.show: what the agent puts on the person's screen: one record, or one page. */
 export const showInput = z
   .object({

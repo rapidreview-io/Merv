@@ -1,21 +1,22 @@
 {
-  "snapshot": "2026-10-07",
+  "snapshot": "2026-10-09",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 71,
-  "serviceProviders": 31,
-  "toolAdapters": 18,
-  "uiAdapters": 16,
+  "pluginCount": 74,
+  "serviceProviders": 32,
+  "toolAdapters": 19,
+  "uiAdapters": 17,
   "apiAdapters": 5,
-  "defaultEntries": 51,
-  "apiEntries": 39,
-  "serverPlugins": 70,
+  "defaultEntries": 54,
+  "apiEntries": 41,
+  "serverPlugins": 73,
   "machinePlugins": 1,
-  "directDependencyCount": 197,
+  "directDependencyCount": 203,
   "optionalDependencyCount": 14,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
     "blobs": 3,
+    "board": 2,
     "code": 1,
     "codeWork": 7,
     "contextBuilder": 3,
@@ -35,13 +36,13 @@
     "reviews": 7,
     "runner": 0,
     "sandboxes": 6,
-    "scope": 27,
+    "scope": 28,
     "secrets": 2,
     "sessions": 7,
-    "state": 22,
+    "state": 23,
     "tasks": 4,
-    "tools": 24,
-    "ui": 16,
+    "tools": 25,
+    "ui": 17,
     "web": 1,
     "workflows": 11
   },
@@ -113,6 +114,47 @@
       "requires": [],
       "optional": [],
       "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-board",
+      "source": "packages/board/src/index.ts",
+      "provides": [
+        "board"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-board-tools",
+      "source": "packages/board/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "board",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-board-ui",
+      "source": "packages/board/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "board",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },

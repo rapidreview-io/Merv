@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
 import type { ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
+import { BoardsView } from './board';
 import { CodeView } from './code';
 import { ExperimentsView } from './experiments';
 import { FeedView } from './feed';
@@ -37,6 +38,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   tasks: TasksView,
   reviews: ReviewsView,
   artifacts: ArtifactsView,
+  boards: BoardsView,
   feed: FeedView,
   settings: SettingsView,
   sessions: SessionsView,

@@ -34,6 +34,8 @@ export interface UiRowFields {
    * opens at `${path}/${id}` too, and the page finds the record that holds it.
    */
   holds?: readonly string[];
+  /** Ids beginning with this prefix are this row's records, opening at `${path}/${id}`. */
+  opens?: string;
   /** Deeper addresses are rooms of this one page, not records, so the shell still titles them. */
   rooms?: true;
   /** The rail lists the row only while its status counts something: an empty archive is no place. */

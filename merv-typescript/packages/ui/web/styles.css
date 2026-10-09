@@ -7326,3 +7326,51 @@ ul.unit-rows {
 .agent-list > li {
   display: flex;
 }
+
+/* Board: the canvas has the window under its one line (← Boards, the title, ⋯), and the
+   document never scrolls under it, so a wheel or a pinch moves the board alone. */
+html:has(.board-page),
+html:has(.board-page) body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.shell:has(.board-page) {
+  height: 100dvh;
+  min-height: 0;
+}
+.board-page {
+  /* It is the only thing on its route, under no title line: it is the window's height. */
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.board-page-head {
+  margin: 0;
+  padding: var(--space-2) var(--page-pad-x);
+  border-bottom: 1px solid var(--line);
+}
+.board-page-head .file-page-title {
+  flex: 1;
+}
+.board-title-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.board-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.board-loading {
+  padding: var(--space-4) var(--page-pad-x);
+}
+.board-problem {
+  position: absolute;
+  z-index: 5;
+  top: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+}

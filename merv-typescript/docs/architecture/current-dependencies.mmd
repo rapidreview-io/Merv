@@ -5,6 +5,9 @@ flowchart BT
     merv_artifact_ui["merv-artifact-ui"]
     artifacts["artifacts"]
     blobs["blobs"]
+    board["board"]
+    merv_board_tools["merv-board-tools"]
+    merv_board_ui["merv-board-ui"]
     code["code"]
     merv_code_tools["merv-code-tools"]
     merv_code_ui["merv-code-ui"]
@@ -84,6 +87,12 @@ flowchart BT
   artifacts --> state
   artifacts --> scope
   artifacts --> blobs
+  board --> state
+  board --> scope
+  merv_board_tools --> board
+  merv_board_tools --> tools
+  merv_board_ui --> board
+  merv_board_ui --> ui
   code --> state
   code --> scope
   code --> domainEvents
