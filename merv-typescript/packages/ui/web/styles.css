@@ -255,6 +255,8 @@ time,
   position: sticky;
   top: 0;
   height: 100vh;
+  /* What the screen shows: on iPad Safari 100vh is the height with the toolbar hidden. */
+  height: 100dvh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -5078,11 +5080,25 @@ del.cut {
   flex-direction: column;
   height: 100dvh;
 }
+/* The Agent page is the window: the document never scrolls under it, so the conversation
+   is the one thing that moves, and reaching its end does not drag the page along. */
+html:has(.pi-page),
+html:has(.pi-page) body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.shell:has(.pi-page) {
+  height: 100dvh;
+  min-height: 0;
+}
+/* One reading column of 880px, centred; the conversation's scroller spans the whole page
+   around it, as a chat's does, so the wheel moves it wherever the pointer is. */
 .pi-page.page-stage {
+  --pi-column: min(880px, 100% - 2 * var(--page-pad-x));
   flex: 1;
   min-height: 0;
-  width: min(100%, 880px + 2 * var(--page-pad-x));
-  margin-inline: auto;
+  width: 100%;
+  padding-inline: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -5285,11 +5301,17 @@ del.cut {
   overflow-wrap: anywhere;
   color: var(--muted);
 }
+.pi-page > :not(.pi-messages) {
+  width: var(--pi-column);
+  margin-inline: auto;
+}
 .pi-messages {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
+  padding-inline: calc((100% - var(--pi-column)) / 2);
   flex-direction: column;
   gap: var(--space-3);
 }
