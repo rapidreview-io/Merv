@@ -71,8 +71,11 @@ const captureSchema = z.object({
     output_state: z.string().nullable().optional(),
   }),
 });
+/** Sandboxes serves at most 10 captures a page (`le=10` on the delegated captures route): a
+ * larger ask is refused with 400 and nothing ever registers. */
+const CAPTURE_PAGE = 10;
 const capturePageSchema = z.object({
-  captures: z.array(captureSchema).max(128),
+  captures: z.array(captureSchema).max(CAPTURE_PAGE),
   next: id.nullable(),
 });
 const filesPageSchema = z.object({
@@ -451,7 +454,7 @@ export class NativeEvidence {
         await this.connections.call<unknown>(
           connection,
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures`,
-          { query: { limit: '128', ...(after ? { after } : {}) } },
+          { query: { limit: String(CAPTURE_PAGE), ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture page', 502);
