@@ -18,6 +18,14 @@ export interface ScreenShot {
   height: number;
 }
 
+/** The person's page, answering the agent: a look with its snapshot, a show with where it went
+ *  or why it could not. */
+export interface ScreenAnswer {
+  shot?: ScreenShot;
+  opened?: { path: string; title: string };
+  missing?: string;
+}
+
 export interface ScreenConfig {
   /** Cloudflare's Browser Run screenshot endpoint, with `{account}` for the account id. */
   url: string;

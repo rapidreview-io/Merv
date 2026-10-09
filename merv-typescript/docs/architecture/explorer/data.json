@@ -1509,7 +1509,7 @@
         },
         {
           "name": "pi.screen",
-          "description": "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+          "description": "Answer your agent's ask of your screen: a snapshot of this page for a look, or where it went for a show (sent by the page itself).",
           "readOnly": false
         },
         {
@@ -1540,6 +1540,11 @@
         {
           "name": "screen.look",
           "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "readOnly": true
+        },
+        {
+          "name": "screen.show",
+          "description": "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. It only navigates; their back button returns them. Answers where it went, or why it could not.",
           "readOnly": true
         }
       ]
@@ -1618,7 +1623,7 @@
         },
         {
           "name": "pi.screen",
-          "description": "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+          "description": "Answer your agent's ask of your screen: a snapshot of this page for a look, or where it went for a show (sent by the page itself).",
           "readOnly": false
         },
         {
@@ -1649,6 +1654,11 @@
         {
           "name": "screen.look",
           "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "readOnly": true
+        },
+        {
+          "name": "screen.show",
+          "description": "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. It only navigates; their back button returns them. Answers where it went, or why it could not.",
           "readOnly": true
         }
       ]

@@ -123,7 +123,7 @@ export function recordNames(
 }
 
 /** One answer of project.references, which names a record as its owner does. */
-interface Reference {
+export interface Reference {
   ref: string;
   status: string;
   kind: string | null;
@@ -133,7 +133,7 @@ interface Reference {
   state?: string;
 }
 /** Where a record a reference names opens: a work record on the row that lists its workflow. */
-const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
+export const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
   const path =
     kind === 'artifact'
       ? '/artifacts'

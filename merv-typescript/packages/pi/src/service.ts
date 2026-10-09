@@ -19,6 +19,7 @@ import {
   piMigrations,
   runInput,
   lookInput,
+  showInput,
   screenInput,
   sendInput,
   voiceInput,
@@ -29,7 +30,7 @@ import { conversationRules } from './conversation-rules.js';
 import { piInstructions } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
-import { describeScreen, renderScreen, type ScreenShot } from './screen.js';
+import { describeScreen, renderScreen, type ScreenAnswer } from './screen.js';
 import type {
   Pi,
   PiCommand,
@@ -42,6 +43,7 @@ import type {
   PiHostView,
   PiProposal,
   PiRan,
+  PiShow,
   PiSnapshot,
 } from './types.js';
 import {
@@ -68,6 +70,9 @@ type Run = { id: string; commandId: string; name: string; at: number; outcome?: 
 
 /** How often Run tries to keep a call's outcome, waiting twice as long each time from 200 ms. */
 const SAVE_ATTEMPTS = 5;
+/** Why the person's page gave no answer to the agent's ask. */
+const UNANSWERED =
+  'no page of theirs answered (Merv is not open in a browser, or the tab is in the background).';
 /** A call that has not returned this long after Run began it may never return. */
 const RUN_MS = 600_000;
 /** What Pi keeps, and the agent is told, of a call whose outcome it cannot know: one a restart
@@ -295,7 +300,7 @@ export class PiService implements Pi {
       commands: commands.map(publicCommand),
       host: view,
       models: this.core.config.models.map(({ effort: _effort, ...model }) => model),
-      ...(this.looks.has(id) ? { look: { id: this.looks.get(id)!.id } } : {}),
+      ...(this.asks.has(id) ? { screen: this.asks.get(id)!.asked } : {}),
       ...transient,
       tail: whole
         ? [
@@ -463,34 +468,42 @@ export class PiService implements Pi {
     return command;
   }
 
-  /** The looks waiting for a page, by conversation: one at a time, answered by any of its tabs. */
-  private readonly looks = new Map<string, { id: string; settle(shot: ScreenShot | null): void }>();
+  /** What the agent asked of the person's page, by conversation: one at a time, answered by any
+   *  of its tabs, or by none before the wait is over. */
+  private readonly asks = new Map<
+    string,
+    { asked: { id: string; show?: PiShow }; settle(answer: ScreenAnswer | null): void }
+  >();
 
-  /** screen.look {question}: only the agent, in a turn, may ask; the person's open page answers
-   *  with its snapshot, Cloudflare draws it, and the conversation's model says what it shows. */
+  /** Asks the page the person has open, only for the agent in a turn, and waits for its answer. */
+  private ask(caller: Caller, show?: PiShow): Promise<ScreenAnswer | null> {
+    const at = caller.conversation;
+    check(at, 'pi_forbidden', "Only the person's own agent can use their screen", 403);
+    this.asks.get(at.id)?.settle(null);
+    const id = `ask_${randomBytes(12).toString('hex')}`;
+    return new Promise<ScreenAnswer | null>((resolve) => {
+      const timer = setTimeout(() => settle(null), this.config.screen.waitMs);
+      const settle = (answer: ScreenAnswer | null) => {
+        clearTimeout(timer);
+        if (this.asks.get(at.id)?.asked.id === id) this.asks.delete(at.id);
+        this.core.streams.changed(at.id, at.commandId);
+        resolve(answer);
+      };
+      this.asks.set(at.id, { asked: { id, ...(show && { show }) }, settle });
+      this.core.streams.changed(at.id, at.commandId);
+    });
+  }
+
+  /** screen.look {question}: the person's open page answers with its snapshot, Cloudflare draws
+   *  it, and the conversation's model says what it shows. */
   async look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }> {
     this.core.ready();
     const { question } = parse(lookInput, input);
-    const at = caller.conversation;
-    check(at, 'pi_forbidden', "Only the person's own agent can look at their screen", 403);
-    const conversation = await this.core.read((tx) => this.core.conversation(tx, at.id));
-    this.looks.get(at.id)?.settle(null);
-    const id = `look_${randomBytes(12).toString('hex')}`;
-    const shot = await new Promise<ScreenShot | null>((resolve) => {
-      const timer = setTimeout(() => settle(null), this.config.screen.waitMs);
-      const settle = (shot: ScreenShot | null) => {
-        clearTimeout(timer);
-        if (this.looks.get(at.id)?.id === id) this.looks.delete(at.id);
-        resolve(shot);
-      };
-      this.looks.set(at.id, { id, settle });
-      this.core.streams.changed(at.id, at.commandId);
-    });
-    this.core.streams.changed(at.id, at.commandId);
-    if (!shot)
-      return {
-        seen: "The person's screen could not be seen: no page of theirs answered (Merv is not open in a browser, or the tab is in the background).",
-      };
+    const shot = (await this.ask(caller))?.shot;
+    if (!shot) return { seen: `The person's screen could not be seen: ${UNANSWERED}` };
+    const conversation = await this.core.read((tx) =>
+      this.core.conversation(tx, caller.conversation!.id),
+    );
     const key = process.env[this.config.modelApiKeyEnv];
     check(key, 'pi_screen_unavailable', 'The screen could not be read', 503);
     const picture = await renderScreen(this.config.screen, shot);
@@ -499,14 +512,28 @@ export class PiService implements Pi {
     return { page: shot.path, seen: text };
   }
 
-  /** pi.screen: the page answers the look it was shown, once; a look already over is refused. */
+  /** screen.show {record | page}: the person's open page goes there, as a link would take it, and
+   *  says where it went; the person's own back returns them. */
+  async show(
+    caller: Caller,
+    input: unknown,
+  ): Promise<{ opened?: string; title?: string; said?: string }> {
+    this.core.ready();
+    const { record, page } = parse(showInput, input);
+    check(!record !== !page, 'invalid_input', 'Name one record or one page', 400);
+    const answer = await this.ask(caller, record ? { record } : { page: page! });
+    if (answer?.opened) return { opened: answer.opened.path, title: answer.opened.title };
+    return { said: answer?.missing ?? `Nothing was shown: ${UNANSWERED}` };
+  }
+
+  /** pi.screen: the page answers what it was asked, once; an ask already over is refused. */
   async screen(caller: Caller, input: unknown): Promise<{ received: true }> {
     this.core.ready();
-    const { id, lookId, ...shot } = parse(screenInput, input);
+    const { id, askId, ...answer } = parse(screenInput, input);
     await this.core.read((tx) => this.owned(caller, id, tx));
-    const waiting = this.looks.get(id);
-    check(waiting?.id === lookId, 'pi_look_over', 'That look is no longer waiting', 409);
-    waiting.settle(shot);
+    const waiting = this.asks.get(id);
+    check(waiting?.asked.id === askId, 'pi_look_over', 'That ask is no longer waiting', 409);
+    waiting.settle(answer);
     return { received: true };
   }
 

@@ -22,7 +22,8 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  *
  * The script reads the person's words: `pause` and `start` propose the dispatch switch, `claim`
  * proposes a call that will be refused, `status` and `tasks` read first, `file` proposes a read
- * whose result only the person sees, `screen` looks at the person's screen, `new task` creates one,
+ * whose result only the person sees, `screen` looks at the person's screen, `open` or `pull up`
+ * puts the newest file (or a named page) on it, `new task` creates one,
  * and anything else reads the project
  * and answers at length.
  */
@@ -64,6 +65,16 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
     return [
       { call: 'screen.look', input: { question: asked } },
       { say: seen ?? 'I could not see your screen.' },
+    ];
+  }
+  if (/\b(open|pull up)\b/i.test(asked)) {
+    const page = /\b(work|files|paper|code)\b page/i.exec(asked)?.[1];
+    const first = page ? undefined : newest(read('artifact.list'));
+    const shown = read('screen.show') as { title?: string; said?: string } | undefined;
+    return [
+      ...(page ? [] : [{ call: 'artifact.list', input: {} }]),
+      { call: 'screen.show', input: page ? { page } : { record: first ?? 'none' } },
+      { say: shown?.title ? `Here is ${shown.title}.` : (shown?.said ?? 'I could not open it.') },
     ];
   }
   if (/claim/i.test(asked))

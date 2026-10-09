@@ -86,6 +86,8 @@ interface Agent {
   hide(): void;
   /** The conversation's voice session, which outlives any one page. */
   voice: Voice;
+  /** What the agent last put on the screen, and when. */
+  shown: { title: string; at: number } | null;
 }
 const AgentContext = createContext<Agent | null>(null);
 export const useAgent = () => useContext(AgentContext);
@@ -116,16 +118,16 @@ export function PiProvider({ children }: { children: ReactNode }) {
     [],
   );
   const voice = useVoice(open.live ? pi : null);
-  // The agent's look at the screen is answered by whatever page the person is on.
-  useScreenAnswer(open.live ? pi : null);
+  // What the agent asks of the screen is answered by whatever page the person is on.
+  const shown = useScreenAnswer(open.live ? pi : null);
   // A conversation that ends takes its voice with it.
   useEffect(() => {
     if (!open.live) voice.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open.live]);
   const agent = useMemo(
-    () => ({ ...open, ...controls, pi: open.live ? pi : null, voice }),
-    [open, controls, pi, voice],
+    () => ({ ...open, ...controls, pi: open.live ? pi : null, voice, shown }),
+    [open, controls, pi, voice, shown],
   );
   return (
     <AgentContext.Provider value={agent}>

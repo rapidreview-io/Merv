@@ -9,6 +9,7 @@ import {
   modelInput,
   runInput,
   lookInput,
+  showInput,
   screenInput,
   sendInput,
   voiceInput,
@@ -79,9 +80,18 @@ export const piToolsPlugin = {
           ctx.pi.look(caller, input),
       },
       {
+        name: 'screen.show',
+        description:
+          "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. It only navigates; their back button returns them. Answers where it went, or why it could not.",
+        inputSchema: showInput,
+        readOnly: true,
+        handler: (caller: Parameters<typeof ctx.pi.show>[0], input: unknown) =>
+          ctx.pi.show(caller, input),
+      },
+      {
         name: 'pi.screen',
         description:
-          "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+          "Answer your agent's ask of your screen: a snapshot of this page for a look, or where it went for a show (sent by the page itself).",
         inputSchema: screenInput,
         handler: (caller: Parameters<typeof ctx.pi.screen>[0], input: unknown) =>
           ctx.pi.screen(caller, input),

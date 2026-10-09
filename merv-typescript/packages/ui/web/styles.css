@@ -5611,6 +5611,28 @@ html:has(.pi-page) body {
 .pi-dock .pi-messages {
   padding: var(--space-3);
 }
+/* What the agent just opened, under the head for a few seconds, with the way back. */
+.pi-dock-shown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.pi-dock-shown > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pi-dock-shown strong {
+  color: var(--text);
+  font-weight: 600;
+}
 .pi-dock > :is(.pi-error, .muted) {
   padding: 0 var(--space-3) var(--space-2);
   font-size: var(--text-sm);

@@ -8,7 +8,14 @@
  * It is not drawn on a phone.
  */
 import type { UiRowDescription } from '@merv/ui/rows';
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CloseIcon, ExpandIcon } from '../icons';
 import type { PiSnapshot } from '@merv/pi/models';
@@ -17,6 +24,8 @@ import type { Conversation } from './pi-conversation';
 
 /** Where the window was last dragged to, for every page this browser opens after. */
 const PLACE = 'merv:agent-dock';
+/** How long what the agent opened is named in the window. */
+const SHOWN_MS = 8_000;
 const ROOM = window.matchMedia('(min-width: 640px)');
 const useRoomy = () =>
   useSyncExternalStore(
@@ -67,7 +76,32 @@ export function PiDock({ rows }: { rows: UiRowDescription[] }) {
     return () => clearTimeout(timer);
   }, [at, end]);
   if (!drawn || !pi || !row || !agent) return null;
-  return <Floating pi={pi} to={row.path} hide={agent.hide} />;
+  return (
+    <Floating pi={pi} to={row.path} hide={agent.hide}>
+      {agent.shown && <Opened key={agent.shown.at} {...agent.shown} />}
+    </Floating>
+  );
+}
+
+/** What the agent just put on the screen, for a few seconds, with the way back from it. */
+function Opened({ title, at }: { title: string; at: number }) {
+  const navigate = useNavigate();
+  const [fresh, setFresh] = useState(() => Date.now() - at < SHOWN_MS);
+  useEffect(() => {
+    const timer = setTimeout(() => setFresh(false), SHOWN_MS - (Date.now() - at));
+    return () => clearTimeout(timer);
+  }, [at]);
+  if (!fresh) return null;
+  return (
+    <p className="pi-dock-shown" role="status">
+      <span>
+        Opened <strong>{title}</strong>
+      </span>
+      <button type="button" className="btn-text" onClick={() => navigate(-1)}>
+        Back
+      </button>
+    </p>
+  );
 }
 
 type Spot = { x: number; y: number };
@@ -86,7 +120,17 @@ const inside = (spot: Spot, { width, height }: DOMRect): Spot => {
   return x === spot.x && y === spot.y ? spot : { x, y };
 };
 
-function Floating({ pi, to, hide }: { pi: Conversation; to: string; hide(): void }) {
+function Floating({
+  pi,
+  to,
+  hide,
+  children,
+}: {
+  pi: Conversation;
+  to: string;
+  hide(): void;
+  children?: ReactNode;
+}) {
   const navigate = useNavigate();
   const box = useRef<HTMLElement>(null);
   const [spot, setSpot] = useState(kept);
@@ -156,6 +200,7 @@ function Floating({ pi, to, hide }: { pi: Conversation; to: string; hide(): void
           <CloseIcon />
         </button>
       </div>
+      {children}
       <Transcript pi={pi} />
       {pi.error && (
         <p className="pi-error" role="alert">

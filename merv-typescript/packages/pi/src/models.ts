@@ -118,6 +118,11 @@ export interface PiStage {
 }
 /** A model a person may pick for a conversation (MERV_PI_MODELS), without the relay's effort. */
 export type PiModel = Omit<PiModelConfig, 'effort'>;
+/** What the agent puts on the person's screen: a record by its id, or a page by its name. */
+export interface PiShow {
+  record?: string;
+  page?: string;
+}
 export interface PiSnapshot {
   stage: PiStage;
   /** The server's clock when this was read, which a stage's `since` is counted against. */
@@ -134,8 +139,9 @@ export interface PiSnapshot {
   streamId: string;
   sequence: number;
   tail: PiEvent[];
-  /** The agent asked to see the screen: the person's page answers with pi.screen. */
-  look?: { id: string };
+  /** The agent asked something of the screen, which the person's page answers with pi.screen:
+   * to put a record or a page on it (`show`), or else to see it. */
+  screen?: { id: string; show?: PiShow };
 }
 
 /** Who began a move: the person (picker), their agent (switch_machine) or a slot's deadline. */

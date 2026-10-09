@@ -21,15 +21,33 @@ export const sendInput = z
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
 /** screen.look: what the agent wants to know about the person's screen. */
 export const lookInput = z.object({ question: z.string().max(1_000).default('') }).strict();
-/** pi.screen: the person's page, answering a look with a snapshot of itself. */
+/** screen.show: what the agent puts on the person's screen: one record, or one page. */
+export const showInput = z
+  .object({
+    record: z.string().trim().min(1).max(200).optional(),
+    page: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+/** pi.screen: the person's page answers what was asked of it: a look with a snapshot of itself,
+ * a show with where it went or why it could not. */
 export const screenInput = z
   .object({
     id,
-    lookId: id,
-    path: z.string().max(2_000),
-    html: z.string().min(1).max(2_500_000),
-    width: z.number().int().min(200).max(8_000),
-    height: z.number().int().min(200).max(8_000),
+    askId: id,
+    shot: z
+      .object({
+        path: z.string().max(2_000),
+        html: z.string().min(1).max(2_500_000),
+        width: z.number().int().min(200).max(8_000),
+        height: z.number().int().min(200).max(8_000),
+      })
+      .strict()
+      .optional(),
+    opened: z
+      .object({ path: z.string().max(2_000), title: z.string().max(500) })
+      .strict()
+      .optional(),
+    missing: z.string().max(2_000).optional(),
   })
   .strict();
 /** pi.model.set */

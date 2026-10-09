@@ -206,7 +206,10 @@ export interface Pi {
   voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }>;
   /** screen.look {question}: the agent sees the person's screen, answered in words (screen.ts). */
   look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }>;
-  /** pi.screen: the person's page answers a look with a snapshot of itself. */
+  /** screen.show {record | page}: the agent puts a record or a page on the person's screen. */
+  show(caller: Caller, input: unknown): Promise<{ opened?: string; title?: string; said?: string }>;
+  /** pi.screen: the person's page answers a look with a snapshot of itself, a show with where
+   *  it went. */
   screen(caller: Caller, input: unknown): Promise<{ received: true }>;
   /** Make sure the person's host exists before their first message; see pi.warm. */
   warm(caller: Caller, input: unknown): Promise<PiSnapshot>;

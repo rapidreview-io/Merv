@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Caller } from '@merv/contracts';
 import { describeScreen, renderScreen, scaleFor } from '../packages/pi/src/screen.js';
+import type { PiSnapshot } from '../packages/pi/src/types.js';
+import { fixture } from './fixtures/pi.js';
 
 const config = {
   url: 'https://render.example/accounts/{account}/browser-run/screenshot',
@@ -81,4 +84,35 @@ test('the conversation model reads the picture and answers the question in words
   assert.match(prompt!.text!, /\/ui\/artifacts/);
   assert.match(prompt!.text!, /Which page\?/);
   assert.equal(image!.image_url, `data:image/jpeg;base64,${Buffer.from('jpg').toString('base64')}`);
+});
+
+test("the agent puts a record on the person's screen: their page goes there and says where", async (t) => {
+  const f = await fixture(t);
+  const { work, input } = await f.begun(f.operator);
+  const agent: Caller = {
+    ...f.operator,
+    conversation: {
+      id: input.conversationId,
+      commandId: input.commandId,
+      runtimeId: work.command.runtimeId,
+      epoch: work.command.epoch,
+    },
+  };
+  const id = input.conversationId;
+  await assert.rejects(f.pi.show(f.operator, { page: 'Work' }), /own agent/);
+  await assert.rejects(f.pi.show(agent, {}), /one record or one page/);
+  const shown = f.pi.show(agent, { record: 'art_1' });
+  let asked: PiSnapshot['screen'];
+  while (!(asked = (await f.pi.snapshot(f.operator, id)).screen))
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(asked.show, { record: 'art_1' });
+  const answer = {
+    id,
+    askId: asked.id,
+    opened: { path: '/artifacts/art_1', title: 'Results.md' },
+  };
+  await f.pi.screen(f.operator, answer);
+  assert.deepEqual(await shown, { opened: '/artifacts/art_1', title: 'Results.md' });
+  assert.equal((await f.pi.snapshot(f.operator, id)).screen, undefined, 'the ask is over');
+  await assert.rejects(f.pi.screen(f.operator, answer), /no longer waiting/);
 });
