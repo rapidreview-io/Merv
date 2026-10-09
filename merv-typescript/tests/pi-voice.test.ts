@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MervError } from '@merv/contracts';
-import type { PiCommand } from '@merv/pi/types';
+import type { PiCommand } from '@merv/pi/models';
 import { openVoice, voiceHistory, voiceInstructions } from '../packages/pi/src/voice.js';
 
 const config = {
