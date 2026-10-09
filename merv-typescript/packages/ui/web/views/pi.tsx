@@ -292,8 +292,13 @@ export function Composer({ pi, rows }: { pi: Conversation; rows: number }) {
           }
         }}
       />
+      {/* Beside the box: audio mode (not yet built) over Send, which is Stop while an answer runs. */}
       <div className="pi-compose-actions">
-        {active && (
+        <button className="btn" type="button" disabled title="Audio mode">
+          Audio
+        </button>
+        {/* While an answer runs, Stop stands where Send was: nothing can be sent until it ends. */}
+        {active ? (
           <button
             className="btn"
             type="button"
@@ -302,14 +307,15 @@ export function Composer({ pi, rows }: { pi: Conversation; rows: number }) {
           >
             Stop
           </button>
+        ) : (
+          <button
+            className="btn btn--primary"
+            type="submit"
+            disabled={busy || blocked || unavailable || !draft.trim()}
+          >
+            {busy ? 'Sending…' : pi.pending.current?.text === draft.trim() ? 'Retry send' : 'Send'}
+          </button>
         )}
-        <button
-          className="btn btn--primary"
-          type="submit"
-          disabled={busy || blocked || unavailable || active || !draft.trim()}
-        >
-          {busy ? 'Sending…' : pi.pending.current?.text === draft.trim() ? 'Retry send' : 'Send'}
-        </button>
       </div>
     </form>
   );

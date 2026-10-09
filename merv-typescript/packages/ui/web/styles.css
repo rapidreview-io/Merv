@@ -5428,6 +5428,8 @@ del.cut {
 }
 .pi-compose {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: var(--space-2);
   padding-top: var(--space-3);
   border-top: 1px solid var(--line);
@@ -5437,8 +5439,10 @@ del.cut {
   max-width: none;
   resize: vertical;
 }
+/* The box's controls stand in one column at its right edge, Send at the foot. */
 .pi-compose-actions {
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: stretch;
 }
 .pi-error {
   color: var(--refutes);
@@ -5490,10 +5494,8 @@ del.cut {
   padding: 0 var(--space-3) var(--space-2);
   font-size: var(--text-sm);
 }
-/* The composer keeps its two rows and puts its controls beside them, where the window has the room. */
+/* The composer keeps its two rows, its controls beside them as on the page. */
 .pi-dock .pi-compose {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
   padding: var(--space-2) var(--space-3) var(--space-3);
 }
 .pi-dock .pi-compose .textarea {
