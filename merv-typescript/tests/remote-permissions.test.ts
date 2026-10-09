@@ -99,7 +99,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   assert.equal((await otherMcp.listTools()).tools.length, 89);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
-    99,
+    104,
     'Operator role is not a remote grant',
   );
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 200);
@@ -134,8 +134,8 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     403,
   );
   app.ctx.scope.toolPolicy.replace([]);
-  assert.equal((await readerMcp.listTools()).tools.length, 37);
-  assert.equal((await httpList(reader.token)).body.tools.length, 99);
+  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await httpList(reader.token)).body.tools.length, 104);
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 403);
   assert.equal(
     (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
