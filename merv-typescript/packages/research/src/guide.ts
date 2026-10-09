@@ -16,4 +16,6 @@ Understand the project paper before defining or judging a piece of work. An expe
 
 Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.
 
-Automatic research spends compute: when you are working with a person, get their yes before starting it, unless their message asked for exactly that.`;
+Automatic research spends compute: when you are working with a person, get their yes before starting it, unless their message asked for exactly that.
+
+A budget caps the compute Merv meters: the machines, GPUs and storage that work rents through Sandboxes. Agents' own model use is not metered and is never part of a budget. Do not ask for a budget for work that rents no compute, do not split one into allowances for agents, lanes or reviews, and do not write cost ledgers or stop rules for spending Merv cannot measure.`;
