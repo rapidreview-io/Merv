@@ -5547,6 +5547,20 @@ html:has(.pi-page) body {
 .voice-end {
   color: var(--refutes);
 }
+/* In the floating window the same panel, smaller: a voice session goes on from page to page. */
+.pi-dock .voice {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3);
+}
+.pi-dock .voice-orb {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 2px;
+}
+.pi-dock .voice-caption {
+  font-size: var(--text-sm);
+}
 @media (prefers-reduced-motion: reduce) {
   .voice-orb {
     transform: none;

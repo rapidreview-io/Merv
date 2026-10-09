@@ -134,6 +134,8 @@ export interface PiSnapshot {
   streamId: string;
   sequence: number;
   tail: PiEvent[];
+  /** The agent asked to see the screen: the person's page answers with pi.screen. */
+  look?: { id: string };
 }
 
 /** Who began a move: the person (picker), their agent (switch_machine) or a slot's deadline. */

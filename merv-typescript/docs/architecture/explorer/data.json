@@ -1508,6 +1508,11 @@
           "readOnly": false
         },
         {
+          "name": "pi.screen",
+          "description": "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+          "readOnly": false
+        },
+        {
           "name": "pi.send",
           "description": "Send one message and request agent capacity. Reuse commandId only to retry the exact same message.",
           "readOnly": false
@@ -1531,6 +1536,11 @@
           "name": "pi.warm",
           "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
           "readOnly": false
+        },
+        {
+          "name": "screen.look",
+          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "readOnly": true
         }
       ]
     },
@@ -1607,6 +1617,11 @@
           "readOnly": false
         },
         {
+          "name": "pi.screen",
+          "description": "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+          "readOnly": false
+        },
+        {
           "name": "pi.send",
           "description": "Send one message and request agent capacity. Reuse commandId only to retry the exact same message.",
           "readOnly": false
@@ -1630,6 +1645,11 @@
           "name": "pi.warm",
           "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
           "readOnly": false
+        },
+        {
+          "name": "screen.look",
+          "description": "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+          "readOnly": true
         }
       ]
     },

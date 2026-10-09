@@ -19,6 +19,7 @@ import { receiptOf } from './pi-proposal';
 import { changed, Context, Machine, Model, Outcome, Proposal, Seconds, useMenu } from './pi-cards';
 import { useConversation, type Conversation } from './pi-conversation';
 import { useVoice, VoicePanel, type Voice } from './pi-voice';
+import { useScreenAnswer } from './pi-screen';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -83,6 +84,8 @@ interface Agent {
   /** The person's machine was released: the conversation ends, and its stream with it. */
   end(): void;
   hide(): void;
+  /** The conversation's voice session, which outlives any one page. */
+  voice: Voice;
 }
 const AgentContext = createContext<Agent | null>(null);
 export const useAgent = () => useContext(AgentContext);
@@ -112,9 +115,17 @@ export function PiProvider({ children }: { children: ReactNode }) {
     }),
     [],
   );
+  const voice = useVoice(open.live ? pi : null);
+  // The agent's look at the screen is answered by whatever page the person is on.
+  useScreenAnswer(open.live ? pi : null);
+  // A conversation that ends takes its voice with it.
+  useEffect(() => {
+    if (!open.live) voice.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open.live]);
   const agent = useMemo(
-    () => ({ ...open, ...controls, pi: open.live ? pi : null }),
-    [open, controls, pi],
+    () => ({ ...open, ...controls, pi: open.live ? pi : null, voice }),
+    [open, controls, pi, voice],
   );
   return (
     <AgentContext.Provider value={agent}>
@@ -473,8 +484,8 @@ function PiConversationPage() {
 }
 
 /** The page's composer, or, while voice is on, the voice panel in its place. */
-function Speak({ pi }: { pi: Conversation }) {
-  const voice = useVoice(pi);
+export function Speak({ pi, rows = 3 }: { pi: Conversation; rows?: number }) {
+  const { voice } = useAgent()!;
   return voice.state === 'off' ? (
     <>
       {voice.problem && (
@@ -482,7 +493,7 @@ function Speak({ pi }: { pi: Conversation }) {
           {voice.problem}
         </p>
       )}
-      <Composer pi={pi} rows={3} voice={voice} />
+      <Composer pi={pi} rows={rows} voice={voice} />
     </>
   ) : (
     <VoicePanel voice={voice} progress={pi.visible?.progress || pi.standing[0]} />

@@ -19,6 +19,19 @@ export const sendInput = z
   .strict();
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
+/** screen.look: what the agent wants to know about the person's screen. */
+export const lookInput = z.object({ question: z.string().max(1_000).default('') }).strict();
+/** pi.screen: the person's page, answering a look with a snapshot of itself. */
+export const screenInput = z
+  .object({
+    id,
+    lookId: id,
+    path: z.string().max(2_000),
+    html: z.string().min(1).max(2_500_000),
+    width: z.number().int().min(200).max(8_000),
+    height: z.number().int().min(200).max(8_000),
+  })
+  .strict();
 /** pi.model.set */
 export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
@@ -139,6 +152,28 @@ export const piConfig = z
         url: z.string().url().default('https://api.openai.com/v1/live/sessions'),
         model: z.string().min(1).default('gpt-live-1'),
         voice: z.string().min(1).default('marin'),
+      })
+      .strict()
+      .default({}),
+    /** Seeing the screen: Cloudflare's headless browser draws the person's page snapshot. */
+    screen: z
+      .object({
+        url: z
+          .string()
+          .url()
+          .default(
+            'https://api.cloudflare.com/client/v4/accounts/{account}/browser-run/screenshot',
+          ),
+        tokenEnv: z
+          .string()
+          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+          .default('MERV_BROWSER_RENDER_TOKEN'),
+        accountEnv: z
+          .string()
+          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+          .default('MERV_BROWSER_RENDER_ACCOUNT'),
+        /** How long the person's page has to answer a look. */
+        waitMs: z.number().int().min(1_000).max(60_000).default(12_000),
       })
       .strict()
       .default({}),

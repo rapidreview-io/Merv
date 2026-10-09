@@ -4,6 +4,8 @@
  * its key (pi.voice), and the page runs the delegation: each request GPT-Live hands over is sent
  * as an ordinary Pi turn, and that turn's answer goes back for GPT-Live to say. The full answer
  * stands in the transcript as always. There is no time limit; a quiet session closes itself.
+ * The session belongs to the conversation, not to a page: it goes on as the person moves around
+ * the app, and the floating window holds its panel away from the Agent page.
  */
 import { useEffect, useRef, useState } from 'react';
 import { call } from '../api';
@@ -85,7 +87,7 @@ const level = (analyser?: AnalyserNode) => {
 };
 
 /** The voice session of one conversation: its state, its two captions, and its controls. */
-export function useVoice(pi: Conversation) {
+export function useVoice(pi: Conversation | null) {
   const [state, setState] = useState<VoiceState>('off');
   const [heard, setHeard] = useState('');
   const [said, setSaid] = useState('');
@@ -135,6 +137,7 @@ export function useVoice(pi: Conversation) {
     const text = held.heard.trim();
     held.heard = '';
     const pi = conversation.current;
+    if (!pi) return;
     if (!text) return send('session.commentary.append', "I didn't catch that.", delegation);
     if (held.pending || pi.active)
       return send(
@@ -197,8 +200,8 @@ export function useVoice(pi: Conversation) {
   };
 
   const start = async () => {
-    const id = pi.snapshot?.conversation.id;
-    if (live.current || !id) return;
+    const id = pi?.snapshot?.conversation.id;
+    if (live.current || !pi || !id) return;
     setProblem('');
     setHeard('');
     setSaid('');
@@ -285,7 +288,7 @@ export function useVoice(pi: Conversation) {
   useEffect(() => {
     const held = live.current;
     const pending = held?.pending;
-    const commands = pi.snapshot?.commands;
+    const commands = pi?.snapshot?.commands;
     if (!held || !pending || !commands) return;
     const turn = commands
       .slice(pending.after)
@@ -297,7 +300,7 @@ export function useVoice(pi: Conversation) {
     held.last = Date.now();
     send('session.commentary.append', resultOf(turn), pending.delegation);
     setState('listening');
-  }, [pi.snapshot]);
+  }, [pi?.snapshot]);
 
   // No time limit; a session nobody has spoken in, with nothing pending, closes itself, and so
   // does one whose page is put away.

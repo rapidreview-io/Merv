@@ -22,7 +22,8 @@ import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
  *
  * The script reads the person's words: `pause` and `start` propose the dispatch switch, `claim`
  * proposes a call that will be refused, `status` and `tasks` read first, `file` proposes a read
- * whose result only the person sees, `new task` creates one, and anything else reads the project
+ * whose result only the person sees, `screen` looks at the person's screen, `new task` creates one,
+ * and anything else reads the project
  * and answers at length.
  */
 type Step = { call: string; input: object } | { say: string };
@@ -58,6 +59,13 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
       },
     ];
   if (/pause/i.test(asked)) return dispatch(false);
+  if (/screen|looking at/i.test(asked)) {
+    const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;
+    return [
+      { call: 'screen.look', input: { question: asked } },
+      { say: seen ?? 'I could not see your screen.' },
+    ];
+  }
   if (/claim/i.test(asked))
     return [
       { call: 'review.start', input: { reviewId: 'review_that_is_gone' } },

@@ -8,6 +8,8 @@ import {
   machineInput,
   modelInput,
   runInput,
+  lookInput,
+  screenInput,
   sendInput,
   voiceInput,
   warmInput,
@@ -66,6 +68,23 @@ export const piToolsPlugin = {
         inputSchema: warmInput,
         handler: (caller: Parameters<typeof ctx.pi.warm>[0], input: unknown) =>
           ctx.pi.warm(caller, input),
+      },
+      {
+        name: 'screen.look',
+        description:
+          "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'); for a record's contents, its own tool reads it exactly.",
+        inputSchema: lookInput,
+        readOnly: true,
+        handler: (caller: Parameters<typeof ctx.pi.look>[0], input: unknown) =>
+          ctx.pi.look(caller, input),
+      },
+      {
+        name: 'pi.screen',
+        description:
+          "Answer your agent's look at your screen with a snapshot of this page (sent by the page itself).",
+        inputSchema: screenInput,
+        handler: (caller: Parameters<typeof ctx.pi.screen>[0], input: unknown) =>
+          ctx.pi.screen(caller, input),
       },
       {
         name: 'pi.voice',

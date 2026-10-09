@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CloseIcon, ExpandIcon } from '../icons';
 import type { PiSnapshot } from '@merv/pi/models';
-import { Composer, Standing, Transcript, useAgent } from './pi';
+import { Speak, Standing, Transcript, useAgent } from './pi';
 import type { Conversation } from './pi-conversation';
 
 /** Where the window was last dragged to, for every page this browser opens after. */
@@ -46,12 +46,15 @@ export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   const here = !!row && (pathname === row.path || pathname.startsWith(`${row.path}/`));
   const pi = agent?.pi;
   const end = agent?.end;
-  const drawn = !!row && !here && roomy && !agent?.hidden && !!pi?.snapshot?.commands.length;
+  const speaking = agent?.voice.state !== undefined && agent.voice.state !== 'off';
+  const drawn =
+    !!row && !here && roomy && (speaking || (!agent?.hidden && !!pi?.snapshot?.commands.length));
   // Away from its page the conversation ends with the machine, whether or not the window is
   // drawn, once nothing the person began is under way: no turn, no question or call on its way,
   // no machine being started, and no question half written in the window.
   const underway =
     !pi ||
+    speaking ||
     pi.active ||
     pi.busy ||
     !!pi.running ||
@@ -164,7 +167,7 @@ function Floating({ pi, to, hide }: { pi: Conversation; to: string; hide(): void
           {pi.streamError}
         </p>
       )}
-      <Composer pi={pi} rows={2} />
+      <Speak pi={pi} rows={2} />
     </aside>
   );
 }

@@ -8,6 +8,7 @@ import {
   type Sql,
   type Transaction,
 } from '@merv/contracts';
+import { randomBytes } from 'node:crypto';
 import { personKey } from '@merv/fleet/model-ledger';
 import type { ModelRelayHandle } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
@@ -17,6 +18,8 @@ import {
   modelInput,
   piMigrations,
   runInput,
+  lookInput,
+  screenInput,
   sendInput,
   voiceInput,
   warmInput,
@@ -26,6 +29,7 @@ import { conversationRules } from './conversation-rules.js';
 import { piInstructions } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
+import { describeScreen, renderScreen, type ScreenShot } from './screen.js';
 import type {
   Pi,
   PiCommand,
@@ -291,6 +295,7 @@ export class PiService implements Pi {
       commands: commands.map(publicCommand),
       host: view,
       models: this.core.config.models.map(({ effort: _effort, ...model }) => model),
+      ...(this.looks.has(id) ? { look: { id: this.looks.get(id)!.id } } : {}),
       ...transient,
       tail: whole
         ? [
@@ -456,6 +461,53 @@ export class PiService implements Pi {
     this.core.announce();
     if (hostId) this.core.streams.wake(hostId);
     return command;
+  }
+
+  /** The looks waiting for a page, by conversation: one at a time, answered by any of its tabs. */
+  private readonly looks = new Map<string, { id: string; settle(shot: ScreenShot | null): void }>();
+
+  /** screen.look {question}: only the agent, in a turn, may ask; the person's open page answers
+   *  with its snapshot, Cloudflare draws it, and the conversation's model says what it shows. */
+  async look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }> {
+    this.core.ready();
+    const { question } = parse(lookInput, input);
+    const at = caller.conversation;
+    check(at, 'pi_forbidden', "Only the person's own agent can look at their screen", 403);
+    const conversation = await this.core.read((tx) => this.core.conversation(tx, at.id));
+    this.looks.get(at.id)?.settle(null);
+    const id = `look_${randomBytes(12).toString('hex')}`;
+    const shot = await new Promise<ScreenShot | null>((resolve) => {
+      const timer = setTimeout(() => settle(null), this.config.screen.waitMs);
+      const settle = (shot: ScreenShot | null) => {
+        clearTimeout(timer);
+        if (this.looks.get(at.id)?.id === id) this.looks.delete(at.id);
+        resolve(shot);
+      };
+      this.looks.set(at.id, { id, settle });
+      this.core.streams.changed(at.id, at.commandId);
+    });
+    this.core.streams.changed(at.id, at.commandId);
+    if (!shot)
+      return {
+        seen: "The person's screen could not be seen: no page of theirs answered (Merv is not open in a browser, or the tab is in the background).",
+      };
+    const key = process.env[this.config.modelApiKeyEnv];
+    check(key, 'pi_screen_unavailable', 'The screen could not be read', 503);
+    const picture = await renderScreen(this.config.screen, shot);
+    const model = this.core.model(conversation.model).id;
+    const { text } = await describeScreen(key, model, question, picture, shot.path);
+    return { page: shot.path, seen: text };
+  }
+
+  /** pi.screen: the page answers the look it was shown, once; a look already over is refused. */
+  async screen(caller: Caller, input: unknown): Promise<{ received: true }> {
+    this.core.ready();
+    const { id, lookId, ...shot } = parse(screenInput, input);
+    await this.core.read((tx) => this.owned(caller, id, tx));
+    const waiting = this.looks.get(id);
+    check(waiting?.id === lookId, 'pi_look_over', 'That look is no longer waiting', 409);
+    waiting.settle(shot);
+    return { received: true };
   }
 
   /** pi.voice {id, sdp}: a GPT-Live session for this conversation, opened here with the model

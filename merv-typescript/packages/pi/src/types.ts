@@ -204,6 +204,10 @@ export interface Pi {
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
   /** pi.voice {id, sdp}: open a GPT-Live voice session for this conversation; see voice.ts. */
   voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }>;
+  /** screen.look {question}: the agent sees the person's screen, answered in words (screen.ts). */
+  look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }>;
+  /** pi.screen: the person's page answers a look with a snapshot of itself. */
+  screen(caller: Caller, input: unknown): Promise<{ received: true }>;
   /** Make sure the person's host exists before their first message; see pi.warm. */
   warm(caller: Caller, input: unknown): Promise<PiSnapshot>;
   /** Interrupt this conversation's turn only; the host keeps serving the others. */
