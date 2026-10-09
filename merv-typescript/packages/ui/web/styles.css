@@ -5430,7 +5430,7 @@ html:has(.pi-page) body {
 .pi-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  align-items: stretch;
   gap: var(--space-2);
   padding-top: var(--space-3);
   border-top: 1px solid var(--line);
@@ -5440,10 +5440,15 @@ html:has(.pi-page) body {
   max-width: none;
   resize: vertical;
 }
-/* The box's controls stand in one column at its right edge, Send at the foot. */
+/* The box's controls stand in one column at its right edge, Send at the foot, and share
+   the box's height between them: their top and bottom edges are the box's. */
 .pi-compose-actions {
   flex-direction: column;
   align-items: stretch;
+}
+.pi-compose-actions > .btn {
+  flex: 1;
+  min-height: 0;
 }
 .pi-error {
   color: var(--refutes);
