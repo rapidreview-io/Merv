@@ -5,6 +5,7 @@ import { call, refreshTools, useScopeVersion, useTool } from '../api';
 import { Ago, ErrorBoundary, LoadState, SearchField, Short } from '../components';
 import { Icon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, typing, useListFilter } from '../list-filters';
+import { BackLink } from '../trail';
 import { CodeBlock } from '../code-block';
 import { DelimitedTable, parseDelimited } from '../csv';
 import { languageOf } from '../highlight';
@@ -278,11 +279,14 @@ function MenuFacts({ artifact }: { artifact: Artifact }) {
 function FileMenu({
   artifact,
   opens,
+  find,
   raw,
 }: {
   artifact: Artifact;
   /** Where the file is shown inside something else: the way to its own page. */
   opens?: boolean;
+  /** On a file's own page: the way to any other file. */
+  find?(): void;
   raw?: { on: boolean; flip(): void };
 }) {
   const navigate = useNavigate();
@@ -326,6 +330,11 @@ function FileMenu({
         <div className="file-menu-panel" role="menu">
           <MenuFacts artifact={artifact} />
           {opens && item('Open file', () => navigate(`/artifacts/${artifact.id}`))}
+          {find &&
+            item('Go to file…', () => {
+              setOpen(false);
+              find();
+            })}
           {raw && (
             <button
               type="button"
@@ -370,20 +379,11 @@ function FileMenu({
 }
 
 /**
- * The way back to Files, and the way to any other file: a pointer resting on the link
- * (or the `t` key) drops a floating search over the project's files, as GitHub's `t`
- * and an editor's quick open do. The search keeps the cursor, the arrows move the row
- * in hand, Enter opens it; Escape, a click away or the pointer leaving shuts it.
+ * Go to file, as GitHub's `t` and an editor's quick open: a floating search over the
+ * project's files, opened from ⋯ on a file's page or by `t`. The search keeps the cursor,
+ * the arrows move the row in hand, Enter opens it; Escape or a click away shuts it.
  */
-function FileFinder() {
-  const [open, setOpen] = useState(false);
-  const hover = useRef<ReturnType<typeof setTimeout>>();
-  // The pointer has to rest a moment, so passing over the link on the way elsewhere opens nothing.
-  const rest = (next: boolean) => {
-    clearTimeout(hover.current);
-    hover.current = setTimeout(() => setOpen(next), next ? 150 : 250);
-  };
-  useEffect(() => () => clearTimeout(hover.current), []);
+function FileFinder({ open, setOpen }: { open: boolean; setOpen(open: boolean): void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
@@ -425,16 +425,7 @@ function FileFinder() {
     navigate(`/artifacts/${file.id}`);
   };
   return (
-    <div
-      className="finder"
-      ref={box}
-      onMouseEnter={() => rest(true)}
-      // What was typed keeps the finder open; a pointer only passing by does not.
-      onMouseLeave={() => !query && rest(false)}
-    >
-      <Link to="/artifacts" className="finder-back" title="Files · t finds a file">
-        ← Files
-      </Link>
+    <div className="finder" ref={box}>
       {open && (
         <div className="finder-panel" role="dialog" aria-label="Go to file">
           <SearchField
@@ -861,6 +852,7 @@ interface FileProps {
 function FileBody({ artifactId, metadata, named }: FileProps) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
+  const [finding, setFinding] = useState(false);
   const [unread, setUnread] = useState(false);
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
   const markUnread = useCallback(() => setUnread(true), []);
@@ -880,6 +872,7 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
     <FileMenu
       artifact={artifact}
       opens={named !== 'page'}
+      find={named === 'page' ? () => setFinding(true) : undefined}
       raw={inline && sourced ? { on: source, flip: () => setSource(!source) } : undefined}
     />
   );
@@ -890,11 +883,12 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
           disclosure above already named it, the head is ⋯ alone. */}
       {named === 'page' ? (
         <header className="file-page-head">
-          <FileFinder />
+          <BackLink home="/artifacts" label="Files" />
           <h1 className="file-page-title" title={artifact.title}>
             <span className="file-title">{artifact.title}</span>
           </h1>
           {menu}
+          <FileFinder open={finding} setOpen={setFinding} />
         </header>
       ) : (
         <div className="doc-head">

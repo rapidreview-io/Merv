@@ -21,6 +21,7 @@ import {
 import type { ApiError } from './api';
 import { KindLabel, LoadState, SearchField, cx, useOpenedForm, words } from './components';
 import { homeOf } from './navigation';
+import { usePrevious } from './trail';
 import { OPEN } from './states';
 import type { ShellData } from './shell-types';
 
@@ -709,6 +710,9 @@ function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; ba
   const wide = useWide();
   const navigate = useNavigate();
   const held = useRef<HTMLDivElement>(null);
+  // Read on each render; the key handler below reads the latest.
+  const previous = useRef<unknown>();
+  previous.current = usePrevious();
   // Escape leaves the record for the list at either width; j/k move within the list.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -717,7 +721,9 @@ function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; ba
       // Nor is it while the record holds something unsent: a desk marks itself `data-draft`.
       if (held.current?.querySelector('[data-draft]')) return;
       event.preventDefault();
-      navigate(back);
+      // Back to wherever the reader came from, as the page's own back control goes.
+      if (previous.current) navigate(-1);
+      else navigate(back);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

@@ -1713,10 +1713,16 @@ select.input,
 /* A file's own page is the file, centred: its name, one quiet line of what it is
    and who made it, and the one control that shows its source; then the file. */
 .file-page {
-  width: min(100%, 1040px);
-  margin-inline: auto;
   /* The end of a file can be scrolled up to the middle of the screen, not left at its foot. */
   padding-bottom: 60vh;
+}
+/* A file read on its own page uses the page: prose, trees and text run its full width. */
+.file-page .md {
+  --md-measure: 100vw;
+}
+.file-page :is(.json, .doc) {
+  max-width: none;
+  max-height: none;
 }
 .file-page-head {
   display: flex;
@@ -1847,23 +1853,29 @@ select.input,
   color: var(--active);
   pointer-events: none;
 }
-/* The way back to Files, which drops the finder over the open file while the pointer rests on it. */
-.finder {
-  position: relative;
+/* The way back: ← and the name of the page the reader came from, never longer than a few words. */
+.back-link {
   flex: none;
-}
-.finder-back {
+  max-width: 28ch;
+  overflow: hidden;
   font-size: var(--text-sm);
+  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
 }
-.finder-back:hover {
+.back-link:hover {
   color: var(--text);
+}
+/* Go to file hangs from the end of the file's line, under ⋯. */
+.finder {
+  position: relative;
+  flex: none;
+  align-self: flex-end;
 }
 .finder-panel {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  top: 6px;
+  right: 0;
   z-index: 30;
   width: min(560px, calc(100vw - 32px));
   padding: var(--space-2);

@@ -19,6 +19,7 @@ import {
   topRows,
 } from './navigation';
 import { stepped } from './record-picker';
+import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
 
 import type { ShellData } from './shell-types';
@@ -371,6 +372,7 @@ export function ShellFrame({
   const location = useLocation();
   const navigationType = useNavigationType();
   const { project } = useSession();
+  useTrail();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigation = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLElement>(null);

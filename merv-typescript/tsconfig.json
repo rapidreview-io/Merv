@@ -34,6 +34,7 @@
     "tests/ui-cycle-gate-wait.test.ts",
     "tests/ui-agents-gallery.test.ts",
     "tests/ui-json.test.ts",
+    "tests/ui-trail.test.ts",
     "tests/ui-keys.test.ts",
     "tests/ui-markdown.test.ts",
     "tests/ui-needs-you.test.ts",
