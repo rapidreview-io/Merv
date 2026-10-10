@@ -14,6 +14,7 @@ import { Drawing } from './elements.js';
 import { drawSchema, elementSchema, id, parse, setSchema, title, type DrawInput } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 import type { Board, BoardDrawn, BoardElement, BoardScene, BoardSummary } from './types.js';
+import { stacked } from './models.js';
 export type * from './types.js';
 
 /** The most live shapes one board holds. */
@@ -63,7 +64,7 @@ export class BoardService implements Board {
             boardId,
             since,
           );
-    return rows.map((row) => JSON.parse(row.record) as BoardElement);
+    return stacked(rows.map((row) => JSON.parse(row.record) as BoardElement));
   }
   private async write(caller: Caller, board: BoardSummary, tx: Transaction) {
     await tx.run(

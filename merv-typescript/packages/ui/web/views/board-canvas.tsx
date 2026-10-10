@@ -20,7 +20,7 @@ import {
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
-import type { BoardScene } from '@merv/board/models';
+import { stacked, type BoardScene } from '@merv/board/models';
 import { call } from '../api';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
@@ -146,7 +146,7 @@ export default function BoardCanvas({ id }: { id: string }) {
       revision.current = scene.board.revision;
       // Never repair bindings here: these are only the shapes that changed, and a box whose text
       // did not change would lose it.
-      const remote = restoreElements(scene.elements as never, null, {
+      const remote = restoreElements(stacked(scene.elements) as never, null, {
         refreshDimensions: true,
       }) as unknown as RemoteExcalidrawElement[];
       for (const el of scene.elements)
@@ -202,7 +202,7 @@ export default function BoardCanvas({ id }: { id: string }) {
           },
         }}
         initialData={{
-          elements: restoreElements(first.elements as never, null, {
+          elements: restoreElements(stacked(first.elements) as never, null, {
             refreshDimensions: true,
             repairBindings: true,
           }),

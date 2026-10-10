@@ -107,6 +107,11 @@ export class Drawing {
     for (const text of this.live().filter((el) => el.type === 'text' && el.containerId)) {
       const box = this.elements.get(text.containerId);
       const bound: { type: string; id: string }[] = box?.boundElements ?? [];
+      // A label stacked under its own box (a page that took another order) is hidden by it.
+      if (box && !box.isDeleted && String(text.index ?? '') <= String(box.index ?? '')) {
+        text.index = this.index();
+        this.touch(text);
+      }
       if (bound.some((b) => b.id === text.id)) continue;
       if (!box || box.isDeleted) {
         text.containerId = null;

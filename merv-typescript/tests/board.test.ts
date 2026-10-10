@@ -395,3 +395,25 @@ test('a board draws itself for its agent: pen strokes and text as SVG, cropped t
   assert.ok(x! > 100, 'a focus crops to its part');
   assert.equal(pictureOf(elements, 'nope'), 'No shape "nope" on this board.');
 });
+
+test('a page is handed shapes in their stacking order, and a label under its own box is lifted', async (t) => {
+  const f = await fixture(t);
+  const { board, created } = await f.board.draw(f.operator, {
+    title: 'Stack',
+    ops: [
+      { op: 'box', key: 'a', text: 'First' },
+      { op: 'box', key: 'b', text: 'Second' },
+      { op: 'note', key: 'c', text: 'Third' },
+    ],
+  });
+  const { elements } = await f.board.scene(f.operator, board.id);
+  const indices = elements.map((el) => String(el.index));
+  assert.deepEqual(indices, [...indices].sort(), 'shapes come in their stacking order');
+  // A page that took the database's order put the box's label under the box.
+  const box = elements.find((el) => el.id === created.a)!;
+  const label = elements.find((el) => el.containerId === box.id)!;
+  const buried = elements.map((el) => (el.id === label.id ? { ...el, index: 'a0' } : el));
+  const next = new Drawing(buried as BoardElement[], false);
+  const lifted = next.result().find((el) => el.id === label.id)!;
+  assert.ok(String(lifted.index) > String(box.index), 'the label stands over its box again');
+});
