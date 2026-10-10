@@ -61,6 +61,58 @@ function plan(asked: string, read: (tool: string) => unknown): Step[] {
       },
     ];
   if (/pause/i.test(asked)) return dispatch(false);
+  if (/\brose\b/i.test(asked)) {
+    const drawn = read('board.draw') as { board?: { id: string } } | undefined;
+    return [
+      {
+        call: 'board.draw',
+        input: {
+          title: 'A rose',
+          ops: [
+            {
+              op: 'sketch',
+              key: 'rose',
+              size: 'l',
+              strokes: [
+                {
+                  path: 'M50 10 C 25 5, 15 30, 25 45 C 30 55, 70 55, 75 45 C 85 30, 75 5, 50 10 Z',
+                  fill: 'red',
+                  color: 'red',
+                },
+                {
+                  path: 'M25 45 C 20 60, 40 70, 50 62 C 40 60, 30 55, 25 45 Z',
+                  fill: 'pink',
+                  color: 'red',
+                },
+                {
+                  path: 'M75 45 C 80 60, 60 70, 50 62 C 60 60, 70 55, 75 45 Z',
+                  fill: 'pink',
+                  color: 'red',
+                },
+                {
+                  path: 'M50 22 C 40 22, 38 35, 50 38 C 60 40, 62 28, 54 26 C 48 25, 46 31, 51 32',
+                  color: 'red',
+                },
+                { path: 'M50 62 C 48 90, 52 120, 50 160', color: 'green', width: 'bold' },
+                {
+                  path: 'M50 110 C 30 95, 15 105, 20 115 C 30 118, 42 115, 50 110 Z',
+                  fill: 'green',
+                  color: 'green',
+                },
+                {
+                  path: 'M50 130 C 70 115, 85 125, 80 135 C 70 138, 58 135, 50 130 Z',
+                  fill: 'green',
+                  color: 'green',
+                },
+              ],
+            },
+          ],
+        },
+      },
+      ...(drawn?.board ? [{ call: 'screen.show', input: { record: drawn.board.id } }] : []),
+      { say: drawn?.board ? 'Here is a rose.' : 'I could not draw it.' },
+    ];
+  }
   if (/\bboard\b/i.test(asked) && /\b(look|see)\b/i.test(asked)) {
     const board = (read('board.read') as { boards?: { id: string }[] } | undefined)?.boards?.[0];
     const seen = (read('screen.look') as { seen?: string } | undefined)?.seen;

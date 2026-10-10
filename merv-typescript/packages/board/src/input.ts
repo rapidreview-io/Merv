@@ -22,6 +22,42 @@ export const COLORS = {
   white: '#ffffff',
 } as const;
 const color = z.enum(Object.keys(COLORS) as [keyof typeof COLORS]);
+/** A pen's colours, and the stronger ones a sketch fills with: the palette Excalidraw offers. */
+export const INKS = {
+  black: '#1e1e1e',
+  red: '#e03131',
+  green: '#2f9e44',
+  blue: '#1971c2',
+  yellow: '#f08c00',
+  purple: '#6741d9',
+  orange: '#e8590c',
+  pink: '#c2255c',
+  gray: '#868e96',
+  white: '#ffffff',
+} as const;
+export const PAINTS = {
+  black: '#343a40',
+  red: '#ff8787',
+  green: '#69db7c',
+  blue: '#74c0fc',
+  yellow: '#ffd43b',
+  purple: '#b197fc',
+  orange: '#ffa94d',
+  pink: '#f783ac',
+  gray: '#ced4da',
+  white: '#ffffff',
+} as const;
+const ink = z.enum(Object.keys(INKS) as [keyof typeof INKS]);
+/** One pen stroke of a sketch: an SVG path in the sketch's own coordinates. */
+const stroke = z
+  .object({
+    path: z.string().trim().min(2).max(20_000),
+    color: ink.optional(),
+    /** Filled, a closed stroke is a painted shape; without, it is a pen line. */
+    fill: ink.optional(),
+    width: z.enum(['thin', 'medium', 'bold']).optional(),
+  })
+  .strict();
 /** Where a new shape goes: beside a shape, inside a frame, or (neither) the next free place. */
 const place = { near: shape.optional(), in: shape.optional() };
 const node = z
@@ -105,6 +141,15 @@ export const opSchema = z.discriminatedUnion('op', [
     .strict(),
   z.object({ op: z.literal('move'), id: shape, ...place }).strict(),
   z.object({ op: z.literal('delete'), ids: z.array(shape).min(1).max(200) }).strict(),
+  z
+    .object({
+      op: z.literal('sketch'),
+      key,
+      strokes: z.array(stroke).min(1).max(80),
+      size: z.enum(['s', 'm', 'l']).optional(),
+      ...place,
+    })
+    .strict(),
 ]);
 export type DrawOp = z.infer<typeof opSchema>;
 export const drawSchema = z

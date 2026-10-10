@@ -240,3 +240,69 @@ test('Board depends on State and Scope alone, and links to records only by id', 
   );
   assert.deepEqual([...new Set(imports)].sort(), ['@merv/api', '@merv/contracts', '@merv/ui']);
 });
+
+test('a sketch path reads as the points a pen passes: lines, curves, arcs and closed outlines', async () => {
+  const { strokesOf } = await import('@merv/board/path');
+  const [square] = strokesOf('M 0 0 H 10 V 10 h -10 Z');
+  assert.deepEqual(square!.points, [
+    [0, 0],
+    [10, 0],
+    [10, 10],
+    [0, 10],
+    [0, 0],
+  ]);
+  assert.equal(square!.closed, true);
+  const [curve] = strokesOf('M0,0 C 0,10 10,10 10,0');
+  assert.deepEqual(curve!.points.at(-1), [10, 0]);
+  assert.ok(
+    curve!.points.length > 10 && curve!.points.some(([, y]) => y > 7),
+    'a curve is walked, not cut short',
+  );
+  const [circle] = strokesOf('M 0 5 A 5 5 0 1 0 10 5 A 5 5 0 1 0 0 5 Z');
+  assert.ok(
+    circle!.points.every(([x, y]) => Math.abs(Math.hypot(x - 5, y - 5) - 5) < 0.01),
+    'an arc keeps its radius',
+  );
+  assert.equal(strokesOf('M0 0 L1 1 M5 5 L6 6').length, 2, 'each move begins a stroke');
+  assert.throws(() => strokesOf('M 0 0 X 3'), /could not be read/);
+  assert.throws(() => strokesOf('L 1 1'), /does not begin with M/);
+});
+
+test('an agent sketches with a pen: grouped strokes, painted petals, scaled and placed as one', () => {
+  const drawing = new Drawing([], true);
+  drawing.apply({ op: 'note', key: 'n', text: 'A rose' });
+  drawing.apply({
+    op: 'sketch',
+    key: 'rose',
+    size: 'l',
+    near: 'n',
+    strokes: [
+      { path: 'M 50 40 C 30 20, 30 0, 50 10 C 70 0, 70 20, 50 40 Z', fill: 'red', color: 'red' },
+      { path: 'M 50 40 C 48 60, 52 80, 50 100', color: 'green', width: 'bold' },
+    ],
+  });
+  const marks = drawing.result().filter((el) => ['line', 'freedraw'].includes(el.type));
+  assert.deepEqual(
+    marks.map((el) => el.type),
+    ['line', 'freedraw'],
+    'a filled stroke paints, a bare one is ink',
+  );
+  assert.equal(
+    new Set(marks.map((el) => (el.groupIds as string[])[0])).size,
+    1,
+    'the strokes move together',
+  );
+  const tall =
+    Math.max(...marks.map((el) => el.y + el.height)) - Math.min(...marks.map((el) => el.y));
+  assert.ok(Math.abs(tall - 440) < 1, `the longest side is the size asked for (${tall})`);
+  const note = drawing.find('n');
+  assert.ok(
+    Math.min(...marks.map((el) => el.x)) >= note.x + note.width,
+    'it stands beside the note',
+  );
+  const read = summarize(drawing.result());
+  const sketch = read.shapes.find((shape) => shape.kind === 'sketch')!;
+  assert.equal((sketch as { strokes?: number }).strokes, 2, 'a sketch reads as one drawing');
+  assert.equal(sketch.id, drawing.created.rose);
+  assert.equal(read.arrows.length, 0, 'a sketched line is not an arrow');
+});

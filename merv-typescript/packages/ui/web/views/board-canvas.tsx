@@ -11,6 +11,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
   Excalidraw,
+  getCommonBounds,
   MainMenu,
   WelcomeScreen,
   reconcileElements,
@@ -96,16 +97,23 @@ export default function BoardCanvas({ id }: { id: string }) {
   useEffect(() => {
     if (!api) return;
     const frame = requestAnimationFrame(() => {
-      const part = focus && api.getSceneElements().find((el) => el.id === focus);
-      api.scrollToContent(part || undefined, {
-        fitToViewport: true,
-        viewportZoomFactor: part ? 0.8 : 0.9,
-        animate: false,
+      const all = api.getSceneElements();
+      const part = focus ? all.filter((el) => el.id === focus) : [];
+      const shown = part.length ? part : all;
+      if (!shown.length) return;
+      const [x1, y1, x2, y2] = getCommonBounds(shown);
+      const { width, height } = api.getAppState();
+      const fit =
+        Math.min(width / (x2 - x1 || 1), height / (y2 - y1 || 1)) * (part.length ? 0.8 : 0.9);
+      const zoom = Math.max(0.1, Math.min(part.length ? 2 : 1, fit));
+      api.updateScene({
+        appState: {
+          zoom: { value: zoom as never },
+          scrollX: width / (2 * zoom) - (x1 + x2) / 2,
+          scrollY: height / (2 * zoom) - (y1 + y2) / 2,
+        },
+        captureUpdate: CaptureUpdateAction.NEVER,
       });
-      const most = part ? 2 : 1;
-      if (api.getAppState().zoom.value <= most) return;
-      api.updateScene({ appState: { zoom: { value: most as never } } });
-      api.scrollToContent(part || undefined, { animate: false });
     });
     return () => cancelAnimationFrame(frame);
   }, [api, focus]);

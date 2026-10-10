@@ -6,7 +6,8 @@
  */
 import { randomBytes } from 'node:crypto';
 import { MervError } from '@merv/contracts';
-import { COLORS, type DrawOp } from './input.js';
+import { COLORS, INKS, PAINTS, type DrawOp } from './input.js';
+import { strokesOf } from './path.js';
 import type { BoardElement } from './types.js';
 
 type El = BoardElement & Record<string, any>;
@@ -560,6 +561,63 @@ export class Drawing {
       case 'delete':
         for (const ref of op.ids) this.remove(this.find(ref));
         return;
+      case 'sketch': {
+        // Each stroke in the sketch's own coordinates, scaled as one so its longest side is the
+        // size asked for, and placed like any shape; the strokes move together as a group.
+        const read = op.strokes.map((stroke) => ({ stroke, lines: strokesOf(stroke.path) }));
+        const points = read.flatMap(({ lines }) => lines.flatMap((line) => line.points));
+        const [minX, minY] = [
+          Math.min(...points.map((p) => p[0])),
+          Math.min(...points.map((p) => p[1])),
+        ];
+        const width = Math.max(...points.map((p) => p[0])) - minX || 1;
+        const height = Math.max(...points.map((p) => p[1])) - minY || 1;
+        const scale = { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
+        const at = this.place({ width: width * scale, height: height * scale }, op.near, op.in);
+        const group = elementId();
+        let first: El | undefined;
+        for (const { stroke, lines } of read)
+          for (const line of lines) {
+            const drawn = line.points.map(([x, y]) => [
+              at.x + (x - minX) * scale,
+              at.y + (y - minY) * scale,
+            ]);
+            const filled = !!stroke.fill;
+            // A painted shape is a closed outline.
+            if (filled && (drawn[0]![0] !== drawn.at(-1)![0] || drawn[0]![1] !== drawn.at(-1)![1]))
+              drawn.push([...drawn[0]!]);
+            const ox = Math.min(...drawn.map((p) => p[0]!));
+            const oy = Math.min(...drawn.map((p) => p[1]!));
+            const box = {
+              x: ox,
+              y: oy,
+              width: Math.max(...drawn.map((p) => p[0]!)) - ox,
+              height: Math.max(...drawn.map((p) => p[1]!)) - oy,
+            };
+            const el = this.add(filled ? 'line' : 'freedraw', box, {
+              points: drawn.map(([x, y]) => [x! - ox, y! - oy]),
+              strokeColor: INKS[stroke.color ?? stroke.fill ?? 'black'],
+              backgroundColor: filled ? PAINTS[stroke.fill!] : 'transparent',
+              strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
+              groupIds: [group],
+              frameId: at.frameId,
+              lastCommittedPoint: null,
+              customData: { ...(this.agent && { by: 'agent' }), sketch: group },
+              ...(filled
+                ? {
+                    startBinding: null,
+                    endBinding: null,
+                    startArrowhead: null,
+                    endArrowhead: null,
+                    polygon: true,
+                  }
+                : { pressures: [], simulatePressure: true }),
+            });
+            first ??= el;
+          }
+        if (first) this.keyed(op.key, first);
+        return;
+      }
     }
   }
   /** Every shape this call changed, as it now stands. */
@@ -625,18 +683,21 @@ export function summarize(elements: BoardElement[]) {
   const frames = live
     .filter((el) => el.type === 'frame')
     .map((el) => ({ id: el.id, title: el.name ?? '', ...where(el) }));
-  const arrows = live
-    .filter((el) => el.type === 'arrow' || el.type === 'line')
-    .map((el) => ({
-      id: el.id,
-      ...(el.startBinding?.elementId && { from: el.startBinding.elementId }),
-      ...(el.endBinding?.elementId && { to: el.endBinding.elementId }),
-      ...(said(el) && { label: said(el) }),
-    }));
+  // A line that joins shapes is an arrow; any other line, and every pen stroke, is a mark.
+  const joins = (el: El) =>
+    el.type === 'arrow' || (el.type === 'line' && !!(el.startBinding || el.endBinding));
+  const marks = live.filter((el) => (el.type === 'line' || el.type === 'freedraw') && !joins(el));
+  const arrows = live.filter(joins).map((el) => ({
+    id: el.id,
+    ...(el.startBinding?.elementId && { from: el.startBinding.elementId }),
+    ...(el.endBinding?.elementId && { to: el.endBinding.elementId }),
+    ...(said(el) && { label: said(el) }),
+  }));
   const shapes = live
     .filter(
       (el) =>
-        !['frame', 'arrow', 'line'].includes(el.type) && !(el.type === 'text' && el.containerId),
+        !['frame', 'arrow', 'line', 'freedraw'].includes(el.type) &&
+        !(el.type === 'text' && el.containerId),
     )
     .map((el) => ({
       id: el.id,
@@ -656,6 +717,24 @@ export function summarize(elements: BoardElement[]) {
       ...(el.customData?.by === 'agent' && { by: 'agent' }),
       ...where(el),
     }));
+  // Strokes drawn as one sketch, or grouped by hand, read as one drawing.
+  const drawings = new Map<string, El[]>();
+  for (const el of marks) {
+    const group = el.groupIds?.[0] ?? el.id;
+    drawings.set(group, [...(drawings.get(group) ?? []), el]);
+  }
+  for (const parts of drawings.values()) {
+    const box = bounds(parts.map(rect))!;
+    const first = parts[0]!;
+    shapes.push({
+      id: first.id,
+      kind: first.customData?.sketch ? 'sketch' : 'drawing',
+      ...(parts.length > 1 && { strokes: parts.length }),
+      ...(first.frameId && { frame: first.frameId }),
+      ...(first.customData?.by === 'agent' && { by: 'agent' }),
+      ...where(box as El),
+    } as (typeof shapes)[number]);
+  }
   return {
     frames,
     shapes: shapes.slice(0, 600),
