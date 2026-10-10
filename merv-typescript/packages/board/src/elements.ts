@@ -15,7 +15,7 @@ const GAP = 40;
 const FONT = 20;
 const LINE = 1.25;
 /** Roughly how wide a character of the hand-drawn font is, for a font size of one. */
-const CHAR = 0.55;
+const CHAR = 0.65;
 const KEY_DIGITS = 'VWXYZabcdefghijklmnopqrstuvwxyz';
 
 const elementId = () => randomBytes(15).toString('base64url');
@@ -264,7 +264,7 @@ export class Drawing {
       }
       c.rowBottom = Math.max(c.rowBottom, at.y + at.height);
       c.inRow += 1;
-      if (c.inRow === 4) Object.assign(c, { x: c.startX, y: c.rowBottom + GAP, inRow: 0 });
+      if (c.inRow === 4) Object.assign(c, { x: c.startX, y: c.rowBottom + 2 * GAP, inRow: 0 });
       else c.x = at.x + at.width + GAP;
     }
     this.occupied.push(at);
@@ -431,7 +431,8 @@ export class Drawing {
         const held = (op.holds ?? []).map((ref) => this.find(ref));
         const box = bounds(held.flatMap((el) => [el, ...this.carried(el)]).map(rect));
         const at = box
-          ? { x: box.x - 40, y: box.y - 60, width: box.width + 80, height: box.height + 100 }
+          ? // The frame's title stands above its edge, so the edge keeps close to what it holds.
+            { x: box.x - 30, y: box.y - 30, width: box.width + 60, height: box.height + 60 }
           : this.place({ width: 640, height: 420 }, op.near);
         const frame = this.add('frame', at, { name: op.title, strokeColor: '#bbb' });
         for (const el of held)

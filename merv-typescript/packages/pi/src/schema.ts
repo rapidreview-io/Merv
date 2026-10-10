@@ -19,6 +19,8 @@ export const sendInput = z
   .strict();
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
+/** A part of the page to bring into view, as the page names its parts (a board's shape or frame). */
+const focus = z.string().trim().min(1).max(200).optional();
 /** screen.look: what the agent wants to know about the person's screen. */
 export const lookInput = z
   .object({
@@ -28,6 +30,7 @@ export const lookInput = z
       .object({
         record: z.string().trim().min(1).max(200).optional(),
         page: z.string().trim().min(1).max(100).optional(),
+        focus,
       })
       .strict()
       .optional(),
@@ -38,6 +41,7 @@ export const showInput = z
   .object({
     record: z.string().trim().min(1).max(200).optional(),
     page: z.string().trim().min(1).max(100).optional(),
+    focus,
   })
   .strict();
 /** pi.screen: the person's page answers what was asked of it: a look with a snapshot of itself,

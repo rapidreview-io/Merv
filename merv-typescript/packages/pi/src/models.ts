@@ -122,6 +122,8 @@ export type PiModel = Omit<PiModelConfig, 'effort'>;
 export interface PiShow {
   record?: string;
   page?: string;
+  /** A part of the page to bring into view and zoom to: a board's shape or frame. */
+  focus?: string;
 }
 export interface PiSnapshot {
   stage: PiStage;

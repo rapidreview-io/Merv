@@ -7,7 +7,7 @@
  */
 import '@excalidraw/excalidraw/index.css';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CaptureUpdateAction,
   Excalidraw,
@@ -89,20 +89,40 @@ export default function BoardCanvas({ id }: { id: string }) {
     await run;
   }, [api, id]);
 
-  // A board opens with all of it in view, zoomed out as far as that takes and never in.
+  // A board opens with all of it in view, zoomed out as far as that takes and never in; with
+  // ?focus=<shape or frame id> it opens on that part, large enough to read.
+  const [search] = useSearchParams();
+  const focus = search.get('focus');
   useEffect(() => {
     if (!api) return;
     const frame = requestAnimationFrame(() => {
-      api.scrollToContent(undefined, {
+      const part = focus && api.getSceneElements().find((el) => el.id === focus);
+      api.scrollToContent(part || undefined, {
         fitToViewport: true,
-        viewportZoomFactor: 0.9,
+        viewportZoomFactor: part ? 0.8 : 0.9,
         animate: false,
       });
-      if (api.getAppState().zoom.value <= 1) return;
-      api.updateScene({ appState: { zoom: { value: 1 as never } } });
-      api.scrollToContent(undefined, { animate: false });
+      const most = part ? 2 : 1;
+      if (api.getAppState().zoom.value <= most) return;
+      api.updateScene({ appState: { zoom: { value: most as never } } });
+      api.scrollToContent(part || undefined, { animate: false });
     });
     return () => cancelAnimationFrame(frame);
+  }, [api, focus]);
+
+  // Text is measured as it is drawn; drawn before the hand-drawn font arrived, it was measured in
+  // another and would be cut short, so it is measured again once the font is in.
+  useEffect(() => {
+    if (!api) return;
+    const measure = () =>
+      api.updateScene({
+        elements: restoreElements(api.getSceneElementsIncludingDeleted(), null, {
+          refreshDimensions: true,
+        }),
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    document.fonts.addEventListener('loadingdone', measure);
+    return () => document.fonts.removeEventListener('loadingdone', measure);
   }, [api]);
 
   // What others drew since the revision in hand, merged in without disturbing what is held.

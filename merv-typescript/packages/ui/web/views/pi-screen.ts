@@ -151,7 +151,13 @@ async function snapshotAt(path: string) {
     frame.src = `/ui${path}`;
     document.body.append(frame);
     await loaded;
-    const win = frame.contentWindow!;
+    let win: Window;
+    try {
+      win = frame.contentWindow!;
+      if (!win.location.pathname.startsWith('/ui')) throw new Error();
+    } catch {
+      throw new Error('the page refused to open in a frame');
+    }
     await settled(win.document);
     return snapshotPage(win);
   } finally {
@@ -162,6 +168,16 @@ async function snapshotAt(path: string) {
 /** Where a show goes on this composition's rows: a page by its row's id, name, path or kind, or a
  *  record wherever project.references says it opens. A miss says what there is instead. */
 export async function placeOf(
+  show: PiShow,
+  rows: readonly UiRowDescription[],
+): Promise<{ path: string; title: string } | string> {
+  const place = await placed(show, rows);
+  // A part to bring into view travels in the address, for whichever page names its parts.
+  return typeof place === 'string' || !show.focus
+    ? place
+    : { ...place, path: `${place.path}?focus=${encodeURIComponent(show.focus)}` };
+}
+async function placed(
   { record, page }: PiShow,
   rows: readonly UiRowDescription[],
 ): Promise<{ path: string; title: string } | string> {
@@ -211,7 +227,11 @@ export function useScreenAnswer(pi: Conversation | null) {
                     : await snapshotAt(place.path),
               }),
         )
-        .catch(() => answer({ missing: 'That page could not be drawn.' }));
+        .catch((error: Error) =>
+          answer({
+            missing: `That page could not be drawn: ${error.message || 'it did not load'}.`,
+          }),
+        );
       return;
     }
     if (!asked.show) return void answer({ shot: snapshotPage() });

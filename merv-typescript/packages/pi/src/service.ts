@@ -530,9 +530,11 @@ export class PiService implements Pi {
     input: unknown,
   ): Promise<{ opened?: string; title?: string; said?: string }> {
     this.core.ready();
-    const { record, page } = parse(showInput, input);
+    const { record, page, focus } = parse(showInput, input);
     check(!record !== !page, 'invalid_input', 'Name one record or one page', 400);
-    const answer = await this.ask(caller, { show: record ? { record } : { page: page! } });
+    const answer = await this.ask(caller, {
+      show: { ...(record ? { record } : { page: page! }), ...(focus && { focus }) },
+    });
     if (answer?.opened) return { opened: answer.opened.path, title: answer.opened.title };
     return { said: answer?.missing ?? `Nothing was shown: ${UNANSWERED}` };
   }

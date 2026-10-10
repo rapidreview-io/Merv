@@ -51,4 +51,8 @@ test('what the agent shows opens where a link to it would: a page by its name, a
     title: 'Reproduce grokking',
   });
   assert.match(String(await placeOf({ record: 'gone' }, rows)), /No record "gone".*\(missing\)/);
+  assert.deepEqual(await placeOf({ record: 'art_1', focus: 'shape 1' }, rows), {
+    path: '/artifacts/art_1?focus=shape%201',
+    title: 'Results.md',
+  });
 });
