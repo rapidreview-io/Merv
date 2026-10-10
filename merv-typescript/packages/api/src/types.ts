@@ -149,7 +149,22 @@ export interface Tools {
   /** Each reader's text for this caller in contribution order, joined by blank lines; a reader
    *  that fails or has nothing to say is left out. */
   context(caller: Caller): Promise<string>;
+  /** Adds a drawer of the records whose ids begin with `prefix`: a self-contained page of one, as
+   *  the caller may see it, for an agent to look at without anyone's screen (409 when taken). */
+  contributePicture(prefix: string, draw: PictureDrawer): () => void;
+  /** The picture of a record whose prefix has a drawer, focused on one of its parts; undefined
+   *  where none draws it. */
+  picture(caller: Caller, id: string, focus?: string): Promise<Picture | undefined>;
 }
+/** A record drawn for looking at: a page with no scripts, at the size it is meant to be seen. */
+export interface Picture {
+  html: string;
+  width: number;
+  height: number;
+  /** Where the record opens in the app, for what the agent says. */
+  path: string;
+}
+export type PictureDrawer = (caller: Caller, id: string, focus?: string) => Promise<Picture>;
 declare module 'cordis' {
   interface Context {
     tools: Tools;

@@ -17,6 +17,8 @@ const FONT = 20;
 const LINE = 1.25;
 /** Roughly how wide a character of the hand-drawn font is, for a font size of one. */
 const CHAR = 0.65;
+/** What Excalidraw binds an arrow's end to. */
+const BINDABLE = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'frame']);
 const KEY_DIGITS = 'VWXYZabcdefghijklmnopqrstuvwxyz';
 
 const elementId = () => randomBytes(15).toString('base64url');
@@ -90,10 +92,35 @@ export class Drawing {
   ) {
     for (const element of existing) this.elements.set(element.id, structuredClone(element) as El);
     this.survey();
+    this.rebind();
     const box = bounds([...this.occupied, ...this.frames]);
     const x = box ? box.x + box.width + 120 : 0;
     const y = box ? box.y : 0;
     this.cursor = { x, y, startX: x, rowBottom: y, inRow: 0 };
+  }
+  /**
+   * Text that names a shape as its container the shape no longer lists is a label that came loose
+   * (a page that merged half a change): it is bound again, or, where the shape has text of its
+   * own, taken away, so no box shows nothing while its words lie elsewhere.
+   */
+  private rebind() {
+    for (const text of this.live().filter((el) => el.type === 'text' && el.containerId)) {
+      const box = this.elements.get(text.containerId);
+      const bound: { type: string; id: string }[] = box?.boundElements ?? [];
+      if (bound.some((b) => b.id === text.id)) continue;
+      if (!box || box.isDeleted) {
+        text.containerId = null;
+        this.touch(text);
+      } else if (bound.some((b) => b.type === 'text' && !this.elements.get(b.id)?.isDeleted))
+        this.remove(text);
+      else {
+        box.boundElements = [...bound, { type: 'text', id: text.id }];
+        const middle = center(box);
+        Object.assign(text, { x: middle.x - text.width / 2, y: middle.y - text.height / 2 });
+        this.touch(box);
+        this.touch(text);
+      }
+    }
   }
   private live() {
     return [...this.elements.values()].filter((el) => !el.isDeleted);
@@ -102,7 +129,7 @@ export class Drawing {
     const standing = this.live().filter(
       (el) => !el.containerId && el.type !== 'arrow' && !except.has(el),
     );
-    this.occupied = standing.filter((el) => el.type !== 'frame').map(rect);
+    this.occupied = standing.filter((el) => el.type !== 'frame').map(rectOf);
     this.frames = standing.filter((el) => el.type === 'frame').map(rect);
   }
   /** A fractional index after every shape the board has, so what is drawn stands on top. */
@@ -214,15 +241,24 @@ export class Drawing {
     return { width, height: Math.max(minHeight, measure(lines, FONT).height + 40) };
   }
 
-  /** Where a new shape of this size goes, by the operation's `near` and `in`. */
+  /**
+   * Where a new shape of this size goes: at the place the operation names (`at`, the top-left
+   * corner in board coordinates, as board.read reports them), in a frame, as near a shape as
+   * there is room (on its `side` if one is asked), or in the next free place.
+   */
   private place(
     size: { width: number; height: number },
-    near?: string,
-    into?: string,
+    where: Where = {},
   ): Rect & { frameId: string | null } {
+    const { near, in: into, side } = where;
+    // Only the size: a shape that is moved brings its old place along, which must not stand.
+    size = { width: size.width, height: size.height };
     let at: Rect | undefined;
     let frameId: string | null = null;
-    if (into) {
+    if (where.at) {
+      at = { x: where.at[0], y: where.at[1], ...size };
+      frameId = into ? this.find(into).id : null;
+    } else if (into) {
       const frame = this.find(into);
       if (frame.type !== 'frame')
         throw new MervError('board_not_a_frame', `"${into}" is not a frame`, 400);
@@ -246,16 +282,40 @@ export class Drawing {
     } else if (near) {
       const target = this.find(near);
       frameId = target.frameId ?? null;
-      const tries = [
-        { x: target.x + target.width + 60, y: target.y },
-        { x: target.x, y: target.y + target.height + 60 },
-      ];
-      for (let step = 0; !at; step++) {
-        const base = tries[step % 2]!;
-        const r = { ...base, y: base.y + Math.floor(step / 2) * GAP, ...size };
-        if (!this.occupied.some((o) => overlaps(o, r))) at = r;
-        if (step > 400) at = r;
-      }
+      const t = rectOf(target);
+      const mid = {
+        x: t.x + t.width / 2 - size.width / 2,
+        y: t.y + t.height / 2 - size.height / 2,
+      };
+      const beside = {
+        right: { x: t.x + t.width + GAP, y: mid.y },
+        below: { x: mid.x, y: t.y + t.height + GAP },
+        left: { x: t.x - GAP - size.width, y: mid.y },
+        above: { x: mid.x, y: t.y - GAP - size.height },
+      };
+      const sides = [...new Set([side ?? 'right', 'right', 'below', 'left', 'above'] as const)];
+      // Outward from the shape ring by ring, its asked side first: the nearest room there is.
+      for (let ring = 0; !at && ring <= 25; ring++)
+        for (const name of sides) {
+          const from = beside[name];
+          const spots: { x: number; y: number }[] = [];
+          for (let dx = -ring; dx <= ring; dx++)
+            for (let dy = -ring; dy <= ring; dy++)
+              if (Math.max(Math.abs(dx), Math.abs(dy)) === ring)
+                spots.push({ x: from.x + dx * GAP, y: from.y + dy * GAP });
+          spots.sort(
+            (a, b) =>
+              Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y),
+          );
+          const free = spots.find(
+            (spot) => !this.occupied.some((o) => overlaps(o, { ...spot, ...size })),
+          );
+          if (free) {
+            at = { ...free, ...size };
+            break;
+          }
+        }
+      at ??= { ...beside[side ?? 'right'], ...size };
     } else {
       const c = this.cursor;
       for (let tries = 0; !at; tries++) {
@@ -275,10 +335,10 @@ export class Drawing {
     kind: 'rectangle' | 'ellipse' | 'diamond',
     content: string,
     size: { width: number; height: number },
-    where: { near?: string; in?: string },
+    where: Where,
     fields: Record<string, unknown> = {},
   ) {
-    const at = this.place(size, where.near, where.in);
+    const at = this.place(size, where);
     const el = this.add(kind, at, {
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
@@ -286,12 +346,21 @@ export class Drawing {
     this.label(el, content);
     return el;
   }
-  private route(arrow: El) {
-    const from = this.elements.get(arrow.startBinding?.elementId);
-    const to = this.elements.get(arrow.endBinding?.elementId);
-    if (!from || !to) return;
-    const start = edge(from, center(to));
-    const end = edge(to, center(from));
+  /**
+   * An arrow drawn again between its ends: each end on a shape it is bound to meets that shape's
+   * edge, and an end bound to nothing (Excalidraw binds no pen stroke) stays where it was.
+   */
+  private route(arrow: El, ends: { from?: El; to?: El } = {}) {
+    const from = ends.from ?? this.elements.get(arrow.startBinding?.elementId);
+    const to = ends.to ?? this.elements.get(arrow.endBinding?.elementId);
+    const points = (arrow.points ?? []) as [number, number][];
+    const free = {
+      start: { x: arrow.x + (points[0]?.[0] ?? 0), y: arrow.y + (points[0]?.[1] ?? 0) },
+      end: { x: arrow.x + (points.at(-1)?.[0] ?? 0), y: arrow.y + (points.at(-1)?.[1] ?? 0) },
+    };
+    if (!from && !to) return;
+    const start = from ? edge(rectOf(from), to ? center(rectOf(to)) : free.end) : free.start;
+    const end = to ? edge(rectOf(to), from ? center(rectOf(from)) : free.start) : free.end;
     Object.assign(arrow, {
       x: start.x,
       y: start.y,
@@ -312,6 +381,10 @@ export class Drawing {
   private arrow(fromRef: string, toRef: string, label?: string) {
     const from = this.find(fromRef);
     const to = this.find(toRef);
+    // Excalidraw binds an arrow to a box, an ellipse, a diamond, text or a frame, never to a pen
+    // stroke or a line: such an end starts at its edge and stays put.
+    const binding = (el: El) =>
+      BINDABLE.has(el.type) ? { elementId: el.id, focus: 0, gap: 8 } : null;
     const el = this.add(
       'arrow',
       { x: 0, y: 0, width: 0, height: 0 },
@@ -321,17 +394,17 @@ export class Drawing {
           [0, 0],
         ],
         lastCommittedPoint: null,
-        startBinding: { elementId: from.id, focus: 0, gap: 8 },
-        endBinding: { elementId: to.id, focus: 0, gap: 8 },
+        startBinding: binding(from),
+        endBinding: binding(to),
         startArrowhead: null,
         endArrowhead: 'arrow',
         roundness: { type: 2 },
         elbowed: false,
       },
     );
-    this.route(el);
-    this.bind(from, 'arrow', el.id);
-    this.bind(to, 'arrow', el.id);
+    this.route(el, { from, to });
+    if (BINDABLE.has(from.type)) this.bind(from, 'arrow', el.id);
+    if (BINDABLE.has(to.type)) this.bind(to, 'arrow', el.id);
     if (label) this.label(el, label, 16);
     return el;
   }
@@ -410,7 +483,7 @@ export class Drawing {
       case 'text': {
         const size = { s: 16, m: 20, l: 32 }[op.size ?? 'm'];
         const content = wrap(op.text, 60);
-        const at = this.place(measure(content, size), op.near, op.in);
+        const at = this.place(measure(content, size), op);
         return this.keyed(
           op.key,
           this.text(at, content, size, { originalText: op.text, frameId: at.frameId }),
@@ -434,7 +507,7 @@ export class Drawing {
         const at = box
           ? // The frame's title stands above its edge, so the edge keeps close to what it holds.
             { x: box.x - 30, y: box.y - 30, width: box.width + 60, height: box.height + 60 }
-          : this.place({ width: 640, height: 420 }, op.near);
+          : this.place({ width: 640, height: 420 }, op);
         const frame = this.add('frame', at, { name: op.title, strokeColor: '#bbb' });
         for (const el of held)
           for (const part of [el, ...this.carried(el)]) {
@@ -464,8 +537,7 @@ export class Drawing {
         const along = widest * (span.height + 50);
         const area = this.place(
           down ? { width: along * 2, height: across / 1.5 } : { width: across, height: along },
-          op.near,
-          op.in,
+          op,
         );
         for (const node of op.nodes) {
           const layer = depth.get(node.key)!;
@@ -536,7 +608,7 @@ export class Drawing {
         const el = this.find(op.id);
         if (!op.near && !op.in) return;
         this.survey(new Set([el, ...this.carried(el)]));
-        const at = this.place(el, op.near, op.in);
+        const at = this.place(el, op);
         const dx = at.x - el.x;
         const dy = at.y - el.y;
         for (const part of [el, ...this.carried(el)]) {
@@ -559,7 +631,11 @@ export class Drawing {
         return;
       }
       case 'delete':
-        for (const ref of op.ids) this.remove(this.find(ref));
+        // What an earlier deletion already took (a box's arrows) is gone, not missing.
+        for (const ref of op.ids) {
+          const gone = this.elements.get(this.created[ref] ?? ref);
+          if (!gone?.isDeleted) this.remove(this.find(ref));
+        }
         return;
       case 'sketch': {
         // Each stroke in the sketch's own coordinates, scaled as one so its longest side is the
@@ -573,7 +649,7 @@ export class Drawing {
         const width = Math.max(...points.map((p) => p[0])) - minX || 1;
         const height = Math.max(...points.map((p) => p[1])) - minY || 1;
         const scale = { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
-        const at = this.place({ width: width * scale, height: height * scale }, op.near, op.in);
+        const at = this.place({ width: width * scale, height: height * scale }, op);
         const group = elementId();
         let first: El | undefined;
         for (const { stroke, lines } of read)
@@ -627,6 +703,25 @@ export class Drawing {
 }
 
 const rect = (el: Rect): Rect => ({ x: el.x, y: el.y, width: el.width, height: el.height });
+/** Where a shape stands, a line or a pen stroke by the points it passes through. */
+function rectOf(el: El): Rect {
+  if (!Array.isArray(el.points) || !el.points.length) return rect(el);
+  const xs = (el.points as [number, number][]).map((p) => el.x + p[0]);
+  const ys = (el.points as [number, number][]).map((p) => el.y + p[1]);
+  return {
+    x: Math.min(...xs),
+    y: Math.min(...ys),
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+  };
+}
+/** Where an operation puts what it makes. */
+type Where = {
+  near?: string;
+  in?: string;
+  side?: 'right' | 'left' | 'above' | 'below';
+  at?: [number, number];
+};
 const contains = (outer: Rect, inner: Rect) =>
   inner.x >= outer.x &&
   inner.y >= outer.y &&

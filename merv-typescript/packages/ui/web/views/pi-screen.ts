@@ -213,8 +213,17 @@ export function useScreenAnswer(pi: Conversation | null) {
     if (!asked || !id || answered.current === asked.id || document.visibilityState === 'hidden')
       return;
     answered.current = asked.id;
+    const send = (said: object) => call('pi.screen', { id, askId: asked.id, ...said });
+    // A snapshot that could not be sent (too large, refused) is said to the agent, not left as
+    // silence it would read as no page at all.
     const answer = (said: object) =>
-      call('pi.screen', { id, askId: asked.id, ...said }).catch(() => undefined);
+      send(said).catch((error: Error) =>
+        'shot' in said
+          ? send({
+              missing: `This page could not be sent: ${error.message || 'it was refused'}.`,
+            }).catch(() => undefined)
+          : undefined,
+      );
     if (asked.at) {
       void placeOf(asked.at, rows)
         .then(async (place) =>

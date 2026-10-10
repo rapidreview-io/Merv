@@ -144,9 +144,10 @@ export default function BoardCanvas({ id }: { id: string }) {
       );
       if (!live || !scene || !scene.elements.length) return;
       revision.current = scene.board.revision;
+      // Never repair bindings here: these are only the shapes that changed, and a box whose text
+      // did not change would lose it.
       const remote = restoreElements(scene.elements as never, null, {
         refreshDimensions: true,
-        repairBindings: true,
       }) as unknown as RemoteExcalidrawElement[];
       for (const el of scene.elements)
         known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));

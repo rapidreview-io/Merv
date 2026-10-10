@@ -59,7 +59,14 @@ const stroke = z
   })
   .strict();
 /** Where a new shape goes: beside a shape, inside a frame, or (neither) the next free place. */
-const place = { near: shape.optional(), in: shape.optional() };
+const place = {
+  near: shape.optional(),
+  in: shape.optional(),
+  /** Which side of `near` to try first. */
+  side: z.enum(['right', 'left', 'above', 'below']).optional(),
+  /** Exactly here: the top-left corner in board coordinates, as board.read reports them. */
+  at: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+};
 const node = z
   .object({
     key: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),

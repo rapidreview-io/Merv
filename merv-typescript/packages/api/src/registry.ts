@@ -7,6 +7,8 @@ import type {
   CallerKind,
   CallerRules,
   ListedTool,
+  Picture,
+  PictureDrawer,
   RegisteredTool,
   RemoteToolDefinition,
   ToolDefinition,
@@ -339,6 +341,21 @@ export class ToolRegistry implements Tools {
   instructions(caller?: 'session'): string {
     if (caller === 'session') return this.sessions?.provider.instructions ?? '';
     return [...this.guide.map(({ text }) => text), toolsGuide].join('\n\n');
+  }
+
+  private readonly drawers = new Map<string, PictureDrawer>();
+  contributePicture(prefix: string, draw: PictureDrawer): () => void {
+    if (this.drawers.has(prefix))
+      throw new MervError('picture_conflict', `Records ${prefix}… already have a drawer`, 409);
+    this.drawers.set(prefix, draw);
+    return () => {
+      if (this.drawers.get(prefix) === draw) this.drawers.delete(prefix);
+    };
+  }
+
+  async picture(caller: Caller, id: string, focus?: string): Promise<Picture | undefined> {
+    const draw = [...this.drawers].find(([prefix]) => id.startsWith(prefix))?.[1];
+    return draw ? await draw(structuredClone(caller), id, focus) : undefined;
   }
 
   contributeContext(read: (caller: Caller) => Promise<string | undefined>): () => void {

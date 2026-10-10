@@ -508,9 +508,17 @@ export class PiService implements Pi {
       'Name one record or one page to look at',
       400,
     );
-    const answer = await this.ask(caller, at ? { at } : {});
+    // A record that draws itself (a board) is looked at as drawn, without anyone's screen.
+    const drawn = at?.record
+      ? await this.core.tools.picture(caller, at.record, at.focus).catch((error: unknown) => {
+          if (error instanceof MervError && error.status < 500) return error.message;
+          throw error;
+        })
+      : undefined;
+    if (typeof drawn === 'string') return { seen: drawn };
+    const answer = drawn ? undefined : await this.ask(caller, at ? { at } : {});
     if (answer?.missing) return { seen: answer.missing };
-    const shot = answer?.shot;
+    const shot = drawn ?? answer?.shot;
     if (!shot) return { seen: `The person's screen could not be seen: ${UNANSWERED}` };
     const conversation = await this.core.read((tx) =>
       this.core.conversation(tx, caller.conversation!.id),

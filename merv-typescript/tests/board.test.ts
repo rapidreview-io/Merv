@@ -306,3 +306,92 @@ test('an agent sketches with a pen: grouped strokes, painted petals, scaled and 
   assert.equal(sketch.id, drawing.created.rose);
   assert.equal(read.arrows.length, 0, 'a sketched line is not an arrow');
 });
+
+/** A handwritten word as a pen stroke: a zigzag across its box. */
+const word = (id: string, x: number, y: number, width = 160): BoardElement =>
+  ({
+    id,
+    type: 'freedraw',
+    version: 1,
+    versionNonce: 1,
+    isDeleted: false,
+    x,
+    y,
+    width,
+    height: 30,
+    points: Array.from({ length: 9 }, (_, i) => [(i * width) / 8, i % 2 ? 30 : 0]),
+  }) as unknown as BoardElement;
+
+test('a shape goes as near its target as there is room, on the side asked, or exactly where asked', () => {
+  // A person's handwriting: a label with words packed to its right and below.
+  const hand = [
+    word('label', 0, 0),
+    word('w1', 200, 0),
+    word('w2', 400, 0),
+    word('w3', 0, 60),
+    word('w4', 200, 60),
+  ];
+  const drawing = new Drawing(hand, true);
+  drawing.apply({ op: 'box', key: 'beside', text: 'Examples', near: 'label' });
+  drawing.apply({ op: 'box', key: 'over', text: 'Above it', near: 'label', side: 'above' });
+  drawing.apply({ op: 'box', key: 'pinned', text: 'Here', at: [1000, 500] });
+  const box = (key: string) => drawing.find(key);
+  const gap = (a: BoardElement, b: BoardElement) =>
+    Math.hypot(a.x + a.width / 2 - (b.x + b.width / 2), a.y + a.height / 2 - (b.y + b.height / 2));
+  assert.ok(
+    gap(box('beside'), box('label')) < 420,
+    `beside its label, not far off (${Math.round(gap(box('beside'), box('label')))})`,
+  );
+  assert.ok(box('over').y + box('over').height <= 0, 'above, when asked');
+  assert.deepEqual([box('pinned').x, box('pinned').y], [1000, 500]);
+  for (const key of ['beside', 'over'])
+    for (const stroke of hand)
+      assert.ok(
+        box(key).x >= stroke.x + stroke.width ||
+          stroke.x >= box(key).x + box(key).width ||
+          box(key).y >= stroke.y + stroke.height ||
+          stroke.y >= box(key).y + box(key).height,
+        `${key} stays off the handwriting`,
+      );
+});
+
+test('deleting a box and then its arrow in one call is fine, and loose text finds its box again', () => {
+  const drawing = new Drawing([], true);
+  drawing.apply({ op: 'box', key: 'a', text: 'A' });
+  drawing.apply({ op: 'box', key: 'b', text: 'B' });
+  drawing.apply({ op: 'arrow', key: 'ab', from: 'a', to: 'b' });
+  drawing.apply({ op: 'delete', ids: [drawing.created.a!, drawing.created.ab!] });
+  assert.throws(() => drawing.apply({ op: 'delete', ids: ['never-was'] }), /No shape "never-was"/);
+  // A page that merged half a change left B's text pointing at B while B no longer lists it.
+  const shapes = drawing.result().filter((el) => !el.isDeleted);
+  const b = shapes.find((el) => el.id === drawing.created.b)!;
+  const loose = shapes.map((el) => (el.id === b.id ? { ...el, boundElements: [] } : el));
+  const next = new Drawing(loose as BoardElement[], false);
+  const rebound = next.result().find((el) => el.id === b.id)!;
+  assert.ok(
+    (rebound.boundElements as { type: string }[]).some((bound) => bound.type === 'text'),
+    'the box has its words again',
+  );
+  assert.equal(summarize(next.result()).shapes.find((s) => s.id === b.id)?.text, 'B');
+});
+
+test('a board draws itself for its agent: pen strokes and text as SVG, cropped to a focus', async () => {
+  const { pictureOf } = await import('@merv/board/picture');
+  const drawing = new Drawing([word('hand', 0, 0)], true);
+  drawing.apply({ op: 'note', key: 'n', text: 'Training <objective>' });
+  drawing.apply({ op: 'frame', key: 'f', title: 'Far away', holds: ['n'] });
+  const elements = [word('hand', 0, 0), ...drawing.result()];
+  const whole = pictureOf(elements);
+  assert.ok(typeof whole !== 'string');
+  assert.match(whole.html, /<polyline points="0,0 20,30/, 'the pen stroke is drawn');
+  assert.match(whole.html, /&lt;objective&gt;/, 'text is drawn, escaped');
+  assert.ok(Math.max(whole.width, whole.height) <= 1600);
+  const part = pictureOf(elements, drawing.created.f);
+  assert.ok(typeof part !== 'string');
+  const [x] = part.html
+    .match(/viewBox="(-?[\d.]+)/)!
+    .slice(1)
+    .map(Number);
+  assert.ok(x! > 100, 'a focus crops to its part');
+  assert.equal(pictureOf(elements, 'nope'), 'No shape "nope" on this board.');
+});

@@ -14,7 +14,7 @@ Board requires State and Scope and nothing else. A card that links to a task, an
 
 ## The agent's two tools
 
-`board.read` lists the boards, or says what one holds: frames, shapes with their text and rough place, link cards with what they open, and arrows with the shapes they join. `board.draw` makes every change in one call of composable operations: `note`, `box`, `text`, `link`, `arrow`, `frame`, `flow`, `edit`, `move` and `delete`. The agent never gives coordinates: a new shape goes `near` a shape, `in` a frame, or into the next free place, and Board works out where (`elements.ts`). Keys name what a call makes, so its later operations can point at it. To see a board as drawn (a sketch, a layout), the agent looks at it on the person's screen.
+`board.read` lists the boards, or says what one holds: frames, shapes with their text and rough place, link cards with what they open, and arrows with the shapes they join. `board.draw` makes every change in one call of composable operations: `note`, `box`, `text`, `link`, `arrow`, `frame`, `flow`, `edit`, `move` and `delete`. A new shape goes `near` a shape (the nearest room around it, on a `side` if asked), `in` a frame, `at` an exact corner in the coordinates `board.read` reports, or into the next free place; Board works out the rest (`elements.ts`). `sketch` draws pen strokes from SVG path data (`path.ts`). Keys name what a call makes, so its later operations can point at it. To see a board as drawn (handwriting, a sketch, a layout), the agent looks at it by its id: Board contributes a drawer to Tools (`picture.ts`, plain SVG, cropped to a `focus`), so the look needs nobody's screen and Pi knows nothing of boards.
 
 ## What a board keeps
 

@@ -116,3 +116,65 @@ test("the agent puts a record on the person's screen: their page goes there and 
   assert.equal((await f.pi.snapshot(f.operator, id)).screen, undefined, 'the ask is over');
   await assert.rejects(f.pi.screen(f.operator, answer), /no longer waiting/);
 });
+
+test('a record that draws itself is looked at as drawn, asking no page of the person', async (t) => {
+  const f = await fixture(t);
+  const { work, input } = await f.begun(f.operator);
+  const agent: Caller = {
+    ...f.operator,
+    conversation: {
+      id: input.conversationId,
+      commandId: input.commandId,
+      runtimeId: work.command.runtimeId,
+      epoch: work.command.epoch,
+    },
+  };
+  const drawn: unknown[] = [];
+  t.after(
+    f.tools.contributePicture('board_', async (_caller, id, focus) => {
+      drawn.push([id, focus]);
+      return { html: '<svg>board</svg>', width: 800, height: 600, path: `/ui/boards/${id}` };
+    }),
+  );
+  const env = {
+    MERV_BROWSER_RENDER_TOKEN: 'cf',
+    MERV_BROWSER_RENDER_ACCOUNT: 'acct',
+    MERV_PI_MODEL_API_KEY: 'sk',
+  };
+  Object.assign(process.env, env);
+  const real = globalThis.fetch;
+  const sent: string[] = [];
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    sent.push(String(url));
+    if (String(url).includes('browser-run'))
+      return new Response(new Uint8Array([0xff, 0xd8]), {
+        headers: { 'content-type': 'image/jpeg' },
+      });
+    return new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: 'Handwritten: data → objective.' }],
+          },
+        ],
+      }),
+    );
+  }) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = real;
+    for (const key of Object.keys(env)) delete process.env[key];
+  });
+  const seen = await f.pi.look(agent, {
+    question: 'Read it',
+    at: { record: 'board_1', focus: 'frame_9' },
+  });
+  assert.deepEqual(seen, { page: '/ui/boards/board_1', seen: 'Handwritten: data → objective.' });
+  assert.deepEqual(drawn, [['board_1', 'frame_9']]);
+  assert.equal(
+    (await f.pi.snapshot(f.operator, input.conversationId)).screen,
+    undefined,
+    'no page was asked',
+  );
+  assert.equal(sent.length, 2, 'drawn once, read once');
+});
