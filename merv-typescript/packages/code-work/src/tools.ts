@@ -86,7 +86,7 @@ export const codeToolsPlugin = {
         name: 'code.commit',
         conversation: 'never' as const,
         description:
-          'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.',
+          'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.',
         inputSchema: codeCommitInputSchema,
         handler: async (caller: Caller, input: CodeCommitInput) =>
           await ctx.codeWork.commit(caller, input),
@@ -95,7 +95,7 @@ export const codeToolsPlugin = {
         name: 'code.merge',
         conversation: 'never' as const,
         description:
-          'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.',
+          'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.',
         inputSchema: codeMergeInputSchema,
         handler: async (caller: Caller, input: CodeMergeInput) =>
           await ctx.codeWork.merge(caller, input),
