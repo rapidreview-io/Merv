@@ -191,10 +191,14 @@ export abstract class DriverCheckout extends DriverCore {
         (commit) => `refs/merv/known/${commit}`,
       );
       try {
+        const objectFormat = (
+          await this.git.ok(['--git-dir', cache, 'rev-parse', '--show-object-format'])
+        ).trim();
         await this.git.ok(['--git-dir', cache, 'bundle', 'create', bundle, ...refs]);
         await this.git.ok([
           'init',
           '--quiet',
+          `--object-format=${objectFormat}`,
           `--template=${join(this.root, 'empty-template')}`,
           row.path,
         ]);

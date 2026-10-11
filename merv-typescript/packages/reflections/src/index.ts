@@ -6,6 +6,7 @@ import {
   createService,
   recorded,
   replayed,
+  digest,
   check,
   inTransaction,
   now,
@@ -95,6 +96,7 @@ export class ReflectionService implements Reflections {
   checked = new CheckedTransitions();
   contexts = new Map<string, ContextRegistration>();
   private releaseOwner?: () => void;
+  private releaseProvenance?: () => void;
   private closed = false;
   constructor(
     readonly state: State,
@@ -122,6 +124,30 @@ export class ReflectionService implements Reflections {
             program.policy(this, definition === LENS_WORKFLOW),
           ),
         );
+      this.releaseProvenance = this.reviews
+        .provenance('reflections')
+        .register(async (projectId, subjectId, tx) => {
+          const lenses = await tx.all<Pick<LensRow, 'id' | 'attempt'>>(
+            'SELECT l.id,l.attempt FROM reflection_lenses l JOIN reflections r ON r.id=l.reflection_id WHERE r.project_id=? AND r.id=? AND l.attempt=r.attempt',
+            projectId,
+            subjectId,
+          );
+          check(lenses.length === 5, 'reflection_not_found', 'Reflection not found', 404);
+          // Lease identities are immutable; releasing a worker does not erase its director.
+          const sources = (
+            await leaseRows(tx, { projectId, instanceIds: lenses.map((lens) => lens.id) })
+          ).map(({ id, actor_id, source_actor_id }) => ({ id, actor_id, source_actor_id }));
+          const body = {
+            formatVersion: 1 as const,
+            provider: 'reflections',
+            reference: `${subjectId}:${lenses[0]!.attempt}`,
+            sourceHash: digest(sources),
+            excludedActorIds: [
+              ...new Set(sources.flatMap(({ source_actor_id }) => source_actor_id ?? [])),
+            ].sort(),
+          };
+          return { ...body, hash: digest(body) };
+        });
       this.releaseOwner = this.reviews.registerSubmitOwner({
         id: 'reflections',
         owns: async (review, tx) =>
@@ -146,6 +172,7 @@ export class ReflectionService implements Reflections {
     if (this.closed) return;
     this.closed = true;
     this.releaseOwner?.();
+    this.releaseProvenance?.();
     for (const handle of this.handles.values()) handle.dispose();
     this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();

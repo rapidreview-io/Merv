@@ -678,11 +678,20 @@ export class NativeConnections {
       sql.all<NativeConnectionRow>(
         `SELECT c.* FROM sandbox_native_connections c WHERE revoke_pending=TRUE
        AND NOT EXISTS (SELECT 1 FROM sandbox_native_flows f WHERE f.id=c.id AND f.expires_at>? AND f.completed_at IS NULL)
-       LIMIT 20`,
+       ORDER BY c.revoke_attempted_at ASC NULLS FIRST,c.id LIMIT 20`,
         this.now(),
       ),
     );
     for (const row of rows) {
+      // Persist the turn before network I/O: a failing or interrupted attempt must let the
+      // bounded batch reach other roots, including after a restart.
+      await this.state.transaction((tx) =>
+        tx.run(
+          'UPDATE sandbox_native_connections SET revoke_attempted_at=? WHERE id=?',
+          this.now(),
+          row.id,
+        ),
+      );
       try {
         // Only a successful native self-revoke confirms revocation. A 403 may be suspension.
         await this.call(row, '/v1/delegations/connection', {

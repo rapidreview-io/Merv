@@ -202,17 +202,7 @@ const Config = z
       .url()
       .refine((value) => {
         const url = new URL(value);
-        return (
-          url.protocol === 'https:' &&
-          !url.port &&
-          /^[a-z0-9.-]+$/.test(url.hostname) &&
-          value === `https://${url.hostname}/hf` &&
-          url.pathname === '/hf' &&
-          !url.search &&
-          !url.hash &&
-          !url.username &&
-          !url.password
-        );
+        return /^[a-z0-9.-]+$/.test(url.hostname) && value === `https://${url.hostname}/hf`;
       })
       .optional(),
   })

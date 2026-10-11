@@ -277,6 +277,62 @@ test('every text is blanked of bearers and exact secrets, even split between pie
   assert.deepEqual(scrubber.scrub([{ kind: 'thinking', id: 'n', delta: '' }]), []);
 });
 
+test('Unicode pairs stay whole when events, tool names and carried text are cut', () => {
+  const prefix = 'x'.repeat(AGENT_EVENT_TEXT - 1);
+  const long = `${prefix}😀after`;
+  const scrubber = new Scrubber([]);
+  assert.deepEqual(
+    scrubber.scrub([
+      { kind: 'tool_call', id: 'call', name: `${'n'.repeat(199)}😀`, input: long },
+      { kind: 'tool_result', id: 'call', output: long },
+      { kind: 'status', id: 'status', text: long },
+    ]),
+    [
+      { kind: 'tool_call', id: 'call', name: 'n'.repeat(199), input: prefix, cut: 7 },
+      { kind: 'tool_result', id: 'call', output: prefix, cut: 7 },
+      { kind: 'status', id: 'status', text: prefix },
+    ],
+  );
+  const carried = `😀${'b'.repeat(4095)}`;
+  assert.deepEqual(scrubber.scrub([{ kind: 'text', id: 'text', delta: `before${carried}` }]), [
+    { kind: 'text', id: 'text', delta: 'before' },
+  ]);
+  assert.deepEqual(scrubber.scrub([{ kind: 'text', id: 'text', delta: '', done: true }]), [
+    { kind: 'text', id: 'text', delta: carried, done: true },
+  ]);
+});
+
+test('escaped credentials are blanked in tool arguments and across streamed pieces', () => {
+  for (const secret of [
+    'opaque-credential-"-\\-123456789',
+    'opaque-credential-ends-\\',
+    `sk-${'s'.repeat(25)}"tail-secret`,
+    '\u0001'.repeat(900),
+  ]) {
+    const input = JSON.stringify({ authorization: secret });
+    const scrubber = new Scrubber([secret]);
+    assert.deepEqual(
+      scrubber.scrub([{ kind: 'tool_call', id: 'tool', name: 'remote.tool', input }]),
+      [
+        {
+          kind: 'tool_call',
+          id: 'tool',
+          name: 'remote.tool',
+          input: '{"authorization":"[REDACTED]"}',
+        },
+      ],
+    );
+    const events = [
+      ...scrubber.scrub([{ kind: 'text', id: 'message', delta: input.slice(0, -4) }]),
+      ...scrubber.scrub([{ kind: 'text', id: 'message', delta: input.slice(-4), done: true }]),
+    ];
+    assert.equal(
+      events.map((event) => (event.kind === 'text' ? event.delta : '')).join(''),
+      '{"authorization":"[REDACTED]"}',
+    );
+  }
+});
+
 test('a launch log is sent whole lines at a time; a failed batch is sent again as it was', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-agent-stream-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

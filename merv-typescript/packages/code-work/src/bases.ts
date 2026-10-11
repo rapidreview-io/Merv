@@ -1140,14 +1140,14 @@ export class CodeBaseService {
       'this server has no sandbox adapter for project checks',
       503,
     );
-    const spec = await this.state.read((sql) => this.checkSpec(sql, projectId));
+    const configured = await this.state.read((sql) => this.checkSpec(sql, projectId));
     const env = this.repositories.environment(projectId);
     const commit = await this.heldCommit(projectId, base);
     check(commit, 'code_check_unavailable', 'the merged base holds no commit to check', 409);
     // The operator withdrew the command while this check was in flight. Verification was not
     // asked for any more, and the merge is already complete and sound, so the base seals the
     // way a merge with no command seals rather than waiting at blocked_infra for a person.
-    if (!spec)
+    if (!configured)
       return await this.seal(
         projectId,
         base,
@@ -1156,18 +1156,28 @@ export class CodeBaseService {
         env,
         handle,
       );
+    check(
+      !handle || handle.spec,
+      'code_check_unavailable',
+      'This check has no retained execution specification; retry it before recording a verdict',
+      503,
+    );
+    // Configuration edits apply to later executions; a started check keeps what it was given.
+    const spec = handle?.spec ?? configured;
     const plan = checkPlan(spec, base.key, base.executionEpoch);
     if (!handle) {
       const source = await archiveCommit(this.repositories.git, env, commit);
       return await this.persist(projectId, base, {
         ...(await checks.start(projectId, { ...plan, source })),
         epoch: base.executionEpoch,
+        spec,
       });
     }
     if (!handle.jobId)
       return await this.persist(projectId, base, {
         ...(await checks.step(projectId, plan, handle)),
         epoch: handle.epoch,
+        spec,
       });
     const verdict = await checks.follow(projectId, handle);
     if (verdict.state === 'running') return;

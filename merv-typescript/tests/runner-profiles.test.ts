@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { inspect } from 'node:util';
 import {
   chmodSync,
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -876,11 +877,14 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
     { autoPoll: false },
   );
   try {
-    const read = (profile: RunnerProfile) =>
-      (runner as unknown as { readUsage(record: unknown): unknown }).readUsage({
-        runDirectory: directory,
-        metadata: { profile },
-      });
+    const read = (profile: RunnerProfile, tailBytes?: number) =>
+      (runner as unknown as { readUsage(record: unknown, tailBytes?: number): unknown }).readUsage(
+        {
+          runDirectory: directory,
+          metadata: { profile },
+        },
+        tailBytes,
+      );
     const log = join(directory, 'stdout.log'),
       file = join(directory, 'usage.json');
     assert.equal(read(codex), undefined);
@@ -904,6 +908,60 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
     assert.deepEqual(read(codex), { inputTokens: 30, outputTokens: 4 });
     writeFileSync(log, `${'"'.repeat(2 << 20)}${stream(turn(31, 5))}`);
     assert.equal(read(codex), undefined, 'a tail inside one line holds no whole event');
+
+    // Claude's assistant usage is per call, not cumulative. Ordinary tool output may put
+    // earlier calls outside both the release's 1 MiB tail and a live budget's 16 MiB tail.
+    const call = (id: string, usage: Record<string, number>) =>
+      JSON.stringify({ type: 'assistant', message: { id, usage, content: [] } });
+    const earlier = call('earlier', {
+      input_tokens: 95_000,
+      cache_read_input_tokens: 5_000,
+      output_tokens: 1000,
+    });
+    const latest = call('latest', { input_tokens: 40_000, output_tokens: 2 });
+    const padding = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: 'x'.repeat(64 << 10) }] },
+    });
+    writeFileSync(
+      log,
+      stream(
+        call('earlier', { input_tokens: 1, output_tokens: 1 }),
+        earlier,
+        ...Array<string>(280).fill(padding),
+        latest,
+        latest,
+      ) + '{"type":"assistant","message":',
+    );
+    for (const tail of [undefined, 16 << 20])
+      assert.deepEqual(
+        read(claude, tail),
+        { inputTokens: 140_000, outputTokens: 1002 },
+        'The latest report per message is counted once, across the whole log',
+      );
+    appendFileSync(log, `\n${result({ input_tokens: 150_000, output_tokens: 2000 })}`);
+    assert.deepEqual(
+      read(claude),
+      { inputTokens: 150_000, outputTokens: 2000 },
+      'A final cumulative result still wins, including without a trailing newline',
+    );
+
+    // A line too large to inspect cannot silently remove a call from the fallback sum.
+    writeFileSync(log, stream(earlier, 'x'.repeat(17 << 20), latest));
+    assert.equal(read(claude), undefined, 'An incomplete fallback is never reported as complete');
+    appendFileSync(log, result({ input_tokens: 150_000, output_tokens: 2000 }));
+    assert.deepEqual(
+      read(claude),
+      { inputTokens: 150_000, outputTokens: 2000 },
+      'A later cumulative result makes the total known even after an oversized line',
+    );
+    rmSync(log);
+    writeFileSync(join(directory, 'real.log'), result({ input_tokens: 1, output_tokens: 2 }));
+    symlinkSync(join(directory, 'real.log'), log);
+    assert.equal(read(claude), undefined, 'The streaming reader never follows a link');
+    rmSync(log);
+    mkdirSync(log);
+    assert.equal(read(claude), undefined, 'The streaming reader requires a regular file');
   } finally {
     await runner.stop();
     delete process.env[credentialEnv];

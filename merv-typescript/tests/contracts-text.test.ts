@@ -59,6 +59,23 @@ test('markdownSection() reads CommonMark headings in linear time', () => {
   assert.ok(Date.now() - started < 2_000);
 });
 
+test('Markdown comment markers in fenced examples leave following sections visible', () => {
+  for (const fence of ['```', '~~~~']) {
+    const example = `${fence}html\n<!--\n${fence}`;
+    assert.equal(
+      markdownSection(`${example}\n## Summary\nMeasured result retained.`, 'Summary'),
+      'Measured result retained.',
+    );
+    assert.equal(
+      markdownSection(`## Summary\nbefore\n${example}\nafter`, 'Summary'),
+      'before\n\n\n\nafter',
+    );
+  }
+  assert.equal(markdownSection('<!--\n```\n-->\n## Summary\nVisible.', 'Summary'), 'Visible.');
+  assert.equal(markdownSection('## Summary\nA<!-- hidden -->B<!-- more -->C', 'Summary'), 'ABC');
+  assert.equal(markdownSection('<!--\n## Summary\nhidden', 'Summary'), null);
+});
+
 test('clip() never ends in half a surrogate pair', () => {
   assert.equal(clip('aaa😀b', 4), 'aaa');
   assert.equal(clip('aaa😀b', 5), 'aaa😀');

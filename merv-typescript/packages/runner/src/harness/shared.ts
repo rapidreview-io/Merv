@@ -140,7 +140,7 @@ export function firstId(output: string, marker: string, pick: (event: Line) => u
 }
 
 /** A usage's counts (and `cache` counts, absent as 0) when all are whole. */
-function counted(usage: Line | undefined, cache: string[], model?: string) {
+export function counted(usage: Line | undefined, cache: string[], model?: string) {
   const [input, outputTokens, ...cached] = ['input_tokens', 'output_tokens', ...cache].map(
     (key, index) => usage?.[key] ?? (index < 2 ? undefined : 0),
   );
@@ -158,23 +158,4 @@ export function spent(output: string, type: string, model?: string, cache: strin
   for (const event of events(output, `"${type}"`))
     if (event.type === type) usage = counted(event.usage, cache, model) ?? usage;
   return usage;
-}
-/**
- * What a run spent so far by each model call's own `type` event (`message.usage`, the last one
- * printed under each message id), summed: for a harness whose total is printed only at its end.
- */
-export function calls(output: string, type: string, model?: string, cache: string[] = []) {
-  const each = new Map<string, SessionUsageReport>();
-  for (const event of events(output, `"${type}"`)) {
-    const usage = event.type === type ? counted(event.message?.usage, cache) : undefined;
-    if (usage && typeof event.message?.id === 'string') each.set(event.message.id, usage);
-  }
-  if (!each.size) return undefined;
-  const sum = (key: 'inputTokens' | 'outputTokens') =>
-    [...each.values()].reduce((total, usage) => total + usage[key], 0);
-  return {
-    inputTokens: sum('inputTokens'),
-    outputTokens: sum('outputTokens'),
-    ...(model && { model }),
-  } as SessionUsageReport;
 }

@@ -74,8 +74,9 @@ const decode = (value: unknown) =>
   typeof value === 'string' ? Buffer.from(value, 'base64').toString('utf8') : '';
 
 export const wrapped = (command: string, timeoutSeconds: number): string[] => [
-  `timeout ${timeoutSeconds} sh -c ${quoted(command)} >out.log 2>&1; code=$?`,
-  `printf '{"exit":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$(wc -c <out.log | tr -d ' ')" "$(head -c 8000 out.log | base64 | tr -d '\\n')" "$(tail -c 8000 out.log | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
+  'output="$HOME/merv-check.log"',
+  `timeout ${timeoutSeconds} sh -c ${quoted(command)} >"$output" 2>&1; code=$?`,
+  `printf '{"exit":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$(wc -c <"$output" | tr -d ' ')" "$(head -c 8000 "$output" | base64 | tr -d '\\n')" "$(tail -c 8000 "$output" | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
   'exit 0',
 ];
 
@@ -101,10 +102,11 @@ export function checkScript(
     'd="$HOME/merv-check"',
     'mkdir -p "$d" || exit 121',
     'cd "$d" || exit 121',
-    `curl -fsS --retry 3 --max-time 300 -o src.tgz ${quoted(url)} || exit 122`,
-    `printf '%s  src.tgz' ${quoted(sha256)} | sha256sum -c - >/dev/null 2>&1 || exit 123`,
-    'tar -xzf src.tgz || exit 124',
-    'rm -f src.tgz',
+    // Scratch files stay beside the source tree, whose filenames belong to the repository.
+    `curl -fsS --retry 3 --max-time 300 -o "$d.tgz" ${quoted(url)} || exit 122`,
+    `printf '%s  %s' ${quoted(sha256)} "$d.tgz" | sha256sum -c - >/dev/null 2>&1 || exit 123`,
+    'tar -xzf "$d.tgz" || exit 124',
+    'rm -f "$d.tgz"',
     // The command's own clock, so an overrun is a written result — exit 124 — and therefore
     // a verdict, while the job's timeout can only mean setup outran its separate allowance.
     ...wrapped(command, timeoutSeconds),

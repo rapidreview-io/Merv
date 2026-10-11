@@ -228,8 +228,9 @@ export async function runPiWorker(
     let savedResult = false;
     try {
       validateWork(work, bootstrap);
-      if (seen.has(ids.commandId)) throw new Error('Duplicate worker assignment');
-      seen.add(ids.commandId);
+      const key = `${ids.conversationId}:${ids.commandId}`;
+      if (seen.has(key)) throw new Error('Duplicate worker assignment');
+      seen.add(key);
       if (controller.signal.aborted) throw new Error('Turn expired');
       const reply = await request<{ apply: boolean }>('begin', ids, controller.signal);
       if (reply.apply !== true) return;
@@ -436,6 +437,7 @@ async function executeTurn(
   let calls = 0;
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
+  let sequence = 0;
   // When the oldest word not yet sent was written, the timer that sends it, and whether anything
   // was sent since the last pulse (a silent turn still asks whether it stands).
   let since = 0;
@@ -456,16 +458,11 @@ async function executeTurn(
     clearTimeout(due);
     due = undefined;
     spoke = true;
-    const batch = events.splice(0, 32);
+    const batch = { ...ids, sequence: ++sequence, events: events.splice(0, 32) };
     const pending = Promise.resolve()
       .then(async () => {
         if (signal.aborted) return;
-        const receipt = await request<{ accepted: boolean }>(
-          'progress',
-          { ...ids, events: batch },
-          signal,
-          3,
-        );
+        const receipt = await request<{ accepted: boolean }>('progress', batch, signal, 3);
         if (receipt.accepted !== true) throw new Error('Conversation revoked');
       })
       .catch((error: unknown) => {

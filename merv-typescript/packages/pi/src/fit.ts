@@ -99,14 +99,15 @@ export function fit(name: string, result: unknown): unknown {
     });
     if (size(shown) <= resultBytes) return shown;
   }
-  const json = JSON.stringify(result);
-  const bytes = Buffer.byteLength(json);
-  const partial = Buffer.from(json)
-    .subarray(0, resultBytes - 200)
-    .toString()
-    .replace(/\uFFFD$/, '');
-  return {
-    partial,
-    truncated: `Only the first ${Buffer.byteLength(partial)} of ${bytes} bytes are shown`,
-  };
+  const json = Buffer.from(JSON.stringify(result));
+  return within(resultBytes - 200, (count) => {
+    const partial = json
+      .subarray(0, count)
+      .toString()
+      .replace(/\uFFFD$/, '');
+    return {
+      partial,
+      truncated: `Only the first ${Buffer.byteLength(partial)} of ${json.length} bytes are shown`,
+    };
+  });
 }

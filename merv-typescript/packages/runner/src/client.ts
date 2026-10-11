@@ -196,11 +196,12 @@ export class RunnerClient {
     } catch {
       throw new RunnerControlError('control_unavailable', 0);
     }
-    let raw = '';
+    let value: any;
     try {
       if (!response.body) throw new Error();
       const reader = response.body.getReader();
       const chunks: Uint8Array[] = [];
+      let raw: string;
       // Sessions admits four frozen packets of up to 512 KiB each. The complete
       // reply also carries session metadata and workspace receipts.
       const limit = response.ok
@@ -227,14 +228,6 @@ export class RunnerClient {
       } finally {
         reader.releaseLock();
       }
-    } catch {
-      throw new RunnerControlError(
-        'invalid_control_response',
-        [401, 403].includes(response.status) ? response.status : 0,
-      );
-    }
-    let value: any;
-    try {
       value = JSON.parse(raw);
     } catch {
       throw new RunnerControlError(

@@ -382,6 +382,18 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal(packed.headers['content-encoding'], 'gzip');
   assert.match(String(packed.headers.vary), /accept-encoding/i);
   assert.equal(gunzipSync(packed.bytes).toString('utf8'), script.body);
+  for (const encoding of ['gzip;q=0, identity;q=1', 'gzip;q=0.000', 'br, gzip;q=0, *;q=1']) {
+    const plain = await raw(url, '/ui/assets/app.js', { 'accept-encoding': encoding });
+    assert.equal(plain.headers['content-encoding'], undefined, encoding);
+    assert.equal(plain.body, script.body, encoding);
+    assert.match(String(plain.headers.vary), /accept-encoding/i);
+    const head = await raw(url, '/ui/assets/app.js', { 'accept-encoding': encoding }, 'HEAD');
+    assert.equal(head.headers['content-encoding'], undefined, encoding);
+    assert.equal(head.body, '');
+  }
+  const weighted = await raw(url, '/ui/assets/app.js', { 'accept-encoding': 'GZip;q=0.5' });
+  assert.equal(weighted.headers['content-encoding'], 'gzip');
+  assert.equal(gunzipSync(weighted.bytes).toString('utf8'), script.body);
   assert.equal((await raw(url, '/ui/missing.css')).status, 404);
   // Dot segments, encoded or not, normalize away before routing: no longer a UI path, and nothing
   // serves the path they leave.

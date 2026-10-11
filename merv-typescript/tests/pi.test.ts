@@ -1225,6 +1225,22 @@ test('a list shown as an index clips its long strings at a whole character', () 
   assert.equal(shown.index.items[0]!.description, `${'d'.repeat(299)}…`);
 });
 
+test('a partial result fits its byte limit after its JSON is escaped again', () => {
+  for (const text of ['"', '\\', '\n', '\u{1F680}"']) {
+    const result = { note: text.repeat(50_000) };
+    const shown = fit('project.records', result) as { partial: string; truncated: string };
+    assert.ok(Buffer.byteLength(JSON.stringify(shown)) <= 32_000, 'Serialized result fits 32 KB');
+    assert.ok(
+      shown.partial.length > 0 && JSON.stringify(result).startsWith(shown.partial),
+      'The partial result is a nonempty prefix at a whole character',
+    );
+    assert.equal(
+      shown.truncated,
+      `Only the first ${Buffer.byteLength(shown.partial)} of ${Buffer.byteLength(JSON.stringify(result))} bytes are shown`,
+    );
+  }
+});
+
 test('what Run tells the agent never ends in half a character, and a failing receipt falls back to the result', async (t) => {
   const f = await fixture(t);
   const head = '{"id":"probe_1","title":"';
@@ -1740,6 +1756,167 @@ test('progress bursts do not add durable writes; stop ends only the turn and fen
   );
   // No project read: a claim's notes read only the paper.
   assert.equal(f.reads, 0);
+});
+
+test('progress batches replay once while identical later text and restart retention stay intact', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const events = [{ type: 'text', text: 'Again. ' }];
+  const batch = { ...bound.input, sequence: 1, events };
+  // Both requests can reach the first-text transaction before either publishes its answer.
+  await Promise.all([f.pi.progress(bound.token, batch), f.pi.progress(bound.token, batch)]);
+  const first = await f.pi.snapshot(f.operator, conversation.id);
+  assert.equal(first.tail.find((event) => event.type === 'text')?.text, 'Again. ');
+  await f.pi.progress(bound.token, batch);
+  assert.equal((await f.pi.snapshot(f.operator, conversation.id)).sequence, first.sequence);
+  // Equal words from the model are new content when their batch advances.
+  await f.pi.progress(bound.token, { ...batch, sequence: 2 });
+  await f.pi.progress(bound.token, batch);
+  const stopped = (await f.pi.stop(f.operator, conversation.id)).commands[0];
+  assert.equal(stopped.status, 'interrupted');
+  assert.deepEqual(
+    stopped.messages.filter((message) => message.role === 'assistant'),
+    [{ role: 'assistant', text: 'Again. Again. ' }],
+  );
+  // A new turn starts at one, and graceful restart saves the deduplicated answer once.
+  await f.send(conversation);
+  const { work } = await f.pi.next(bound.token, { workerId: bound.input.workerId });
+  const next = { ...bound.input, commandId: work!.command.id };
+  await f.pi.begin(bound.token, next);
+  const last = { ...next, sequence: 1, events };
+  await f.pi.progress(bound.token, last);
+  await f.pi.progress(bound.token, last);
+  await f.restart();
+  const commands = (await f.pi.snapshot(f.operator, conversation.id)).commands;
+  assert.deepEqual(commands[0], stopped);
+  assert.equal(commands[1].error, 'service_unavailable');
+  assert.deepEqual(
+    commands[1].messages.filter((message) => message.role === 'assistant'),
+    [{ role: 'assistant', text: 'Again. ' }],
+  );
+  await assert.rejects(f.pi.progress(bound.token, last));
+});
+
+test('the real worker retries a lost progress reply without duplicating an interrupted answer', async (t) => {
+  const { runPiWorker } = await import('../packages/pi/src/worker.js');
+  const f = await fixture(t, { startTime: Date.now() });
+  const conversation = await f.create();
+  const command = await f.send(conversation, 'Report the measurement.');
+  const bound = await f.claimed(command);
+  const bootstrap = JSON.parse(await f.pi.bootstrap(await f.allocation(command.runtimeId)));
+  const answer = 'The measured accuracy is 92%. ';
+  const message = {
+    id: 'msg_fixture',
+    type: 'message',
+    role: 'assistant',
+    status: 'completed',
+    content: [{ type: 'output_text', text: answer, annotations: [] }],
+  };
+  const sse = [
+    { type: 'response.created', response: { id: 'resp_fixture' } },
+    { type: 'response.output_item.added', output_index: 0, item: message },
+    { type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: answer },
+    { type: 'response.output_item.done', output_index: 0, item: message },
+    {
+      type: 'response.completed',
+      response: {
+        id: 'resp_fixture',
+        status: 'completed',
+        output: [message],
+        usage: { input_tokens: 12, output_tokens: 8 },
+      },
+    },
+  ]
+    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+    .join('');
+  const controller = new AbortController();
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  let issued = false,
+    textPosts = 0,
+    modelCalls = 0;
+  let firstBatch: unknown;
+  const fetcher: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const path = new URL(request.url).pathname;
+    const body = (await request.json()) as {
+      sequence?: number;
+      events?: { type: string }[];
+    };
+    if (path === '/pi-model/responses') {
+      modelCalls++;
+      return new Response(sse, { headers: { 'content-type': 'text/event-stream' } });
+    }
+    if (path === '/pi-worker/next') {
+      if (!issued) {
+        issued = true;
+        return json({ work: bound.work });
+      }
+      return new Promise<Response>((resolve) => {
+        if (controller.signal.aborted) resolve(json({ work: null }));
+        else
+          controller.signal.addEventListener('abort', () => resolve(json({ work: null })), {
+            once: true,
+          });
+      });
+    }
+    try {
+      if (path === '/pi-worker/begin') return json(await f.pi.begin(bound.token, body));
+      if (path === '/pi-worker/progress') {
+        const receipt = await f.pi.progress(bound.token, body);
+        if (body.events?.some((event) => event.type === 'text')) {
+          textPosts++;
+          if (textPosts === 1) {
+            assert.ok(
+              typeof body.sequence === 'number' &&
+                Number.isSafeInteger(body.sequence) &&
+                body.sequence > 0,
+            );
+            firstBatch = body;
+            // Main applied the words; only its response was lost.
+            throw new TypeError('Simulated reset after progress application');
+          }
+          assert.deepEqual(body, firstBatch);
+          await f.pi.stop(f.operator, conversation.id);
+        }
+        return json(receipt);
+      }
+      if (path === '/pi-worker/complete') return json(await f.pi.complete(bound.token, body));
+      if (path === '/pi-worker/fail') {
+        controller.abort();
+        return json(await f.pi.fail(bound.token, body));
+      }
+      throw new Error(`Unexpected worker route ${path}`);
+    } catch (error) {
+      if (!(error instanceof MervError)) throw error;
+      return json({ error: { code: error.code, message: error.message } }, error.status);
+    }
+  };
+  const previous = globalThis.fetch;
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  globalThis.fetch = fetcher;
+  try {
+    await runPiWorker(bootstrap, {
+      fetchImpl: fetcher,
+      signal: controller.signal,
+      pollIntervalMs: 250,
+      workerId: bound.input.workerId,
+    });
+  } finally {
+    globalThis.fetch = previous;
+    clearTimeout(timeout);
+  }
+  const result = (await f.pi.snapshot(f.operator, conversation.id)).commands[0];
+  assert.deepEqual([modelCalls, textPosts, result.status], [1, 2, 'interrupted']);
+  assert.deepEqual(
+    result.messages.filter((message) => message.role === 'assistant'),
+    [{ role: 'assistant', text: answer }],
+  );
 });
 
 test('a turn still streaming runs past the old five-minute deadline; one silent that long ends', async (t) => {

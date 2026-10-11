@@ -1341,6 +1341,25 @@ function slotServer(
   };
 }
 
+test('one worker accepts the same command ID in different conversations', async () => {
+  const queue = ['a', 'b'].map((name) => assignment(name, { id: 'cmd_same' }));
+  const server = slotServer(1, {
+    next: () => (queue.length ? { work: queue.shift()! } : { work: null, retire: true }),
+    model: (name) => new Response(sse([message(`Answer ${name}`)], `Answer ${name}`)),
+  });
+  await server.run();
+  assert.deepEqual(server.bodies('fail'), []);
+  assert.deepEqual(
+    server
+      .bodies('complete')
+      .map(({ conversationId, commandId }) => ({ conversationId, commandId })),
+    [
+      { conversationId: 'conv_a', commandId: 'cmd_same' },
+      { conversationId: 'conv_b', commandId: 'cmd_same' },
+    ],
+  );
+});
+
 test('one worker streams turns of several conversations at once, never more than its slots', async () => {
   // a and b each finish only once both have streamed; turns run one at a time wait out 2 s instead.
   const order: string[] = [];

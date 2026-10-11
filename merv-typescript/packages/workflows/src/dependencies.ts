@@ -50,9 +50,9 @@ const INSTANCE = 'id,workflow,version,state,revision,data_json';
 /**
  * As INSTANCE, but an instance's data can be as large as the data it merged, and a dependency is
  * named by two of its fields: only those are sent. PostgreSQL's JSON operators refuse a document
- * holding an escaped NUL anywhere, which workflow data may, so that one is sent whole.
+ * holding an escaped NUL or lone surrogate anywhere, which workflow data may, so those are sent whole.
  */
-const NODE = `id,workflow,version,state,revision,CASE WHEN strpos(data_json,'\\u0000')>0 THEN data_json ELSE json_build_object('title',data_json::json->'title','name',data_json::json->'name')::text END AS data_json`;
+const NODE = String.raw`id,workflow,version,state,revision,CASE WHEN data_json ~ '\\u(0000|[dD][89a-fA-F])' THEN data_json ELSE json_build_object('title',data_json::json->'title','name',data_json::json->'name')::text END AS data_json`;
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
 
 /**

@@ -286,7 +286,7 @@ test(
   },
 );
 
-test('code-import brings a local branch into a served project, in steps, as its administrator only', async (t) => {
+test('code-import brings local branches and tags into a served project, in steps, as its administrator only', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-import-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -386,6 +386,43 @@ test('code-import brings a local branch into a served project, in steps, as its 
     git(source.repository, ['for-each-ref']) + git(source.repository, ['status', '--porcelain']),
     before,
   );
+
+  for (const nested of [false, true]) {
+    const tip = source.commit({ 'README.md': `annotated release ${nested}\n` });
+    const tag = nested ? 'nested-release' : 'annotated-release';
+    source.git('tag', '-a', `${tag}-inner`, '-m', 'Release', tip);
+    if (nested) source.git('tag', '-a', tag, '-m', 'Nested release', `${tag}-inner`);
+    const ref = nested ? tag : `${tag}-inner`;
+    assert.notEqual(source.git('rev-parse', ref), tip, 'The ref is a tag object, not a commit');
+    const moved = nested ? source.commit({ 'README.md': 'a later commit\n' }) : undefined;
+    let expectedSource = source.git('for-each-ref') + source.git('status', '--porcelain');
+    const status = app.ctx.codeWork.status.bind(app.ctx.codeWork);
+    const statusMock = t.mock.method(app.ctx.codeWork, 'status', async (caller: Caller) => {
+      if (moved) {
+        // The client resolved its commit before asking the server what it holds.
+        source.git('tag', '-f', ref, moved);
+        expectedSource = source.git('for-each-ref') + source.git('status', '--porcelain');
+      }
+      return await status(caller);
+    });
+    try {
+      const imported = await importRepository({
+        url,
+        repository: source.repository,
+        ref,
+        token: boot.token,
+      });
+      assert.deepEqual([imported.status, imported.head], ['completed', tip]);
+      assert.equal(
+        source.git('for-each-ref') + source.git('status', '--porcelain'),
+        expectedSource,
+        'Import does not change the source refs or working tree',
+      );
+      if (moved) assert.equal(source.git('rev-parse', ref), moved);
+    } finally {
+      statusMock.mock.restore();
+    }
+  }
 });
 
 test('a server configured with no repository root does not start', async (t) => {

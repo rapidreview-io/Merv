@@ -296,7 +296,14 @@ function fieldsOf(input: string): Record<string, unknown> | string {
   } catch {
     // Arguments a feed cut short are no longer JSON: the telling field is read from its start.
     const named = new RegExp(`"(${TELLING.join('|')})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(input);
-    return named ? { [named[1]!]: JSON.parse(`"${named[2]!.replace(/\\$/, '')}"`) } : input;
+    if (!named) return input;
+    let value = named[2]!;
+    try {
+      value = JSON.parse(`"${value}"`);
+    } catch {
+      // A partial Unicode escape still makes a useful summary in its original spelling.
+    }
+    return { [named[1]!]: value };
   }
 }
 

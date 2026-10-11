@@ -219,6 +219,14 @@ export async function submit(
         snapshot,
       );
       const pinnedInputIds = lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id);
+      const directors = (
+        await leaseRows(tx, {
+          projectId: caller.projectId,
+          instanceIds: lenses.map((lens) => lens.id),
+        })
+      )
+        .map((row) => row.source_actor_id)
+        .filter((id): id is string => typeof id === 'string');
       const review = await ctx.reviews.request(
         caller,
         {
@@ -230,19 +238,17 @@ export async function submit(
             ...new Set([submission.report.id, submission.changeSpec.id, ...pinnedInputIds]),
           ],
           pinnedInputIds,
+          // Other lens directors need the wave's retained lease provenance. Certify them even
+          // if they also directed synthesis; owner-only waves keep their existing review policy.
+          ...(directors.some((id) => id !== wave.owner_id)
+            ? { provenanceOwner: 'reflections' }
+            : {}),
           // Lens authors, whoever directed a lens worker, the owner and the authority that
           // directed a worker's synthesis are none of them independent of it.
           excludedActorIds: [
             ...new Set([
               ...lenses.map((lens) => lens.producer_id!),
-              ...(
-                await leaseRows(tx, {
-                  projectId: caller.projectId,
-                  instanceIds: lenses.map((lens) => lens.id),
-                })
-              )
-                .map((row) => row.source_actor_id)
-                .filter((id): id is string => typeof id === 'string'),
+              ...directors.filter((id) => id === wave.owner_id),
               ...(caller.session
                 ? [wave.owner_id, (await ctx.scope.authorityActor(caller, tx)).id]
                 : []),

@@ -114,5 +114,5 @@ export function receiptOf(commands: PiCommand[], at: number): PiProposal | null 
     .filter((call) => same(call.ran?.told))
     .sort((a, b) => a.ran!.at.localeCompare(b.ran!.at));
   const earlier = commands.slice(from + 1, at).filter((turn) => same(told(turn)));
-  return ran[Math.min(earlier.length, ran.length - 1)] ?? null;
+  return ran[earlier.length] ?? null;
 }

@@ -448,10 +448,16 @@ export const childRequest = (caller: Caller, scope: string, step: string, reques
 /** Markdown with comments and fenced blocks blanked: nothing inside them is a heading or a figure. */
 export function visibleMarkdown(text: string): string {
   let fence: { character: string; count: number } | undefined;
+  let comment = false;
   return text
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
     .split(/\r?\n/)
     .map((line) => {
+      if (!fence && comment) {
+        const end = line.indexOf('-->');
+        if (end < 0) return '';
+        line = line.slice(end + 3);
+        comment = false;
+      }
       const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
       if (fence) {
         if (
@@ -463,8 +469,14 @@ export function visibleMarkdown(text: string): string {
           fence = undefined;
         return '';
       }
-      if (match) fence = { character: match[1][0], count: match[1].length };
-      return match ? '' : line;
+      if (match) {
+        fence = { character: match[1][0], count: match[1].length };
+        return '';
+      }
+      return line.replace(/<!--.*?(-->|$)/g, (_, end: string) => {
+        comment = !end;
+        return '';
+      });
     })
     .join('\n');
 }

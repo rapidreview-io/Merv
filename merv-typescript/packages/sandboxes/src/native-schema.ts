@@ -143,6 +143,11 @@ ALTER TABLE sandbox_native_captures DROP CONSTRAINT sandbox_native_captures_outc
 ALTER TABLE sandbox_native_captures ADD CONSTRAINT sandbox_native_captures_outcome
   CHECK (artifact_id IS NULL OR error IS NULL);`,
   },
+  {
+    // Failed self-revocations take their turn behind untried roots, across restarts too.
+    version: 8,
+    sql: `ALTER TABLE sandbox_native_connections ADD COLUMN revoke_attempted_at TEXT;`,
+  },
 ];
 
 export interface NativeConnectionRow {

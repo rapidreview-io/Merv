@@ -1,11 +1,22 @@
-import { lstatSync, realpathSync, rmSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { check } from '@merv/contracts';
-import { claudeEvents, claudeToolName } from '@merv/sessions/agent-stream';
+import { claudeEvents, claudeToolName, readLine } from '@merv/sessions/agent-stream';
+import type { SessionUsageReport } from '@merv/sessions/types';
 import type { RunnerProfile } from '../profiles.js';
 import {
-  calls,
+  counted,
   entries,
   firstId,
   type Harness,
@@ -13,12 +24,87 @@ import {
   type LaunchFacts,
   type Launcher,
   sessionTokenVariable,
-  spent,
 } from './shared.js';
 
 type Claude = Extract<RunnerProfile, { harness: 'claude' }>;
 
 const cache = ['cache_creation_input_tokens', 'cache_read_input_tokens'];
+/** A bounded line and bounded retained message ids; an incomplete sum is never reported. */
+const usageLimit = 16 << 20;
+
+function usage(lines: Iterable<string | undefined>, model?: string) {
+  let total: SessionUsageReport | undefined,
+    incomplete = false,
+    retained = 0;
+  const each = new Map<string, SessionUsageReport>();
+  for (const line of lines) {
+    if (line === undefined) {
+      incomplete = true;
+      each.clear();
+      total = undefined;
+      continue;
+    }
+    if (!line.includes('"result"') && !line.includes('"assistant"')) continue;
+    const event = readLine(line);
+    if (event?.type === 'result') total = counted(event.usage, cache) ?? total;
+    const item = event?.type === 'assistant' && counted(event.message?.usage, cache);
+    const id = event?.message?.id;
+    if (!incomplete && item && typeof id === 'string') {
+      if (!each.has(id)) retained += id.length + 64;
+      if (retained > usageLimit) {
+        incomplete = true;
+        each.clear();
+      } else each.set(id, item);
+    }
+  }
+  if (!total && !incomplete && each.size) {
+    total = { inputTokens: 0, outputTokens: 0 };
+    for (const item of each.values()) {
+      total.inputTokens += item.inputTokens;
+      total.outputTokens += item.outputTokens;
+    }
+  }
+  return total && { ...total, ...(model && { model }) };
+}
+
+/** Read the whole log: assistant usage is per call, so a tail cannot give its total. */
+export function claudeLogUsage(path: string, model?: string) {
+  function* lines() {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) return;
+      const bytes = Buffer.alloc(64 << 10),
+        decoder = new StringDecoder('utf8');
+      let pending: string | undefined = '';
+      const append = (text: string) => {
+        if (pending !== undefined)
+          pending = pending.length + text.length > usageLimit ? undefined : pending + text;
+      };
+      for (let at = 0; at < stat.size;) {
+        const got = readSync(fd, bytes, 0, Math.min(bytes.length, stat.size - at), at);
+        if (!got) {
+          yield undefined;
+          return;
+        }
+        at += got;
+        const text = decoder.write(bytes.subarray(0, got));
+        let start = 0;
+        for (let end; (end = text.indexOf('\n', start)) >= 0; start = end + 1) {
+          append(text.slice(start, end));
+          yield pending;
+          pending = '';
+        }
+        append(text.slice(start));
+      }
+      append(decoder.end());
+      if (pending !== '') yield pending;
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return usage(lines(), model);
+}
 
 /**
  * Claude Code. Its `stream-json` ends with one `result` event: its `input_tokens` excludes the
@@ -31,8 +117,7 @@ export const claude: Harness = {
   name: 'claude',
   lines: claudeEvents,
   // A run stopped before its `result` spent what each of its model calls printed.
-  usage: (output, model) =>
-    spent(output, 'result', model, cache) ?? calls(output, 'assistant', model, cache),
+  usage: (output, model) => usage(output.split('\n'), model),
   conversationId: (output) =>
     firstId(
       output,
@@ -149,7 +234,7 @@ export const claudeLauncher: Launcher<Claude> = {
   agent: claude,
   tuned: true,
   skills: false,
-  // Stopped at once: a Claude run so stopped before its `result` event reports no usage.
+  // Stopped at once: its per-call usage accounts for a run ending before its `result` event.
   handoffGraceMs: 0,
   valid: () => true,
   isolated: () => false,

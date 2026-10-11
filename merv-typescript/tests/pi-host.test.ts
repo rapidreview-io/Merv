@@ -428,6 +428,35 @@ test('a turn whose machine a rollout takes before it shows anything waits for a 
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
 });
 
+for (const events of [[], [{ type: 'progress', text: 'Thinking' }]])
+  test(`a retried turn restarts progress sequences after ${events.length ? 'thinking' : 'a heartbeat'}`, async (t) => {
+    const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+    const conversation = await f.create();
+    const sent = await f.send(conversation);
+    const first = await f.claimed(sent);
+    await f.pi.begin(first.token, first.input);
+    await f.pi.progress(first.token, { ...first.input, sequence: 1, events });
+    await released(f, sent.runtimeId, { intent: 'run' });
+    await f.pi.tick();
+    const moved = await command(f, sent);
+    assert.equal(moved.status, 'waiting');
+    assert.notEqual(moved.runtimeId, sent.runtimeId);
+    const second = await f.claimed(moved, 'worker_2');
+    await f.pi.begin(second.token, second.input);
+    const batch = {
+      ...second.input,
+      sequence: 1,
+      events: [{ type: 'text', text: 'The recovered answer.' }],
+    };
+    await f.pi.progress(second.token, batch);
+    await f.pi.progress(second.token, batch);
+    const stopped = (await f.pi.stop(f.operator, conversation.id)).commands[0];
+    assert.deepEqual(
+      stopped.messages.filter((message) => message.role === 'assistant'),
+      [{ role: 'assistant', text: 'The recovered answer.' }],
+    );
+  });
+
 test('a turn whose fresh machine Fleet refuses ends refused, not lost', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const request = f.fleet.request.bind(f.fleet);

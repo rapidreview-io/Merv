@@ -1129,11 +1129,19 @@ test('a dependency is named by its data title, else its name, else its workflow,
     { title: 7, name: 'Named \u0000 too', large: 'x'.repeat(200_000) },
     { title: null, name: { nested: true } },
     {},
+    { title: 'High surrogate', detail: 'a\ud800b' },
+    { name: 'Low surrogate', detail: 'a\udfffb' },
+    { title: 'Emoji 🧪', detail: 'Valid surrogate pair 🧪' },
   ].entries() as Iterable<[number, Data]>)
     ids.push(
       (await prep.start(caller, { workflow: 'preparation', requestId: `n-${index}`, data })).id,
     );
-  const downstream = await start(prep, caller, 'preparation', 'downstream', ids);
+  const downstream = await prep.start(caller, {
+    workflow: 'preparation',
+    requestId: 'downstream',
+    data: { title: 'downstream', detail: '\ud800' },
+    dependsOn: ids,
+  });
   const [dependencies, upstream] = [
     (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)!,
     (await workflows.records(caller, [ids[1]])).get(ids[1])!.dependents,
@@ -1141,7 +1149,15 @@ test('a dependency is named by its data title, else its name, else its workflow,
   // Edges made together are in no particular order among themselves.
   assert.deepEqual(
     ids.map((id) => dependencies.find((item) => item.id === id)!.name),
-    ['Titled', 'Named \u0000 too', 'preparation', 'preparation'],
+    [
+      'Titled',
+      'Named \u0000 too',
+      'preparation',
+      'preparation',
+      'High surrogate',
+      'Low surrogate',
+      'Emoji 🧪',
+    ],
   );
   assert.deepEqual(
     upstream.map((item) => item.name),

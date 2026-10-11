@@ -566,3 +566,42 @@ test('a credential anywhere in the delivered history is found, and never echoed'
   });
   assert.deepEqual((await f.judge(f.source.bundle(harmless, [base]))).findings, []);
 });
+
+for (const format of ['sha1', 'sha256'] as const)
+  for (const move of ['blob', 'tree', 'copy', 'policy'] as const)
+    test(`retained content is checked at its current non-exempt path (${format}, ${move})`, async (t) => {
+      const f = await fixture(t, format);
+      const token = secrets['credentials@1.github_token'];
+      const original = f.source.commit({ 'fixtures/token.txt': token });
+      const limits = { secretExemptGlobs: ['fixtures/**'] };
+      assert.deepEqual((await f.judge(f.source.bundle(original), { limits })).findings, []);
+      f.keep(original);
+
+      const destination = move === 'blob' ? 'token.txt' : 'production/token.txt';
+      const next = f.source.commit(
+        move === 'policy'
+          ? {}
+          : {
+              ...(move === 'copy' ? {} : { 'fixtures/token.txt': null }),
+              [destination]: token,
+            },
+      );
+      const bundle = f.source.bundle(next, [original]);
+      const path = move === 'policy' ? 'fixtures/token.txt' : destination;
+      const judged = await f.judge(bundle, {
+        limits: move === 'policy' ? { secretExemptGlobs: [] } : limits,
+      });
+      assert.deepEqual(judged.findings, [
+        {
+          rule: 'credentials@1.github_token',
+          path,
+          oid: f.source.git('rev-parse', `${original}:fixtures/token.txt`),
+        },
+      ]);
+      assert.equal(JSON.stringify(judged).includes(token), false);
+      // Even a cached match must respect the current path exemption.
+      assert.deepEqual(
+        (await f.judge(bundle, { limits: { secretExemptGlobs: ['**'] } })).findings,
+        [],
+      );
+    });

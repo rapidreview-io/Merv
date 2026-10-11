@@ -614,9 +614,8 @@ export class NativeWorkService {
               item.namespace === work.namespace &&
               typeof item.state === 'string',
           );
-      for (const stream of streams.filter((stream) => !stream.done))
-        reply[stream.key].forEach((item) => stream.found.set(item.id, item));
       for (const stream of streams.filter((stream) => !stream.done)) {
+        for (const item of reply[stream.key]) stream.found.set(item.id, item);
         const next = reply.next[stream.key];
         valid(next === null || (reference(next) && !stream.seen.has(next)));
         if (next === null) stream.done = true;

@@ -35,7 +35,7 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
   const [actor, project, workflows] = await Promise.all([
     tools.call('actor.whoami', caller, {}),
     tools.call('project.get', caller, {}),
-    answer(async () => await tools.call('workflow.catalog', caller, {})),
+    answer(() => tools.call('workflow.catalog', caller, {})),
   ]);
   return { actor: actor as Json, project: project as Json, workflows: workflows ?? [] };
 }
@@ -53,25 +53,19 @@ export async function homeRead(
   rows: UiRow[],
   caller: Caller,
 ): Promise<Json> {
-  const call = (tool: string) => async () => await tools.call(tool, caller, {});
-  const parts: (readonly [string, () => Promise<unknown>, (readonly string[])?])[] = [
-    ...PARTS.map(([key, tool, keep]) => [key, call(tool), keep] as const),
-    ['workflows', async () => (gates ? await gates(caller) : null)],
-    ...rows.flatMap((row) =>
-      row.home
-        ? [
-            [
-              row.id,
-              row.home.list ? async () => await row.home!.list!(caller) : call(row.home.tool!),
-              row.home.keep,
-            ] as const,
-          ]
-        : [],
-    ),
-  ];
   const home: Record<string, Json> = {};
-  for (const [key, read, keep] of parts)
-    home[key] = trim(await answer(async () => await isolated(read)), keep);
+  const read = async (key: string, fn: () => Promise<unknown>, keep?: readonly string[]) => {
+    home[key] = trim(await answer(() => isolated(fn)), keep);
+  };
+  for (const [key, tool, keep] of PARTS) await read(key, () => tools.call(tool, caller, {}), keep);
+  await read('workflows', async () => (gates ? gates(caller) : null));
+  for (const { id, home: part } of rows)
+    if (part)
+      await read(
+        id,
+        () => (part.list ? part.list(caller) : tools.call(part.tool!, caller, {})),
+        part.keep,
+      );
   return home;
 }
 

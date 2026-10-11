@@ -38,7 +38,9 @@ async function foundation(t: TestContext) {
     loseReply: false,
     suspended: false,
     denyDelete: false,
+    allowDelete: '',
     deletes: 0,
+    deleteIds: [] as string[],
     pause: undefined as ReturnType<typeof deferred<void>> | undefined,
     entered: deferred<void>(),
   };
@@ -103,7 +105,8 @@ async function foundation(t: TestContext) {
       }
       if (req.method === 'DELETE') {
         control.deletes++;
-        if (control.denyDelete) {
+        control.deleteIds.push(root.connection_id);
+        if (control.denyDelete && root.connection_id !== control.allowDelete) {
           json({}, 403);
           return;
         }
@@ -248,6 +251,39 @@ test('a temporarily suspended account still self-revokes; a rejected DELETE is n
   );
   assert.equal(row?.revoke_pending, false);
   assert.equal([...f.roots.values()][0]!.revoked, true);
+});
+
+test('bounded revocation batches reach healthy roots past failures after restart', async (t) => {
+  const f = await foundation(t);
+  f.control.denyDelete = true;
+  for (let index = 0; index < 21; index++) {
+    await f.service.finish(f.caller, await f.ready());
+    await f.service.disconnect(f.caller);
+  }
+  const dates = () =>
+    f.state.read((sql) =>
+      sql.all('SELECT id,connected_at,revoked_at FROM sandbox_native_connections ORDER BY id'),
+    );
+  const before = await dates();
+  const start = f.control.deleteIds.length;
+  await f.reopen().reconcileRevocations();
+  const attempted = new Set(f.control.deleteIds.slice(start));
+  assert.equal(attempted.size, 20, 'each pass keeps its bound');
+  const target = [...f.roots.values()].find((root) => !attempted.has(root.connection_id))!;
+  assert.ok(target);
+  f.control.allowDelete = target.connection_id;
+  for (let pass = 0; pass < 2; pass++) {
+    f.advance(60_000);
+    const start = f.control.deleteIds.length;
+    await f.reopen().reconcileRevocations();
+    assert.ok(f.control.deleteIds.length - start <= 20);
+  }
+  assert.equal(target.revoked, true, 'earlier failures cannot starve this healthy root');
+  const pending = await f.state.read((sql) =>
+    sql.all('SELECT id FROM sandbox_native_connections WHERE revoke_pending=TRUE'),
+  );
+  assert.equal(pending.length, 20, 'failed DELETEs remain pending');
+  assert.deepEqual(await dates(), before, 'retries preserve connection and local revocation times');
 });
 
 test('overlapping flows cannot replace a new connection or revoke its winning root', async (t) => {

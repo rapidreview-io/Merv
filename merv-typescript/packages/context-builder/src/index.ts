@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
+import { itemArtifactIds } from './artifact-item.js';
 import { renderItems, type ResolvedArtifacts } from './items.js';
 import {
   check,
@@ -126,11 +127,7 @@ async function resolve(
   input: Omit<ContextBuild, 'requestId'>,
   tx: Transaction,
 ): Promise<ResolvedArtifacts> {
-  const ids = new Set(
-    Object.values(input.inputs).flatMap((value) =>
-      value.items.flatMap((item) => ('artifactId' in item.body ? [item.body.artifactId] : [])),
-    ),
-  );
+  const ids = itemArtifactIds(input.inputs);
   const found = new Map<string, Artifact | MervError>();
   const fetch = async (batch: string[]) => {
     try {
@@ -144,7 +141,7 @@ async function resolve(
     }
   };
   // The batch is refused only when an ID is: then each one learns its own answer.
-  if (ids.size && !(await fetch([...ids]))) for (const id of ids) await fetch([id]);
+  if (ids.length && !(await fetch(ids))) for (const id of ids) await fetch([id]);
   return {
     get: (id) => {
       const artifact = found.get(id)!;

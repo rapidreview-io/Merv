@@ -140,7 +140,8 @@ export function useConversation() {
         : null,
     );
     if (pending.current && next.commands.some((command) => command.id === pending.current?.id)) {
-      setDraft((value) => (value.trim() === pending.current?.text ? '' : value));
+      const submitted = pending.current.text;
+      setDraft((value) => (value.trim() === submitted ? '' : value));
       pending.current = null;
       setError('');
     }

@@ -20,7 +20,12 @@ import type { CodeBaseCheck, CodeBaseRecord, CodeCheckSpec } from './models.js';
  * The durable handle and its execution epoch. releaseAttempts is read only from handles
  * written before durable cleanup ownership; new attempts live in code_base_cleanup.
  */
-export type CheckHandle = SandboxCheckHandle & { epoch: number; releaseAttempts?: number };
+export type CheckHandle = SandboxCheckHandle & {
+  epoch: number;
+  /** Absent only on handles retained before checks pinned their execution specification. */
+  spec?: CodeCheckSpec;
+  releaseAttempts?: number;
+};
 
 const ARCHIVE_TIMEOUT_MS = 120_000;
 
@@ -36,20 +41,31 @@ export async function archiveCommit(
   env: Record<string, string>,
   commit: string,
 ): Promise<{ bytes: Buffer; sha256: string }> {
-  const bytes = await git.ok(['archive', '--format=tar.gz', commit], {
-    env,
-    timeoutMs: ARCHIVE_TIMEOUT_MS,
-    // One byte of headroom, so a tree over the limit is refused by the named check below
-    // rather than by the runner's generic "said more than it may", which reads to an
-    // operator as a Git malfunction and is retried as though it were transient.
-    maxBuffer: CODE_CHECK_SOURCE_MAX_BYTES + 1,
-  });
+  const abort = new AbortController();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    await git.ok(['archive', '--format=tar.gz', commit], {
+      env,
+      timeoutMs: ARCHIVE_TIMEOUT_MS,
+      signal: abort.signal,
+      output(chunk) {
+        size += chunk.byteLength;
+        // Stop at the bound without retaining excess output or misclassifying it as a Git failure.
+        if (size > CODE_CHECK_SOURCE_MAX_BYTES) abort.abort();
+        else chunks.push(chunk);
+      },
+    });
+  } catch (error) {
+    if (size <= CODE_CHECK_SOURCE_MAX_BYTES) throw error;
+  }
   check(
-    bytes.byteLength <= CODE_CHECK_SOURCE_MAX_BYTES,
+    size <= CODE_CHECK_SOURCE_MAX_BYTES,
     'code_check_source_too_large',
     `The merged tree is larger than the ${CODE_CHECK_SOURCE_MAX_BYTES} bytes one check may ship`,
     413,
   );
+  const bytes = Buffer.concat(chunks, size);
   return { bytes, sha256: sha256Hex(bytes) };
 }
 

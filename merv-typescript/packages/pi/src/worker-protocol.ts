@@ -640,6 +640,8 @@ export class PiWorkerProtocol {
     const value = parse(
       commandInput
         .extend({
+          // Older workers omit this; current workers retain it across a batch's retries.
+          sequence: z.number().int().positive().safe().optional(),
           events: z
             .array(
               z.object({ type: z.enum(['text', 'progress']), text: z.string().max(8192) }).strict(),
@@ -661,7 +663,6 @@ export class PiWorkerProtocol {
         409,
       );
     });
-    if (value.events.length) this.touch(turn);
     const text = value.events.some((event) => event.type === 'text');
     // When the answer began to show: one write per turn, never one per token.
     if (text && this.core.live.get(id)?.streamed?.commandId !== value.commandId)
@@ -670,6 +671,18 @@ export class PiWorkerProtocol {
         current.firstTextAt ??= this.core.time();
         await this.core.saveCommand(tx, current);
       });
+    // After every await: two deliveries of the same batch may have waited on admission or
+    // the first-text write together. The worker sends only one batch at a time.
+    if (value.sequence !== undefined) {
+      const live = this.core.live.get(id);
+      if (live?.progress?.commandId === value.commandId && live.progress.sequence >= value.sequence)
+        return { accepted: true };
+      this.core.live.set(id, {
+        ...live,
+        progress: { commandId: value.commandId, sequence: value.sequence },
+      });
+    }
+    if (value.events.length) this.touch(turn);
     for (const event of value.events)
       this.core.streams.publish(id, { ...event, commandId: value.commandId });
     if (text) {

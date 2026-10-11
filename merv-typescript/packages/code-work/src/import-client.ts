@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -106,7 +106,29 @@ export async function importRepository(input: {
       )
         held.push(`^${kept}`);
     const file = join(directory, 'bundle');
-    await run('git', ['-C', input.repository, 'bundle', 'create', '--quiet', file, name, ...held]);
+    // Bundles advertise refs, so pin the peeled commit in a temporary repository. Sharing
+    // its objects leaves the source untouched, even if its branch or tag moves meanwhile.
+    const repository = join(directory, 'repository');
+    await run('git', [
+      'clone',
+      '--bare',
+      '--shared',
+      '--quiet',
+      '--',
+      resolve(input.repository),
+      repository,
+    ]);
+    await run('git', ['-C', repository, 'update-ref', 'refs/heads/merv-import', tip]);
+    await run('git', [
+      '-C',
+      repository,
+      'bundle',
+      'create',
+      '--quiet',
+      file,
+      'refs/heads/merv-import',
+      ...held,
+    ]);
     const bytes = statSync(file).size;
     check(
       bytes <= CODE_BUNDLE_MAX_BYTES,

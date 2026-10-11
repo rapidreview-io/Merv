@@ -63,8 +63,12 @@ export function serveBundle(root: string): MountHandler {
       'content-type': type,
       'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
     };
-    const zipped =
-      compressible.test(type) && /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+    const encoding = String(req.headers['accept-encoding'] ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .find((value) => /^gzip(?:\s*;|$)/i.test(value));
+    const quality = /;\s*q\s*=\s*([^;]*)/i.exec(encoding ?? '')?.[1] ?? '1';
+    const zipped = compressible.test(type) && encoding !== undefined && Number(quality) > 0;
     const sendText = (body: Uint8Array) =>
       send(200, body, {
         ...headers,

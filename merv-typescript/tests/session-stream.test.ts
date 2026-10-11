@@ -14,10 +14,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { Caller, WorkflowPolicy } from '@merv/contracts';
-import type { AgentEvent } from '@merv/sessions/agent-stream';
+import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import { serveEvents } from '@merv/api/event-stream';
 import type { ApplicationConfig } from '../src/config.js';
 import { AgentStream } from '../packages/runner/src/agent-stream.js';
+import { RunnerClient } from '../packages/runner/src/client.js';
 import { codex } from '../packages/runner/src/harness/codex.js';
 import { createApp } from './fixtures/app.js';
 
@@ -210,6 +211,59 @@ async function fixture(t: TestContext) {
 
 const thinking = (id: string, delta: string): AgentEvent => ({ kind: 'thinking', id, delta });
 const call: AgentEvent = { kind: 'tool_call', id: 't1', name: 'sandbox.run', input: '{}' };
+
+test('binary and clipped Unicode tool output do not end the runner’s live HTTP stream', async (t) => {
+  const f = await fixture(t);
+  const { session, control } = await f.leased();
+  const client = new RunnerClient(f.app.ctx.api.url!, f.owner.projectId, f.token);
+  const directory = await mkdtemp(join(tmpdir(), 'merv-stream-binary-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'stdout.log');
+  const line = (item: unknown) => `${JSON.stringify({ type: 'item.completed', item })}\n`;
+  writeFileSync(
+    path,
+    line({
+      type: 'command_execution',
+      id: 'command',
+      status: 'completed',
+      command: 'read binary fixture',
+      aggregated_output: 'hello\0world',
+      exit_code: 0,
+    }) +
+      line({
+        type: 'command_execution',
+        id: 'unicode-command',
+        status: 'completed',
+        command: 'read Unicode fixture',
+        aggregated_output: `${'x'.repeat(AGENT_EVENT_TEXT - 1)}😀more`,
+        exit_code: 0,
+      }),
+  );
+  const runner = new AgentStream(
+    directory,
+    codex,
+    [],
+    (batch) => client.stream(session.id, control.runnerId, control.hostRef, batch),
+    Date.now,
+  );
+  await runner.flush();
+  assert.equal(runner.finished, false, 'ordinary tool output must not close the stream');
+  appendFileSync(path, line({ type: 'agent_message', id: 'message', text: 'Next message' }));
+  await runner.flush();
+  const events = (await f.app.ctx.sessions.streams.snapshot(session.id)).map(({ event }) => event);
+  assert.ok(
+    events.some((event) => event.kind === 'tool_result' && event.output === 'hello\\0world'),
+  );
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === 'tool_result' &&
+        event.output === 'x'.repeat(AGENT_EVENT_TEXT - 1) &&
+        event.cut === 6,
+    ),
+  );
+  assert.ok(events.some((event) => event.kind === 'text' && event.delta === 'Next message'));
+});
 
 test('the runner that holds a session sends its agent’s events; a retry is taken once, in order', async (t) => {
   const f = await fixture(t);

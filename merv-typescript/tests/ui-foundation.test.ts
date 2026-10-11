@@ -18,7 +18,7 @@ const { ListPage, mixesKinds, splitRoutes, stateCounts, useListFilter } =
   await import('../packages/ui/web/list-filters.js');
 const { fileIcon } = await import('../packages/ui/web/icons.js');
 const { reviewClause } = await import('../packages/ui/web/states.js');
-const { CollectionView } = await import('../packages/ui/web/views/remote.js');
+const { CollectionView, RecordView } = await import('../packages/ui/web/views/remote.js');
 
 interface Item {
   id: string;
@@ -260,6 +260,165 @@ test('a published list opens on its live work, and what has ended is one chip aw
   assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing open');
   await click('released');
   assert.equal(document.querySelectorAll('.rows > .row').length, 3);
+});
+
+for (const guarded of [false, true])
+  for (const failure of ['refused', 'offline', 'server'])
+    test(`a ${guarded ? 'guarded' : 'plain'} remote action recovers safely after ${failure}`, async (t) => {
+      t.after(unmount);
+      const originalLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')!;
+      let reloads = 0;
+      Object.defineProperty(globalThis, 'location', {
+        ...originalLocation,
+        value: { reload: () => reloads++ },
+      });
+      t.after(() => Object.defineProperty(globalThis, 'location', originalLocation));
+      const row = {
+        ...fleetRow(),
+        view: {
+          ...fleetRow().view,
+          record: {
+            title: 'title',
+            act: [
+              {
+                id: 'extend',
+                label: 'Extend',
+                verb: 'extend',
+                tool: 'sandbox.extend',
+                args: { seconds: 300 },
+                ...(guarded
+                  ? { guard: { title: 'Extend lease', consequence: 'Adds five minutes.' } }
+                  : {}),
+              },
+            ],
+          },
+        },
+      };
+      serve('/tools/ui.read', { body: { result: { id: 'sandbox_1', title: 'Test sandbox' } } });
+      const calls: unknown[] = [];
+      let leaseSeconds = 3600;
+      serve('/tools/sandbox.extend', (_attempt, input) => {
+        calls.push(input);
+        // An uncertain response can be lost after the additive action committed.
+        if (calls.length > 1 || failure !== 'refused') leaseSeconds += 300;
+        return calls.length > 1
+          ? { body: { result: { extended: true } } }
+          : failure === 'offline'
+            ? { network: true }
+            : {
+                status: failure === 'refused' ? 400 : 503,
+                body: { error: { code: 'unavailable', message: 'Try again' } },
+              };
+      });
+      await mount(
+        createElement(
+          MemoryRouter,
+          { initialEntries: ['/fleet/sandbox_1'] },
+          createElement(
+            Routes,
+            null,
+            createElement(Route, {
+              path: '/fleet/:id',
+              element: createElement(RecordView, { row, shell: { rows: [row], plugins: [] } }),
+            }),
+          ),
+        ),
+      );
+      await click('Extend');
+      if (guarded) await click('Extend');
+      if (failure === 'refused') {
+        assert.ok(!text().includes('The result is unknown'));
+        await click('Extend');
+        assert.equal(calls.length, 2, 'a definite refusal permits another attempt');
+        assert.equal(reloads, 0);
+      } else {
+        assert.match(text(), /The result is unknown/);
+        assert.ok(!text().includes('Retry the same request'));
+        assert.ok(
+          ![...document.querySelectorAll('button')].some(
+            (button) => button.textContent === 'Extend',
+          ),
+          'an uncertain action cannot be repeated as confirmation',
+        );
+        await click('Refresh page');
+        assert.equal(reloads, 1, 'recovery reloads the record instead of repeating the command');
+        assert.equal(calls.length, 1);
+      }
+      assert.equal(leaseSeconds, 3900, 'the requested extension is applied only once');
+      assert.ok(
+        calls.every(
+          (input) => JSON.stringify(input) === JSON.stringify({ id: 'sandbox_1', seconds: 300 }),
+        ),
+        'manifest actions retain their accepted arguments',
+      );
+    });
+
+test('remote link columns keep safe destinations and show unsafe destinations as text', async (t) => {
+  t.after(async () => await unmount());
+  const destinations = [
+    ['HTTPS', 'https://example.com/output', 'https://example.com/output'],
+    ['HTTP', 'http://example.com/output', 'http://example.com/output'],
+    ['Mail', 'mailto:person@example.com', 'mailto:person@example.com'],
+    ['Relative', '/outputs/report one', '/outputs/report one'],
+    ['Fragment', 'notes/output#result', 'notes/output#result'],
+    ['Protocol relative', '//example.com/output', 'https://example.com/output'],
+    ['Whitespace', '  https://example.com/output  ', 'https://example.com/output'],
+    ['Script', 'javascript:void(document.body.dataset.executed="yes")', null],
+    ['Hidden script', 'JaVa\nScRiPt:alert(1)', null],
+    ['Data', 'data:text/html,<script>alert(1)</script>', null],
+    ['File', 'file:///tmp/output', null],
+    ['Empty', '', null],
+    ['Missing', undefined, null],
+    ['Number', 42, null],
+    ['Object', { url: 'https://example.com/output' }, null],
+  ] as const;
+  const row = {
+    ...fleetRow(),
+    view: {
+      ...fleetRow().view,
+      record: {
+        title: 'title',
+        content: {
+          kind: 'list',
+          title: 'Outputs',
+          field: 'outputs',
+          columns: [{ type: 'link', label: 'Output', field: 'link' }],
+        },
+      },
+    },
+  };
+  serve('/tools/ui.read', (_call, input) => {
+    assert.equal(input.params.id, 'flt_1');
+    return {
+      body: {
+        result: {
+          title: 'Hosted agent',
+          outputs: destinations.map(([name, href]) => ({ link: { name, href } })),
+        },
+      },
+    };
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/fleet/flt_1'] },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, {
+          path: '/fleet/:id',
+          element: createElement(RecordView, { row, shell: { rows: [row], plugins: [] } }),
+        }),
+      ),
+    ),
+  );
+  const anchors = [...document.querySelectorAll('a')];
+  for (const [name, , expected] of destinations) {
+    assert.ok(text().includes(name), `${name} keeps its label`);
+    const anchor = anchors.find((node) => node.textContent === name);
+    assert.equal(anchor?.getAttribute('href') ?? null, expected, name);
+    if (expected === null) assert.equal(!!anchor, false, `${name} must not be clickable`);
+  }
 });
 
 test('every state a record stands in has a tone, and a review gate never reads as stopped', async () => {

@@ -440,7 +440,7 @@ export abstract class DriverTransfer extends DriverCheckout {
           ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only'],
           { cwd: row.path },
         );
-        if (staged.trim())
+        if (staged)
           await this.git.ok(
             ['commit', '--quiet', '--no-verify', '-m', `merv: capture ${row.session_id}`],
             {

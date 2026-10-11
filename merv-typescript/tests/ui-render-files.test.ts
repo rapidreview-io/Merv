@@ -297,6 +297,31 @@ test('the CSV parser reads quotes, doubled quotes and newlines inside quotes, an
   assert.equal(parseDelimited('a,b\n"1"x,2', ','), undefined, 'text after a quote');
 });
 
+test('CSV preserves quoted empty final records and ignores only trailing blank lines', () => {
+  for (const separator of [',', '\t'] as const) {
+    for (const newline of ['\n', '\r\n', '\r']) {
+      for (const tail of ['', newline, newline.repeat(3)]) {
+        assert.deepEqual(parseDelimited(`value${newline}first${newline}""${tail}`, separator), [
+          ['value'],
+          ['first'],
+          [''],
+        ]);
+        assert.deepEqual(parseDelimited(`""${tail}`, separator), [['']]);
+        assert.deepEqual(parseDelimited(`value${newline}first${tail}`, separator), [
+          ['value'],
+          ['first'],
+        ]);
+      }
+    }
+  }
+  assert.equal(parseDelimited('', ','), undefined);
+  assert.deepEqual(parseDelimited('\n\n', ','), [['']]);
+  assert.equal(parseDelimited('value\n"unclosed\n\n', ','), undefined);
+  const interiorBlanks = parseDelimited(`value\n${'\n'.repeat(10_000)}last\n\n`, ',');
+  assert.equal(interiorBlanks?.length, 10_002);
+  assert.deepEqual(interiorBlanks?.at(-1), ['last']);
+});
+
 test('a CSV file is a table with a head, numbered rows, numbers set right and rows a page at a time', async (t) => {
   t.after(async () => await unmount());
   const rows = Array.from({ length: 450 }, (_, at) => `run ${at},${at / 10},"note, ${at}"`);

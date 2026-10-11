@@ -16,13 +16,15 @@ export const splitIds = (text: string): string[] => text.split(ID_ANYWHERE);
 
 /**
  * The only addresses that become an href: http, https, mailto, and a relative one,
- * which can only stay on this origin. Whitespace and control characters go first,
- * because a browser ignores them inside a scheme and `java\tscript:` must not pass;
+ * which can only stay on this origin. Controls go first because a browser ignores
+ * them inside a scheme and `java\tscript:` must not pass. Only surrounding spaces are trimmed;
  * anything else — javascript:, data:, vbscript:, file: — is refused and its text stays.
  */
 export function safeHref(raw: string): { href: string; external: boolean } | null {
-  // eslint-disable-next-line no-control-regex
-  const href = raw.replace(/[\u0000-\u0020\u007f-\u009f\u200b-\u200f\u2028-\u202e\ufeff]/g, '');
+  const href = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\ufeff]/g, '')
+    .trim();
   if (!href) return null;
   // A browser reads a backslash as a slash, so `/\host` is another origin too.
   if (/^[/\\]{2}/.test(href))

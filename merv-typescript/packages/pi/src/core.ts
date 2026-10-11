@@ -150,6 +150,8 @@ export class PiCore {
       stage?: PiStage;
       turn?: PiStage & { commandId: string };
       streamed?: { commandId: string; text: string };
+      /** Last accepted worker batch: a lost reply must not append its words twice. */
+      progress?: { commandId: string; sequence: number };
     }
   >();
   /** Memory only, like `live` (a restart ends every turn): when each claimed turn, keyed

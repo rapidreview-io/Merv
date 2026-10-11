@@ -260,6 +260,26 @@ test('only http, https, mailto and relative addresses ever become an href', () =
   assert.equal(bare.href, 'https://b.example/path_(x)');
 });
 
+test('Markdown links preserve spaces in paths, queries, and fragments', () => {
+  for (const href of [
+    'https://example.org/my plot.png?label=first result#figure one',
+    '/my plot.png?label=first result#figure one',
+    'notes/my plot.png',
+  ]) {
+    const [link] = parseInline(`[plot](<${href}>)`);
+    assert.equal(link.type, 'link');
+    assert.equal(link.href, href);
+    assert.equal(
+      new URL(link.href, 'https://example.org').pathname.endsWith('my%20plot.png'),
+      true,
+    );
+  }
+  assert.deepEqual(safeHref('  https://example.org/my plot.png  '), {
+    href: 'https://example.org/my plot.png',
+    external: true,
+  });
+});
+
 test('an image loads nothing: it is a link reading as its alt text, or just the text', () => {
   assert.deepEqual(parseInline('![learning curve](https://example.org/curve.png)'), [
     {

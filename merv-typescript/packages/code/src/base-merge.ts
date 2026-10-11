@@ -48,10 +48,19 @@ export async function mergeBases(
   if (left === right || (await holds(right, left))) return { outcome: 'contained', commit: left };
   if (await holds(left, right)) return { outcome: 'contained', commit: right };
   const merged = await git.run(
-    [...MERGE_SETTINGS, 'merge-tree', '--write-tree', '--name-only', '--no-messages', left, right],
+    [
+      ...MERGE_SETTINGS,
+      'merge-tree',
+      '--write-tree',
+      '-z',
+      '--name-only',
+      '--no-messages',
+      left,
+      right,
+    ],
     run,
   );
-  const [tree = '', ...paths] = merged.stdout.toString('utf8').split('\n').filter(Boolean);
+  const [tree = '', ...paths] = merged.stdout.toString('utf8').split('\0').filter(Boolean);
   if (merged.code === 1) {
     const said = await git.run([...MERGE_SETTINGS, 'merge-tree', '--write-tree', left, right], run);
     return {

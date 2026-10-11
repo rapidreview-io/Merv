@@ -114,6 +114,7 @@ function putFile(
  * failure is said there too, with Retry, which resumes the same upload where it can.
  */
 export function UploadControl({ available }: { available: boolean }) {
+  const current = useCurrent();
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -125,6 +126,7 @@ export function UploadControl({ available }: { available: boolean }) {
   const done = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(done.current), []);
   const send = async (file: File) => {
+    if (file.size < 1 || !current()) return;
     clearTimeout(done.current);
     setFailed(undefined);
     setFraction(0);
@@ -144,7 +146,9 @@ export function UploadControl({ available }: { available: boolean }) {
     setNote('Uploading');
     try {
       if (file.size <= MAX_FILE) {
-        await call('artifact.create', await fileInput(file));
+        const input = await fileInput(file);
+        if (!current()) return;
+        await call('artifact.create', input);
       } else {
         let plan: UploadPlan;
         if (pending.current?.file === file) {
@@ -153,7 +157,10 @@ export function UploadControl({ available }: { available: boolean }) {
           });
         } else {
           setNote('Hashing');
-          const sha256 = await fileHash(file, (value) => setFraction(value * 0.1));
+          const sha256 = await fileHash(file, (value) => {
+            if (current()) setFraction(value * 0.1);
+          });
+          if (!current()) return;
           const said = file.type.toLowerCase().split(';')[0]!.trim();
           plan = await call<UploadPlan>('artifact.upload_begin', {
             title: file.name.trim().slice(0, 300) || 'File',
@@ -167,23 +174,30 @@ export function UploadControl({ available }: { available: boolean }) {
           });
           pending.current = { file, uploadId: plan.uploadId };
         }
+        if (!current()) return;
         const upload = plan.parts[0];
         if (upload) {
           setNote('Uploading');
-          await putFile(upload, file, (loaded) => setFraction(0.1 + 0.9 * (loaded / file.size)));
+          await putFile(upload, file, (loaded) => {
+            if (current()) setFraction(0.1 + 0.9 * (loaded / file.size));
+          });
         }
+        if (!current()) return;
         setNote('Verifying');
         await call('artifact.upload_complete', { uploadId: plan.uploadId });
       }
+      if (!current()) return;
       pending.current = undefined;
       refreshTools('artifact.list');
       setNote('Uploaded');
       done.current = setTimeout(() => setFile(undefined), 2500);
     } catch (error) {
-      setNote(error instanceof Error ? error.message : 'Upload failed');
-      setFailed('retry');
+      if (current()) {
+        setNote(error instanceof Error ? error.message : 'Upload failed');
+        setFailed('retry');
+      }
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   const choose = (chosen?: File) => {

@@ -100,9 +100,12 @@ export const diffStats = async (
   let filesChanged = 0,
     insertions = 0,
     deletions = 0;
-  for (const entry of changes.split('\0')) {
-    const match = /^(\d+|-)\t(\d+|-)\t/.exec(entry);
+  const entries = changes.split('\0');
+  for (let i = 0; i < entries.length; i++) {
+    const match = /^(\d+|-)\t(\d+|-)\t/.exec(entries[i]);
     if (!match) continue;
+    // Renames have an empty name here, then separate old and new pathname fields.
+    if (entries[i] === match[0]) i += 2;
     filesChanged++;
     insertions += match[1] === '-' ? 0 : Number(match[1]);
     deletions += match[2] === '-' ? 0 : Number(match[2]);

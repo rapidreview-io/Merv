@@ -688,3 +688,29 @@ test('native MCP bearers cross only IPC and process env and are redacted before 
     assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
   assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
 });
+
+test('JSON-escaped MCP credentials are redacted before persistence across process writes', async (t) => {
+  const { ledger, host, reserve, token, command } = setup(t);
+  const record = reserve('escaped-native-mcp');
+  const marker = 'opaque-credential-"-\\-é-123456789';
+  const child = command(
+    `const s=JSON.stringify({authorization:process.env.MERV_NATIVE_MCP_TOKEN_0}); process.stdout.write(s.slice(0,-4)); setTimeout(()=>{process.stdout.write(s.slice(-4)+'\\n');process.stderr.write(s);},20);`,
+  );
+  Object.assign(child.env, { MERV_NATIVE_MCP_TOKEN_0: marker });
+  await host.launch({
+    launchId: record.id,
+    sessionToken: token,
+    deadline: record.deadline,
+    command: { ...child, secrets: [marker] },
+  });
+  await until(() => terminalLaunch(ledger.get(record.id)!));
+  assert.equal(ledger.get(record.id)?.exitCode, 0);
+  assert.equal(
+    readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'),
+    '{"authorization":"[REDACTED]"}\n',
+  );
+  assert.equal(
+    readFileSync(join(record.runDirectory, 'stderr.log'), 'utf8'),
+    '{"authorization":"[REDACTED]"}',
+  );
+});

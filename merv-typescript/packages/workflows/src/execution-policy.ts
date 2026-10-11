@@ -100,11 +100,15 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
   valid(new Set(names).size === names.length, 'Execution tool names must be unique');
   const tools = parsed.data.tools
     .map((tool) => {
-      const alternatives = tool.alternatives.map((value) => JSON.parse(canonical(value)));
-      const keys = alternatives.map(canonical);
-      valid(new Set(keys).size === keys.length, 'Execution alternatives must be distinct');
-      alternatives.sort((a, b) => compare(canonical(a), canonical(b)));
-      return { name: tool.name, alternatives };
+      const alternatives = tool.alternatives.map(canonical);
+      valid(
+        new Set(alternatives).size === alternatives.length,
+        'Execution alternatives must be distinct',
+      );
+      return {
+        name: tool.name,
+        alternatives: alternatives.sort(compare).map((value) => JSON.parse(value)),
+      };
     })
     .sort((a, b) => compare(a.name, b.name));
   return freezeData({

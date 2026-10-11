@@ -239,6 +239,9 @@ function groupOwner(group) {
 function redactedFile(path, secrets) {
   const fd = openSync(path, 'wx', 0o600);
   const decoder = new StringDecoder('utf8');
+  secrets = [
+    ...new Set(secrets.flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1)])),
+  ].sort((a, b) => b.length - a.length);
   const max = Math.max(1, ...secrets.map((secret) => secret.length));
   let pending = '',
     closed = false;

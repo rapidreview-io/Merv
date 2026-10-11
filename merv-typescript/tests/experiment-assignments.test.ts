@@ -1977,6 +1977,54 @@ test('a resumed visit attaches a result its cut visit made at the same revision,
   await f.work.release(later);
 });
 
+test('a resumed visit submits results its cut visit retained before attaching them', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.running();
+  const cut = await f.work.lease(experiment);
+  const retained = await f.work.run(
+    cut,
+    'artifact.create',
+    { title: 'Retained result', content: 'The observation is unchanged.', mediaType: 'text/plain' },
+    (caller, input) => f.artifacts.create(caller, input as never),
+  );
+  await f.work.release(cut);
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const resumed = await f.work.lease(experiment);
+  const reportArtifact = await f.work.run(
+    resumed,
+    'artifact.create',
+    { title: 'Resumed report', content: report, mediaType: 'text/markdown' },
+    (caller, input) => f.artifacts.create(caller, input as never),
+  );
+  for (const [role, artifactId] of [
+    ['result', retained.id],
+    ['report', reportArtifact.id],
+  ] as const) {
+    await f.work.run(
+      resumed,
+      'experiment.attach',
+      {
+        artifactId,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  const submitted = await f.work.run(
+    resumed,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  assert.equal(submitted.workflow.state, 'experiment_review');
+  assert.ok(submitted.submissions.at(-1)!.evidence.some((item) => item.artifactId === retained.id));
+  await f.work.release(resumed);
+});
+
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
   const f = await fixture(t);
   let experiment = await f.running();

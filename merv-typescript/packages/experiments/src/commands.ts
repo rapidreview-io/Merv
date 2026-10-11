@@ -160,7 +160,7 @@ export async function create(
         createdAt,
         'git',
       );
-      await addAttempt(ctx, workflow.id, 1, workflow.revision, null, [], createdAt, tx);
+      await addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
       await ctx.code.declareUnit(caller, workflow.id, tx);
       await recordEvent(
         ctx,
@@ -252,7 +252,6 @@ export async function attach(
         ? await figures(ctx, caller, text, experiment, tx)
         : [];
       const association = await saveEvidence(
-        ctx,
         caller,
         experiment,
         input.role,
@@ -297,11 +296,7 @@ async function selected(
   return evidence.filter((e) => allowed.has(e.artifactId));
 }
 
-function one(
-  ctx: ExperimentsContext,
-  evidence: ExperimentEvidence[],
-  role: string,
-): ExperimentEvidence {
+function one(evidence: ExperimentEvidence[], role: string): ExperimentEvidence {
   const matching = evidence.filter((e) => e.role === role);
   check(
     matching.length === 1,
@@ -339,7 +334,7 @@ async function figures(
   experiment: Experiment,
   tx: Transaction,
 ): Promise<string[]> {
-  const ids = [...new Set(markdownImageTargets(text))];
+  const ids = markdownImageTargets(text);
   const allowed = caller.session
     ? new Set(await allowedArtifacts(ctx, caller, experiment, tx))
     : null;
@@ -541,7 +536,6 @@ export async function transition(
       );
       if (input.transition === 'retry_running')
         await feedback(
-          ctx,
           experiment,
           `Infrastructure recovery: ${input.evidence?.reason}. ${input.evidence?.detail ?? ''} Recover existing jobs and retained outputs before starting new work.`,
           tx,
@@ -595,12 +589,12 @@ async function prepareSubmission(
   const approved =
     experiment.workflow.state === 'running' ? approvedSubmission(experiment) : undefined;
   if (!approved) {
-    const plan = one(ctx, evidence, 'plan');
+    const plan = one(evidence, 'plan');
     const text = await evidenceText(ctx, caller, plan.artifactId, tx);
     figureIds = await figures(ctx, caller, text, experiment, tx);
     validatePlan(text, { figures: figureIds });
     const statement = parseFeasibility(
-      await evidenceText(ctx, caller, one(ctx, evidence, 'feasibility').artifactId, tx),
+      await evidenceText(ctx, caller, one(evidence, 'feasibility').artifactId, tx),
     );
     // The cheap check: a design whose own figures fall short never reaches a reviewer.
     const shortfalls = feasibilityShortfalls(statement);
@@ -612,7 +606,7 @@ async function prepareSubmission(
     );
   } else {
     evidence = [...approved.evidence, ...evidence];
-    const report = one(ctx, evidence, 'report');
+    const report = one(evidence, 'report');
     const text = await evidenceText(ctx, caller, report.artifactId, tx);
     figureIds = [
       ...new Set([...approved.figureIds, ...(await figures(ctx, caller, text, experiment, tx))]),
@@ -635,6 +629,7 @@ async function prepareSubmission(
     ...(await pinnedRecovery(ctx, caller, experiment, tx)),
     ...(approved?.evidence ?? []),
   ];
+  const resumed = await resumedOutputs(ctx, caller, experiment.workflow, tx);
   for (const item of evidence) {
     const metadata = await ctx.artifacts.get(caller, item.artifactId, tx);
     check(
@@ -646,6 +641,7 @@ async function prepareSubmission(
     check(
       (await authoredInExecution(ctx, caller, metadata, tx)) ||
         experiment.captureArtifactIds?.includes(item.artifactId) ||
+        resumed.includes(item.artifactId) ||
         inherited.some(
           (pin) =>
             pin.experimentId === item.experimentId &&
@@ -720,7 +716,6 @@ async function submit(
     );
     evidence.push(
       await saveEvidence(
-        ctx,
         caller,
         experiment,
         'exhibit',
@@ -864,7 +859,7 @@ export async function submitReview(
       // The transition's guard runs checkReview before anything below is written.
       let conclusion: string | null = null;
       if (action === 'accept_results') {
-        const report = one(ctx, submission.evidence, 'report');
+        const report = one(submission.evidence, 'report');
         const body = await evidenceText(ctx, caller, report.artifactId, tx);
         const section = reportConclusion(body);
         conclusion =
@@ -929,7 +924,6 @@ export async function submitReview(
         );
         const index = experiment.attempt.index + 1;
         await addAttempt(
-          ctx,
           experiment.id,
           index,
           moved.revision,
@@ -941,7 +935,7 @@ export async function submitReview(
         );
         await tx.run('UPDATE experiments SET attempt_index=? WHERE id=?', index, experiment.id);
       } else if (action === 'revise_execution')
-        await feedback(ctx, experiment, input.notes, tx, review.id);
+        await feedback(experiment, input.notes, tx, review.id);
       else if (action === 'accept_results') {
         await tx.run(
           'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
@@ -1033,7 +1027,7 @@ export async function checkAction(
       rolesFor(experiment.workflow.state),
       tx,
     );
-    const own = one(ctx, selection, action === 'submit_design' ? 'plan' : 'report');
+    const own = one(selection, action === 'submit_design' ? 'plan' : 'report');
     check(
       await authoredInExecution(
         ctx,
@@ -1075,7 +1069,6 @@ export async function checkAction(
 }
 
 async function addAttempt(
-  ctx: ExperimentsContext,
   id: string,
   index: number,
   revision: number,
@@ -1098,7 +1091,6 @@ async function addAttempt(
 }
 
 async function feedback(
-  ctx: ExperimentsContext,
   experiment: Experiment,
   note: string,
   tx: Transaction,
@@ -1114,7 +1106,6 @@ async function feedback(
 }
 
 async function saveEvidence(
-  ctx: ExperimentsContext,
   caller: Caller,
   experiment: Experiment,
   role: ExperimentEvidence['role'],

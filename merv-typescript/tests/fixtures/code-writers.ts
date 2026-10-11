@@ -45,9 +45,12 @@ export const refused = (code: string) => (error: unknown) => {
 export async function writerFixture(
   t: TestContext,
   grace = 900,
-  options: Pick<CodeStoreOptions, 'mirror' | 'mirrorConfig'> = {},
+  options: Pick<CodeStoreOptions, 'mirror' | 'mirrorConfig'> & {
+    objectFormat?: 'sha1' | 'sha256';
+  } = {},
 ) {
-  const source = gitSource(t);
+  const { objectFormat = 'sha1', ...storeOptions } = options;
+  const source = gitSource(t, objectFormat);
   const root = source.commit({ 'README.md': 'root\n' });
   const sessions = new Map<string, Record<string, unknown>>();
   const f = await codeStoreFixture(t, {}, root, {
@@ -57,7 +60,7 @@ export async function writerFixture(
       return structuredClone(session) as never;
     },
   });
-  await f.open({ finalizeGraceSeconds: grace, ...options });
+  await f.open({ finalizeGraceSeconds: grace, ...storeOptions });
   assert.equal((await f.deliver(source.bundle(root))).status, 'completed');
   const build = await f.workflows.register(definition, policy);
   const unit = await build.start(f.admin, { workflow: 'build', requestId: 'unit' });

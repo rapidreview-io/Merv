@@ -50,6 +50,7 @@ import {
   type ConversationFacts,
 } from './conversation.js';
 import { harnessOf, launcherOf } from './harness/index.js';
+import { claudeLogUsage } from './harness/claude.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
@@ -951,8 +952,8 @@ export class MachineRunner implements Runner {
   /**
    * Before the release: what the process printed and the conversation it kept, declared (no store
    * I/O on the server) so a hosted machine is kept for them. A final refusal or a local fault
-   * ends one; the release never waits on them. The log is read once; each release try declares
-   * them again.
+   * ends one; a temporary refusal holds the release for retry. The log is read once; each release
+   * try declares them again.
    */
   private async declare(record: LaunchRecord): Promise<LaunchRecord> {
     for (const kind of kinds)
@@ -966,14 +967,13 @@ export class MachineRunner implements Runner {
         }
         if (t.state === 'owed') await this.send(kind, record, factsOf(t));
       } catch (error) {
-        if (error instanceof RunnerControlError && !error.final) this.lastError = error.code;
-        else
-          record = this.save(record.id, {
-            [kind]: {
-              state: 'refused',
-              code: error instanceof RunnerControlError ? error.code : `${kind}_unreadable`,
-            },
-          });
+        if (error instanceof RunnerControlError && !error.final) throw error;
+        record = this.save(record.id, {
+          [kind]: {
+            state: 'refused',
+            code: error instanceof RunnerControlError ? error.code : `${kind}_unreadable`,
+          },
+        });
       }
     return record;
   }
@@ -1247,8 +1247,8 @@ export class MachineRunner implements Runner {
   /**
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
    * anything here, so a link, a device or a malformed report is simply not sent. Without one,
-   * what the profile's harness printed of its spending at the end of the launch's redacted log:
-   * its last `tailBytes` (1 MiB), from the first whole line, however long the log grew.
+   * what the profile's harness printed of its spending. Claude's per-call usage needs the whole
+   * log; Codex's cumulative report is read from its last `tailBytes` (1 MiB), at a whole line.
    */
   private readUsage(record: LaunchRecord, tailBytes = 1 << 20): SessionUsageReport | undefined {
     const read = (path: string, limit: number, tail = false) => {
@@ -1272,10 +1272,14 @@ export class MachineRunner implements Runner {
       // No report of its own; the harness may have printed one.
     }
     try {
-      const log = read(join(record.runDirectory, 'stdout.log'), tailBytes, true);
       const profile = record.metadata.profile as RunnerProfile;
       const model = 'model' in profile ? profile.model : undefined;
-      return sessionUsageReportSchema.parse(harnessOf(profile)?.usage(log, model));
+      const path = join(record.runDirectory, 'stdout.log');
+      return sessionUsageReportSchema.parse(
+        profile.harness === 'claude'
+          ? claudeLogUsage(path, model)
+          : harnessOf(profile)?.usage(read(path, tailBytes, true), model),
+      );
     } catch {
       return;
     }

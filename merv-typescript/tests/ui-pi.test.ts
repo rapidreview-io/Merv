@@ -521,6 +521,49 @@ test('an ambiguous send retry retains its command ID', async (t) => {
   assert.deepEqual(sent, [sent[0], sent[0]]);
 });
 
+for (const edited of [false, true])
+  test(`a snapshot confirms an ambiguous send and ${edited ? 'preserves an edited' : 'clears the submitted'} draft`, async (t) => {
+    t.after(cleanup);
+    setProject('p1');
+    let state = snapshot(conversation());
+    const stream = boot(
+      () => state,
+      () => [conversation()],
+    );
+    const sent: string[] = [];
+    serve('/tools/pi.send', (_attempt, input) => {
+      sent.push(input.commandId as string);
+      return { network: true };
+    });
+    await open();
+    await write('Look up evidence');
+    await click('Send');
+    assert.match(text(), /Merv didn’t answer. Try again./);
+    if (edited) await write('A different question');
+    state = snapshot(
+      conversation(),
+      [
+        command(sent[0], 'completed', [
+          { role: 'user', text: 'Look up evidence' },
+          { role: 'assistant', text: 'Saved answer' },
+        ]),
+      ],
+      1,
+    );
+    await act(async () => stream.push('snapshot', state));
+    await settle(10);
+    assert.match(text(), /Saved answer/);
+    assert.doesNotMatch(text(), /Merv didn’t answer/);
+    assert.equal(
+      document.querySelector<HTMLTextAreaElement>('#pi-draft')!.value,
+      edited ? 'A different question' : '',
+    );
+    if (!edited) {
+      await click('Send');
+      assert.equal(sent.length, 1, 'the confirmed question cannot be sent again accidentally');
+    }
+  });
+
 test('snapshot tail and live deltas share ordered transient output, however long', async (context) => {
   context.after(cleanup);
   setProject('p1');
@@ -2352,6 +2395,8 @@ test('what Run told the agent is a receipt only where it is exactly what Pi kept
     [1, 2].map((at) => receiptOf(twice, at)),
     [again, start],
   );
+  twice.push(said('Ran session.dispatch: {"enabled":true}'));
+  assert.equal(receiptOf(twice, 3), null, 'each execution accounts for only one receipt');
 });
 
 test('a card says how its call came out from what Pi kept, and a run Pi itself refuses tells the agent nothing', async (t) => {

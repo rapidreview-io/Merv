@@ -965,6 +965,101 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   assert.equal((await f.verdict(wave, reviewer, true)).workflow.state, 'approved');
 });
 
+test('lens directors outside the wave owner remain independent-review exclusions without blocking synthesis', async (t) => {
+  for (const scenario of [
+    'wave owner',
+    'second operator',
+    'synthesis author',
+    'synthesis director',
+  ])
+    await t.test(scenario, async (t) => {
+      const f = await fixture(t);
+      const lead = scenario === 'wave owner' ? f.owner : await f.actor('Lens director', 'operator');
+      let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
+      const first = wave.lenses[0]!;
+      const secret = token();
+      const execution = await f.app.ctx.sessions.offer(lead, {
+        instanceId: first.id,
+        expectedRevision: 0,
+        runnerId: 'external',
+        requestId: 'direct-lens',
+        secret,
+      });
+      const worker = await f.app.ctx.sessions.authenticate(secret);
+      const artifact = (await f.app.ctx.tools.call('artifact.create', worker, {
+        title: 'Lens evidence',
+        content: '# Summary\nNo completed research exists yet.\n# Evidence\nThe corpus is empty.',
+      })) as Artifact;
+      await f.app.ctx.tools.call('reflection.submit_lens', worker, {
+        lensId: first.id,
+        artifactId: artifact.id,
+        expectedRevision: 0,
+        requestId: 'submit-first',
+      });
+      await f.app.ctx.sessions.release(lead, { sessionId: execution.id, runnerId: 'external' });
+      const authors: Caller[] = [];
+      for (const lens of wave.lenses.slice(1)) {
+        const author = await f.actor(lens.perspective, 'operator');
+        authors.push(author);
+        await f.app.ctx.reflections.submitLens(author, {
+          lensId: lens.id,
+          artifactId: (await f.create(author, lens.perspective)).id,
+          expectedRevision: 0,
+          requestId: lens.id,
+        });
+      }
+      wave = await f.app.ctx.reflections.get(f.owner, wave.id);
+      if (scenario === 'synthesis author' || scenario === 'synthesis director') {
+        const secret = token();
+        const synthesis =
+          scenario === 'synthesis director'
+            ? await f.app.ctx.sessions.offer(lead, {
+                instanceId: wave.id,
+                expectedRevision: wave.workflow.revision,
+                runnerId: 'external',
+                requestId: 'direct-synthesis',
+                secret,
+              })
+            : null;
+        const author = synthesis ? await f.app.ctx.sessions.authenticate(secret) : lead;
+        const report = (await f.app.ctx.tools.call('artifact.create', author, {
+          title: 'Synthesis',
+          content: 'The five independent lenses found no completed research.',
+        })) as Artifact;
+        const changeSpec = (await f.app.ctx.tools.call('artifact.create', author, {
+          title: 'Changes',
+          content: 'No changes are needed.',
+        })) as Artifact;
+        wave = (await f.app.ctx.tools.call('reflection.submit', author, {
+          reflectionId: wave.id,
+          expectedRevision: wave.workflow.revision,
+          reportArtifactId: report.id,
+          changeSpecArtifactId: changeSpec.id,
+          requestId: 'synthesize',
+        })) as Reflection;
+        if (synthesis)
+          await f.app.ctx.sessions.release(lead, { sessionId: synthesis.id, runnerId: 'external' });
+      } else wave = await f.synthesize(wave);
+      assert.equal(wave.workflow.state, 'in_review');
+      for (const contributor of [lead, ...authors])
+        await assert.rejects(f.app.ctx.reviews.start(contributor, wave.review!.id), {
+          code: 'review_independence',
+        });
+      await assert.rejects(
+        f.app.ctx.sessions.offer(lead, {
+          instanceId: wave.id,
+          expectedRevision: wave.workflow.revision,
+          runnerId: 'external',
+          requestId: 'direct-review',
+          secret: token(),
+        }),
+        { code: 'review_independence' },
+      );
+      const reviewer = await f.actor('Independent reviewer', 'reviewer');
+      assert.equal((await f.verdict(wave, reviewer, true)).workflow.state, 'approved');
+    });
+});
+
 test('leased lens calls use exact execution evidence, retain context through release and recover independent review claims', async (t) => {
   const f = await fixture(t);
   let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });

@@ -90,6 +90,9 @@ const credentials: [rule: string, pattern: RegExp][] = [
   ['credentials@1.merv_session', /(?<![A-Za-z0-9_-])ms_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/],
 ];
 const anyCredential = new RegExp(credentials.map(([, pattern]) => pattern.source).join('|'));
+/** Content is immutable; cache rule names, never a path-dependent exemption or credential text. */
+const credentialMemo = new Map<string, string[]>();
+const MAX_CREDENTIAL_MEMO = 50_000;
 
 /**
  * The project deny-glob matcher: a literal matches itself, `?` one character and `*` any run
@@ -200,13 +203,6 @@ interface TreeEntry {
   oid: string;
 }
 type KeptTree = { trees: string[]; links: string[]; inside: TreeEntry[] };
-/**
- * Kept trees as admission last read them. A tree never changes, and every upload borrows most
- * of the repository's, so they are read once per process rather than once per upload. Only
- * without deny globs: their names would make a whole repository of trees far from small.
- */
-const keptTreeMemo = new Map<string, KeptTree>();
-const MAX_KEPT_MEMO = 50_000;
 function parseTree(
   content: Buffer,
   format: ObjectFormat,
@@ -471,9 +467,16 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   /** Kept trees a fresh tree or commit puts somewhere, with how many directories lie above them. */
   const borrowed: { oid: string; path: string | null; depth: number }[] = [];
   const scan = (content: Buffer, path: string | null, oid: string) => {
-    const text = content.toString('latin1');
-    if (!anyCredential.test(text)) return;
-    for (const [rule, pattern] of credentials) if (pattern.test(text)) found(rule, path, oid);
+    let rules = credentialMemo.get(oid);
+    if (!rules) {
+      const text = content.toString('latin1');
+      rules = anyCredential.test(text)
+        ? credentials.filter(([, pattern]) => pattern.test(text)).map(([rule]) => rule)
+        : [];
+      if (credentialMemo.size >= MAX_CREDENTIAL_MEMO) credentialMemo.clear();
+      credentialMemo.set(oid, rules);
+    }
+    for (const rule of rules) found(rule, path, oid);
   };
   await read(
     fresh.filter(([, object]) => object.type === 'commit').map(([oid]) => oid),
@@ -488,8 +491,14 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
 
   const deny = limits.denyGlobs.map(globPattern);
   const exempt = limits.secretExemptGlobs.map(globPattern);
-  /** The first path each fresh blob was found at; null while every path of it is exempt. */
+  /** The first non-exempt path of each blob; null while every encountered path is exempt. */
   const blobPaths = new Map<string, string | null>();
+  const noteBlob = (entry: TreeEntry, path: string) => {
+    if (entry.mode === '40000' || entry.mode === '160000') return;
+    const skipped = exempt.some((pattern) => pattern.test(path));
+    if (!blobPaths.has(entry.oid) || (blobPaths.get(entry.oid) === null && !skipped))
+      blobPaths.set(entry.oid, skipped ? null : path);
+  };
   const links: { path: string; oid: string }[] = [];
   const visited = new Set<string>();
   const stack = roots.map((oid) => ({ oid, prefix: '', depth: 1 }));
@@ -518,53 +527,40 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
           stack.push({ oid: entry.oid, prefix: `${path}/`, depth: node.depth + 1 });
       } else if (entry.mode === '120000') links.push({ path, oid: entry.oid });
       else if (entry.mode !== '100644' && entry.mode !== '100755') found('mode', path, entry.oid);
-      if (entry.mode !== '40000' && entry.mode !== '160000' && reached.has(entry.oid)) {
-        const skipped = exempt.some((pattern) => pattern.test(path));
-        if (!blobPaths.has(entry.oid) || (blobPaths.get(entry.oid) === null && !skipped))
-          blobPaths.set(entry.oid, skipped ? null : path);
-      }
+      noteBlob(entry, path);
     }
   }
 
-  // A kept tree was examined where it then stood, and a path decides three of these rules. Put
+  // A kept tree was examined where it then stood, and a path decides these rules. Put
   // higher up, a link inside it that climbed to just below the root now climbs out; put further
   // down, what was shallow enough is too deep; put under a denied directory, what is inside it
-  // is denied. So every borrowed tree is read, and what a path decides is judged again.
+  // is denied; outside an exemption, its blobs need credential checks. Read every borrowed tree
+  // and judge path-dependent rules again, even if exemptions have since been removed.
   const keptTrees = new Map<string, KeptTree>();
-  const memo = deny.length ? keptTrees : keptTreeMemo;
   for (let level = [...new Set(borrowed.map((item) => item.oid))]; level.length;) {
     if (keptTrees.size + level.length > MAX_TREE_VISITS) {
       found('history_size', null, null);
       break;
     }
-    if (memo === keptTreeMemo && memo.size + level.length > MAX_KEPT_MEMO) memo.clear();
-    await read(
-      level.filter((oid) => !memo.has(oid)),
-      (oid, content) => {
-        const parsed = parseTree(content, header.objectFormat);
-        const entries = Array.isArray(parsed) ? parsed : [];
-        memo.set(oid, {
-          trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
-          links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
-          // Only the deny globs need the names, and a whole repository of them is not small.
-          inside: deny.length
-            ? entries.map((entry) => ({ ...entry, name: Buffer.from(entry.name) }))
-            : [],
-        });
-      },
-    );
+    await read(level, (oid, content) => {
+      const parsed = parseTree(content, header.objectFormat);
+      const entries = Array.isArray(parsed) ? parsed : [];
+      keptTrees.set(oid, {
+        trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
+        links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
+        inside: entries,
+      });
+    });
     const below = new Set<string>();
     for (const oid of level) {
-      const node = memo.get(oid);
-      if (node) keptTrees.set(oid, node);
+      const node = keptTrees.get(oid);
       for (const tree of node?.trees ?? []) below.add(tree);
     }
     level = [...below].filter((oid) => !keptTrees.has(oid));
   }
 
-  // A rename is not a way past a deny glob: what is inside a kept directory is matched at the
-  // path it now has. The names above it were judged when the tree that holds them was admitted.
-  if (deny.length) {
+  // Match both denied paths and credential exemptions at the directory’s current location.
+  {
     const seen = new Set<string>();
     const stack = borrowed.map((item) => ({
       oid: item.oid,
@@ -584,6 +580,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
         if (deny.some((pattern) => pattern.test(path))) found('deny_glob', path, entry.oid);
         if (entry.mode === '40000' && node.depth <= MAX_DEPTH)
           stack.push({ oid: entry.oid, prefix: `${path}/`, depth: node.depth + 1 });
+        noteBlob(entry, path);
       }
     }
   }
@@ -639,12 +636,18 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     if (item.depth + 1 + deepest(item.oid) > MAX_DEPTH) found('path_depth', item.path, item.oid);
   }
 
-  const blobs = fresh.filter(
-    ([oid, object]) => object.type === 'blob' && blobPaths.get(oid) !== null,
-  );
-  await read(
-    blobs.map(([oid]) => oid),
-    (oid, content) => scan(content, blobPaths.get(oid) ?? null, oid),
-  );
+  const blobs = new Set([
+    ...fresh.filter(([, object]) => object.type === 'blob').map(([oid]) => oid),
+    ...blobPaths.keys(),
+  ]);
+  const unread: string[] = [];
+  for (const oid of blobs) {
+    const path = blobPaths.get(oid);
+    if (path === null) continue;
+    const rules = credentialMemo.get(oid);
+    if (rules) for (const rule of rules) found(rule, path ?? null, oid);
+    else unread.push(oid);
+  }
+  await read(unread, (oid, content) => scan(content, blobPaths.get(oid) ?? null, oid));
   return result(tree, fresh.length, bytes);
 }

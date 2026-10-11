@@ -30,7 +30,7 @@ import {
 } from '../components';
 import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { elapsed, say, type Liveness } from '../liveness';
-import { Markdown } from '../markdown';
+import { Markdown, safeHref } from '../markdown';
 import { useCommand } from '../mutations';
 import { TimeInStatus } from '../process';
 import { firstSentence } from '@merv/contracts/text';
@@ -117,10 +117,11 @@ function cell(column: UiColumn, { data, states, now, linked }: Facts): ReactNode
     case 'link': {
       const link = at(data, column.field) as { name?: string; href?: string } | undefined;
       if (!link?.name) return null;
-      return linked ? (
+      const safe = typeof link.href === 'string' ? safeHref(link.href) : null;
+      return linked || !safe ? (
         <span className="muted">{link.name}</span>
       ) : (
-        <a href={link.href}>{link.name}</a>
+        <a href={safe.href}>{link.name}</a>
       );
     }
     default:
@@ -257,6 +258,7 @@ const detailRow = (data: Json, detail: UiDetail): KVRow => {
 function Act({ action, id, onDone }: { action: UiAction; id: string; onDone(): void }) {
   const command = useCommand<unknown>({
     tool: action.tool,
+    // Published tools do not accept requestId; an unknown result must be checked by reading.
     idempotent: true,
     validate: () => true,
     onSuccess: onDone,
@@ -264,7 +266,11 @@ function Act({ action, id, onDone }: { action: UiAction; id: string; onDone(): v
   const run = () => void command.submit({ id, ...action.args });
   return (
     <>
-      {action.guard ? (
+      {command.retry ? (
+        <button type="button" className="btn" onClick={() => location.reload()}>
+          Refresh page
+        </button>
+      ) : action.guard ? (
         <ConfirmAction
           label={action.label}
           title={action.guard.title}
@@ -275,11 +281,17 @@ function Act({ action, id, onDone }: { action: UiAction; id: string; onDone(): v
           <p>{action.guard.consequence}</p>
         </ConfirmAction>
       ) : (
-        <button type="button" className="btn" disabled={command.locked} onClick={run}>
+        <button type="button" className="btn" disabled={command.busy} onClick={run}>
           {action.label}
         </button>
       )}
-      <Failure message={command.error} />
+      <Failure
+        message={
+          command.retry
+            ? 'The result is unknown. Refresh the page and check the updated record before performing this action again.'
+            : command.error
+        }
+      />
     </>
   );
 }

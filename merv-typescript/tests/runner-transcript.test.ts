@@ -101,6 +101,23 @@ test('the exact source bearer is blanked even unprefixed and inside a word', (t)
   assert.equal(text(path, [legacy, 'abc'], undefined, 5), text(path, [legacy, 'abc']));
 });
 
+test('JSON-escaped exact credentials are blanked across chunks, including expanded UTF-8', (t) => {
+  const path = directory(t);
+  for (const secret of [
+    'opaque-credential-"-\\-é-123456789',
+    'opaque-credential-ends-\\',
+    `sk-${'s'.repeat(25)}"tail-secret`,
+    '\u0001'.repeat(900),
+  ]) {
+    log(path, `${secret}\n${JSON.stringify({ authorization: secret })}\n`);
+    for (const chunk of [7, 4096, 8192])
+      assert.equal(
+        text(path, [secret], undefined, chunk),
+        '[REDACTED]\n{"authorization":"[REDACTED]"}\n',
+      );
+  }
+});
+
 test('multibyte UTF-8 passes byte for byte across chunks', (t) => {
   const path = directory(t);
   const bytes = Buffer.from('é漢字🙂 — ünïcødé\n'.repeat(50));
@@ -410,6 +427,35 @@ test('each release try declares once, from one read; a log changed since is not 
   assert.equal(sessions.of('deliver'), 1);
   assert.equal(sessions.of('PUT'), 0);
   assert.deepEqual(transcript(f, id), { state: 'refused', code: 'transcript_changed' });
+  assert.deepEqual(open(f), []);
+});
+
+test('a temporary declaration failure holds release across retries and restart', async (t) => {
+  const fake = server(() => null);
+  const sessions = transcripts(fake);
+  sessions.state.refuse = new Refusal(503, 'state_busy');
+  const f = machine(t, [node('a')], sessions.fetch);
+  const { session, id } = seed(f, fake, 'declaration-outage', 'printed\n');
+  let runner = f.make();
+  await runner.start();
+  await runner.tick();
+  assert.equal(sessions.of('declare'), 2);
+  assert.equal(fake.releases(session.id).length, 0);
+  assert.equal(sessions.of('deliver'), 0);
+  assert.equal(runner.snapshot().lastError, 'state_busy');
+  assert.equal(transcript(f, id).state, 'owed');
+  assert.deepEqual(open(f), [id]);
+  await runner.stop();
+  assert.equal(fake.releases(session.id).length, 0, 'stop also keeps the release owed');
+
+  sessions.state.refuse = undefined;
+  runner = f.make();
+  await runner.start();
+  await until(runner, () => transcript(f, id)?.state === 'uploaded', 'the recovered transcript');
+  assert.equal(fake.releases(session.id).length, 1);
+  const release = sessions.events.indexOf('release');
+  assert.equal(sessions.events[release - 1], 'declare');
+  assert.ok(sessions.bodies.every((body) => body.sha256 === sessions.bodies[0]!.sha256));
   assert.deepEqual(open(f), []);
 });
 

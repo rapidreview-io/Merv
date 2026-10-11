@@ -12,8 +12,11 @@ import type {
 import { migrationList } from '@merv/contracts';
 import { checkScript } from '@merv/sandboxes';
 import { checkFailure } from '@merv/code-work/base-check';
+import { configureWorkRepository } from '@merv/code-work/check-configuration';
+import { CodeStore } from '@merv/code/store/operations';
 import { resolutionBrief } from '@merv/tasks/resolution-brief';
 import { baseFixture } from './fixtures/code-bases.js';
+import { boundProject } from './fixtures/code-binding.js';
 import { migrateBases } from '@merv/code-work/base-schema';
 import { openState } from './fixtures/state.js';
 import type { CodeCheckSpec } from '@merv/code-work/models';
@@ -213,6 +216,98 @@ test('a passing check seals the base with a receipt, and the machine and its sou
   );
   assert.equal((await row(f, base.key)).check_job_json, null, 'and the handle is forgotten');
   assert.equal(held(f, base.key), record.result!.commit);
+});
+
+test('administrator configuration changes preserve the specification of a check already started', async (t) => {
+  for (const phase of ['provisioning', 'running'] as const)
+    await t.test(phase, async (t) => {
+      const f = await baseFixture(t);
+      await boundProject(f.state, f.projectId, f.commits.a, 'repository-bases');
+      const store = new CodeStore(
+        f.state,
+        f.scope,
+        { root: f.bare },
+        {
+          changed: async () => {},
+          workspaces: async () => [],
+          fenced: async () => {},
+          advanced: async () => {},
+          quarantined: async () => {},
+        },
+        f.repositories,
+      );
+      const configure = (check: CodeCheckSpec, requestId: string) =>
+        configureWorkRepository(f.state, f.scope, store, f.admin, {
+          denyGlobs: [],
+          secretExemptGlobs: [],
+          check,
+          requestId,
+        });
+      const adapter = scripted([ran(0)]);
+      const launched: SandboxCheckPlan[] = [];
+      const step = adapter.checks.step;
+      adapter.checks.step = async (project, plan, handle) => {
+        if (handle.ready) launched.push(structuredClone(plan));
+        return step(project, plan, handle);
+      };
+      f.bases.checks = adapter.checks;
+      await configure(SPEC, 'original');
+      const { a, b } = f.commits;
+      const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+      await settle(f, phase === 'provisioning' ? 2 : 4);
+      const before = (await row(f, base.key)).check_job_json;
+      assert.ok(before, 'the check has started');
+      assert.equal(!!JSON.parse(before).jobId, phase === 'running');
+      const changed = {
+        command: 'make new-check',
+        timeoutSeconds: 30,
+        image: { ...SPEC.image, snapshotId: 'new-snapshot' },
+      };
+      assert.deepEqual((await configure(changed, 'changed')).check, changed);
+      assert.equal((await row(f, base.key)).check_job_json, before);
+      await f.bases.close();
+      const restarted = f.worker();
+      restarted.checks = adapter.checks;
+      await restarted.initialize();
+      for (let pass = 0; pass < 5; pass++) await restarted.work(f.projectId);
+      const record = await f.state.read((sql) => restarted.find(sql, f.projectId, [a, b]));
+      assert.equal(record?.state, 'resolved');
+      assert.equal(record?.checkState, 'passed');
+      assert.deepEqual(record?.check?.spec, SPEC, 'the receipt names what this execution ran');
+      assert.equal(launched.length, 1);
+      assert.equal(launched[0].command, SPEC.command);
+      assert.equal(launched[0].timeoutSeconds, SPEC.timeoutSeconds);
+      assert.equal(launched[0].snapshotId, SPEC.image.snapshotId);
+    });
+});
+
+test('a legacy running check without its specification requires retry instead of inventing a receipt', async (t) => {
+  const f = await baseFixture(t);
+  const adapter = scripted([ran(0)]);
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const base = await f.state.transaction((tx) =>
+    f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  await settle(f, 4);
+  const { spec: _spec, ...legacy } = JSON.parse((await row(f, base.key)).check_job_json!);
+  assert.ok(legacy.jobId, 'the legacy handle belongs to a running job');
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE code_bases SET check_job_json=? WHERE project_id=? AND base_key=?',
+      JSON.stringify(legacy),
+      f.projectId,
+      base.key,
+    ),
+  );
+  await settle(f, 2);
+  const stopped = await row(f, base.key);
+  assert.equal(stopped.state, 'blocked_infra');
+  assert.equal(stopped.check_state, 'unavailable');
+  assert.equal(stopped.check_json, null);
+  assert.equal(stopped.check_job_json, null, 'the old job is released through normal cleanup');
+  assert.equal(adapter.log.includes('follow'), false, 'an unknown command produces no verdict');
+  assert.match(stopped.blocker!, /execution specification/);
 });
 
 test('a failing check drops the auto-merge ref, so the one resolution task can seal it', async (t) => {

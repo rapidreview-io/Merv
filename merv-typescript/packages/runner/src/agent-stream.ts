@@ -46,21 +46,23 @@ export function coalesce(events: AgentEvent[]): AgentEvent[] {
   return out;
 }
 
+/** A string boundary that never parts a surrogate pair. */
+const textEnd = (text: string, end: number) =>
+  end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!) ? end - 1 : end;
 /** One block's text as pieces an event holds, never parting a surrogate pair. */
 function pieces(text: string): string[] {
   const out: string[] = [];
   for (let at = 0; ;) {
-    let end = Math.min(text.length, at + AGENT_EVENT_TEXT);
-    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!)) end--;
+    const end = textEnd(text, Math.min(text.length, at + AGENT_EVENT_TEXT));
     out.push(text.slice(at, end));
     if ((at = end) >= text.length) return out;
   }
 }
 /** Cuts one text to AGENT_EVENT_TEXT characters, saying how many it dropped. */
-const cut = (text: string): [string, { cut?: number }] =>
-  text.length > AGENT_EVENT_TEXT
-    ? [text.slice(0, AGENT_EVENT_TEXT), { cut: text.length - AGENT_EVENT_TEXT }]
-    : [text, {}];
+const cut = (text: string, limit = AGENT_EVENT_TEXT): [string, { cut?: number }] => {
+  const end = textEnd(text, Math.min(text.length, limit));
+  return [text.slice(0, end), end < text.length ? { cut: text.length - end } : {}];
+};
 
 /**
  * Every text blanked of bearers and exact secrets, then cut, or a block's parted into pieces.
@@ -71,11 +73,14 @@ export class Scrubber {
   private readonly carry = new Map<string, string>();
   private readonly opened = new Set<string>();
   private readonly blank: RegExp;
+  private readonly maxSecret: number;
   constructor(secrets: string[]) {
     this.blank = blankPattern(secrets);
+    this.maxSecret = Math.max(CARRY, ...secrets.map((secret) => JSON.stringify(secret).length));
   }
   private redact(text: string) {
-    return text.replace(this.blank, '[REDACTED]');
+    // Binary tool output may contain NUL, which the stream's JSON transport refuses.
+    return text.replace(this.blank, '[REDACTED]').replaceAll('\0', '\\0');
   }
   scrub(events: AgentEvent[]): AgentEvent[] {
     return events.flatMap((event): AgentEvent[] => {
@@ -85,7 +90,7 @@ export class Scrubber {
         this.carry.delete(key);
         if (!event.done) {
           const tail = /\S+$/.exec(text)?.[0] ?? '';
-          const held = tail.slice(Math.max(0, tail.length - CARRY));
+          const held = tail.slice(textEnd(tail, Math.max(0, tail.length - this.maxSecret)));
           if (held) this.carry.set(key, held);
           text = text.slice(0, text.length - held.length);
         }
@@ -103,7 +108,7 @@ export class Scrubber {
       }
       if (event.kind === 'tool_call') {
         const [input, dropped] = cut(this.redact(event.input));
-        return [{ ...event, name: this.redact(event.name).slice(0, 200), input, ...dropped }];
+        return [{ ...event, name: cut(this.redact(event.name), 200)[0], input, ...dropped }];
       }
       if (event.kind === 'tool_result') {
         const [output, dropped] = cut(this.redact(event.output));

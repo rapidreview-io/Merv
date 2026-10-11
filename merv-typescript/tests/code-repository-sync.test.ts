@@ -97,6 +97,27 @@ test('connecting unrelated GitHub history retains Merv main and creates exactly 
   assert.deepEqual(merge, { left_oid: f.initial.main.oid, right_oid: f.remoteHead });
 });
 
+test('previously imported GitHub history still requires its one independent integration review', async (t) => {
+  const f = await fixture(t);
+  const imported = await f.code.importRepository(f.admin, {
+    source: 'github',
+    ref: 'refs/heads/main',
+    requestId: 'earlier-import',
+  });
+  assert.equal(imported.status, 'completed');
+  const first = await f.code.prepareRepository(f.admin, f.input);
+  assert.equal(first.state, 'review_required');
+  assert.ok(first.taskId, 'Retained remote work still needs independent review');
+  assert.equal(first.operation.error, 'code_import_current');
+  const next = await f.code.prepareRepository(f.admin, { ...f.input, requestId: 'reconnect' });
+  assert.equal(next.taskId, first.taskId);
+  assert.equal((await f.code.status(f.admin)).project!.main.oid, f.initial.main.oid);
+  await assert.rejects(
+    f.code.prepareRepository(f.admin, { ...f.input, expectedMainOid: f.remoteHead }),
+    { code: 'code_main_changed' },
+  );
+});
+
 test('a ref moving before fetch is refused without changing main or starting a review of the wrong head', async (t) => {
   const f = await fixture(t);
   f.source.commit({ 'late.txt': 'Arrived after selection' });

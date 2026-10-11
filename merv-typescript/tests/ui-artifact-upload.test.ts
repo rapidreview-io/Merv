@@ -1,15 +1,55 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
-import { click, mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import { deferred } from './fixtures/deferred.js';
 
 const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const { UploadControl } = await import('../packages/ui/web/views/artifacts.js');
 
+const { setProject } = await import('../packages/ui/web/api.js');
+
+for (const size of [32, 2_000_001])
+  for (const leave of ['switch project', 'unmount'] as const)
+    test(`Files stops a ${size}-byte upload after ${leave} during file preparation`, async (t) => {
+      t.after(async () => {
+        await unmount();
+        setProject(null);
+      });
+      setProject('project-a');
+      const ready = deferred();
+      const resume = deferred();
+      t.after(() => resume.resolve());
+      const file = new File([new Uint8Array(size)], 'results.csv', { type: 'text/csv' });
+      const bytes = await file.arrayBuffer();
+      const arrayBuffer = async () => {
+        ready.resolve();
+        await resume.promise;
+        return bytes;
+      };
+      if (size <= 2_000_000) Object.defineProperty(file, 'arrayBuffer', { value: arrayBuffer });
+      else {
+        const part = file.slice();
+        Object.defineProperty(part, 'arrayBuffer', { value: arrayBuffer });
+        Object.defineProperty(file, 'slice', { value: () => part });
+      }
+      await mount(createElement(UploadControl, { available: true }));
+      const input = document.querySelector('input')!;
+      Object.defineProperty(input, 'files', { value: [file] });
+      await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
+      await ready.promise;
+      if (leave === 'switch project') await act(async () => setProject('project-b'));
+      else await unmount();
+      resume.resolve();
+      await settle();
+      assert.deepEqual(requests, [], 'no upload is admitted after its original page or scope left');
+      assert.ok(!text().includes('Uploaded'), 'the abandoned upload is not reported as complete');
+    });
+
 /** Only the storage transport is simulated; the control hashes and sends the actual File. */
-async function uploading(t: TestContext, replies: (number | 'network')[]) {
+async function uploading(t: TestContext, replies: (number | 'network')[], onPut?: () => void) {
   t.after(unmount);
   const original = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
   t.after(() => {
@@ -36,6 +76,7 @@ async function uploading(t: TestContext, replies: (number | 'network')[]) {
     send(file: File) {
       this.body = file;
       puts.push(this);
+      onPut?.();
       const reply = replies.shift();
       assert.notEqual(reply, undefined, 'no unexpected storage request');
       queueMicrotask(() => {
@@ -121,6 +162,26 @@ test('Files sends one whole file with its signed checksum headers before complet
   assert.equal(f.puts[0].url, f.plan().parts[0].url);
   assert.deepEqual(f.puts[0].headers, f.headers);
   assert.equal(f.closed(), 1);
+});
+
+test('Files does not complete an upload under a project selected during the storage PUT', async (t) => {
+  setProject('project-a');
+  const sent = deferred();
+  const f = await uploading(t, [200], () => {
+    setProject('project-b');
+    sent.resolve();
+  });
+  t.after(() => setProject(null));
+  serve('/tools/artifact.upload_begin', { body: { result: f.plan() } });
+  serve('/tools/artifact.upload_complete', { body: { result: { id: 'art_file' } } });
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', { value: [f.file] });
+  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
+  await sent.promise;
+  await settle();
+  assert.deepEqual(requests, ['POST /tools/artifact.upload_begin']);
+  assert.equal(f.puts.length, 1);
+  assert.equal(f.closed(), 0);
 });
 
 test('Files resumes a failed PUT with the same upload and fresh signed URL', async (t) => {

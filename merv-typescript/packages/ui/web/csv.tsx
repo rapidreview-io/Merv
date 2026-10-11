@@ -9,11 +9,16 @@ import { useMemo, useState } from 'react';
 
 /** Rows of fields, or nothing where the text is not one rectangular table. */
 export function parseDelimited(text: string, separator: ',' | '\t'): string[][] | undefined {
+  // Ignore trailing blank lines while keeping the last record's terminator.
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === '\r' || text[end - 1] === '\n')) end--;
+  if (end < text.length) text = text.slice(0, end) + '\n';
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
   let at = 0;
-  const end = () => {
+  let rowStart = 0;
+  const endField = () => {
     row.push(field);
     field = '';
   };
@@ -35,26 +40,20 @@ export function parseDelimited(text: string, separator: ',' | '\t'): string[][] 
         return undefined;
       continue;
     }
-    if (char === separator) end();
+    if (char === separator) endField();
     else if (char === '\n' || char === '\r') {
       if (char === '\r' && text[at + 1] === '\n') at++;
-      end();
+      endField();
       rows.push(row);
       row = [];
+      rowStart = at + 1;
     } else field += char;
     at++;
   }
-  if (field || row.length) {
-    end();
+  if (at > rowStart) {
+    endField();
     rows.push(row);
   }
-  // Blank lines at the end are the end of the file, not rows of one empty field.
-  while (
-    rows.length > 1 &&
-    rows[rows.length - 1]!.join('') === '' &&
-    rows[rows.length - 1]!.length === 1
-  )
-    rows.pop();
   const width = rows[0]?.length ?? 0;
   return width && rows.every((cells) => cells.length === width) ? rows : undefined;
 }

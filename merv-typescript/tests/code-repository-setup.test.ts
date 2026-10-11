@@ -43,6 +43,79 @@ test('the import journal freezes GitHub authorization across retries and rejects
   assert.equal(observed.length, 1);
 });
 
+for (const nested of [false, true]) {
+  test(`GitHub imports peel ${nested ? 'nested' : 'annotated'} tags to the selected commit`, async (t) => {
+    const source = gitSource(t);
+    const head = source.commit({ 'readme.txt': 'Release history' });
+    source.git('tag', '-a', 'release', '-m', 'Release', head);
+    if (nested) source.git('tag', '-a', 'outer', '-m', 'Outer release', 'release');
+    const ref = `refs/tags/${nested ? 'outer' : 'release'}`;
+    const tag = source.git('rev-parse', ref);
+    assert.notEqual(tag, head);
+    const f = await codeStoreFixture(t, {}, head);
+    await f.open({
+      remote: {
+        read: async (_caller, use) =>
+          use({
+            url: source.repository,
+            protocol: 'file',
+            repository: { id: 42, fullName: 'research/project' },
+            env: {},
+          }),
+      },
+    });
+    const input = { source: 'github', ref, expectedHead: head, requestId: 'tag-import' };
+    const imported = await f.code.importRepository(f.admin, input);
+    assert.deepEqual([imported.status, imported.head, imported.error], ['completed', head, null]);
+    assert.deepEqual(f.refs(), [`refs/merv/imports/${imported.id} ${head}`]);
+    assert.equal((await f.code.importRepository(f.admin, input)).id, imported.id);
+    assert.equal(source.git('rev-parse', ref), tag);
+  });
+}
+
+test('connecting a previously imported GitHub head recognizes the retained main', async (t) => {
+  const source = gitSource(t);
+  const head = source.commit({ 'readme.txt': 'Existing history' });
+  const f = await codeStoreFixture(t, {}, head);
+  await f.open({
+    remote: {
+      read: async (_caller, use) =>
+        use({
+          url: source.repository,
+          protocol: 'file',
+          repository: { id: 42, fullName: 'research/project' },
+          env: {},
+        }),
+    },
+  });
+  const imported = await f.code.importRepository(f.admin, {
+    source: 'github',
+    ref: 'refs/heads/main',
+    requestId: 'earlier-import',
+  });
+  assert.equal(imported.status, 'completed');
+  t.mock.method(f.code.github, 'status', async () => ({
+    revision: 1,
+    repository: { id: 42, fullName: 'research/project' },
+    baseBranch: 'main',
+    automation: 'write',
+  }));
+  t.mock.method(f.code.github, 'assertBinding', async () => {});
+  const input = {
+    expectedRevision: 1,
+    baseBranch: 'main',
+    headOid: head,
+    expectedMainOid: head,
+    requestId: 'connect',
+  };
+  const prepared = await f.code.prepareRepository(f.admin, input);
+  assert.equal(prepared.state, 'ready');
+  assert.equal(prepared.mainOid, head);
+  assert.equal(prepared.operation.error, 'code_import_current');
+  assert.deepEqual(await f.code.prepareRepository(f.admin, input), prepared);
+  assert.equal((await f.code.status(f.admin)).project!.main.stored, true);
+});
+
 test('relinking before import authorization never fetches the replacement repository', async (t) => {
   const f = await codeStoreFixture(t);
   let tokens = 0;

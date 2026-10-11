@@ -838,59 +838,96 @@ test('a worker that asks its owner or hands off still hands over its checkout, a
   assert.equal((await f.unit()).canonicalHead, result.headOid);
 });
 
-test('hosted Code checkout has independent Git metadata and its edits pass through Code capture', async (t) => {
+for (const objectFormat of ['sha1', 'sha256'] as const)
+  test(`hosted ${objectFormat} Code checkout has independent Git metadata and its edits pass through Code capture`, async (t) => {
+    const f = await writerFixture(t, 900, { objectFormat });
+    await f.lease('ses_hosted');
+    const m = machine(t, f, undefined, true, f.unitId);
+    const driver = m.start();
+    const launch = m.launch('ses_hosted');
+    const handle = await driver.prepare(launch, m.session('ses_hosted'));
+    assert.equal(
+      handle.path,
+      join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(f.unitId).digest('hex')),
+    );
+    assert.ok(lstatSync(join(handle.path, '.git')).isDirectory());
+    assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
+    assert.equal(git(handle.path, ['rev-parse', '--git-common-dir']), '.git');
+    assert.equal(git(handle.path, ['rev-parse', '--show-object-format']), objectFormat);
+    assert.equal(git(handle.path, ['remote']), '');
+    assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
+    await f.event('session.workspace_attached', 'ses_hosted');
+    writeFileSync(join(handle.path, 'hosted.txt'), 'work from assignment\n');
+    const first = await command(f, driver, 'ses_hosted', f.root);
+    const receipt = await driver.checkpointCommit(launch, first);
+    assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+    writeFileSync(join(handle.path, 'after.txt'), 'capture this too\n');
+    // A killed agent's Git left HEAD and its branch locked; the session is confirmed stopped.
+    const branch = git(handle.path, ['symbolic-ref', '-q', 'HEAD']) || 'refs/heads/left';
+    const locks = ['HEAD.lock', `${branch}.lock`].map((name) => join(handle.path, '.git', name));
+    for (const lock of locks) writeFileSync(lock, '');
+    m.terminal.add(launch.id);
+    const final = await driver.capture(launch);
+    await f.event('session.closed', 'ses_hosted');
+    f.end('ses_hosted');
+    assert.equal((await f.unit()).canonicalHead, final?.headOid);
+    assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
+    assert.deepEqual(
+      locks.filter((lock) => existsSync(lock)),
+      [],
+    );
+    await driver.close(launch);
+    assert.deepEqual(
+      readdirSync(join(handle.path, '.git')).filter((name) => name.startsWith('index-')),
+      [],
+    );
+    f.reviewer('ses_hosted_review', receipt.headOid);
+    const reviewLaunch = m.launch('ses_hosted_review');
+    const review = await driver.prepare(reviewLaunch, m.session('ses_hosted_review'));
+    assert.equal(review.snapshot?.headOid, receipt.headOid);
+    assert.ok(lstatSync(join(review.path, '.git')).isDirectory());
+    assert.equal(git(review.path, ['rev-parse', '--git-common-dir']), '.git');
+    m.terminal.add(reviewLaunch.id);
+    assert.equal((await driver.capture(reviewLaunch))?.headOid, receipt.headOid);
+    await driver.close(reviewLaunch);
+    // The work item keeps its one cwd: the review read it in place and it stays.
+    assert.equal(review.path, handle.path);
+    assert.ok(existsSync(review.path));
+  });
+
+test('capture sends whitespace-only filenames through admission and preserves rejected work', async (t) => {
   const f = await writerFixture(t);
-  await f.lease('ses_hosted');
+  await f.lease('ses_whitespace_1');
   const m = machine(t, f, undefined, true, f.unitId);
   const driver = m.start();
-  const launch = m.launch('ses_hosted');
-  const handle = await driver.prepare(launch, m.session('ses_hosted'));
-  assert.equal(
-    handle.path,
-    join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(f.unitId).digest('hex')),
+  const first = m.launch('ses_whitespace_1');
+  const writer = await driver.prepare(first, m.session('ses_whitespace_1'));
+  await f.event('session.workspace_attached', 'ses_whitespace_1');
+  writeFileSync(join(writer.path, ' '), 'retained work\n');
+  m.terminal.add(first.id);
+  const captured = await driver.capture(first);
+  assert.ok(captured);
+  assert.equal(captured.headOid, f.root);
+  assert.notEqual(git(writer.path, ['rev-parse', 'HEAD']), f.root);
+  assert.equal(git(writer.path, ['show', 'HEAD: ']), 'retained work');
+  const unit = await f.unit();
+  assert.equal(unit.writerState, 'recovery_required');
+  assert.ok(unit.quarantine, 'a trailing space must be quarantined, not silently omitted');
+  await f.event('session.closed', 'ses_whitespace_1');
+  f.end('ses_whitespace_1');
+  await driver.close(first);
+
+  await f.code.fenceUnit(await f.human(), { unitId: f.unitId, requestId: 'fence-whitespace' });
+  await f.lease('ses_whitespace_2');
+  const next = await driver.prepare(m.launch('ses_whitespace_2'), m.session('ses_whitespace_2'));
+  assert.equal(next.snapshot!.headOid, captured.headOid);
+  assert.equal(existsSync(join(next.path, ' ')), false);
+  const rejected = join(
+    m.directory,
+    'code-v2/rejected',
+    createHash('sha256').update(first.id).digest('hex'),
   );
-  assert.ok(lstatSync(join(handle.path, '.git')).isDirectory());
-  assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
-  assert.equal(git(handle.path, ['rev-parse', '--git-common-dir']), '.git');
-  assert.equal(git(handle.path, ['remote']), '');
-  assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
-  await f.event('session.workspace_attached', 'ses_hosted');
-  writeFileSync(join(handle.path, 'hosted.txt'), 'work from assignment\n');
-  const first = await command(f, driver, 'ses_hosted', f.root);
-  const receipt = await driver.checkpointCommit(launch, first);
-  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
-  writeFileSync(join(handle.path, 'after.txt'), 'capture this too\n');
-  // A killed agent's Git left HEAD and its branch locked; the session is confirmed stopped.
-  const branch = git(handle.path, ['symbolic-ref', '-q', 'HEAD']) || 'refs/heads/left';
-  const locks = ['HEAD.lock', `${branch}.lock`].map((name) => join(handle.path, '.git', name));
-  for (const lock of locks) writeFileSync(lock, '');
-  m.terminal.add(launch.id);
-  const final = await driver.capture(launch);
-  await f.event('session.closed', 'ses_hosted');
-  f.end('ses_hosted');
-  assert.equal((await f.unit()).canonicalHead, final?.headOid);
-  assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
-  assert.deepEqual(
-    locks.filter((lock) => existsSync(lock)),
-    [],
-  );
-  await driver.close(launch);
-  assert.deepEqual(
-    readdirSync(join(handle.path, '.git')).filter((name) => name.startsWith('index-')),
-    [],
-  );
-  f.reviewer('ses_hosted_review', receipt.headOid);
-  const reviewLaunch = m.launch('ses_hosted_review');
-  const review = await driver.prepare(reviewLaunch, m.session('ses_hosted_review'));
-  assert.equal(review.snapshot?.headOid, receipt.headOid);
-  assert.ok(lstatSync(join(review.path, '.git')).isDirectory());
-  assert.equal(git(review.path, ['rev-parse', '--git-common-dir']), '.git');
-  m.terminal.add(reviewLaunch.id);
-  assert.equal((await driver.capture(reviewLaunch))?.headOid, receipt.headOid);
-  await driver.close(reviewLaunch);
-  // The work item keeps its one cwd: the review read it in place and it stays.
-  assert.equal(review.path, handle.path);
-  assert.ok(existsSync(review.path));
+  assert.equal(readFileSync(join(rejected, ' '), 'utf8'), 'retained work\n');
 });
 
 test('a quarantined commit leaves the checkout as it was and never rides along in the next bundle', async (t) => {

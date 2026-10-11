@@ -52,6 +52,10 @@ export async function prepareRepository(
     },
     requestId: `${input.requestId}:import`,
   });
+  // Code checked expectedHead before finding that this history was already retained.
+  // Reconciliation still checks the selected connection, local main and review requirement.
+  if (operation.status === 'failed' && operation.error === 'code_import_current')
+    return reconcile(operation);
   if (operation.status !== 'completed')
     return {
       state: operation.status === 'prepared' ? 'importing' : 'failed',

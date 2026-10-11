@@ -597,6 +597,7 @@ export class PiHosts implements FleetOwner {
     this.core.forget(turn);
     const live = this.core.live.get(turn.conversationId);
     if (live?.turn?.commandId === turn.id) delete live.turn;
+    if (live?.progress?.commandId === turn.id) delete live.progress;
     if (once) turn.retried = true;
     Object.assign(turn, { status: 'waiting', workerId: null });
     for (const claimed of ['startedAt', 'tools', 'canMove'] as const) delete turn[claimed];

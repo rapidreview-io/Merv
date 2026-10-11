@@ -8,7 +8,7 @@ import { ServerGit } from '../packages/code/src/git.js';
 import { mergeBases } from '../packages/code/src/base-merge.js';
 
 /** A bare repository holding main and three branches off it: a and c touch one file, b another. */
-function repository(t: TestContext) {
+function repository(t: TestContext, conflictPath = 'f.txt') {
   const root = mkdtempSync(join(tmpdir(), 'merv-merge-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const work = join(root, 'work');
@@ -28,14 +28,14 @@ function repository(t: TestContext) {
     git('commit', '-q', '-m', branch);
     return git('rev-parse', 'HEAD');
   };
-  writeFileSync(join(work, 'f.txt'), 'base\n');
+  writeFileSync(join(work, conflictPath), 'base\n');
   writeFileSync(join(work, 'g.txt'), 'keep\n');
   git('add', '.');
   git('commit', '-q', '-m', 'base');
   const main = git('rev-parse', 'HEAD');
-  const a = commit('a', 'f.txt', 'base\nA\n');
+  const a = commit('a', conflictPath, 'base\nA\n');
   const b = commit('b', 'g.txt', 'keep\nB\n');
-  const c = commit('c', 'f.txt', 'base\nC\n');
+  const c = commit('c', conflictPath, 'base\nC\n');
   const bare = join(root, 'bare.git');
   execFileSync('git', ['clone', '-q', '--bare', work, bare]);
   return { env: { GIT_DIR: bare }, main, a, b, c, bare, home: mkdtempSync(join(root, 'home-')) };
@@ -72,6 +72,17 @@ test('a conflict is an answer that names its paths and keeps what Git said', asy
   if (result.outcome !== 'conflict') return;
   assert.deepEqual(result.paths, ['f.txt']);
   assert.match(result.messages, /CONFLICT \(content\)/);
+});
+
+test('conflict paths preserve Unicode and quotes exactly', async (t) => {
+  const path = 'résumé "draft".txt';
+  const r = repository(t, path);
+  const git = new ServerGit(r.home);
+  t.after(() => git.close());
+  const result = await mergeBases(git, r.env, r.a, r.c, 'quoted');
+  assert.equal(result.outcome, 'conflict');
+  if (result.outcome !== 'conflict') return;
+  assert.deepEqual(result.paths, [path]);
 });
 
 test('a history that already holds the other is the base as it stands', async (t) => {

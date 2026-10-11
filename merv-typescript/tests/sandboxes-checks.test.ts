@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { SandboxClient } from '../packages/sandboxes/src/client.js';
-import { SandboxCheckRunner } from '../packages/sandboxes/src/checks.js';
+import { checkScript, SandboxCheckRunner } from '../packages/sandboxes/src/checks.js';
 import type { SandboxCheckSpec } from '@merv/sandboxes';
 
 /**
- * The route sequence one project check walks, against a recorded transport. Nothing here
- * runs a command: this is what Merv says to the service and what it refuses to say.
+ * The route sequence one project check walks, against a recorded transport, and its shell
+ * wrapper against a local source archive. No remote machine is used.
  */
 
 const tokenEnv = 'MERV_SANDBOXES_CHECK_TEST_TOKEN';
@@ -22,6 +27,54 @@ const spec: SandboxCheckSpec = {
   source: { bytes: Buffer.from('a gzipped tree'), sha256: 'b'.repeat(64) },
   idempotencyKey: `chk:${'c'.repeat(64)}:1`,
 };
+
+test('check scratch files preserve repository filenames and the command’s working directory', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-check files-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = join(directory, 'source'),
+    home = join(directory, 'home');
+  mkdirSync(source);
+  mkdirSync(home);
+  writeFileSync(join(source, 'out.log'), 'tracked output');
+  writeFileSync(join(source, 'src.tgz'), 'tracked archive');
+  const archive = join(directory, 'source.tar.gz');
+  const packed = spawnSync('tar', ['-czf', archive, '-C', source, '.'], { encoding: 'utf8' });
+  assert.equal(packed.status, 0, packed.stderr);
+  const sha256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+  const resultPath = join(directory, 'result.json');
+  const command = [
+    'test "$PWD" = "$HOME/merv-check"',
+    'test "$(cat out.log)" = "tracked output"',
+    'test "$(cat src.tgz)" = "tracked archive"',
+    "printf 'check output'",
+  ].join(' && ');
+  const script = [
+    // Local substitutes for the download and GNU utilities. The digest and copied bytes
+    // must match the fixture, and the immediate command needs no timeout clock.
+    'curl() { while [ "$1" != "-o" ]; do shift; done; cp "$SOURCE_ARCHIVE" "$2"; }',
+    'sha256sum() { read expected file; test "$expected" = "$SOURCE_SHA256" && cmp "$file" "$SOURCE_ARCHIVE"; }',
+    'timeout() { shift; "$@"; }',
+    checkScript(command, 'https://fixture.invalid/source', sha256, 30),
+  ].join('\n');
+  const run = spawnSync('/bin/sh', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      SOURCE_ARCHIVE: archive,
+      SOURCE_SHA256: sha256,
+      SBX_RESULT_PATH: resultPath,
+    },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  assert.equal(result.exit, 0);
+  assert.equal(result.bytes, 12);
+  assert.equal(Buffer.from(result.head64, 'base64').toString(), 'check output');
+  assert.equal(Buffer.from(result.tail64, 'base64').toString(), 'check output');
+  assert.equal(readFileSync(join(home, 'merv-check', 'out.log'), 'utf8'), 'tracked output');
+  assert.equal(readFileSync(join(home, 'merv-check', 'src.tgz'), 'utf8'), 'tracked archive');
+});
 
 interface Call {
   method: string;

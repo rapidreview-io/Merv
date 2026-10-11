@@ -1152,6 +1152,9 @@ export class CodeReceiver {
       );
       return null;
     }
+    // Admission expects the selected commit in the bundle header, including when the
+    // fetched ref names an annotated tag (or a tag of a tag).
+    await git.ok(['update-ref', 'refs/merv/fetched', oid], { env });
     const part = join(directory, 'bundle.part');
     // What every earlier import reached is held: the repository is the scratch's alternate.
     const made = await git.run(

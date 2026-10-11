@@ -110,8 +110,8 @@ async function loadJwks(
   }
 }
 
-/** A public signing key this verifier can use; everything else in a set is ignored. */
-const usable = (key: unknown) =>
+/** A supported public key candidate; importing it below validates its contents. */
+const usable = (key: unknown): key is JSONWebKeySet['keys'][number] =>
   object(key) &&
   !PRIVATE_FIELDS.some((field) => Object.hasOwn(key, field)) &&
   ((key.kty === 'EC' && key.crv === 'P-256') ||
@@ -154,9 +154,20 @@ class RemoteKeys {
         signal.addEventListener('abort', () => reject(unauthorized()), { once: true });
       });
       const json = await Promise.race([this.load(signal), timedOut]);
-      const keys = object(json) && Array.isArray(json.keys) ? json.keys.filter(usable) : [];
+      const candidates = object(json) && Array.isArray(json.keys) ? json.keys.filter(usable) : [];
+      const keys: JSONWebKeySet['keys'] = [];
+      for (const key of candidates) {
+        const alg = key.kty === 'EC' ? 'ES256' : key.kty === 'RSA' ? 'RS256' : (key.alg ?? 'EdDSA');
+        try {
+          // Local resolvers import lazily. Check each key before replacing the last good set.
+          await createLocalJWKSet({ keys: [key] })({ alg });
+          keys.push(key);
+        } catch {
+          // A malformed or non-signing entry must not discard other usable keys.
+        }
+      }
       if (keys.length === 0) throw unauthorized();
-      this.#keys = createLocalJWKSet({ keys } as JSONWebKeySet);
+      this.#keys = createLocalJWKSet({ keys });
       this.#loadedAt = this.clock();
     })().finally(() => {
       this.#pending = undefined;
