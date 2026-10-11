@@ -5,7 +5,7 @@
  */
 import { MervError, check } from '@merv/contracts';
 import type { CodeRepositories } from './store/repository.js';
-import type { CodeBrowsed, CodeFolderEntry } from './models.js';
+import type { CodeBrowsed, CodeFolderEntry, CodeLogEntry } from './models.js';
 
 /** The most of one file shown as text. */
 export const MOST_FILE_BYTES = 1024 * 1024;
@@ -92,4 +92,59 @@ export async function browse(
   if (bytes.subarray(0, 8000).includes(0))
     return { kind: 'file', commit, path, size, withheld: 'binary' };
   return { kind: 'file', commit, path, size, text: bytes.toString('utf8') };
+}
+
+/** The most commits one read of history returns. */
+export const MOST_LOG = 200;
+
+/** A commit's history as `git log` reads it, newest first, optionally only where `path` changed. */
+export async function log(
+  repositories: CodeRepositories,
+  projectId: string,
+  commit: string,
+  { limit = 50, path = '' }: { limit?: number; path?: string } = {},
+): Promise<CodeLogEntry[]> {
+  check(OID.test(commit), 'invalid_code_ref', 'A commit is its full object id');
+  const where = treePath(path);
+  const listed = await repositories.git.run(
+    [
+      'log',
+      `-n${Math.max(1, Math.min(MOST_LOG, limit))}`,
+      '--format=%H%x00%P%x00%aI%x00%s%x00%b%x1e',
+      commit,
+      ...(where ? ['--', where] : []),
+    ],
+    { env: repositories.environment(projectId), timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 },
+  );
+  check(listed.code === 0, 'code_path_not_found', 'Code does not hold that commit', 404);
+  return listed.stdout
+    .toString('utf8')
+    .split('\x1e')
+    .map((record) => record.replace(/^\n/, ''))
+    .filter(Boolean)
+    .map((record) => {
+      const [oid, parents, date, subject, body] = record.split('\0');
+      return {
+        oid: oid!,
+        parents: parents ? parents.split(' ') : [],
+        date: date!,
+        subject: subject ?? '',
+        // A body is the bullet points of a change; kept short whatever was written.
+        body: (body ?? '').trim().slice(0, 2_000),
+      };
+    });
+}
+
+/** The commits `head` adds over `base`: the work of the unit whose head and base they are. */
+export async function added(
+  repositories: CodeRepositories,
+  projectId: string,
+  head: string,
+  base: string | null,
+): Promise<string[]> {
+  const walk = await repositories.git.run(
+    ['rev-list', '--max-count=5000', head, ...(base ? ['--not', base] : [])],
+    { env: repositories.environment(projectId), timeoutMs: 10_000 },
+  );
+  return walk.code === 0 ? walk.stdout.toString('utf8').split('\n').filter(Boolean) : [];
 }

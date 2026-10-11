@@ -657,6 +657,11 @@
           "readOnly": false
         },
         {
+          "name": "code.log",
+          "description": "Read the project's Git history newest first, like git log, with the task or experiment each commit came from (unit: its id, kind and title) — Git itself does not carry those names. ref chooses whose history: main (the default), a task or experiment by its work unit id, or a full commit id; path narrows it to commits that changed that file or folder; limit is at most 200 (default 50). Each commit has its subject, its bullet-point body, parents and date. It changes nothing.",
+          "readOnly": true
+        },
+        {
           "name": "code.merge",
           "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.",
           "readOnly": false
@@ -788,6 +793,11 @@
           "name": "code.local.bind",
           "description": "Bind this project to a repository identity and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
           "readOnly": false
+        },
+        {
+          "name": "code.log",
+          "description": "Read the project's Git history newest first, like git log, with the task or experiment each commit came from (unit: its id, kind and title) — Git itself does not carry those names. ref chooses whose history: main (the default), a task or experiment by its work unit id, or a full commit id; path narrows it to commits that changed that file or folder; limit is at most 200 (default 50). Each commit has its subject, its bullet-point body, parents and date. It changes nothing.",
+          "readOnly": true
         },
         {
           "name": "code.merge",

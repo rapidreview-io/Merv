@@ -1,4 +1,4 @@
-import type { CodeBrowsed } from '@merv/code/models';
+import type { CodeBrowsed, CodeLogEntry } from '@merv/code/models';
 import type {
   Caller,
   CodeCommandRecord,
@@ -152,6 +152,11 @@ export interface CodeUnits {
     caller: Caller,
     input: { ref?: string; path?: string },
   ): Promise<CodeBrowsed & { ref: string }>;
+  /** The history of main, a unit of work or a commit, each commit with the work it came from. */
+  history(
+    caller: Caller,
+    input: { ref?: string; path?: string; limit?: number },
+  ): Promise<{ ref: string; commit: string; commits: CodeLogEntry[] }>;
   /**
    * Whether Code has this project, and so keeps its history in its own repository. It never
    * turns false again, and it is read from the database alone, so an owner may ask inside a

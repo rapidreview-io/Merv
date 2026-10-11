@@ -162,7 +162,13 @@ async function fixture(
         sweepIntervalMs: 60_000,
       }),
     );
-    code = await createService(new CodeCommandService(state, scope, sessions));
+    code = await createService(
+      new CodeCommandService(state, scope, sessions, {
+        // The name a checkpoint says it saves; Workflows answers it in the composition.
+        relations: async () =>
+          ({ instance: { name: 'Fold both sweeps', workflow: 'task' } }) as never,
+      }),
+    );
   };
   const close = async () => {
     code.close();
@@ -346,7 +352,7 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
   const checkpoint = (await asked('checkpoint-1'))!;
   assert.deepEqual(
     [checkpoint.actorId, checkpoint.expectedHead, checkpoint.message],
-    [worker.caller.actorId, oid('a'), 'merv: checkpoint'],
+    [worker.caller.actorId, oid('a'), 'Checkpoint: Fold both sweeps'],
   );
   // A lost reply asks again: the same command, already dispatched.
   assert.deepEqual(await asked('checkpoint-1'), checkpoint);

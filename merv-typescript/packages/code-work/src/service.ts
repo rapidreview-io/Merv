@@ -4,7 +4,7 @@ import { parseCodeInput } from '@merv/code/input';
 import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
 import { enqueueMirror, type CodeMirrorService } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
-import type { Caller, Reviews, Scope, State, Transaction, Workflows } from '@merv/contracts';
+import type { Caller, Reviews, Scope, Sql, State, Transaction, Workflows } from '@merv/contracts';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
   check,
@@ -100,13 +100,21 @@ export class CodeService implements Code {
     private readonly reviews: Reviews,
     private readonly utility: Pick<
       CodeUtility,
-      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories' | 'browse'
+      | 'github'
+      | 'writers'
+      | 'units'
+      | 'openStore'
+      | 'declareManaged'
+      | 'repositories'
+      | 'browse'
+      | 'log'
+      | 'added'
     >,
     private readonly repositories: CodeStoreOptions = {},
     /** The plugin's config: whether accepted work lands on main (landing.ts). */
     private readonly options: { mainLanding?: boolean } = {},
   ) {
-    this.commands = new CodeCommandService(state, scope, sessions);
+    this.commands = new CodeCommandService(state, scope, sessions, workflows);
     this.github = utility.github;
     this.writerStore = utility.writers;
     this.board = new CodeRunningReader(state, scope, workflows, {
@@ -159,7 +167,8 @@ export class CodeService implements Code {
           await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
         },
         message: async (sql, projectId, key) =>
-          (await this.landing?.message(sql, projectId, key)) ?? null,
+          (await this.landing?.message(sql, projectId, key)) ??
+          (await this.mergeMessage(sql, projectId, key)),
       });
       await bases.initialize();
       this.unitStore.bases = bases;
@@ -403,7 +412,42 @@ export class CodeService implements Code {
    * A folder or file of the project's code, as of `ref`: main (the default), a task or
    * experiment by its id (its accepted code, or else the newest Code admitted for it), or a commit.
    */
-  async files(caller: Caller, input: { ref?: string; path?: string }) {
+  /**
+   * What a merge of accepted work says it merges: the tasks and experiments whose accepted
+   * commits are its members, by their names, which never change, so a repeat makes the same
+   * commit. A member no unit accepted (main, an earlier merge) is counted, not named.
+   */
+  private async mergeMessage(sql: Sql, projectId: string, key: string): Promise<string | null> {
+    const base = await sql.get<{ members_json: string }>(
+      'SELECT members_json FROM code_bases WHERE project_id=? AND base_key=?',
+      projectId,
+      key,
+    );
+    if (!base) return null;
+    const members = JSON.parse(base.members_json) as string[];
+    const accepted = await sql.all<{ unit_id: string; acceptance_json: string }>(
+      'SELECT unit_id,acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY accepted_at,unit_id',
+      projectId,
+    );
+    const ids = accepted.flatMap((row) =>
+      members.includes(
+        (JSON.parse(row.acceptance_json) as { code?: { commit?: string } }).code?.commit ?? '',
+      )
+        ? [row.unit_id]
+        : [],
+    );
+    if (!ids.length) return null;
+    const names = await this.state.snapshotTransaction(async (tx) => {
+      const found: string[] = [];
+      for (const id of ids)
+        found.push((await this.workflows.relations(projectId, id, tx))?.instance.name ?? id);
+      return found;
+    });
+    const rest = members.length - ids.length;
+    return `Merge ${names.join(' + ')}${rest > 0 ? ` + ${rest} more` : ''}`;
+  }
+  /** The commit `ref` names: main (the default), a unit's accepted code or newest head, or a commit. */
+  private async commitOf(caller: Caller, input: { ref?: string }) {
     const ref = input.ref?.trim() || 'main';
     const commit = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(ref)
       ? ref
@@ -423,9 +467,57 @@ export class CodeService implements Code {
         404,
       );
     await this.state.snapshotTransaction((tx) => this.scope.require(caller, 'read', tx));
+    return { ref, commit };
+  }
+  /**
+   * A folder or file of the project's code, as of `ref`: main (the default), a task or
+   * experiment by its id (its accepted code, or else the newest Code admitted for it), or a commit.
+   */
+  async files(caller: Caller, input: { ref?: string; path?: string }) {
+    const { ref, commit } = await this.commitOf(caller, input);
+    return { ref, ...(await this.utility.browse(caller.projectId, commit, input.path ?? '')) };
+  }
+  /**
+   * The history of `ref`, newest first, each commit with the task or experiment whose work it is:
+   * the unit whose accepted (or newest) head adds it over the base that unit was built on. Git
+   * holds no record names, so this is where a reader of history learns where a change came from.
+   */
+  async history(caller: Caller, input: { ref?: string; path?: string; limit?: number }) {
+    const { ref, commit } = await this.commitOf(caller, input);
+    const entries = await this.utility.log(caller.projectId, commit, input);
+    const { units } = await this.unitStore.status(caller);
+    const owner = new Map<string, string>();
+    const wanted = new Set(entries.map((entry) => entry.oid));
+    // Oldest acceptance first, so a commit is the work of the unit that first carried it.
+    for (const unit of [...units].sort((a, b) =>
+      (a.acceptance?.acceptedAt ?? '~').localeCompare(b.acceptance?.acceptedAt ?? '~'),
+    )) {
+      const head = unit.acceptance?.reference ?? unit.canonicalHead;
+      if (!head || owner.size >= wanted.size) continue;
+      for (const oid of await this.utility.added(
+        caller.projectId,
+        head,
+        unit.base?.reference ?? null,
+      ))
+        if (wanted.has(oid) && !owner.has(oid)) owner.set(oid, unit.unitId);
+    }
+    const named = new Map<string, { kind: string; title: string }>();
+    await this.state.snapshotTransaction(async (tx) => {
+      for (const id of new Set(owner.values())) {
+        const found = await this.workflows.relations(caller.projectId, id, tx).catch(() => null);
+        named.set(id, {
+          kind: found?.instance.workflow ?? 'work',
+          title: found?.instance.name ?? id,
+        });
+      }
+    });
     return {
       ref,
-      ...(await this.utility.browse(caller.projectId, commit, input.path ?? '')),
+      commit,
+      commits: entries.map((entry) => {
+        const id = owner.get(entry.oid);
+        return id ? { ...entry, unit: { id, ...named.get(id)! } } : entry;
+      }),
     };
   }
   async status(caller: Caller) {

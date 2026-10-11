@@ -156,6 +156,21 @@ export const codeToolsPlugin = {
           await ctx.codeWork.bindLocal(caller, input),
       },
       {
+        name: 'code.log',
+        description:
+          "Read the project's Git history newest first, like git log, with the task or experiment each commit came from (unit: its id, kind and title) — Git itself does not carry those names. ref chooses whose history: main (the default), a task or experiment by its work unit id, or a full commit id; path narrows it to commits that changed that file or folder; limit is at most 200 (default 50). Each commit has its subject, its bullet-point body, parents and date. It changes nothing.",
+        inputSchema: z
+          .object({
+            ref: z.string().trim().max(200).optional(),
+            path: z.string().max(4096).optional(),
+            limit: z.number().int().min(1).max(200).optional(),
+          })
+          .strict(),
+        readOnly: true,
+        handler: async (caller: Caller, input: { ref?: string; path?: string; limit?: number }) =>
+          await ctx.codeWork.history(caller, input),
+      },
+      {
         name: 'code.files',
         description:
           "Read the project's code as files, the way GitHub shows a repository: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",

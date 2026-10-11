@@ -383,3 +383,36 @@ test('a conflict with main is one resolution task, and main takes its reviewed r
     [resolved, f.d].sort(),
   );
 });
+
+test('history says which work each commit came from, though Git carries no record names', async (t) => {
+  const f = await fixture(t);
+  const first = await f.declare('First');
+  await f.accept(first, f.feature);
+  const second = await f.declare('Second');
+  await f.accept(second, f.moved);
+  await f.drive();
+  const history = await f.code.history(f.admin, {});
+  assert.equal(history.ref, 'main');
+  const merge = history.commits[0]!;
+  assert.equal(merge.subject, `Land input: Second (${second.id})`, 'the landing names its work');
+  const own = (oid: string) => history.commits.find((commit) => commit.oid === oid)?.unit;
+  assert.deepEqual(own(f.feature), { id: first.id, kind: 'input', title: 'First' });
+  assert.deepEqual(own(f.moved), { id: second.id, kind: 'input', title: 'Second' });
+  assert.equal(merge.unit, undefined, 'a server merge is no unit’s own work');
+  const one = await f.code.history(f.admin, { ref: first.id, limit: 1 });
+  assert.equal(one.commits.length, 1);
+  assert.equal(one.commits[0]!.oid, f.feature);
+});
+
+test('a merge of accepted work for work that depends on it names that work, not its key', async (t) => {
+  const f = await fixture(t, false, false);
+  const first = await f.declare('First');
+  await f.accept(first, f.feature);
+  const second = await f.declare('Second');
+  await f.accept(second, f.moved);
+  await f.declare('Third', [first.id, second.id]);
+  for (let round = 0; round < 4; round++) await f.bases.work(f.project);
+  const merged = (await f.code.status(f.admin)).bases?.find((base) => base.result)?.result;
+  assert.ok(merged, 'the two accepted commits were merged for the work that waits on both');
+  assert.equal(f.subject(merged.commit), 'Merge First + Second');
+});

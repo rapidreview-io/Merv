@@ -22,6 +22,7 @@ import {
   type State,
   type Transaction,
   idSchema,
+  type Workflows,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { live } from '@merv/sessions/rules';
@@ -59,7 +60,9 @@ const nextInputSchema = codeCommandControlSchema
     checkpoint: codeCommitInputSchema.pick({ expectedHead: true, requestId: true }).optional(),
   })
   .strict();
-const CHECKPOINT_MESSAGE = 'merv: checkpoint';
+/** A checkpoint says whose work it saves: the work's name never changes, so a retry is the same. */
+const checkpointMessage = (name: string | undefined) =>
+  name ? `Checkpoint: ${name}`.slice(0, 200) : 'Checkpoint: work in progress';
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
 
@@ -81,6 +84,8 @@ export class CodeCommandService implements CodeCommands {
     protected readonly state: State,
     protected readonly scope: Scope,
     protected readonly sessions: Sessions,
+    /** Where a checkpoint learns the name of the work it saves. */
+    protected readonly workflows?: Pick<Workflows, 'relations'>,
   ) {}
 
   /** Complete storage migrations before publishing this service. */
@@ -380,7 +385,10 @@ export class CodeCommandService implements CodeCommands {
       input.expectedHead.length !== session.workspace.attachment.baseOid.length
     )
       return undefined;
-    const hash = digest({ ...input, message: CHECKPOINT_MESSAGE });
+    const message = checkpointMessage(
+      (await this.workflows?.relations(session.projectId, session.instanceId, tx))?.instance.name,
+    );
+    const hash = digest({ ...input, message });
     const prior = await tx.get<Row>(
       'SELECT * FROM code_commands WHERE session_id=? AND request_id=?',
       session.id,
@@ -406,7 +414,7 @@ export class CodeCommandService implements CodeCommands {
       hostRef: session.hostRef,
       workspace: session.workspace.attachment,
       expectedHead: input.expectedHead,
-      message: CHECKPOINT_MESSAGE,
+      message,
       createdAt: now(),
     };
     await tx.run(
