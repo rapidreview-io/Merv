@@ -6,7 +6,8 @@ import type { ServerGit } from './git.js';
  * The automatic merge of two retained histories, made inside Code's own repository. It
  * runs no code of the repository: `merge-tree` needs no checkout, and the child sees no
  * hooks, drivers, filters, replacement objects or configuration but what Code wrote. A
- * clean result is only ever a base for somebody's work, never a retained result.
+ * clean result is a base for somebody's work, or, since 2026-10-11, main itself where accepted
+ * work lands on Merv's main (code-work landing.ts).
  */
 
 /** The one identity and moment every server-made merge carries, so a repeat is the same commit. */
@@ -41,6 +42,8 @@ export async function mergeBases(
   right: string,
   label: string,
   signal?: AbortSignal,
+  /** The whole commit message, when the merge says what work it carries (a landing on main). */
+  message = `Merge base ${label}`,
 ): Promise<BaseMergeResult> {
   const run = { env: { ...env, ...IDENTITY }, timeoutMs: DEADLINE_MS, signal };
   const holds = async (ancestor: string, descendant: string) =>
@@ -72,9 +75,7 @@ export async function mergeBases(
   }
   if (merged.code !== 0 || !/^[0-9a-f]{40,64}$/.test(tree))
     throw new MervError('code_merge_failed', 'Git could not merge the two histories', 503);
-  const commit = (
-    await git.ok(['commit-tree', tree, '-p', left, '-p', right, '-m', `Merge base ${label}`], run)
-  )
+  const commit = (await git.ok(['commit-tree', tree, '-p', left, '-p', right, '-m', message], run))
     .toString('utf8')
     .trim();
   return { outcome: 'merged', commit, tree };

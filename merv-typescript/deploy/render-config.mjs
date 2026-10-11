@@ -127,7 +127,11 @@ set('ui', {});
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
-set('code-work', {});
+// Accepted work lands on Merv's main in projects without GitHub, once this is `on`.
+const landing = process.env.MERV_CODE_MAIN_LANDING;
+if (landing !== undefined && !['on', 'off'].includes(landing))
+  throw new Error('Invalid MERV_CODE_MAIN_LANDING');
+set('code-work', landing === 'on' ? { mainLanding: true } : {});
 // Code's HTTP routes: without them a deployment that runs Code serves no /code at all.
 set('code-work-api', {});
 // Rows and acts published by merv-sandboxes. Absent until the operator names the service, so

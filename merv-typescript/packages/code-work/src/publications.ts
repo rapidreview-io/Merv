@@ -105,6 +105,8 @@ export const publicationState = (p: Omit<CodePublication, 'state'>): CodePublica
 
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
 export class CodePublicationService implements CodePublicationApi {
+  /** Set by Code Work's start: where it is on, a main that moved is merged by landing.ts. */
+  landing?: { standing(sql: Sql, projectId: string): Promise<{ reason: string | null }> };
   constructor(
     private state: State,
     private scope: Scope,
@@ -441,6 +443,8 @@ export class CodePublicationService implements CodePublicationApi {
     // before the transaction, which only accepts the main it was asked about.
     const seen = await this.state.read((sql) => this.mainOf(sql, caller.projectId));
     const held = !!seen && (await this.host.ancestor(caller.projectId, seen, record.headOid));
+    // A main that already holds the reviewed head, landed there or bound past it, published it.
+    const within = !!seen && (await this.host.ancestor(caller.projectId, record.headOid, seen));
     await this.state.transaction(async (tx) => {
       const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
       await this.scope.require(caller, 'write', tx);
@@ -449,7 +453,15 @@ export class CodePublicationService implements CodePublicationApi {
       // The checkout base may already merge accepted dependencies with main.
       // CAS the pinned integration main, not that derived checkout commit.
       const expectedMain = current.approval!.integrationBase;
-      if (main !== expectedMain && main !== current.headOid && !(held && main === seen)) {
+      const contained = within && main === seen && main !== current.headOid;
+      if (
+        !contained &&
+        main !== expectedMain &&
+        main !== current.headOid &&
+        !(held && main === seen)
+      ) {
+        // Where accepted work lands on main, landing merges this head; it waits for that.
+        if ((await this.landing?.standing(tx, caller.projectId))?.reason === null) return;
         await this.markStale(caller, current, 'code_main_changed', null, tx);
         return;
       }
@@ -465,7 +477,8 @@ export class CodePublicationService implements CodePublicationApi {
         }),
         row.proposal_id,
       );
-      await this.host.main(caller, record.headOid, tx, main);
+      if (contained) await this.host.reconcile(caller, tx);
+      else await this.host.main(caller, record.headOid, tx, main);
       await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
         destination: 'local',
         unitId: record.instanceId,

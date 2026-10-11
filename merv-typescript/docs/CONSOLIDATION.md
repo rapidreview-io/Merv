@@ -5,6 +5,10 @@ approval. The task depends on the accepted units missing from the project base a
 normal task delivery, independent review and Code publication path. Research waits for its
 publication before completing the cycle. See [Research](RESEARCH.md).
 
+Since 2026-10-11 a project with no linked GitHub repository needs no consolidation for code:
+accepted work lands on Merv's main by itself once `MERV_CODE_MAIN_LANDING` is on (GIT_MODEL.md,
+owner decision 1).
+
 The dedicated `@merv/consolidation` plugin was retired on 2026-09-22. Its package, workflow
 registrations, tools, UI and special Code integration are removed. Remove its three entries
 (`consolidation`, `consolidation-tools`, `consolidation-ui`) from custom configurations.

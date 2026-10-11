@@ -80,6 +80,17 @@ export interface BaseBody {
   sources: { unitId: string; acceptanceHash: string; terminalRevision: number }[];
   main: { oid: string; operationId: string } | null;
 }
+/** Every accepted commit of a project, with the main to compare them against. */
+export interface AcceptedCandidates {
+  main: string;
+  candidates: {
+    unitId: string;
+    commit: string;
+    quarantined: boolean;
+    acceptanceHash: string;
+    acceptedAt: string;
+  }[];
+}
 /** The publication facts of one unit, read by the id its acceptance sealed. */
 export interface PublicationRow {
   record_json: string;
@@ -354,49 +365,50 @@ export class WorkUnitRecords {
    * closed unmerged rejected its unit and every acceptance its base was made from, so none of
    * them is offered again.
    */
-  async acceptedCandidates(
-    caller: Caller,
-    tx?: Transaction,
-  ): Promise<{
-    main: string;
-    candidates: { unitId: string; commit: string; quarantined: boolean }[];
-  }> {
+  async acceptedCandidates(caller: Caller, tx?: Transaction): Promise<AcceptedCandidates> {
     this.assertOpen();
     caller = structuredClone(caller);
     return await inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const project = await this.code.project(tx, caller.projectId);
-      check(project, 'code_project_unbound', 'This project has no Code binding', 409);
-      const candidates: { unitId: string; commit: string; quarantined: boolean }[] = [];
-      const rows = await tx.all<UnitRow>(
-        `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
-        caller.projectId,
-      );
-      // Only a consolidation, a unit declared to publish to main, has a pull request.
-      const published = await tx.all<PublicationRow & { unit_id: string }>(
-        `SELECT u.unit_id,${publicationColumns} FROM code_units u JOIN code_publications p ON p.project_id=u.project_id AND p.proposal_id=u.publication_id WHERE u.project_id=? AND u.publishes_at IS NOT NULL AND u.acceptance_json IS NOT NULL`,
-        caller.projectId,
-      );
-      const units = new Map(rows.map((row) => [row.unit_id, row]));
-      const rejected = new Set<string>();
-      for (const publication of published)
-        if (storedPublication(publication).state === 'closed') {
-          rejected.add(publication.unit_id);
-          const row = units.get(publication.unit_id);
-          if (row) pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
-        }
-      for (const row of rows) {
-        const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
-        // A code-less success is nothing main could be missing.
-        if (!accepted.code || rejected.has(row.unit_id)) continue;
-        candidates.push({
-          unitId: row.unit_id,
-          commit: accepted.code.commit,
-          quarantined: !!row.quarantine_base_key,
-        });
-      }
-      return { main: project.main.oid, candidates };
+      return await this.candidatesOf(tx, caller.projectId);
     });
+  }
+  /** The same answer for the server's own reader, which has no caller (landing.ts). */
+  async candidatesOf(sql: Sql, projectId: string): Promise<AcceptedCandidates> {
+    this.assertOpen();
+    const project = await this.code.project(sql, projectId);
+    check(project, 'code_project_unbound', 'This project has no Code binding', 409);
+    const rows = await sql.all<UnitRow>(
+      `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
+      projectId,
+    );
+    // Only a consolidation, a unit declared to publish to main, has a pull request.
+    const published = await sql.all<PublicationRow & { unit_id: string }>(
+      `SELECT u.unit_id,${publicationColumns} FROM code_units u JOIN code_publications p ON p.project_id=u.project_id AND p.proposal_id=u.publication_id WHERE u.project_id=? AND u.publishes_at IS NOT NULL AND u.acceptance_json IS NOT NULL`,
+      projectId,
+    );
+    const units = new Map(rows.map((row) => [row.unit_id, row]));
+    const rejected = new Set<string>();
+    for (const publication of published)
+      if (storedPublication(publication).state === 'closed') {
+        rejected.add(publication.unit_id);
+        const row = units.get(publication.unit_id);
+        if (row) pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
+      }
+    const candidates: AcceptedCandidates['candidates'] = [];
+    for (const row of rows) {
+      const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
+      // A code-less success is nothing main could be missing.
+      if (!accepted.code || rejected.has(row.unit_id)) continue;
+      candidates.push({
+        unitId: row.unit_id,
+        commit: accepted.code.commit,
+        quarantined: !!row.quarantine_base_key,
+        acceptanceHash: row.acceptance_hash!,
+        acceptedAt: row.accepted_at!,
+      });
+    }
+    return { main: project.main.oid, candidates };
   }
 
   async unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit> {

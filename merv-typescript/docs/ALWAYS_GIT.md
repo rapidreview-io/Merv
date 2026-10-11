@@ -37,7 +37,11 @@ imported before creating new managed work.
 
 A local publication retains its destination when the independent review is
 sealed. With no linked remote it advances Merv main only when that main still
-matches the reviewed base. Connecting GitHub later does not retarget old receipts.
+matches the reviewed base, and it is verified without moving main once main
+already holds the reviewed head. Where accepted work lands on main
+(2026-10-11, `MERV_CODE_MAIN_LANDING`), a main that moved leaves it pending
+rather than stale: landing merges the head and the publication then verifies.
+Connecting GitHub later does not retarget old receipts.
 
 Repository preparation imports the exact selected remote head, rejecting a ref
 that moves during transfer. If Merv already contains it, preparation is complete.

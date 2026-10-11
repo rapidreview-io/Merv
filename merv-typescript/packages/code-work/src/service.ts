@@ -18,6 +18,7 @@ import type { Sessions } from '@merv/sessions/types';
 import { CodeBaseService } from './bases.js';
 import { checkedCapture, CodeCaptureReader } from './captures.js';
 import { CodeCommandService } from './commands.js';
+import { beyondMain, MainLanding } from './landing.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
 import { CodePublicationService } from './publications.js';
@@ -69,6 +70,7 @@ export class CodeService implements Code {
   private store!: CodeStore;
   private mirrorStore!: CodeMirrorService;
   private baseStore!: CodeBaseService;
+  private landing?: MainLanding;
   private protocol!: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
   private publicationStore!: CodePublicationService;
@@ -101,6 +103,8 @@ export class CodeService implements Code {
       'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories' | 'browse'
     >,
     private readonly repositories: CodeStoreOptions = {},
+    /** The plugin's config: whether accepted work lands on main (landing.ts). */
+    private readonly options: { mainLanding?: boolean } = {},
   ) {
     this.commands = new CodeCommandService(state, scope, sessions);
     this.github = utility.github;
@@ -143,13 +147,19 @@ export class CodeService implements Code {
         );
       // Bases come first: what the store's start finishes may derive units, which merge.
       const bases = new CodeBaseService(state, utility.repositories, {
-        changed: (tx, projectId) => this.unitStore.changed(tx, projectId),
+        changed: async (tx, projectId) => {
+          await this.unitStore.changed(tx, projectId);
+          // A base that reached an end may be the one a landing on main waits for.
+          this.landing?.soon(projectId);
+        },
         sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
         serviceWork: sessions.serviceWork,
         resolved: async (tx, projectId, key, commit) => {
           await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
           await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
         },
+        message: async (sql, projectId, key) =>
+          (await this.landing?.message(sql, projectId, key)) ?? null,
       });
       await bases.initialize();
       this.unitStore.bases = bases;
@@ -182,6 +192,16 @@ export class CodeService implements Code {
         this.publicationHost,
       );
       this.unitStore.publications = this.publicationStore;
+      const landing = new MainLanding(
+        state,
+        this.unitStore,
+        utility.repositories,
+        this.github,
+        this.workflows,
+        !!this.options.mainLanding,
+      );
+      await landing.initialize();
+      this.landing = this.unitStore.landing = this.publicationStore.landing = landing;
       this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, opened.store);
       bases.start();
       await this.publicationStore.initialize();
@@ -189,10 +209,15 @@ export class CodeService implements Code {
       // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
-        pass ??= this.network(() => this.publicationStore.syncDue(() => this.publicationClosed))
+        pass ??= this.network(async () => {
+          await landing.tick();
+          await this.publicationStore.syncDue(() => this.publicationClosed);
+        })
           .catch(() => undefined)
           .finally(() => (pass = undefined));
       }, 30_000);
+      // What a restart left to land, including every acceptance from before landing existed.
+      void this.network(() => landing.tick()).catch(() => undefined);
       this.publicationTimer.unref();
     } catch (error) {
       await this.close();
@@ -270,29 +295,17 @@ export class CodeService implements Code {
   /**
    * The accepted units whose code the project's main does not contain yet. It takes no
    * transaction, because the house rule is that Git never runs inside one: the candidates are
-   * read on their own and Git is asked afterwards. `rev-list` of every accepted commit
-   * `--not main` walks only the history beyond main, so the reading costs what is actually
-   * unpublished rather than the project's whole past.
+   * read on their own and Git is asked afterwards (beyondMain).
    */
   async acceptedSince(caller: Caller): Promise<CodeAcceptedSince> {
     caller = structuredClone(caller);
     const { main, candidates } = await this.unitStore.records.acceptedCandidates(caller);
-    const repositories = this.utility.repositories;
-    const commits = [...new Set(candidates.map((item) => item.commit))];
-    const beyond = new Set<string>();
-    if (commits.length) {
-      const walk = await repositories.git.run(['rev-list', ...commits, '--not', main], {
-        env: repositories.environment(caller.projectId),
-      });
-      check(
-        walk.code === 0,
-        'code_candidate_unavailable',
-        'Code must hold main and every accepted commit; import the missing history',
-        409,
-      );
-      for (const line of walk.stdout.toString('utf8').split('\n'))
-        if (line) beyond.add(line.trim());
-    }
+    const beyond = await beyondMain(
+      this.utility.repositories,
+      caller.projectId,
+      main,
+      candidates.map((item) => item.commit),
+    );
     const missing = (quarantined: boolean) =>
       candidates
         .filter((item) => beyond.has(item.commit) && !!item.quarantined === quarantined)
@@ -431,6 +444,7 @@ export class CodeService implements Code {
       ...status,
       ...publication,
       bases: await this.state.read((sql) => this.baseStore.records(sql, caller.projectId)),
+      landing: await this.landing!.status(caller.projectId),
       ...technical,
       store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
       mirror: await this.mirrorStore.describe(caller.projectId),
@@ -473,6 +487,7 @@ export class CodeService implements Code {
     clearInterval(this.publicationTimer);
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
     const mirroring = this.mirrorStore?.close();
+    const landing = this.landing?.close();
     // No new merge starts from here; one that is running is waited for below, because every
     // read must be refused before this method first yields.
     const merging = this.baseStore?.close();
@@ -482,7 +497,12 @@ export class CodeService implements Code {
     this.commands.close();
     // Every read is refused from here on. Running admissions and GitHub calls still reach the
     // database, which outlives Code, and are waited for before the writer lock is given up.
-    await Promise.all([merging, mirroring, Promise.allSettled([...this.networkOperations])]);
+    await Promise.all([
+      merging,
+      mirroring,
+      landing,
+      Promise.allSettled([...this.networkOperations]),
+    ]);
     await this.store?.close();
   }
 }

@@ -174,6 +174,35 @@ export interface CodeAcceptedSince {
   /** The answer's identity, so a caller can tell one reading from another. */
   hash: string;
 }
+/** How one landing on main ended: moved forward, merged, merged by a resolution task, or not. */
+export type CodeMainLandingOutcome = 'ff' | 'merged' | 'resolved' | 'superseded' | 'skipped';
+/**
+ * Accepted work on its way to main, in a project Merv keeps main for (no GitHub linked). One
+ * landing runs at a time, oldest acceptance first; `waiting` is that order, read even while
+ * landing is off, so it is also the plan it would follow.
+ */
+export interface CodeMainLanding {
+  enabled: boolean;
+  /** Why landing is off. */
+  reason?: 'disabled' | 'github_linked' | 'main_not_stored';
+  current: {
+    unitId: string;
+    mainOid: string;
+    headOid: string;
+    baseKey: string | null;
+    state: 'merging' | 'awaiting_resolution';
+    resolutionTaskId?: string;
+  } | null;
+  waiting: { unitId: string; acceptedAt: string }[];
+  /** Newest first, at most 50. */
+  landed: {
+    unitId: string;
+    outcome: CodeMainLandingOutcome;
+    resultOid: string | null;
+    reason?: string;
+    settledAt: string;
+  }[];
+}
 export interface CodeUnitAcceptance {
   unitId: string;
   hash: string;
@@ -363,6 +392,8 @@ export interface CodeProjectStatus {
   };
   /** Shared base records and their retained admission and recovery state, when hosted. */
   bases?: CodeBaseRecord[];
+  /** Where accepted work stands on its way to main, when Merv keeps main (no GitHub). */
+  landing?: CodeMainLanding;
   project: CodeProjectBinding | null;
   /** Null only in a server that predates required repositories. */
   store: CodeWorkStoreStatus | null;

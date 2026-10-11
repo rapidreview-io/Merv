@@ -8,13 +8,25 @@ import { CodeService } from './service.js';
 
 export const codePlugin = {
   name: 'merv-code-work',
-  /** No settings: several accepted commits are always merged into one base on the server. */
-  Config: z.object({}).strict().default({}),
+  /** `mainLanding`: accepted work lands on Merv's main where no GitHub is linked (landing.ts). */
+  Config: z
+    .object({ mainLanding: z.boolean().default(false) })
+    .strict()
+    .default({}),
   inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
-  async apply(ctx: Context) {
+  async apply(ctx: Context, config: { mainLanding?: boolean } = {}) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.reviews, ctx.code),
+        new CodeService(
+          ctx.state,
+          ctx.scope,
+          ctx.sessions,
+          ctx.workflows,
+          ctx.reviews,
+          ctx.code,
+          {},
+          config,
+        ),
       );
       yield () => service.close();
       // Where a deployment runs sandboxes, a project check reaches them through this one

@@ -179,6 +179,8 @@ interface CodeBaseHooks {
   serviceWork?: ServiceWork;
   /** Journal publication in the transaction that seals the result. */
   resolved?(tx: Transaction, projectId: string, key: string, commit: string): Promise<void>;
+  /** The message a base's merge commit carries instead of `Merge base <key>`; fixed per base. */
+  message?(sql: Sql, projectId: string, key: string): Promise<string | null>;
 }
 
 export const baseControlSchema = z
@@ -728,7 +730,10 @@ export class CodeBaseService {
     try {
       const outcome = await Promise.race([
         (async () => {
-          const [left, right] = await this.state.read((sql) => this.inputs(sql, projectId, base));
+          const [[left, right], message] = await this.state.read(async (sql) => [
+            await this.inputs(sql, projectId, base),
+            await this.hooks.message?.(sql, projectId, base.key),
+          ]);
           if (!left || !right)
             throw new MervError('code_base_inputs', 'An input has no result', 409);
           const env = this.repositories.environment(projectId);
@@ -739,6 +744,7 @@ export class CodeBaseService {
             right,
             base.key,
             abort.signal,
+            message ?? undefined,
           );
           if (abort.signal.aborted || this.clock() >= Date.parse(input.deadline))
             throw new MervError(

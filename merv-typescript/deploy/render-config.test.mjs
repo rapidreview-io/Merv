@@ -110,6 +110,15 @@ test('native compute is opt-in and carries only credential names, preserving leg
   assert.equal(plugin('sandboxes').config.native, undefined);
 });
 
+test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) => {
+  const { run, plugin } = renderer(t);
+  assert.equal(run().status, 0);
+  assert.deepEqual(plugin('code-work').config, {});
+  assert.equal(run({ MERV_CODE_MAIN_LANDING: 'on' }).status, 0);
+  assert.deepEqual(plugin('code-work').config, { mainLanding: true });
+  assert.notEqual(run({ MERV_CODE_MAIN_LANDING: 'true' }).status, 0);
+});
+
 /** render-config.mjs beside a fixture default.json, run with `env` plus the given variables. */
 function renderer(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'merv-render-config-')));

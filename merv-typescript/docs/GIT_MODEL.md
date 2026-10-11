@@ -42,6 +42,11 @@ No automated test uses a real GitHub. Before release, verify read-only import to
 
 1. One branch per unit of work. `main` is reviewed work: it moves at consolidation, and at the publication of a
    unit whose owner declared before its first lease that it publishes, and no agent or runner can move it.
+   **Amended 2026-10-11:** in a project with no linked GitHub repository `main` is all accepted work. The server
+   lands each accepted unit with code on it, oldest acceptance first, through the base merge path; a conflict is
+   the one resolution task any base gets (Code Work `landing.ts`, switch `MERV_CODE_MAIN_LANDING`). Landing never
+   blocks a lease, review or acceptance, and dependents still base on their dependencies' accepted commits.
+   Projects with GitHub linked are unchanged.
 2. A unit gets its code by branching from its dependencies' accepted commits, derived automatically.
 3. Several code-bearing dependencies are auto-merged; when that fails the server creates one reviewed merge task,
    which slots in as a dependency of every unit waiting on it.
@@ -693,7 +698,7 @@ Repository rebinding changes the opaque Code-side identity a hosted project is b
 13. Review targets immutable submissions, never moving branches.
 14. Contributors and their directing authorities cannot approve retained work.
 15. Runners receive no GitHub credentials.
-16. Main changes only through human-authorized publication of reviewed work — a consolidation or a declared unit; connected publication preserves the reviewed tree.
+16. Main changes only through human-authorized publication of reviewed work — a consolidation or a declared unit; connected publication preserves the reviewed tree. Since 2026-10-11, where no GitHub is linked, also by the server landing accepted work, by compare-and-swap only.
 17. Transient preparation waits consume neither launch-failure limits nor review rounds.
 18. Quarantine blocks ordinary acceptance/use/publication and propagates to dependent results.
 19. Same request ID and fingerprint replays; changed input conflicts.

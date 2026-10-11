@@ -244,6 +244,7 @@ test('the unit tables arrive beside existing Code rows and hold their write-once
 const unhosted = {
   project: null,
   bases: [],
+  landing: { enabled: false, reason: 'disabled', current: null, waiting: [], landed: [] },
   store: {
     hosted: false,
     objectFormat: null,

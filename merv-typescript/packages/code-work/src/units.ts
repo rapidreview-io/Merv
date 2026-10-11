@@ -86,6 +86,8 @@ export class CodeUnitService {
   publications!: {
     openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
   };
+  /** Set by Code Work's start: what carries accepted work onto main where Merv keeps it. */
+  landing?: { soon(projectId: string): void };
   resolutionTasks?: ResolutionWorkCreator;
   constructor(
     private readonly state: State,
@@ -362,6 +364,7 @@ export class CodeUnitService {
     if (!existing?.acceptance_hash && stored.publishes_at)
       await this.sealPublication(caller, relations.instance.name, stored, body, digest(body), tx);
     this.bases.soon(caller.projectId);
+    this.landing?.soon(caller.projectId);
     return acceptance(stored)!;
   }
 
