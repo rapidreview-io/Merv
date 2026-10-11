@@ -772,12 +772,24 @@ test('a relation is said by the record whose own field says it', () => {
   const of = (id: string) => said.get(id) ?? [];
   assert.ok(of('u2').includes('based on Pin the tokenizer'), of('u2').join(' · '));
   assert.ok(!of('u1').some((line) => line.startsWith('based on')), 'never on what it was cut from');
-  assert.ok(of('u6').includes('waiting on A merge of 2'), of('u6').join(' · '));
+  assert.ok(
+    of('u6').includes('waiting on Merge of Pin the tokenizer + 1 more'),
+    of('u6').join(' · '),
+  );
   assert.ok(!of('b2').some((line) => line.startsWith('waiting on')), 'a base waits on nothing');
-  assert.ok(of('u4').includes('pinned to A merge of 2'), of('u4').join(' · '));
-  assert.ok(of('u2').includes('member of A merge of 2'), 'a member says what it is a member of');
+  assert.ok(
+    of('u4').includes('pinned to Merge of Baseline p97 + Sweep depth'),
+    of('u4').join(' · '),
+  );
+  assert.ok(
+    of('u2').includes('member of Merge of Baseline p97 + Sweep depth'),
+    'a member says what it is a member of',
+  );
   assert.ok(of('b2').includes('resolved by Resolve loader'), of('b2').join(' · '));
-  assert.ok(of('b2').includes('merged from A merge of 2'), 'the later merge names the earlier');
+  assert.ok(
+    of('b2').includes('merged from Merge of Baseline p97 + Sweep depth'),
+    'the later merge names the earlier',
+  );
   assert.ok(of('p1').includes('published from Wave one'), of('p1').join(' · '));
   assert.ok(of('p1').includes('merged into main'), of('p1').join(' · '));
 });
@@ -868,7 +880,10 @@ test('too narrow to draw, the same model reads as a list of the same nodes', asy
     assert.ok(text().includes(node.name), `${node.name} is on screen`);
   // The words are the drawing's own lines, said by the record each one belongs to.
   const said = (name: string) => rows.find((item) => item.textContent?.includes(name))!.textContent;
-  assert.ok(said('Long-run grokking')?.includes('waiting on A merge of 2'), said('Long-run'));
+  assert.ok(
+    said('Long-run grokking')?.includes('waiting on Merge of Pin the tokenizer + 1 more'),
+    said('Long-run'),
+  );
   assert.ok(said('Baseline p97')?.includes('based on Pin the tokenizer'), said('Baseline p97'));
   assert.ok(!said('Fold both sweeps')?.includes('waiting on'), said('Fold both sweeps'));
   // What the drawing would draw hollow wears the refusal here, and says the word too.
@@ -877,7 +892,7 @@ test('too narrow to draw, the same model reads as a list of the same nodes', asy
     assert.ok(refused?.className.includes('code-refused'), `${name} wears the refusal`);
     assert.ok(/QUARANTINED/i.test(refused.textContent ?? ''), refused.textContent);
   }
-  const merges = rows.filter((item) => item.textContent?.includes('A merge of 2'));
+  const merges = rows.filter((item) => item.textContent?.includes('Merge of '));
   const refused = merges.filter((item) => item.className.includes('code-refused'));
   assert.equal(refused.length, 1, 'the quarantined base, and only it, wears the refusal');
   assert.ok(/QUARANTINED/i.test(refused[0]!.textContent ?? ''), refused[0]!.textContent);
@@ -1184,7 +1199,7 @@ test('the base card names what was merged, what conflicted and who waits — nev
   await mount(page([row], { at: '/code/merge/b2' }));
   const card = document.querySelector('#code-props');
   const said = card?.textContent ?? '';
-  assert.ok(said.includes('A merge of 2'), said);
+  assert.ok(said.includes('Merge of Pin the tokenizer + 1 more'), said);
   assert.ok(/AWAITING RESOLUTION/i.test(said), said);
   // A commit that went in is named by the record accepted with it, and shown as a short.
   assert.ok(said.includes('Pin the tokenizer'), said);
@@ -1458,7 +1473,7 @@ test('a session principal reads the page and is offered none of its verbs', asyn
   await mount(page([row], { at: '/code/merge/b2', manages: false }));
   const said = text();
   // Everything the page reads is still there: only the verbs are not.
-  assert.ok(said.includes('A merge of 2'), said.slice(0, 300));
+  assert.ok(said.includes('Merge of Pin the tokenizer + 1 more'), said.slice(0, 300));
   assert.ok(said.includes('refs/heads/merv/work/u1'), 'the blocked ref is still stated');
   for (const label of ['Suspend merge', 'Cancel merge', 'Quarantine base', 'Retry mirror'])
     assert.ok(!said.includes(label), `${label} is not offered to a session: ${said.slice(0, 300)}`);

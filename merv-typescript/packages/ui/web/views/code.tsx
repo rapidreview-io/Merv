@@ -66,6 +66,19 @@ const addressed = (pathname: string, root: string): string | null => {
   return (kind === 'merge' || kind === 'unit') && value ? decodeURIComponent(value) : null;
 };
 
+/**
+ * What main holds, under its name: what landed on it and what waits, once Code reports landing
+ * (founder, 2026-10-11: accepted work lands on main); until then, that accepted work lands there.
+ */
+function mainSaid(status: CodeProjectStatus | undefined): string {
+  type Landing = { waiting: unknown[]; landed: { outcome: string }[]; current: unknown };
+  const landing = (status as { landing?: Landing } | undefined)?.landing;
+  if (!landing) return 'Accepted work lands here';
+  const landed = landing.landed.filter((row) => !['skipped', 'superseded'].includes(row.outcome));
+  const waiting = landing.waiting.length + (landing.current ? 1 : 0);
+  return `${landed.length} landed${waiting ? ` · ${waiting} waiting to land` : ''}`;
+}
+
 /** A count not yet read is the em dash the console uses, never a zero. */
 const EM = '—';
 
@@ -217,7 +230,14 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
       )}
       {model.lanes.length > 0 && (
         <div className="code-plane">
-          <BranchCanvas model={model} selected={selected} onSelect={select} lit={lit} card={card} />
+          <BranchCanvas
+            model={model}
+            selected={selected}
+            onSelect={select}
+            lit={lit}
+            card={card}
+            mainSaid={mainSaid(read.data?.status)}
+          />
         </div>
       )}
       <GitHubPublications

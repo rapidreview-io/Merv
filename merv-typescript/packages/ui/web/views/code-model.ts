@@ -85,6 +85,21 @@ export interface GitModel {
   word: ReadonlyMap<string, string>;
 }
 
+/** What a merge is called: the records it merges, then main or how many other commits. */
+function mergeName(
+  commits: readonly string[],
+  members: readonly string[],
+  nodes: readonly GitNode[],
+  main?: string,
+) {
+  const names = members.flatMap((id) => nodes.find((node) => node.id === id)?.name ?? []);
+  const rest = commits.length - names.length;
+  if (!names.length) return `A merge of ${commits.length}`;
+  const more =
+    rest <= 0 ? '' : rest === 1 && main && commits.includes(main) ? ' + main' : ` + ${rest} more`;
+  return `Merge of ${names.join(' + ')}${more}`;
+}
+
 /** The trunk is one node whatever its commit is, so nothing joins to a bare oid. */
 export const MAIN = 'main';
 
@@ -300,8 +315,9 @@ export function gitModel(
       id: base.key,
       kind: 'base',
       colour: 'code',
-      // A base key is a digest that names nothing to a person, so it is never printed.
-      name: `A merge of ${base.members.length}`,
+      // A base key is a digest that names nothing to a person, so it is never printed: a merge
+      // is named by the work it merges, and main by its name.
+      name: mergeName(base.members, members, nodes, status?.project?.main.oid),
       hollow: base.quarantined,
       row: rows.get(base.key) ?? 0,
     });

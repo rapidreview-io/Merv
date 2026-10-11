@@ -30,12 +30,10 @@ const LABEL = 260;
 /** The trunk sits as near the top as its own label's ascender allows: the drawing
     begins under the title line, not after a band of nothing. */
 const TRUNK_Y = 24;
-const ROW = 76;
+const ROW = 92;
 /** The room a lane leaves after the point it was cut from, and its elbow's radius. */
 const CUT = 32;
 const ELBOW = 20;
-/** A diffstat is printed only where the next one is far enough away to read it. */
-const STAT_GAP = 56;
 
 interface Point {
   x: number;
@@ -65,12 +63,19 @@ export function canvas(model: GitModel, width: number) {
     const from = at.get(lane.from) ?? { x: x0, y: TRUNK_Y };
     const start = Math.min(from.x + CUT, here.x);
     const run = Math.max(here.x - start, 0);
-    let printed = -Infinity;
+    // A lane says how much code it wrote once, at its tip: the sum of its commits.
+    const total = lane.stops.reduce(
+      (sum, stop) => ({
+        add: sum.add + (stop.stat?.add ?? 0),
+        del: sum.del + (stop.stat?.del ?? 0),
+      }),
+      { add: 0, del: 0 },
+    );
     const dots = lane.stops.map((stop, index) => {
       const x = lane.stops.length > 1 ? start + (run * index) / (lane.stops.length - 1) : here.x;
-      const stat = !!stop.stat && x - printed >= STAT_GAP;
-      if (stat) printed = x;
-      return { x, add: stop.stat?.add ?? 0, del: stop.stat?.del ?? 0, stat, title: stop.title };
+      const last = index === lane.stops.length - 1;
+      const stat = last && (total.add > 0 || total.del > 0);
+      return { x, add: total.add, del: total.del, stat, title: stop.title };
     });
     // A lane always runs to its own node, so that a lane with nothing committed on it yet
     // still reaches the point every edge that names it is drawn to.
@@ -145,7 +150,24 @@ interface Held {
    * asked for without one rather than saying the same four facts twice.
    */
   card?(of: { head: boolean }): ReactNode;
+  /** What main holds, said under its name: what landed on it and what waits. */
+  mainSaid?: string;
 }
+
+/** The verbs as a reader says them under a lane's name; the model keeps the records' own. */
+const SAID: Record<string, string> = {
+  'based on': 'built on',
+  'pinned to': 'built on',
+  'waiting on': 'waiting for',
+  'member of': 'merged into',
+};
+/** The one line a lane's label says about where its code came from: what it was built on. */
+const cameFrom = (lines: readonly string[]) => {
+  const line = lines.find((said) => /^(based on|pinned to|waiting on) /.test(said));
+  if (!line) return 'built on main';
+  const verb = Object.keys(SAID).find((key) => line.startsWith(`${key} `));
+  return verb ? `${SAID[verb]}${line.slice(verb.length)}` : line;
+};
 
 /**
  * The drawing, placed from one measured width. Hovering or selecting a node lights
@@ -153,7 +175,15 @@ interface Held {
  * Enter opens the record a lane belongs to — the map's grammar, on a DAG. The
  * selection is the page's, because the address is what holds it.
  */
-export function BranchCanvas({ model, selected, onSelect, lit, card }: Held & { model: GitModel }) {
+export function BranchCanvas({
+  model,
+  selected,
+  onSelect,
+  lit,
+  card,
+  mainSaid,
+}: Held & { model: GitModel }) {
+  const relations = relationsOf(model);
   const navigate = useNavigate();
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -243,6 +273,11 @@ export function BranchCanvas({ model, selected, onSelect, lit, card }: Held & { 
               <text className="bg-ref" x={8} y={trunk.y + 4}>
                 {nodeOf(MAIN).name}
               </text>
+              {mainSaid && (
+                <text className="bg-came" x={8} y={trunk.y + 22}>
+                  {clip(mainSaid)}
+                </text>
+              )}
             </>,
           )}
           {g.edges.map(({ edge, d, x, y }) => {
@@ -287,6 +322,11 @@ export function BranchCanvas({ model, selected, onSelect, lit, card }: Held & { 
                 </text>
                 <text className={cx('bg-meta', `status--${tone(word)}`)} x={8} y={lane.y + 23}>
                   ● {words(word ?? '').toUpperCase()}
+                </text>
+                {/* Where its code came from, in words, so the lines need no decoding. */}
+                <text className="bg-came" x={8} y={lane.y + 40}>
+                  {clip(cameFrom(relations.get(lane.id) ?? []))}
+                  <title>{cameFrom(relations.get(lane.id) ?? [])}</title>
                 </text>
                 {lane.dots.map((dot) => (
                   <g key={dot.x}>
@@ -340,6 +380,10 @@ export function BranchCanvas({ model, selected, onSelect, lit, card }: Held & { 
                       height={14}
                       transform={`rotate(45 ${x} ${y})`}
                     />
+                    <text className="bg-merge-name" x={x} y={y - 14} textAnchor="middle">
+                      {ellipsis(node.name, 34)}
+                      <title>{node.name}</title>
+                    </text>
                     <text
                       className={cx('bg-mark', `status--${tone(word)}`)}
                       x={x}

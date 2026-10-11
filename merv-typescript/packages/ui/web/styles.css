@@ -4766,6 +4766,16 @@ del.cut {
   outline-offset: 4px;
   border-radius: var(--radius-md);
 }
+/* Under a lane's name, what its code was built on; under main's, what it holds. */
+.bg-came {
+  font-size: 12px;
+  fill: var(--muted);
+}
+.bg-merge-name {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text);
+}
 .branch-graph {
   display: block;
   width: 100%;
@@ -4787,8 +4797,9 @@ del.cut {
 }
 .bg-trunk {
   fill: none;
-  stroke: var(--line-strong);
-  stroke-width: 1.5;
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-linecap: round;
 }
 /* Past the last commit Merv can name the trunk is a dash: the base branch has
    history this process never read, and the drawing says so instead of inventing it. */
@@ -4836,7 +4847,9 @@ del.cut {
 }
 .bg-ref {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 14px;
+  font-weight: 700;
+  fill: var(--text);
 }
 /* A relation is a hairline in the ink kept for what is drawn and never read; its
    verb is written across it only while the reader is holding one end of it. */
