@@ -177,23 +177,38 @@ export async function exerciseRuntime(start) {
     });
     await call(secondWorker, 'artifact.read', { artifactId: secondArtifact.id });
     const threadId = secondExecution.threadId;
-    const live = await http(`/sessions/agents/${threadId}/observation`, boot.token);
-    assert.equal(
-      live.assignments.find((entry) => entry.id === secondExecution.id)?.instanceId,
-      second.id,
-    );
-    assert.equal(live.agent.currentExecutionId, secondExecution.id);
+    const { session: live } = await http(`/sessions/${secondExecution.id}`, boot.token);
+    assert.equal(live.id, secondExecution.id);
+    assert.equal(live.threadId, threadId);
+    assert.equal(live.instanceId, second.id);
+    assert.equal(live.status, 'active');
     await work.release(secondLease);
-    const observation = await http(`/sessions/agents/${threadId}/observation`, boot.token);
-    assert.equal(observation.assignments.length, 1);
-    assert.equal(observation.tokenStats.totalCalls, 2);
-    assert.equal(observation.tokenStats.completedCalls, 2);
-    assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
-    assert.ok(observation.tokenStats.inputTokens > 0 && observation.tokenStats.outputTokens > 0);
-    assert.equal(observation.tokenAccounting.kind, 'estimate');
-    assert.ok(observation.toolCalls.every((entry) => entry.status === 'succeeded'));
+    const { sessions } = await http('/sessions', boot.token);
+    const visits = sessions.filter((entry) => entry.threadId === threadId);
+    assert.deepEqual(
+      visits.map((entry) => entry.id),
+      [secondExecution.id],
+    );
+    assert.equal(visits[0].status, 'released');
+    const observation = await http(`/sessions/threads/${threadId}/calls`, boot.token);
+    assert.equal(observation.threadId, threadId);
+    assert.equal(observation.totals.calls, 2);
+    assert.equal(observation.totals.completed, 2);
+    assert.ok(Object.values(observation.totals).every(Number.isSafeInteger));
+    assert.ok(observation.totals.inputTokens > 0 && observation.totals.outputTokens > 0);
+    assert.deepEqual(observation.calls.map((entry) => entry.tool).sort(), [
+      'artifact.create',
+      'artifact.read',
+    ]);
+    for (const entry of observation.calls) {
+      assert.equal(entry.sessionId, secondExecution.id);
+      assert.equal(entry.status, 'succeeded');
+      assert.ok(Number.isFinite(Date.parse(entry.startedAt)));
+      assert.ok(Number.isFinite(Date.parse(entry.finishedAt)));
+      assert.ok(Number.isSafeInteger(entry.durationMs) && entry.durationMs >= 0);
+    }
     assert.ok(
-      !JSON.stringify(observation).includes(secondLease.token),
+      !JSON.stringify({ live, visits, observation }).includes(secondLease.token),
       'Observation must not expose session credentials',
     );
 
@@ -325,9 +340,13 @@ export async function exerciseRuntime(start) {
       (await call(restarted, 'artifact.read', { artifactId: artifact.id })).content,
       'Observed 2 + 3 = 5.',
     );
-    const retained = await http(`/sessions/agents/${threadId}/observation`, boot.token);
-    assert.deepEqual(retained.tokenStats, observation.tokenStats);
-    assert.equal(retained.assignments.length, 1);
+    const retained = await http(`/sessions/threads/${threadId}/calls`, boot.token);
+    assert.deepEqual(retained, observation);
+    const { sessions: retainedSessions } = await http('/sessions', boot.token);
+    assert.deepEqual(
+      retainedSessions.filter((entry) => entry.threadId === threadId),
+      visits,
+    );
     assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
     assert.equal((await app.ctx.reflections.get(owner, reflection.id)).lenses.length, 5);
     const dispatch = (await app.ctx.sessions.dispatch.projectStatus(owner)).dispatch;
@@ -338,9 +357,9 @@ export async function exerciseRuntime(start) {
       taskState: 'done',
       closedWorkerReplay: 'fenced',
       threadId,
-      toolCalls: retained.tokenStats.totalCalls,
+      toolCalls: retained.totals.calls,
       tokenAccounting: 'payload estimates, not model billing',
-      tokenStats: retained.tokenStats,
+      tokenStats: retained.totals,
       researchState: 'reflecting',
       reflectionLenses: 5,
       signedDownload: 'verified',
