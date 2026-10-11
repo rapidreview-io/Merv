@@ -970,7 +970,7 @@
       "component": "code_main_landings",
       "version": 1,
       "hash": "52ecf210aa198b023e5426869ac8b89ebc1fdb871005c8fdfbc2b2e226a84761",
-      "published": false
+      "published": true
     },
     {
       "component": "code_storage",
