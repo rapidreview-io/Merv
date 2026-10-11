@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1120,7 +1120,9 @@ async function machine(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
         status !== 'running' &&
         status !== 'queued' &&
         snapshot.launches.length &&
-        snapshot.launches.every((launch) => !launch.releasePending)
+        snapshot.launches.every(
+          (launch) => ['exited', 'stopped'].includes(launch.status) && !launch.releasePending,
+        )
       )
         return;
       assert.ok(Date.now() < end, JSON.stringify(snapshot));
@@ -1148,6 +1150,24 @@ test('real runners: a machine resumes a retired thread’s conversation read-onl
   await f.dispatch();
   const asked = await f.ask(threadId, 'What did you conclude?');
 
+  // Force the reply to arrive after a runner tick, while its snapshot still describes a live
+  // launch. An answered question alone does not mean the runner has reported the visit's usage.
+  const gate = join(claudeHome, 'hold-reply');
+  writeFileSync(gate, '');
+  const inquiry = f.inquiry;
+  let held = true;
+  t.mock.method(f, 'inquiry', async (id: string) => {
+    if (held) {
+      held = false;
+      rmSync(gate);
+      for (let end = Date.now() + 30_000; ;) {
+        if ((await inquiry(id)).status === 'answered') break;
+        assert.ok(Date.now() < end, 'the agent must answer before the next runner tick');
+        await delay(10);
+      }
+    }
+    return inquiry(id);
+  });
   await runner.start();
   await settled(asked.id);
   const row = await f.inquiry(asked.id);

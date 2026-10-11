@@ -3,8 +3,9 @@
  * restored for it, and answers over Merv's MCP as a resumed agent would. No model is called.
  */
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
@@ -93,6 +94,8 @@ writeFileSync(
   JSON.stringify({ inputTokens: 4000, outputTokens: 321 }),
 );
 // The reply ends the visit; its runner stops this process once it sees that.
+// A test may hold that reply until after the runner's tick, before its next database read.
+while (existsSync(join(root, 'hold-reply'))) await delay(10);
 await call('session.message.ack', {
   messageId: question?.id,
   reply: 'I concluded the second method is better.',
