@@ -1,3 +1,5 @@
+import { browse } from './browse.js';
+import type { CodeBrowsed } from './models.js';
 import { createService, type Scope, type State, type Transaction } from '@merv/contracts';
 import { CodeGitHubService } from './github.js';
 import type { GitHubConfig } from './github-client.js';
@@ -142,6 +144,11 @@ export class CodeService {
     );
     mirror.initialize();
     return { store, mirror, transport };
+  }
+
+  /** One commit's folder or file of a project's code; the caller has read the project. */
+  browse(projectId: string, commit: string, path: string): Promise<CodeBrowsed> {
+    return browse(this.repositories, projectId, commit, path);
   }
 
   /** A project Code initializes its own repository for; the caller authorized it. */

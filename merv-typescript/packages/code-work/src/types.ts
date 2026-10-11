@@ -1,3 +1,4 @@
+import type { CodeBrowsed } from '@merv/code/models';
 import type {
   Caller,
   CodeCommandRecord,
@@ -146,6 +147,11 @@ export interface CodeUnits {
   resumesFrom(caller: Caller, unitId: string, tx: Transaction): Promise<string | null>;
   bindLocal(caller: Caller, input: CodeLocalBindInput): Promise<CodeProjectBinding>;
   unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit>;
+  /** A folder or file of the code as of main, a unit of work, or a commit (code.files). */
+  files(
+    caller: Caller,
+    input: { ref?: string; path?: string },
+  ): Promise<CodeBrowsed & { ref: string }>;
   /**
    * Whether Code has this project, and so keeps its history in its own repository. It never
    * turns false again, and it is read from the database alone, so an owner may ask inside a

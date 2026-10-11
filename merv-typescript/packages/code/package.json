@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./service": "./src/service.ts",
     "./base-merge": "./src/base-merge.ts",
+    "./models": "./src/models.ts",
     "./git": "./src/git.ts",
     "./github": "./src/github.ts",
     "./github-client": "./src/github-client.ts",

@@ -9,6 +9,7 @@ import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
 import { usePageFacts } from '../shell';
 import { BranchCanvas } from './code-canvas';
+import { CodeFiles } from './code-files';
 import { CodeCard, CodeOperations, type Reader } from './code-card';
 import { MAIN, chipsOf, gitModel } from './code-model';
 import { GitHubPublications } from './github-publications';
@@ -121,8 +122,8 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
         ? `${row.path}/merge/${encodeURIComponent(id)}`
         : id && kind === 'unit'
           ? `${row.path}/unit/${encodeURIComponent(id)}`
-          : row.path;
-    setHeld(to === row.path ? id : null);
+          : `${row.path}/history`;
+    setHeld(to === `${row.path}/history` ? id : null);
     if (to !== pathname) navigate(to, { replace: true });
   };
 
@@ -246,14 +247,45 @@ export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
 export const signedInAdmin = (actor: Actor, account: Account) =>
   permits(actor.role, 'admin') && account.kind === 'user';
 
+/** Files and History: whose code it is as a repository, and how the work made it. */
+function CodeSwitch({ root, files }: { root: string; files: boolean }) {
+  return (
+    <nav className="code-switch" aria-label="Code">
+      <Link to={root} aria-current={files ? 'page' : undefined}>
+        Files
+      </Link>
+      <Link to={`${root}/history`} aria-current={files ? undefined : 'page'}>
+        History
+      </Link>
+    </nav>
+  );
+}
+
 export const CodeView = (props: ViewProps) => {
   const { actor, account } = useSession();
+  const { pathname } = useLocation();
+  const root = props.row.path;
+  const rest = pathname.slice(root.length);
+  // The repository is what a reader opens first; how the work made it is History, which
+  // keeps its own addresses for what is selected in it.
+  const files = rest === '' || rest === '/' || /^\/(tree|blob)(\/|$)/.test(rest);
   return (
-    <CodePage
-      {...props}
-      manages={managesCode(actor)}
-      signedIn={signedInAdmin(actor, account)}
-      named={useActorNames()}
-    />
+    <>
+      <div className="page-stage code-switch-stage">
+        <CodeSwitch root={root} files={files} />
+      </div>
+      {files ? (
+        <div className="page-stage">
+          <CodeFiles {...props} root={root} />
+        </div>
+      ) : (
+        <CodePage
+          {...props}
+          manages={managesCode(actor)}
+          signedIn={signedInAdmin(actor, account)}
+          named={useActorNames()}
+        />
+      )}
+    </>
   );
 };

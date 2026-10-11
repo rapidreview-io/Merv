@@ -7374,3 +7374,176 @@ html:has(.board-page) body {
   transform: translateX(-50%);
   margin: 0;
 }
+
+/* Code: Files and History, two words at the head of the page; the one in view is the dark one. */
+.code-switch-stage {
+  padding-bottom: 0;
+}
+.code-switch {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.code-switch a {
+  padding: var(--space-2) 0;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.code-switch a[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--text);
+}
+/* Files: whose code and where in it on one line, then the folder or the file, as GitHub does. */
+.code-files-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.code-ref-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+}
+.code-ref-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-ref-panel {
+  left: 0;
+  right: auto;
+  width: min(420px, 90vw);
+  max-height: 60vh;
+  overflow: auto;
+}
+.code-ref-panel .input {
+  margin: var(--space-1) var(--space-2) var(--space-2);
+  width: calc(100% - 2 * var(--space-2));
+}
+.code-ref-panel .file-menu-item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  text-align: left;
+}
+.code-ref-panel .file-menu-item[aria-selected='true'] {
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
+}
+.code-ref-kind {
+  font-size: var(--text-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  flex: none;
+}
+.code-ref-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-crumbs {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-sm);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.code-crumbs-sep {
+  color: var(--muted);
+  padding: 0 4px;
+}
+.code-tree {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.code-tree-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-3);
+  color: var(--text);
+  text-decoration: none;
+  border-top: 1px solid var(--line);
+}
+.code-tree-row:first-child {
+  border-top: 0;
+}
+.code-tree-row:hover {
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+}
+.code-tree-row svg {
+  color: var(--muted);
+}
+.code-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-tree-size {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.code-readme,
+.code-file {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.code-readme-head,
+.code-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.code-readme .md,
+.code-file-preview {
+  padding: var(--space-4) var(--space-5);
+}
+.code-file .code-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.code-file-note {
+  padding: var(--space-4);
+}
+.code-file-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+}
+.code-file-switch button {
+  border: 0;
+  background: none;
+  padding: 2px 10px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+.code-file-switch button[aria-pressed='true'] {
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.1));
+  color: var(--text);
+}
+/* The branch picker leads the line, as on GitHub; its menu opens to the right of it. */
+.code-files-bar .code-ref {
+  margin-left: 0;
+}
+.code-files-bar .code-ref-panel {
+  left: 0;
+  right: auto;
+}

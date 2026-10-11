@@ -647,6 +647,11 @@
           "readOnly": false
         },
         {
+          "name": "code.files",
+          "description": "Read the project's code as files, the way GitHub shows a repository: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",
+          "readOnly": true
+        },
+        {
           "name": "code.local.bind",
           "description": "Bind this project to a repository identity and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
           "readOnly": false
@@ -773,6 +778,11 @@
           "name": "code.commit",
           "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
           "readOnly": false
+        },
+        {
+          "name": "code.files",
+          "description": "Read the project's code as files, the way GitHub shows a repository: with no path, the root folder; a path names a folder (its entries: folders first, then files with their bytes) or a file (its text, up to 1 MiB; binary and larger files say so instead). ref chooses whose code: main (the default), a task or experiment by its work unit id (its accepted code, or else the newest commit Code admitted for it), or a full commit id. It reads Code's own repository and changes nothing.",
+          "readOnly": true
         },
         {
           "name": "code.local.bind",

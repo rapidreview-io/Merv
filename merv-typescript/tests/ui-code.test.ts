@@ -1174,7 +1174,7 @@ test('selecting a node is an address, and the drawing it was made on never remou
   );
   // Pressing the held node again lets it go, and the address goes back with it.
   await pickBase(1);
-  assert.equal(where, '/code');
+  assert.equal(where, '/code/history', 'History is where the drawing stands with nothing held');
   assert.equal(document.querySelector('#code-props'), null);
 });
 

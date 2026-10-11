@@ -98,7 +98,7 @@ export class CodeService implements Code {
     private readonly reviews: Reviews,
     private readonly utility: Pick<
       CodeUtility,
-      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories'
+      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories' | 'browse'
     >,
     private readonly repositories: CodeStoreOptions = {},
   ) {
@@ -386,6 +386,35 @@ export class CodeService implements Code {
     this.store.wake();
   }
   unit: Code['unit'] = (...args) => this.unitStore.records.unit(...args);
+  /**
+   * A folder or file of the project's code, as of `ref`: main (the default), a task or
+   * experiment by its id (its accepted code, or else the newest Code admitted for it), or a commit.
+   */
+  async files(caller: Caller, input: { ref?: string; path?: string }) {
+    const ref = input.ref?.trim() || 'main';
+    const commit = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(ref)
+      ? ref
+      : ref === 'main'
+        ? await this.state.snapshotTransaction(async (tx) => {
+            await this.scope.require(caller, 'read', tx);
+            return (await this.utility.units.project(tx, caller.projectId))?.main.oid;
+          })
+        : await (async () => {
+            const unit = await this.unit(caller, ref);
+            return unit.acceptance?.reference ?? unit.canonicalHead;
+          })();
+    if (!commit)
+      throw new MervError(
+        'code_ref_empty',
+        ref === 'main' ? 'This project has no main yet' : `${ref} has no code yet`,
+        404,
+      );
+    await this.state.snapshotTransaction((tx) => this.scope.require(caller, 'read', tx));
+    return {
+      ref,
+      ...(await this.utility.browse(caller.projectId, commit, input.path ?? '')),
+    };
+  }
   async status(caller: Caller) {
     const status = await this.unitStore.status(caller);
     const publication = status.project
