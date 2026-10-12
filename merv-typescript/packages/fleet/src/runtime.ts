@@ -18,9 +18,9 @@ export const runtimeProfiles = z
       })
       .strict(),
   )
+  .min(1)
   .max(8)
-  .refine((all) => new Set(all.map((p) => p.key)).size === all.length, 'Profile keys repeat')
-  .default([]);
+  .refine((all) => new Set(all.map((p) => p.key)).size === all.length, 'Profile keys repeat');
 
 export function runtimeProfileId(profile: z.output<typeof runtimeProfiles>[number]): string {
   return `srp_${sha256Hex(

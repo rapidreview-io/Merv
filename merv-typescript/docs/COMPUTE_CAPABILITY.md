@@ -13,14 +13,10 @@ epoch policy. The runner adds compute guidance only when a Sandboxes connection 
 The integration also reads historical `sandboxes-native` and `sandboxes` files directly, checking
 historical project ownership and recorded file identity without rewriting manifests or native rows.
 
-Do not activate the old native plugin alongside this integration: Sessions has one launch-provider
-slot. Keep the old plugin disabled until its removal and the deployment switch.
-
 ## Historical adoption notes (superseded by the integration above)
 
 Status: accepted by the owner on 2026-10-04. Phase 1 (the capability) and phase 2 (removing the
-older path and the version changes below) are implemented; the release waits on the production
-reads under "Before release". The following records that earlier change. It decided two things:
+older path and the version changes below) are implemented. The following records that earlier change. It decided two things:
 
 - **The older Merv-side compute path is retired.** That path is the `task.compute_*` and
   `compute.*` tools, the `ManagedCompute` and `WorkMachines` ledgers, and the legacy
@@ -79,64 +75,6 @@ work's **compute epoch** changes:
 - Experiments set `computeEpoch` to `attempt:state`, so `retry_running` keeps the same machines and
   jobs.
 
-## Historical native lifecycle
-
-**Sandboxes:**
-
-- `sandbox_native_work.work_kind` now holds the workflow name. Migration `sandboxes-native@3`
-  replaces the `task`/`experiment` CHECK with the workflow-name pattern and adds
-  `epoch_revision`, the instance revision the epoch was last derived at. Existing rows take
-  their instance's current revision, so in-flight work keeps its attempt until its instance
-  next moves.
-- The epoch only moves forward. The launch provider and the transition consumer both derive
-  it from the instance as it stands, and only when `epoch_revision` is behind the instance's
-  revision.
-- Launch refuses a lease whose instance has moved past the lease's revision. In a project
-  without a funded connection it attaches nothing and takes no writer lock.
-- Consumers, both `from: 'beginning'` and safe to replay:
-  - `sandboxes.native-leases.v1` (`session.closed`) tombstones the lease and queues revocation
-    of its assignment. History older than eight days adds no tombstone unless an assignment
-    exists.
-  - `sandboxes.native-work.v1` (`workflow.transition`) touches only work already pinned. It
-    advances the epoch. It closes the work when the event is `terminal` and its revision is the
-    instance's current revision, or when the instance no longer exists.
-- Capture file references accept any workflow name as their kind.
-
-**Not yet done:**
-
-- Which `work_kind` values beyond `task` and `experiment` the native service accepts is
-  unconfirmed. Until it confirms, units declare one of those two.
-- A pinned work whose connection was revoked while the project later connected a different
-  account is refused at launch, as before. It is not moved to the new account.
-
-## Phase 2: the older path removed (implemented)
-
-- **Versions.** Tasks and Experiments create every new work item on the native contracts and no
-  longer ask Sandboxes whether the project is connected. The `task@31`/`35` and
-  `experiment@28`/`32` execution policies are unchanged byte for byte (they are fingerprinted),
-  so live work keeps its pinned grants; the tools those grants name are no longer registered.
-- **Briefs.** The runner adds `computeGuidance(profile)` after a connection is issued. The rental
-  guidance, `GPU_WORK`, the planner's "Planning has no compute.run" guidance and the "Current work
-  machines" line are gone.
-- **Reads.** `task.get` and `experiment.get_state` no longer return `compute` or `machines`;
-  `captureArtifactIds` holds only the captures Sandboxes verified. The Running page no longer
-  draws GPU-run cards or the experiment sidebar's GPU runs table.
-- **Ledgers.** `managed_compute_runs` and `work_compute_machines` stay. Their published
-  migrations (`sandboxes-compute@1-2`, `sandboxes-work-machines@1`) are still registered,
-  unchanged, from `packages/sandboxes/src/compute-ledgers.ts`, which native Sandboxes runs at
-  startup; nothing reads or writes the tables. The startup copy of `experiment_compute_runs`
-  into `managed_compute_runs` is gone (production already holds its rows).
-- **Configuration.** The `ml` adapter configuration is gone from Sandboxes and from the
-  renderer, with `MERV_SANDBOXES_ML_SINCE` and `MERV_SANDBOXES_ML_STORAGE_ORIGIN`.
-  `MERV_SANDBOXES_ML_NAMESPACE` and `MERV_SANDBOXES_ML_TOKEN` remain: Merv-managed native ML
-  (`native.managed`) uses them, and the renderer now reads them only when
-  `MERV_SANDBOXES_MANAGED_ML_ENABLED` is set.
-- **Retained captures.** Capture collections the older path registered remain artifacts whose
-  member files name the `sandboxes` file provider. A read-only provider (`legacy-captures.ts`)
-  keeps them downloadable under the same ML grant when the deployment sets
-  `MERV_SANDBOXES_ML_STORAGE_ORIGIN` (rendered as `legacyCaptures`). Without it, their manifests
-  still read and member downloads answer `download_unsupported`.
-
 ## Versions
 
 New tasks and experiments always use the native contracts (task@43 and experiment@41),
@@ -172,12 +110,3 @@ GROUP BY 1;
 
 SELECT count(*) FROM sandbox_native_captures WHERE artifact_id IS NOT NULL;
 ```
-
-## Before release
-
-Read production first:
-
-- **Live runs and rentals on the older path.** These are bounded: a run or rental lasts at most
-  1,380 minutes.
-- **Projects without a funded native connection.** These lose GPU access.
-- **Open leases on task@31/35 and experiment@28/32.**

@@ -1,2 +1,0 @@
-# Unified patches contain meaningful context markers and the format-patch signature.
-merv-typescript/deploy/patches/*.patch -whitespace

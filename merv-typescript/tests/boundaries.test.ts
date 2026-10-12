@@ -18,7 +18,6 @@ import { sessionsPlugin } from '@merv/sessions';
 import { statePlugin } from '@merv/state';
 import { secretsPlugin } from '@merv/secrets';
 import { nisaPlugin } from '@merv/nisa';
-import { sandboxesPlugin } from '@merv/sandboxes';
 import { tasksPlugin } from '@merv/tasks';
 import { toolsPlugin } from '@merv/api';
 import { webPlugin } from '@merv/web';
@@ -154,8 +153,6 @@ const capabilities: Record<string, readonly string[]> = {
   codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
-  // Legacy transport stands alone; native connection owners are conditional below.
-  sandboxes: [],
   sandboxEvidence: [
     'state',
     'scope',
@@ -195,8 +192,6 @@ const knownCapability = (name: string) => name in capabilities || hostCapabiliti
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Pi may investigate Sessions' questions, but either service boots without the other.
   pi: ['sessions'],
-  // Native compute follows session closes and workflow transitions, reading instances through Workflows.
-  sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
@@ -584,7 +579,7 @@ function assertComponentReferences(
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
   // The console transport allowance must not let the Sandboxes core embed or load transport.
-  const core = join(packagesRoot, 'sandboxes', 'src', 'index.ts');
+  const core = join(packagesRoot, 'sandboxes', 'src', 'integration.ts');
   for (const specifier of ['./console.js', './sandboxes-proxy.js', 'node:http'])
     assert.throws(
       () =>
@@ -982,7 +977,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
-      'sandboxes',
       'scope',
       'sessions',
       'tasks',
@@ -1004,7 +998,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
-      'sandboxes',
       'sessions',
       'tasks',
       'workflows',
@@ -1131,15 +1124,12 @@ test('each service boots with only its declared dependency closure and without A
   const directory = mkdtempSync(join(tmpdir(), 'merv-independent-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const credentialEnv = 'MERV_BOUNDARY_RUNNER_CREDENTIAL';
-  const sandboxUrlEnv = 'MERV_BOUNDARY_SANDBOX_URL';
   const webKeyEnv = 'MERV_BOUNDARY_WEB_KEY';
   const nisaKeyEnv = 'MERV_BOUNDARY_NISA_KEY';
   const piSecretEnv = 'MERV_BOUNDARY_PI_SECRET';
   const piModelKeyEnv = 'MERV_BOUNDARY_PI_MODEL_KEY';
   const previousCredential = process.env[credentialEnv];
-  const previousSandboxUrl = process.env[sandboxUrlEnv];
   process.env[credentialEnv] = 'synthetic-boundary-source';
-  process.env[sandboxUrlEnv] = 'http://127.0.0.1:1';
   process.env[webKeyEnv] = 'tvly-synthetic';
   process.env[nisaKeyEnv] = 'rr_sk_synthetic';
   process.env[piSecretEnv] = 'synthetic-boundary-pi-signing-secret';
@@ -1147,8 +1137,6 @@ test('each service boots with only its declared dependency closure and without A
   t.after(() => {
     if (previousCredential === undefined) delete process.env[credentialEnv];
     else process.env[credentialEnv] = previousCredential;
-    if (previousSandboxUrl === undefined) delete process.env[sandboxUrlEnv];
-    else process.env[sandboxUrlEnv] = previousSandboxUrl;
     delete process.env[webKeyEnv];
     delete process.env[nisaKeyEnv];
     delete process.env[piSecretEnv];
@@ -1169,25 +1157,21 @@ test('each service boots with only its declared dependency closure and without A
     legacyHistory: { plugin: legacyHistoryPlugin },
     identity: { plugin: identityPlugin },
     secrets: { plugin: secretsPlugin },
-    sandboxes: {
-      plugin: sandboxesPlugin,
+    tools: { plugin: toolsPlugin },
+    fleet: {
+      plugin: fleetPlugin,
       config: {
-        urlEnv: sandboxUrlEnv,
-        connections: [{ projectId: 'synthetic', namespace: 'boundary', tokenEnv: credentialEnv }],
-        // Fleet rents only through a protected runtime.
-        runtimes: [
+        profiles: [
           {
             key: 'standard',
             provider: 'boundary',
             offerId: 'offer',
             releaseId: `rt1_${'0'.repeat(64)}`,
-            leaseSeconds: 3600,
+            leaseSeconds: 900,
           },
         ],
       },
     },
-    tools: { plugin: toolsPlugin },
-    fleet: { plugin: fleetPlugin, config: {} },
     // Loading Pi is its switch, so it boots with its host and credentials.
     pi: {
       plugin: piPlugin,

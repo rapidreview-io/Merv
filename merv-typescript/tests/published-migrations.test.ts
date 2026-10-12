@@ -10,8 +10,6 @@ import { legacyFoundationImportMigrations } from './fixtures/legacy-foundation-i
 import { initializeLegacyHistory } from '@merv/legacy-history/history';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
-import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
-import { computeLedgers } from '../packages/sandboxes/src/compute-ledgers.js';
 import { piMigrations } from '../packages/pi/src/schema.js';
 
 interface Row {
@@ -69,17 +67,20 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   } as unknown as State;
   for (const start of [
     () => recorder.migrate('legacy-foundation-import', legacyFoundationImportMigrations),
-    () => new FleetService(recorder, {} as never, {} as never).initialize(),
+    () =>
+      new FleetService(recorder, {} as never, {} as never, {
+        profiles: [
+          {
+            key: 'standard',
+            provider: 'boundary',
+            offerId: 'offer',
+            releaseId: `rt1_${'0'.repeat(64)}`,
+            leaseSeconds: 900,
+          },
+        ],
+      }).initialize(),
     // The Fleet workflow owner's start(), only where it is enabled: the census app leaves it off.
     () => recorder.migrate('fleet_workflow', modelMigrations),
-    // Native Sandboxes is configured per deployment; the default census app leaves it off.
-    () => recorder.migrate('sandboxes-native', nativeMigrations),
-    // So are the retired compute path's ledgers, kept with it.
-    ...computeLedgers.map(
-      ([component, migrations]) =>
-        () =>
-          recorder.migrate(component, migrations),
-    ),
     // Pi's own tables; the shared credential ledger is the identity plugin's.
     () => recorder.migrate('pi', piMigrations),
     () => initializeLegacyHistory(recorder),

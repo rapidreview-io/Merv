@@ -203,7 +203,10 @@ class FakeRuntimes {
   }
 }
 
-async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, projectLimit: 1 }) {
+async function fixture(
+  t: TestContext,
+  limits: Partial<FleetConfig> = { globalLimit: 2, projectLimit: 1 },
+) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const admin = await scope.credentials.bootstrap({ projectName: 'Fleet', actorName: 'Operator' });
@@ -1003,7 +1006,7 @@ test('a project named in projectLimits has its own cap, and free() counts what w
 });
 
 /** A fixture whose owner names the person each request is for: `a_1` is for `person_a`. */
-async function capped(t: TestContext, limits: FleetConfig = {}) {
+async function capped(t: TestContext, limits: Partial<FleetConfig> = {}) {
   const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2, ...limits });
   f.unregister();
   f.fleet.registerOwner('workflow', {

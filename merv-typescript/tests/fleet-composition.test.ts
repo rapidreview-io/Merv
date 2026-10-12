@@ -39,7 +39,18 @@ test('Fleet is optional and its row and controls install without research or Ses
   };
   assert.equal(ctx.get('fleet'), undefined);
   assert.equal((await scope.project(caller)).id, boot.project.id);
-  await ctx.plugin(fleetPlugin, { hostProjectId: boot.project.id });
+  await ctx.plugin(fleetPlugin, {
+    hostProjectId: boot.project.id,
+    profiles: [
+      {
+        key: 'standard',
+        provider: 'boundary',
+        offerId: 'offer',
+        releaseId: `rt1_${'0'.repeat(64)}`,
+        leaseSeconds: 900,
+      },
+    ],
+  });
   const uiFiber = ctx.plugin(fleetUiPlugin);
   const toolsFiber = ctx.plugin(fleetToolsPlugin);
   await Promise.all([uiFiber, toolsFiber]);

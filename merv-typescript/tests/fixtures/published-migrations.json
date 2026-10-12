@@ -886,7 +886,8 @@
       "component": "sandboxes-compute",
       "version": 1,
       "hash": "e1b845176e970d4025ffa011e79b96ceaa448bf7372fb05bb847baa4053d98d5",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "artifacts",
@@ -898,13 +899,15 @@
       "component": "sandboxes-compute",
       "version": 2,
       "hash": "fe700319248e4291e88600e90242e79145b17a216a43aea6aa93cb708edb65b2",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-work-machines",
       "version": 1,
       "hash": "33c056578f156cc92521bc69e594be069b27c5891df9bf444cbeeda12a550730",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "secrets",
@@ -916,49 +919,57 @@
       "component": "sandboxes-native",
       "version": 1,
       "hash": "20bb7afa2dc67ad965818904e24c1c2d1f7e508d8988aa757772a8cafcd692cb",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 2,
       "hash": "dc316a6787960ca3cd117dc8201a4389c6856c14cc3c3761ef6bd8e96b537f42",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 3,
       "hash": "50e8d53e7a5b37abb34e07682fb03e8541863d287f27d0959fd607051e93042d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 4,
       "hash": "c8f45f9576d5e18fd1fd41702bb90cb80384792b02a6472dbf13c3eae02080fb",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 5,
       "hash": "54fc2d423d84c4c5a91dd468eed11841ff93e4e9385160f2c753302c61ba8416",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 6,
       "hash": "fc963917ab44e49d124a94248fcd293a0e1e107b5b0bd75024e24049e7a550b4",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 7,
       "hash": "d3b9cf1aff008d049fdf5d5e74bcd70eb7a1d8f9c8e8e30d9b3e6da2ff7dcf8d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "sandboxes-native",
       "version": 8,
       "hash": "939cd82e4083d133c180990d63b820a00d82893ace2d7a057d4758b5fc3ad2d8",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_repository_sync",

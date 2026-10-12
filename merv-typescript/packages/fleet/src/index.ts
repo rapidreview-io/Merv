@@ -144,7 +144,7 @@ export class FleetService implements Fleet {
     private readonly state: State,
     private readonly scope: Scope,
     private readonly sbxMerv: Pick<SbxMerv, 'linked' | 'runtimes'>,
-    config: FleetConfig = {},
+    config: FleetConfig,
     private readonly clock: () => number = Date.now,
   ) {
     const parsed = fleetConfig.safeParse(config);
@@ -201,7 +201,7 @@ export class FleetService implements Fleet {
     return this.ready.get(projectId);
   }
   private async linked(projectId: string) {
-    return this.profiles.length > 0 && !!(await this.sbxMerv.linked(projectId));
+    return !!(await this.sbxMerv.linked(projectId));
   }
   private async read(projectId: string) {
     if (!(await this.linked(projectId))) return null;
@@ -1004,7 +1004,7 @@ export class FleetService implements Fleet {
    * machine this allocation could hold (a minute covers a reply still in flight; the longest
    * configured lease covers every profile). Without a create attempt there is none to wait for. */
   private waitOutLease(a: FleetAllocation): void {
-    const lease = Math.max(0, ...this.profiles.map((profile) => profile.leaseSeconds)) || 86_400;
+    const lease = Math.max(...this.profiles.map((profile) => profile.leaseSeconds));
     a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
     a.phase =
       (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
