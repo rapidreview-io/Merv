@@ -32,6 +32,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: true
+          token: ${{ secrets.SANDBOXES_CHECKOUT_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -86,6 +90,10 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: true
+          token: ${{ secrets.SANDBOXES_CHECKOUT_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:

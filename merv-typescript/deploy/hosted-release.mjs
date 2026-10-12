@@ -472,7 +472,7 @@ mv ~azureuser/${inbox}/source.tar.gz ~azureuser/${inbox}/sandboxes.tar.gz ${dir}
 cd ${dir} && printf '%s  source.tar.gz\\n%s  sandboxes.tar.gz\\n' ${src.archiveSha256} ${sha256(readFileSync(sbx))} | sha256sum -c - >/dev/null
 umask 022 # git archive's files are group-writable; the gates mount them into the image
 mkdir source sandboxes
-tar -xzf source.tar.gz -C source --no-same-owner --no-same-permissions
+tar -xizf source.tar.gz -C source --no-same-owner --no-same-permissions
 tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
 `,
       stdio: ['pipe', 'inherit', 'inherit'],

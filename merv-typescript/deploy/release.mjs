@@ -109,7 +109,7 @@ BK=/var/backups/merv/typescript-staging-refresh/${release}
 cd "$REL"
 echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
 echo "${archiveSha256}  source.tar.gz" > archive.sha256
-mkdir -p source && tar -xzf source.tar.gz -C source
+mkdir -p source && tar -xizf source.tar.gz -C source
 docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE} >> build.log 2>&1
 docker build --platform linux/amd64 --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
 docker run --rm --entrypoint node "$IMG" dist/src/cli.js help >> build.log 2>&1
