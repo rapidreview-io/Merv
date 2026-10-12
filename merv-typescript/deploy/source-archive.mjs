@@ -2,7 +2,7 @@
 // and the commit of the production ledgers they write.
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,8 @@ const ROOTS = [
   'deploy',
   'docs/architecture',
 ];
+const VENDOR = 'vendor/merv-sandboxes';
+const VENDOR_ROOTS = ['typescript/packages', 'typescript/hosts/merv', 'typescript/patches'];
 const EXCLUDE =
   /(^|\/)(node_modules|dist)\/|(^|\/)\.env|\.env$|credentials[^/]*\.json$|\.sqlite|^deploy\/[^/]*-private\.json$/;
 
@@ -41,13 +43,28 @@ export function packageSource() {
     .split('\0')
     .filter((p) => p && !EXCLUDE.test(p))
     .sort();
-  const entries = files.map((path) => {
-    const buf = execFileSync('git', ['show', `${tree}/${path}`], {
-      cwd: root,
-      maxBuffer: 64 << 20,
+  const vendor = join(root, VENDOR);
+  const pin = sh('git', ['rev-parse', `${tree}/${VENDOR}`], repo).trim();
+  const vendorFiles = sh(
+    'git',
+    ['ls-tree', '-r', '-z', '--name-only', pin, '--', ...VENDOR_ROOTS],
+    vendor,
+  )
+    .split('\0')
+    .filter(Boolean);
+  const entries = [
+    ...files.map((path) => ({ path, cwd: repo, object: `${tree}/${path}` })),
+    ...vendorFiles.map((path) => ({
+      path: `${VENDOR}/${path}`,
+      cwd: vendor,
+      object: `${pin}:${path}`,
+    })),
+  ]
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map(({ path, cwd, object }) => {
+      const buf = execFileSync('git', ['show', object], { cwd, maxBuffer: 64 << 20 });
+      return { path, sha256: sha256(buf), bytes: buf.length };
     });
-    return { path, sha256: sha256(buf), bytes: buf.length };
-  });
   const contentSha256 = sha256(entries.map((e) => `${e.sha256}  ${e.path}\n`).join(''));
   const stamp = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
   const release = `${stamp}-${gitRevision.slice(0, 8)}-${contentSha256.slice(0, 12)}`;
@@ -56,6 +73,14 @@ export function packageSource() {
     'git',
     ['archive', '--format=tar.gz', '-o', join(dir, 'source.tar.gz'), tree, '--', ...files],
     { cwd: repo },
+  );
+  appendFileSync(
+    join(dir, 'source.tar.gz'),
+    execFileSync(
+      'git',
+      ['archive', '--format=tar.gz', `--prefix=${VENDOR}/`, pin, '--', ...VENDOR_ROOTS],
+      { cwd: vendor, maxBuffer: 64 << 20 },
+    ),
   );
   const archiveSha256 = sha256(readFileSync(join(dir, 'source.tar.gz')));
   const manifest = { release, gitRevision, contentSha256, archiveSha256, files: entries };
@@ -66,7 +91,7 @@ export function packageSource() {
     repo,
   ).trim();
   if (uncommitted) console.error(`not in this release (uncommitted):\n${uncommitted}`);
-  return { dir, release, gitRevision, contentSha256, archiveSha256, count: files.length };
+  return { dir, release, gitRevision, contentSha256, archiveSha256, count: entries.length };
 }
 
 /** Commits exactly these ledger files, if a production release changed them, with a [skip ci]

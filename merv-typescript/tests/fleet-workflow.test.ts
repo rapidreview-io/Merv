@@ -29,7 +29,9 @@ import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
-import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
+import type { FleetRuntimeHandle } from '@merv/fleet/types';
+import type { RuntimeLauncher } from '@sandboxes/runtimes/launcher';
+import { profiles, sandbox, receipt, offer, link } from './fixtures/runtime-records.js';
 import type {
   Fleet,
   FleetAllocation,
@@ -1611,83 +1613,80 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
   let stuck = 0;
   const stopped = new Set<string>();
   const bootstraps = new Map<string, string>();
-  const runtimeHandles = new Map<string, SandboxRuntimeHandle>();
-  const creates = new Map<string, SandboxRuntimeHandle>();
+  const runtimeHandles = new Map<string, FleetRuntimeHandle>();
+  const creates = new Map<string, FleetRuntimeHandle>();
   const launches = new Map<string, number>();
-  const runtimes: SandboxRuntimes = {
-    profiles: [{ key: 'standard', id: 'real-fixed-profile', leaseSeconds: 600 }],
-    describe: async () => null,
-    connected: () => true,
-    async provision(_projectId, operationKey) {
-      let handle = creates.get(operationKey);
-      if (!handle) {
-        const ready = !stuck || !stuck--;
-        handle = {
-          sandboxId: `sbx_workflow_${creates.size + 1}`,
-          state: ready ? 'ready' : 'provisioning',
-          ready,
-          deleted: false,
-          leaseExpiresAt: new Date(now + 3_600_000).toISOString(),
-          revision: 1,
-          launch: null,
+  const runtimes = {
+    linked: async (projectId: string) => link(projectId),
+    runtimes: (): RuntimeLauncher => ({
+      describe: async () => offer(null),
+      async provision({ operationKey }) {
+        let handle = creates.get(operationKey);
+        if (!handle) {
+          const ready = !stuck || !stuck--;
+          handle = {
+            sandboxId: `sbx_workflow_${creates.size + 1}`,
+            state: ready ? 'ready' : 'provisioning',
+            ready,
+            leaseExpiresAt: new Date(now + 3_600_000).toISOString(),
+            revision: 1,
+            launch: null,
+          };
+          creates.set(operationKey, handle);
+          runtimeHandles.set(handle.sandboxId, handle);
+        }
+        return sandbox(handle);
+      },
+      async inspect(sandboxId, launchId) {
+        const h = runtimeHandles.get(sandboxId)!;
+        return { sandbox: sandbox(h), launch: launchId && h.launch ? receipt(h.launch) : null };
+      },
+      async launch(sandboxId, { operation_key: operationKey, bootstrap, release_id }) {
+        const runtimeHandle = runtimeHandles.get(sandboxId)!;
+        bootstraps.set(sandboxId, bootstrap.getSecretValue());
+        if (runtimeHandle.launch) return receipt(runtimeHandle.launch);
+        launches.set(sandboxId, (launches.get(sandboxId) ?? 0) + 1);
+        runtimeHandle.launch = {
+          launchId: `launch_${sandboxId}`,
+          jobId: 'job_workflow',
+          state: 'pending',
+          deliveryState: 'launched',
         };
-        creates.set(operationKey, handle);
-        runtimeHandles.set(handle.sandboxId, handle);
-      }
-      return structuredClone(handle);
-    },
-    async inspect(_projectId, handle) {
-      return structuredClone(runtimeHandles.get(handle.sandboxId)!);
-    },
-    async launch(_projectId, handle, operationKey, bootstrap) {
-      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
-      bootstraps.set(handle.sandboxId, bootstrap);
-      launches.set(handle.sandboxId, (launches.get(handle.sandboxId) ?? 0) + 1);
-      runtimeHandle.launch = {
-        sandboxId: runtimeHandle.sandboxId,
-        launchId: `launch_${handle.sandboxId}`,
-        operationKey,
-        releaseId: 'release_workflow',
-        jobId: 'job_workflow',
-        state: 'pending',
-        deliveryState: 'launched',
-        expiresAt: new Date(Date.now() + 600_000).toISOString(),
-      };
-      runtimeHandle.revision++;
-      if (lostLaunch && !lostReply) {
-        lostReply = true;
-        throw new Error('injected lost provider launch response');
-      }
-      return structuredClone(runtimeHandle);
-    },
-    async acknowledge(_projectId, handle) {
-      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
-      if (!runtimeHandle.launch || runtimeHandle.launch.deliveryState !== 'launched')
-        throw new Error('runtime exchange requires a launched receipt');
-      runtimeHandle.launch.state = 'consumed';
-      return structuredClone(runtimeHandle);
-    },
-    async stop(_projectId, handle) {
-      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
-      stopped.add(handle.sandboxId);
-      Object.assign(runtimeHandle, {
-        state: 'stopped',
-        ready: false,
-        deleted: true,
-        revision: runtimeHandle.revision + 1,
-      });
-      return structuredClone(runtimeHandle);
-    },
-    async renew(_projectId, handle) {
-      return structuredClone(runtimeHandles.get(handle.sandboxId)!);
-    },
+        runtimeHandle.revision++;
+        if (lostLaunch && !lostReply) {
+          lostReply = true;
+          throw new Error('injected lost provider launch response');
+        }
+        return receipt(runtimeHandle.launch!);
+      },
+      async acknowledge(sandboxId) {
+        const runtimeHandle = runtimeHandles.get(sandboxId)!;
+        if (!runtimeHandle.launch || runtimeHandle.launch.deliveryState !== 'launched')
+          throw new Error('runtime exchange requires a launched receipt');
+        runtimeHandle.launch.state = 'consumed';
+        return receipt(runtimeHandle.launch!);
+      },
+      async stop(sandboxId) {
+        const runtimeHandle = runtimeHandles.get(sandboxId)!;
+        stopped.add(sandboxId);
+        Object.assign(runtimeHandle, {
+          state: 'stopped',
+          ready: false,
+          revision: runtimeHandle.revision + 1,
+        });
+        return sandbox(runtimeHandle);
+      },
+      async renew(sandboxId) {
+        return sandbox(runtimeHandles.get(sandboxId)!);
+      },
+    }),
   };
   const fleet = await createService(
     new FleetService(
       state,
       scope,
       runtimes,
-      { globalLimit: workers, projectLimit: workers, pollIntervalMs: 60_000 },
+      { profiles, globalLimit: workers, projectLimit: workers, pollIntervalMs: 60_000 },
       () => now,
     ),
   );
@@ -2400,9 +2399,13 @@ test('a halted allocation relays no model calls while its stop stalls', async (t
   const grant = (await relay.authority!.authorize(machine.secret)) as ManagedModelGrant;
   await relay.authority!.validate(grant);
   // The provider cannot stop the machine, so its allocation stays open with intent stop.
-  h.runtimes.stop = async () => {
-    throw new Error('provider down');
-  };
+  const runtime = h.runtimes.runtimes();
+  h.runtimes.runtimes = () => ({
+    ...runtime,
+    stop: async () => {
+      throw new Error('provider down');
+    },
+  });
   await h.fleet.cancel(caller, allocation!.id);
   await h.fleet.tick();
   const halted = await h.fleet.inspectOwned(h.adapter, allocation!.id);

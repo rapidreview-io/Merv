@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
@@ -94,7 +95,13 @@ export interface ApiRequest {
 /** A path prefix's handler: undefined when it responded itself, a Buffer as 200 octets, any
  *  other value as 200 JSON. */
 export type MountHandler = (req: IncomingMessage, res: ServerResponse, r: ApiRequest) => unknown;
+export type UpgradeHandler = (
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+) => void | Promise<void>;
 export interface MountOptions {
+  upgrade?: UpgradeHandler;
   /** Served without API authentication: the whole mount, or these paths and all below them. Its
    *  handler authenticates any bearer itself and answers 404 outside its exact routes. */
   public?: true | readonly `/${string}`[];

@@ -18,7 +18,7 @@
       "id": "mounts",
       "label": "Integrations",
       "caption": "Remote tools, compute & search",
-      "members": ["mounts", "sandboxes", "web", "nisa"],
+      "members": ["mounts", "web", "nisa"],
       "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Web searches the internet through Tavily, with OpenAI's hosted web search as its fallback, and Nisa searches the literature through RapidReview's paper index. Each integration owns its upstream credentials; availability is not proof of remote health."
     },
     {
@@ -93,10 +93,6 @@
     "mounts": {
       "label": "External Mounts",
       "purpose": "Connects remote MCP tools to Tools with names such as _nisa.search. Owns upstream credential bindings and secret resolution; Scope supplies caller tool policy."
-    },
-    "sandboxes": {
-      "label": "Sandboxes",
-      "purpose": "Connects to the remote compute service over HTTP for resources, durable jobs and retained outputs. Optional API, Artifacts, State, Scope and Sessions bindings enable delegation, evidence and managed compute. Its tool adapter enforces project permissions."
     },
     "nisa": {
       "label": "Nisa",
@@ -268,7 +264,7 @@
         "id": "integrations",
         "label": "External service adapters",
         "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
-        "members": ["sandboxes", "mounts", "nisa", "web"]
+        "members": ["mounts", "nisa", "web", "sbxMerv", "sandboxEvidence"]
       },
       {
         "id": "runtime",
@@ -280,7 +276,7 @@
         "id": "transport",
         "label": "HTTP / MCP boundary",
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
-        "members": ["api"],
+        "members": ["api", "merv-sandboxes-console"],
         "kinds": ["api"]
       },
       {

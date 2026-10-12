@@ -94,10 +94,11 @@
         "label": "External service adapters",
         "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
         "members": [
-          "sandboxes",
           "mounts",
           "nisa",
-          "web"
+          "web",
+          "sbxMerv",
+          "sandboxEvidence"
         ]
       },
       {
@@ -115,6 +116,7 @@
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
         "members": [
           "api",
+          "merv-sandboxes-console",
           "merv-code-work-api",
           "merv-pi-api",
           "merv-scope-api",
@@ -143,7 +145,6 @@
           "merv-reflection-tools",
           "merv-research-tools",
           "merv-review-tools",
-          "merv-sandboxes-tools",
           "merv-scope-tools",
           "merv-sessions-tools",
           "merv-task-tools",
@@ -173,7 +174,6 @@
           "merv-reflection-ui",
           "merv-research-ui",
           "merv-review-ui",
-          "merv-sandboxes-ui",
           "merv-sessions-ui",
           "merv-task-ui",
           "merv-workflows-ui"
@@ -220,7 +220,6 @@
       "caption": "Remote tools, compute & search",
       "members": [
         "mounts",
-        "sandboxes",
         "web",
         "nisa"
       ],
@@ -302,7 +301,10 @@
         "fleet",
         "merv-fleet-workflow",
         "pi",
-        "secrets"
+        "sandboxEvidence",
+        "merv-sandboxes-console",
+        "secrets",
+        "sbxMerv"
       ],
       "description": "These providers were discovered automatically and await a visual grouping in notes.json."
     }
@@ -768,7 +770,12 @@
         "domainEvents"
       ],
       "optional": [
-        "sandboxes"
+        "sbxMerv",
+        "sbxObjects",
+        "sbxPipelines",
+        "sbxRegistry",
+        "sbxJobs",
+        "sbxSnapshots"
       ],
       "kind": "service",
       "runtime": "server",
@@ -949,7 +956,7 @@
         "paper"
       ],
       "optional": [
-        "sandboxes"
+        "sandboxEvidence"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1172,7 +1179,7 @@
       "requires": [
         "state",
         "scope",
-        "sandboxes"
+        "sbxMerv"
       ],
       "optional": [],
       "kind": "service",
@@ -2229,92 +2236,57 @@
       "exposedTools": []
     },
     {
-      "plugin": "merv-sandboxes",
-      "source": "packages/sandboxes/src/index.ts",
+      "plugin": "merv-sandbox-integration",
+      "source": "packages/sandboxes/src/integration.ts",
       "provides": [
-        "sandboxes"
+        "sandboxEvidence"
       ],
-      "requires": [],
-      "optional": [
-        "api",
-        "artifacts",
+      "requires": [
         "state",
         "scope",
-        "artifacts",
-        "sessions",
+        "workflows",
         "domainEvents",
-        "workflows"
+        "sessions",
+        "artifacts",
+        "sbxMerv",
+        "sbxPipelines",
+        "sbxObjects",
+        "sbxAccounts"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
-      "id": "sandboxes",
-      "group": "mounts",
-      "owner": "sandboxes",
-      "label": "Sandboxes",
-      "purpose": "Connects to the remote compute service over HTTP for resources, durable jobs and retained outputs. Optional API, Artifacts, State, Scope and Sessions bindings enable delegation, evidence and managed compute. Its tool adapter enforces project permissions.",
-      "exposedTools": [
-        {
-          "name": "sandbox.extend",
-          "description": "Adds seconds to the remaining lease on one sandbox: what is left is read first and carried, so extending a machine can only lengthen its life. The service refuses a sandbox that is no longer live, and refuses a total beyond the lease it allows. Answers the renewed record.",
-          "readOnly": false
-        },
-        {
-          "name": "sandbox.release",
-          "description": "Release one sandbox: the machine is deleted at the provider and everything on it goes with it, so retain what you need first. Retained job logs stay readable. Deletion is asynchronous — the answer is the record as it reads afterwards, usually while it is still deleting — and releasing an already-released sandbox changes nothing.",
-          "readOnly": false
-        }
-      ]
+      "id": "sandboxEvidence",
+      "group": "other",
+      "owner": "sandboxEvidence",
+      "label": "sandboxEvidence",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
     },
     {
-      "plugin": "merv-sandboxes-tools",
-      "source": "packages/sandboxes/src/tools.ts",
+      "plugin": "merv-sandboxes-console",
+      "source": "packages/sandboxes/src/console.ts",
       "provides": [],
       "requires": [
-        "sandboxes",
-        "tools",
-        "scope"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": false,
-      "id": "merv-sandboxes-tools",
-      "group": "front",
-      "owner": "sandboxes",
-      "label": "Sandboxes · tools adapter",
-      "purpose": "Connects Sandboxes to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "sandbox.extend",
-          "description": "Adds seconds to the remaining lease on one sandbox: what is left is read first and carried, so extending a machine can only lengthen its life. The service refuses a sandbox that is no longer live, and refuses a total beyond the lease it allows. Answers the renewed record.",
-          "readOnly": false
-        },
-        {
-          "name": "sandbox.release",
-          "description": "Release one sandbox: the machine is deleted at the provider and everything on it goes with it, so retain what you need first. Retained job logs stay readable. Deletion is asynchronous — the answer is the record as it reads afterwards, usually while it is still deleting — and releasing an already-released sandbox changes nothing.",
-          "readOnly": false
-        }
-      ]
-    },
-    {
-      "plugin": "merv-sandboxes-ui",
-      "source": "packages/sandboxes/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "sandboxes",
+        "api",
         "ui",
-        "scope"
+        "scope",
+        "sbxMerv",
+        "sbxRegistry",
+        "sbxDb",
+        "sbxClock",
+        "sbxSettings"
       ],
       "optional": [],
-      "kind": "ui",
+      "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
-      "id": "merv-sandboxes-ui",
-      "group": "front",
-      "owner": "sandboxes",
-      "label": "Sandboxes · ui adapter",
-      "purpose": "Connects Sandboxes to the UI registry. This adapter owns no domain state.",
+      "id": "merv-sandboxes-console",
+      "group": "other",
+      "owner": "merv-sandboxes-console",
+      "label": "merv-sandboxes-console",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
       "exposedTools": []
     },
     {
@@ -2871,7 +2843,7 @@
         "paper"
       ],
       "optional": [
-        "sandboxes"
+        "sandboxEvidence"
       ],
       "kind": "service",
       "runtime": "server",
@@ -3165,6 +3137,33 @@
       "label": "Workflows · ui adapter",
       "purpose": "Connects Workflows to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
+    },
+    {
+      "plugin": "sandboxes-host",
+      "source": "packages/sandboxes/src/host.ts",
+      "provides": [
+        "sbxMerv",
+        "sbxPipelines",
+        "sbxObjects",
+        "sbxAccounts",
+        "sbxRegistry",
+        "sbxJobs",
+        "sbxSnapshots",
+        "sbxDb",
+        "sbxClock",
+        "sbxSettings"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "sbxMerv",
+      "group": "other",
+      "owner": "sbxMerv",
+      "label": "sbxMerv",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
     }
   ],
   "edges": [
@@ -3320,7 +3319,32 @@
     },
     {
       "from": "codeWork",
-      "to": "sandboxes",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sbxMerv",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sbxMerv",
       "optional": true
     },
     {
@@ -3395,7 +3419,7 @@
     },
     {
       "from": "experiments",
-      "to": "sandboxes",
+      "to": "sandboxEvidence",
       "optional": true
     },
     {
@@ -3465,7 +3489,7 @@
     },
     {
       "from": "fleet",
-      "to": "sandboxes",
+      "to": "sbxMerv",
       "optional": false
     },
     {
@@ -3894,73 +3918,93 @@
       "optional": true
     },
     {
-      "from": "sandboxes",
-      "to": "api",
-      "optional": true
-    },
-    {
-      "from": "sandboxes",
-      "to": "artifacts",
-      "optional": true
-    },
-    {
-      "from": "sandboxes",
+      "from": "sandboxEvidence",
       "to": "state",
-      "optional": true
+      "optional": false
     },
     {
-      "from": "sandboxes",
+      "from": "sandboxEvidence",
       "to": "scope",
-      "optional": true
+      "optional": false
     },
     {
-      "from": "sandboxes",
-      "to": "artifacts",
-      "optional": true
-    },
-    {
-      "from": "sandboxes",
-      "to": "sessions",
-      "optional": true
-    },
-    {
-      "from": "sandboxes",
-      "to": "domainEvents",
-      "optional": true
-    },
-    {
-      "from": "sandboxes",
+      "from": "sandboxEvidence",
       "to": "workflows",
-      "optional": true
-    },
-    {
-      "from": "merv-sandboxes-tools",
-      "to": "sandboxes",
       "optional": false
     },
     {
-      "from": "merv-sandboxes-tools",
-      "to": "tools",
+      "from": "sandboxEvidence",
+      "to": "domainEvents",
       "optional": false
     },
     {
-      "from": "merv-sandboxes-tools",
-      "to": "scope",
+      "from": "sandboxEvidence",
+      "to": "sessions",
       "optional": false
     },
     {
-      "from": "merv-sandboxes-ui",
-      "to": "sandboxes",
+      "from": "sandboxEvidence",
+      "to": "artifacts",
       "optional": false
     },
     {
-      "from": "merv-sandboxes-ui",
+      "from": "sandboxEvidence",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxEvidence",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxEvidence",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxEvidence",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
       "to": "ui",
       "optional": false
     },
     {
-      "from": "merv-sandboxes-ui",
+      "from": "merv-sandboxes-console",
       "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-sandboxes-console",
+      "to": "sbxMerv",
       "optional": false
     },
     {
@@ -4130,7 +4174,7 @@
     },
     {
       "from": "tasks",
-      "to": "sandboxes",
+      "to": "sandboxEvidence",
       "optional": true
     },
     {
@@ -4191,17 +4235,11 @@
   ],
   "counts": {
     "plugins": 74,
-    "providers": 32,
-    "adapters": 42,
-    "dependencies": 204
+    "providers": 33,
+    "adapters": 41,
+    "dependencies": 213
   },
   "network": [
-    {
-      "from": "sandboxes",
-      "to": "remote-sandboxes",
-      "protocol": "HTTP",
-      "description": "Optional direct compute-service connection for published views, scoped reads and lease controls."
-    },
     {
       "from": "runner",
       "to": "api",

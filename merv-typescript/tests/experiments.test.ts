@@ -4,7 +4,7 @@ import {
 } from '../packages/experiments/src/input.js';
 import { currentWork } from './fixtures/current-work.js';
 import { managedServices } from './fixtures/managed-services.js';
-import { nativeWorkFixture } from './fixtures/native-work.js';
+import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
@@ -1022,13 +1022,12 @@ test('a retry keeps the compute epoch of work started before Experiments recorde
 
 test('native experiments fence compute by attempt and state and retain service captures', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  t.after(f.experiments.bindSandboxes(native.service));
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
   let experiment = await f.create('Native');
   assert.equal(experiment.workflow.version, 41);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
-  assert.match(planning.brief, /native Sandboxes MCP/);
   assert.ok(!planning.execution.tools.some((tool) => tool.name.startsWith('compute.')));
   await f.attach(experiment, 'plan', plan);
   experiment = await f.transition(experiment, 'submit_design');
@@ -1081,8 +1080,8 @@ test('native experiments fence compute by attempt and state and retain service c
 
 test('a result submission may select a verified sandbox capture its worker attached', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  t.after(f.experiments.bindSandboxes(native.service));
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
   let experiment = await f.create('Captured');
   await f.attach(experiment, 'plan', plan);
   experiment = await f.submitReview(await f.transition(experiment, 'submit_design'));
@@ -1120,27 +1119,10 @@ test('a result submission may select a verified sandbox capture its worker attac
   assert.ok(review.artifactIds.includes(capture.id));
 });
 
-test('an assignment is told to use Sandboxes only where its visit gets the Sandboxes MCP', async (t) => {
-  const f = await fixture(t);
-  const experiment = await f.create('Unconnected');
-  // No Sandboxes at all, then Sandboxes with the project not connected: no connection is issued
-  // at launch, so the brief names none.
-  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
-  const native = nativeWorkFixture();
-  native.connection.connected = false;
-  t.after(f.experiments.bindSandboxes(native.service));
-  assert.doesNotMatch((await f.workflows.assignment(f.producer, experiment.id)).brief, /Sandboxes/);
-  native.connection.connected = true;
-  assert.match(
-    (await f.workflows.assignment(f.producer, experiment.id)).brief,
-    /native Sandboxes MCP/,
-  );
-});
-
 test('a worker cannot attach a sandbox capture another attempt retained', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  t.after(f.experiments.bindSandboxes(native.service));
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
   const experiment = await f.running();
   const service = await f.scope.serviceActor('sandboxes', f.producer.projectId);
   const capture = await f.artifacts.createCollection(service, {
@@ -1169,8 +1151,8 @@ test('a worker cannot attach a sandbox capture another attempt retained', async 
 
 test('a capture Sandboxes refused is on the experiment, its card and its sidebar', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  t.after(f.experiments.bindSandboxes(native.service));
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
   const experiment = await f.running();
   assert.equal((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, undefined);
   const refused = {
@@ -1192,10 +1174,10 @@ test('a capture Sandboxes refused is on the experiment, its card and its sidebar
 
 test('experiments.list reads Sandboxes captures once for every experiment', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
+  const native = captureEvidenceFixture();
   const calls = { captures: 0, evidence: 0 };
   t.after(
-    f.experiments.bindSandboxes({
+    f.experiments.bindCaptureEvidence({
       ...native.service,
       captures: (...args) => (calls.captures++, native.service.captures(...args)),
       evidence: (...args) => (calls.evidence++, native.service.evidence(...args)),

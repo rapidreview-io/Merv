@@ -14,7 +14,7 @@ import { createService, type Caller, type RunningNode, type RunningSection } fro
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { UiRegistry, type RunningContribution } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
-import type { SandboxCheckHandle, SandboxChecks } from '@merv/sandboxes';
+import type { SandboxCheckHandle, SandboxChecks } from '@merv/code-work/check-types';
 import { baseFixture } from './fixtures/code-bases.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
@@ -607,10 +607,8 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
       jobId: 'job_1',
       objectId: 'obj_1',
       restoreJobId: null,
-      sha256: 'f'.repeat(64),
       ready: true,
       environment: null,
-      isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
       epoch: 1,
       ...extra,
     });
@@ -981,14 +979,12 @@ async function keptMachine(t: TestContext, action: 'suspend' | 'cancel') {
     objectId: 'obj_kept',
     jobId: null,
     restoreJobId: null,
-    sha256: '',
     ready: false,
     environment: null,
-    isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
   };
   const service = { taken: false, asked: [] as (string | null)[] };
   const checks: SandboxChecks = {
-    start: async (_projectId, spec) => ({ ...machine, sha256: spec.source.sha256 }),
+    start: async () => ({ ...machine }),
     step: async (_projectId, _plan, handle) => handle,
     follow: async () => assert.fail('a machine that never came up has no job to follow'),
     release: async (_projectId, handle) => {

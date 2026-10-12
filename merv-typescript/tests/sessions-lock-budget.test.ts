@@ -18,7 +18,9 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { FleetService } from '@merv/fleet';
-import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
+import type { FleetRuntimeHandle } from '@merv/fleet/types';
+import type { RuntimeLauncher } from '@sandboxes/runtimes/launcher';
+import { profiles, sandbox, receipt, offer, link } from './fixtures/runtime-records.js';
 import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { FleetWorkflowAdapter } from '../packages/fleet/src/workflow.js';
 import { openState } from './fixtures/state.js';
@@ -318,60 +320,58 @@ async function rented(t: TestContext) {
     }),
   );
   const bootstraps = new Map<string, string>();
-  const handles = new Map<string, SandboxRuntimeHandle>();
-  const runtimes: SandboxRuntimes = {
-    profiles: [{ key: 'standard', id: 'budget-profile', leaseSeconds: 600 }],
-    describe: async () => null,
-    connected: () => true,
-    async provision(_projectId, operationKey) {
-      const handle = handles.get(operationKey) ?? {
-        sandboxId: `sbx_${handles.size + 1}`,
-        state: 'ready' as const,
-        ready: true,
-        deleted: false,
-        leaseExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-        revision: 1,
-        launch: null,
-      };
-      handles.set(operationKey, handle);
-      return structuredClone(handle);
-    },
-    async inspect(_projectId, { sandboxId }) {
-      return structuredClone([...handles.values()].find((h) => h.sandboxId === sandboxId)!);
-    },
-    async launch(_projectId, { sandboxId }, operationKey, bootstrap) {
-      const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
-      bootstraps.set(sandboxId, bootstrap);
-      handle.launch = {
-        sandboxId,
-        launchId: `launch_${sandboxId}`,
-        operationKey,
-        releaseId: 'release_budget',
-        jobId: 'job_budget',
-        state: 'pending',
-        deliveryState: 'launched',
-        expiresAt: new Date(Date.now() + 600_000).toISOString(),
-      };
-      handle.revision++;
-      return structuredClone(handle);
-    },
-    async acknowledge(_projectId, { sandboxId }) {
-      const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
-      handle.launch!.state = 'consumed';
-      return structuredClone(handle);
-    },
-    async stop(_projectId, { sandboxId }) {
-      const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
-      Object.assign(handle, { state: 'stopped', ready: false, deleted: true });
-      return structuredClone(handle);
-    },
-    async renew(_projectId, { sandboxId }) {
-      return structuredClone([...handles.values()].find((h) => h.sandboxId === sandboxId)!);
-    },
+  const handles = new Map<string, FleetRuntimeHandle>();
+  const runtimes = {
+    linked: async (projectId: string) => link(projectId),
+    runtimes: (): RuntimeLauncher => ({
+      describe: async () => offer(null),
+      async provision({ operationKey }) {
+        const handle = handles.get(operationKey) ?? {
+          sandboxId: `sbx_${handles.size + 1}`,
+          state: 'ready' as const,
+          ready: true,
+          leaseExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          revision: 1,
+          launch: null,
+        };
+        handles.set(operationKey, handle);
+        return sandbox(handle);
+      },
+      async inspect(sandboxId, launchId) {
+        const h = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
+        return { sandbox: sandbox(h), launch: launchId && h.launch ? receipt(h.launch) : null };
+      },
+      async launch(sandboxId, { operation_key: operationKey, bootstrap, release_id }) {
+        const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
+        bootstraps.set(sandboxId, bootstrap.getSecretValue());
+        handle.launch = {
+          launchId: `launch_${sandboxId}`,
+          jobId: 'job_budget',
+          state: 'pending',
+          deliveryState: 'launched',
+        };
+        handle.revision++;
+        return receipt(handle.launch!);
+      },
+      async acknowledge(sandboxId) {
+        const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
+        handle.launch!.state = 'consumed';
+        return receipt(handle.launch!);
+      },
+      async stop(sandboxId) {
+        const handle = [...handles.values()].find((h) => h.sandboxId === sandboxId)!;
+        Object.assign(handle, { state: 'stopped', ready: false });
+        return sandbox(handle);
+      },
+      async renew(sandboxId) {
+        return sandbox([...handles.values()].find((h) => h.sandboxId === sandboxId)!);
+      },
+    }),
   };
   // Fleet's own passes are its cost, not Sessions': it runs on the uncounted state.
   const fleet = await createService(
     new FleetService(f.state, f.scope, runtimes, {
+      profiles,
       globalLimit: 1,
       projectLimit: 1,
       pollIntervalMs: 60_000,

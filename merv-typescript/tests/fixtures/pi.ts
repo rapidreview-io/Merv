@@ -18,6 +18,7 @@ import type {
   PiHostRecord,
   PiPersonRecord,
 } from '../../packages/pi/src/types.js';
+import { profiles } from './runtime-records.js';
 import { FakeRuntimes } from './runtimes.js';
 import { openState } from './state.js';
 
@@ -155,6 +156,7 @@ export async function fixture(
       scope,
       runtimes,
       {
+        profiles,
         globalLimit: options.machines ?? 8,
         projectLimit: options.machines ?? 8,
         allocationTimeoutSeconds: 3600,
@@ -165,6 +167,7 @@ export async function fixture(
     ),
   );
   // Tests tick Fleet themselves; a kick is only counted.
+  await fleet.tick();
   let kicks = 0;
   fleet.kick = () => void kicks++;
   const disk = new DiskBlobs(join(directory, 'blobs'));

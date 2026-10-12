@@ -21,7 +21,7 @@ missing from the explicit namespace list of `cloudflare-fleet`, so a create from
 any of those projects would have failed with `provider is not configured`. The
 QA project's onboarding at 19:33 UTC added every `merv-pi-*` namespace and
 verified that each one resolves the provider;
-[`pi-connect-project.py`](../deploy/pi-connect-project.py) repeats that step.
+the retired project-connection script repeated that step.
 
 **Wedged Fleet slot, 18:28 UTC.** An Agent message in the QA project, which had
 no sandbox connection yet, created allocation `flt_480e9542…`. Its create failed

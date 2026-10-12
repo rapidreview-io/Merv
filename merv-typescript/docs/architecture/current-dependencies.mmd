@@ -50,9 +50,8 @@ flowchart BT
     merv_review_tools["merv-review-tools"]
     merv_review_ui["merv-review-ui"]
     reviews["reviews"]
-    sandboxes["sandboxes"]
-    merv_sandboxes_tools["merv-sandboxes-tools"]
-    merv_sandboxes_ui["merv-sandboxes-ui"]
+    sandboxEvidence["sandboxEvidence"]
+    merv_sandboxes_console["merv-sandboxes-console"]
     scope["scope"]
     merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
@@ -73,6 +72,7 @@ flowchart BT
     merv_workflow_tools["merv-workflow-tools"]
     workflows["workflows"]
     merv_workflows_ui["merv-workflows-ui"]
+    sbxMerv["sbxMerv"]
   end
   subgraph machine["Independent machine runtime"]
     runner["runner"]
@@ -107,7 +107,12 @@ flowchart BT
   codeWork --> workflows
   codeWork --> reviews
   codeWork --> domainEvents
-  codeWork -. optional .-> sandboxes
+  codeWork -. optional .-> sbxMerv
+  codeWork -. optional .-> sbxMerv
+  codeWork -. optional .-> sbxMerv
+  codeWork -. optional .-> sbxMerv
+  codeWork -. optional .-> sbxMerv
+  codeWork -. optional .-> sbxMerv
   merv_code_work_api --> codeWork
   merv_code_work_api --> api
   contextBuilder --> state
@@ -122,7 +127,7 @@ flowchart BT
   experiments --> contextBuilder
   experiments --> codeWork
   experiments --> paper
-  experiments -. optional .-> sandboxes
+  experiments -. optional .-> sandboxEvidence
   merv_experiments_tools --> experiments
   merv_experiments_tools --> tools
   merv_experiments_ui --> experiments
@@ -136,7 +141,7 @@ flowchart BT
   merv_feed_ui --> ui
   fleet --> state
   fleet --> scope
-  fleet --> sandboxes
+  fleet --> sbxMerv
   merv_fleet_tools --> fleet
   merv_fleet_tools --> tools
   merv_fleet_ui --> fleet
@@ -222,20 +227,24 @@ flowchart BT
   reviews --> artifacts
   reviews --> domainEvents
   reviews -. optional .-> workflows
-  sandboxes -. optional .-> api
-  sandboxes -. optional .-> artifacts
-  sandboxes -. optional .-> state
-  sandboxes -. optional .-> scope
-  sandboxes -. optional .-> artifacts
-  sandboxes -. optional .-> sessions
-  sandboxes -. optional .-> domainEvents
-  sandboxes -. optional .-> workflows
-  merv_sandboxes_tools --> sandboxes
-  merv_sandboxes_tools --> tools
-  merv_sandboxes_tools --> scope
-  merv_sandboxes_ui --> sandboxes
-  merv_sandboxes_ui --> ui
-  merv_sandboxes_ui --> scope
+  sandboxEvidence --> state
+  sandboxEvidence --> scope
+  sandboxEvidence --> workflows
+  sandboxEvidence --> domainEvents
+  sandboxEvidence --> sessions
+  sandboxEvidence --> artifacts
+  sandboxEvidence --> sbxMerv
+  sandboxEvidence --> sbxMerv
+  sandboxEvidence --> sbxMerv
+  sandboxEvidence --> sbxMerv
+  merv_sandboxes_console --> api
+  merv_sandboxes_console --> ui
+  merv_sandboxes_console --> scope
+  merv_sandboxes_console --> sbxMerv
+  merv_sandboxes_console --> sbxMerv
+  merv_sandboxes_console --> sbxMerv
+  merv_sandboxes_console --> sbxMerv
+  merv_sandboxes_console --> sbxMerv
   scope --> state
   merv_scope_api --> scope
   merv_scope_api --> api
@@ -269,7 +278,7 @@ flowchart BT
   tasks --> contextBuilder
   tasks --> codeWork
   tasks --> paper
-  tasks -. optional .-> sandboxes
+  tasks -. optional .-> sandboxEvidence
   tools --> scope
   ui --> api
   ui --> tools

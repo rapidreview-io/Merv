@@ -18,9 +18,10 @@ const proxy = Object.fromEntries(
     '/projects',
     '/sessions',
     '/sandboxes',
+    '/sbx',
     '/code',
     '/pi',
-  ].map((path) => [path, { target: api }]),
+  ].map((path) => [path, { target: api, ...(path === '/sbx' ? { ws: true } : {}) }]),
 );
 
 /**

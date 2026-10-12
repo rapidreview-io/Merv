@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -18,8 +26,57 @@ const render = new Function(
   `${definition}\nreturn remoteJob;`,
 );
 
+test('release.env accepts one registry digest or local image ID and rejects other values', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merv-release-image-'));
+  try {
+    const job = render(
+      'node:test',
+      'https://example.test',
+      false,
+    )({
+      release: 'test',
+      archiveSha256: 'a'.repeat(64),
+    });
+    const start = job.indexOf('SANDBOXES_TS_IMAGE=$(sed');
+    const end = job.indexOf('\ndocker build', start);
+    assert.ok(start > 0 && end > start);
+    const script =
+      'set -euo pipefail\n' + job.slice(start, end).replace('/etc/sandboxes/release.env', '"$1"');
+    const digest = 'sha256:' + 'a'.repeat(64);
+    for (const [value, valid] of [
+      [digest, true],
+      [`registry.example:5000/team/image@${digest}`, true],
+      ['', false],
+      ['registry/image:latest', false],
+      [digest.slice(0, -1), false],
+      [digest + 'a', false],
+      [digest.toUpperCase(), false],
+      [`"${digest}"`, false],
+      [digest + ' ', false],
+      [`@${digest}`, false],
+      [`registry/image@${digest}\nSANDBOXES_TS_IMAGE=${digest}`, false],
+    ]) {
+      writeFileSync(join(dir, 'release.env'), `SANDBOXES_TS_IMAGE=${value}\n`);
+      const result = spawnSync('bash', ['-c', script, 'test', join(dir, 'release.env')], {
+        encoding: 'utf8',
+      });
+      assert.equal(result.status, valid ? 0 : 1, value + result.stderr);
+    }
+    for (const file of ['release.env', 'missing.env']) {
+      writeFileSync(join(dir, 'release.env'), 'OTHER=value\n');
+      const result = spawnSync('bash', ['-c', script, 'test', join(dir, file)], {
+        encoding: 'utf8',
+      });
+      assert.notEqual(result.status, 0);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 const failures = [
-  { name: 'unhealthy release restores previous image', noRollback: false },
+  { name: 'unhealthy release restores a compatible in-process image', noRollback: false },
+  { name: 'unhealthy release refuses a native image', compatible: false },
   { name: 'unhealthy release stops without rollback', noRollback: true },
   // grep -v finds nothing to keep, which once ended the job under set -e before any rollback.
   {
@@ -28,7 +85,13 @@ const failures = [
   },
   { name: 'failed compose up restores previous image', composeFails: true },
 ];
-for (const { name, noRollback = false, logs = 'startup failed', composeFails = false } of failures)
+for (const {
+  name,
+  noRollback = false,
+  logs = 'startup failed',
+  composeFails = false,
+  compatible = true,
+} of failures)
   test(name, () => {
     const dir = mkdtempSync(join(tmpdir(), 'merv-release-fault-'));
     try {
@@ -43,18 +106,20 @@ for (const { name, noRollback = false, logs = 'startup failed', composeFails = f
         archiveSha256: 'a'.repeat(64),
       });
       // From the build manifest through the health wait and its failure handling.
-      const start = job.indexOf(
-        '\nprintf \'{"release":"%s","image":"%s","imageId":"%s","nodeImage"',
-      );
+      const start = job.indexOf('\nALLOW_ROLLBACK=false');
       const end = job.indexOf('\ncode() {', start);
       assert.ok(start > 0 && end > start);
       const script = `
 set -euo pipefail
 IMG=merv-typescript:test; IMAGE_ID=sha256:123456789abc
-PREV=merv-typescript:old; PREV_DIR="$PWD/previous"
+PREV=merv-typescript:old; PREV_DIR="$PWD/previous"; PREV_ID=sha256:old
+SANDBOXES_TS_IMAGE=sbx@sha256:123; BK="$PWD/backup"
+mkdir -p "$BK"
+cp() { :; }; chmod() { :; }
 COMMANDS="$PWD/commands.txt"; RESTORED="$PWD/restored"
 docker() {
   # \`return 0\`, not a bare return: in a trap handler bash 5 returns the status that fired it.
+  if [ "$1" = image ]; then echo '${compatible ? 'sbx@sha256:123' : '<no value>'}'; return 0; fi
   if [ "$1" = logs ]; then echo ${JSON.stringify(logs)}; return 0; fi
   if [ "$1" = inspect ]; then
     if [ "$3" = '{{.RestartCount}}' ]; then echo 3;
@@ -80,7 +145,7 @@ ${job.slice(start, end)}
       assert.equal(result.status, 1, result.stderr);
       const commands = readFileSync(join(dir, 'commands.txt'), 'utf8');
       const status = JSON.parse(readFileSync(join(dir, 'deploy-status.json'), 'utf8'));
-      if (noRollback) {
+      if (noRollback || !compatible) {
         assert.match(commands, /deploy compose -f compose\.yml down/);
         assert.doesNotMatch(commands, /previous compose/);
         assert.equal(status.noRollback, true);
@@ -128,9 +193,9 @@ const hostedChild = new Function(
 );
 
 test('selected Sandboxes checkout reaches resume, pin checks and final hosted rollout unchanged', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-python-checkout-'));
+  const directory = mkdtempSync(join(tmpdir(), 'merv-sandboxes-checkout-'));
   try {
-    const checkout = join(directory, 'Python checkout with spaces');
+    const checkout = join(directory, 'Sandboxes checkout with spaces');
     mkdirSync(join(checkout, '.git'), { recursive: true });
     const selected = parseSandboxes(['--sandboxes', checkout], existsSync, statSync, join, resolve);
     const calls = [];
@@ -194,4 +259,27 @@ test('selected Sandboxes checkout reaches resume, pin checks and final hosted ro
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('cutover skips hosted resume and checks; ordinary releases retain both gates', () => {
+  const gates = new Function(
+    'args',
+    'local',
+    'PUBLIC',
+    'PRODUCTION',
+    'hosted',
+    source.slice(
+      source.indexOf('// A hosted run left open'),
+      source.indexOf('const release = resume'),
+    ),
+  );
+  const calls = [];
+  const hosted = (flag) => {
+    calls.push(flag);
+    return 0;
+  };
+  gates({ 'skip-hosted': true }, {}, 'production', 'production', hosted);
+  assert.deepEqual(calls, []);
+  gates({}, {}, 'production', 'production', hosted);
+  assert.deepEqual(calls, ['--resume', '--check']);
 });

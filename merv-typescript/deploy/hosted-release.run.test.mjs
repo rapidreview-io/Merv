@@ -268,10 +268,20 @@ before(() => {
   const top = resolve(merv, '..');
   mkdirSync(join(repo, 'merv-typescript'), { recursive: true });
   const files = git(top, 'ls-files', '-co', '--exclude-standard', '--', 'merv-typescript');
-  for (const file of files.split('\n').filter((f) => existsSync(join(top, f)))) {
+  for (const file of files
+    .split('\n')
+    .filter((f) => existsSync(join(top, f)) && f !== 'merv-typescript/vendor/merv-sandboxes')) {
     mkdirSync(dirname(join(repo, file)), { recursive: true });
     writeFileSync(join(repo, file), readFileSync(join(top, file)));
   }
+  git(
+    top,
+    'clone',
+    '--shared',
+    '--quiet',
+    join(merv, 'vendor/merv-sandboxes'),
+    join(repo, 'merv-typescript/vendor/merv-sandboxes'),
+  );
   symlinkSync(join(merv, 'node_modules'), join(repo, 'merv-typescript/node_modules'));
   git(repo, 'init', '-q');
   git(repo, 'add', '-A');
@@ -282,9 +292,9 @@ before(() => {
     ['agent/main.go', 'package main'],
     ['deploy/cloudflare-sandbox/Dockerfile', 'FROM debian'],
     ['deploy/cloudflare-sandbox/worker/src/index.ts', 'worker v1'],
-    ['control/src/merv_sandboxes/__init__.py', ''],
-    ['control/src/merv_sandboxes/errors.py', ''],
-    ['control/src/merv_sandboxes/runtimes/__init__.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/__init__.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/errors.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/runtimes/__init__.py', ''],
   ]) {
     mkdirSync(dirname(join(sandboxes, file)), { recursive: true });
     writeFileSync(join(sandboxes, file), text);

@@ -5,6 +5,7 @@ import {
   type Server as HttpServer,
 } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { isUtf8 } from 'node:buffer';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -181,6 +182,7 @@ const namespaced = (token: string) =>
   /^[a-z]+_/.test(token) && !token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
 
 interface Mounted {
+  upgrade?: MountOptions['upgrade'];
   handler: MountHandler;
   public?: true | readonly string[];
 }
@@ -229,6 +231,7 @@ export class ApiServer {
   private closing?: Promise<void>;
   private readonly requests = new Set<Promise<unknown>>();
   private readonly calls = new Set<Promise<unknown>>();
+  private readonly upgrades = new Set<Duplex>();
   /** By prefix; null marks a withdrawn one, which answers 503. */
   private readonly mounts = new Map<string, Mounted | null>();
   private readonly credentials = new Map<string, { credential: ApiCredential }>();
@@ -279,6 +282,15 @@ export class ApiServer {
 
   private async listen(): Promise<string> {
     const server = createServer((req, res) => {
+      const idle = () => {
+        if (!res.headersSent) res.writeHead(408, { connection: 'close' }).end();
+        req.destroy(Object.assign(new Error('request body timed out'), { code: 'ECONNABORTED' }));
+      };
+      req.setTimeout(30_000, idle);
+      req.once('end', () => {
+        req.setTimeout(0);
+        req.off('timeout', idle);
+      });
       // A request is done when its response is flushed or its connection is gone: a handler
       // settles at res.end(), before the bytes leave, and shutdown must not cut them off.
       const request = Promise.all([
@@ -297,7 +309,16 @@ export class ApiServer {
         () => this.requests.delete(request),
       );
     });
-    server.requestTimeout = 30_000;
+    server.on('upgrade', (req, socket, head) => {
+      this.upgrades.add(socket);
+      socket.once('close', () => this.upgrades.delete(socket));
+      socket.on('error', () => socket.destroy());
+      void this.upgrade(req, socket, head).catch((error: unknown) => {
+        const { status } = errorBody(error);
+        socket.end(`HTTP/1.1 ${status} Rejected\r\nConnection: close\r\n\r\n`);
+      });
+    });
+    server.requestTimeout = 0;
     server.headersTimeout = 15_000;
     // Above the reverse proxy's two-minute idle timeout, so the proxy closes idle connections
     // first and never reuses one this server is closing.
@@ -336,6 +357,7 @@ export class ApiServer {
     if (starting) await starting.catch(() => undefined);
     if (!this.server) return;
     const server = this.server;
+    for (const socket of this.upgrades) socket.destroy();
     // Admission is already withdrawn: every new request is answered 503. Responses get drainMs
     // to finish; cutting their sockets then ends every stream still open, since each one ends
     // when its response closes. Existing responses and handlers retain their providers.
@@ -365,7 +387,11 @@ export class ApiServer {
       throw new MervError('invalid_mount', 'Public paths must lie within their mount');
     if (this.mounts.get(prefix))
       throw new MervError('mount_conflict', `Path prefix is already mounted: ${prefix}`, 409);
-    const mounted: Mounted = { handler, public: paths === true ? true : paths && [...paths] };
+    const mounted: Mounted = {
+      handler,
+      upgrade: options.upgrade,
+      public: paths === true ? true : paths && [...paths],
+    };
     this.mounts.set(prefix, mounted);
     return () => {
       if (this.mounts.get(prefix) === mounted) this.mounts.set(prefix, null);
@@ -469,11 +495,7 @@ export class ApiServer {
     }
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (this.stopping) {
-      json(res, 503, { error: { code: 'unavailable', message: 'Server is stopping' } });
-      return;
-    }
+  private checkOrigin(req: IncomingMessage): void {
     const origin = req.headers.origin;
     // Browsers send Origin on same-origin POSTs; this server speaks plain HTTP, so self is http://<host>.
     if (
@@ -482,6 +504,14 @@ export class ApiServer {
       !this.options.allowedOrigins?.includes(origin)
     )
       throw new MervError('forbidden_origin', 'Origin is not allowed', 403);
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (this.stopping) {
+      json(res, 503, { error: { code: 'unavailable', message: 'Server is stopping' } });
+      return;
+    }
+    this.checkOrigin(req);
     const url = new URL(req.url ?? '/', 'http://localhost');
     const prefix = `/${url.pathname.split('/')[1]}`;
     const mounted = this.mounts.get(prefix);
@@ -504,6 +534,17 @@ export class ApiServer {
     if (value === undefined) return;
     if (Buffer.isBuffer(value)) send(res, 200, 'application/octet-stream', value);
     else json(res, 200, value);
+  }
+
+  private async upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+    this.checkOrigin(req);
+    if (this.stopping) throw new MervError('unavailable', 'API server is stopping', 503);
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const prefix = `/${url.pathname.split('/')[1]}`;
+    const mounted = this.mounts.get(prefix);
+    if (mounted === null) throw new MervError('unavailable', 'This route was withdrawn', 503);
+    if (!mounted?.upgrade || !open(mounted, url.pathname)) throw unknownEndpoint();
+    await mounted.upgrade(req, socket, head);
   }
 
   private request(

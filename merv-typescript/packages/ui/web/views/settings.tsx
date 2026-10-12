@@ -8,7 +8,6 @@ import { ThreeStates } from '../states';
 import type { PluginState } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
-import { SandboxesConnection } from './sandboxes';
 import { KeysPanel } from './keys';
 import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView, personName } from './people';
@@ -283,15 +282,11 @@ function Keys() {
  * that connection produced; everything that configures it is here.
  */
 export function Integrations({ shell }: ViewProps) {
-  const [nativeAvailable, setNativeAvailable] = useState<boolean | null>(null);
   const code = shell.rows.some((row) => row.view.kind === 'code');
   return (
     <div className="page-stage stack stack--lg">
-      <SandboxesConnection onAvailable={setNativeAvailable} />
       {code && <GitHubConnection />}
-      {!code && nativeAvailable === false && (
-        <EmptyState kind="settings" icon="link" title="No integrations" />
-      )}
+      {!code && <EmptyState kind="settings" icon="link" title="No integrations" />}
     </div>
   );
 }

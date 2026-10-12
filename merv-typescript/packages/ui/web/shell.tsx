@@ -203,6 +203,38 @@ function AccountFoot() {
   );
 }
 
+export function SandboxesNav({ row }: { row: UiRowDescription }) {
+  const { pathname } = useLocation();
+  const children = [
+    ['machines', 'Machines'],
+    ['jobs', 'Jobs'],
+    ['spend', 'Spend'],
+  ] as const;
+  const active = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
+  const childActive = children.some(([id]) => active(`${row.path}/${id}`));
+  return (
+    <div className={cx('sandboxes-nav', active(row.path) && 'open')}>
+      <RailRow
+        to={row.path}
+        label={row.label}
+        icon={iconOf(row)}
+        active={active(row.path) && !childActive}
+      />
+      <div className="sandboxes-nav-children">
+        {children.map(([id, label]) => (
+          <RailRow
+            key={id}
+            to={`${row.path}/${id}`}
+            label={label}
+            icon={id}
+            active={active(`${row.path}/${id}`)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * The one navigation. Home, the lead rows (Work) and the top rows (Paper) first, then every other
  * collection as its own row under the heading of the section it belongs to, then
@@ -216,17 +248,20 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   // it; away from Home, as often as the rows beside it.
   const needsYou = useNow(rows, pathname === '/' ? undefined : 30000).count;
   const holds = (row: UiRowDescription) => held(row, pathname, rows);
-  const place = (row: UiRowDescription) => (
-    <RailRow
-      key={row.id}
-      to={row.path}
-      label={row.label}
-      icon={iconOf(row)}
-      active={holds(row)}
-      badge={row.status.badge}
-      sick={unwell(row)}
-    />
-  );
+  const place = (row: UiRowDescription) =>
+    row.view.kind === 'sandboxes' ? (
+      <SandboxesNav key={row.id} row={row} />
+    ) : (
+      <RailRow
+        key={row.id}
+        to={row.path}
+        label={row.label}
+        icon={iconOf(row)}
+        active={holds(row)}
+        badge={row.status.badge}
+        sick={unwell(row)}
+      />
+    );
   return (
     <aside className="sidebar" aria-label="Primary">
       <div className="rail-util">
@@ -314,7 +349,12 @@ function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts
   return (
     // Agent and Work title themselves (the conversation's bar, the cycle's head), so the
     // place is heard here and seen only once.
-    <header className={cx('page-lede', ['pi', 'work'].includes(current.view.kind) && 'sr-only')}>
+    <header
+      className={cx(
+        'page-lede',
+        ['pi', 'work', 'sandboxes'].includes(current.view.kind) && 'sr-only',
+      )}
+    >
       <h1 className="lede-line">
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that

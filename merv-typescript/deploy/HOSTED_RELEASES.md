@@ -1,7 +1,7 @@
 # Hosted Pi/Codex image releases
 
 One row per run of [`hosted-release.mjs`](hosted-release.mjs) that changed, or tried to change,
-the hosted worker image. `release.mjs` runs it after every passing production release. Source is
+the hosted worker image. `release.mjs` runs it after passing production releases unless `--skip-hosted` is set. Source is
 the commit and the content hash of its allowlisted archive; both are also image labels
 (`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`), beside
 `org.merv.hosted.sandboxes-commit`. Image is the amd64 manifest digest that Cloudflare and the
@@ -15,6 +15,14 @@ unverified, so each later run rebuilds and canaries them (`rechecked`) until a c
 release replaces them. Each run commits this file and `hosted-release.json` by path, with a
 `[skip ci]` message, and pushes them when its checkout is at origin/main's tip; otherwise it
 leaves them for you to commit.
+
+Later hosted releases default
+to `vendor/merv-sandboxes` and archive its agent, base/bridge and runtime assets at the selected
+commit. Probes execute Node/TS in the standalone container without starting services or migrating.
+Catalog changes atomically update the root-only raw `/etc/sandboxes/shared.env`, validate both
+compositions, and recreate standalone and Merv on their current images under the maintenance
+lock. The drain, isolation gates, canary and recovery journal remain required. Retire old
+archived timers before the cutover.
 
 | UTC               | Run                         | Source                    | Lane     | Image          | Release        | App     | Gates             | Canary                 | Result                     | Notes                                                                                                                                                                                                                                                                                                                                              |
 | ----------------- | --------------------------- | ------------------------- | -------- | -------------- | -------------- | ------- | ----------------- | ---------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

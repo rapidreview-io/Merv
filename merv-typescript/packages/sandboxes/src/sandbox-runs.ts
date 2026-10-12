@@ -1,0 +1,179 @@
+import {
+  check,
+  type Scope,
+  type State,
+  type StoredEvent,
+  type Transaction,
+  type Workflows,
+} from '@merv/contracts';
+import type { MervRunScope, SbxMerv } from '@sandboxes/merv-host/types';
+import { computeEpoch, computeProfile } from '@merv/sessions/compute';
+import type { NativeMcpConnection, WorkSession } from '@merv/sessions/types';
+
+export const sandboxRunMigrations = {
+  1: `CREATE TABLE sandbox_run_intents (
+    run_ref TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    work_ref TEXT NOT NULL,
+    attempt_ref TEXT NOT NULL,
+    target SMALLINT NOT NULL DEFAULT 0,
+    retired SMALLINT NOT NULL DEFAULT 0
+  );
+  CREATE INDEX sandbox_run_work ON sandbox_run_intents(project_id,work_ref);`,
+};
+
+interface Run {
+  run_ref: string;
+  project_id: string;
+  namespace: string;
+  account_id: string;
+  work_ref: string;
+  attempt_ref: string;
+  target: number;
+  retired: number;
+}
+const scopeOf = (run: Run): MervRunScope => ({
+  namespace: run.namespace,
+  accountId: run.account_id,
+  workRef: run.work_ref,
+  attemptRef: run.attempt_ref,
+  runRef: run.run_ref,
+});
+
+export class SandboxRuns {
+  private readonly issuing = new Map<string, Promise<NativeMcpConnection[]>>();
+  private reconciling?: Promise<void>;
+  constructor(
+    private readonly state: State,
+    private readonly scope: Scope,
+    private readonly workflows: Pick<Workflows, 'relations'>,
+    private readonly host: SbxMerv,
+  ) {}
+
+  private row(tx: Transaction, runRef: string) {
+    return tx.get<Run>('SELECT * FROM sandbox_run_intents WHERE run_ref=?', runRef);
+  }
+
+  private async level(run: Run, tx: Transaction): Promise<number> {
+    const i = (await this.workflows.relations(run.project_id, run.work_ref, tx))?.instance;
+    return !i || i.terminal ? 3 : computeEpoch(i.data, i.revision) !== run.attempt_ref ? 2 : 0;
+  }
+
+  async event(event: StoredEvent, tx: Transaction): Promise<void> {
+    if (event.type === 'session.closed') {
+      await tx.run(
+        'UPDATE sandbox_run_intents SET target=GREATEST(target,1) WHERE project_id=? AND run_ref=?',
+        event.projectId,
+        event.subjectId,
+      );
+      return;
+    }
+    const runs = await tx.all<Run>(
+      'SELECT * FROM sandbox_run_intents WHERE project_id=? AND work_ref=?',
+      event.projectId,
+      event.subjectId,
+    );
+    for (const run of runs) {
+      await tx.run(
+        'UPDATE sandbox_run_intents SET target=? WHERE run_ref=?',
+        (await this.level(run, tx)) || Math.min(run.target, 1),
+        run.run_ref,
+      );
+    }
+  }
+
+  async launchConnections(session: Readonly<WorkSession>): Promise<NativeMcpConnection[]> {
+    const refs = session.execution.references;
+    if (
+      computeProfile(session.execution.policy, refs.computeProfile) === 'none' ||
+      refs.computeKind === undefined
+    )
+      return [];
+    const pending = this.issuing.get(session.id);
+    if (pending) return pending;
+    const issue = this.issue(session).finally(() => this.issuing.delete(session.id));
+    this.issuing.set(session.id, issue);
+    return issue;
+  }
+
+  private async issue(session: Readonly<WorkSession>): Promise<NativeMcpConnection[]> {
+    const linked = await this.host.linked(session.projectId);
+    if (!linked) return [];
+    const run = await this.state.transaction(async (tx) => {
+      const instance = (await this.workflows.relations(session.projectId, session.instanceId, tx))
+        ?.instance;
+      check(
+        instance &&
+          instance.workflow === session.execution.workflow &&
+          instance.revision === session.expectedRevision,
+        'execution_replaced',
+        'The assignment changed before sandbox issuance',
+        409,
+      );
+      await tx.run(
+        `INSERT INTO sandbox_run_intents(run_ref,project_id,namespace,account_id,work_ref,attempt_ref)
+        VALUES(?,?,?,?,?,?) ON CONFLICT(run_ref) DO NOTHING`,
+        session.id,
+        session.projectId,
+        linked.namespace,
+        linked.account_id,
+        session.instanceId,
+        computeEpoch(instance.data, instance.revision),
+      );
+      const run = (await this.row(tx, session.id))!;
+      check(run.target === 0, 'session_closed', 'The sandbox run has ended', 409);
+      return run;
+    });
+    const caller = await this.scope.serviceActor('sessions', run.project_id);
+    const connection = await this.host.launchConnection(caller, {
+      ...scopeOf(run),
+      expiresAt: session.hardDeadline,
+    });
+    const accepted = await this.state.transaction(
+      async (tx) => (await this.row(tx, session.id))!.target === 0,
+    );
+    if (!accepted) await this.host.retireRun(caller, scopeOf(run));
+    check(accepted, 'session_closed', 'The sandbox run ended during issuance', 409);
+    return [connection];
+  }
+
+  async close(): Promise<void> {
+    await this.reconciling?.catch(() => {});
+    await Promise.allSettled(this.issuing.values());
+  }
+
+  reconcile(): Promise<void> {
+    return (this.reconciling ??= this.pass().finally(() => {
+      this.reconciling = undefined;
+    }));
+  }
+
+  private async pass(): Promise<void> {
+    const runs = await this.state.read((sql) =>
+      sql.all<Run>('SELECT * FROM sandbox_run_intents WHERE target > retired'),
+    );
+    for (const run of runs) {
+      try {
+        const caller = await this.scope.serviceActor('sessions', run.project_id);
+        const retire = [
+          this.host.retireRun.bind(this.host),
+          this.host.retireAttempt.bind(this.host),
+          this.host.releaseWork.bind(this.host),
+        ][run.target - 1];
+        if ((await retire(caller, scopeOf(run))) === false) continue;
+        await this.state.transaction(async (tx) => {
+          await tx.run(
+            'UPDATE sandbox_run_intents SET retired=? WHERE run_ref=? AND retired<?',
+            run.target,
+            run.run_ref,
+            run.target,
+          );
+        });
+      } catch {
+        // The recorded scope remains pending across crashes and temporary host failures.
+      }
+    }
+  }
+}

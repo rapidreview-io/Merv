@@ -18,6 +18,9 @@ const env = {
   MERV_TS_AUTH_MODE: 'hs256',
   MERV_BLOB_PREFIX: 'merv-ts',
   MERV_DB_URL: 'postgresql://unused',
+  SANDBOXES_DATABASE_URL: 'postgresql://sandboxes:fixture@sbx-db/sandboxes',
+  SANDBOXES_VAULT_KEY: 'fixture-vault-key',
+  MERV_SANDBOXES_PROXY_URL: 'http://sbx-control:8000',
   MERV_BLOB_BUCKET: 'unused',
   MERV_BLOB_ENDPOINT_URL: 'https://storage.example',
   MERV_BLOB_ACCESS_KEY_ID: 'fixture',
@@ -27,15 +30,7 @@ const env = {
   SUPABASE_URL: 'https://identity.example',
   MERV_TS_PUBLIC_ORIGIN: 'https://merv.example',
 };
-const connected = {
-  MERV_SANDBOXES_URL: 'https://sandboxes.example',
-  MERV_SANDBOXES_CONNECTIONS: JSON.stringify([
-    { projectId: 'project_1', namespace: 'research', tokenEnv: 'SANDBOX_GRANT' },
-  ]),
-  SANDBOX_GRANT: 'sbxt_fixture',
-};
 const fleet = {
-  ...connected,
   MERV_FLEET_ENABLED: 'true',
   MERV_FLEET_RUNTIME_PROVIDER: 'cloudflare',
   MERV_FLEET_RUNTIME_OFFER_ID: 'standard-1:cloudflare',
@@ -46,11 +41,6 @@ const fleet = {
 };
 const pi = {
   ...fleet,
-  MERV_SANDBOXES_CONNECTIONS: JSON.stringify([
-    { projectId: 'project_1', namespace: 'research', tokenEnv: 'SANDBOX_GRANT' },
-    { projectId: 'project_host', namespace: 'merv-pi-host', tokenEnv: 'HOST_GRANT' },
-  ]),
-  HOST_GRANT: 'sbxt_host_fixture',
   MERV_PI_ENABLED: 'true',
   MERV_PI_SECRET_ENV: 'PI_PRIVATE_SECRET',
   MERV_PI_MODEL_API_KEY_ENV: 'PI_PROVIDER_KEY',
@@ -61,53 +51,65 @@ const pi = {
   PI_HOST_KEY: 'h'.repeat(43),
 };
 
-test('the ML consumption grant renders nothing on its own: only managed native ML uses it', (t) => {
+test('deployment loads the in-process host, integration and standalone console', (t) => {
   const { run, plugin, output } = renderer(t);
-  const ml = {
-    ...connected,
-    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
-    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_ml',
-  };
-  assert.equal(run(ml).status, 0);
-  assert.equal(plugin('sandboxes').config.ml, undefined);
-  assert.equal(plugin('sandboxes').config.native, undefined);
-  assert.ok(!readFileSync(output, 'utf8').includes('merv-ml'));
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(plugin('sandboxes-host'), {
+    id: 'sandboxes-host',
+    name: '@merv/sandboxes/host',
+    config: {
+      databaseUrlEnv: 'SANDBOXES_DATABASE_URL',
+      schema: 'public',
+      vaultKeyEnv: 'SANDBOXES_VAULT_KEY',
+      dataDir: '/data',
+      publicOrigin: 'https://sandboxes.rapidreview.io',
+      registerUi: true,
+      registerTools: true,
+      relayEvents: true,
+    },
+  });
+  assert.deepEqual(plugin('sandboxes-integration'), {
+    id: 'sandboxes-integration',
+    name: '@merv/sandboxes/integration',
+    config: { legacyCaptures: { namespace: 'merv-ml' } },
+  });
+  assert.deepEqual(plugin('sandboxes-console'), {
+    id: 'sandboxes-console',
+    name: '@merv/sandboxes/console',
+    config: { upstream: 'http://sbx-control:8000' },
+  });
+  const rendered = readFileSync(output, 'utf8');
+  assert.ok(!rendered.includes(env.SANDBOXES_DATABASE_URL));
+  assert.ok(!rendered.includes(env.SANDBOXES_VAULT_KEY));
+  for (const name of ['SANDBOXES_VAULT_KEY', 'MERV_SANDBOXES_PROXY_URL']) {
+    const refused = run({ [name]: undefined });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, new RegExp(`Missing or invalid ${name}`));
+  }
+  for (const upstream of [
+    'https://sbx-control:8000',
+    'http://user:pass@sbx-control:8000',
+    'http://sbx-control:8000/ui/',
+  ])
+    assert.notEqual(run({ MERV_SANDBOXES_PROXY_URL: upstream }).status, 0);
 });
 
-test('native compute is opt-in and carries only credential names, preserving legacy connections', (t) => {
-  const { run, plugin, output } = renderer(t);
-  const native = {
-    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
-    MERV_SANDBOXES_URL: 'https://sandboxes.example',
-    MERV_SANDBOXES_APPLICATION_ID: 'merv',
-    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
-    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
-  };
-  assert.equal(run(native).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.connections, []);
-  assert.deepEqual(plugin('sandboxes').config.native, {
-    applicationId: 'merv',
-    applicationSecretEnv: 'MERV_SANDBOXES_APPLICATION_SECRET',
-    encryptionKeyEnv: 'MERV_SANDBOXES_ENCRYPTION_KEY',
-    publicOrigin: 'https://merv.example',
+test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t) => {
+  const { run, output } = renderer(t);
+  const result = run({
+    SANDBOXES_DATABASE_URL: undefined,
+    SANDBOXES_VAULT_KEY: undefined,
+    MERV_SANDBOXES_PROXY_URL: undefined,
+    MERV_FLEET_ENABLED: 'true',
+    MERV_FLEET_WORKFLOW_ENABLED: 'true',
+    MERV_PI_ENABLED: 'true',
   });
-  for (const value of [
-    native.MERV_SANDBOXES_APPLICATION_SECRET,
-    native.MERV_SANDBOXES_ENCRYPTION_KEY,
-  ])
-    assert.ok(!readFileSync(output, 'utf8').includes(value));
-  assert.equal(run({ ...connected, ...native }).status, 0);
-  assert.equal(plugin('sandboxes').config.connections[0].projectId, 'project_1');
-  for (const invalid of [
-    { MERV_SANDBOXES_URL: undefined },
-    { MERV_SANDBOXES_APPLICATION_SECRET: '' },
-    { MERV_SANDBOXES_ENCRYPTION_KEY: 'wrong' },
-    { MERV_SANDBOXES_APPLICATION_ID: '../bad' },
-  ])
-    assert.notEqual(run({ ...native, ...invalid }).status, 0);
-  assert.notEqual(run({ ...native, MERV_SANDBOXES_NATIVE_ENABLED: 'false' }).status, 0);
-  assert.equal(run(connected).status, 0);
-  assert.equal(plugin('sandboxes').config.native, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 11);
+  assert.ok(
+    JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
+  );
 });
 
 test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) => {
@@ -149,7 +151,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 11);
+  assert.equal(config.plugins.length, 14);
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
@@ -162,7 +164,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 13);
+  assert.equal(config.plugins.length, 16);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -170,55 +172,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(config.plugins.find((p) => p.id === 'legacy-history').name, '@merv/legacy-history');
   assert.notEqual(run({ MERV_TS_DB_SCHEMA: 'public' }).status, 0);
   assert.notEqual(run({ MERV_TS_LEGACY_SOURCE_ID: '../source' }).status, 0);
-
-  assert.equal(run(connected).status, 0);
-  config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 14);
-  assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtimes, undefined);
-  assert.equal(
-    config.plugins.find((p) => p.id === 'fleet'),
-    undefined,
-  );
-
-  const projectConnections = (count) =>
-    Array.from({ length: count }, (_, index) => ({
-      projectId: `project_${index}`,
-      namespace: `namespace_${index}`,
-      tokenEnv: `SANDBOX_GRANT_${index}`,
-    }));
-  const listed = (connections) => ({
-    ...connected,
-    ...Object.fromEntries(connections.map((entry) => [entry.tokenEnv, 'sbxt_fixture'])),
-    MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections),
-  });
-  for (const count of [33, 256]) {
-    const connections = projectConnections(count);
-    assert.equal(run(listed(connections)).status, 0);
-    config = JSON.parse(readFileSync(output));
-    assert.deepEqual(
-      config.plugins.find((p) => p.id === 'sandboxes').config.connections,
-      connections,
-    );
-  }
-  for (const connections of [
-    projectConnections(257),
-    [...projectConnections(32), projectConnections(1)[0]],
-  ]) {
-    assert.notEqual(run(listed(connections)).status, 0);
-  }
-  // A connection whose grant variable is unset, empty or not a grant fails the render, naming
-  // only the variable, instead of starting healthy and wedging the first send.
-  for (const [broken, name] of [
-    [{ SANDBOX_GRANT: undefined }, 'SANDBOX_GRANT'],
-    [{ SANDBOX_GRANT: '' }, 'SANDBOX_GRANT'],
-    [{ SANDBOX_GRANT: "'sbxt_quoted'" }, 'SANDBOX_GRANT'],
-    [{ ...listed(projectConnections(2)), SANDBOX_GRANT_1: 'secret-value' }, 'SANDBOX_GRANT_1'],
-  ]) {
-    const result = run({ ...connected, ...broken });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`Error: Missing or invalid ${name}\\n`));
-    assert.ok(!/sbxt_quoted|secret-value/.test(result.stderr));
-  }
 
   assert.equal(run(fleet).status, 0);
   assert.notEqual(run({ MERV_PI_ENABLED: 'true' }).status, 0);
@@ -269,6 +222,15 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run(fleet).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
+    profiles: [
+      {
+        key: 'standard',
+        provider: 'cloudflare',
+        offerId: 'standard-1:cloudflare',
+        releaseId: fleet.MERV_FLEET_RUNTIME_RELEASE_ID,
+        leaseSeconds: 900,
+      },
+    ],
     globalLimit: 50,
     projectLimit: 5,
     projectLimits: {},
@@ -285,7 +247,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     undefined,
   );
   assert.ok(!readFileSync(output, 'utf8').includes(fleet.MANAGED_SECRET));
-  assert.ok(!readFileSync(output, 'utf8').includes(fleet.SANDBOX_GRANT));
 
   const workflow = {
     ...fleet,
@@ -302,18 +263,27 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(config.plugins.find((p) => p.id === 'sessions').config.dispatchByDefault, true);
   // A workflow machine may outlive Main, so no machine is leased for more than 15 minutes.
   const leases = config.plugins
-    .find((p) => p.id === 'sandboxes')
-    .config.runtimes.map((profile) => profile.leaseSeconds);
+    .find((p) => p.id === 'fleet')
+    .config.profiles.map((profile) => profile.leaseSeconds);
   assert.ok(leases.length && leases.every((seconds) => seconds <= 900), String(leases));
   assert.equal(run({ ...workflow, MERV_FLEET_RUNTIME_LEASE_SECONDS: '3600' }).status, 0);
   assert.equal(
-    JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'sandboxes').config.runtimes[0]
+    JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'fleet').config.profiles[0]
       .leaseSeconds,
     900,
   );
   assert.equal(run(workflow).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
+    profiles: [
+      {
+        key: 'standard',
+        provider: 'cloudflare',
+        offerId: 'standard-1:cloudflare',
+        releaseId: fleet.MERV_FLEET_RUNTIME_RELEASE_ID,
+        leaseSeconds: 900,
+      },
+    ],
     globalLimit: 2,
     projectLimit: 2,
     projectLimits: {},
@@ -371,7 +341,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   }
 });
 
-test('Pi rents its machines from one catalog in a connected host project', (t) => {
+test('Pi rents its machines from one catalog and defers host link readiness to Fleet', (t) => {
   const { output, run, plugin } = renderer(t);
   // The single-profile variables render as the Standard machine.
   const standard = {
@@ -382,7 +352,7 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     leaseSeconds: 900,
   };
   assert.equal(run(pi).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.runtimes, [standard]);
+  assert.deepEqual(plugin('fleet').config.profiles, [standard]);
   assert.deepEqual(plugin('pi').config, {
     secretEnv: 'PI_PRIVATE_SECRET',
     modelApiKeyEnv: 'PI_PROVIDER_KEY',
@@ -394,10 +364,12 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     agentMoves: false,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(pi.PI_HOST_KEY));
-  // Fleet rents through Pi's host unless another connected project is named.
+  // Fleet rents through Pi's host unless another project is named.
   assert.equal(plugin('fleet').config.hostProjectId, 'project_host');
   assert.equal(run({ ...fleet, MERV_FLEET_HOST_PROJECT_ID: 'project_1' }).status, 0);
   assert.equal(plugin('fleet').config.hostProjectId, 'project_1');
+  assert.equal(run({ ...pi, MERV_FLEET_HOST_PROJECT_ID: 'project_other' }).status, 0);
+  assert.equal(plugin('fleet').config.hostProjectId, 'project_other');
 
   // The catalog replaces the single-profile variables, which stay only for an older image.
   const large = {
@@ -420,8 +392,7 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     MERV_PI_AGENT_MOVES: 'true',
   };
   assert.equal(run(machines).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.runtimes, [current, large]);
-  assert.equal(plugin('sandboxes').config.runtime, undefined);
+  assert.deepEqual(plugin('fleet').config.profiles, [current, large]);
   assert.deepEqual(plugin('fleet').config.projectLimits, { project_host: 50 });
   assert.deepEqual(
     (({ machines, agentMoves }) => ({ machines, agentMoves }))(plugin('pi').config),
@@ -435,7 +406,7 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
   );
   // A Fleet without Pi still rents from the catalog.
   assert.equal(run({ ...fleet, MERV_FLEET_RUNTIMES: machines.MERV_FLEET_RUNTIMES }).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.runtimes, [current, large]);
+  assert.deepEqual(plugin('fleet').config.profiles, [current, large]);
 
   const entry = (change) => JSON.stringify([{ ...catalog[0], ...change }]);
   for (const broken of [
@@ -461,10 +432,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     { MERV_PI_AGENT_MOVES: 'yes' },
     { MERV_PI_HOST_PROJECT_ID: undefined },
     { MERV_PI_HOST_PROJECT_ID: 'project.host' },
-    // The host must be connected to Sandboxes: its grant rents every machine.
-    { MERV_PI_HOST_PROJECT_ID: 'project_other' },
-    { MERV_FLEET_HOST_PROJECT_ID: 'project_other' },
-    { MERV_SANDBOXES_CONNECTIONS: connected.MERV_SANDBOXES_CONNECTIONS },
     { MERV_PI_HOST_KEY_ENV: undefined },
     { MERV_PI_HOST_KEY_ENV: 'bad-name' },
   ]) {
@@ -634,60 +601,4 @@ test('the retired work-host reuse switch and approval list are ignored, whatever
     assert.equal(run({ ...workflow, ...retired }).status, 0);
     assert.deepEqual(plugin('fleet-workflow').config, rendered);
   }
-});
-
-test('managed ML requires both native and ML configuration and never renders its bearer', (t) => {
-  const { run, plugin, output } = renderer(t);
-  const settings = {
-    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
-    MERV_SANDBOXES_MANAGED_ML_ENABLED: 'true',
-    MERV_SANDBOXES_URL: 'https://sandboxes.example',
-    MERV_SANDBOXES_APPLICATION_ID: 'merv',
-    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
-    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
-    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
-    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_managed',
-  };
-  assert.equal(run(settings).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.native.managed, {
-    namespace: 'merv-ml',
-    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
-  });
-  assert.ok(!readFileSync(output, 'utf8').includes(settings.MERV_SANDBOXES_ML_TOKEN));
-  for (const invalid of [
-    { MERV_SANDBOXES_NATIVE_ENABLED: 'false' },
-    { MERV_SANDBOXES_ML_NAMESPACE: undefined },
-    { MERV_SANDBOXES_ML_NAMESPACE: 'Not A Namespace' },
-    { MERV_SANDBOXES_ML_TOKEN: '' },
-  ])
-    assert.notEqual(run({ ...settings, ...invalid }).status, 0);
-});
-
-test('files the retired compute path captured stay downloadable under the ML grant', (t) => {
-  const { run, plugin, output } = renderer(t);
-  const settings = {
-    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
-    MERV_SANDBOXES_URL: 'https://sandboxes.example',
-    MERV_SANDBOXES_APPLICATION_ID: 'merv',
-    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
-    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
-    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
-    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_captures',
-    MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'https://bucket.example',
-  };
-  assert.equal(run(settings).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.legacyCaptures, {
-    namespace: 'merv-ml',
-    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
-    storageOrigins: ['https://bucket.example'],
-  });
-  assert.ok(!readFileSync(output, 'utf8').includes(settings.MERV_SANDBOXES_ML_TOKEN));
-  assert.equal(run({ ...settings, MERV_SANDBOXES_ML_STORAGE_ORIGIN: undefined }).status, 0);
-  assert.equal(plugin('sandboxes').config.legacyCaptures, undefined);
-  for (const invalid of [
-    { MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'http://bucket.example' },
-    { MERV_SANDBOXES_ML_NAMESPACE: undefined },
-    { MERV_SANDBOXES_ML_TOKEN: '' },
-  ])
-    assert.notEqual(run({ ...settings, ...invalid }).status, 0);
 });

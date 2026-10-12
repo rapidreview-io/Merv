@@ -1,3 +1,4 @@
+import { sandboxesHostCapabilities } from '../packages/sandboxes/src/host-capabilities.js';
 import { artifactsPlugin } from '@merv/artifacts';
 import { blobsPlugin } from '@merv/blobs';
 import { codePlugin } from '@merv/code';
@@ -18,11 +19,11 @@ import { sessionsPlugin } from '@merv/sessions';
 import { statePlugin } from '@merv/state';
 import { secretsPlugin } from '@merv/secrets';
 import { nisaPlugin } from '@merv/nisa';
-import { sandboxesPlugin } from '@merv/sandboxes';
 import { tasksPlugin } from '@merv/tasks';
 import { toolsPlugin } from '@merv/api';
 import { webPlugin } from '@merv/web';
 import { workflowsPlugin } from '@merv/workflows';
+import type { SbxMerv } from '@sandboxes/merv-host';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import {
@@ -153,28 +154,38 @@ const capabilities: Record<string, readonly string[]> = {
   codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
-  // Legacy transport stands alone; native connection owners are conditional below.
-  sandboxes: [],
+  sandboxEvidence: [
+    'state',
+    'scope',
+    'workflows',
+    'domainEvents',
+    'sessions',
+    'artifacts',
+    'sbxMerv',
+    'sbxPipelines',
+    'sbxObjects',
+    'sbxAccounts',
+  ],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
   // Literature search over Nisa's public API; it holds nothing but its calls in flight.
   nisa: [],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
-  fleet: ['state', 'scope', 'sandboxes'],
+  fleet: ['state', 'scope', 'sbxMerv'],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
   ui: ['api', 'tools'],
 };
+const hostCapabilities = new Set<string>(sandboxesHostCapabilities);
+const knownCapability = (name: string) => name in capabilities || hostCapabilities.has(name);
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Pi may investigate Sessions' questions, but either service boots without the other.
   pi: ['sessions'],
-  // Native compute follows session closes and workflow transitions, reading instances through Workflows.
-  sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeWork: ['sandboxes'],
-  experiments: ['sandboxes'],
+  codeWork: ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
+  experiments: ['sandboxEvidence'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.
   reviews: ['workflows'],
@@ -182,7 +193,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
   sessions: ['tools', 'secrets'],
-  tasks: ['sandboxes'],
+  tasks: ['sandboxEvidence'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -202,7 +213,7 @@ function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optio
     );
     const childDeps = deps.elements.map((element) => {
       assert.ok(
-        ts.isStringLiteral(element) && element.text in capabilities,
+        ts.isStringLiteral(element) && knownCapability(element.text),
         'Unknown child capability',
       );
       optional.add(element.text);
@@ -217,7 +228,7 @@ function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optio
     node.expression.text === 'ctx'
   ) {
     const accessed = node.name.text;
-    if (accessed in capabilities)
+    if (knownCapability(accessed))
       assert.ok(declared.includes(accessed), `ctx.${accessed} is an undeclared dependency`);
     assert.notEqual(accessed, 'root', 'Root-context access bypasses declared dependencies');
   }
@@ -228,6 +239,11 @@ const adapterKinds = { tools: 'tools', ui: 'ui', api: 'api' } as const;
 const adapterKind = (path: string) =>
   (/[/\\](tools|ui|api)\.ts$/.exec(path)?.[1] as keyof typeof adapterKinds | undefined) ??
   undefined;
+// The in-process host's console composes API and UI; its proxy is transport-only.
+const consoleAdapters = new Set([
+  join('sandboxes', 'src', 'console.ts'),
+  join('sandboxes', 'src', 'sandboxes-proxy.ts'),
+]);
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 const capabilityOf = (owner: string) =>
@@ -257,7 +273,7 @@ const sharedContract = (specifier: string) =>
  * grace, the lease rows every leased step keeps, a record's Code unit, a unit's history as its
  * owner tells it on the Work page, and its Artifacts tab. */
 const pureRules = new Set([
-  '@merv/sandboxes/compute-capability',
+  '@merv/sessions/compute',
   '@merv/workflows/rules',
   '@merv/workflows/retired-instances',
   '@merv/experiments/rules',
@@ -486,7 +502,7 @@ function assertComponentReferences(
   seen = new Set<string>(),
 ): void {
   const owner = relative(base, path).split(sep)[0];
-  const isAdapter = adapterKind(path) !== undefined;
+  const isAdapter = adapterKind(path) !== undefined || consoleAdapters.has(relative(base, path));
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
     // Contracts is no component: any of its modules may be named for types alone, which is how
@@ -503,8 +519,10 @@ function assertComponentReferences(
       // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
       const events =
         isAdapter && ['@merv/api/event-stream', '@merv/api/errors'].includes(specifier);
+      // The integration publishes its capture reader contract alongside its implementation.
+      const captureTypes = typeOnly && specifier === '@merv/sandboxes/sandbox-evidence';
       // Pure rules (no service, see the test below) that any unit may run.
-      if (!utility && !credentials && !events && !pureRules.has(specifier)) {
+      if (!utility && !credentials && !events && !captureTypes && !pureRules.has(specifier)) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,
@@ -521,7 +539,8 @@ function assertComponentReferences(
       );
       if (!isAdapter && !['api', 'mounts'].includes(owner))
         assert.ok(
-          !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier),
+          !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier) &&
+            !consoleAdapters.has(relative(base, target).replace(/\.js$/, '.ts')),
           `${path} loads a transport adapter from its core entrypoint`,
         );
     }
@@ -533,6 +552,9 @@ function assertComponentReferences(
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           (!['node:http', 'node:https', 'express', 'fastify'].includes(specifier) ||
+            // Only this console transport forwards HTTP and WebSocket requests upstream.
+            (specifier === 'node:http' &&
+              relative(base, path) === join('sandboxes', 'src', 'sandboxes-proxy.ts')) ||
             // API adapters and Fleet's model relay name the request types their handlers take.
             (specifier === 'node:http' &&
               typeOnly &&
@@ -546,6 +568,17 @@ function assertComponentReferences(
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+  // The console transport allowance must not let the Sandboxes core embed or load transport.
+  const core = join(packagesRoot, 'sandboxes', 'src', 'integration.ts');
+  for (const specifier of ['./console.js', './sandboxes-proxy.js', 'node:http'])
+    assert.throws(
+      () =>
+        assertComponentReferences(
+          core,
+          ts.createSourceFile(core, `import '${specifier}';`, ts.ScriptTarget.Latest, true),
+        ),
+      /transport/,
+    );
 });
 
 /** Research logic. Every other package is a foundation, which must not know it. */
@@ -812,6 +845,10 @@ test('optional capabilities cannot escape their Cordis child injection', () => {
     () => verify("ctx.inject(['codeWork'], (ctx) => ctx.sessions);"),
     /undeclared dependency/,
   );
+  assert.throws(
+    () => verify("ctx.inject(['sbxMerv'], (ctx) => ctx.sbxMerv); ctx.sbxMerv;"),
+    /undeclared dependency/,
+  );
 });
 
 test('Cordis service requirements match the architecture and every accessed capability is declared', () => {
@@ -863,6 +900,24 @@ test('Cordis service requirements match the architecture and every accessed capa
         orchestrationAdapters.add(name.text);
         return;
       }
+      if (name.text === 'merv-sandboxes-console') {
+        assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'console.ts'));
+        assert.deepEqual(sorted(declared), [
+          'api',
+          'sbxClock',
+          'sbxDb',
+          'sbxMerv',
+          'sbxRegistry',
+          'sbxSettings',
+          'scope',
+          'ui',
+        ]);
+        assert.deepEqual(sorted([...optional]), []);
+        assert.deepEqual(actualProvided, []);
+        assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate console orchestration');
+        orchestrationAdapters.add(name.text);
+        return;
+      }
       assert.equal(
         actualProvided.length,
         1,
@@ -889,7 +944,10 @@ test('Cordis service requirements match the architecture and every accessed capa
     sorted(Object.keys(capabilities)),
     'Every architectural service must have an actual plugin provider',
   );
-  assert.deepEqual([...orchestrationAdapters], ['merv-fleet-workflow']);
+  assert.deepEqual(sorted([...orchestrationAdapters]), [
+    'merv-fleet-workflow',
+    'merv-sandboxes-console',
+  ]);
 });
 
 test('feature adapters inject their owner and one registry, without acquiring sibling business capabilities', () => {
@@ -909,7 +967,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
-      'sandboxes',
       'scope',
       'sessions',
       'tasks',
@@ -931,7 +988,6 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'reflections',
       'research',
       'reviews',
-      'sandboxes',
       'sessions',
       'tasks',
       'workflows',
@@ -976,7 +1032,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
           ts.isPropertyAccessExpression(child) &&
           ts.isIdentifier(child.expression) &&
           child.expression.text === 'ctx' &&
-          child.name.text in capabilities
+          knownCapability(child.name.text)
         ) {
           assert.ok(
             declared.includes(child.name.text),
@@ -1058,15 +1114,12 @@ test('each service boots with only its declared dependency closure and without A
   const directory = mkdtempSync(join(tmpdir(), 'merv-independent-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const credentialEnv = 'MERV_BOUNDARY_RUNNER_CREDENTIAL';
-  const sandboxUrlEnv = 'MERV_BOUNDARY_SANDBOX_URL';
   const webKeyEnv = 'MERV_BOUNDARY_WEB_KEY';
   const nisaKeyEnv = 'MERV_BOUNDARY_NISA_KEY';
   const piSecretEnv = 'MERV_BOUNDARY_PI_SECRET';
   const piModelKeyEnv = 'MERV_BOUNDARY_PI_MODEL_KEY';
   const previousCredential = process.env[credentialEnv];
-  const previousSandboxUrl = process.env[sandboxUrlEnv];
   process.env[credentialEnv] = 'synthetic-boundary-source';
-  process.env[sandboxUrlEnv] = 'http://127.0.0.1:1';
   process.env[webKeyEnv] = 'tvly-synthetic';
   process.env[nisaKeyEnv] = 'rr_sk_synthetic';
   process.env[piSecretEnv] = 'synthetic-boundary-pi-signing-secret';
@@ -1074,8 +1127,6 @@ test('each service boots with only its declared dependency closure and without A
   t.after(() => {
     if (previousCredential === undefined) delete process.env[credentialEnv];
     else process.env[credentialEnv] = previousCredential;
-    if (previousSandboxUrl === undefined) delete process.env[sandboxUrlEnv];
-    else process.env[sandboxUrlEnv] = previousSandboxUrl;
     delete process.env[webKeyEnv];
     delete process.env[nisaKeyEnv];
     delete process.env[piSecretEnv];
@@ -1096,25 +1147,21 @@ test('each service boots with only its declared dependency closure and without A
     legacyHistory: { plugin: legacyHistoryPlugin },
     identity: { plugin: identityPlugin },
     secrets: { plugin: secretsPlugin },
-    sandboxes: {
-      plugin: sandboxesPlugin,
+    tools: { plugin: toolsPlugin },
+    fleet: {
+      plugin: fleetPlugin,
       config: {
-        urlEnv: sandboxUrlEnv,
-        connections: [{ projectId: 'synthetic', namespace: 'boundary', tokenEnv: credentialEnv }],
-        // Fleet rents only through a protected runtime.
-        runtimes: [
+        profiles: [
           {
             key: 'standard',
             provider: 'boundary',
             offerId: 'offer',
             releaseId: `rt1_${'0'.repeat(64)}`,
-            leaseSeconds: 3600,
+            leaseSeconds: 900,
           },
         ],
       },
     },
-    tools: { plugin: toolsPlugin },
-    fleet: { plugin: fleetPlugin, config: {} },
     // Loading Pi is its switch, so it boots with its host and credentials.
     pi: {
       plugin: piPlugin,
@@ -1142,12 +1189,22 @@ test('each service boots with only its declared dependency closure and without A
       },
     },
   };
+  // External host capabilities are leaves of Merv's closure. The host's real boot is
+  // covered in sandboxes-host.test.ts; this fixture has no linked projects or runtimes.
+  const hostPlugins: Record<string, { plugin: any; config?: any }> = {
+    sbxMerv: {
+      plugin: (ctx: Context) => {
+        ctx.provide('sbxMerv', { linked: async () => null } as unknown as SbxMerv);
+      },
+    },
+  };
   for (const target of Object.keys(plugins))
     await t.test(target, async () => {
       const required = new Set<string>();
       const include = (name: string) => {
         if (required.has(name)) return;
         required.add(name);
+        if (hostCapabilities.has(name)) return;
         for (const dependency of capabilities[name]) include(dependency);
       };
       include(target);
@@ -1155,13 +1212,16 @@ test('each service boots with only its declared dependency closure and without A
       try {
         // Install the requested service first: activation must follow dependency availability.
         const fibers = [];
-        for (const name of required)
-          fibers.push(await ctx.plugin(plugins[name].plugin, plugins[name].config));
+        for (const name of required) {
+          const provider = plugins[name] ?? hostPlugins[name];
+          assert.ok(provider, `Missing dependency fixture for ${name}`);
+          fibers.push(await ctx.plugin(provider.plugin, provider.config));
+        }
         await Promise.all(fibers.map((fiber) => fiber.await()));
         const deadline = Date.now() + 5000;
         while ([...required].some((name) => !ctx.get(name)) && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 10));
-        for (const name of Object.keys(capabilities))
+        for (const name of [...Object.keys(capabilities), ...hostCapabilities])
           assert.equal(
             !!ctx.get(name),
             required.has(name),

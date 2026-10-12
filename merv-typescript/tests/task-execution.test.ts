@@ -1,7 +1,7 @@
 import type { Task, TaskCheckpointInput } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { nativeWorkFixture } from './fixtures/native-work.js';
+import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
 import type { TaskService } from '@merv/tasks';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -222,20 +222,10 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
-test('a task visit whose project has no Sandboxes connection is not told to use Sandboxes', async (t) => {
-  const { app, offer, release, create } = await fixture(t);
-  const native = nativeWorkFixture();
-  native.connection.connected = false;
-  t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
-  const { session } = await offer(await create('native-unconnected'));
-  assert.doesNotMatch(session.assignment.brief, /Sandboxes/);
-  await release(session.id);
-});
-
 test('current native task leases leave compute to Sandboxes and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create, work, held } = await fixture(t);
-  const native = nativeWorkFixture();
-  t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
+  const native = captureEvidenceFixture();
+  t.after((app.ctx.tasks as TaskService).bindCaptureEvidence(native.service));
   const task = await create('native-connected');
   assert.equal(task.workflow.version, 43);
   const first = await offer(task);
@@ -245,7 +235,6 @@ test('current native task leases leave compute to Sandboxes and admit registered
   assert.ok(
     !first.session.execution.policy.tools.some((tool) => tool.name.startsWith('task.compute_')),
   );
-  assert.match(first.session.assignment.brief, /native Sandboxes MCP/);
   assert.doesNotMatch(first.session.assignment.brief, /task\.compute_/);
   await release(first.session.id);
   const second = await offer(task);
@@ -318,7 +307,6 @@ test('current native task leases leave compute to Sandboxes and admit registered
   };
   const reviewLease = await work.lease(delivered, reviewer);
   const reviewSession = reviewLease.session;
-  assert.match(reviewSession.assignment.brief, /brief verification only/);
   assert.ok((reviewSession.execution.references.artifacts as string[]).includes(capture.id));
   await work.release(reviewLease);
   await app.ctx.domainEvents.drain();

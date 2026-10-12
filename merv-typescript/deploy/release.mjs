@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--public https://origin] [--host HOST]
-//                           [--sandboxes <committed Python checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
+//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -109,10 +109,12 @@ BK=/var/backups/merv/typescript-staging-refresh/${release}
 cd "$REL"
 echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
 echo "${archiveSha256}  source.tar.gz" > archive.sha256
-mkdir -p source && tar -xzf source.tar.gz -C source
+mkdir -p source && tar -xizf source.tar.gz -C source
 docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE} >> build.log 2>&1
-docker build --platform linux/amd64 --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
-docker run --rm --entrypoint node "$IMG" dist/src/cli.js help >> build.log 2>&1
+SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.env)
+[[ $SANDBOXES_TS_IMAGE =~ ^([a-zA-Z0-9][a-zA-Z0-9._:/-]*@)?sha256:[a-f0-9]{64}$ ]] || { echo 'release.env requires one SANDBOXES_TS_IMAGE registry digest reference or local image ID' >&2; exit 1; }
+docker build --platform linux/amd64 --build-arg SANDBOXES_TS_IMAGE="$SANDBOXES_TS_IMAGE" --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
+docker run --rm --entrypoint node "$IMG" --import tsx dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
 # A first deploy on a VM has no previous container, and so nothing to roll back to.
 PREV=$(docker inspect --format '{{.Config.Image}}' merv-typescript-control-1 2>/dev/null || true)
@@ -121,23 +123,27 @@ if [ -n "$PREV" ]; then
   PREV_ID=$(docker image inspect --format '{{.Id}}' "$PREV")
   PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
 fi
+ALLOW_ROLLBACK=false
+if [ "${noRollback ? '1' : '0'}" = 0 ] && [ -n "$PREV" ]; then
+  PREV_SBX=$(docker image inspect --format '{{index .Config.Labels "org.merv.sandboxes-image"}}' "$PREV")
+  [ "$PREV_SBX" != "$SANDBOXES_TS_IMAGE" ] || ALLOW_ROLLBACK=true
+fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
-printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":${!noRollback}}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
-printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
+printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":%s}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" "$ALLOW_ROLLBACK" > "$BK/rollback.json"
+printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","sandboxesImage":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" "$SANDBOXES_TS_IMAGE" > build-manifest.json
 # Until the new container is healthy, any failure (a failed compose up included) ends here.
 # A schema cutover may make the previous image unsafe: --no-rollback leaves it stopped.
 rollback() {
   trap - EXIT
   set +e
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
-  if [ "${noRollback ? '1' : '0'}" = 1 ]; then
+  if [ "$ALLOW_ROLLBACK" != true ]; then
     (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1
     printf '{"release":"%s","image":"%s","imageId":"%s","noRollback":true,"rolledBack":false,"containerHealth":"%s","restarts":"%s","previousImage":"%s","log":"%s"}\\n' \\
       "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$LOG" > deploy-status.json
     exit 1
   fi
-  if [ -z "$PREV" ]; then (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1; fi
-  [ -n "$PREV" ] && (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
+  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
   for i in $(seq 1 24); do
     P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || P=starting
@@ -255,7 +261,12 @@ const hosted = (...extra) =>
     },
   ).status;
 // A hosted run left open would make the VM job refuse; finish it (forward or back) first.
-if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
+if (
+  local &&
+  PUBLIC === PRODUCTION &&
+  !args['skip-hosted'] &&
+  ![0, 1, 4].includes(hosted('--resume'))
+) {
   console.error(
     'A hosted image run is still open; Main was not released. Once production agrees on one of its releases, `node deploy/hosted-release.mjs --abandon` closes it.',
   );

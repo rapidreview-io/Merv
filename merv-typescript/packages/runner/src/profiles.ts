@@ -1,5 +1,6 @@
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import type { NativeMcpConnection } from '@merv/sessions/types';
+import { computeGuidance, computeProfile } from '@merv/sessions/compute';
 import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { inspect } from 'node:util';
@@ -400,6 +401,14 @@ export function buildLaunch(
         ]
       : []),
     request.prompt,
+    ...(session.kind === 'work' &&
+    request.connections?.some((connection) => connection.name === 'sandboxes')
+      ? [
+          computeGuidance(
+            computeProfile(session.execution.policy, session.execution.references.computeProfile),
+          ),
+        ]
+      : []),
     ...(launcher.agent ? [searching(internet(profile, session))] : []),
     ...(launcher.huggingface(profile) && !sealed(session) && request.hfToken && request.hfEndpoint
       ? [

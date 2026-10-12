@@ -311,7 +311,7 @@ export class PiService implements Pi {
     return {
       stage: this.core.stage(conversation, turn ?? null, host, allocation),
       now: this.core.time(),
-      available: this.core.fleet.connected(this.core.hostProject),
+      available: await this.core.fleet.connected(this.core.hostProject),
       conversation: {
         ...publicConversation(conversation),
         model: this.core.model(conversation.model).id,
@@ -610,7 +610,7 @@ export class PiService implements Pi {
       value.conversationId ??
       (await this.core.read(empty))?.id ??
       (await this.create(caller, { requestId: value.requestId })).id;
-    if (!this.core.fleet.connected(this.core.hostProject)) return this.snapshot(caller, id);
+    if (!(await this.core.fleet.connected(this.core.hostProject))) return this.snapshot(caller, id);
     const renter = await this.hosts.hostCaller();
     await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);

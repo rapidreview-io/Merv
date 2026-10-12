@@ -8,7 +8,7 @@ import { migrateBases } from './base-schema.js';
 import { CodeWorkReceipt } from './receipts.js';
 import { canonical, check, digest, newId, MervError } from '@merv/contracts';
 import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
-import type { SandboxChecks } from '@merv/sandboxes/types';
+import type { SandboxChecks } from './check-types.js';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
 import { parseCodeInput } from '@merv/code/input';
@@ -223,9 +223,8 @@ interface Execution {
 
 export class CodeBaseService {
   /**
-   * The adapter that runs a project check, bound by the plugin when a sandboxes connection
-   * exists. Without it a configured command leaves its base unsealed and an operator is
-   * told why; a check never runs on this host.
+   * The runner for project checks, bound when the Sandboxes host is loaded. Without it a
+   * configured command leaves its base unsealed; a check never runs on this host.
    */
   checks?: SandboxChecks;
   private readonly busy = new Map<string, Promise<void>>();
@@ -1143,7 +1142,7 @@ export class CodeBaseService {
     check(
       checks,
       'code_check_unavailable',
-      'this server has no sandbox adapter for project checks',
+      'this server has no sandbox host for project checks',
       503,
     );
     const configured = await this.state.read((sql) => this.checkSpec(sql, projectId));

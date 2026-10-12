@@ -1,6 +1,5 @@
 import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
-import type { SandboxRuntimeHandle, SandboxRuntimeOffer } from '@merv/sandboxes/types';
 
 export type FleetPhase =
   'queued' | 'provisioning' | 'starting' | 'running' | 'uncertain' | 'releasing' | 'released';
@@ -11,7 +10,7 @@ export interface FleetAllocation {
   source: DelegationSource;
   owner: { kind: string; id: string };
   requestId: string;
-  /** The host project whose connection rents the machine, when not `projectId`'s own. */
+  /** The host project whose link pays for the machine, when not `projectId`'s own. */
   rentedIn?: string;
   /** The request's own machine time, when it set one. */
   seconds?: number;
@@ -24,7 +23,7 @@ export interface FleetAllocation {
   epoch: number;
   phase: FleetPhase;
   intent: FleetIntent;
-  runtime: SandboxRuntimeHandle | null;
+  runtime: FleetRuntimeHandle | null;
   /** Durable intent written before create; false proves no provider call has begun. */
   createAttempted: boolean;
   /** When Fleet adopted its current machine, which must be ready within a minute. */
@@ -60,7 +59,7 @@ export interface FleetRequest {
   requestId: string;
   /** The registered owner's kind, and its own id for the work. */
   owner: { kind: string; id: string };
-  /** The Sandboxes runtime profile key to rent ('standard', 'large'); absent means the default
+  /** The Fleet runtime profile key to rent ('standard', 'large'); absent means the default
    * (first) profile. Part of the request's fingerprint; the allocation keeps that profile's id. */
   profile?: string;
   /** Seconds the machine may run once it leaves the queue (a queued request gives up after as
@@ -68,7 +67,28 @@ export interface FleetRequest {
   seconds?: number;
 }
 /** A machine Fleet can rent, as the service's options describe the profile's offer. */
-export type FleetMachine = SandboxRuntimeOffer;
+export interface FleetMachine {
+  key: string;
+  vcpu: number;
+  memoryGiB: number;
+  diskGB: number;
+  maxHourlyUsd: number;
+}
+/** Stored allocation shape. */
+export interface FleetRuntimeHandle {
+  sandboxId: string;
+  state: 'provisioning' | 'ready' | 'unknown' | 'deleting' | 'failed' | 'stopped';
+  ready: boolean;
+  leaseExpiresAt: string | null;
+  revision: number;
+  launch: FleetRuntimeLaunch | null;
+}
+export interface FleetRuntimeLaunch {
+  launchId: string;
+  jobId: string;
+  state: 'pending' | 'consumed' | 'revoked' | 'expired';
+  deliveryState: 'pending' | 'uncertain' | 'launched';
+}
 /** Trusted server adapter, never an agent-supplied command or harness implementation.
  * Workflow and chat own authority, enrollment and completion. Fleet owns machines only.
  */
@@ -206,14 +226,11 @@ export interface Fleet {
    * pass after start, since owners register after Fleet starts. */
   kick(): void;
   /** Whether this project can rent machines at all; false means every request is refused. */
-  connected(projectId: string): boolean;
+  connected(projectId: string): Promise<boolean>;
   /** Slots a new request in this project could take now: the smaller of the global and this
    * project's room, each less what is already open in it. Queued work counts even where its own
    * project's cap holds it back, so this errs low; 0 when the project cannot rent. */
   free(projectId: string, tx?: Transaction): Promise<number>;
-  /** The machine behind a profile key for this project, from Sandboxes' cached options (cheap
-   * enough for every snapshot); null when the key is not configured or its offer is missing,
-   * and then the machine is hidden. */
   describe(projectId: string, key: string): Promise<FleetMachine | null>;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
