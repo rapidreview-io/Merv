@@ -2426,6 +2426,23 @@ pre.math--source {
 .file-image[aria-pressed='true'] img {
   max-width: none;
 }
+/* A PDF in the browser's own reader, tall enough to read a page, and a way to open it whole. */
+.file-pdf {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.file-pdf iframe {
+  width: 100%;
+  height: min(85vh, 1100px);
+  border: 0;
+  background: var(--surface, #fff);
+}
+.file-pdf-open {
+  justify-self: start;
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+}
 /* A table file: its size above, then the rows under a head that stays in view, each
    numbered at the left in the faint mono, numbers set flush right in even figures. */
 .table-file {
@@ -7532,6 +7549,48 @@ html:has(.board-page) body {
 }
 .code-file-note {
   padding: var(--space-4);
+}
+/* Full screen: the file alone over the whole window, its head kept, its body scrolling. */
+html.modal-open {
+  overflow: hidden;
+}
+.code-file--full {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+}
+.code-file--full .code-file-head {
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+}
+.code-file--full .code-file-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.code-file--full .code-body,
+.code-file--full .doc-frame .code-body {
+  max-height: none;
+}
+.code-file--full .file-pdf {
+  height: 100%;
+  grid-template-rows: 1fr auto;
+}
+.code-file--full .file-pdf iframe {
+  height: 100%;
+}
+.code-file-name {
+  color: var(--text);
+}
+.code-file-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .code-file-switch {
   display: inline-flex;

@@ -455,7 +455,15 @@ test('an SVG is an image from its own bytes, never inline, and a picture opens a
   await unmount();
 
   await file({ title: 'plot.png', mediaType: 'image/png' }, 'iVBORw0KGgo=', 'base64');
-  assert.equal(one('.file-image img')?.getAttribute('src'), 'data:image/png;base64,iVBORw0KGgo=');
+  // A picture is drawn from its own bytes, as a blob of its own type, never from an address.
+  assert.match(one('.file-image img')?.getAttribute('src') ?? '', /^blob:/);
+  assert.equal(await rawView(), 'none');
+  await unmount();
+
+  // A PDF is the browser's own reader, framed from its bytes, with a way to open it whole.
+  await file({ title: 'paper.pdf', mediaType: 'application/pdf' }, 'JVBERi0xLjQK', 'base64');
+  assert.match(one('.file-pdf iframe')?.getAttribute('src') ?? '', /^blob:/);
+  assert.ok(one('.file-pdf-open'));
   assert.equal(await rawView(), 'none');
 });
 

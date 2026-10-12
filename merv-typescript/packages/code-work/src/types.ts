@@ -152,6 +152,8 @@ export interface CodeUnits {
     caller: Caller,
     input: { ref?: string; path?: string },
   ): Promise<CodeBrowsed & { ref: string }>;
+  /** One file's bytes as of main, a unit of work or a commit: what the page shows whole. */
+  raw(caller: Caller, input: { ref?: string; path: string }): Promise<Buffer>;
   /** The history of main, a unit of work or a commit, each commit with the work it came from. */
   history(
     caller: Caller,

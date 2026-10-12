@@ -1,4 +1,4 @@
-import { added, browse, log } from './browse.js';
+import { added, browse, log, raw } from './browse.js';
 import type { CodeBrowsed } from './models.js';
 import { createService, type Scope, type State, type Transaction } from '@merv/contracts';
 import { CodeGitHubService } from './github.js';
@@ -149,6 +149,10 @@ export class CodeService {
   /** One commit's folder or file of a project's code; the caller has read the project. */
   browse(projectId: string, commit: string, path: string): Promise<CodeBrowsed> {
     return browse(this.repositories, projectId, commit, path);
+  }
+  /** One file's bytes as they are; the caller has read the project. */
+  raw(projectId: string, commit: string, path: string): Promise<Buffer> {
+    return raw(this.repositories, projectId, commit, path);
   }
   /** One commit's history, newest first; the caller has read the project. */
   log(projectId: string, commit: string, options: { limit?: number; path?: string }) {

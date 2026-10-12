@@ -569,6 +569,7 @@ const TYPE_NAMES: Record<string, string> = {
   'application/gzip': 'Gzip archive',
   'application/x-tar': 'Tar archive',
   'image/svg+xml': 'SVG image',
+  'application/pdf': 'PDF',
 };
 /** A type that says nothing of the kind leaves the end of the name to say it. */
 const ENDING_NAMES: [RegExp, string][] = [
@@ -587,6 +588,7 @@ const ENDING_NAMES: [RegExp, string][] = [
   [/\.jpe?g$/i, 'JPEG image'],
   [/\.gif$/i, 'GIF image'],
   [/\.webp$/i, 'WEBP image'],
+  [/\.pdf$/i, 'PDF'],
 ];
 const VAGUE = new Set(['', 'text/plain', 'application/octet-stream']);
 /** The pictures a file is drawn as, from its own bytes: the four raster types and SVG. */
@@ -606,6 +608,7 @@ const READS: Record<string, FileType['reads']> = {
   TSV: 'tsv',
   Notebook: 'notebook',
   Mermaid: 'mermaid',
+  PDF: 'pdf',
 };
 /** The language each of these is written in, for its source. */
 const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
@@ -614,7 +617,7 @@ const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
   notebook: 'json',
 };
 
-interface FileType {
+export interface FileType {
   /** The short human word for it: Markdown, JSON, PNG image. */
   label: string;
   icon: IconName;
@@ -632,6 +635,7 @@ interface FileType {
     | 'notebook'
     | 'mermaid'
     | 'image'
+    | 'pdf'
     | 'code'
     | 'text';
   /** What its text is written in, for colour, where that is a language this page colours. */
@@ -702,6 +706,128 @@ function FileImage({ src, title }: { src: string; title: string }) {
   );
 }
 
+/** A blob's address for as long as it is shown, withdrawn after. */
+function useObjectUrl(blob: Blob | undefined) {
+  const url = useMemo(() => blob && URL.createObjectURL(blob), [blob]);
+  useEffect(
+    () => () => {
+      if (url) URL.revokeObjectURL(url);
+    },
+    [url],
+  );
+  return url;
+}
+
+/** A PDF in the browser's own reader, with the way to open it at full size. */
+function FilePdf({ url, title }: { url: string; title: string }) {
+  return (
+    <div className="file-pdf">
+      <iframe src={url} title={title} />
+      <a className="file-pdf-open" href={url} target="_blank" rel="noopener noreferrer">
+        Open in a new tab
+      </a>
+    </div>
+  );
+}
+
+/**
+ * One file's body as it reads best, wherever a file is shown (Files, Code): its text read as
+ * what it is (a document, a tree, a table, a notebook, a diagram, code), or its bytes drawn as a
+ * picture or a PDF. A picture is drawn from the file's own bytes, never from an address: an SVG
+ * as an image, where its scripts do not run, and never into the page; only a PDF is framed, as a
+ * PDF, so no file is ever a page of its own.
+ */
+export function FileView({
+  type,
+  title,
+  size,
+  text,
+  blob,
+  source = false,
+  onUnread,
+}: {
+  type: FileType;
+  title: string;
+  size: number;
+  /** Its text, where it is text. */
+  text?: string;
+  /** Its bytes, where it is a picture or a PDF. */
+  blob?: Blob;
+  /** Shown as the text its author typed rather than as what it reads as. */
+  source?: boolean;
+  /** Told once a file that should parse turns out not to: what is shown is already its source. */
+  onUnread?: () => void;
+}) {
+  const { reads } = type;
+  // Parsed whichever way it is being shown, so turning to the source and back reads it once.
+  const parsed = useMemo(() => {
+    if (text === undefined) return undefined;
+    if (reads === 'json') return { json: readJson(text) };
+    if (reads === 'csv' || reads === 'tsv')
+      return { table: parseDelimited(text, reads === 'csv' ? ',' : '\t') };
+    if (reads === 'notebook') return { notebook: readNotebook(text) };
+    return {};
+  }, [text, reads]);
+  const unread = !!parsed && Object.values(parsed).some((value) => value === undefined);
+  const names = useRecordNames(
+    !source && !unread && (reads === 'json' || reads === 'jsonl') && text ? text : '',
+  );
+  useEffect(() => {
+    if (unread) onUnread?.();
+  }, [unread, onUnread]);
+  const drawn = useMemo(
+    () =>
+      blob && (type.image || reads === 'pdf') && !source
+        ? new Blob([blob], { type: type.image ?? 'application/pdf' })
+        : undefined,
+    [blob, type.image, reads, source],
+  );
+  const picture = useObjectUrl(drawn);
+  if (picture)
+    return reads === 'pdf' ? (
+      <FilePdf url={picture} title={title} />
+    ) : (
+      <FileImage title={title} src={picture} />
+    );
+  if (type.image === 'image/svg+xml' && !source && text !== undefined)
+    return (
+      <FileImage
+        title={title}
+        src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`}
+      />
+    );
+  if (text === undefined) return <div className="empty">Binary file · {bytes(size)}</div>;
+  // A file that does not parse stays exactly as it was written.
+  if (
+    source ||
+    unread ||
+    reads === 'code' ||
+    reads === 'text' ||
+    reads === 'image' ||
+    reads === 'pdf'
+  )
+    return <CodeBlock code={text} lang={type.lang} label={type.label} numbered />;
+  if (reads === 'markdown')
+    return (
+      <div className="doc-read">
+        <Markdown source={text} />
+      </div>
+    );
+  if (reads === 'mermaid') return <Mermaid source={text} />;
+  if (reads === 'jsonl') return <JsonLines content={text} names={names} />;
+  if (parsed?.json) return <JsonView value={parsed.json.value} names={names} folds />;
+  if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
+  return parsed?.notebook ? <NotebookView notebook={parsed.notebook} /> : null;
+}
+
+/** Base64 as the bytes it spells. */
+const unbase64 = (content: string) => {
+  const raw = atob(content);
+  const out = new Uint8Array(raw.length);
+  for (let at = 0; at < raw.length; at++) out[at] = raw.charCodeAt(at);
+  return new Blob([out]);
+};
+
 function InlineArtifact({
   artifactId,
   type,
@@ -712,61 +838,26 @@ function InlineArtifact({
   artifactId: string;
   type: FileType;
   title: string;
-  /** Shown as the text its author typed rather than as what it reads as. */
   source: boolean;
-  /** Told once a file that should parse turns out not to: what is shown is already its source. */
   onUnread: () => void;
 }) {
   const read = useTool<ArtifactContent>('artifact.read', { artifactId });
-  const content = read.data?.encoding === 'utf8' ? read.data.content : undefined;
-  const { reads } = type;
-  // Parsed whichever way it is being shown, so turning to the source and back reads it once.
-  const parsed = useMemo(() => {
-    if (content === undefined) return undefined;
-    if (reads === 'json') return { json: readJson(content) };
-    if (reads === 'csv' || reads === 'tsv')
-      return { table: parseDelimited(content, reads === 'csv' ? ',' : '\t') };
-    if (reads === 'notebook') return { notebook: readNotebook(content) };
-    return {};
-  }, [content, reads]);
-  const unread = !!parsed && Object.values(parsed).some((value) => value === undefined);
-  const names = useRecordNames(
-    !source && !unread && (reads === 'json' || reads === 'jsonl') && content ? content : '',
+  const blob = useMemo(
+    () => (read.data?.encoding === 'base64' ? unbase64(read.data.content) : undefined),
+    [read.data],
   );
-  useEffect(() => {
-    if (unread) onUnread();
-  }, [unread, onUnread]);
   if (!read.data) return <LoadState loading={read.loading} error={read.error} />;
-  const { encoding } = read.data;
-  // A picture is drawn from the file's own bytes, never from an address: an SVG as an
-  // image, where its scripts do not run, and never into the page.
-  if (type.image && !source && (encoding === 'base64' || type.image === 'image/svg+xml'))
-    return (
-      <FileImage
-        title={title}
-        src={
-          encoding === 'base64'
-            ? `data:${type.image};base64,${read.data.content}`
-            : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(read.data.content)}`
-        }
-      />
-    );
-  if (content === undefined)
-    return <div className="empty">Binary file · {bytes(read.data.artifact.size)}</div>;
-  // A file that does not parse stays exactly as it was written.
-  if (source || unread || reads === 'code' || reads === 'text' || reads === 'image')
-    return <CodeBlock code={content} lang={type.lang} label={type.label} numbered />;
-  if (reads === 'markdown')
-    return (
-      <div className="doc-read">
-        <Markdown source={content} />
-      </div>
-    );
-  if (reads === 'mermaid') return <Mermaid source={content} />;
-  if (reads === 'jsonl') return <JsonLines content={content} names={names} />;
-  if (parsed?.json) return <JsonView value={parsed.json.value} names={names} folds />;
-  if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
-  return parsed?.notebook ? <NotebookView notebook={parsed.notebook} /> : null;
+  return (
+    <FileView
+      type={type}
+      title={title}
+      size={read.data.artifact.size}
+      text={read.data.encoding === 'utf8' ? read.data.content : undefined}
+      blob={blob}
+      source={source}
+      onUnread={onUnread}
+    />
+  );
 }
 
 /** Native capture receipts keep useful files even when their finalizer did not finish. */
@@ -879,7 +970,7 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
       ? artifact.size <= MAX_READ
       : type.reads === 'image'
         ? type.image === 'image/svg+xml'
-        : type.reads !== 'code' && type.reads !== 'text' && !unread;
+        : type.reads !== 'code' && type.reads !== 'pdf' && type.reads !== 'text' && !unread;
   // Past the length a document is read at, for code and text, and where a file does
   // not parse, the source is already what is shown, so there is no raw view to offer.
   const menu = (

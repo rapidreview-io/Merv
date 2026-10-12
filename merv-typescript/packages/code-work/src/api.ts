@@ -14,7 +14,7 @@ import type { Code } from './types.js';
 import { unknownEndpoint } from '@merv/api/errors';
 
 /** What Code's HTTP routes use of Code. */
-export type CodeRoutes = Pick<Code, 'github' | 'nextCommand' | 'completeCommand' | 'v2'>;
+export type CodeRoutes = Pick<Code, 'github' | 'nextCommand' | 'completeCommand' | 'v2' | 'raw'>;
 
 const emptyObject = (body: unknown) =>
   !!body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0;
@@ -113,7 +113,7 @@ async function githubRequest(
 
 /**
  * `/code`: GitHub's OAuth callback (public), then the authenticated GitHub,
- * workspace (`/code/v2/`) and command controls. Each decides its caller once before
+ * workspace (`/code/v2/`) and command controls, and one file's raw bytes (`/code/raw`). Each decides its caller once before
  * its body; Code parses every body it is handed and authorizes each effect itself. A managed
  * runner's credential already confines it to the routes its protocol uses.
  */
@@ -150,6 +150,34 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       if (part) return await v2.putPart(caller, part[1]!, Number(part[2]), body as Buffer);
       if (read) return await v2.readPart(caller, read[1]!, body);
       return await v2.call(caller, route, body);
+    }
+    if (path === '/code/raw') {
+      // The page's read of a file whole, a PDF or a picture: bytes, never a page of their own.
+      const caller = await r.caller();
+      if (req.method !== 'POST') {
+        res.setHeader('allow', 'POST');
+        throw new MervError('method_not_allowed', 'Use POST for a file', 405);
+      }
+      const input = (await r.json(undefined, 8192)) as { ref?: unknown; path?: unknown };
+      check(
+        typeof input?.path === 'string' &&
+          (input.ref === undefined || typeof input.ref === 'string'),
+        'invalid_input',
+        'A file is its path and, optionally, its ref',
+      );
+      const bytes = await code.raw(caller, {
+        ref: input.ref as string | undefined,
+        path: input.path,
+      });
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': bytes.length,
+        'content-disposition': 'attachment',
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(bytes);
+      return;
     }
     if (path === '/code/commands/next' || path === '/code/commands/complete') {
       if ([...r.url.searchParams].length)

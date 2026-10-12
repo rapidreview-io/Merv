@@ -8,12 +8,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { CodeProjectStatus } from '@merv/code-work/models';
 import type { CodeBrowsed } from '@merv/code/models';
-import { useTool } from '../api';
-import { CodeBlock } from '../code-block';
+import { ApiError, codeFile, useTool } from '../api';
 import { EmptyState, LoadState } from '../components';
 import { Icon } from '../icons';
 import { Markdown, recordNames, type NamedHome } from '../markdown';
-import { bytes } from './artifacts';
+import { bytes, fileType, FileView } from './artifacts';
 import type { ViewProps } from './index';
 
 type Browsed = CodeBrowsed & { ref: string };
@@ -229,38 +228,127 @@ function Readme({ refName, path }: { refName: string; path: string }) {
   );
 }
 
+/** What the page reads as more than its text, so a press shows its source instead. */
+const READ_AS = new Set(['markdown', 'json', 'jsonl', 'csv', 'tsv', 'notebook', 'mermaid']);
+/** Past this a file's text is shown as written: parsing it whole would hold the page. */
+const MOST_READ_AS = 2_000_000;
+
+/**
+ * A file's bytes, fetched whole where its summary did not carry them: a picture or a PDF, and
+ * text too long to send in one answer (read as text).
+ */
+function useWhole(ref: string, path: string, wanted: 'bytes' | 'text' | null) {
+  const [got, setGot] = useState<{ blob?: Blob; text?: string; error?: ApiError }>({});
+  useEffect(() => {
+    setGot({});
+    if (!wanted) return;
+    let live = true;
+    void codeFile(ref, path)
+      .then(async (blob) => (wanted === 'text' ? { text: await blob.text() } : { blob }))
+      .then(
+        (whole) => live && setGot(whole),
+        (error: ApiError) => live && setGot({ error }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [ref, path, wanted]);
+  return got;
+}
+
+async function download(ref: string, path: string, name: string) {
+  const url = URL.createObjectURL(await codeFile(ref, path));
+  const link = Object.assign(document.createElement('a'), { href: url, download: name });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 function File({ data }: { data: Extract<Browsed, { kind: 'file' }> }) {
-  const markdown = /\.(md|markdown)$/i.test(data.path);
-  const [preview, setPreview] = useState(markdown);
   const name = data.path.split('/').at(-1) ?? data.path;
+  const type = useMemo(() => fileType({ title: name }), [name]);
+  // A picture or a PDF is drawn from its bytes, whatever its summary carried; an SVG is text.
+  const drawn = (!!type.image && type.image !== 'image/svg+xml') || type.reads === 'pdf';
+  const wanted = drawn ? 'bytes' : data.withheld === 'too_large' ? 'text' : null;
+  const whole = useWhole(data.ref, data.path, wanted);
+  const text = drawn ? undefined : (data.text ?? whole.text);
+  const readAs =
+    (READ_AS.has(type.reads) || type.image === 'image/svg+xml') && data.size <= MOST_READ_AS;
+  const [source, setSource] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Full screen is the file alone over the whole window, as a modal: Escape or the button ends it.
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    if (!full) return;
+    const leave = (event: KeyboardEvent) => event.key === 'Escape' && setFull(false);
+    document.addEventListener('keydown', leave);
+    document.documentElement.classList.add('modal-open');
+    return () => {
+      document.removeEventListener('keydown', leave);
+      document.documentElement.classList.remove('modal-open');
+    };
+  }, [full]);
+  const waiting = !!wanted && !whole.blob && whole.text === undefined && !whole.error;
   return (
-    <section className="code-file">
+    <section
+      className={`code-file${full ? ' code-file--full' : ''}`}
+      {...(full && { role: 'dialog', 'aria-modal': true, 'aria-label': name })}
+    >
       <header className="code-file-head">
         <span className="tabular muted">
-          {data.text !== undefined && `${data.text.split('\n').length} lines · `}
+          {full && <strong className="code-file-name">{name} · </strong>}
+          {type.label} ·{' '}
+          {text !== undefined && `${text.split('\n').length.toLocaleString()} lines · `}
           {bytes(data.size)}
         </span>
-        {markdown && data.text !== undefined && (
-          <span className="code-file-switch" role="group" aria-label="Show as">
-            <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>
-              Preview
-            </button>
-            <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>
-              Code
-            </button>
-          </span>
-        )}
+        <span className="code-file-tools">
+          {readAs && text !== undefined && (
+            <span className="code-file-switch" role="group" aria-label="Show as">
+              <button type="button" aria-pressed={!source} onClick={() => setSource(false)}>
+                Preview
+              </button>
+              <button type="button" aria-pressed={source} onClick={() => setSource(true)}>
+                Code
+              </button>
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn--quiet"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              void download(data.ref, data.path, name).finally(() => setBusy(false));
+            }}
+          >
+            {busy ? 'Preparing…' : 'Download'}
+          </button>
+          <button
+            type="button"
+            className="btn-icon btn-icon--inline"
+            aria-pressed={full}
+            aria-label={full ? 'Exit full screen' : 'Full screen'}
+            title={full ? 'Exit full screen (Esc)' : 'Full screen'}
+            onClick={() => setFull(!full)}
+          >
+            <Icon name={full ? 'close' : 'expand'} size={15} />
+          </button>
+        </span>
       </header>
-      {data.withheld === 'binary' ? (
-        <p className="muted code-file-note">A binary file; nothing here to read as text.</p>
-      ) : data.withheld === 'too_large' ? (
-        <p className="muted code-file-note">Over 1 MiB, too large to show here.</p>
-      ) : preview ? (
-        <div className="md code-file-preview">
-          <Markdown source={data.text ?? ''} />
-        </div>
+      {whole.error ? (
+        <p className="muted code-file-note">{whole.error.message}</p>
+      ) : waiting ? (
+        <LoadState loading />
       ) : (
-        <CodeBlock code={data.text ?? ''} lang={name} numbered />
+        <div className={`code-file-body${readAs && !source && !drawn ? ' code-file-preview' : ''}`}>
+          <FileView
+            type={type}
+            title={name}
+            size={data.size}
+            text={text}
+            blob={whole.blob}
+            source={source || (!readAs && !drawn)}
+          />
+        </div>
       )}
     </section>
   );

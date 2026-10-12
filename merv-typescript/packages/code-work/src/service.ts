@@ -107,6 +107,7 @@ export class CodeService implements Code {
       | 'declareManaged'
       | 'repositories'
       | 'browse'
+      | 'raw'
       | 'log'
       | 'added'
     >,
@@ -476,6 +477,10 @@ export class CodeService implements Code {
   async files(caller: Caller, input: { ref?: string; path?: string }) {
     const { ref, commit } = await this.commitOf(caller, input);
     return { ref, ...(await this.utility.browse(caller.projectId, commit, input.path ?? '')) };
+  }
+  async raw(caller: Caller, input: { ref?: string; path: string }) {
+    const { commit } = await this.commitOf(caller, input);
+    return await this.utility.raw(caller.projectId, commit, input.path);
   }
   /**
    * The history of `ref`, newest first, each commit with the task or experiment whose work it is:

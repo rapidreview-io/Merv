@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { browse, treePath } from '../packages/code/src/browse.js';
+import { browse, raw, treePath } from '../packages/code/src/browse.js';
 
 /** A project repository holding one commit: README.md, src/train.py, data/blob.bin. */
 async function project(t: TestContext) {
@@ -64,6 +64,14 @@ test("a commit's code reads as folders and files: folders first, text shown, bin
   await assert.rejects(browse(repositories, 'p', commit, 'src/missing.py'), /No "src\/missing.py"/);
   await assert.rejects(browse(repositories, 'p', '0'.repeat(40), ''), /does not hold that commit/);
   await assert.rejects(browse(repositories, 'p', 'main', ''), /full object id/);
+});
+
+test('a file withheld from its summary is fetched whole as its own bytes; a folder is not a file', async (t) => {
+  const { repositories, commit } = await project(t);
+  assert.deepEqual([...(await raw(repositories, 'p', commit, 'data/blob.bin'))], [0, 1, 2, 3]);
+  assert.equal((await raw(repositories, 'p', commit, 'README.md')).toString('utf8'), '# Laya\n');
+  await assert.rejects(raw(repositories, 'p', commit, 'src'), /"src" is not a file/);
+  await assert.rejects(raw(repositories, 'p', commit, '../etc'), /segment by segment/);
 });
 
 test('a path never steps outside the tree it names', () => {

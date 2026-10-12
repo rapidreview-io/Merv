@@ -162,7 +162,14 @@ export const onAccessLost = (listener: (error: ApiError) => void) => {
 /** Account operations are deliberately independent of a selected project. */
 export async function accountRequest<T>(
   path: string,
-  options: { method?: string; body?: unknown; scoped?: boolean; credentials?: 'same-origin' } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    scoped?: boolean;
+    credentials?: 'same-origin';
+    /** The answer is bytes, read as a Blob; a refusal is still JSON. */
+    bytes?: boolean;
+  } = {},
 ): Promise<T> {
   const epoch = scopeEpoch;
   const project = selectedProject;
@@ -185,6 +192,11 @@ export async function accountRequest<T>(
       throw new ApiError('offline', 'The Merv server did not answer', 0);
     }
     requireScope(epoch);
+    if (options.bytes && response.ok) {
+      const blob = await response.blob();
+      requireScope(epoch);
+      return blob as T;
+    }
     const body = (await response.json().catch(() => null)) as
       (T & { error?: { code: string; message: string; details?: unknown } }) | null;
     requireScope(epoch);
@@ -218,6 +230,15 @@ export async function accountRequest<T>(
     return body;
   }
 }
+
+/** One file of the project's code, whole, as bytes: what the page shows that is not short text. */
+export const codeFile = (ref: string, path: string) =>
+  accountRequest<Blob>('/code/raw', {
+    method: 'POST',
+    body: { ref, path },
+    scoped: true,
+    bytes: true,
+  });
 
 /** One tool call over the same-origin JSON endpoint agents use. */
 export async function call<T>(name: string, input: Record<string, unknown> = {}): Promise<T> {

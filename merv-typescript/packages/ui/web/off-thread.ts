@@ -2,8 +2,9 @@
  * Work a member's text could make hold the page's one thread, done in a worker
  * (`markdown-worker.ts`) one job at a time: micromark is superlinear on a few texts, such as
  * thousands of `*` or of links that never close in one paragraph, and a grammar is on some lines
- * of code. A job the worker has not done in READ_MS stands undone (null), and a new worker takes
- * the next. That clock runs only while the worker works, never while it, or a grammar a job
+ * of code. A job the worker has not done in READ_MS, and a millisecond more for every READ_CHARS
+ * of it (the clock is the page's, and it also waits while the page draws a long text), stands
+ * undone (null), and a new worker takes the next. That clock runs only while the worker works, never while it, or a grammar a job
  * needs, still downloads; a grammar that has not come in LOAD_MS leaves its job undone. Where the
  * page has no workers, as in a test's DOM, `here` does each job in the page. Where a worker fails
  * to start or dies, as a stale tab's does once a deploy removed its script, so does `here` unless
@@ -12,6 +13,7 @@
  * keys, so every length of a block streamed in is not kept.
  */
 const READ_MS = 2000;
+const READ_CHARS = 20;
 const LOAD_MS = 15_000;
 const KEEP = 500;
 const KEEP_CHARS = 2_000_000;
@@ -76,7 +78,7 @@ export function offThread<Message, Result>(
       here(message).then(done, () => done(null));
       return;
     }
-    const time = (ms = READ_MS) => {
+    const time = (ms = READ_MS + key.length / READ_CHARS) => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         worker?.terminate();
