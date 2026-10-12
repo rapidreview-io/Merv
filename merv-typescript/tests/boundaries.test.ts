@@ -23,6 +23,7 @@ import { tasksPlugin } from '@merv/tasks';
 import { toolsPlugin } from '@merv/api';
 import { webPlugin } from '@merv/web';
 import { workflowsPlugin } from '@merv/workflows';
+import type { SbxMerv } from '@sandboxes/merv-host';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import {
@@ -172,13 +173,24 @@ const capabilities: Record<string, readonly string[]> = {
   // Literature search over Nisa's public API; it holds nothing but its calls in flight.
   nisa: [],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
-  fleet: ['state', 'scope', 'sandboxes'],
+  fleet: ['state', 'scope', 'sbxMerv'],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
   ui: ['api', 'tools'],
 };
-const hostCapabilities = new Set(['sbxMerv', 'sbxPipelines', 'sbxObjects', 'sbxAccounts']);
+const hostCapabilities = new Set([
+  'sbxMerv',
+  'sbxPipelines',
+  'sbxObjects',
+  'sbxAccounts',
+  'sbxRegistry',
+  'sbxJobs',
+  'sbxSnapshots',
+  'sbxDb',
+  'sbxClock',
+  'sbxSettings',
+]);
 const knownCapability = (name: string) => name in capabilities || hostCapabilities.has(name);
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Pi may investigate Sessions' questions, but either service boots without the other.
@@ -187,7 +199,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeWork: ['sandboxes'],
+  codeWork: ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
   experiments: ['sandboxEvidence'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.
@@ -242,6 +254,11 @@ const adapterKinds = { tools: 'tools', ui: 'ui', api: 'api' } as const;
 const adapterKind = (path: string) =>
   (/[/\\](tools|ui|api)\.ts$/.exec(path)?.[1] as keyof typeof adapterKinds | undefined) ??
   undefined;
+// The in-process host's console composes API and UI; its proxy is transport-only.
+const consoleAdapters = new Set([
+  join('sandboxes', 'src', 'console.ts'),
+  join('sandboxes', 'src', 'sandboxes-proxy.ts'),
+]);
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 const capabilityOf = (owner: string) =>
@@ -500,7 +517,7 @@ function assertComponentReferences(
   seen = new Set<string>(),
 ): void {
   const owner = relative(base, path).split(sep)[0];
-  const isAdapter = adapterKind(path) !== undefined;
+  const isAdapter = adapterKind(path) !== undefined || consoleAdapters.has(relative(base, path));
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
     // Contracts is no component: any of its modules may be named for types alone, which is how
@@ -537,7 +554,8 @@ function assertComponentReferences(
       );
       if (!isAdapter && !['api', 'mounts'].includes(owner))
         assert.ok(
-          !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier),
+          !/(?:^|[/\\])(tools|ui|api|http|registry)\.[cm]?[jt]s$/.test(specifier) &&
+            !consoleAdapters.has(relative(base, target).replace(/\.js$/, '.ts')),
           `${path} loads a transport adapter from its core entrypoint`,
         );
     }
@@ -549,6 +567,9 @@ function assertComponentReferences(
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           (!['node:http', 'node:https', 'express', 'fastify'].includes(specifier) ||
+            // Only this console transport forwards HTTP and WebSocket requests upstream.
+            (specifier === 'node:http' &&
+              relative(base, path) === join('sandboxes', 'src', 'sandboxes-proxy.ts')) ||
             // API adapters and Fleet's model relay name the request types their handlers take.
             (specifier === 'node:http' &&
               typeOnly &&
@@ -562,6 +583,17 @@ function assertComponentReferences(
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+  // The console transport allowance must not let the Sandboxes core embed or load transport.
+  const core = join(packagesRoot, 'sandboxes', 'src', 'index.ts');
+  for (const specifier of ['./console.js', './sandboxes-proxy.js', 'node:http'])
+    assert.throws(
+      () =>
+        assertComponentReferences(
+          core,
+          ts.createSourceFile(core, `import '${specifier}';`, ts.ScriptTarget.Latest, true),
+        ),
+      /transport/,
+    );
 });
 
 /** Research logic. Every other package is a foundation, which must not know it. */
@@ -883,6 +915,24 @@ test('Cordis service requirements match the architecture and every accessed capa
         orchestrationAdapters.add(name.text);
         return;
       }
+      if (name.text === 'merv-sandboxes-console') {
+        assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'console.ts'));
+        assert.deepEqual(sorted(declared), [
+          'api',
+          'sbxClock',
+          'sbxDb',
+          'sbxMerv',
+          'sbxRegistry',
+          'sbxSettings',
+          'scope',
+          'ui',
+        ]);
+        assert.deepEqual(sorted([...optional]), []);
+        assert.deepEqual(actualProvided, []);
+        assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate console orchestration');
+        orchestrationAdapters.add(name.text);
+        return;
+      }
       assert.equal(
         actualProvided.length,
         1,
@@ -909,7 +959,10 @@ test('Cordis service requirements match the architecture and every accessed capa
     sorted(Object.keys(capabilities)),
     'Every architectural service must have an actual plugin provider',
   );
-  assert.deepEqual([...orchestrationAdapters], ['merv-fleet-workflow']);
+  assert.deepEqual(sorted([...orchestrationAdapters]), [
+    'merv-fleet-workflow',
+    'merv-sandboxes-console',
+  ]);
 });
 
 test('feature adapters inject their owner and one registry, without acquiring sibling business capabilities', () => {
@@ -1162,12 +1215,22 @@ test('each service boots with only its declared dependency closure and without A
       },
     },
   };
+  // External host capabilities are leaves of Merv's closure. The host's real boot is
+  // covered in sandboxes-host.test.ts; this fixture has no linked projects or runtimes.
+  const hostPlugins: Record<string, { plugin: any; config?: any }> = {
+    sbxMerv: {
+      plugin: (ctx: Context) => {
+        ctx.provide('sbxMerv', { linked: async () => null } as unknown as SbxMerv);
+      },
+    },
+  };
   for (const target of Object.keys(plugins))
     await t.test(target, async () => {
       const required = new Set<string>();
       const include = (name: string) => {
         if (required.has(name)) return;
         required.add(name);
+        if (hostCapabilities.has(name)) return;
         for (const dependency of capabilities[name]) include(dependency);
       };
       include(target);
@@ -1175,8 +1238,11 @@ test('each service boots with only its declared dependency closure and without A
       try {
         // Install the requested service first: activation must follow dependency availability.
         const fibers = [];
-        for (const name of required)
-          fibers.push(await ctx.plugin(plugins[name].plugin, plugins[name].config));
+        for (const name of required) {
+          const provider = plugins[name] ?? hostPlugins[name];
+          assert.ok(provider, `Missing dependency fixture for ${name}`);
+          fibers.push(await ctx.plugin(provider.plugin, provider.config));
+        }
         await Promise.all(fibers.map((fiber) => fiber.await()));
         const deadline = Date.now() + 5000;
         while ([...required].some((name) => !ctx.get(name)) && Date.now() < deadline)
