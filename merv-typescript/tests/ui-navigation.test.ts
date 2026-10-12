@@ -31,7 +31,7 @@ const row = (
 
 test('the rail is Home with Work, Pi and Board, then Fleet and Ops; every other row is left out', () => {
   const work = row('work', 'work', 'lead', 14);
-  const rows = [
+  const rows: UiRowDescription[] = [
     row('settings', 'settings', 'settings', 100),
     row('artifacts', 'artifacts', 'research', 21),
     row('code', 'code', 'operations', 25),
