@@ -21,7 +21,6 @@ expected runtime, released its worker, and verified the Large app. Question rout
 resolution, stale-answer rejection, restart recovery and no-Pi fallback are covered by
 automated tests; this live canary checks ordinary Pi execution, not a synthetic worker question.
 
-
 ## GPT-6.1 Sol research defaults, 2026-09-30
 
 Main `20260930T015006Z-3740fde9-c65f2ecf8cd4` and hosted image run

@@ -3,7 +3,7 @@
 //   node deploy/hosted-release.mjs [--dry-run] [--resume] [--host ResearchSuite_Control]
 //        [--staging-host azureuser@dev-experiments.rapidreview.io]
 //        [--drain-minutes 15] [--canary-credential <root-only path on the host>]
-//        [--sandboxes <main checkout>/output/fleet-sandboxes] [--wrangler <path to wrangler.js>]
+//        [--sandboxes vendor/merv-sandboxes] [--wrangler <path to wrangler.js>]
 //   node deploy/hosted-release.mjs --mint-canary   (once: the canary's root-only reader key)
 //   node deploy/hosted-release.mjs --check   (reads only: the live pins agree with the host's
 //        record, as Main will run them once released from the env file; release.mjs runs it first)
@@ -13,7 +13,7 @@
 // release.mjs finishes any open run before a production release and starts one after it. The
 // image is pinned in three places that move together: every Cloudflare container app serving one
 // of Main's machines (APPS: Standard, and Large once MERV_FLEET_RUNTIMES names it), the Sandboxes
-// release catalog (control and pipelines-worker; Standard's entry and its copy for each other app,
+// release catalog (shared env; standalone and Merv; Standard's entry and its copy for each other app,
 // only the provider changed) and Main's release ids (each machine's in MERV_FLEET_RUNTIMES, and
 // Standard's in the legacy MERV_FLEET_RUNTIME_RELEASE_ID). The host keeps the live pins and the
 // open run; deploy/hosted-release.json seeds and records the pins and deploy/HOSTED_RELEASES.md
@@ -31,7 +31,7 @@
 //    the isolation probe. A failure stops with nothing changed.
 //  4 push with a 30-minute registry credential minted by the local wrangler and piped over ssh
 //    stdin into docker login (tmpfs config, logged out after); pin the amd64 manifest digest.
-//  5 catalog: add the release to both Sandboxes services, keeping earlier releases.
+//  5 catalog: add the release to both shared-env readers, keeping earlier releases.
 //  6 drain until no Pi turn, launch or machine is in flight, releasing each idle Pi machine at every
 //    poll, and until no work machine Fleet rented for workflow steps is up: a Cloudflare rollout
 //    replaces every running container of an app, whatever it runs, so Main holds work machines
@@ -83,6 +83,7 @@ export const WATCH = [
   'packages/pi/worker-runtime/',
   'package-lock.json',
   'deploy/hosted-release-vm.py',
+  'deploy/hosted-sandboxes-probe.mjs',
   'deploy/source-archive.mjs',
   'tsconfig.json',
 ];
@@ -100,9 +101,7 @@ export const BOUNDARY = [
 export const SANDBOXES = [
   'agent',
   'deploy/cloudflare-sandbox',
-  'control/src/merv_sandboxes/__init__.py',
-  'control/src/merv_sandboxes/errors.py',
-  'control/src/merv_sandboxes/runtimes',
+  'typescript/packages/runtimes/assets',
 ];
 // Each Cloudflare app that may serve one of Main's machines, by its Sandboxes provider, and the
 // template it is deployed from; the host reads which are live from Main. A template names its app
@@ -122,6 +121,7 @@ export const STAGING_APPS = {
 const PIPELINE = [
   'deploy/hosted-release.mjs',
   'deploy/hosted-release-vm.py',
+  'deploy/hosted-sandboxes-probe.mjs',
   'deploy/source-archive.mjs',
   ...Object.values(APPS),
   ...Object.values(STAGING_APPS),
@@ -355,7 +355,7 @@ async function main(args) {
   const git = (a, cwd = root) => sh('git', a, cwd).trim();
   // The defaults sit in the main checkout, which a worktree shares its Git directory with.
   const checkout = dirname(resolve(root, git(['rev-parse', '--git-common-dir'])));
-  const sandboxes = resolve(values.sandboxes ?? join(checkout, 'output/fleet-sandboxes'));
+  const sandboxes = resolve(values.sandboxes ?? join(root, 'vendor/merv-sandboxes'));
   const wrangler = resolve(
     values.wrangler ??
       join(checkout, 'output/fleet-cloudflare-tools/node_modules/wrangler/bin/wrangler.js'),

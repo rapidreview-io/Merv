@@ -292,9 +292,9 @@ before(() => {
     ['agent/main.go', 'package main'],
     ['deploy/cloudflare-sandbox/Dockerfile', 'FROM debian'],
     ['deploy/cloudflare-sandbox/worker/src/index.ts', 'worker v1'],
-    ['control/src/merv_sandboxes/__init__.py', ''],
-    ['control/src/merv_sandboxes/errors.py', ''],
-    ['control/src/merv_sandboxes/runtimes/__init__.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/__init__.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/errors.py', ''],
+    ['typescript/packages/runtimes/assets/python/merv_sandboxes/runtimes/__init__.py', ''],
   ]) {
     mkdirSync(dirname(join(sandboxes, file)), { recursive: true });
     writeFileSync(join(sandboxes, file), text);

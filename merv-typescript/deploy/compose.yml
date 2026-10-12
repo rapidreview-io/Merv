@@ -7,14 +7,18 @@ services:
     init: true
     env_file:
       - /etc/merv/typescript.env
+      - path: /etc/sandboxes/shared.env
+        format: raw
     ports:
       - 127.0.0.1:3081:3081
     volumes:
       # Code's repositories live here, under code/, beside the database and the blobs. One
       # server writes to this volume at a time, which Code enforces with a lock of its own.
       - /var/lib/merv-ts:/var/lib/merv-ts
+      - sandboxes_data:/data
     networks:
       - legacy_database
+      - sandboxes
     read_only: true
     tmpfs:
       # Git children of the server read and write under the data volume, never here.
@@ -43,3 +47,10 @@ networks:
   legacy_database:
     external: true
     name: deploy_default
+  sandboxes:
+    external: true
+    name: sandboxes_default
+volumes:
+  sandboxes_data:
+    external: true
+    name: sandboxes_sandboxes-data

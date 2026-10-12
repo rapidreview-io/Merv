@@ -62,16 +62,20 @@ const py = (body, input) => {
 test('the drain waits on Pi turns, launches and machines, never on those Fleet rents for workflow steps', () => {
   const seen = py(
     `queries = []
-def main_read(query, *params, write=False):
+def main_read(query, *params, write=False, url=None):
     queries.append(query)
+    if url == 'SANDBOXES_DATABASE_URL':
+        assert not write
+        return {'machines': '["sbx_w", "sbx_p"]', 'bootstraps': '["rln_w"]'}
     return {'turns': '[]', 'launches': '["flt_pi"]', 'kept': '[["sbx_w", "rln_w"], [null, null]]'}
-def sbx(**env):
-    return '["sbx_w", "sbx_p"]' if 'sandboxes' in env['MERV_Q'] else '["rln_w"]'
-vm.main_read, vm.sbx = main_read, sbx
+vm.main_read = main_read
 print(json.dumps([vm.busy(), queries]))`,
   );
   assert.deepEqual(seen[0], { launches: ['flt_pi'], machines: ['sbx_p'] });
   assert.match(seen[1][0], /NOT \(data_json::jsonb#>>'\{owner,kind\}' = 'workflow'\)/);
+  assert.equal(seen[1].length, 2);
+  assert.match(seen[1][1], /FROM public\.sandboxes/);
+  assert.match(seen[1][1], /FROM public\.runtime_bootstraps/);
 });
 
 test('changed paths pick the source lane, and both sides agree on gates and the lease', () => {
@@ -590,44 +594,24 @@ test('--dry-run plans without a host and prints no secrets', () => {
   }
 });
 
-test('the catalog edit appends to both services, keeps earlier releases and is idempotent', () => {
+test('the raw shared catalog appends, prunes only unprotected releases and preserves other bytes', () => {
   const release = (hex) => releaseEntry(image(hex), LIVE_EXECUTABLE);
-  const services = (list) => ({
-    services: Object.fromEntries(
-      ['control', 'pipelines-worker'].map((name) => [
-        name,
-        { environment: { SANDBOXES_RUNTIME_RELEASES: JSON.stringify(list), OTHER: 'kept' } },
-      ]),
-    ),
-  });
+  const raw = `OTHER={"literal":"$VALUE#'"}\nSANDBOXES_RUNTIME_RELEASES=${JSON.stringify([release('1'), release('2')])}\n`;
   const edit =
-    'd,c=vm.with_release(i["doc"],i["entry"],keep=i.get("keep",16),protect=i.get("protect",()));print(json.dumps([d,c]))';
-  const [doc, changed] = py(edit, {
-    doc: services([release('1'), release('2')]),
-    entry: release('3'),
-  });
+    'd,c=vm.with_release(i["raw"].encode(),i["entry"],keep=i.get("keep",16),protect=i.get("protect",()));print(json.dumps([d.decode(),c]))';
+  const [doc, changed] = py(edit, { raw, entry: release('3') });
   assert.equal(changed, true);
-  for (const service of Object.values(doc.services)) {
-    assert.deepEqual(JSON.parse(service.environment.SANDBOXES_RUNTIME_RELEASES), [
-      release('1'),
-      release('2'),
-      release('3'),
-    ]);
-    assert.equal(service.environment.OTHER, 'kept');
-  }
-  assert.deepEqual(py(edit, { doc, entry: release('3') }), [doc, false]);
-  // Beyond `keep`, the oldest go first, but never the release Main still runs.
+  assert.equal(doc.split('\n')[0], raw.split('\n')[0]);
+  const catalog = (raw) => JSON.parse(raw.split('\n')[1].split('=').slice(1).join('='));
+  assert.deepEqual(catalog(doc), [release('1'), release('2'), release('3')]);
+  assert.deepEqual(py(edit, { raw: doc, entry: release('3') }), [doc, false]);
   const [pruned] = py(edit, {
-    doc,
+    raw: doc,
     entry: release('4'),
     keep: 2,
     protect: [release('1').image_digest],
   });
-  const kept = JSON.parse(pruned.services.control.environment.SANDBOXES_RUNTIME_RELEASES);
-  assert.deepEqual(kept, [release('1'), release('3'), release('4')]);
-  const split = services([release('1')]);
-  split.services['pipelines-worker'].environment.SANDBOXES_RUNTIME_RELEASES = '[]';
-  assert.match(python('vm.with_release(i,{})', split).stderr, /catalog_services_differ/);
+  assert.deepEqual(catalog(pruned), [release('1'), release('3'), release('4')]);
 });
 
 test('the env edit replaces exactly one release id line, and each machine release', () => {
@@ -714,8 +698,8 @@ test('the drain releases each Pi machine that goes idle while it waits, and ends
   const out = py(`import types
 clock=[0.0];hosts={'alice':{'turn':True,'idle':None,'up':True}};released=[]
 vm.time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda s:clock.__setitem__(0,clock[0]+s))
-vm.sbx=lambda **e:'[]'
-def main_read(q,*p,write=False):
+def main_read(q,*p,write=False,url=None):
+    if url == 'SANDBOXES_DATABASE_URL': return {'machines':'[]','bootstraps':'[]'}
     assert write==(vm.IDLE in q)
     for h in hosts.values(): h['up']=h['up'] and h['idle']!=0
     if clock[0]>=5 and hosts['alice']['turn']: hosts['alice'].update(turn=False,idle=clock[0])
@@ -744,8 +728,8 @@ test('the drain holds work machines and waits until Fleet has released each, or 
   const out = py(`import types
 clock=[0.0];work=['flt_w1','flt_w2'];queries=[];settles=[True]
 vm.time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda s:clock.__setitem__(0,clock[0]+s))
-vm.sbx=lambda **e:'[]'
-def main_read(q,*p,write=False):
+def main_read(q,*p,write=False,url=None):
+    if url == 'SANDBOXES_DATABASE_URL': return {'machines':'[]','bootstraps':'[]'}
     queries.append([q,write])
     if q==vm.UNHOLD: return {'lifted':True}
     if clock[0]>=20 and work and settles[0]: work.pop()
@@ -876,7 +860,7 @@ test('the pin check reads the apps of the machines Main or the env file names, a
     `${scratch}vm.ENV=t/'typescript.env'
 runtimes=json.dumps([{'provider':'cloudflare-fleet','releaseId':'${OLD}'},{'provider':'cloudflare-fleet-large','releaseId':'${OLD_L}'}])
 vm.ENV.write_text(f"{vm.KEY}=${OLD}\\n{vm.RUNTIMES}='{runtimes}'\\n")
-vm.env_of=lambda n:{vm.KEY:'${OLD}'} if n==vm.MAIN else {vm.CATALOG:'[]'}
+vm.env_of=lambda n:{vm.KEY:'${OLD}',vm.CATALOG:'[]'}
 vm.native=lambda p:{'image':p};vm.release_ids=lambda entries:[]
 pins=vm.Step(r,{}).pins();pins['active']=vm.owner()
 print(json.dumps(pins))`,
@@ -976,7 +960,7 @@ vm.ENV=t/'typescript.env'
 live={'native':{'image':'reg@sha256:new','rollout':None},'main':new,
       'catalog':[{'provider':'cloudflare-fleet','image_digest':'sha256:new'}]}
 vm.native=lambda p='cloudflare-fleet':live['native']
-vm.env_of=lambda n:{vm.KEY:live['main']} if n==vm.MAIN else {vm.CATALOG:json.dumps(live['catalog'])}
+vm.env_of=lambda n:{vm.KEY:live['main'],vm.CATALOG:json.dumps(live['catalog'])}
 vm.release_ids=lambda entries:[{'sha256:new':new,'sha256:old':old}[e['image_digest']] for e in entries]
 step=vm.Step(r,{'current':{'image':'reg@sha256:old','releaseId':old}})
 def attempt():
@@ -1008,7 +992,7 @@ vm.release_ids=lambda entries:[ids[e['provider'],e['image_digest']] for e in ent
 runtimes="'"+json.dumps([{'key':'standard','provider':'cloudflare-fleet','releaseId':'${NEW}'},
                          {'key':'large','provider':'cloudflare-fleet-large','releaseId':'${NEW_L}'}])+"'"
 vm.ENV.write_text(f"{vm.KEY}=${NEW}\\n{vm.RUNTIMES}={runtimes}\\n")
-vm.env_of=lambda n:{vm.KEY:'${NEW}',vm.RUNTIMES:runtimes.strip("'")} if n==vm.MAIN else {vm.CATALOG:json.dumps(catalog)}
+vm.env_of=lambda n:{vm.KEY:'${NEW}',vm.RUNTIMES:runtimes.strip("'"),vm.CATALOG:json.dumps(catalog)}
 res={'agreed':step.abandon({})}
 apps['cloudflare-fleet-large']['image']='reg@sha256:old'
 try: step.abandon({})
@@ -1185,112 +1169,6 @@ print(json.dumps(res))`);
   assert.deepEqual(out.ready, { guard: 'ran' });
 });
 
-test('native application status retries only transient HTTP reads within the sbx deadline', () => {
-  const result = py(`import ast,asyncio,contextlib,types
-class ProviderUnavailableError(Exception):
-    def __init__(self,status):
-        super().__init__('native status unavailable')
-        self.details={'status':status,'path':'DO-NOT-LOG-PATH'}
-    def add_note(self,note): self.__notes__=[*getattr(self,'__notes__',[]),note]
-class AuthorizationError(Exception): pass
-node=next(n for n in ast.parse(vm.SBX).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='application_status')
-budgets=[];sleeps=[]
-@contextlib.asynccontextmanager
-async def timeout(seconds):
-    budgets.append(seconds)
-    yield
-async def sleep(delay): sleeps.append(delay)
-ns={'asyncio':types.SimpleNamespace(timeout=timeout,sleep=sleep),'ProviderUnavailableError':ProviderUnavailableError}
-exec(compile(ast.Module(body=[node],type_ignores=[]),'<native-status-test>','exec'),ns)
-class Driver:
-    _account_id='account';_application_id='application'
-    def __init__(self,sequence): self.sequence=iter(sequence);self.calls=[]
-    async def _native_result(self,path):
-        self.calls.append(path)
-        value=next(self.sequence)
-        if isinstance(value,Exception): raise value
-        return value
-async def main():
-    cases=[]
-    for statuses in ([], [429,503], [500], [502], [504], [599]):
-        budgets.clear();sleeps.clear()
-        expected=({'id':'application','configuration':{'image':'digest'}},{'success':True})
-        d=Driver([*[ProviderUnavailableError(s) for s in statuses],expected])
-        assert await ns['application_status'](d)==expected
-        assert len(d.calls)==len(statuses)+1
-        assert set(d.calls)=={'/accounts/account/containers/applications/application'}
-        assert budgets==[45] and sleeps==list(range(1,len(d.calls)))
-        cases.append(len(d.calls))
-    for error in [AuthorizationError('401'),AuthorizationError('403'),*[ProviderUnavailableError(s) for s in (401,403,404,200,None,'503',True,600)],TimeoutError('read deadline'),ValueError('bad response')]:
-        budgets.clear();sleeps.clear();d=Driver([error])
-        try: await ns['application_status'](d)
-        except Exception as caught: assert caught is error
-        else: raise AssertionError('error was swallowed')
-        assert len(d.calls)==1 and not sleeps
-    budgets.clear();sleeps.clear()
-    errors=[ProviderUnavailableError(s) for s in (503,429,502)]
-    d=Driver(errors)
-    try: await ns['application_status'](d)
-    except ProviderUnavailableError as caught:
-        assert caught is errors[-1]
-        assert caught.__notes__==['Cloudflare application status GET: HTTP 502, attempt 3/3']
-        assert 'DO-NOT-LOG-PATH' not in str(caught.__notes__)
-    else: raise AssertionError('exhaustion was swallowed')
-    assert budgets==[45] and sleeps==[1,2]
-    print(json.dumps({'successAttempts':cases,'exhaustedAttempts':len(d.calls),'maximumReadSeconds':45}))
-asyncio.run(main())`);
-  assert.deepEqual(result, {
-    successAttempts: [1, 3, 2, 2, 2, 2],
-    exhaustedAttempts: 3,
-    maximumReadSeconds: 45,
-  });
-});
-
-test('native application read timeout cancels its request without retrying', () => {
-  const result = py(`import ast,asyncio,contextlib,types
-class ProviderUnavailableError(Exception):
-    details={'status':503}
-node=next(n for n in ast.parse(vm.SBX).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='application_status')
-budgets=[];sleeps=[]
-@contextlib.asynccontextmanager
-async def timeout(seconds):
-    budgets.append(seconds)
-    if hasattr(asyncio,'timeout'):
-        async with asyncio.timeout(0.001): yield
-    else:
-        # Test compatibility for macOS's Python 3.9; native control uses 3.11.
-        timer=asyncio.get_running_loop().call_later(0.001,asyncio.current_task().cancel)
-        try: yield
-        except asyncio.CancelledError: raise asyncio.TimeoutError from None
-        finally: timer.cancel()
-async def sleep(delay): sleeps.append(delay)
-ns={'asyncio':types.SimpleNamespace(timeout=timeout,sleep=sleep),'ProviderUnavailableError':ProviderUnavailableError}
-exec(compile(ast.Module(body=[node],type_ignores=[]),'<native-timeout-test>','exec'),ns)
-class Driver:
-    _account_id='account';_application_id='application';calls=0;cancelled=False
-    def __init__(self,hang_at): self.hang_at=hang_at
-    async def _native_result(self,path):
-        self.calls+=1
-        if self.calls<self.hang_at: raise ProviderUnavailableError('HTTP 503')
-        try: await asyncio.Event().wait()
-        finally: self.cancelled=True
-async def main():
-    results=[]
-    for hang_at in (1,2):
-        budgets.clear();sleeps.clear();d=Driver(hang_at)
-        try: await ns['application_status'](d)
-        except asyncio.TimeoutError: pass
-        else: raise AssertionError('timeout was swallowed')
-        assert budgets==[45] and sleeps==list(range(1,hang_at))
-        results.append({'calls':d.calls,'cancelled':d.cancelled})
-    print(json.dumps(results))
-asyncio.run(main())`);
-  assert.deepEqual(result, [
-    { calls: 1, cancelled: true },
-    { calls: 2, cancelled: true },
-  ]);
-});
-
 test('each staging template is its app as wrangler created it, otherwise Standard’s or Large’s', () => {
   const staging = Object.fromEntries(
     Object.entries(STAGING_APPS).map(([p, f]) => [p, read(f.slice(7))]),
@@ -1373,4 +1251,36 @@ print(json.dumps(res))`,
   assert.deepEqual(out.again, { changed: false });
   assert.match(out.refused[0], /staging Main runs no machine on these apps/);
   assert.match(out.refused[1], /invalid release id/);
+});
+
+test('catalog changes validate both readers before recreating and restore both after failure', () => {
+  const out = py(`${scratch}import types
+raw=b'OTHER=$literal\\nSANDBOXES_RUNTIME_RELEASES=[]\\n'
+state={'raw':raw}; calls=[]; fail=[True]
+vm.SHARED=types.SimpleNamespace(stat=lambda:types.SimpleNamespace(st_uid=0,st_gid=0,st_mode=0o100600),read_bytes=lambda:state['raw'])
+vm.atomic=lambda path,data,*args:state.update(raw=data)
+vm.main_release_running=lambda:False
+vm.inspect=lambda n:{'Image':n+'-image','Config':{'Labels':{'com.docker.compose.project':n,'com.docker.compose.project.config_files':'/compose.yml',
+    'com.docker.compose.project.working_dir':'/'}}}
+def run(c,**kwargs):
+    calls.append([c,kwargs['env'].get('MERV_TS_IMAGE') or kwargs['env'].get('SANDBOXES_TS_IMAGE')])
+    if 'up' in c and vm.MAIN in c and fail[0]:
+        fail[0]=False;raise RuntimeError('recreate failed')
+vm.run=run;vm.healthy=lambda *a:None
+vm.env_of=lambda n:{vm.CATALOG:vm.env_value(state['raw'],vm.CATALOG)}
+vm.release_ids=lambda entries:['rt1_new'];vm.quiet=lambda *a:None
+step=vm.Step(r,{'drainSeconds':10});entry={'provider':vm.PROVIDER,'image_digest':'sha256:new'}
+try:step.add_releases({'entries':[entry],'releases':{vm.PROVIDER:'rt1_new'}},r/'catalog.before')
+except RuntimeError as e: error=str(e)
+print(json.dumps({'calls':calls,'restored':state['raw']==raw,'error':error}))`);
+  assert.equal(out.error, 'recreate failed');
+  assert.equal(out.restored, true);
+  const commands = out.calls.map(([args]) => args);
+  const firstUp = commands.findIndex((args) => args.includes('up'));
+  assert.ok(commands.slice(0, firstUp).some((args) => args.includes('--status')));
+  assert.ok(
+    commands.slice(0, firstUp).some((args) => args.includes('/app/deploy/render-config.mjs')),
+  );
+  assert.equal(commands.filter((args) => args.includes('up')).length, 4);
+  for (const [args, image] of out.calls) assert.equal(image, args[3] + '-image');
 });
