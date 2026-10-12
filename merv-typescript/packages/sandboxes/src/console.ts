@@ -28,10 +28,10 @@ export const sandboxesUiPlugin = {
         const caller = await r.caller();
         const { path } = await r.json(z.object({ path: z.string() }).strict());
         const route = path.split('?')[0]!;
-        const session = await ctx.sbxMerv.consoleSession(
-          caller,
-          route === '/ui/' ? {} : { path: route },
-        );
+        const session = await ctx.sbxMerv.consoleSession(caller, {
+          ...(route === '/ui/' ? {} : { path: route }),
+          accessToken: r.bearer(),
+        });
         return { url: `/sbx/ui/${new URL(session.url).hash}` };
       }),
     );
