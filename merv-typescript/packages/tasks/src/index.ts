@@ -29,7 +29,7 @@ import type { Context } from 'cordis';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code } from '@merv/code-work/types';
-import type { Sandboxes } from '@merv/sandboxes/types';
+import type { SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import type { Paper } from '@merv/paper/types';
 import { TASK_TYPES } from './definitions.js';
 import { acceptanceChecks, composedBrief } from './evidence.js';
@@ -107,7 +107,6 @@ export type TasksContext = Pick<
   TaskService,
   | 'artifacts'
   | 'captureArtifactIds'
-  | 'computeGuidance'
   | 'checked'
   | 'code'
   | 'command'
@@ -140,7 +139,7 @@ export class TaskService implements Tasks {
     return (await this.reviews.apply(caller, input, tx)) as Task;
   }
   private closed = false;
-  private sandboxes?: Pick<Sandboxes, 'captures' | 'guidance'>;
+  private captureEvidence?: Pick<SandboxCaptureEvidence, 'captures'>;
   private releaseReviewOwner?: () => void;
   private releaseServiceTasks?: () => void;
   private readonly registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -363,23 +362,14 @@ export class TaskService implements Tasks {
     };
   }
 
-  /** Captures, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'guidance'>): () => void {
-    this.sandboxes = service;
+  bindCaptureEvidence(service: Pick<SandboxCaptureEvidence, 'captures'>): () => void {
+    this.captureEvidence = service;
     return () => {
-      if (this.sandboxes === service) this.sandboxes = undefined;
+      if (this.captureEvidence === service) this.captureEvidence = undefined;
     };
   }
   async captureArtifactIds(projectId: string, workId: string, tx: Transaction): Promise<string[]> {
-    return (await this.sandboxes?.captures(projectId, workId, tx)) ?? [];
-  }
-  /** Sandboxes' compute guidance for this project's assignment, or none (`Sandboxes.guidance`). */
-  async computeGuidance(
-    projectId: string,
-    profile: 'execute' | 'check',
-    tx: Transaction,
-  ): Promise<string> {
-    return (await this.sandboxes?.guidance(projectId, profile, tx)) ?? '';
+    return (await this.captureEvidence?.captures(projectId, workId, tx)) ?? [];
   }
   async command<T>(
     tx: Transaction,
@@ -549,8 +539,8 @@ export const tasksPlugin = {
         ctx.paper,
       ),
     );
-    ctx.inject(['sandboxes'], (ctx) => {
-      ctx.effect(() => tasks.bindSandboxes(ctx.sandboxes));
+    ctx.inject(['sandboxEvidence'], (ctx) => {
+      ctx.effect(() => tasks.bindCaptureEvidence(ctx.sandboxEvidence));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.
     ctx.effect(function* () {

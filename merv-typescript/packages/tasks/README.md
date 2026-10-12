@@ -21,7 +21,7 @@ flowchart LR
     contextBuilder["Context Builder<br/><small>assignment context</small>"]
     artifacts["Artifacts<br/><small>immutable evidence</small>"]
     codeWork["Code Work<br/><small>managed Git</small>"]
-    sandboxes["Sandboxes<br/><small>native compute</small>"]
+    sandboxes["Sandboxes<br/><small>compute</small>"]
     scope["Scope"]
     state["State"]
   end
@@ -37,7 +37,7 @@ flowchart LR
   tasks -- "reads paper context" --> paper
   tasks -- "pins evidence" --> artifacts
   tasks -- "injects managed Git" --> codeWork
-  tasks -. "binds compute" .-> sandboxes
+  tasks -. "reads capture receipts" .-> sandboxes
   tasks -- "injects" --> scope
   tasks -- "injects" --> state
   state -- "reads/writes" --> postgres
@@ -54,7 +54,7 @@ context recipe, and the task UI displays it. Delivery/reissue/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@43`, on which Sandboxes attaches native compute, and conflict-resolution service work at `task@11`. Both grant the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twins `task@39` and `task@6` are retired. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
+Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@43`, on which Sessions attaches Sandboxes compute, and conflict-resolution service work at `task@11`. Both grant the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twins `task@39` and `task@6` are retired. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
 
 Other stored versions remain read-only history: records, evidence, verdicts, context packages and pinned graphs are retained. Their runtime implementations are not registered, so they cannot dispatch or accept new contexts, checkpoints, claims or submissions. No old record is upgraded into another contract. The program retains private registration handles; generic workflow tools cannot bypass task gates.
 
@@ -79,11 +79,10 @@ Creation and type registration copy their inputs before asynchronous work. A typ
 
 ## Work prerequisites
 
-Tasks owns no compute. Sandboxes attaches native compute to a leased assignment where the project has a funded
-connection: `execute` for work, `check` for review. Conflict-resolution service tasks declare
-`computeProfile: 'none'`. The assignment carries the guidance from
-`@merv/sandboxes/compute-capability`, and delivery admits the capture collections Sandboxes
-verified for the task. See [compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
+Sessions issues a Sandboxes connection for eligible leased assignments in linked projects and records its run
+scope before issuance. Conflict-resolution service work declares `computeProfile: 'none'`; sealed reviews
+receive no connection. The runner adds compute guidance only when it receives the connection. Delivery reads
+verified capture collections from Artifacts' Merv-side receipt index, without querying Sandboxes inside its transaction.
 
 `task.create.dependsOn` accepts existing same-project work IDs (array, one ID, null
 or omitted). Workflows owns the durable DAG and its completion checks. Tasks

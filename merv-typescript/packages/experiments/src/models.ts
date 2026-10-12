@@ -87,10 +87,6 @@ export interface ExperimentAttempt {
   createdAt: string;
 }
 /** All fields here are metadata; artifact bytes and the exhibit document use separate reads. */
-/**
- * One entry of Sandboxes' `CaptureEvidence['refused']`, restated here because this module is read
- * by the web bundle, which cannot type-check `@merv/sandboxes/types` (it imports `@merv/contracts`).
- */
 export interface RefusedCapture {
   nativeWorkflowId: string;
   captureNode: string;

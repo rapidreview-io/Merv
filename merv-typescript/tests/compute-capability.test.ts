@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WorkflowExecutionPolicy } from '@merv/contracts';
-import { computeEpoch, computeGuidance, computeProfile } from '@merv/sandboxes/compute-capability';
+import { computeEpoch, computeGuidance, computeProfile } from '@merv/sessions/compute';
 
 const policy = (readOnly: boolean, workspace?: WorkflowExecutionPolicy['workspace']) =>
   ({ readOnly, tools: [], ...(workspace ? { workspace } : {}) }) as WorkflowExecutionPolicy;
@@ -53,7 +53,7 @@ test('the epoch is workflow data computeEpoch when set, else the revision', () =
 
 test('guidance follows the profile', () => {
   assert.equal(computeGuidance('none'), '');
-  assert.match(computeGuidance('execute'), /native Sandboxes MCP/);
+  assert.match(computeGuidance('execute'), /Sandboxes MCP/);
   assert.match(computeGuidance('execute'), /Execute only the authorized work/);
   assert.match(computeGuidance('check'), /at most 300 seconds/);
   assert.doesNotMatch(computeGuidance('check'), /Execute only/);

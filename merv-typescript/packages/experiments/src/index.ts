@@ -28,7 +28,7 @@ import {
 } from '@merv/contracts';
 import type { ProcessGraph, WorkflowDependency, WorkflowSnapshot } from '@merv/workflows/models';
 import type { Code } from '@merv/code-work/types';
-import type { Sandboxes } from '@merv/sandboxes/types';
+import type { SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import {
   enteredAgain,
   experimentFileIds,
@@ -113,7 +113,7 @@ export type ExperimentsContext = Pick<
   | 'open'
   | 'paper'
   | 'reviews'
-  | 'sandboxes'
+  | 'captureEvidence'
   | 'scope'
   | 'state'
   | 'workflows'
@@ -137,7 +137,7 @@ export class ExperimentService implements Experiments {
     return (await this.reviews.apply(caller, input, tx)) as Experiment;
   }
   closed = false;
-  sandboxes?: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'>;
+  captureEvidence?: Pick<SandboxCaptureEvidence, 'captures' | 'evidence'>;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   readonly contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
@@ -202,12 +202,11 @@ export class ExperimentService implements Experiments {
       throw error;
     }
   }
-  /** Captures, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'>): () => void {
+  bindCaptureEvidence(service: Pick<SandboxCaptureEvidence, 'captures' | 'evidence'>): () => void {
     this.open();
-    this.sandboxes = service;
+    this.captureEvidence = service;
     return () => {
-      if (this.sandboxes === service) this.sandboxes = undefined;
+      if (this.captureEvidence === service) this.captureEvidence = undefined;
     };
   }
   open(): void {
@@ -387,14 +386,14 @@ export class ExperimentService implements Experiments {
     const open = new Map(
       rows.filter((row) => !terminal.has(row.state)).map((row) => [row.id, row]),
     );
-    if (!this.sandboxes || !open.size) return new Map();
+    if (!this.captureEvidence || !open.size) return new Map();
     const current = await tx.all<AttemptRow>(
       `SELECT a.* FROM experiment_attempts a JOIN experiments e ON e.id=a.experiment_id AND e.attempt_index=a.attempt_index
       WHERE e.project_id=? AND e.id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
       caller.projectId,
       JSON.stringify([...open.keys()]),
     );
-    const found = await this.sandboxes.evidence(
+    const found = await this.captureEvidence.evidence(
       caller.projectId,
       current.map((attempt) => ({
         instanceId: attempt.experiment_id,
@@ -529,7 +528,7 @@ export class ExperimentService implements Experiments {
     const workflows = rows.map((row) => records.get(row.id)!.snapshot);
     const ends = await this.workflows.ends(workflows, tx);
     // Only what each current attempt's own compute captured, under any of its states' epochs.
-    const captured = await this.sandboxes?.evidence(
+    const captured = await this.captureEvidence?.evidence(
       caller.projectId,
       rows.map((row, index) => ({
         instanceId: row.id,
@@ -694,8 +693,8 @@ export const experimentsPlugin = {
         ctx.paper,
       ),
     );
-    ctx.inject(['sandboxes'], (ctx) => {
-      ctx.effect(() => experiments.bindSandboxes(ctx.sandboxes));
+    ctx.inject(['sandboxEvidence'], (ctx) => {
+      ctx.effect(() => experiments.bindCaptureEvidence(ctx.sandboxEvidence));
     });
     ctx.effect(function* () {
       yield () => experiments.close();

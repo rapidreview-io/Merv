@@ -2,7 +2,7 @@ import type { TaskDelivery } from '@merv/tasks/types';
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { git } from './fixtures/code-store.js';
-import { nativeWorkFixture } from './fixtures/native-work.js';
+import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -389,8 +389,6 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
-  // A connected project: its visits get the Sandboxes MCP, so its briefs say how to use it.
-  f.experiments.bindSandboxes(nativeWorkFixture().service);
   const prerequisite = await currentTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',
@@ -437,8 +435,6 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, true);
-  assert.match(planned.brief, /native Sandboxes MCP/);
-  assert.match(planned.brief, /brief verification only/);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.match(planned.brief, /reviewers must independently verify pivotal claims/);
   assert.ok(
@@ -1596,15 +1592,14 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
 
 test('every experiment lease admits verified captures and leaves compute to Sandboxes', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  f.experiments.bindSandboxes(native.service);
+  const native = captureEvidenceFixture();
+  f.experiments.bindCaptureEvidence(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
   // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
   assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
   assert.equal(first.session.execution.references.computeProfile, undefined);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
-  assert.match(first.session.assignment.brief, /brief verification only/);
   assert.ok(!first.session.execution.policy.tools.some((tool) => tool.name.startsWith('compute.')));
   const worker = await f.sessions.authenticate(first.secret);
   const service = await f.scope.serviceActor('sandboxes', f.source.projectId);
@@ -1645,8 +1640,8 @@ test('every experiment lease admits verified captures and leaves compute to Sand
 
 test('a lease admits the captures of its own attempt only', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  f.experiments.bindSandboxes(native.service);
+  const native = captureEvidenceFixture();
+  f.experiments.bindCaptureEvidence(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
   const worker = await f.sessions.authenticate(first.secret);

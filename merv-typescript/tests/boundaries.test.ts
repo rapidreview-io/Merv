@@ -155,6 +155,18 @@ const capabilities: Record<string, readonly string[]> = {
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // Legacy transport stands alone; native connection owners are conditional below.
   sandboxes: [],
+  sandboxEvidence: [
+    'state',
+    'scope',
+    'workflows',
+    'domainEvents',
+    'sessions',
+    'artifacts',
+    'sbxMerv',
+    'sbxPipelines',
+    'sbxObjects',
+    'sbxAccounts',
+  ],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
   // Literature search over Nisa's public API; it holds nothing but its calls in flight.
@@ -166,6 +178,8 @@ const capabilities: Record<string, readonly string[]> = {
   mounts: ['tools', 'scope'],
   ui: ['api', 'tools'],
 };
+const hostCapabilities = new Set(['sbxMerv', 'sbxPipelines', 'sbxObjects', 'sbxAccounts']);
+const knownCapability = (name: string) => name in capabilities || hostCapabilities.has(name);
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Pi may investigate Sessions' questions, but either service boots without the other.
   pi: ['sessions'],
@@ -174,7 +188,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['sandboxes'],
-  experiments: ['sandboxes'],
+  experiments: ['sandboxEvidence'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.
   reviews: ['workflows'],
@@ -182,7 +196,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
   sessions: ['tools', 'secrets'],
-  tasks: ['sandboxes'],
+  tasks: ['sandboxEvidence'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -202,7 +216,7 @@ function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optio
     );
     const childDeps = deps.elements.map((element) => {
       assert.ok(
-        ts.isStringLiteral(element) && element.text in capabilities,
+        ts.isStringLiteral(element) && knownCapability(element.text),
         'Unknown child capability',
       );
       optional.add(element.text);
@@ -217,7 +231,7 @@ function checkCapabilityAccess(node: ts.Node, declared: readonly string[], optio
     node.expression.text === 'ctx'
   ) {
     const accessed = node.name.text;
-    if (accessed in capabilities)
+    if (knownCapability(accessed))
       assert.ok(declared.includes(accessed), `ctx.${accessed} is an undeclared dependency`);
     assert.notEqual(accessed, 'root', 'Root-context access bypasses declared dependencies');
   }
@@ -257,7 +271,7 @@ const sharedContract = (specifier: string) =>
  * grace, the lease rows every leased step keeps, a record's Code unit, a unit's history as its
  * owner tells it on the Work page, and its Artifacts tab. */
 const pureRules = new Set([
-  '@merv/sandboxes/compute-capability',
+  '@merv/sessions/compute',
   '@merv/workflows/rules',
   '@merv/workflows/retired-instances',
   '@merv/experiments/rules',
@@ -503,8 +517,10 @@ function assertComponentReferences(
       // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
       const events =
         isAdapter && ['@merv/api/event-stream', '@merv/api/errors'].includes(specifier);
+      // The integration publishes its capture reader contract alongside its implementation.
+      const captureTypes = typeOnly && specifier === '@merv/sandboxes/sandbox-evidence';
       // Pure rules (no service, see the test below) that any unit may run.
-      if (!utility && !credentials && !events && !pureRules.has(specifier)) {
+      if (!utility && !credentials && !events && !captureTypes && !pureRules.has(specifier)) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,
@@ -812,6 +828,10 @@ test('optional capabilities cannot escape their Cordis child injection', () => {
     () => verify("ctx.inject(['codeWork'], (ctx) => ctx.sessions);"),
     /undeclared dependency/,
   );
+  assert.throws(
+    () => verify("ctx.inject(['sbxMerv'], (ctx) => ctx.sbxMerv); ctx.sbxMerv;"),
+    /undeclared dependency/,
+  );
 });
 
 test('Cordis service requirements match the architecture and every accessed capability is declared', () => {
@@ -976,7 +996,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
           ts.isPropertyAccessExpression(child) &&
           ts.isIdentifier(child.expression) &&
           child.expression.text === 'ctx' &&
-          child.name.text in capabilities
+          knownCapability(child.name.text)
         ) {
           assert.ok(
             declared.includes(child.name.text),
@@ -1161,7 +1181,7 @@ test('each service boots with only its declared dependency closure and without A
         const deadline = Date.now() + 5000;
         while ([...required].some((name) => !ctx.get(name)) && Date.now() < deadline)
           await new Promise((resolve) => setTimeout(resolve, 10));
-        for (const name of Object.keys(capabilities))
+        for (const name of [...Object.keys(capabilities), ...hostCapabilities])
           assert.equal(
             !!ctx.get(name),
             required.has(name),
