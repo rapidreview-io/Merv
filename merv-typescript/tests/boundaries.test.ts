@@ -1,3 +1,4 @@
+import { sandboxesHostCapabilities } from '../packages/sandboxes/src/host-capabilities.js';
 import { artifactsPlugin } from '@merv/artifacts';
 import { blobsPlugin } from '@merv/blobs';
 import { codePlugin } from '@merv/code';
@@ -176,18 +177,7 @@ const capabilities: Record<string, readonly string[]> = {
   mounts: ['tools', 'scope'],
   ui: ['api', 'tools'],
 };
-const hostCapabilities = new Set([
-  'sbxMerv',
-  'sbxPipelines',
-  'sbxObjects',
-  'sbxAccounts',
-  'sbxRegistry',
-  'sbxJobs',
-  'sbxSnapshots',
-  'sbxDb',
-  'sbxClock',
-  'sbxSettings',
-]);
+const hostCapabilities = new Set<string>(sandboxesHostCapabilities);
 const knownCapability = (name: string) => name in capabilities || hostCapabilities.has(name);
 const optionalCapabilities: Record<string, readonly string[]> = {
   // Pi may investigate Sessions' questions, but either service boots without the other.

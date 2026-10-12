@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { sandboxesHostCapabilities } from '../packages/sandboxes/src/host-capabilities.js';
 import { loadConfiguration } from '../src/config.js';
 import { writeArchitectureExplorer } from './architecture-explorer.js';
 import { writeAtlas } from './atlas.js';
@@ -104,6 +105,17 @@ for (const file of sources.filter(
   };
   visit(source);
 }
+// The host factory installs its providers in Cordis children outside the scanned sources.
+plugins.push({
+  plugin: 'sandboxes-host',
+  source: 'packages/sandboxes/src/host.ts',
+  provides: [...sandboxesHostCapabilities],
+  requires: [],
+  optional: [],
+  kind: 'service',
+  runtime: 'server',
+  defaultConfiguration: configured.has('sandboxes-host'),
+});
 plugins.sort((a, b) => a.plugin.localeCompare(b.plugin));
 const providers = plugins.filter((p) => p.provides.length);
 const directConsumers = Object.fromEntries(
@@ -157,7 +169,10 @@ if (
 )
   data.snapshot = previous.snapshot;
 writeFileSync(inventoryFile, JSON.stringify(data, null, 2) + '\n');
-const id = (name: string) => name.replaceAll('-', '_');
+const providerKey = new Map(
+  plugins.flatMap((p) => p.provides.map((name) => [name, p.provides[0]] as const)),
+);
+const id = (name: string) => (providerKey.get(name) ?? name).replaceAll('-', '_');
 let graph = 'flowchart BT\n';
 for (const runtime of ['server', 'machine'] as const) {
   graph += `  subgraph ${runtime}["${runtime === 'server' ? 'Merv server' : 'Independent machine runtime'}"]\n`;
