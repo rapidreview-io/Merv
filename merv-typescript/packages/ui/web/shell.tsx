@@ -221,15 +221,17 @@ export function SandboxesNav({ row }: { row: UiRowDescription }) {
         active={active(row.path) && !childActive}
       />
       <div className="sandboxes-nav-children">
-        {children.map(([id, label]) => (
-          <RailRow
-            key={id}
-            to={`${row.path}/${id}`}
-            label={label}
-            icon={id}
-            active={active(`${row.path}/${id}`)}
-          />
-        ))}
+        <div className="sandboxes-nav-children-inner">
+          {children.map(([id, label]) => (
+            <RailRow
+              key={id}
+              to={`${row.path}/${id}`}
+              label={label}
+              icon={id}
+              active={active(`${row.path}/${id}`)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
