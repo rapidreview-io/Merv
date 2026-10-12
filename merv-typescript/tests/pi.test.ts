@@ -2214,12 +2214,14 @@ test('a queued turn waits for capacity; its clock restarts out of the queue and 
 test('warming rents the person’s machine once, for the latest empty conversation, and a turn shares it', async (t) => {
   const f = await fixture(t);
   f.runtimes.connected = () => false;
+  await f.fleet.tick();
   const unavailable = await f.pi.warm(f.operator, { requestId: 'warm_1' });
   assert.deepEqual([unavailable.available, unavailable.stage.name], [false, 'idle']);
   // A question refused as the page expects: it reads as the agent being unavailable here.
   await assert.rejects(f.send(unavailable.conversation), code('sandbox_not_connected'));
   assert.deepEqual(await f.fleet.list(f.hostCaller), []);
   f.runtimes.connected = () => true;
+  await f.fleet.tick();
   const warmed = await f.pi.warm(f.operator, { requestId: 'warm_2' });
   assert.equal(warmed.conversation.id, unavailable.conversation.id);
   assert.deepEqual([warmed.commands, warmed.stage.name], [[], 'machine']);

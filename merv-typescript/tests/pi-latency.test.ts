@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createService, type Caller, type Transaction } from '@merv/contracts';
-import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
+import type { FleetRuntimeHandle } from '@merv/fleet/types';
+import { profiles, link, launcher } from './fixtures/runtime-records.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { PiService } from '../packages/pi/src/index.js';
 import { PiHttp } from '../packages/pi/src/api.js';
@@ -15,62 +16,54 @@ import type { PiBootstrap } from '../packages/pi/src/types.js';
 import { createApp } from './fixtures/app.js';
 import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
-class LocalRuntimes implements SandboxRuntimes {
-  profileId = 'latency-fixture';
-  leaseSeconds = 600;
-  get profiles() {
-    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
-  }
-  describe = async () => null;
-  connected = () => true;
-  private handle?: SandboxRuntimeHandle;
+class LocalRuntimes {
+  linked = async (p: string) => link(p);
+  runtimes = ({ projectId }: { projectId: string }) => launcher(this, projectId);
 
-  async provision(): Promise<SandboxRuntimeHandle> {
+  describe = async () => null;
+  private handle?: FleetRuntimeHandle;
+
+  async provision(): Promise<FleetRuntimeHandle> {
     this.handle ??= {
       sandboxId: 'sbx_latency',
       state: 'ready',
       ready: true,
-      deleted: false,
       leaseExpiresAt: '2099-01-01T00:00:00Z',
       revision: 1,
       launch: null,
     };
     return structuredClone(this.handle);
   }
-  async inspect(): Promise<SandboxRuntimeHandle> {
+  async inspect(): Promise<FleetRuntimeHandle> {
     assert.ok(this.handle);
     return structuredClone(this.handle);
   }
   async launch(
     _projectId: string,
-    _handle: SandboxRuntimeHandle,
+    _handle: FleetRuntimeHandle,
     key: string,
-  ): Promise<SandboxRuntimeHandle> {
+  ): Promise<FleetRuntimeHandle> {
     assert.ok(this.handle);
     this.handle.launch ??= {
-      sandboxId: this.handle.sandboxId,
       launchId: 'rln_latency',
-      operationKey: key,
-      releaseId: 'latency-fixture',
       jobId: 'job_latency',
       state: 'pending',
       deliveryState: 'launched',
-      expiresAt: '2099-01-01T00:00:00Z',
     };
     return structuredClone(this.handle);
   }
-  async acknowledge(): Promise<SandboxRuntimeHandle> {
+  async acknowledge(): Promise<FleetRuntimeHandle> {
     assert.ok(this.handle?.launch);
     this.handle.launch.state = 'consumed';
     return structuredClone(this.handle);
   }
-  async stop(): Promise<SandboxRuntimeHandle> {
+  async stop(): Promise<FleetRuntimeHandle> {
     assert.ok(this.handle);
     this.handle.state = 'deleting';
     this.handle.ready = false;
     return structuredClone(this.handle);
   }
-  async renew(): Promise<SandboxRuntimeHandle> {
+  async renew(): Promise<FleetRuntimeHandle> {
     return this.inspect();
   }
 }
@@ -164,13 +157,6 @@ test(
       actorId: reviewerActor.actor.id,
       credentialId: reviewerActor.credential.id,
     };
-    const fleet = await createService(
-      new FleetService(state, scope, new LocalRuntimes(), {
-        globalLimit: 2,
-        projectLimit: 2,
-        pollIntervalMs: 30_000,
-      }),
-    );
     const secretEnv = `MERV_PI_LATENCY_${randomUUID().replaceAll('-', '')}`;
     process.env[secretEnv] = randomBytes(32).toString('base64url');
     // Machines are rented in the Pi host project, by its key.
@@ -178,6 +164,15 @@ test(
       projectName: 'Pi host',
       actorName: 'Pi host',
     });
+    const fleet = await createService(
+      new FleetService(state, scope, new LocalRuntimes(), {
+        profiles,
+        hostProjectId: host.project.id,
+        globalLimit: 2,
+        projectLimit: 2,
+        pollIntervalMs: 30_000,
+      }),
+    );
     const credentialEnv = `${secretEnv}_HOST`;
     process.env[credentialEnv] = host.token;
     const pi = await createService(

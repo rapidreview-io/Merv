@@ -674,6 +674,7 @@ test('a machine in use near its deadline hands over to a fresh one of its kind w
     input: { ...bound.input, commandId: sent.id, workerId: 'worker_next' },
   });
   f.runtimes.connected = (projectId) => projectId !== f.operator.projectId;
+  await f.fleet.tick();
   assert.equal((await nearDeadline()).host.next?.machine, 'large');
 });
 
@@ -743,6 +744,7 @@ test('a writer may choose Large without a project Sandboxes connection', async (
   assert.equal((await large(f.operator, chat.id))?.available, true);
   const unconnected = (projectId: string) => projectId !== f.operator.projectId;
   f.runtimes.connected = unconnected;
+  await f.fleet.tick();
   assert.equal((await large(f.operator, chat.id))?.available, true);
   await f.pi.setMachine(f.operator, { machine: 'large' });
   assert.deepEqual(await f.fleet.list(f.hostCaller), []);
@@ -751,6 +753,7 @@ test('a writer may choose Large without a project Sandboxes connection', async (
   assert.equal((await f.send(chat)).machine, 'large');
   // An offer Sandboxes no longer describes is hidden.
   f.runtimes.describe = async (_projectId, key) => (key === 'large' ? null : offers[key]);
+  await f.fleet.tick();
   assert.deepEqual(
     (await f.pi.snapshot(f.operator, chat.id)).host.catalog.map(({ key }) => key),
     ['standard'],

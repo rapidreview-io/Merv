@@ -6,7 +6,7 @@ import { uiManifestSchema } from '@merv/ui/manifest';
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
-import type { Sandboxes } from '@merv/sandboxes';
+import type { SbxMerv } from '@sandboxes/merv-host';
 import { fleetPlugin } from '../packages/fleet/src/index.js';
 import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
@@ -27,9 +27,7 @@ test('Fleet is optional and its row and controls install without research or Ses
   ctx.provide('ui', ui);
   ctx.provide('tools', tools);
   // Sandboxes protects a runtime, which no project here is connected to.
-  ctx.provide('sandboxes', {
-    runtimes: { connected: () => false, profiles: [] },
-  } as unknown as Sandboxes);
+  ctx.provide('sbxMerv', { linked: async () => null } as unknown as SbxMerv);
   const boot = await scope.credentials.bootstrap({
     projectName: 'Fleet optional composition',
     actorName: 'Operator',

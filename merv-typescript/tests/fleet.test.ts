@@ -3,11 +3,9 @@ import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import { createService, MervError, type Caller, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import type {
-  SandboxRuntimeHandle,
-  SandboxRuntimeProfileRef,
-  SandboxRuntimes,
-} from '@merv/sandboxes';
+import type { FleetRuntimeHandle, FleetMachine } from '@merv/fleet/types';
+import type { RuntimeLauncher } from '@sandboxes/runtimes/launcher';
+import { profiles, createKey, sandbox, receipt, offer, link } from './fixtures/runtime-records.js';
 import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
@@ -31,24 +29,54 @@ async function within(ms: number, ok: () => boolean | Promise<boolean>) {
   }
 }
 
-class FakeRuntimes implements SandboxRuntimes {
-  profileId = 'fixed-profile';
-  leaseSeconds = 600;
-  large?: SandboxRuntimeProfileRef;
-  get profiles() {
-    const standard = { key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds };
-    return this.large ? [standard, this.large] : [standard];
-  }
-  describe: SandboxRuntimes['describe'] = async () => null;
-  /** `${call} ${operation key or sandbox} ${profile}` for each call that names a profile. */
+class FakeRuntimes {
+  describe: (projectId: string, key: string) => Promise<FleetMachine | null> = async () => null;
+  /** `${call} ${operation key or sandbox} ${release id, or lease seconds for renew}` */
   readonly profiled: string[] = [];
   readonly disconnected = new Set<string>();
   /** The projects whose connections provider calls went through. */
   readonly places = new Set<string>();
-  connected(projectId: string) {
-    return !this.disconnected.has(projectId);
+  async linked(projectId: string) {
+    return this.disconnected.has(projectId) ? null : link(projectId);
   }
-  readonly byKey = new Map<string, SandboxRuntimeHandle>();
+  runtimes = ({ projectId }: Caller): RuntimeLauncher => {
+    return {
+      describe: async (_provider, offerId) => offer(await this.describe(projectId, offerId)),
+      provision: async (input) =>
+        sandbox(await this.provision(projectId, input.operationKey, input.releaseId)),
+      inspect: async (id, launchId) => {
+        const handle = await this.inspect(projectId, {
+          sandboxId: id,
+          launch: launchId ? this.find(id).launch : null,
+        } as FleetRuntimeHandle);
+        return { sandbox: sandbox(handle), launch: handle.launch && receipt(handle.launch) };
+      },
+      launch: async (id, input) =>
+        receipt(
+          (
+            await this.launch(
+              projectId,
+              this.find(id),
+              input.operation_key,
+              input.bootstrap.getSecretValue(),
+              input.release_id,
+            )
+          ).launch!,
+        ),
+      acknowledge: async (id, launchId, jobId) => {
+        assert.equal(this.find(id).launch?.launchId, launchId);
+        assert.equal(this.find(id).launch?.jobId, jobId);
+        return receipt((await this.acknowledge(projectId, this.find(id))).launch!);
+      },
+      stop: async (id) => sandbox(await this.stop(projectId, this.find(id))),
+      renew: async (id, seconds) =>
+        sandbox(await this.renew(projectId, this.find(id), String(seconds))),
+    };
+  };
+  private find(id: string) {
+    return [...this.byKey.values()].find((item) => item.sandboxId === id)!;
+  }
+  readonly byKey = new Map<string, FleetRuntimeHandle>();
   readonly createKeys: string[] = [];
   readonly launchKeys: string[] = [];
   readonly acknowledgements: string[] = [];
@@ -63,16 +91,16 @@ class FakeRuntimes implements SandboxRuntimes {
   refuseLaunch?: Error;
   failAcknowledgeOnce = false;
   heartbeatOnInspect = false;
-  holdCreate?: ReturnType<typeof deferred<SandboxRuntimeHandle>>;
-  initialState: SandboxRuntimeHandle['state'] = 'ready';
-  receiptState: NonNullable<SandboxRuntimeHandle['launch']>['state'] = 'pending';
-  private copy(handle: SandboxRuntimeHandle) {
+  holdCreate?: ReturnType<typeof deferred<FleetRuntimeHandle>>;
+  initialState: FleetRuntimeHandle['state'] = 'ready';
+  receiptState: NonNullable<FleetRuntimeHandle['launch']>['state'] = 'pending';
+  private copy(handle: FleetRuntimeHandle) {
     return structuredClone(handle);
   }
-  async provision(projectId: string, operationKey: string, profileId?: string) {
+  async provision(projectId: string, operationKey: string, releaseId?: string) {
     this.places.add(projectId);
     this.createKeys.push(operationKey);
-    this.profiled.push(`provision ${operationKey} ${profileId}`);
+    this.profiled.push(`provision ${operationKey} ${releaseId}`);
     if (this.createError) throw this.createError;
     let handle = this.byKey.get(operationKey);
     if (!handle) {
@@ -80,7 +108,6 @@ class FakeRuntimes implements SandboxRuntimes {
         sandboxId: `sbx_${this.byKey.size + 1}`,
         state: this.initialState,
         ready: this.initialState === 'ready',
-        deleted: false,
         leaseExpiresAt: '2099-01-01T00:00:00Z',
         revision: 1,
         launch: null,
@@ -94,7 +121,7 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(handle);
   }
-  async inspect(projectId: string, current: SandboxRuntimeHandle) {
+  async inspect(projectId: string, current: FleetRuntimeHandle) {
     this.places.add(projectId);
     this.inspected.push(current.sandboxId);
     if (this.inspectError) throw this.inspectError;
@@ -106,28 +133,24 @@ class FakeRuntimes implements SandboxRuntimes {
   }
   async launch(
     projectId: string,
-    current: SandboxRuntimeHandle,
+    current: FleetRuntimeHandle,
     operationKey: string,
     _bootstrap: string,
-    profileId?: string,
+    releaseId?: string,
   ) {
     this.places.add(projectId);
     this.launchKeys.push(operationKey);
-    this.profiled.push(`launch ${operationKey} ${profileId}`);
+    this.profiled.push(`launch ${operationKey} ${releaseId}`);
     const refusal = this.refuseLaunch;
     this.refuseLaunch = undefined;
     if (refusal) throw refusal;
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
     live.launch ??= {
-      sandboxId: live.sandboxId,
       launchId: `rln_${live.sandboxId}`,
-      operationKey,
-      releaseId: 'fixed-release',
       jobId: `rtj_${live.sandboxId}`,
       state: this.receiptState,
       deliveryState: 'launched',
-      expiresAt: '2026-09-22T00:05:00Z',
     };
     if (this.failLaunchOnce) {
       this.failLaunchOnce = false;
@@ -135,7 +158,7 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async stop(projectId: string, current: SandboxRuntimeHandle) {
+  async stop(projectId: string, current: FleetRuntimeHandle) {
     this.places.add(projectId);
     this.stopped.push(current.sandboxId);
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
@@ -147,7 +170,7 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async acknowledge(projectId: string, current: SandboxRuntimeHandle) {
+  async acknowledge(projectId: string, current: FleetRuntimeHandle) {
     this.places.add(projectId);
     assert.equal(current.launch?.deliveryState, 'launched');
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
@@ -160,9 +183,9 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async renew(projectId: string, current: SandboxRuntimeHandle, profileId?: string) {
+  async renew(projectId: string, current: FleetRuntimeHandle, seconds?: string) {
     this.renewed.push(current.sandboxId);
-    this.profiled.push(`renew ${current.sandboxId} ${profileId}`);
+    this.profiled.push(`renew ${current.sandboxId} ${seconds}`);
     return this.inspect(projectId, current);
   }
   confirmStopped(sandboxId: string) {
@@ -170,7 +193,6 @@ class FakeRuntimes implements SandboxRuntimes {
     assert.ok(live);
     live.state = 'stopped';
     live.ready = false;
-    live.deleted = true;
     live.revision++;
   }
   leaseSoon(sandboxId: string) {
@@ -190,6 +212,15 @@ async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, p
     actorId: admin.actor.id,
     credentialId: admin.credential.id,
   };
+  if (limits.hostProjectId)
+    await state.transaction((tx) =>
+      tx.run(
+        'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',
+        limits.hostProjectId!,
+        'Host',
+        new Date().toISOString(),
+      ),
+    );
   const runtimes = new FakeRuntimes();
   let now = Date.parse('2026-09-22T00:00:00Z');
   let valid = true;
@@ -205,7 +236,7 @@ async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, p
       state,
       scope,
       runtimes,
-      { allocationTimeoutSeconds: 3600, ...limits },
+      { profiles, allocationTimeoutSeconds: 3600, ...limits },
       () => now,
     ),
   );
@@ -223,6 +254,7 @@ async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, p
     fleet,
     owner,
     unregister,
+    now: () => now,
     advance: (milliseconds: number) => {
       now += milliseconds;
     },
@@ -257,8 +289,12 @@ test('concurrent controllers reserve within global and project caps; requests ar
   await f.fleet.request(f.caller, input('second'));
   await f.fleet.request(f.caller, input('third'));
   const second = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { globalLimit: 2, projectLimit: 1 }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
+    new FleetService(
+      f.state,
+      f.scope,
+      f.runtimes,
+      { profiles, globalLimit: 2, projectLimit: 1 },
+      () => Date.parse('2026-09-22T00:00:00Z'),
     ),
   );
   second.registerOwner('workflow', {
@@ -289,8 +325,12 @@ test('concurrent controllers enforce the global cap across projects', async (t) 
   const first = await f.fleet.request(f.caller, input('first-project'));
   const secondAllocation = await f.fleet.request(otherCaller, input('second-project'));
   const second = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { globalLimit: 1, projectLimit: 2 }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
+    new FleetService(
+      f.state,
+      f.scope,
+      f.runtimes,
+      { profiles, globalLimit: 1, projectLimit: 2 },
+      () => Date.parse('2026-09-22T00:00:00Z'),
     ),
   );
   second.registerOwner('workflow', {
@@ -359,7 +399,7 @@ test('an owner that rents in the host rents there for work in a project without 
   );
   assert.equal(await f.fleet.free('host_project'), 1);
   // Pi's machine rules still read the project's own connection.
-  assert.equal(f.fleet.connected(f.caller.projectId), false);
+  assert.equal(await f.fleet.connected(f.caller.projectId), false);
   assert.equal(await f.fleet.free(f.caller.projectId), 0);
   await f.fleet.cancel(f.caller, second.id);
   f.runtimes.leaseSoon('sbx_1');
@@ -728,7 +768,7 @@ test('cancellation during create retains capacity until provider reports stopped
   const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
   f.runtimes.initialState = 'provisioning';
   const allocation = await f.fleet.request(f.caller, input('cancel-create'));
-  const created = deferred<SandboxRuntimeHandle>();
+  const created = deferred<FleetRuntimeHandle>();
   f.runtimes.holdCreate = created;
   const ticking = f.fleet.tick();
   while (f.runtimes.createKeys.length === 0) await new Promise((resolve) => setImmediate(resolve));
@@ -844,7 +884,17 @@ test('profile change never reprovisions a new image and frees an uncertain creat
   f.runtimes.failCreateOnce = true;
   const allocation = await f.fleet.request(f.caller, input('profile-change'));
   await f.fleet.tick();
-  f.runtimes.profileId = 'new-profile';
+  const restarted = await createService(
+    new FleetService(
+      f.state,
+      f.scope,
+      f.runtimes,
+      { profiles: [{ ...profiles[0], releaseId: `rt1_${'c'.repeat(64)}` }] },
+      () => f.now(),
+    ),
+  );
+  restarted.registerOwner('workflow', f.owner);
+  f.fleet = restarted;
   f.advance(2000);
   await f.fleet.tick();
   const current = await f.fleet.inspect(f.caller, allocation.id);
@@ -854,14 +904,18 @@ test('profile change never reprovisions a new image and frees an uncertain creat
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
   assert.equal(f.runtimes.createKeys.length, 1);
+  await restarted.close();
 });
 
 test('each machine is rented, launched and renewed under its own profile', async (t) => {
-  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
-  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 900 };
+  const f = await fixture(t, {
+    globalLimit: 2,
+    projectLimit: 2,
+    profiles: [profiles[0], { ...profiles[1], leaseSeconds: 900 }],
+  });
   const standard = await f.fleet.request(f.caller, input('standard'));
   const large = await f.fleet.request(f.caller, { ...input('large'), profile: 'large' });
-  assert.deepEqual([standard.profileId, large.profileId], ['fixed-profile', 'large-profile']);
+  assert.notEqual(standard.profileId, large.profileId);
   // The profile is part of the request: the same id cannot name another machine.
   await assert.rejects(f.fleet.request(f.caller, input('large')), { code: 'request_conflict' });
   await assert.rejects(f.fleet.request(f.caller, { ...input('huge'), profile: 'huge' }), {
@@ -874,25 +928,28 @@ test('each machine is rented, launched and renewed under its own profile', async
   assert.deepEqual(
     f.runtimes.profiled.sort(),
     [
-      `launch ${large.id}:launch large-profile`,
-      `launch ${standard.id}:launch fixed-profile`,
-      `provision ${large.id}:create large-profile`,
-      `provision ${standard.id}:create fixed-profile`,
-      `renew ${await machine(large.id)} large-profile`,
-      `renew ${await machine(standard.id)} fixed-profile`,
+      `launch ${large.id}:launch ${profiles[1].releaseId}`,
+      `launch ${standard.id}:launch ${profiles[0].releaseId}`,
+      `provision ${createKey(f.caller.projectId, `${large.id}:create`)} ${profiles[1].releaseId}`,
+      `provision ${createKey(f.caller.projectId, `${standard.id}:create`)} ${profiles[0].releaseId}`,
+      `renew ${await machine(large.id)} 900`,
+      `renew ${await machine(standard.id)} 600`,
     ].sort(),
   );
 });
 
 test('dropping a profile from configuration stops only its machines', async (t) => {
   const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
-  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 900 };
   const standard = await f.fleet.request(f.caller, input('standard'));
   const large = await f.fleet.request(f.caller, { ...input('large'), profile: 'large' });
   for (const _ of [1, 2, 3]) await f.fleet.tick();
   const admits = (id: string) => f.state.transaction((tx) => f.fleet.admits(id, 1, tx));
   assert.deepEqual([await admits(standard.id), await admits(large.id)], [true, true]);
-  f.runtimes.large = undefined;
+  const restarted = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { profiles: [profiles[0]] }, () => f.now()),
+  );
+  restarted.registerOwner('workflow', f.owner);
+  f.fleet = restarted;
   assert.deepEqual([await admits(standard.id), await admits(large.id)], [true, false]);
   await f.fleet.tick();
   const [kept, dropped] = await Promise.all(
@@ -901,6 +958,7 @@ test('dropping a profile from configuration stops only its machines', async (t) 
   assert.deepEqual([kept.phase, kept.intent], ['running', 'run']);
   assert.equal(dropped.intent, 'stop');
   assert.deepEqual(f.runtimes.stopped, [dropped.runtime!.sandboxId]);
+  await restarted.close();
 });
 
 test('a project named in projectLimits has its own cap, and free() counts what waits', async (t) => {
@@ -912,6 +970,7 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   });
   const host = await createService(
     new FleetService(f.state, f.scope, f.runtimes, {
+      profiles,
       globalLimit: 4,
       projectLimit: 1,
       projectLimits: { [f.caller.projectId]: 3 },
@@ -919,6 +978,8 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   );
   host.registerOwner('workflow', f.owner);
   const free = async () => [await host.free(f.caller.projectId), await host.free(other.project.id)];
+  await free();
+  await host.tick();
   assert.deepEqual(await free(), [3, 1]);
   for (const id of ['a', 'b', 'c', 'd']) await host.request(f.caller, input(id));
   // Queued work is served first: all four count against both rooms.
@@ -931,9 +992,11 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   assert.deepEqual(await free(), [0, 1]);
   const machine = { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074016 };
   f.runtimes.describe = async (_projectId, key) => (key === 'standard' ? machine : null);
+  await host.tick();
   assert.deepEqual(await host.describe(f.caller.projectId, 'standard'), machine);
   // A project that cannot rent has no room and no machines.
   f.runtimes.disconnected.add(f.caller.projectId);
+  await host.tick();
   assert.equal(await host.free(f.caller.projectId), 0);
   assert.equal(await host.describe(f.caller.projectId, 'standard'), null);
   await host.close();
@@ -999,7 +1062,7 @@ test('a request queued before its person’s compute was spent is refused, not a
     [refused.phase, refused.intent, refused.error, refused.runtime],
     ['released', 'stop', 'person_capped', null],
   );
-  assert.deepEqual(f.runtimes.createKeys, [`${first.id}:create`]);
+  assert.deepEqual(f.runtimes.createKeys, [createKey(f.caller.projectId, `${first.id}:create`)]);
   // Another person's request takes the slot.
   const other = await f.ask('b_1');
   await f.fleet.tick();
@@ -1050,7 +1113,7 @@ test('a capped request waits for its offer’s price, then is refused ten minute
   await f.fleet.tick();
   const admitted = await f.get(waiting.id);
   assert.deepEqual([admitted.phase, admitted.usdPerHour], ['provisioning', 0.5]);
-  assert.deepEqual(f.runtimes.createKeys, [`${waiting.id}:create`]);
+  assert.deepEqual(f.runtimes.createKeys, [createKey(f.caller.projectId, `${waiting.id}:create`)]);
   // One that never does is refused once ten minutes have passed, and said so once.
   f.price(null);
   const refused = await f.ask('a_2');
@@ -1073,7 +1136,7 @@ test('a capped request waits for its offer’s price, then is refused ten minute
   const late = await f.ask('a_3');
   let now = Date.parse(late.createdAt) + 900_000;
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { dailyUsdPerPerson: 2 }, () => now),
+    new FleetService(f.state, f.scope, f.runtimes, { profiles, dailyUsdPerPerson: 2 }, () => now),
   );
   successor.registerOwner('workflow', { ...f.owner, payer: async () => 'person_a' });
   await successor.tick();
@@ -1151,7 +1214,6 @@ test('a capped request whose place loses its connection is refused at once, not 
 
 test('prices are read once per place and profile each pass, outside any transaction, and never by a request', async (t) => {
   const f = await capped(t);
-  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 600 };
   const other = await f.scope.credentials.bootstrap({
     projectName: 'Other',
     actorName: 'Other operator',
@@ -1180,7 +1242,12 @@ test('prices are read once per place and profile each pass, outside any transact
   await ask(otherCaller, 'a_3');
   assert.deepEqual(reads, [], 'a request reads no price');
   await f.fleet.tick();
-  assert.deepEqual(reads.toSorted(), ['other standard', 'own large', 'own standard']);
+  assert.deepEqual(reads.toSorted(), [
+    'other large',
+    'other standard',
+    'own large',
+    'own standard',
+  ]);
   assert.deepEqual(
     (await f.fleet.list(f.caller)).map((a) => [a.phase, a.usdPerHour]),
     Array.from({ length: 4 }, () => ['provisioning', 0.1]),
@@ -1199,6 +1266,8 @@ test('a storage cap refusal is a wallet refusal', async (t) => {
 test('the reads every pass makes walk their indexes, not the whole history', async (t) => {
   const f = await fixture(t, { globalLimit: 2, projectLimit: 1, dailyUsdPerPerson: 20 });
   f.fleet.registerOwner('paid', { ...f.owner, payer: async () => 'person_7' });
+  await f.fleet.connected(f.caller.projectId);
+  await f.fleet.tick();
   const template = await f.fleet.request(f.caller, input('template'));
   const plans = await f.state.transaction(async (tx) => {
     await tx.run('SET LOCAL enable_seqscan = off');
@@ -1303,7 +1372,9 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
   const restart = async () =>
     await createService(
-      new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
+      new FleetService(f.state, f.scope, f.runtimes, { profiles }, () =>
+        Date.parse('2026-09-22T00:00:00Z'),
+      ),
     );
   // A Fleet that closes before the owner registers again never fences what it did not own.
   await (await restart()).close();
@@ -1343,7 +1414,9 @@ test('closing leaves a kept owner’s queued and booting work to the successor, 
   assert.deepEqual(await phases(), closed, 'closing admits, creates and stops nothing kept');
   assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:10Z')),
+    new FleetService(f.state, f.scope, f.runtimes, { profiles }, () =>
+      Date.parse('2026-09-22T00:00:10Z'),
+    ),
   );
   await successor.tick();
   assert.deepEqual(await phases(), closed, 'nothing moves before the owner registers again');
@@ -1352,7 +1425,12 @@ test('closing leaves a kept owner’s queued and booting work to the successor, 
   await successor.tick();
   assert.deepEqual(await phases(), ['provisioning run', 'starting run', 'provisioning run']);
   assert.deepEqual(f.runtimes.launchKeys, [`${booting.id}:launch`]);
-  assert.equal(f.runtimes.createKeys.filter((key) => key === `${lost.id}:create`).length, 2);
+  assert.equal(
+    f.runtimes.createKeys.filter(
+      (key) => key === createKey(f.caller.projectId, `${lost.id}:create`),
+    ).length,
+    2,
+  );
   await successor.close();
 });
 
@@ -1365,13 +1443,18 @@ test('a create whose reply was lost before closing is recovered by the successor
   const closed = await f.fleet.inspect(f.caller, id);
   assert.deepEqual(
     [closed.intent, closed.runtime, closed.releaseBy, f.runtimes.createKeys],
-    ['stop', null, undefined, [`${id}:create`]],
+    ['stop', null, undefined, [createKey(f.caller.projectId, `${id}:create`)]],
   );
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
+    new FleetService(f.state, f.scope, f.runtimes, { profiles }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
+    ),
   );
   await successor.tick();
-  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create`]);
+  assert.deepEqual(f.runtimes.createKeys, [
+    createKey(f.caller.projectId, `${id}:create`),
+    createKey(f.caller.projectId, `${id}:create`),
+  ]);
   await successor.tick();
   assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
   await successor.close();
@@ -1421,7 +1504,9 @@ test('drain waits for owner completion and close leaves pending delete for a suc
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
   f.runtimes.confirmStopped('sbx_1');
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
+    new FleetService(f.state, f.scope, f.runtimes, { profiles }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
+    ),
   );
   successor.registerOwner('workflow', {
     valid: async () => true,
@@ -1443,9 +1528,6 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   });
   await f.fleet.request(f.caller, { requestId: 'steady', owner: { kind: 'steady', id: 'x' } });
   for (const _ of [1, 2, 3]) await f.fleet.tick();
-  let reads = 0;
-  const read = f.state.read.bind(f.state);
-  f.state.read = ((fn) => (reads++, read(fn))) as typeof f.state.read;
   const inspected = (id: string) => f.runtimes.inspected.filter((item) => item === id).length;
   f.setObservation('starting');
   f.fleet.start();
@@ -1462,10 +1544,14 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   // Work held by the caps waits for the interval too.
   await f.fleet.request(f.caller, input('held'));
   await sleep(450);
-  const before = reads;
+  let passes = 0;
+  const linked = f.runtimes.linked.bind(f.runtimes);
+  f.runtimes.linked = async (p) => {
+    if (p === f.caller.projectId) passes++;
+    return linked(p);
+  };
   await sleep(800);
-  // Each pass reads the allocations twice: once all are running, only the interval passes.
-  assert.ok(reads - before <= 2, 'Fleet slows down once nothing is starting or stopping');
+  assert.ok(passes <= 2, 'Fleet slows down once nothing is starting or stopping');
   assert.equal(f.runtimes.createKeys.length, 2);
 });
 
@@ -1503,7 +1589,7 @@ test('a request committed while a pass is in flight is acted on right after it, 
   const f = await fixture(t, { globalLimit: 2, projectLimit: 2, pollIntervalMs: 60_000 });
   f.fleet.start();
   await f.fleet.tick();
-  const hold = deferred<SandboxRuntimeHandle>();
+  const hold = deferred<FleetRuntimeHandle>();
   f.runtimes.holdCreate = hold;
   await f.fleet.request(f.caller, input('first'));
   // The pass this request kicked read the allocations and now waits on its create.
@@ -1648,7 +1734,10 @@ test('a machine not ready a minute after its create is stopped and rented again 
   await f.fleet.tick();
   f.advance(59_000);
   await f.fleet.tick();
-  assert.deepEqual([f.runtimes.createKeys, f.runtimes.stopped], [[`${id}:create`], []]);
+  assert.deepEqual(
+    [f.runtimes.createKeys, f.runtimes.stopped],
+    [[createKey(f.caller.projectId, `${id}:create`)], []],
+  );
   // Its agent never connected; the provider places the next machine afresh.
   f.runtimes.initialState = 'ready';
   f.advance(1000);
@@ -1664,7 +1753,10 @@ test('a machine not ready a minute after its create is stopped and rented again 
   f.advance(2000);
   for (const _ of [1, 2, 3]) await f.fleet.tick();
   const launched = await f.fleet.inspect(f.caller, id);
-  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create:2`]);
+  assert.deepEqual(f.runtimes.createKeys, [
+    createKey(f.caller.projectId, `${id}:create`),
+    createKey(f.caller.projectId, `${id}:create:2`),
+  ]);
   assert.deepEqual(
     [launched.phase, launched.runtime?.sandboxId, launched.failures, launched.error],
     ['running', 'sbx_2', 0, null],
@@ -1687,7 +1779,11 @@ test('an allocation whose machines never become ready fails after three, with ru
   f.advance(60_000);
   await f.fleet.tick();
   const failed = await f.fleet.inspect(f.caller, id);
-  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create:2`, `${id}:create:3`]);
+  assert.deepEqual(f.runtimes.createKeys, [
+    createKey(f.caller.projectId, `${id}:create`),
+    createKey(f.caller.projectId, `${id}:create:2`),
+    createKey(f.caller.projectId, `${id}:create:3`),
+  ]);
   assert.deepEqual(f.runtimes.stopped, ['sbx_1', 'sbx_2', 'sbx_3']);
   assert.deepEqual(
     [failed.intent, failed.phase, failed.error, failed.runtime?.sandboxId],
@@ -1713,7 +1809,7 @@ test('a machine that fails before anything was launched on it is replaced at onc
   const { id } = await f.fleet.request(f.caller, input('failed-early'));
   await f.fleet.tick();
   // The provider ended the container before its agent connected: Sandboxes fails the machine.
-  const live = f.runtimes.byKey.get(`${id}:create`)!;
+  const live = f.runtimes.byKey.get(createKey(f.caller.projectId, `${id}:create`))!;
   Object.assign(live, { state: 'failed', revision: live.revision + 1 });
   f.runtimes.initialState = 'ready';
   f.advance(1000);
