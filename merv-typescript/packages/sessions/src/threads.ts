@@ -613,6 +613,7 @@ export class SessionThreads {
                 id: question.id,
                 question: question.question,
                 askedAt: question.asked_at,
+                ...(question.response_json ? { response: JSON.parse(question.response_json) } : {}),
               },
             }),
             ...(message && {

@@ -537,6 +537,7 @@ test('retiring the versions that can no longer start deletes their records and n
   expected.session_managed_assignments = [];
   expected.session_messages = [];
   expected.session_questions = [];
+  expected.session_question_responses = [];
   expected.session_inquiries = [];
   expected.wf_leases = movedLeases(before);
   const after = await snapshot(client);

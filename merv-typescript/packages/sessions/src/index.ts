@@ -2015,6 +2015,7 @@ export class LeasedSessions implements Sessions {
       await this.alone('session-events', () => this.streams.prune());
       await this.alone('threads', () => this.readFirst((tx) => this.threads.expire(tx)));
       await this.alone('inquiries', () => this.readFirst((tx) => this.inquiries.expire(tx)));
+      await this.alone('question-responses', () => this.messaging.responders.sweep());
     }
   }
   /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved. */

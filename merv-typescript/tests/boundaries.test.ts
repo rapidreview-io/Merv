@@ -167,6 +167,8 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
+  // Pi may investigate Sessions' questions, but either service boots without the other.
+  pi: ['sessions'],
   // Native compute follows session closes and workflow transitions, reading instances through Workflows.
   sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
@@ -1172,6 +1174,7 @@ test('each service boots with only its declared dependency closure and without A
         }
         if (target === 'fleet') assert.equal(!!ctx.get('pi'), false, 'Fleet does not require Pi');
         if (target === 'pi') {
+          assert.equal(!!ctx.get('sessions'), false, 'Pi does not require Sessions');
           assert.ok(ctx.get('fleet'), 'Pi hard-depends on Fleet');
           assert.ok(ctx.get('tools'), 'Pi requires the native ToolRegistry');
         }

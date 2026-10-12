@@ -1,6 +1,8 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from '@merv/fleet/types';
+import type {} from '@merv/sessions/types';
+import { questionResponder } from './questions.js';
 import { check } from '@merv/contracts';
 import { piConfig, type PiConfig } from './schema.js';
 import { PiService } from './service.js';
@@ -26,6 +28,9 @@ export const piPlugin = {
     await pi.initialize();
     ctx.effect(() => () => pi.close());
     ctx.provide('pi', pi);
+    ctx.inject(['sessions'], (ctx) => {
+      ctx.effect(() => ctx.sessions.messaging.registerResponder(questionResponder(pi, ctx.scope)));
+    });
   },
 };
 export default piPlugin;

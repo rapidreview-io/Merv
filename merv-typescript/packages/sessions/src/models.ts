@@ -320,7 +320,7 @@ export interface ProjectThread extends ThreadView {
    *  still read. */
   attention?: true;
   /** The question its agent asked that is still open, for a reader of its work. */
-  question?: { id: string; question: string; askedAt: string };
+  question?: { id: string; question: string; askedAt: string; response?: QuestionResponse };
   /**
    * The newest message to it, and whether its agent has read it yet, for a reader of its work;
    * a question to its agent (an inquiry) with where that inquiry stands.
@@ -428,7 +428,14 @@ export interface ThreadInquiry {
   tokenBudget: number;
 }
 /** A question a worker asked its owner as it ended its visit; a message to its thread answers it. */
+export interface QuestionResponse {
+  state: 'investigating' | 'needs_you' | 'answered' | 'obsolete';
+  label: string;
+  reference?: { id: string; route: string };
+  reason?: string;
+}
 export interface ThreadQuestion {
+  response?: QuestionResponse;
   id: string;
   threadId: string;
   /** The visit that asked. */

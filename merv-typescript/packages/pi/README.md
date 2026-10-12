@@ -12,6 +12,7 @@ flowchart LR
   end
   subgraph foundations["Foundations"]
     pi["Pi<br/><small>conversations and turns</small>"]
+    sessions[Sessions]
     ui[UI]
     api["API<br/><small>HTTP and tool registry</small>"]
     fleet["Fleet<br/><small>hosted machines</small>"]
@@ -33,6 +34,7 @@ flowchart LR
   pi -- "relays model calls" --> model
   pi -- "issues worker tokens" --> identity
   pi -- "injects" --> blobs
+  pi -. "optional question responder" .-> sessions
   pi -- "injects" --> state
   state -- "reads/writes" --> postgres
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
@@ -43,7 +45,15 @@ Pi sits between the person and a machine it rents from Fleet. A sent message bec
 
 ## Surface
 
-- `@merv/pi`: provides `pi`; injects `state`, `scope`, `fleet`, `tools` and `blobs`, and registers as Fleet's `pi-host` owner.
+- `@merv/pi`: provides `pi`; injects `state`, `scope`, `fleet`, `tools` and `blobs`, and registers as Fleet's `pi-host` owner. When `sessions` is present, an optional injection registers Pi as its question responder.
 - `@merv/pi/tools`: `pi.create`, `pi.list`, `pi.snapshot`, `pi.prompt`, `pi.send`, `pi.voice`, `pi.screen`, `pi.warm`, `pi.stop`, `pi.run`, `pi.model.set`, `pi.machine.set` and `pi.machine.stop`; and `screen.look` and `screen.show`, which only the agent calls: to see the person's screen (or, with `at`, a record or page they are not on, which their page draws out of sight in a hidden frame of the app), and to put a record or a page on it (their page navigates as a link would, and its back returns them).
 - `@merv/pi/api`: `/pi`, the conversation event stream; `/pi-worker`, the worker's routes, which only its registered `piw_` credential reaches; and `/pi-model`, a public mount whose relay authenticates its `pir_` bearer itself.
 - `@merv/pi/ui`: the rail's Pi row at `/agent`, present wherever Pi is loaded.
+
+## Worker questions
+
+When Sessions is present, Pi investigates new worker questions in a separate conversation owned by the person who delegated the work (a service's voucher identifies that person). It uses the ordinary Pi tools and authority, including existing human-only proposal rules. No restricted investigator role is introduced. Pi creates and binds the conversation before sending its first turn; stable question-derived IDs make repeated delivery safe.
+
+Pi ends with `session.question.resolve`: `answered` includes a repair and its verification; `needs_you` includes an investigation that failed. On escalation the person continues the same conversation at `/agent?conversation=<id>`. Pi can answer the original question after that exchange. A direct human answer always remains available in the worker's thread.
+
+Sessions owns the durable question, its blocker, exact revision checks, accepted answer and dispatch resumption. Pi owns the investigation, its prompt and conversation. Sessions has no Pi dependency or knowledge of research concepts. Its existing upkeep checks only due investigations in bounded batches every full pass (normally 30 seconds), with a 15-minute investigation deadline; failure, an ended turn without a resolution, or responder unload restores human attention. Pi is optional: without it, new questions go directly to the person. A restart inspects an attached conversation; an interrupted launch that never sent its turn falls back to the person rather than leaving a hidden question.

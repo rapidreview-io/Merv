@@ -373,19 +373,26 @@ export function questionMarks(
   return blockers
     .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
     .map((blocker) =>
-      answers.has(blocker.instanceId)
+      blocker.code === 'agent_question_investigating'
         ? {
             key: runningKey('work', blocker.instanceId),
-            says: ['Asked you a question'],
-            who: 'You answer it with a message to its agent’s thread',
-            to: { route: questionRoute(blocker.key), text: 'Answer it' },
-          }
-        : {
-            key: runningKey('work', blocker.instanceId),
-            says: ['Its agent asked its owner a question'],
+            says: ['Investigating its agent’s question'],
             to: { route: questionRoute(blocker.key), text: 'Open its thread' },
             quiet: true as const,
-          },
+          }
+        : answers.has(blocker.instanceId)
+          ? {
+              key: runningKey('work', blocker.instanceId),
+              says: ['Asked you a question'],
+              who: 'You answer it with a message to its agent’s thread',
+              to: { route: questionRoute(blocker.key), text: 'Answer it' },
+            }
+          : {
+              key: runningKey('work', blocker.instanceId),
+              says: ['Its agent asked its owner a question'],
+              to: { route: questionRoute(blocker.key), text: 'Open its thread' },
+              quiet: true as const,
+            },
     );
 }
 

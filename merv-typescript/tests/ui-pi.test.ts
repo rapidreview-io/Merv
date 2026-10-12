@@ -2804,3 +2804,33 @@ test('the window closes itself when the machine is released for inactivity, and 
   await settle(20);
   assert.ok(!dock());
 });
+
+test('a worker-question link opens its investigation rather than the newest conversation', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const newest = conversation('newest');
+  const investigation = { ...conversation('investigation'), title: 'Worker question' };
+  let state = snapshot(newest);
+  boot(
+    () => state,
+    () => [newest, investigation],
+  );
+  serve('/tools/pi.snapshot', (_count, input) => {
+    state = snapshot(input.id === investigation.id ? investigation : newest);
+    return { body: { result: state } };
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/agent?conversation=investigation'] },
+      createElement(PiView, { row, shell: { rows: [], plugins: [] } }),
+    ),
+  );
+  await settle(15);
+  assert.match(text(), /Worker question/);
+  assert.equal(state.conversation.id, 'investigation');
+  assert.equal(
+    requests.some((request) => request.includes('/tools/pi.create')),
+    false,
+  );
+});

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { ProjectThread, ProjectThreads } from '@merv/sessions/models';
 import { accountRequest, refreshTools, useTool } from '../api';
 import { LoadState, cx, kindOf, words } from '../components';
@@ -120,6 +120,18 @@ export function AgentsGallery() {
         onOpen={() => setOpened(thread.id)}
       >
         {thread.question && <p className="agent-card-question wrap">{thread.question.question}</p>}
+        {thread.question?.response && (
+          <p className="muted">
+            {thread.question.response.state === 'investigating'
+              ? `${thread.question.response.label} is investigating. `
+              : 'Needs you. '}
+            {thread.question.response.reference && (
+              <Link to={thread.question.response.reference.route}>
+                Continue with {thread.question.response.label}
+              </Link>
+            )}
+          </p>
+        )}
         {thread.question && <ThreadCompose thread={thread} answering />}
         {reads && isLive(thread) && <Tail blocks={tails.byThread.get(thread.id)} />}
         {thread.message && !thread.question && <Said message={thread.message} />}

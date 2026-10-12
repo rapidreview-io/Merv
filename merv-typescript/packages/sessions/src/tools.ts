@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
 import type {
+  QuestionResolution,
   SessionBudgetInput,
   SessionMessageInput,
   Sessions,
@@ -160,9 +161,27 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'session.question.resolve',
+        description:
+          'Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.',
+        inputSchema: z
+          .object({
+            questionId: z.string().min(1).max(200),
+            expectedRevision: z.number().int().nonnegative(),
+            outcome: z.enum(['answered', 'needs_you']),
+            body: z.string().min(1).max(8000),
+            requestId: z.string().min(1).max(200),
+          })
+          .strict(),
+        handler: (caller: Caller, input: QuestionResolution) =>
+          sessions.messaging.resolve(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'session.ask_owner',
         description:
-          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.',
+          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.',
         conversation: 'never',
         inputSchema: z.object({ question: z.string().min(1).max(4000) }).strict(),
         handler: async (caller: Caller, input: { question: string }) => ({

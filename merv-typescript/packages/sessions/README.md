@@ -88,9 +88,11 @@ an operator message for a thread (`threadId`), which its live or next visit read
 the worker-only `session.messages` (its own queue) and `session.message.ack` retain receipt and
 an optional reply, and `session.thread_messages` (`GET /sessions/threads/:id/messages`) reads a thread's.
 A worker that needs its owner's decision ends its visit with `session.ask_owner`: uncounted,
-its work withheld from dispatch and shown in Needs you, and its work's card on the Running board and the Work map saying "Asked you a question", until a message to its thread answers. A question stands only while Workflows holds its blocker: once the work it asked about ends, its thread no longer waits on it, whichever work item continuity has carried the thread to. Pending messages are surfaced at the next Merv tool
+its work withheld from dispatch and, without an optional responder, shown in Needs you, and its work's card on the Running board and the Work map saying "Asked you a question", until a message to its thread answers. A question stands only while Workflows holds its blocker: once the work it asked about ends, its thread no longer waits on it, whichever work item continuity has carried the thread to. Pending messages are surfaced at the next Merv tool
 interaction and fence worker writes until acknowledged. See [session steering](../../docs/SESSION_LEASES.md#steering-an-assigned-agent)
 for delivery limits and the distinction between acknowledgment and incorporation.
+
+An optional `messaging.registerResponder` lets another plugin investigate before asking the owner. Sessions retains the question and a separate durable investigation slot. While investigating, the same question blocker withholds dispatch but names nobody's move; `needs_you` restores owner attention. `session.question.resolve` accepts only the bound conversation, exact question and revision, queues an attributed answer once, and refuses answers after a human answered or the work moved. The bound conversation cannot bypass that check with `session.message`. Human messages remain available throughout. Failure, timeout and unload return the question to the owner. Pi supplies this optional responder; Sessions imports no Pi code.
 
 Every close writes what the session cost to `session_usage`, and budgets only pause automatic dispatch; see [loop limits, usage and budgets](../../docs/BUDGETS_AND_LIMITS.md).
 

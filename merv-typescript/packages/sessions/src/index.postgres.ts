@@ -778,4 +778,16 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   20: `ALTER TABLE session_threads ADD COLUMN delivered_json TEXT;`,
   // (unpublished) Every inquiry row names its kind; prod count in `inquiryKinds`' comment.
   21: inquiryKinds,
+  // Optional investigations do not mutate the retained question or its write-once answer.
+  22: `CREATE TABLE session_question_responses (
+    question_id TEXT PRIMARY KEY REFERENCES session_questions(id),
+    responder TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('investigating','needs_you','answered','obsolete')),
+    deadline TEXT NOT NULL,
+    check_at TEXT NOT NULL,
+    receipt_json TEXT
+  );
+  CREATE INDEX session_question_responses_due ON session_question_responses(check_at)
+    WHERE state='investigating';`,
 };

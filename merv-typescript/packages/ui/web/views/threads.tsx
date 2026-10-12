@@ -287,8 +287,21 @@ function peopleOf(
       key: question.id,
       at: question.askedAt,
       who: 'Agent asked',
-      body: question.question,
-      note: question.open ? 'waiting on an answer' : undefined,
+      body: [
+        question.question,
+        question.response?.reason,
+        question.response?.reference &&
+          `[Continue with ${question.response.label}](${question.response.reference.route})`,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      note: question.open
+        ? question.response?.state === 'investigating'
+          ? `${question.response.label} is investigating`
+          : question.response
+            ? 'needs you'
+            : 'waiting on an answer'
+        : undefined,
       asked: { open: question.open },
     })),
     ...said.messages.map((message): PersonLine => ({

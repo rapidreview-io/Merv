@@ -256,6 +256,25 @@ export class PiService implements Pi {
     });
   }
 
+  /** Narrow upkeep read for a delegated question; no transcript, catalog, or host refresh. */
+  async questionStatus(caller: Caller, id: string): Promise<string | null> {
+    this.core.ready();
+    return await this.core.read(async (tx) => {
+      const conversation = await this.owned(caller, id, tx);
+      if (!conversation.activeCommandId)
+        return 'Pi finished without resolving the question. Continue its conversation or answer the worker directly.';
+      const row = await tx.get<{ data_json: string }>(
+        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
+        id,
+        conversation.activeCommandId,
+      );
+      const command = row && decode<PiCommandRecord>(row);
+      return !command || command.status === 'interrupted' || command.status === 'completed'
+        ? 'Pi could not finish the investigation. Continue its conversation or answer directly.'
+        : null;
+    });
+  }
+
   async snapshot(caller: Caller, id: string): Promise<PiSnapshot> {
     this.core.ready();
     await this.authorizeStream(caller, id);

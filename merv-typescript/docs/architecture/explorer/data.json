@@ -192,7 +192,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-09",
+  "snapshot": "2026-10-12",
   "groups": [
     {
       "id": "front",
@@ -1597,7 +1597,9 @@
         "tools",
         "blobs"
       ],
-      "optional": [],
+      "optional": [
+        "sessions"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
@@ -2532,7 +2534,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
           "readOnly": false
         },
         {
@@ -2574,6 +2576,11 @@
           "name": "session.observe",
           "description": "Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.",
           "readOnly": true
+        },
+        {
+          "name": "session.question.resolve",
+          "description": "Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.",
+          "readOnly": false
         },
         {
           "name": "session.release_hold",
@@ -2651,7 +2658,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
           "readOnly": false
         },
         {
@@ -2693,6 +2700,11 @@
           "name": "session.observe",
           "description": "Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.",
           "readOnly": true
+        },
+        {
+          "name": "session.question.resolve",
+          "description": "Bound question responder only: answer the exact worker question, or escalate it as needs_you with what you investigated and the decision still needed. Repaired work counts as answered. Investigation failure counts as needs_you. Answering queues your explanation and releases the question blocker; escalation leaves the worker blocked. Reuse requestId after an uncertain response. A question already answered by a person, or whose revision moved, cannot be resolved.",
+          "readOnly": false
         },
         {
           "name": "session.release_hold",
@@ -3672,6 +3684,11 @@
       "optional": false
     },
     {
+      "from": "pi",
+      "to": "sessions",
+      "optional": true
+    },
+    {
       "from": "merv-pi-api",
       "to": "pi",
       "optional": false
@@ -4176,7 +4193,7 @@
     "plugins": 74,
     "providers": 32,
     "adapters": 42,
-    "dependencies": 203
+    "dependencies": 204
   },
   "network": [
     {

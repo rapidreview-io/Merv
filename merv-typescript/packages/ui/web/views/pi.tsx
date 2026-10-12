@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { currentToken, projectSelection, useScopeVersion } from '../api';
 import { Ago, relativeTime } from '../components';
 import { ChevronsIcon } from '../icons';
@@ -343,6 +344,15 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
 
 function PiConversationPage() {
   const { pi, start } = useAgent()!;
+  const [params] = useSearchParams();
+  const requested = params.get('conversation');
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (requested && pi?.listed && opened.current !== requested) {
+      opened.current = requested;
+      pi.switchTo(requested);
+    }
+  }, [requested, pi]);
   // Opening the page begins the conversation, or finds it as it was left.
   useEffect(start, [start]);
   // The conversations as the menu opened: an answer streaming meanwhile moves none of them.

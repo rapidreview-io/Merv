@@ -559,7 +559,32 @@ export interface ManagedRunners {
     tx?: Transaction,
   ): Promise<ManagedRunnerInspection | null>;
 }
+/** Optional first responder. Sessions owns delivery; the responder owns its investigation. */
+export interface QuestionResponder {
+  name: string;
+  label: string;
+  start(input: {
+    question: ThreadQuestion;
+    source: DelegationSource;
+    /** Bind before starting work; false means the question no longer needs investigation. */
+    attach(reference: { id: string; route: string }): Promise<boolean>;
+  }): Promise<void>;
+  /** Only the outstanding investigation is inspected, never a full conversation list. */
+  inspect(
+    source: DelegationSource,
+    reference: { id: string; route: string },
+  ): Promise<string | null>;
+}
+export interface QuestionResolution {
+  questionId: string;
+  expectedRevision: number;
+  outcome: 'answered' | 'needs_you';
+  body: string;
+  requestId: string;
+}
 export interface SessionMessaging {
+  registerResponder(responder: QuestionResponder): () => Promise<void>;
+  resolve(caller: Caller, input: QuestionResolution): Promise<ThreadQuestion>;
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
   messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
   /** A thread's messages and questions: anyone who may read its work, never a leased worker. */

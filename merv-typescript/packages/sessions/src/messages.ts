@@ -11,8 +11,12 @@ import {
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
+import { QuestionResponders } from './question-responder.js';
+import type { QuestionResponse } from './models.js';
 import { messageInquiry } from './inquiries.js';
 import type {
+  QuestionResponder,
+  QuestionResolution,
   InquirySession,
   InquiryStatus,
   Session,
@@ -40,6 +44,7 @@ interface MessageRow {
 }
 /** A question a worker asked its owner, as `session_questions` holds it. */
 export interface QuestionRow {
+  response_json?: string | null;
   id: string;
   project_id: string;
   thread_id: string;
@@ -97,6 +102,7 @@ export const takesMessage = (
   standing.questions.some((question) => question.thread_id === thread.id) ||
   (thread.status !== 'retired' && !standing.ended.has(thread.instance_id));
 const question = (row: QuestionRow, open: boolean): ThreadQuestion => ({
+  ...(row.response_json ? { response: JSON.parse(row.response_json) as QuestionResponse } : {}),
   id: row.id,
   threadId: row.thread_id,
   sessionId: row.session_id,
@@ -159,12 +165,131 @@ export interface MessageHost {
  * answers it.
  */
 export class SessionMessages {
+  readonly responders: QuestionResponders;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly clock: () => number,
     private readonly host: MessageHost,
-  ) {}
+  ) {
+    this.responders = new QuestionResponders(
+      host,
+      clock,
+      async (tx, row) =>
+        (await this.standing(tx, row.project_id, { instance: row.instance_id })).questions.some(
+          (q) => q.id === row.id,
+        ),
+      (project, instance, tx) => this.report(project, instance, tx),
+      question,
+    );
+  }
+  registerResponder(responder: QuestionResponder): () => Promise<void> {
+    return this.responders.register(responder);
+  }
+  /** Only the bound investigation can resolve this exact question. Human messages remain available. */
+  async resolve(caller: Caller, input: QuestionResolution): Promise<ThreadQuestion> {
+    check(
+      caller.conversation && !caller.session && !caller.managed,
+      'conversation_required',
+      'Only the bound responder conversation resolves a question',
+      403,
+    );
+    check(
+      text(input.questionId, 200) &&
+        Number.isSafeInteger(input.expectedRevision) &&
+        input.expectedRevision >= 0 &&
+        ['answered', 'needs_you'].includes(input.outcome) &&
+        text(input.body, 8000) &&
+        text(input.requestId, 200),
+      'invalid_question_resolution',
+      'An exact question, revision, outcome, explanation and stable requestId are required',
+    );
+    caller = structuredClone(caller);
+    input = structuredClone(input);
+    return await this.host.transaction(async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      const row = await tx.get<QuestionRow>(
+        'SELECT * FROM session_questions WHERE id=? AND project_id=?',
+        input.questionId,
+        caller.projectId,
+      );
+      check(row, 'question_not_found', 'Question not found', 404);
+      const response = await this.responders.read(tx, row.id);
+      check(
+        response && JSON.parse(response.data_json).reference?.id === caller.conversation!.id,
+        'question_responder_forbidden',
+        'This conversation is not the question’s responder',
+        403,
+      );
+      const fingerprint = digest(input);
+      const receipt = response.receipt_json && JSON.parse(response.receipt_json);
+      if (receipt?.requestId === input.requestId) {
+        check(
+          receipt.fingerprint === fingerprint,
+          'request_conflict',
+          'Resolution requestId was reused',
+          409,
+        );
+        return question(
+          { ...row, response_json: response.data_json },
+          !row.answered_at &&
+            (
+              await this.standing(tx, caller.projectId, { instance: row.instance_id })
+            ).questions.some((q) => q.id === row.id),
+        );
+      }
+      check(
+        Number(row.revision) === input.expectedRevision &&
+          (await this.standing(tx, caller.projectId, { instance: row.instance_id })).questions.some(
+            (q) => q.id === row.id,
+          ),
+        'question_obsolete',
+        'This question has already been answered or its work has moved on',
+        409,
+      );
+      await this.host.readable(caller, row.instance_id, tx);
+      if (input.outcome === 'answered') {
+        await this.toThread(
+          caller,
+          row.thread_id,
+          {
+            threadId: row.thread_id,
+            requestId: `question:${row.id}`,
+            body: `${JSON.parse(response.data_json).label} acting on your behalf:\n\n${input.body}`,
+          },
+          fingerprint,
+          tx,
+          row.id,
+        );
+      }
+      if (input.outcome === 'needs_you')
+        await this.responders.finish(tx, row, 'needs_you', input.body);
+      await tx.run(
+        'UPDATE session_question_responses SET receipt_json=? WHERE question_id=?',
+        JSON.stringify({ requestId: input.requestId, fingerprint }),
+        row.id,
+      );
+      await this.state.appendEvent(tx, {
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        type: 'session.question_resolved',
+        subjectId: row.thread_id,
+        data: {
+          questionId: row.id,
+          revision: input.expectedRevision,
+          outcome: input.outcome,
+          conversationId: caller.conversation!.id,
+        },
+      });
+      return question(
+        {
+          ...(await tx.get<QuestionRow>('SELECT * FROM session_questions WHERE id=?', row.id))!,
+          response_json: (await this.responders.read(tx, row.id))!.data_json,
+        },
+        input.outcome !== 'answered',
+      );
+    });
+  }
   private async messageRow(tx: Transaction, id: string): Promise<MessageRow> {
     const row = await tx.get<MessageRow>('SELECT * FROM session_messages WHERE id=?', id);
     check(row, 'session_message_not_found', 'Session message not found', 404);
@@ -329,9 +454,9 @@ export class SessionMessages {
   ): Promise<Standing> {
     if (read.threads && !read.threads.length) return { questions: [], ended: new Set() };
     const open = await tx.all<QuestionRow>(
-      `SELECT * FROM session_questions WHERE project_id=? AND answered_at IS NULL
+      `SELECT q.*,r.data_json AS response_json FROM session_questions q LEFT JOIN session_question_responses r ON r.question_id=q.id WHERE project_id=? AND answered_at IS NULL
         ${read.threads ? `AND thread_id IN (${read.threads.map(() => '?').join(',')})` : ''}
-        ${read.instance === undefined ? '' : 'AND instance_id=?'} ORDER BY _merv_rowid`,
+        ${read.instance === undefined ? '' : 'AND instance_id=?'} ORDER BY q._merv_rowid`,
       projectId,
       ...(read.threads ?? []),
       ...(read.instance === undefined ? [] : [read.instance]),
@@ -360,6 +485,7 @@ export class SessionMessages {
     input: SessionMessageInput,
     fingerprint: string,
     tx: Transaction,
+    questionId?: string,
   ): Promise<SessionMessage> {
     const thread = await this.threadRow(tx, caller, threadId);
     await this.host.readable(caller, thread.instance_id, tx);
@@ -367,7 +493,22 @@ export class SessionMessages {
       threads: [thread.id],
       instances: [thread.instance_id],
     });
-    const open = standing.questions;
+    if (caller.conversation && !questionId) {
+      const bound = await tx.get(
+        `SELECT 1 FROM session_question_responses r JOIN session_questions q ON q.id=r.question_id WHERE q.thread_id=? AND r.data_json::jsonb#>>'{reference,id}'=?`,
+        thread.id,
+        caller.conversation.id,
+      );
+      check(
+        !bound,
+        'question_resolution_required',
+        'Use session.question.resolve with the exact question and revision',
+        409,
+      );
+    }
+    const open = questionId
+      ? standing.questions.filter((row) => row.id === questionId)
+      : standing.questions;
     check(
       takesMessage(thread, standing),
       'thread_retired',
@@ -397,6 +538,19 @@ export class SessionMessages {
         id,
         ...open.map((row) => row.id),
       );
+      for (const row of open) {
+        if (row.response_json)
+          await tx.run(
+            'UPDATE session_question_responses SET state=?,data_json=? WHERE question_id=?',
+            'answered',
+            JSON.stringify({
+              ...JSON.parse(row.response_json),
+              state: 'answered',
+              reason: undefined,
+            }),
+            row.id,
+          );
+      }
       for (const instanceId of new Set(open.map((row) => row.instance_id)))
         await this.report(caller.projectId, instanceId, tx);
       await this.state.appendEvent(tx, {
@@ -434,20 +588,30 @@ export class SessionMessages {
       {
         projectId,
         instanceId,
-        blockers: [...newest.values()].map((row) => ({
-          key: row.thread_id,
-          code: 'agent_question',
-          status: 409,
-          message: `Its agent asked its owner: ${clip(row.question, 3_900)}`,
-          next: 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
-          cause: 'agent_question',
-          // Its owner's move, as Workflows tells that owner and a project admin; the question
-          // reaches Needs you through this blocker alone.
-          whose: 'owner' as const,
-          // About the revision it asked at: work moved on by any hand no longer waits on it.
-          revision: Number(row.revision),
-          related: [{ kind: 'thread', id: row.thread_id, label: 'Its agent’s thread' }],
-        })),
+        blockers: [...newest.values()].map((row) => {
+          const response: QuestionResponse | undefined = row.response_json
+            ? JSON.parse(row.response_json)
+            : undefined;
+          const investigating = response?.state === 'investigating';
+          return {
+            key: row.thread_id,
+            code: investigating ? 'agent_question_investigating' : 'agent_question',
+            status: 409,
+            message: `${investigating ? `${response.label} is investigating` : 'Its agent asked its owner'}: ${clip(row.question, 3_900)}`,
+            next: investigating
+              ? 'The responder is investigating; you can still answer directly in the thread'
+              : response?.reference
+                ? 'Answer its agent’s question with a message to its thread, or continue the responder conversation linked there'
+                : 'Answer its agent’s question with a message to its thread; dispatch then offers the work again',
+            cause: 'agent_question',
+            // Its owner's move, as Workflows tells that owner and a project admin; the question
+            // reaches Needs you through this blocker alone.
+            whose: investigating ? ('nobody' as const) : ('owner' as const),
+            // About the revision it asked at: work moved on by any hand no longer waits on it.
+            revision: Number(row.revision),
+            related: [{ kind: 'thread', id: row.thread_id, label: 'Its agent’s thread' }],
+          };
+        }),
       },
       tx,
     );
@@ -495,6 +659,7 @@ export class SessionMessages {
         asked,
         isoNow(this.clock),
       );
+      await this.responders.reserve(tx, id);
       await this.report(session.projectId, session.instanceId, tx);
       await this.state.appendEvent(tx, {
         projectId: session.projectId,
@@ -558,7 +723,7 @@ export class SessionMessages {
         thread.id,
       );
       const questions = await tx.all<QuestionRow>(
-        'SELECT * FROM session_questions WHERE thread_id=? ORDER BY _merv_rowid',
+        'SELECT q.*,r.data_json AS response_json FROM session_questions q LEFT JOIN session_question_responses r ON r.question_id=q.id WHERE thread_id=? ORDER BY q._merv_rowid',
         thread.id,
       );
       const standing = new Set(
