@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1004,6 +1005,56 @@ print(json.dumps(res))`,
   assert.match(out.split, /stays open: the Cloudflare apps run different images$/);
 });
 
+const canaryProfile = {
+  key: 'standard',
+  provider: 'cloudflare-fleet',
+  offerId: 'standard-1:cloudflare',
+  releaseId: OLD,
+  leaseSeconds: 900,
+};
+const profileId = (p) =>
+  `srp_${createHash('sha256')
+    .update(
+      JSON.stringify([p.provider, p.offerId, p.releaseId, p.leaseSeconds, p.ttlSeconds ?? 300]),
+    )
+    .digest('hex')}`;
+
+test("the canary resolves Fleet's release-bound profile IDs from Main's rendered config", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merv-canary-profiles-'));
+  try {
+    const config = join(dir, 'config.json');
+    const profiles = [
+      canaryProfile,
+      {
+        ...canaryProfile,
+        key: 'large',
+        provider: 'cloudflare-fleet-large',
+        releaseId: OLD_L,
+        ttlSeconds: 600,
+      },
+    ];
+    writeFileSync(config, JSON.stringify({ plugins: [{ id: 'fleet', config: { profiles } }] }));
+    const source = py('print(json.dumps(vm.FLEET_PROFILES))').replace(
+      "'/tmp/merv-config.json'",
+      JSON.stringify(config),
+    );
+    const result = execFileSync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', source],
+      {
+        cwd: new URL('..', import.meta.url),
+        encoding: 'utf8',
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(result),
+      Object.fromEntries(profiles.map((p) => [profileId(p), p.releaseId])),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the canary releases a Pi v2 machine as its person would, then checks it served the release', () => {
   const out = py(
     `${scratch}${twoApps}vm.credential=lambda path:{'projectId':'p'};vm.whoami=lambda c:None
@@ -1011,25 +1062,43 @@ vm.secrets.token_hex=lambda n:'beef'
 clock=[0];vm.time.monotonic=lambda:clock[0]
 vm.time.sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds)
 for app in apps.values(): app['health']={'errors':[],'instances':{'failed':0}}
-def canary(v2=True,releases=True,deleted=True,release_after=0):
+profile='${profileId(canaryProfile)}'
+other_profile='${profileId({ ...canaryProfile, releaseId: NEW })}'
+def run(command):
+    assert command==['docker','exec','-w','/app',vm.MAIN,'node','--import','tsx','--input-type=module','-e',vm.FLEET_PROFILES]
+    return json.dumps({profile:'${OLD}',other_profile:'${NEW}'})
+vm.run=run
+def canary(v2=True,releases=True,stopped=True,release_after=0,recorded_profile=profile,runtime_id='fa_1'):
     clock[0]=0
-    calls,phase=[],['active']
+    calls=[]
+    allocation={'id':'fa_1','phase':'running','profileId':recorded_profile,
+                'runtime':{'ready':True,'state':'ready','revision':7,'sandboxId':'sbx_1',
+                           'leaseExpiresAt':'2026-10-12T12:00:00.000Z',
+                           'launch':{'jobId':'job_1','state':'consumed','launchId':'rln_1','deliveryState':'launched'}}}
     def tool(c,name,body,tries=12):
         calls.append(name)
         if name=='pi.machine.stop' and not v2: raise RuntimeError('pi.machine.stop_http_404_None')
-        if name==('pi.machine.stop' if v2 else 'pi.stop') and releases: phase[0]='released'
-        command={'id':'cmd1','status':'completed','runtimeId':'fa_1','messages':[{'role':'assistant','text':'canary-beef'}]}
+        if name==('pi.machine.stop' if v2 else 'pi.stop'):
+            if releases: allocation['phase']='released'
+            if stopped: allocation['runtime'].update(ready=False,state='stopped')
+        command={'id':'cmd1','status':'completed','runtimeId':runtime_id,'messages':[{'role':'assistant','text':'canary-beef'}]}
         return {'pi.create':{'id':'conv1'},'pi.send':{'id':'cmd1'},'pi.snapshot':{'commands':[command]}}.get(name,{})
     def main_read(query,*p):
-        if 'launch' in query: return {'n':int(p==('fa_1','${OLD}'))}
-        assert \"phase = 'released'\" in query and \"->'runtime'->>'deleted' = 'true'\" in query
-        return {'n':int(p==('fa_1',) and phase[0]=='released' and deleted and clock[0]>=release_after)}
+        if 'profileId' in query:
+            assert \"WHERE id = $1 AND data_json::jsonb->>'profileId' = ANY($2::text[])\" in query
+            assert p[1]==[profile]
+            return {'n':int(p[0]==allocation['id'] and allocation.get('profileId') in p[1])}
+        assert \"WHERE id = $1 AND phase = 'released' AND data_json::jsonb->'runtime'->>'state' = 'stopped'\" in query
+        return {'n':int(p==(allocation['id'],) and allocation['phase']=='released' and
+                        allocation['runtime']['state']=='stopped' and clock[0]>=release_after)}
     vm.tool,vm.main_read=tool,main_read
     vm.unhold=lambda:calls.append('unhold')
     try: return [step.canary({'releaseId':'${OLD}'}),calls]
     except RuntimeError as e: return [str(e),calls]
 res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
-     'phaseOnly':canary(deleted=False),'late':canary(release_after=327),'deadline':canary(release_after=601)}
+     'phaseOnly':canary(stopped=False),'late':canary(release_after=327),'deadline':canary(release_after=601),
+     'wrongRelease':canary(recorded_profile=other_profile),'missingProfile':canary(recorded_profile=None),
+     'unknownProfile':canary(recorded_profile='srp_unknown'),'missingAllocation':canary(runtime_id=None)}
 apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
 print(json.dumps(res))`,
   );
@@ -1051,6 +1120,10 @@ print(json.dumps(res))`,
   // A failed canary keeps the hold for the rollback, which redeploys every app.
   assert.ok(!out.held[1].includes('unhold'));
   assert.match(out.phaseOnly[0], /^canary_failed .*"released": false/);
+  for (const key of ['wrongRelease', 'missingProfile', 'unknownProfile', 'missingAllocation']) {
+    assert.match(out[key][0], /^canary_failed .*"servedByRelease": false/);
+    assert.ok(!out[key][1].includes('unhold'));
+  }
   assert.equal(out.late[0].released, true);
   assert.equal(out.late[0].seconds, 327);
   assert.match(out.deadline[0], /^canary_failed .*"released": false/);

@@ -75,6 +75,13 @@ const c=new pg.Client({connectionString:process.env[process.env.MERV_URL??'MERV_
 try{await c.query(w?'BEGIN':'BEGIN READ ONLY');const s=(process.env.MERV_TS_DB_SCHEMA??'merv_ts').replace(/[^a-z0-9_]/g,'');
 const r=await c.query(process.env.MERV_Q.replaceAll('{s}',s),JSON.parse(process.env.MERV_P));
 console.log(JSON.stringify(r.rows[0]));await c.query(w?'COMMIT':'ROLLBACK')}finally{await c.end()}'''
+# Use Main's rendered profiles (including deployment defaults) and Fleet's own identity function.
+# Allocations persist this release-bound profileId, not a releaseId in their runtime launch.
+FLEET_PROFILES = r'''import { readFileSync } from 'node:fs';
+import { runtimeProfiles, runtimeProfileId } from '@merv/fleet/runtime';
+const config=JSON.parse(readFileSync('/tmp/merv-config.json','utf8'));
+const profiles=runtimeProfiles.parse(config.plugins.find(p=>p.id==='fleet').config.profiles);
+console.log(JSON.stringify(Object.fromEntries(profiles.map(p=>[runtimeProfileId(p),p.releaseId]))));'''
 # Ends each idle Pi host's idle clock: Main releases its machine at its next pass, as at the idle
 # timeout, instead of a rollout killing it. A host that took a turn meanwhile keeps it.
 IDLE = ("e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
@@ -798,14 +805,17 @@ class Step:
                 with contextlib.suppress(RuntimeError):
                     tool(cred, name, body, tries=3)
         allocation = command.get('runtimeId')  # the machine that served the turn
+        profiles = json.loads(run(['docker', 'exec', '-w', '/app', MAIN, 'node', '--import', 'tsx',
+                                   '--input-type=module', '-e', FLEET_PROFILES]))
         served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
-                           "data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", allocation, target)['n']
+                           "data_json::jsonb->>'profileId' = ANY($2::text[])", allocation,
+                           [profile for profile, release in profiles.items() if release == target])['n']
         # Native deletion and Fleet retries can each back off for a minute. Wait for
         # observed stop, not just Fleet's lease-expiry fallback freeing its slot.
         released, release_deadline = False, time.monotonic() + 600
         while time.monotonic() < release_deadline:
             released = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
-                                 "phase = 'released' AND data_json::jsonb->'runtime'->>'deleted' = 'true'",
+                                 "phase = 'released' AND data_json::jsonb->'runtime'->>'state' = 'stopped'",
                                  allocation)['n'] == 1
             if released:
                 break
