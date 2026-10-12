@@ -17,6 +17,7 @@ import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
+import { SandboxesView } from './sandboxes';
 import { TasksView } from './tasks';
 import { WorkView } from './work';
 
@@ -41,6 +42,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   boards: BoardsView,
   feed: FeedView,
   settings: SettingsView,
+  sandboxes: SandboxesView,
   sessions: SessionsView,
   code: CodeView,
   experiments: ExperimentsView,

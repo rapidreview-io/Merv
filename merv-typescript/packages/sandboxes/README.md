@@ -267,3 +267,6 @@ published `sandboxes-compute` and `sandboxes-work-machines` migrations registere
 Sandboxes, and nothing reads or writes them. Capture collections that path registered remain
 artifacts; with `legacyCaptures` configured (`MERV_SANDBOXES_ML_STORAGE_ORIGIN`), the read-only
 `sandboxes` file provider in `legacy-captures.ts` keeps their member files downloadable.
+
+Load `@merv/sandboxes/console` with `{ "upstream": "http://sbx-control:8000" }`.
+The standalone needs `SANDBOXES_AUTH_MERV_ORIGIN`; see the host README’s "Embedded console".

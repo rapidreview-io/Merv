@@ -7619,3 +7619,25 @@ html.modal-open {
   left: 0;
   right: auto;
 }
+
+.sandboxes-nav-children {
+  display: none;
+  padding-left: 18px;
+}
+.sandboxes-nav:is(:hover, :focus-within, .open) .sandboxes-nav-children {
+  display: block;
+}
+.sandboxes-console {
+  flex: 1;
+  min-width: 0;
+}
+.sandboxes-console iframe {
+  display: block;
+  width: 100%;
+  min-height: calc(100dvh - 80px);
+  border: 0;
+}
+.sandboxes-reload {
+  display: block;
+  margin-left: auto;
+}

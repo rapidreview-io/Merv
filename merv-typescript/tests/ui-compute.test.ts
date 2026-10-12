@@ -1,124 +1,169 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, requests, serve, text, unmount } from './ui-render.js';
+import { click, mount, requests, serve, text, unmount, settle } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
-const { createElement, StrictMode } = await import('react');
+const { createElement } = await import('react');
+const { act } = await import('react-dom/test-utils');
+const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
 const { Integrations } = await import('../packages/ui/web/views/settings.js');
-const { SandboxesConnection } = await import('../packages/ui/web/views/sandboxes.js');
-const props = { shell: { rows: [], plugins: [] } } as never;
+const { SandboxesView } = await import('../packages/ui/web/views/sandboxes.js');
+const { SandboxesNav } = await import('../packages/ui/web/shell.js');
+const { setProject } = await import('../packages/ui/web/api.js');
+const row = {
+  id: 'sandboxes',
+  label: 'Sandboxes',
+  group: 'operations',
+  order: 40,
+  path: '/sandboxes',
+  rooms: true,
+  view: { kind: 'sandboxes' },
+  status: {},
+  readable: false,
+};
+const props = { row, shell: { rows: [row], plugins: [] } } as never;
+function Route() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  return createElement(
+    'div',
+    null,
+    createElement('output', null, location.pathname + location.search),
+    createElement('button', { onClick: () => navigate(-1) }, 'Back'),
+    createElement('button', { onClick: () => navigate(1) }, 'Forward'),
+  );
+}
+const frame = () => document.querySelector('iframe')!;
+const children = () => document.querySelector<HTMLElement>('.sandboxes-nav-children')!;
+const minted: string[] = [];
+function sessions() {
+  minted.length = 0;
+  serve('/sandboxes/console-session', (n, input) => {
+    minted.push(String(input.path));
+    return {
+      body: {
+        url: `/sbx/ui/#code=code_${n}`,
+      },
+    };
+  });
+}
+async function open(path = '/sandboxes') {
+  sessions();
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: [path] },
+      createElement(SandboxesNav, { row }),
+      createElement(SandboxesView, props),
+      createElement(Route),
+    ),
+  );
+}
+async function link(path: string) {
+  await act(async () => document.querySelector<HTMLAnchorElement>(`a[href="${path}"]`)!.click());
+  await settle(0);
+}
+async function message(
+  data: object,
+  origin = window.location.origin,
+  source = frame().contentWindow,
+) {
+  await act(async () =>
+    window.dispatchEvent(new window.MessageEvent('message', { data, origin, source })),
+  );
+}
 
-test('Integrations stays empty without Code or native compute', async (t) => {
+test('Integrations has no old compute connection flow', async (t) => {
   t.after(unmount);
   await mount(createElement(Integrations, props));
   assert.match(text(), /No integrations/);
+  assert.equal(requests.length, 0);
 });
 
-const unavailable = { available: false, connected: false, url: null };
-const disconnected = { available: true, connected: false, url: 'https://compute.example/ui' };
-const connected = {
-  ...disconnected,
-  connected: true,
-  accountId: 'account-a',
-  memberId: 'member-a',
-  connectionId: 'connection-a',
-};
-
-test('compute card hides unavailable deployments without broken controls', async (t) => {
-  t.after(unmount);
-  serve('/sandboxes/connection', { body: unavailable });
-  await mount(createElement(SandboxesConnection));
-  assert.equal(text(), '');
-});
-
-test('compute uses the same account without a second enrollment flow', async (t) => {
-  t.after(unmount);
-  serve('/sandboxes/connection', { body: disconnected });
-  await mount(createElement(SandboxesConnection));
-  assert.match(text(), /same compute and spending/);
-  assert.match(text(), /Enable compute/);
-  assert.doesNotMatch(text(), /token|namespace|sign up|link account/i);
-});
-
-test('connected project opens native compute and disconnect updates permission', async (t) => {
-  t.after(unmount);
-  serve('/sandboxes/connection', (call) => ({ body: call === 1 ? connected : disconnected }));
-  await mount(createElement(SandboxesConnection));
-  assert.match(text(), /bills the account you approved/);
-  assert.match(text(), /Existing rentals and admitted jobs continue/);
-  assert.equal(document.querySelector('a')?.getAttribute('href'), connected.url);
-  await click('Disconnect');
-  assert.ok(requests.includes('DELETE /sandboxes/connection'));
-  assert.match(text(), /Enable compute/);
-});
-
-test('consent return finishes once and removes its marker only after success', async (t) => {
-  t.after(async () => {
-    await unmount();
-    window.history.replaceState(null, '', '/');
+for (const [route, console] of [
+  ['', '/ui/'],
+  ['/machines', '/ui/machines'],
+  ['/jobs', '/ui/jobs'],
+  ['/spend', '/ui/spend'],
+]) {
+  test(`Sandboxes deep link ${route || 'home'} opens the embedded console`, async (t) => {
+    t.after(unmount);
+    await open(`/sandboxes${route}`);
+    assert.deepEqual(minted, [console]);
+    assert.equal(frame().getAttribute('src'), `/sbx${console}#code=code_1`);
+    assert.equal(requests.filter((r) => r.includes('ui.read')).length, 0);
+    assert.deepEqual(
+      [...children().querySelectorAll('a')].map((a) => a.textContent),
+      ['Machines', 'Jobs', 'Spend'],
+    );
   });
-  window.history.replaceState(null, '', '/settings/integrations?sandboxes=complete');
-  serve('/sandboxes/connection/finish', { body: connected });
-  await mount(createElement(StrictMode, null, createElement(SandboxesConnection)));
-  assert.equal(requests.filter((r) => r === 'POST /sandboxes/connection/finish').length, 1);
-  assert.equal(window.location.search, '');
-  assert.match(text(), /View compute/);
-});
+}
 
-test('failed consent completion preserves the callback for an exact retry', async (t) => {
-  t.after(async () => {
-    await unmount();
-    window.history.replaceState(null, '', '/');
-  });
-  window.history.replaceState(null, '', '/settings/integrations?sandboxes=complete');
-  serve('/sandboxes/connection/finish', { network: true });
-  await mount(createElement(SandboxesConnection));
-  assert.match(text(), /did not answer/);
-  assert.equal(window.location.search, '?sandboxes=complete');
-  assert.doesNotMatch(text(), /View compute/);
-});
-
-test('Integrations shows native Personal compute billing the approved account', async (t) => {
+test('children remain while active and parent opens home', async (t) => {
   t.after(unmount);
-  serve('/sandboxes/connection', { body: connected });
-  await mount(createElement(Integrations, props));
-  assert.match(text(), /bills the account you approved/);
+  await open();
+  assert.ok(document.querySelector('.sandboxes-nav.open'));
+  assert.equal(children().querySelectorAll('a').length, 3);
+  await link('/sandboxes/machines');
+  assert.ok(document.querySelector('.sandboxes-nav.open'));
+  assert.ok(children().querySelector('a[href="/sandboxes/machines"].active'));
+  assert.equal(frame().getAttribute('src'), '/sbx/ui/machines#code=code_2');
+  assert.equal(minted.length, 2);
+  await link('/sandboxes');
+  assert.ok(document.querySelector('.sandboxes-nav.open'));
+  assert.equal(frame().getAttribute('src'), '/sbx/ui/#code=code_3');
+  assert.equal(document.querySelector('output')!.textContent, '/sandboxes');
+  assert.equal(minted.length, 3);
 });
 
-test('managed compute displays the enforced account usage and enables without Personal consent', async (t) => {
+test('only the console window and origin can navigate; paths and heights are validated', async (t) => {
   t.after(unmount);
-  serve('/sandboxes/connection', { body: { ...disconnected, managedAvailable: true } });
-  serve('/sandboxes/connection/managed', {
-    body: {
-      ...connected,
-      funding: 'managed',
-      managedAvailable: true,
-      allowance: {
-        budgets: [
-          {
-            scope: 'member',
-            target: 'member-a',
-            window: 'month',
-            metric: 'money',
-            currency: 'USD',
-            cap: '500',
-            accrued: '12.4',
-            reserved: '8',
-            available: '479.6',
-            provider: null,
-            source: null,
-            accounting_complete: true,
-          },
-        ],
-      },
-    },
-  });
-  await mount(createElement(SandboxesConnection));
-  await click('Enable Merv-managed ML');
-  assert.ok(requests.includes('POST /sandboxes/connection/managed'));
-  assert.match(text(), /\$12\.40 used/);
-  assert.match(text(), /\$8\.00 reserved/);
-  assert.match(text(), /\$500 per account this month/);
-  assert.match(text(), /shared across that account’s projects/);
-  assert.doesNotMatch(text(), /bills the account you approved/);
+  await open('/sandboxes/jobs');
+  for (const [path, origin, source] of [
+    ['/sbx/ui/machines', 'https://elsewhere.example', frame().contentWindow],
+    ['/sbx/ui/machines', window.location.origin, window],
+    ['//elsewhere.example', window.location.origin, frame().contentWindow],
+    ['/sbx/ui/../mcp', window.location.origin, frame().contentWindow],
+    ['/sbx/ui/%2e%2e/mcp', window.location.origin, frame().contentWindow],
+    ['/sbx/ui/\\evil', window.location.origin, frame().contentWindow],
+  ] as const)
+    await message({ type: 'sandboxes:navigate', path }, origin, source);
+  assert.equal(document.querySelector('output')!.textContent, '/sandboxes/jobs');
+  await message({ type: 'sandboxes:height', height: 100000 });
+  assert.equal(frame().style.height, '700px');
+  await message({ type: 'sandboxes:height', height: 900 });
+  assert.equal(frame().style.height, '900px');
+  await link('/sandboxes/machines');
+  await link('/sandboxes/jobs');
+  const src = frame().getAttribute('src');
+  await message({ type: 'sandboxes:navigate', path: '/sbx/ui/machines/sbx_a?tab=terminal' });
+  assert.equal(
+    document.querySelector('output')!.textContent,
+    '/sandboxes/machines/sbx_a?tab=terminal',
+  );
+  assert.equal(frame().getAttribute('src'), src, 'console navigation does not reload the frame');
+  const navigated = frame();
+  await click('Back');
+  assert.notEqual(
+    frame(),
+    navigated,
+    'Back reloads even when the src attribute still names the old page',
+  );
+  assert.equal(frame().getAttribute('src'), '/sbx/ui/jobs#code=code_4');
+  assert.equal(minted.length, 4);
+  await click('Forward');
+  assert.equal(frame().getAttribute('src'), '/sbx/ui/machines/sbx_a?tab=terminal#code=code_5');
+  assert.equal(minted.length, 5);
+});
+
+test('project changes remount the frame and Reload renews without another sign-in', async (t) => {
+  t.after(unmount);
+  await open('/sandboxes/spend');
+  const first = frame();
+  await act(async () => setProject('project-next'));
+  assert.notEqual(frame(), first);
+  assert.deepEqual(minted, ['/ui/spend', '/ui/spend']);
+  await click('Reload');
+  assert.equal(frame().getAttribute('src'), '/sbx/ui/spend#code=code_3');
+  assert.equal(requests.filter((r) => !r.endsWith('/sandboxes/console-session')).length, 0);
 });
