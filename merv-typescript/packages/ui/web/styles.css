@@ -7621,11 +7621,43 @@ html.modal-open {
 }
 
 .sandboxes-nav-children {
-  display: none;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  /* Hold through a brief pointer exit, then hide from focus and accessibility
+     when the collapse finishes. The global reduced-motion rule removes transitions. */
+  transition:
+    grid-template-rows var(--sidebar-out) 150ms,
+    opacity var(--sidebar-out) 150ms,
+    visibility var(--sidebar-out) 150ms;
+}
+.sandboxes-nav-children-inner {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
   padding-left: 18px;
 }
+.sandboxes-nav-children-inner::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  /* The parent glyph's centre is 8px of row padding + half its 16px width. */
+  left: 15.5px;
+  border-left: 1px solid var(--line);
+  pointer-events: none;
+}
 .sandboxes-nav:is(:hover, :focus-within, .open) .sandboxes-nav-children {
-  display: block;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    grid-template-rows var(--sidebar-in) var(--motion-fast),
+    opacity var(--sidebar-in) var(--motion-fast),
+    visibility 0s linear var(--motion-fast);
+}
+.sandboxes-nav:is(:focus-within, .open) .sandboxes-nav-children {
+  transition-delay: 0s;
 }
 .sandboxes-console {
   flex: 1;
