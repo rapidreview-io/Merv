@@ -105,8 +105,8 @@ test('the rail lists places, hides the rows other pages absorbed, and leads with
   assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
-test('Code stands under Agents; what is running, its agents and Fleet’s requests are reached from Work, not rows', () => {
-  // Code declares the operations group, which the rail heads Agents. Sessions and Fleet are
+test('Git stands under Agents; what is running, its agents and Fleet’s requests are reached from Work, not rows', () => {
+  // Git declares the operations group, which the rail heads Agents. Sessions and Fleet are
   // still registered, hidden, and the rail lists neither.
   const sections = buildNavigation([
     row('code', 'code', 'operations', 25),
@@ -181,7 +181,7 @@ test('a heading is drawn only where it names more than its one row already says'
   });
   const sections = buildNavigation([
     labelled('artifacts', 'artifacts', 'research', 21, 'Files'),
-    labelled('code', 'code', 'operations', 25, 'Code'),
+    labelled('code', 'code', 'operations', 25, 'Git'),
     labelled('feed', 'feed', 'activity', 30, 'Feed'),
   ]);
   assert.deepEqual(

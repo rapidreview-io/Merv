@@ -344,7 +344,7 @@ function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts
     pathname === '/'
       ? undefined
       : rows.find(
-          // A row with rooms (Settings, Code's selections) is still the page under its rooms.
+          // A row with rooms (Settings, Git's selections) is still the page under its rooms.
           (row) => row.path === pathname || (row.rooms && pathname.startsWith(`${row.path}/`)),
         );
   if (!current) return null;
