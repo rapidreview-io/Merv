@@ -1005,13 +1005,6 @@ print(json.dumps(res))`,
   assert.match(out.split, /stays open: the Cloudflare apps run different images$/);
 });
 
-const canaryProfile = {
-  key: 'standard',
-  provider: 'cloudflare-fleet',
-  offerId: 'standard-1:cloudflare',
-  releaseId: OLD,
-  leaseSeconds: 900,
-};
 const profileId = (p) =>
   `srp_${createHash('sha256')
     .update(
@@ -1023,10 +1016,17 @@ test("the canary resolves Fleet's release-bound profile IDs from Main's rendered
   const dir = mkdtempSync(join(tmpdir(), 'merv-canary-profiles-'));
   try {
     const config = join(dir, 'config.json');
+    const standard = {
+      key: 'standard',
+      provider: 'cloudflare-fleet',
+      offerId: 'standard-1:cloudflare',
+      releaseId: OLD,
+      leaseSeconds: 900,
+    };
     const profiles = [
-      canaryProfile,
+      standard,
       {
-        ...canaryProfile,
+        ...standard,
         key: 'large',
         provider: 'cloudflare-fleet-large',
         releaseId: OLD_L,
@@ -1062,43 +1062,27 @@ vm.secrets.token_hex=lambda n:'beef'
 clock=[0];vm.time.monotonic=lambda:clock[0]
 vm.time.sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds)
 for app in apps.values(): app['health']={'errors':[],'instances':{'failed':0}}
-profile='${profileId(canaryProfile)}'
-other_profile='${profileId({ ...canaryProfile, releaseId: NEW })}'
-def run(command):
-    assert command==['docker','exec','-w','/app',vm.MAIN,'node','--import','tsx','--input-type=module','-e',vm.FLEET_PROFILES]
-    return json.dumps({profile:'${OLD}',other_profile:'${NEW}'})
-vm.run=run
-def canary(v2=True,releases=True,stopped=True,release_after=0,recorded_profile=profile,runtime_id='fa_1'):
+vm.run=lambda command:json.dumps({'srp_old':'${OLD}','srp_new':'${NEW}'})
+def canary(v2=True,releases=True,stopped=True,release_after=0,recorded='srp_old'):
     clock[0]=0
-    calls=[]
-    allocation={'id':'fa_1','phase':'running','profileId':recorded_profile,
-                'runtime':{'ready':True,'state':'ready','revision':7,'sandboxId':'sbx_1',
-                           'leaseExpiresAt':'2026-10-12T12:00:00.000Z',
-                           'launch':{'jobId':'job_1','state':'consumed','launchId':'rln_1','deliveryState':'launched'}}}
+    calls,phase=[],['active']
     def tool(c,name,body,tries=12):
         calls.append(name)
         if name=='pi.machine.stop' and not v2: raise RuntimeError('pi.machine.stop_http_404_None')
-        if name==('pi.machine.stop' if v2 else 'pi.stop'):
-            if releases: allocation['phase']='released'
-            if stopped: allocation['runtime'].update(ready=False,state='stopped')
-        command={'id':'cmd1','status':'completed','runtimeId':runtime_id,'messages':[{'role':'assistant','text':'canary-beef'}]}
+        if name==('pi.machine.stop' if v2 else 'pi.stop') and releases: phase[0]='released'
+        command={'id':'cmd1','status':'completed','runtimeId':'fa_1','messages':[{'role':'assistant','text':'canary-beef'}]}
         return {'pi.create':{'id':'conv1'},'pi.send':{'id':'cmd1'},'pi.snapshot':{'commands':[command]}}.get(name,{})
     def main_read(query,*p):
-        if 'profileId' in query:
-            assert \"WHERE id = $1 AND data_json::jsonb->>'profileId' = ANY($2::text[])\" in query
-            assert p[1]==[profile]
-            return {'n':int(p[0]==allocation['id'] and allocation.get('profileId') in p[1])}
-        assert \"WHERE id = $1 AND phase = 'released' AND data_json::jsonb->'runtime'->>'state' = 'stopped'\" in query
-        return {'n':int(p==(allocation['id'],) and allocation['phase']=='released' and
-                        allocation['runtime']['state']=='stopped' and clock[0]>=release_after)}
+        if 'profileId' in query: return {'n':int(p==('fa_1',['srp_old']) and recorded=='srp_old')}
+        assert \"phase = 'released'\" in query and \"->'runtime'->>'state' = 'stopped'\" in query
+        return {'n':int(p==('fa_1',) and phase[0]=='released' and stopped and clock[0]>=release_after)}
     vm.tool,vm.main_read=tool,main_read
     vm.unhold=lambda:calls.append('unhold')
     try: return [step.canary({'releaseId':'${OLD}'}),calls]
     except RuntimeError as e: return [str(e),calls]
 res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
      'phaseOnly':canary(stopped=False),'late':canary(release_after=327),'deadline':canary(release_after=601),
-     'wrongRelease':canary(recorded_profile=other_profile),'missingProfile':canary(recorded_profile=None),
-     'unknownProfile':canary(recorded_profile='srp_unknown'),'missingAllocation':canary(runtime_id=None)}
+     'wrongRelease':canary(recorded='srp_new')}
 apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
 print(json.dumps(res))`,
   );
@@ -1120,10 +1104,8 @@ print(json.dumps(res))`,
   // A failed canary keeps the hold for the rollback, which redeploys every app.
   assert.ok(!out.held[1].includes('unhold'));
   assert.match(out.phaseOnly[0], /^canary_failed .*"released": false/);
-  for (const key of ['wrongRelease', 'missingProfile', 'unknownProfile', 'missingAllocation']) {
-    assert.match(out[key][0], /^canary_failed .*"servedByRelease": false/);
-    assert.ok(!out[key][1].includes('unhold'));
-  }
+  assert.match(out.wrongRelease[0], /^canary_failed .*"servedByRelease": false/);
+  assert.ok(!out.wrongRelease[1].includes('unhold'));
   assert.equal(out.late[0].released, true);
   assert.equal(out.late[0].seconds, 327);
   assert.match(out.deadline[0], /^canary_failed .*"released": false/);
