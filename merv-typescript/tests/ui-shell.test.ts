@@ -72,12 +72,10 @@ test('the rail says a word once: no heading over its own row, no role under its 
   boot('Operator', { rows: [...rows, row('feed', 'feed', 'activity', 30, 'Feed')] });
   await open('/paper');
   const heads = [...rail().querySelectorAll('.rail-group-head')].map((node) => node.textContent);
-  assert.deepEqual(heads, ['Research'], 'Feed over Feed is the row alone');
-  const feed = rail().querySelector('.rail-group[aria-label="Feed"]')!;
-  assert.equal(
-    feed.querySelectorAll('a').length,
-    1,
-    'the group is still named for a screen reader',
+  assert.deepEqual(heads, ['Ops'], 'Feed is registered but not on the rail');
+  assert.ok(
+    rail().querySelector('.rail-group[aria-label="Ops"]'),
+    'the group is named for a screen reader',
   );
 
   const account = rail().querySelector<HTMLButtonElement>('.account-row')!;
@@ -90,10 +88,10 @@ test('the rail says a word once: no heading over its own row, no role under its 
   assert.equal(account.getAttribute('aria-expanded'), 'true');
   assert.equal(document.querySelectorAll('.account-menu [role="menuitem"]').length, 2);
 
-  // The place you are in is said as well as shown, and no other row claims it.
+  // The place you are in is said as well as shown; the paper is not on the rail, so Work holds it.
   assert.deepEqual(
     [...rail().querySelectorAll('[aria-current="page"]')].map((node) => node.textContent),
-    ['Paper'],
+    ['Work'],
   );
 });
 
@@ -655,17 +653,16 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
   assert.equal(where, '/work?key=work:wf_index');
 });
 
-test('a project opens on Home, named for the project, which leads the rail over Work and the paper', async (t) => {
+test('a project opens on Home, named for the project, which leads the rail over Work', async (t) => {
   t.after(async () => await unmount());
   boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'hidden', 10, 'Tasks')] });
   await open('/');
   const links = [...rail().querySelectorAll('.rail-nav a')];
   assert.deepEqual(
-    links.slice(0, 3).map((link) => [link.textContent, link.getAttribute('href')]),
+    links.slice(0, 2).map((link) => [link.textContent, link.getAttribute('href')]),
     [
       ['Home', '/'],
       ['Work', '/work'],
-      ['Paper', '/paper'],
     ],
   );
   assert.ok(!links.some((link) => link.getAttribute('href') === '/now'));
@@ -704,7 +701,7 @@ test('the rail counts what Home lists as needing you, an unwell row included', a
   assert.equal(rail().querySelector('.rail-count')?.textContent, '1');
 });
 
-test('the Agents row stands in the rail’s Agents section beside Pi, with its working·waiting badge', async (t) => {
+test('Pi stands with Work, and the Agents row in the rail’s Fleet section with its working·waiting badge', async (t) => {
   t.after(async () => await unmount());
   const pi = row('pi', 'pi', 'operations', 0, 'Pi');
   const agents = {
@@ -714,10 +711,14 @@ test('the Agents row stands in the rail’s Agents section beside Pi, with its w
   boot('Operator', { rows: [...rows, pi, agents] });
   serve('/tools/ui.home', { body: { result: {} } });
   await open('/');
-  const section = rail().querySelector('[role="group"][aria-label="Agents"]')!;
+  const labels = [...rail().querySelectorAll('.rail-nav > a .rail-row-label')].map(
+    (l) => l.textContent,
+  );
+  assert.ok(labels.includes('Pi'), 'Pi is in the top cluster');
+  const section = rail().querySelector('[role="group"][aria-label="Fleet"]')!;
   assert.deepEqual(
     [...section.querySelectorAll('.rail-row-label')].map((label) => label.textContent),
-    ['Pi', 'Agents'],
+    ['Agents'],
   );
   const link = [...section.querySelectorAll('a')].find((a) => a.textContent!.startsWith('Agents'))!;
   assert.equal(link.getAttribute('href'), '/sessions');

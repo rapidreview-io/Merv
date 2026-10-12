@@ -3,15 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   accountLines,
-  buildNavigation,
   documentTitle,
   dormantOwner,
-  headed,
   holds,
   homeOf,
-  leadRows,
   MOVED,
-  topRows,
+  railSections,
 } from '../packages/ui/web/navigation.js';
 import type { PluginState } from '../packages/ui/web/shell-types.js';
 
@@ -32,178 +29,63 @@ const row = (
   readable: false,
 });
 
-test('the rail lists places, hides the rows other pages absorbed, and leads with the lead row', () => {
+test('the rail is Home with Work, Pi and Board, then Fleet and Ops; every other row is left out', () => {
   const work = row('work', 'work', 'lead', 14);
-  // Each row is placed by its owner: what another page absorbed declares itself hidden.
   const rows = [
-    work,
-    row('connections', 'connections', 'hidden', 40, '/external-connections'),
     row('settings', 'settings', 'settings', 100),
-    row('research-provider', 'research', 'hidden', 8, '/cycles'),
-    row('jobs', 'tasks', 'hidden', 12, '/task-browser'),
-    row('trials', 'experiments', 'hidden', 13),
-    row('verdicts', 'reviews', 'hidden', 14),
     row('artifacts', 'artifacts', 'research', 21),
+    row('code', 'code', 'operations', 25),
+    row('sandboxes', 'sandboxes', 'operations', 45),
+    row('sessions', 'sessions', 'operations', 24),
+    row('boards', 'board', 'research', 22),
+    row('pi', 'pi', 'operations', 23),
+    work,
+    // Registered, but not places on the rail.
     row('paper', 'paper', 'top', 16),
-    row('reflections', 'reflections', 'hidden', 35),
     row('feed', 'feed', 'activity', 30),
+    row('reflections', 'reflections', 'hidden', 35),
+    row('connections', 'connections', 'hidden', 40, '/external-connections'),
+    {
+      ...row('legacy-history', 'legacy-history', 'research', 19),
+      whenCounted: true,
+      status: { count: 412 },
+    },
   ];
   const before = structuredClone(rows);
-  const sections = buildNavigation(rows);
+  const sections = railSections(rows);
   assert.deepEqual(
-    sections.map((section) => section.id),
-    ['research', 'activity'],
+    sections.map((section) => [section.label, section.rows.map((entry) => entry.id)]),
+    [
+      ['', ['work', 'pi', 'boards']],
+      ['Fleet', ['sessions', 'sandboxes']],
+      ['Ops', ['code', 'artifacts', 'settings']],
+    ],
   );
-  // The wave of work is the lead row, standing over every section; the kinds inside it, a
-  // reflection among them, are not places.
-  assert.deepEqual(leadRows(rows), [work]);
-  assert.deepEqual(leadRows([row('feed', 'feed', 'activity', 30)]), []);
-  // The paper stands with Home and Work, so it is not one of the sections' rows.
-  assert.deepEqual(
-    topRows(rows).map((entry) => entry.id),
-    ['paper'],
-  );
-  const shown = sections.flatMap((section) => section.rows.map((entry) => entry.id));
-  for (const hidden of [
-    'research-provider',
-    'jobs',
-    'trials',
-    'verdicts',
-    'reflections',
-    'connections',
-    'paper',
-    'work',
-  ])
-    assert.ok(!shown.includes(hidden), `${hidden} is registered but not a place`);
-  // Every row the rail does show is the registration itself, untouched.
-  for (const entry of sections.flatMap((section) => section.rows))
-    assert.equal(
-      entry,
-      rows.find((original) => original.id === entry.id),
-    );
+  // The rail draws the registrations themselves, untouched.
+  assert.equal(sections[0]!.rows[0], work);
   assert.deepEqual(rows, before);
-  // No page is nowhere: a record of the work, and the agents behind it, light the Work row.
+  // No page is nowhere: a page the rail leaves out lights the Work row.
   const lit = (pathname: string) =>
-    [work, ...sections.flatMap((section) => section.rows)]
+    sections
+      .flatMap((section) => section.rows)
       .filter((entry) => holds(entry, pathname, rows))
       .map((entry) => entry.id);
   assert.deepEqual(lit('/work'), ['work']);
-  assert.deepEqual(lit('/task-browser/wf_1'), ['work']);
+  assert.deepEqual(lit('/paper'), ['work']);
   assert.deepEqual(lit('/reflections/wf_2'), ['work']);
   assert.deepEqual(lit('/artifacts/art_1'), ['artifacts']);
   assert.deepEqual(lit('/nowhere'), []);
-  // Work appears only with the work it opens; the archive only when it holds records.
-  const listed = (entries: UiRowDescription[]) =>
-    buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));
-  assert.deepEqual(listed([row('reflections', 'reflections', 'hidden', 35)]), []);
-  const archive: UiRowDescription = {
-    ...row('legacy-history', 'legacy-history', 'research', 19),
-    whenCounted: true,
-  };
-  assert.deepEqual(listed([archive]), []);
-  archive.status = { count: 412 };
-  assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
-test('Git stands under Agents; what is running, its agents and Fleet’s requests are reached from Work, not rows', () => {
-  // Git declares the operations group, which the rail heads Agents. Sessions and Fleet are
-  // still registered, hidden, and the rail lists neither.
-  const sections = buildNavigation([
-    row('code', 'code', 'operations', 25),
-    row('sessions', 'sessions', 'hidden', 24),
-    row('fleet', 'collection', 'hidden', 20),
-    row('reviews', 'reviews', 'hidden', 17),
-  ]);
+test('a section with none of its rows registered is left out, but the first always stands for Home', () => {
   assert.deepEqual(
-    sections.map((section) => [section.label, section.rows.map((entry) => entry.id)]),
-    [['Agents', ['code']]],
-  );
-});
-
-test('unknown views retain their declared group, path, status and deterministic ordering', () => {
-  const rows = [
-    row('z-lab', 'new-scientific-view', 'science-lab', 20, '/laboratory/results'),
-    row('feed', 'custom-dashboard', 'extensions', 10, '/custom-feed'),
-    row('a-lab', 'another-future-view', 'science-lab', 20, '/laboratory/input'),
-  ];
-  rows[0].status = { state: 'unavailable', detail: 'Owner is reconnecting' };
-  const sections = buildNavigation(rows);
-  assert.deepEqual(
-    sections.map(({ id, label }) => ({ id, label })),
-    [
-      { id: 'extensions', label: 'Extensions' },
-      { id: 'science-lab', label: 'Science Lab' },
-    ],
+    railSections([row('code', 'code', 'operations', 25)]).map((section) => section.label),
+    ['', 'Ops'],
   );
   assert.deepEqual(
-    sections[1].rows.map((entry) => entry.id),
-    ['a-lab', 'z-lab'],
+    railSections([{ ...row('sessions', 'sessions', 'hidden', 24) }]).map((s) => s.label),
+    [''],
   );
-  assert.equal(sections[0].rows[0].path, '/custom-feed');
-  assert.equal(sections[1].rows[1], rows[0]);
-  assert.equal(sections[1].rows[1].status.state, 'unavailable');
-});
-
-test('plugin removal removes only its rows and re-addition restores navigation without duplicates', () => {
-  const tasks = row('tasks', 'tasks', 'hidden', 10);
-  const feed = row('feed', 'feed', 'activity', 20);
-  const artifacts = row('artifacts', 'artifacts', 'research', 21);
-  const extension = row('custom', 'unrecognized', 'extensions', 30);
-  const all = [tasks, feed, artifacts, extension];
-  const initial = buildNavigation(all);
-  // Files belong to Research; the tasks row is not a place.
-  assert.deepEqual(initial[0].rows, [artifacts]);
-  assert.deepEqual(
-    initial.map((section) => section.id),
-    ['research', 'activity', 'extensions'],
-  );
-  const removed = buildNavigation([tasks, extension]);
-  assert.deepEqual(
-    removed.flatMap((section) => section.rows.map((entry) => entry.id)),
-    ['custom'],
-  );
-  assert.ok(!removed.some((section) => section.id === 'activity'));
-  assert.deepEqual(buildNavigation([extension, artifacts, tasks, feed]), initial);
-  assert.deepEqual(buildNavigation([]), []);
-  assert.deepEqual(buildNavigation([row('settings', 'settings', 'settings', 100)]), []);
-});
-
-test('a heading is drawn only where it names more than its one row already says', () => {
-  const labelled = (
-    id: string,
-    kind: string,
-    group: string,
-    order: number,
-    label: string,
-  ): UiRowDescription => ({
-    ...row(id, kind, group, order),
-    label,
-  });
-  const sections = buildNavigation([
-    labelled('artifacts', 'artifacts', 'research', 21, 'Files'),
-    labelled('code', 'code', 'operations', 25, 'Git'),
-    labelled('feed', 'feed', 'activity', 30, 'Feed'),
-  ]);
-  assert.deepEqual(
-    sections.map((section) => [section.label, headed(section)]),
-    [
-      ['Research', true],
-      // One row, and a different word from its heading: the heading still says something.
-      ['Agents', true],
-      // Feed over Feed says the same word twice, so the row stands alone.
-      ['Feed', false],
-    ],
-  );
-  // The comparison is of words, not of bytes; a second row brings the heading back.
-  const feed = {
-    id: 'activity',
-    label: 'Feed',
-    rows: [labelled('feed', 'feed', 'activity', 30, ' feed ')],
-  };
-  assert.equal(headed(feed), false);
-  feed.rows.push(labelled('digest', 'feed', 'activity', 31, 'Digest'));
-  assert.equal(headed(feed), true);
-  assert.equal(headed({ id: 'empty', label: 'Empty', rows: [] }), true);
 });
 
 test('the account row prints the role only where it adds to the name', () => {

@@ -20,7 +20,7 @@ Knowledge reports Code references it cannot read now as `unavailable`, distinct 
 | Code          | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
 | code-tools    | Code, Tools                    | `code.commit` and `code.operation`                                                         |
 | code-work-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
-| code-ui       | Code, UI                       | Recent operations and publications in the Git page                                        |
+| code-ui       | Code, UI                       | Recent operations and publications in the Git page                                         |
 | Runner        | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
