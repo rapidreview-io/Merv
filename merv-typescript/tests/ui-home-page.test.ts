@@ -284,11 +284,11 @@ test('Home says where the project stands, what needs you, who is at work and wha
   assert.ok(latest.querySelector('.crit-word--pass'));
   assert.ok(requests.includes('POST /tools/artifact.list'));
 
-  // The rail: Home leads, with Work and the paper after it.
-  const rail = [...document.querySelectorAll('.sidebar .rail-nav a')].slice(0, 3);
+  // The rail: Home leads, with Work after it.
+  const rail = [...document.querySelectorAll('.sidebar .rail-nav a')].slice(0, 2);
   assert.deepEqual(
     rail.map((link) => link.getAttribute('href')),
-    ['/', '/work', '/paper'],
+    ['/', '/work'],
   );
 });
 

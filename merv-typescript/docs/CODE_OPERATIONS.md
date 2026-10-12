@@ -20,7 +20,7 @@ Knowledge reports Code references it cannot read now as `unavailable`, distinct 
 | Code          | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
 | code-tools    | Code, Tools                    | `code.commit` and `code.operation`                                                         |
 | code-work-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
-| code-ui       | Code, UI                       | Recent operations and publications in the Code page                                        |
+| code-ui       | Code, UI                       | Recent operations and publications in the Git page                                         |
 | Runner        | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
@@ -56,7 +56,7 @@ The step must grant both tools, declare a writable Git workspace, and belong to 
 
 Inspect `code.operation` with the returned `command.id` until the result is terminal. Keep files stable while the checkpoint is pending: the Runner captures their contents when it processes the request. Repeating the same request ID and input returns the same operation; changing that input conflicts. A session can have only one queued or dispatched operation at a time. A later checkpoint uses a new request ID and the new current HEAD.
 
-Workers can read only their own current session's operations. Authorized project readers can inspect project operations, including after a worker closes. The Code page lists the latest 100; it does not imply a complete history count.
+Workers can read only their own current session's operations. Authorized project readers can inspect project operations, including after a worker closes. The Git page lists the latest 100; it does not imply a complete history count.
 
 A receipt contains command, repository and workspace IDs, the retained workspace base, expected parent, resulting head, exact tree and change statistics. Statistics are from the retained base to the resulting head, and can include earlier persistent-workspace history. A checkpoint with no content change succeeds at the existing HEAD; it does not create an empty commit. Git author/committer metadata uses the Runner identity, while Code records the original worker actor and workflow revision.
 
@@ -259,7 +259,7 @@ See [Git workspaces](WORKSPACES.md) for workspace ownership and source isolation
 
 ## Reviewed unit publication
 
-An accepted Git unit marked for publication seals its acceptance and passing independent review into the publication journal. Code syncs it every 30 seconds as the project owner (an open pull request every ten minutes), and `code.publication.sync` does so at once: a sync integrates a local destination into Merv main, or opens or reconciles its draft pull request and sets the exact-head App approval status. `code.publication.merge` (which the Code page calls) requires a signed-in human administrator, the reviewed head, inspected base and stable `requestId`. It requests a synchronous merge of that exact head; Code imports the result and verifies its two parents and reviewed tree before marking the unit published. A lost reply reconciles the already-merged pull request without requesting another merge.
+An accepted Git unit marked for publication seals its acceptance and passing independent review into the publication journal. Code syncs it every 30 seconds as the project owner (an open pull request every ten minutes), and `code.publication.sync` does so at once: a sync integrates a local destination into Merv main, or opens or reconciles its draft pull request and sets the exact-head App approval status. `code.publication.merge` (which the Git page calls) requires a signed-in human administrator, the reviewed head, inspected base and stable `requestId`. It requests a synchronous merge of that exact head; Code imports the result and verifies its two parents and reviewed tree before marking the unit published. A lost reply reconciles the already-merged pull request without requesting another merge.
 
 The publication GitHub App token is limited to the selected repository and needed contents, pull request, status and check permissions. Main must require pull requests and strict up-to-date checks including the App-sourced `merv/consolidation-approved` status. That context string is retained for branch-rule compatibility; it now approves current unit publications as well. Keep the App out of bypass lists. Import and mirroring use narrower per-operation tokens.
 

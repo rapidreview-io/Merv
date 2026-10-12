@@ -10,7 +10,7 @@ export const codeUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'code',
-        label: 'Code',
+        label: 'Git',
         group: 'operations',
         order: 25,
         path: '/code',

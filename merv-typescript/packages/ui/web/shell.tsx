@@ -1,5 +1,13 @@
 import type { UiRowDescription } from '@merv/ui/rows';
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  Fragment,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool, type Account } from './api';
@@ -9,15 +17,7 @@ import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
 import { initials, personName } from './views/people';
-import {
-  accountLines,
-  buildNavigation,
-  documentTitle,
-  headed,
-  holds as held,
-  leadRows,
-  topRows,
-} from './navigation';
+import { accountLines, documentTitle, holds as held, railSections } from './navigation';
 import { stepped } from './record-picker';
 import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
@@ -238,9 +238,8 @@ export function SandboxesNav({ row }: { row: UiRowDescription }) {
 }
 
 /**
- * The one navigation. Home, the lead rows (Work) and the top rows (Paper) first, then every other
- * collection as its own row under the heading of the section it belongs to, then
- * Settings and the account at the foot. Nothing is hidden behind a row or a title.
+ * The one navigation: Home with Work, Pi and Board, then the Fleet and Ops sections
+ * (`railSections`), then the account at the foot.
  */
 export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
   const { project, account, chooseProject } = useSession();
@@ -295,18 +294,21 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         </div>
       )}
       <nav className="rail-nav">
-        <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
-        {leadRows(rows).map(place)}
-        {topRows(rows).map(place)}
-        {buildNavigation(rows).map((section) => (
-          <div className="rail-group" key={section.id} role="group" aria-label={section.label}>
-            {headed(section) && <h3 className="rail-group-head">{section.label}</h3>}
-            {section.rows.map(place)}
-          </div>
-        ))}
+        {railSections(rows).map((section) =>
+          section.label ? (
+            <div className="rail-group" key={section.label} role="group" aria-label={section.label}>
+              <h3 className="rail-group-head">{section.label}</h3>
+              {section.rows.map(place)}
+            </div>
+          ) : (
+            <Fragment key="top">
+              <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
+              {section.rows.map(place)}
+            </Fragment>
+          ),
+        )}
       </nav>
       <div className="sidebar-foot">
-        {rows.filter((row) => row.group === 'settings').map(place)}
         <AccountFoot />
       </div>
     </aside>
@@ -344,7 +346,7 @@ function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts
     pathname === '/'
       ? undefined
       : rows.find(
-          // A row with rooms (Settings, Code's selections) is still the page under its rooms.
+          // A row with rooms (Settings, Git's selections) is still the page under its rooms.
           (row) => row.path === pathname || (row.rooms && pathname.startsWith(`${row.path}/`)),
         );
   if (!current) return null;

@@ -343,11 +343,11 @@ time,
 .rail-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   /* A short window scrolls the rail; it never squeezes a row under its target. */
   flex: none;
-  height: 32px;
-  padding: 0 8px;
+  height: 36px;
+  padding: 0 10px;
   border-radius: var(--radius-md);
   color: var(--muted);
   font-size: var(--text-base);
@@ -443,13 +443,13 @@ time,
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-top: 8px;
+  margin-top: 16px;
 }
 /* Small grey heading over the destinations it names; it is not a place itself. */
 .rail-group-head {
   line-height: 1.4;
   color: var(--faint);
-  padding: 4px 8px 2px;
+  padding: 4px 10px 2px;
 }
 .rail-dot {
   width: 7px;
@@ -465,7 +465,7 @@ time,
   background: var(--faint);
 }
 .sidebar-foot {
-  padding-top: 10px;
+  padding-top: 16px;
   font-size: var(--text-xs);
   color: var(--faint);
   display: flex;
@@ -7636,14 +7636,14 @@ html.modal-open {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  padding-left: 18px;
+  padding-left: 20px;
 }
 .sandboxes-nav-children-inner::before {
   content: '';
   position: absolute;
   inset-block: 0;
-  /* The parent glyph's centre is 8px of row padding + half its 16px width. */
-  left: 15.5px;
+  /* The parent glyph's centre is 10px of row padding + half its 16px width. */
+  left: 17.5px;
   border-left: 1px solid var(--line);
   pointer-events: none;
 }

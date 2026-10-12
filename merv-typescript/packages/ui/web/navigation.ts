@@ -3,17 +3,15 @@ import { useTool } from './api';
 import type { PluginState, ShellData } from './shell-types';
 
 /**
- * Sidebar navigation model. Sections express what a person is doing
- * (Research, Work, Agents, Feed), not which plugin provided a row.
- * Only rows registered through ui.shell are consumed; nothing is invented.
- * Settings rows are omitted here because the shell renders them in its
- * footer, and Home's row is likewise the shell's own.
+ * The rail, as the owner laid it out: Home (the shell's own row) with Work, Pi and Board, then
+ * Fleet and Ops. Every other row stays registered and serves its pages and records; the rail
+ * does not list it.
  */
-interface NavSection {
-  id: string;
-  label: string;
-  rows: UiRowDescription[];
-}
+const RAIL = [
+  { label: '', ids: ['work', 'pi', 'boards'] },
+  { label: 'Fleet', ids: ['sessions', 'sandboxes'] },
+  { label: 'Ops', ids: ['code', 'artifacts', 'settings'] },
+];
 
 /**
  * Rows of the `lead` group stand under Home at the head of the rail, and a page the rail does
@@ -87,16 +85,14 @@ export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>>
 export const useStateWords = (): StateWords =>
   stateWords(useTool<ShellData>('ui.shell', {}, { every: 30000 }).data);
 
-/** Rows of the `top` group stand with Home and the lead rows rather than inside a section. */
-export const topRows = (rows: UiRowDescription[]) => rows.filter((row) => row.group === 'top');
+const RAILED = new Set(RAIL.flatMap((section) => section.ids));
 
 /**
- * Whether the rail draws a row at all, as its owner placed it. A row of the `hidden` group is
- * still registered and still serves its record routes and its ui.read: the page that absorbed
- * it reaches it.
+ * Whether the rail draws a row at all: the layout lists it and its owner did not hide it. A row
+ * the rail does not draw still serves its record routes and its ui.read.
  */
 const shows = (row: UiRowDescription) =>
-  row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
+  RAILED.has(row.id) && row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
 
 /**
  * The rail row an address lights: the row it stands under, and — for a page the rail does
@@ -109,58 +105,24 @@ export function holds(row: UiRowDescription, pathname: string, rows: UiRowDescri
   return under(row) || (row.group === 'lead' && rows.some((o) => under(o) && !shows(o)));
 }
 
-const SECTION_LABELS: Record<string, string> = {
-  research: 'Research',
-  work: 'Work',
-  operations: 'Agents',
-  activity: 'Feed',
-};
+/**
+ * The rail's sections in order, each with the rows it draws. The first, unheaded section is
+ * always kept, because Home stands in it.
+ */
+export const railSections = (rows: UiRowDescription[]) =>
+  RAIL.map(({ label, ids }) => ({
+    label,
+    rows: ids.flatMap((id) => rows.filter((row) => row.id === id && shows(row))),
+  })).filter((section) => !section.label || section.rows.length > 0);
 
-const SECTION_ORDER = ['research', 'work', 'operations', 'activity'];
-
-/** Human readable label for a group name the mapping does not know. */
+/** Human readable label for a group name, as a switched-off page names its owner. */
 export const humanizeGroup = (group: string) =>
   group
     .replaceAll(/[-_]+/g, ' ')
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase()) || group;
 
-/**
- * Build sections from registered rows. Deterministic: rows sort by the
- * server-declared order (id as tiebreaker), known sections keep a fixed
- * order, and unknown sections follow in the order their first row appears.
- * Every non-settings row the rail shows under a heading lands in exactly one section.
- */
-export function buildNavigation(rows: UiRowDescription[]): NavSection[] {
-  const sorted = rows
-    .filter((row) => !['settings', 'lead', 'top'].includes(row.group) && shows(row))
-    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  const sections = new Map<string, NavSection>();
-  for (const row of sorted) {
-    const id = row.group;
-    let section = sections.get(id);
-    if (!section) {
-      section = { id, label: SECTION_LABELS[id] ?? humanizeGroup(id), rows: [] };
-      sections.set(id, section);
-    }
-    section.rows.push(row);
-  }
-  const known = SECTION_ORDER.filter((id) => sections.has(id)).map(
-    (id) => sections.get(id) as NavSection,
-  );
-  const unknown = [...sections.values()].filter((section) => !SECTION_ORDER.includes(section.id));
-  return [...known, ...unknown];
-}
-
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-
-/**
- * A heading names the places under it. Over one place that already says the same
- * word — Feed over Feed — it names nothing, so the rail draws the row alone and
- * keeps the gap a heading would have stood in.
- */
-export const headed = (section: NavSection) =>
-  section.rows.length !== 1 || !same(section.rows[0]!.label, section.label);
 
 /**
  * Who is signed in, as the lines the account row prints: the name, then the role
