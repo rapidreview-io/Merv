@@ -1132,7 +1132,7 @@
       "component": "sessions",
       "version": 22,
       "hash": "8fe042afb4f687b184571542d045933ca244977c9314f3ec7c9728dd712da84c",
-      "published": false
+      "published": true
     }
   ]
 }

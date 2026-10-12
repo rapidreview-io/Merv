@@ -1,5 +1,27 @@
 # Production releases
 
+## Pi worker-question responder, 2026-10-12
+
+Main `20261012T020301Z-440f47a5-cfb43641bb50` is live from source `440f47a53`.
+All four test shards and verification passed in [CI run38193858640](https://github.com/rapidreview-io/Merv/actions/runs/38193858640).
+The same source passed staging as `20261012T015702Z-440f47a5-cfb43641bb50`.
+Production health, UI, both served assets, anonymous authentication and approved/unapproved
+origin checks passed; the container is healthy with68/71 plugins including Pi and Fleet.
+
+Sessions migration22 was read back from production with hash
+`8fe042afb4f687b184571542d045933ca244977c9314f3ec7c9728dd712da84c`.
+Recovery snapshot `20261012T014834Z-2ab1c716919d448cba1ed81763884723`
+completed before deployment. The previous server is not schema-compatible with this
+migration; the release used `--no-rollback`.
+
+Hosted check `20261012T020913Z-fe45dbe4` rebuilt an identical runtime, so the existing
+hosted pins remain current. A separate live Pi canary conversation
+`pic_588aa352377943c08339302438ac0c33` completed in35 seconds, replied on the
+expected runtime, released its worker, and verified the Large app. Question routing,
+resolution, stale-answer rejection, restart recovery and no-Pi fallback are covered by
+automated tests; this live canary checks ordinary Pi execution, not a synthetic worker question.
+
+
 ## GPT-6.1 Sol research defaults, 2026-09-30
 
 Main `20260930T015006Z-3740fde9-c65f2ecf8cd4` and hosted image run
