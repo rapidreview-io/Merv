@@ -8,9 +8,9 @@ import type {
   SandboxCheckSpec,
   SandboxCheckVerdict,
   SandboxChecks,
-} from '@merv/sandboxes';
+} from '@merv/code-work/check-types';
 import { migrationList } from '@merv/contracts';
-import { checkScript } from '@merv/sandboxes';
+import { checkScript } from '@merv/code-work/checks';
 import { checkFailure } from '@merv/code-work/base-check';
 import { configureWorkRepository } from '@merv/code-work/check-configuration';
 import { CodeStore } from '@merv/code/store/operations';
@@ -19,7 +19,7 @@ import { baseFixture } from './fixtures/code-bases.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { migrateBases } from '@merv/code-work/base-schema';
 import { openState } from './fixtures/state.js';
-import type { CodeCheckSpec } from '@merv/code-work/models';
+import type { CodeBaseCheck, CodeCheckSpec } from '@merv/code-work/models';
 
 /**
  * The project check of a base, end to end against a scripted adapter. Nothing here executes
@@ -32,7 +32,7 @@ const SPEC: CodeCheckSpec = {
   timeoutSeconds: 600,
   image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
 };
-const ISOLATION: SandboxCheckHandle['isolation'] = {
+const ISOLATION: NonNullable<CodeBaseCheck['receipt']>['isolation'] = {
   network: 'on',
   sourceReadOnly: false,
   imagePinned: 'offer',
@@ -67,10 +67,8 @@ function scripted(verdicts: SandboxCheckVerdict[] = [], readyAfter = 1) {
         objectId: `obj_${made}`,
         jobId: null,
         restoreJobId: null,
-        sha256: spec.source.sha256,
         ready: false,
         environment: null,
-        isolation: ISOLATION,
       };
       handles.set(spec.idempotencyKey, handle);
       return handle;

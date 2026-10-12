@@ -4,6 +4,7 @@ import type {} from '@merv/sessions/types';
 import type {} from './types.js';
 import type {} from '@merv/code/service';
 import { z } from 'zod';
+import { SandboxCheckRunner } from './checks.js';
 import { CodeService } from './service.js';
 
 export const codePlugin = {
@@ -29,11 +30,13 @@ export const codePlugin = {
         ),
       );
       yield () => service.close();
-      // Where a deployment runs sandboxes, a project check reaches them through this one
-      // capability; no tool does, so no leased worker can ever start or stop a machine.
-      ctx.inject(['sandboxes'], (ctx) => {
-        ctx.effect(() => service.bindChecks(ctx.sandboxes));
-      });
+      // Checks use a service actor; leased workers cannot invoke this runner.
+      ctx.inject(
+        ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
+        (ctx) => {
+          ctx.effect(() => service.bindChecks(new SandboxCheckRunner(ctx)));
+        },
+      );
       // New projects initialize automatically; old unbound projects initialize on new work.
       yield await ctx.domainEvents.subscribe({
         id: 'code.projects.v1',

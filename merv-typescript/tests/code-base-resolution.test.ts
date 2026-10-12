@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import type { Caller } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import type { CodeCapture } from '@merv/code-work/types';
-import type { SandboxCheckHandle } from '@merv/sandboxes';
+import type { SandboxCheckHandle } from '@merv/code-work/check-types';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../packages/code-work/src/bases.js';
 import { personMove } from '../packages/code-work/src/blockers.js';
@@ -1628,21 +1628,13 @@ test('a base that merged cleanly and failed its check is briefed as that, not as
       }),
     ),
   );
-  const isolation: SandboxCheckHandle['isolation'] = {
-    network: 'on',
-    sourceReadOnly: false,
-    imagePinned: 'offer',
-    facts: [],
-  };
   const handle: SandboxCheckHandle = {
     sandboxId: 'sbx_1',
     jobId: null,
     objectId: 'obj_1',
     restoreJobId: null,
-    sha256: 'a'.repeat(64),
     ready: false,
     environment: null,
-    isolation,
   };
   f.bases.checks = {
     start: async () => ({ ...handle }),

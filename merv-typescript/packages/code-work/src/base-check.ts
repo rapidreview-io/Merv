@@ -1,9 +1,5 @@
 import { check, sha256Hex } from '@merv/contracts';
-import type {
-  SandboxCheckHandle,
-  SandboxCheckPlan,
-  SandboxCheckVerdict,
-} from '@merv/sandboxes/types';
+import type { SandboxCheckHandle, SandboxCheckPlan, SandboxCheckVerdict } from './check-types.js';
 import type { ServerGit } from '@merv/code/git';
 import { CODE_CHECK_SLACK_SECONDS, CODE_CHECK_SOURCE_MAX_BYTES } from './check-configuration.js';
 import type { ResolutionWork } from './types.js';
@@ -25,6 +21,23 @@ export type CheckHandle = SandboxCheckHandle & {
   /** Absent only on handles retained before checks pinned their execution specification. */
   spec?: CodeCheckSpec;
   releaseAttempts?: number;
+};
+
+const ISOLATION: NonNullable<CodeBaseCheck['receipt']>['isolation'] = {
+  network: 'on',
+  sourceReadOnly: false,
+  imagePinned: 'offer',
+  facts: [
+    'The check had outbound network access; this check runner has no egress control, and the machine needs it to fetch the source.',
+    'The source was copied into the machine and was writable by the check; this check runner has no read-only mount.',
+    'The command ran as the machine login user; this check runner has no unprivileged-execution, capability or seccomp control.',
+    'Scratch space was the whole offer disk; only the recorded output was bounded.',
+    'The environment was pinned by provider offer and snapshot, not by an image digest.',
+    'The check saw the merged tree only; the machine held no Git history.',
+    'The source download URL was signed by the sandboxes service for a lifetime that service chooses.',
+    'No Merv credential reached the machine, and the command was given no environment.',
+    'The command was stopped at its timeout by terminating its whole process group.',
+  ],
 };
 
 const ARCHIVE_TIMEOUT_MS = 120_000;
@@ -69,7 +82,7 @@ export async function archiveCommit(
   return { bytes, sha256: sha256Hex(bytes) };
 }
 
-/** The machine and command the sandbox plugin is asked for; the bytes join it on the first step. */
+/** The machine and command for the check; the bytes join them on the first step. */
 export function checkPlan(spec: CodeCheckSpec, key: string, epoch: number): SandboxCheckPlan {
   return {
     provider: spec.image.provider,
@@ -101,9 +114,9 @@ export function checkReceipt(
     state: !timedOut && verdict.result?.exit === 0 ? 'passed' : 'failed',
     spec,
     receipt: {
-      sandboxId: handle.sandboxId ?? '',
+      sandboxId: handle.sandboxId,
       jobId: handle.jobId ?? '',
-      objectId: handle.objectId ?? '',
+      objectId: handle.objectId,
       exitCode: verdict.result ? verdict.result.exit : null,
       timedOut,
       startedAt: verdict.startedAt,
@@ -115,7 +128,7 @@ export function checkReceipt(
       },
       environment: handle.environment,
       usage: verdict.usage,
-      isolation: handle.isolation,
+      isolation: ISOLATION,
     },
     reason: timedOut
       ? `The command exceeded its ${spec.timeoutSeconds} second timeout and its process group was terminated.`

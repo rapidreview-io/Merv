@@ -281,12 +281,12 @@ export class CodeService implements Code {
     this.network(() => this.publicationStore.publicationDetails(...args));
   mergePublication: Code['mergePublication'] = (...args) =>
     this.network(() => this.publicationStore.mergePublication(...args));
-  /** The adapter that runs a project check. */
-  bindChecks(sandboxes: import('@merv/sandboxes/types').Sandboxes): () => void {
+  /** The runner that executes a project check. */
+  bindChecks(checks: import('./check-types.js').SandboxChecks): () => void {
     const bases = this.baseStore;
-    bases.checks = sandboxes.checks;
+    bases.checks = checks;
     return () => {
-      if (bases.checks === sandboxes.checks) bases.checks = undefined;
+      if (bases.checks === checks) bases.checks = undefined;
     };
   }
   bindServiceTasks(provider: ResolutionWorkCreator): () => void {

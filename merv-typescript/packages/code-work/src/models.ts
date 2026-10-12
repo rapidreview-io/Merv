@@ -326,9 +326,8 @@ export interface CodeBaseCheck {
     environment: { provider: string; offerId: string; snapshotId: string | null } | null;
     usage: { amount: string; currency: string } | null;
     /**
-     * What the adapter could and could not guarantee, in its own words. Copied onto the
-     * record verbatim and never inferred by Code, because only the plugin that speaks to the
-     * service knows what that service does.
+     * What the code-work check runner could and could not guarantee, recorded with its
+     * verdict. These facts belong to the check recipe.
      */
     isolation: {
       network: 'on';
