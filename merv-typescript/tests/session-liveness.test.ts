@@ -1106,6 +1106,7 @@ test('the assembled application offers the stuck report as a read tool and the g
       ['session.message.ack', false],
       ['session.messages', true],
       ['session.observe', true],
+      ['session.question.resolve', false],
       ['session.release_hold', false],
       ['session.stuck', true],
       ['session.thread_messages', true],
