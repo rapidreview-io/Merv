@@ -50,13 +50,13 @@ function server() {
 
 test('console sessions use the authenticated human and selected project, strip queries, preserve the host default, and never cache', async (t) => {
   const { api, scope } = server();
-  const calls: { caller: Caller; options: { path?: string } }[] = [];
+  const calls: { caller: Caller; options: { path?: string; accessToken?: string } }[] = [];
   const ctx = new Context();
   ctx.provide('api', api);
   ctx.provide('scope', scope);
   ctx.provide('ui', { contribute: () => () => {} } as never);
   ctx.provide('sbxMerv', {
-    consoleSession: async (caller: Caller, options: { path?: string }) => {
+    consoleSession: async (caller: Caller, options: { path?: string; accessToken?: string }) => {
       calls.push({ caller, options });
       return {
         url: 'https://sandboxes.example/ui/#code=single_use',
@@ -94,11 +94,14 @@ test('console sessions use the authenticated human and selected project, strip q
           membershipId: 'member',
         },
       },
-      options: { path: '/ui/jobs' },
+      options: { path: '/ui/jobs', accessToken: 'human' },
     },
   ]);
   assert.equal((await post('/ui/')).status, 200);
-  assert.deepEqual(calls[1], { caller: calls[0]!.caller, options: {} });
+  assert.deepEqual(calls[1], {
+    caller: calls[0]!.caller,
+    options: { accessToken: 'human' },
+  });
   assert.equal((await post('/ui/', 'human', 'denied')).status, 403);
   assert.equal((await post('/ui/', 'bad')).status, 401);
   assert.equal((await fetch(`${url}/sandboxes/console-session`)).status, 401);
