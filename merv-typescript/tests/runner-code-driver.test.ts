@@ -5,6 +5,7 @@ import {
   chmodSync,
   chownSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -515,7 +516,7 @@ test('a symlink at the private preservation slot is refused without touching its
   assert.ok(existsSync(foreign));
 });
 
-test('special retained nodes cannot be copied into review and a retry keeps the writer sidecar', async (t) => {
+test('special and hard-linked retained nodes stay in the writer sidecar and review proceeds', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_fifo_writer');
   const m = machine(t, f, undefined, true, f.unitId);
@@ -526,27 +527,30 @@ test('special retained nodes cannot be copied into review and a retry keeps the 
   writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
   mkdirSync(join(writer.path, '.cache'));
   execFileSync('mkfifo', [join(writer.path, '.cache/pipe')]);
+  // A uv environment links its packages from a cache.
+  writeFileSync(join(writer.path, '.cache/package.py'), 'x = 1\n');
+  linkSync(join(writer.path, '.cache/package.py'), join(writer.path, '.cache/linked.py'));
+  writeFileSync(join(writer.path, '.cache/data.bin'), 'kept');
   m.terminal.add(writerLaunch.id);
   const result = await driver.capture(writerLaunch);
   await f.event('session.closed', 'ses_fifo_writer');
   f.end('ses_fifo_writer');
   await driver.close(writerLaunch);
   f.reviewer('ses_fifo_review', result!.headOid);
-  const reviewLaunch = m.launch('ses_fifo_review');
-  await assert.rejects(
-    driver.prepare(reviewLaunch, m.session('ses_fifo_review')),
-    failed('workspace_foreign_path'),
-  );
+  const review = await driver.prepare(m.launch('ses_fifo_review'), m.session('ses_fifo_review'));
+  assert.equal(review.path, writer.path);
+  assert.equal(review.snapshot!.headOid, result!.headOid);
+  assert.equal(readFileSync(join(review.path, '.cache/data.bin'), 'utf8'), 'kept');
+  assert.equal(existsSync(join(review.path, '.cache/pipe')), false);
+  assert.equal(existsSync(join(review.path, '.cache/linked.py')), false);
+  assert.equal(existsSync(join(review.path, '.cache/package.py')), false);
+  assert.deepEqual(handoffRefusals(review.path), []);
   const sidecar = join(
     m.directory,
     'code-v2/preserved',
     createHash('sha256').update(f.unitId).digest('hex'),
   );
   assert.ok(lstatSync(join(sidecar, '.cache/pipe')).isFIFO());
-  rmSync(join(sidecar, '.cache/pipe'));
-  const review = await driver.prepare(reviewLaunch, m.session('ses_fifo_review'));
-  assert.equal(review.path, writer.path);
-  assert.equal(review.snapshot!.headOid, result!.headOid);
 });
 
 /**

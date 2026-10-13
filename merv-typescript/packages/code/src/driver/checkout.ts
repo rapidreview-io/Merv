@@ -319,13 +319,16 @@ export abstract class DriverCheckout extends DriverCore {
         if (source === preserved) return true;
         const name = relative(preserved, source);
         if (name === '.git' || name.startsWith(`.git${sep}`) || tracked.has(name)) return false;
+        // A hard-linked file (a uv or pip environment links its packages from a cache) or a
+        // special node (a socket, a FIFO) is not carried over: it stays with the writer's
+        // sidecar, and the review starts without it rather than failing on every machine retry.
         const entry = lstatSync(source);
         if (!(
           entry.isDirectory() ||
           entry.isSymbolicLink() ||
           (entry.isFile() && entry.nlink === 1)
         ))
-          throw new WorkspaceError('workspace_foreign_path');
+          return false;
         const parent = realpathSync(dirname(target));
         if (parent !== row.path && !parent.startsWith(row.path + sep))
           throw new WorkspaceError('workspace_foreign_path');
