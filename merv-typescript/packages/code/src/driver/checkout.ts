@@ -218,6 +218,36 @@ export abstract class DriverCheckout extends DriverCore {
   }
 
   /**
+   * Within one work unit on one machine the next agent continues where the last one stopped:
+   * its directory, data, environments and Git state stay as they are, nothing moved or rebuilt,
+   * whenever the last agent left it at the head Code now names. A refused capture, a moved head
+   * or a new machine is rebuilt from Code as before. A reviewer that
+   * continues in place records the directory, so its close checks nothing replaced it.
+   */
+  protected async continuesInPlace(cache: string, row: WorkspaceRow): Promise<boolean> {
+    const last = this.priorVisible(row);
+    if (!last || this.priorCaptureRefused(last) || pathStat(this.preservedPath())) return false;
+    const left = last.result_json
+      ? (JSON.parse(last.result_json) as SessionWorkspace).headOid
+      : last.head_oid;
+    const visible = pathStat(row.path);
+    if (
+      left !== row.head_oid ||
+      !visible?.isDirectory() ||
+      visible.isSymbolicLink() ||
+      !(await this.has(cache, row.head_oid))
+    )
+      return false;
+    if (row.read_only)
+      this.db
+        .prepare(
+          'INSERT OR IGNORE INTO code_v2_review_restores(launch_id,device,inode) VALUES(?,?,?)',
+        )
+        .run(row.launch_id, visible.dev, visible.ino);
+    return true;
+  }
+
+  /**
    * One visible cwd per work unit. The previous writer checkout is an immutable source of
    * non-Code files while review gets a disposable copy at the same path. A preparing row is
    * the durable intent: after a crash the sidecar is authoritative and a partial visible
@@ -229,6 +259,7 @@ export abstract class DriverCheckout extends DriverCore {
     retryPreparing: boolean,
   ): Promise<void> {
     this.assignmentPath(row.path);
+    if (await this.continuesInPlace(cache, row)) return;
     const preserved = this.preservedPath();
     const previous = this.priorWriter(row);
     const lastVisible = this.priorVisible(row);
