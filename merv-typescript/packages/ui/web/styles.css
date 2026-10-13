@@ -5816,6 +5816,42 @@ html:has(.pi-page) body {
 .wmap:focus-visible {
   outline-offset: 4px;
 }
+/* A timed map's axis: each row's time at its head, the day over the first row of each day,
+   on a rule down the left of the drawing. */
+.wmap:has(.wmap-tick)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 80px;
+  border-left: 1px solid var(--ghost);
+}
+.wmap-tick {
+  position: absolute;
+  left: 0;
+  width: 72px;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.wmap-tick::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  right: -12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ghost);
+}
+.wmap-tick-day {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
 /* Lines: straight runs and right angles, in the ink of what is drawn and never read;
    dashed while the prerequisite is unsettled, ink for the card in hand. */
 .wmap-wires {

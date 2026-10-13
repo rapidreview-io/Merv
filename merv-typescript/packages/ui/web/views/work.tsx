@@ -19,6 +19,7 @@ import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import { CreateReflection } from './research-programs';
 import type { Task } from '@merv/tasks/models';
+import { isResolution } from '@merv/tasks/resolution';
 import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map';
 
 /**
@@ -53,6 +54,33 @@ interface Item {
   depth: number;
   /** The prerequisites it still waits on, by name. */
   waits: string[];
+  /** Support work, a merge of deliveries: hidden unless the reader asks for it. */
+  support?: boolean;
+}
+
+/**
+ * The edges with the hidden records taken out and the lines through them kept: what waited
+ * on a hidden record waits on whatever that record waited on, unsettled if any step was.
+ */
+export function bridged<E extends { from: string; to: string; waiting?: boolean }>(
+  edges: E[],
+  hidden: ReadonlySet<string>,
+): E[] {
+  if (!hidden.size) return edges;
+  const out = new Map<string, E>();
+  const onward = (from: string, edge: E, waiting: boolean, seen: Set<string>) => {
+    if (!hidden.has(edge.to)) {
+      out.set(`${from}>${edge.to}`, { ...edge, from, waiting });
+      return;
+    }
+    if (seen.has(edge.to)) return;
+    seen.add(edge.to);
+    for (const next of edges.filter((other) => other.from === edge.to))
+      onward(from, next, waiting || !!next.waiting, seen);
+  };
+  for (const edge of edges)
+    if (!hidden.has(edge.from)) onward(edge.from, edge, !!edge.waiting, new Set());
+  return [...out.values()];
 }
 
 /**
@@ -259,6 +287,7 @@ function WaveList({ shell }: { shell: ShellData }) {
   const { actor } = useSession();
   const nameOf = useActorNames();
   const [kind, setKind] = useState<string>(ALL);
+  const [merges, setMerges] = useState<'hidden' | 'shown'>('hidden');
   const rowOf = (view: string) => shell.rows.find((row) => row.view.kind === view);
   const tasksRow = rowOf('tasks');
   const experimentsRow = rowOf('experiments');
@@ -295,6 +324,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         owner: task.producerId,
         depth: 0,
         waits: [],
+        support: isResolution(task.title),
       })),
       ...(experiments ?? []).map((item): Item => ({
         id: item.id,
@@ -342,8 +372,11 @@ function WaveList({ shell }: { shell: ShellData }) {
     mine: (item) => item.mine,
     labels: (item) => item.labels,
     ids: (item) => [item.id, item.owner],
-    also: under(kind),
+    also: (item) => under(kind)(item) && (merges === 'shown' || !item.support),
   });
+  const hidden = new Set(
+    merges === 'shown' ? [] : items.filter((item) => item.support).map((item) => item.id),
+  );
   // The first narrowing: which kind of work, and the work this cycle itself names. A tab
   // with nothing under it is not drawn, unless it is the one in force and so the way back;
   // and where only one of them holds anything there is nothing to choose between. Which
@@ -385,26 +418,31 @@ function WaveList({ shell }: { shell: ShellData }) {
   const kept = new Set(filter.rows);
   const read: Wave = {
     only,
-    items: items.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      name: item.name,
-      flow: item.flow,
-      at: item.at,
-      held: only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named,
-    })),
-    edges: (tasks ?? []).flatMap((task) => [
-      ...(task.dependencies ?? []).map((on) => ({
-        from: on.id,
-        to: task.id,
-        waiting: !on.settled,
+    items: items
+      .filter((item) => !hidden.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        name: item.name,
+        flow: item.flow,
+        at: item.at,
+        held: only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named,
       })),
-      ...(task.dependents ?? []).map((next) => ({
-        from: task.id,
-        to: next.id,
-        waiting: !task.settled,
-      })),
-    ]),
+    edges: bridged(
+      (tasks ?? []).flatMap((task) => [
+        ...(task.dependencies ?? []).map((on) => ({
+          from: on.id,
+          to: task.id,
+          waiting: !on.settled,
+        })),
+        ...(task.dependents ?? []).map((next) => ({
+          from: task.id,
+          to: next.id,
+          waiting: !task.settled,
+        })),
+      ]),
+      hidden,
+    ),
   };
   // The same wave read again is the same wave, so the map is not worked out again on each poll.
   const same = JSON.stringify(read);
@@ -432,10 +470,12 @@ function WaveList({ shell }: { shell: ShellData }) {
         filter.query ||
         filter.scope !== 'everyone' ||
         kind !== ALL ||
+        merges !== 'hidden' ||
         chosen
           ? () => {
               filter.reset();
               setKind(ALL);
+              setMerges('hidden');
               setChosen(undefined);
             }
           : undefined
@@ -482,6 +522,21 @@ function WaveList({ shell }: { shell: ShellData }) {
               }))}
               value={kind}
               onChange={setKind}
+            />
+          )}
+          {items.some((item) => item.support) && (
+            <Chips
+              label="Merges"
+              options={[
+                { value: 'hidden' as const, label: 'Hide merges' },
+                {
+                  value: 'shown' as const,
+                  label: 'Show merges',
+                  count: items.filter((item) => item.support).length,
+                },
+              ]}
+              value={merges}
+              onChange={(value) => setMerges(value === 'shown' ? 'shown' : 'hidden')}
             />
           )}
         </>
