@@ -2438,6 +2438,18 @@ pre.math--source {
   border: 0;
   background: var(--surface, #fff);
 }
+/* An HTML file as its page: white like a browser's, since the page sets its own colours. */
+.file-html {
+  padding: var(--space-2) 0;
+}
+.file-html iframe {
+  display: block;
+  width: 100%;
+  height: min(85vh, 1100px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+}
 .file-pdf-open {
   justify-self: start;
   padding: 0 var(--space-3) var(--space-2);
@@ -7582,6 +7594,10 @@ html.modal-open {
   grid-template-rows: 1fr auto;
 }
 .code-file--full .file-pdf iframe {
+  height: 100%;
+}
+.code-file--full .file-html,
+.code-file--full .file-html iframe {
   height: 100%;
 }
 .code-file-name {

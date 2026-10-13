@@ -37,6 +37,7 @@ const MAX_UPLOAD = 512 * 1024 * 1024;
 /** What the end of a name says of a file the browser could not type. */
 const ENDING_TYPES: [RegExp, string][] = [
   [/\.(md|markdown|mdx)$/i, 'text/markdown'],
+  [/\.html?$/i, 'text/html'],
   [/\.json$/i, 'application/json'],
   [/\.csv$/i, 'text/csv'],
   [/\.tsv$/i, 'text/tab-separated-values'],
@@ -609,12 +610,14 @@ const READS: Record<string, FileType['reads']> = {
   Notebook: 'notebook',
   Mermaid: 'mermaid',
   PDF: 'pdf',
+  HTML: 'html',
 };
 /** The language each of these is written in, for its source. */
 const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
   markdown: 'markdown',
   json: 'json',
   notebook: 'json',
+  html: 'html',
 };
 
 export interface FileType {
@@ -634,6 +637,7 @@ export interface FileType {
     | 'tsv'
     | 'notebook'
     | 'mermaid'
+    | 'html'
     | 'image'
     | 'pdf'
     | 'code'
@@ -731,11 +735,23 @@ function FilePdf({ url, title }: { url: string; title: string }) {
 }
 
 /**
+ * An HTML file drawn as the page it is, inside a sandbox with an origin of its own: its scripts
+ * run, but it cannot reach Merv's page, cookies or API, open windows or navigate away.
+ */
+function FileHtml({ html, title }: { html: string; title: string }) {
+  return (
+    <div className="file-html">
+      <iframe srcDoc={html} title={title} sandbox="allow-scripts" referrerPolicy="no-referrer" />
+    </div>
+  );
+}
+
+/**
  * One file's body as it reads best, wherever a file is shown (Files, Code): its text read as
- * what it is (a document, a tree, a table, a notebook, a diagram, code), or its bytes drawn as a
- * picture or a PDF. A picture is drawn from the file's own bytes, never from an address: an SVG
- * as an image, where its scripts do not run, and never into the page; only a PDF is framed, as a
- * PDF, so no file is ever a page of its own.
+ * what it is (a document, a tree, a table, a notebook, a diagram, a sandboxed page, code), or its
+ * bytes drawn as a picture or a PDF. A picture is drawn from the file's own bytes, never from an
+ * address: an SVG as an image, where its scripts do not run, and never into the page; an HTML file
+ * is framed in a sandbox of its own origin, so no file ever runs as Merv's page.
  */
 export function FileView({
   type,
@@ -814,6 +830,7 @@ export function FileView({
       </div>
     );
   if (reads === 'mermaid') return <Mermaid source={text} />;
+  if (reads === 'html') return <FileHtml html={text} title={title} />;
   if (reads === 'jsonl') return <JsonLines content={text} names={names} />;
   if (parsed?.json) return <JsonView value={parsed.json.value} names={names} folds />;
   if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
