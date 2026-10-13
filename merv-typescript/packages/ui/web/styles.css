@@ -1706,6 +1706,18 @@ select.input,
 .file-title {
   min-width: 0;
 }
+/* The extension a name does not carry, said in passing: small, faint, never in the way. */
+.file-ext {
+  flex: none;
+  margin-left: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ghost);
+}
+.file-name > .file-ext {
+  margin-left: -2px;
+}
 /* A file's own page is the file, centred: its name, one quiet line of what it is
    and who made it, and the one control that shows its source; then the file. */
 .file-page {

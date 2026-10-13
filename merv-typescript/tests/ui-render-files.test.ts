@@ -666,3 +666,20 @@ test('code still streaming in is drawn plain and coloured once it stands still; 
   assert.equal(one('.code-body')?.textContent, more);
   assert.equal(highlightable('x = 1\n'.repeat(10_000)), false, 'sixty thousand characters');
 });
+
+test('a file whose name carries no extension is tagged with the one its type would have', async () => {
+  const { extensionOf } = await import('../packages/ui/web/views/artifacts.js');
+  const cases: [string, string, string | null][] = [
+    ['English tool_use train v1', 'application/x-ndjson', 'jsonl'],
+    ['Run results', 'application/json', 'json'],
+    ['Delivery: report', 'text/markdown', 'md'],
+    ['Schema bundle', 'application/gzip', 'gz'],
+    ['Scores', 'text/csv; charset=utf-8', 'csv'],
+    ['Diagram', 'image/svg+xml', 'svg'],
+    ['report.html', 'text/html', null],
+    ['Blob', 'application/octet-stream', null],
+    ['Sheet', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null],
+  ];
+  for (const [title, mediaType, ext] of cases)
+    assert.equal(extensionOf({ title, mediaType }), ext, `${title} (${mediaType})`);
+});

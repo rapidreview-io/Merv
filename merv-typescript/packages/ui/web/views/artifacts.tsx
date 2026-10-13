@@ -472,7 +472,10 @@ function FileFinder({ open, setOpen }: { open: boolean; setOpen(open: boolean): 
                 onClick={() => go(file)}
               >
                 <TypeGlyph type={fileType(file)} size={14} />
-                <span className="finder-name">{file.title}</span>
+                <span className="finder-name">
+                  {file.title}
+                  <Extension file={file} />
+                </span>
                 <Ago at={file.createdAt} className="finder-when" />
               </button>
             ))}
@@ -686,6 +689,38 @@ export function fileType(file: { mediaType?: string | null; title?: string | nul
     ...(image ? { image } : {}),
   };
 }
+
+/** Extensions for the media types whose own name is not the one people write. */
+const EXTENSIONS: Record<string, string> = {
+  markdown: 'md',
+  ndjson: 'jsonl',
+  jsonl: 'jsonl',
+  gzip: 'gz',
+  plain: 'txt',
+  jpeg: 'jpg',
+  'tab-separated-values': 'tsv',
+  javascript: 'js',
+  python: 'py',
+  'ipynb+json': 'ipynb',
+  'svg+xml': 'svg',
+  yaml: 'yaml',
+};
+/**
+ * The extension a file would have, said quietly after its name where the name does not end in
+ * one: the glyph alone does not tell a JSON file from a JSONL one. Null where the name says it,
+ * or the type has no short name.
+ */
+export function extensionOf(file: { mediaType?: string | null; title?: string | null }) {
+  if (/\.[a-z0-9]{1,6}$/i.test(file.title ?? '')) return null;
+  const subtype = (file.mediaType ?? '').toLowerCase().split(';')[0]!.split('/')[1]?.trim() ?? '';
+  const bare = subtype.replace(/^(x-|vnd\.)/, '');
+  const ext = EXTENSIONS[bare] ?? bare.replace(/\+\w+$/, '');
+  return ext && ext.length <= 5 && ext !== 'octet-stream' ? ext : null;
+}
+const Extension = ({ file }: { file: { mediaType?: string | null; title?: string | null } }) => {
+  const ext = extensionOf(file);
+  return ext ? <span className="file-ext">{ext}</span> : null;
+};
 
 /** The glyph says the type; the word for it is its name and its hover title. */
 const TypeGlyph = ({ type, size }: { type: FileType; size?: number }) => (
@@ -1062,6 +1097,7 @@ const FileName = ({ file }: { file: Artifact }) => (
   <strong className="file-name">
     <TypeGlyph type={fileType(file)} size={15} />
     <span className="file-title">{file.title}</span>
+    <Extension file={file} />
   </strong>
 );
 
