@@ -31,6 +31,10 @@ const GAP_X = 24;
 /** Between two rows: the turns of the row above, then where a gutter's lines come in. */
 const GAP_Y = 48;
 const ARRIVE = 12;
+/** The left column a timed map keeps for its time labels. */
+export const AXIS_W = 96;
+/** Units this close in time share a row of a timed map. */
+const SAME_ROW_MS = 30 * 60_000;
 
 export interface MapBox {
   x: number;
@@ -49,6 +53,11 @@ export interface MapWire extends MapEdge {
   /** The arrowhead at the head of what waits. */
   head: string;
 }
+/** A row of a timed map and the time of its earliest unit. */
+export interface MapTick {
+  y: number;
+  at: string;
+}
 export interface WorkMapLayout {
   width: number;
   height: number;
@@ -56,6 +65,8 @@ export interface WorkMapLayout {
   /** Reading order: rows top to bottom, left to right. The keyboard follows it. */
   order: string[];
   wires: MapWire[];
+  /** On a timed map, each row's time, top to bottom. */
+  ticks: MapTick[];
 }
 interface Cell {
   col: number;
@@ -78,8 +89,11 @@ export function workMapLayout(
   keys: readonly string[],
   edges: readonly MapEdge[],
   width: number,
+  /** Each unit's time: the map then reads down in time, its rows labelled in a left axis. */
+  times?: ReadonlyMap<string, string>,
 ): WorkMapLayout | null {
   if (!(width >= MAP_MIN) || !keys.length) return null;
+  const axis = times ? AXIS_W : 0;
   const index = new Map(keys.map((key, n) => [key, n]));
   const drawn = [
     ...new Map(
@@ -108,14 +122,27 @@ export function workMapLayout(
     return d;
   };
   keys.forEach(depthOf);
+  if (times) {
+    // A timed map's rows follow time: units close in time share a row, a later stretch of
+    // time starts a new one, and nothing stands level with or above what it waits on.
+    const ms = (key: string) => Date.parse(times.get(key) ?? '') || 0;
+    let [level, start, deepest] = [0, -Infinity, -1];
+    for (const key of [...keys].sort((a, b) => ms(a) - ms(b) || index.get(a)! - index.get(b)!)) {
+      if (ms(key) - start > SAME_ROW_MS) [level, start] = [deepest + 1, ms(key)];
+      const d = Math.max(level, ...(before.get(key) ?? []).map((on) => (depth.get(on) ?? -1) + 1));
+      depth.set(key, d);
+      deepest = Math.max(deepest, d);
+    }
+  }
 
-  const cols = Math.floor((width + GAP_X) / (CARD_MIN + GAP_X));
-  const w = Math.min(CARD_MAX, Math.floor((width - (cols - 1) * GAP_X) / cols));
+  const room = width - axis;
+  const cols = Math.floor((room + GAP_X) / (CARD_MIN + GAP_X));
+  const w = Math.min(CARD_MAX, Math.floor((room - (cols - 1) * GAP_X) / cols));
 
   /** One chain on a grid of its own: its rows, and each unit as near its relations as it fits. */
   const block = (members: string[]) => {
     const least = Math.min(...members.map((key) => depth.get(key)!));
-    const first = (key: string) => !before.has(key) && after.has(key);
+    const first = (key: string) => !times && !before.has(key) && after.has(key);
     const levels: string[][] = [];
     for (const key of members) if (!first(key)) (levels[depth.get(key)! - least] ??= []).push(key);
     // The topmost first, so one that finds its row full can stand beside them.
@@ -182,8 +209,9 @@ export function workMapLayout(
   const seen = new Set<string>();
   for (const head of keys) {
     if (seen.has(head)) continue;
-    const members = [head];
-    seen.add(head);
+    // A timed map is one block, so its rows line up with the axis across the page.
+    const members = times ? [...keys] : [head];
+    for (const key of members) seen.add(key);
     for (const key of members)
       for (const other of [...(before.get(key) ?? []), ...(after.get(key) ?? [])])
         if (!seen.has(other)) {
@@ -206,7 +234,7 @@ export function workMapLayout(
   // The drawing stands in the middle of its frame: a lone chain is not pushed to the left
   // edge of a wide page, and a full page of cards starts where it always did.
   const across = Math.max(...[...place.values()].map(({ col }) => col)) + 1;
-  const inset = Math.round((width - (across * (w + GAP_X) - GAP_X)) / 2);
+  const inset = axis + Math.round((room - (across * (w + GAP_X) - GAP_X)) / 2);
   const at = new Map<string, MapBox>();
   for (const [key, { col, row }] of place)
     at.set(key, { x: inset + col * (w + GAP_X), y: row * (CARD_H + GAP_Y), w, h: CARD_H });
@@ -267,7 +295,19 @@ export function workMapLayout(
     };
   });
   const order = [...place.keys()].sort((a, b) => rowOf(a) - rowOf(b) || colOf(a) - colOf(b));
-  return { width, height: used.length * (CARD_H + GAP_Y) - GAP_Y, at, order, wires };
+  // One label for each stretch of time, at its first row: a stretch wider than the page wraps.
+  const stretches = new Map<number, MapTick>();
+  for (const key of order) {
+    const time = times?.get(key);
+    const tick = stretches.get(depth.get(key)!);
+    if (time)
+      stretches.set(depth.get(key)!, {
+        y: Math.min(tick?.y ?? Infinity, at.get(key)!.y),
+        at: tick && tick.at <= time ? tick.at : time,
+      });
+  }
+  const ticks = [...stretches.values()].sort((a, b) => a.y - b.y);
+  return { width, height: used.length * (CARD_H + GAP_Y) - GAP_Y, at, order, wires, ticks };
 }
 
 /** The card straight below (or above) this one: the nearest row that way, nearest across. */

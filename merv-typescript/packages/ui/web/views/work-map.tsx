@@ -102,6 +102,11 @@ export function absorberOf(board: RunningBoard, key: RunningKey): RunningNode | 
   return undefined;
 }
 
+const dayOf = (at: string) =>
+  new Date(at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const timeOf = (at: string) =>
+  new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
 /** One unit of work on the map: what the wave's records say of it, and what the board does. */
 interface MapUnit {
   key: RunningKey;
@@ -449,14 +454,22 @@ export function WorkMap({
   // The clock ticks every second while anything moves; the map is laid out again only when
   // the board, the wave or the room changes.
   const { units, edges } = useMemo(() => mapOf(board, wave), [board, wave]);
+  // Each unit's last move, which a prerequisite always makes before what waits on it; work the
+  // wave does not hold yet is live, so it stands at the foot.
+  const times = useMemo(() => {
+    const at = new Map((wave.items ?? []).map((item) => [runningKey('work', item.id), item.at]));
+    const now = new Date().toISOString();
+    return new Map(units.map((unit) => [unit.key, at.get(unit.key) ?? now]));
+  }, [units, wave]);
   const layout = useMemo(
     () =>
       workMapLayout(
         units.map((unit) => unit.key),
         edges,
         width,
+        times,
       ),
-    [units, edges, width],
+    [units, edges, width, times],
   );
   const liveOn = useMemo(() => liveLookup(board), [board]);
   const drawn = !!layout;
@@ -545,6 +558,17 @@ export function WorkMap({
           })}
         </svg>
       )}
+      {layout?.ticks.map((tick, n) => {
+        const day = dayOf(tick.at);
+        return (
+          <div key={tick.y} className="wmap-tick" style={{ top: tick.y }}>
+            {(n === 0 || day !== dayOf(layout.ticks[n - 1]!.at)) && (
+              <span className="wmap-tick-day">{day}</span>
+            )}
+            <time dateTime={tick.at}>{timeOf(tick.at)}</time>
+          </div>
+        );
+      })}
       {layout &&
         units.map((unit) => (
           <Card

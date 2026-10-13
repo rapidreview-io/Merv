@@ -226,3 +226,32 @@ test('the drawing stands in the middle of its frame, however few columns it fill
   for (const wire of chain.wires)
     assert.equal(Number(/^M(\d+)/.exec(wire.d)![1]), Math.round(centre(chain.at.get(wire.from)!)));
 });
+
+test('a timed map reads down in time, never above what it waits on, with each row labelled', () => {
+  const times = new Map([
+    ['early', '2026-10-13T01:00:00Z'],
+    ['beside', '2026-10-13T01:10:00Z'],
+    ['later', '2026-10-13T05:00:00Z'],
+    // Moved at the same time as its prerequisite, it still stands under it.
+    ['waits', '2026-10-13T01:05:00Z'],
+  ]);
+  const layout = workMapLayout([...times.keys()], edges(['early', 'waits']), 1200, times)!;
+  assert.equal(row(layout, 'early'), 0);
+  assert.equal(row(layout, 'beside'), 0);
+  assert.equal(row(layout, 'waits'), 1);
+  assert.equal(row(layout, 'later'), 2);
+  assert.deepEqual(
+    layout.ticks.map((tick) => tick.at),
+    ['2026-10-13T01:00:00Z', '2026-10-13T01:05:00Z', '2026-10-13T05:00:00Z'],
+  );
+  for (const box of layout.at.values()) assert.ok(box.x >= 96, 'cards clear the axis');
+  assert.deepEqual(workMapLayout(['a'], [], 1200)!.ticks, []);
+});
+
+test('a stretch of time wider than the page wraps under one label', () => {
+  const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  const times = new Map(keys.map((key, n) => [key, `2026-10-13T01:0${n}:00Z`]));
+  const layout = workMapLayout(keys, [], MAP_MIN, times)!;
+  assert.ok(new Set([...layout.at.values()].map((box) => box.y)).size > 1, 'the row wraps');
+  assert.deepEqual(layout.ticks, [{ y: 0, at: '2026-10-13T01:00:00Z' }]);
+});

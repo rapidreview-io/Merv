@@ -1585,3 +1585,28 @@ test('who is on each card is looked up from one index of the board', () => {
     );
   assert.deepEqual(liveLookup(undefined)('work:wf_index'), []);
 });
+
+test('hiding merges keeps the lines through them, unsettled if any step was', async () => {
+  const { bridged } = await import('../packages/ui/web/views/work.js');
+  const { isResolution } = await import('../packages/tasks/src/resolution.js');
+  assert.ok(isResolution('Merge ‘A’ with ‘B’'));
+  assert.ok(isResolution('Make the project check pass on ‘A’ with ‘B’'));
+  assert.ok(!isResolution('Merge sort benchmarks'));
+  assert.deepEqual(
+    bridged(
+      [
+        { from: 'a', to: 'm1' },
+        { from: 'b', to: 'm1', waiting: true },
+        { from: 'm1', to: 'm2' },
+        { from: 'm2', to: 'c' },
+        { from: 'a', to: 'd' },
+      ],
+      new Set(['m1', 'm2']),
+    ),
+    [
+      { from: 'a', to: 'c', waiting: false },
+      { from: 'b', to: 'c', waiting: true },
+      { from: 'a', to: 'd', waiting: false },
+    ],
+  );
+});
