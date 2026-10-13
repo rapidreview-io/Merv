@@ -441,7 +441,7 @@ test('a room with nothing in it is an empty state, and the session room ends the
   assert.equal(empty.querySelector('button')!.textContent, 'Sign out');
   assert.deepEqual(
     [...document.querySelectorAll('nav[aria-label="Settings"] a')].map((room) => room.textContent),
-    ['Introduction', 'Integrations', 'Connections', 'Plugins', 'Session'],
+    ['Introduction', 'Integrations', 'Connections', 'Machines', 'Plugins', 'Session'],
   );
   await unmount();
 

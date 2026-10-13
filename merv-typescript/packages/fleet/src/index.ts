@@ -24,7 +24,7 @@ import {
   runtimeLaunch,
   runtimeOffer,
 } from './runtime.js';
-import { migration, migrationV2, migrationV3 } from './schema.js';
+import { migration, migrationV2, migrationV3, migrationV4 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
@@ -33,6 +33,7 @@ import type {
   FleetIntent,
   FleetMachine,
   FleetOwner,
+  FleetProjectLimit,
   FleetRequest,
   FleetRuntimeHandle,
   ModelRelayConfig,
@@ -158,7 +159,7 @@ export class FleetService implements Fleet {
     this.startedAt = clock();
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration, migrationV2, migrationV3]);
+    await this.state.migrate('fleet', [migration, migrationV2, migrationV3, migrationV4]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -188,9 +189,12 @@ export class FleetService implements Fleet {
     if (!(await this.connected(projectId))) return 0;
     const open = await (tx ? this.all(tx) : this.state.read((sql) => this.all(sql)));
     const mine = open.filter((a) => a.projectId === projectId).length;
+    const limits = await (tx
+      ? this.limits(tx, projectId)
+      : this.state.read((sql) => this.limits(sql, projectId)));
     return Math.max(
       0,
-      Math.min(this.config.globalLimit - open.length, this.limit(projectId) - mine),
+      Math.min(this.config.globalLimit - open.length, this.limit(projectId, limits) - mine),
     );
   }
   async describe(projectId: string, key: string) {
@@ -221,8 +225,66 @@ export class FleetService implements Fleet {
       ),
     );
   }
-  private limit(projectId: string): number {
-    return this.config.projectLimits[projectId] ?? this.config.projectLimit;
+  /** The caps projects' administrators set, or only `projectId`'s; one without keeps the operator's. */
+  private async limits(sql: Sql, projectId?: string): Promise<Map<string, number>> {
+    const rows = projectId
+      ? [
+          await sql.get<{ project_id: string; machines: number }>(
+            'SELECT project_id,machines FROM fleet_project_limits WHERE project_id=?',
+            projectId,
+          ),
+        ].filter((row) => !!row)
+      : await sql.all<{ project_id: string; machines: number }>(
+          'SELECT project_id,machines FROM fleet_project_limits',
+        );
+    return new Map(rows.map((row) => [row.project_id, Number(row.machines)]));
+  }
+  private limit(projectId: string, limits: Map<string, number>): number {
+    return (
+      limits.get(projectId) ?? this.config.projectLimits[projectId] ?? this.config.projectLimit
+    );
+  }
+  /** How many machines this project may hold at once, and what it holds without its own setting. */
+  async projectLimit(caller: Caller): Promise<FleetProjectLimit> {
+    return this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const set = await tx.get<{ machines: number }>(
+        'SELECT machines FROM fleet_project_limits WHERE project_id=?',
+        caller.projectId,
+      );
+      const fallback = this.config.projectLimits[caller.projectId] ?? this.config.projectLimit;
+      return {
+        machines: set ? Number(set.machines) : fallback,
+        default: fallback,
+        max: Math.min(64, this.config.globalLimit),
+      };
+    });
+  }
+  /** A project administrator, signed in, sets it; machines already running finish their work. */
+  async setProjectLimit(caller: Caller, machines: number): Promise<FleetProjectLimit> {
+    check(
+      !caller.session && !caller.key,
+      'fleet_forbidden',
+      'Only a project administrator, signed in, can change how many machines run at once',
+      403,
+    );
+    check(
+      Number.isSafeInteger(machines) &&
+        machines >= 1 &&
+        machines <= Math.min(64, this.config.globalLimit),
+      'invalid_fleet_limit',
+      `Machines at once must be between 1 and ${Math.min(64, this.config.globalLimit)}`,
+    );
+    await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'admin', tx);
+      await tx.run(
+        'INSERT INTO fleet_project_limits(project_id,machines) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET machines=excluded.machines',
+        caller.projectId,
+        machines,
+      );
+    });
+    this.kick();
+    return this.projectLimit(caller);
   }
   /**
    * What a person's machines have cost today (UTC) at the prices stamped when Fleet reserved
@@ -601,7 +663,9 @@ export class FleetService implements Fleet {
   }
   private async reserve(): Promise<void> {
     if (this.closed) return;
-    const waiting = await this.state.read((sql) => this.all(sql));
+    const [waiting, limits] = await this.state.read(
+      async (sql) => [await this.all(sql), await this.limits(sql)] as const,
+    );
     const queued = waiting.filter((a) => a.phase === 'queued');
     if (!queued.length) return;
     const cap = this.config.dailyUsdPerPerson;
@@ -629,11 +693,13 @@ export class FleetService implements Fleet {
     const hasRoom =
       active.length < this.config.globalLimit &&
       queued.some(
-        (a) => admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId),
+        (a) =>
+          admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId, limits),
       );
     if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
+      const caps = await this.limits(tx);
       let count = allocations.filter(occupied).length;
       const byProject = new Map<string, number>();
       for (const active of allocations.filter(occupied))
@@ -651,7 +717,7 @@ export class FleetService implements Fleet {
         } else if (
           admissible(a) &&
           count < this.config.globalLimit &&
-          (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
+          (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId, caps)
         ) {
           // Its person may have spent today's compute while it waited.
           if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {

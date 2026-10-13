@@ -66,6 +66,14 @@ export interface FleetRequest {
    * long), within allocationTimeoutSeconds, the default. Part of the fingerprint. */
   seconds?: number;
 }
+/** How many machines a project may hold at once: its own setting, or the operator's default. */
+export interface FleetProjectLimit {
+  machines: number;
+  /** What the project holds without its own setting. */
+  default: number;
+  /** The most it may be set to. */
+  max: number;
+}
 /** A machine Fleet can rent, as the service's options describe the profile's offer. */
 export interface FleetMachine {
   key: string;
@@ -250,6 +258,10 @@ export interface Fleet {
   list(caller: Caller, recent?: number): Promise<FleetAllocation[]>;
   cancel(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   drain(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
+  /** How many machines the caller's project may hold at once. */
+  projectLimit(caller: Caller): Promise<FleetProjectLimit>;
+  /** A project administrator, signed in, sets how many machines the project may hold at once. */
+  setProjectLimit(caller: Caller, machines: number): Promise<FleetProjectLimit>;
   /** Sessions must call this inside the same transaction that enrolls or claims work. False for
    * a work machine while work machines are held. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;

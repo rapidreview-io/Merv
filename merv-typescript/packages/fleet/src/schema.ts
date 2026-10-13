@@ -54,6 +54,16 @@ export const migrationV3 = {
   );`,
 };
 
+/** How many machines a project may hold at once, where its administrator set it in Settings. It
+ *  replaces the operator's default and named caps for that project; the global limit still holds. */
+export const migrationV4 = {
+  version: 4,
+  sql: `CREATE TABLE fleet_project_limits (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id),
+    machines INTEGER NOT NULL CHECK (machines BETWEEN 1 AND 64)
+  );`,
+};
+
 /** Fleet workflow's own tables (component `fleet_workflow`): its model ledger and retry grants.
  *  Published migration text is immutable after release. */
 export const usageMigration = {

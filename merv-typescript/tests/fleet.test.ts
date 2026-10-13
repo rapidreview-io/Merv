@@ -426,6 +426,32 @@ test('an owner that rents in the host rents there for work in a project without 
   assert.deepEqual([...f.runtimes.places], [f.caller.projectId]);
 });
 
+test('a project administrator sets how many machines the project runs at once', async (t) => {
+  const f = await fixture(t, { globalLimit: 3, projectLimit: 1 });
+  f.runtimes.initialState = 'provisioning';
+  await f.fleet.request(f.caller, input('first'));
+  await f.fleet.request(f.caller, input('second'));
+  const phases = async () => (await f.fleet.list(f.caller)).map((a) => a.phase).sort();
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['provisioning', 'queued']);
+  assert.deepEqual(await f.fleet.projectLimit(f.caller), { machines: 1, default: 1, max: 3 });
+  await assert.rejects(
+    f.fleet.setProjectLimit({ ...f.caller, key: { id: 'key_1', membershipId: 'm_1' } }, 2),
+    {
+      code: 'fleet_forbidden',
+    },
+  );
+  await assert.rejects(f.fleet.setProjectLimit(f.caller, 4), { code: 'invalid_fleet_limit' });
+  assert.deepEqual(await f.fleet.setProjectLimit(f.caller, 2), {
+    machines: 2,
+    default: 1,
+    max: 3,
+  });
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['provisioning', 'provisioning']);
+  assert.equal(await f.fleet.free(f.caller.projectId), 0);
+});
+
 test('a refused first create frees the only slot; an ambiguous one is retried', async (t) => {
   const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
   f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
