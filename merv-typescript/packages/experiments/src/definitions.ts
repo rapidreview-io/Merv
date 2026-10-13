@@ -98,6 +98,14 @@ const gatedHandoffs: Partial<Record<ActiveState, string>> = {
 export const handoff = (state: ActiveState) =>
   gatedHandoffs[state] ? `${handoffs[state]} ${gatedHandoffs[state]}` : handoffs[state];
 
+/**
+ * How an executor presents what it found, said in the running assignment beside its handoff. It
+ * is not part of the handoff, which every registered version embeds exactly; the report's shape
+ * (its headings and diagram) stays the template's.
+ */
+export const reportPresentation =
+  'Presenting results in the report: choose the form by the shape of the content. Use a table when two or more items (arms, domains, metrics, runs, settings) are compared on one or more measures; never put a run of numbers in a sentence. Use a sentence for one number and its comparison, a Mermaid flowchart for a process or flow, and a Mermaid xychart-beta chart when a pattern across many values or over time matters more than the exact numbers. Keep prose for reasoning, interpretation and caveats. Every number states what it is compared with and its unit; where its meaning is not obvious, add a few plain words on what it means for the result. Define each abbreviation or unit once, where it first appears. Make the report longer only by adding information, a table or a figure, never by adding wording. Link every record or file you name: artifacts as [name](/artifacts/<artifact id>), files in the experiment code as [name](code-file:<full commit>:<path from the repository root>), and external models, datasets and papers by their URL at the exact revision used. Identifiers such as revisions, seeds and hashes belong where someone needs them to reproduce the work: shorten them in the text and link the full record. Say plainly what was verified and how, as facts, not as a first-person account.';
+
 /** Said to every planner, executor and reviewer of an experiment, in the assignment. */
 export const sourceVerification =
   'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';

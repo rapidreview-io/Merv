@@ -9,6 +9,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { CodeProjectStatus } from '@merv/code-work/models';
 import type { CodeBrowsed } from '@merv/code/models';
 import { ApiError, codeFile, useTool } from '../api';
+import { filesPath } from '../code-paths';
 import { EmptyState, LoadState } from '../components';
 import { Icon } from '../icons';
 import { Markdown, recordNames, type NamedHome } from '../markdown';
@@ -26,8 +27,7 @@ export function placeIn(pathname: string, root: string) {
     file: kind === 'blob',
   };
 }
-export const filesPath = (root: string, ref: string, path: string, file = false) =>
-  `${root}/${file ? 'blob' : 'tree'}/${encodeURIComponent(ref)}${path ? `/${path.split('/').map(encodeURIComponent).join('/')}` : ''}`;
+export { filesPath };
 
 /** Whose code a reader may choose: main, then every task and experiment that has code. */
 function useRefs(row: ViewProps['row'], shell: ViewProps['shell']) {

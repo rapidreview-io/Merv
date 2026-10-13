@@ -456,10 +456,12 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const running = await f.verdict(pending, 'pass');
   assert.equal(running.workflow.state, 'running');
   assert.equal(running.attempt.startedAt, null);
-  assert.equal(
-    (await f.workflows.assignment(f.source, running.id)).context!.type,
-    'experiment.execute',
-  );
+  const executing = await f.workflows.assignment(f.source, running.id);
+  assert.equal(executing.context!.type, 'experiment.execute');
+  // The executor is told how to present results and link what it names; the planner is not.
+  assert.match(executing.brief, /choose the form by the shape of the content/);
+  assert.match(executing.brief, /code-file:<full commit>:<path from the repository root>/);
+  assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
   assert.equal(packet.context!.type, 'experiment.attempt_review');

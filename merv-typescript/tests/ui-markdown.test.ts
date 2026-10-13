@@ -226,6 +226,22 @@ test('only http, https, mailto and relative addresses ever become an href', () =
     '',
   ])
     assert.equal(safeHref(bad), null, bad);
+  // A file in the project's code: an exact ref and a path inside the repository, nothing else.
+  const commit = 'a'.repeat(40);
+  for (const good of [
+    `code-file:${commit}:experiments/x/metrics.json`,
+    'code-file:main:README.md',
+    `code-file:wf_${'b'.repeat(32)}:src/a.py`,
+  ])
+    assert.deepEqual(safeHref(good), { href: good, external: false }, good);
+  for (const bad of [
+    `code-file:${commit}:/etc/passwd`,
+    `code-file:${commit}:a/../../b`,
+    'code-file:HEAD~1:a.py',
+    `code-file:${commit}:`,
+    'code-file:main:a//b',
+  ])
+    assert.equal(safeHref(bad), null, bad);
   assert.deepEqual(safeHref('https://example.org/a'), {
     href: 'https://example.org/a',
     external: true,
