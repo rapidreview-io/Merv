@@ -183,7 +183,7 @@ export async function inputsOf(
           },
         ],
       },
-      ...(state === 'planned' ? { feasibilityFormat } : {}),
+      ...(state === 'planned' ? { feasibilityFormat, computeAccess: PLANNING_COMPUTE } : {}),
       // Its notes are the feedback section's, which embeds the newest few.
       attempt: { ...experiment.attempt, feedback: undefined },
       workflow: experiment.workflow,
@@ -284,6 +284,13 @@ async function resumesFrom(
   const head = await ctx.code.resumesFrom(caller, snapshot.id, tx);
   return head ? { base: head } : {};
 }
+
+/**
+ * What a design may do with compute, said in the assignment a planner reads first: its Sandboxes
+ * tools come on their own connection, so the declared tools above never list them.
+ */
+const PLANNING_COMPUTE =
+  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them.';
 
 export async function references(
   ctx: ExperimentsContext,
