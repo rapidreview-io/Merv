@@ -23,6 +23,7 @@ const render = new Function(
   'NODE_IMAGE',
   'PUBLIC',
   'noRollback',
+  'UI_DIR',
   `${definition}\nreturn remoteJob;`,
 );
 

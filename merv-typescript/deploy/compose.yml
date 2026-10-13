@@ -5,6 +5,9 @@ services:
     image: ${MERV_TS_IMAGE:?Set the immutable TypeScript release image}
     restart: unless-stopped
     init: true
+    environment:
+      # The served UI, which deploy/release.mjs and deploy/ui-release.mjs write on the VM.
+      MERV_UI_ASSETS: /ui/
     env_file:
       - /etc/merv/typescript.env
       - path: /etc/sandboxes/shared.env
@@ -16,6 +19,7 @@ services:
       # server writes to this volume at a time, which Code enforces with a lock of its own.
       - /var/lib/merv-ts:/var/lib/merv-ts
       - sandboxes_data:/data
+      - /var/lib/merv-ts-ui:/ui:ro
     networks:
       - legacy_database
       - sandboxes

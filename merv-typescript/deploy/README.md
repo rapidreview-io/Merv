@@ -4,6 +4,21 @@
 
 These files prepare the TypeScript backend and its `/ui/` application for the existing Azure VM. They do not deploy anything by themselves. Stage independently, finish the authenticated checks below, then change routing. The user selected preservation through import, which ran once at cutover; the offline importer has since been removed (see [legacy import](../docs/LEGACY_IMPORT.md)), and unfinished legacy work is retained as history.
 
+## Releasing
+
+| Changed since the running server                       | Command                      | Takes        |
+| ------------------------------------------------------ | ---------------------------- | ------------ |
+| Only `packages/ui/web` (tests and docs may ride along) | `node deploy/ui-release.mjs` | seconds      |
+| Anything else                                          | `node deploy/release.mjs`    | a full build |
+
+Both deploy committed `origin/main` and write the same log (`RELEASES.md`; a UI row says `ui only`).
+The served UI is one directory on the VM, `/var/lib/merv-ts-ui`, mounted read-only at `/ui`:
+a full release puts its own bundle there once healthy, and a UI release replaces only the bundle.
+`ui-release.mjs` refuses when anything outside the UI changed since the running server's commit,
+and names those files, so a UI never reaches a server without the tools it calls. New hashed
+assets are added beside the old ones, so open tabs keep loading theirs; `index.html` changes last.
+To undo a UI release, revert the commit on main and run `ui-release.mjs` again.
+
 ## Sandboxes in-process cutover
 
 This section is the Merv-side handoff for the Sandboxes cutover runbook. The TS standalone

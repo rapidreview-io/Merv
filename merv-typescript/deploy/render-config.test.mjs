@@ -121,6 +121,15 @@ test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) =
   assert.notEqual(run({ MERV_CODE_MAIN_LANDING: 'true' }).status, 0);
 });
 
+test('the UI is served from the directory the release scripts write, when the VM names one', (t) => {
+  const { run, plugin } = renderer(t);
+  assert.equal(run().status, 0);
+  assert.deepEqual(plugin('ui').config, {});
+  assert.equal(run({ MERV_UI_ASSETS: '/ui/' }).status, 0);
+  assert.deepEqual(plugin('ui').config, { assets: '/ui/' });
+  assert.notEqual(run({ MERV_UI_ASSETS: 'ui' }).status, 0);
+});
+
 /** render-config.mjs beside a fixture default.json, run with `env` plus the given variables. */
 function renderer(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'merv-render-config-')));

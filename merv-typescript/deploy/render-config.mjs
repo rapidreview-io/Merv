@@ -119,7 +119,11 @@ set('api', {
   port: 3081,
   allowedOrigins: [origin('MERV_TS_PUBLIC_ORIGIN')],
 });
-set('ui', {});
+// The served UI bundle: on a VM the directory both release scripts write, else the image's own.
+const uiAssets = process.env.MERV_UI_ASSETS;
+if (uiAssets !== undefined && !/^\/[\w./-]*\/$/.test(uiAssets))
+  throw new Error('Invalid MERV_UI_ASSETS');
+set('ui', uiAssets ? { assets: uiAssets } : {});
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
