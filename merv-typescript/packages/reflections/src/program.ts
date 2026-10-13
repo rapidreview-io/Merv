@@ -484,10 +484,12 @@ export function execution(
   ctx: ReflectionsContext,
   lens: boolean,
   reviewing: boolean,
+  research = false,
 ): WorkflowExecutionPolicy {
   return {
     readOnly: reviewing,
     tools: [
+      ...(research ? [grant('nisa.research', {})] : []),
       grant('project.records', {}),
       grant('task.get', {}),
       grant('experiment.get_state', {}),
@@ -597,7 +599,7 @@ export function hooks(
     },
   });
 }
-export function policy(ctx: ReflectionsContext, lens: boolean): WorkflowPolicy {
+export function policy(ctx: ReflectionsContext, lens: boolean, research = false): WorkflowPolicy {
   const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({
     state,
     check: async (c: WorkflowCheckContext) => {
@@ -605,7 +607,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean): WorkflowPolicy {
     },
     build: async (c: WorkflowCheckContext) => await build(ctx, c),
     references: async (c: WorkflowCheckContext) => await references(ctx, c),
-    execution: execution(ctx, lens, state === 'in_review'),
+    execution: execution(ctx, lens, state === 'in_review', research),
     lease: hooks(ctx),
   }));
   return {

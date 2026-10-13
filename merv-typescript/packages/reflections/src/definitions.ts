@@ -36,7 +36,7 @@ export const LENSES = [
  */
 export const REFLECTION_WORKFLOW: WorkflowDefinition = {
   name: 'reflection',
-  version: 4,
+  version: 5,
   blocksStarts: ['task', 'experiment'],
   initial: 'reflecting',
   states: ['reflecting', 'synthesizing', 'in_review', 'approved', 'abandoned'],
@@ -56,7 +56,7 @@ export const REFLECTION_WORKFLOW: WorkflowDefinition = {
 };
 export const LENS_WORKFLOW: WorkflowDefinition = {
   name: 'reflection.lens',
-  version: 3,
+  version: 4,
   initial: 'reflecting',
   states: ['reflecting', 'complete', 'abandoned'],
   terminal: ['complete', 'abandoned'],

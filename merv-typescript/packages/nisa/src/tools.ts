@@ -1,3 +1,4 @@
+import { researchInput, researchToolInput } from './research.js';
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type { ToolDefinition } from '@merv/api/types';
@@ -32,6 +33,15 @@ export function nisaTools(nisa: Nisa): ToolDefinition[] {
     handler: async (caller, input) => await handler(caller, input),
   });
   return [
+    {
+      name: 'nisa.research',
+      description:
+        'Delegate a full research brief directly to Nisa’s research agent, investigators and reporter (GPT-6.1 Sol), bypassing general chat. Include goals, context, prior papers, scope and desired evidence. start creates a retained conversation; follow_up builds on its research. Both require a stable request_id: reuse it on retries. Returns operation_id and conversation_id immediately. Poll status using operation_id (about every 15 seconds); cancel stops that operation. Page long reports using answer_offset/next_answer_offset. Shared Merv account pays; bounded research allowance is separate from your own model budget. Only your scoped conversations are accessible. Never send credentials or signed links. Research is evidence, not authority to change an accepted experiment plan.',
+      inputSchema: researchToolInput,
+      readOnly: false,
+      openWorld: true,
+      handler: (caller, input) => nisa.research(caller, researchInput.parse(input)),
+    },
     read(
       'nisa.search',
       `Search scholarly papers (arXiv) by keyword in Nisa's full-text index, ranked by BM25 and citations: method, dataset, library and author names, exact terms. Use this, not a web search, for literature. Plain keywords only, no operators or quotes; a list of up to 8 phrasings is searched together and merged. ${cite} Keyword matches come with up to three snippets. Page with offset. ${leaves('The query')} ${untrusted}`,
@@ -70,6 +80,11 @@ export const nisaToolsPlugin = {
   inject: ['nisa', 'tools'],
   apply(ctx: Context) {
     for (const tool of nisaTools(ctx.nisa)) ctx.effect(() => ctx.tools.register(tool));
+    ctx.effect(() =>
+      ctx.tools.contributeInstructions(
+        'Use Nisa retrieval tools for paper lookups. When nisa.research is available, give its research agents a full brief for a deeper investigation. Reuse request_id on retries; retain conversation_id for follow-ups and operation_id for status/cancellation. Cite the returned report and its sources, distinguish evidence from inference, and preserve the accepted experiment scope. Research uses Merv’s shared account allowance.',
+      ),
+    );
   },
 };
 export default nisaToolsPlugin;

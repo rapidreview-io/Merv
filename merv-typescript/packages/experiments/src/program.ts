@@ -21,7 +21,7 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
  * (designCheckout);
  * experiment@40 stays registered for the experiments that run on it.
  */
-export const programVersions: readonly number[] = [40, 41];
+export const programVersions: readonly number[] = [40, 41, 42];
 
 /**
  * Whether a design and its review read, in a read-only checkout, the code execution will start
@@ -50,7 +50,7 @@ export const runningNode = {
 };
 
 /** The contract a new experiment runs on. */
-export const programVersion = 41;
+export const programVersion = 42;
 
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.

@@ -1,9 +1,9 @@
-# Nisa literature search
+# Nisa literature search and research
 
 Merv's agents search the literature through `@merv/nisa`, a native plugin that
 calls Nisa's public `/api/sdk` routes at `https://api.rapidreview.io` with one
 deployment-wide `rr_sk_` key: the routes the `nisa` CLI uses, already served by
-Nisa's main, so nothing needs deploying on Nisa's side. Internet search is a
+Nisa's main. Direct research additionally requires its `/api/research` service. Internet search is a
 separate plugin, `@merv/web`, modelled on how Nisa's own agents search the web;
 the two are composed independently and both stay dormant until their keys are
 configured. The package README ([packages/nisa/README.md](../packages/nisa/README.md))
@@ -20,7 +20,7 @@ both.
 | `nisa.excerpts`        | `GET /api/sdk/paper/{id}/excerpts?q=&max=`  | passages inside one paper's full text                        |
 | `nisa.related`         | `GET /api/sdk/paper/{id}/related?n=`        | papers similar to one paper                                  |
 
-Every tool is a read of another service (`readOnly`, `openWorld`): it runs
+Each retrieval tool above is a read of another service (`readOnly`, `openWorld`): it runs
 without holding a PostgreSQL snapshot, and every agent gets it with no grant or
 policy entry. Pi offers it to every turn, a reader's included, and runs it as
 the person; leased workers call it as an open read (both harnesses see every
@@ -55,27 +55,12 @@ the detail.
   conversation, and that branch's backend is not deployed. Do not compose both
   under the same agents: the native `nisa.*` tools are the supported ones.
 
-## What is deferred
+## Direct research
 
-- **Q&A** (`qa.ask`, `qa.get`, `qa.cancel`). Nisa's main has no route for it:
-  `/api/chat/message` runs a whole agent turn with no idempotency, and
-  `/api/sdk/search` with `enrich: true` keeps its papers in one worker's memory
-  for five minutes. It needs the branch's `/api/plugin` backend deployed on
-  Nisa's side, and `qa.ask` is a paid, asynchronous write that execution
-  policies would have to name. Until then an agent answers from these reads
-  with its own model.
-- **PDF links** (`/api/sdk/paper/{id}/pdf`): the route links a PDF, and no
-  Merv tool yet turns a PDF into text an agent can read. Merv's `paper.*`
-  tools are the project's own living paper, not arXiv papers, so an agent sees
-  a paper's body only through `nisa.excerpts` (at most 20 passages of at most
-  2,000 characters that match its terms).
-- **Per-person Nisa accounts.** One key means every agent's search is that one
-  Nisa account's. A Nisa key has no scope: it is a credential for the whole
-  account, so a leaked key reads that account's chats, transcripts and research
-  documents, changes and shares its lists, starts paid agent turns, and sends
-  shell commands to any `nisa` CLI the account has connected (the user-shell
-  route asks no approval). Hence the dedicated account below. Merv has no
-  per-person secret bindings for it.
+The native `nisa.research` tool invokes Nisa research mode directly. Its four actions
+are start, follow_up, status and cancel. It is a stateful tool, not an automatic read
+permission; see the [package contract](../packages/nisa/README.md#direct-research)
+for worker versions, ownership, limits and the single-tool request schema.
 
 ## Turning on literature and internet search
 
