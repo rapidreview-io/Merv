@@ -296,6 +296,8 @@ export async function references(
   return {
     // The native Sandboxes work kind an experiment binds compute under.
     computeKind: 'experiment',
+    // A design measures its compute rather than guessing it: bounded probes, not the run.
+    ...(context.snapshot.state === 'planned' ? { computeProfile: 'plan' } : {}),
     // Execution works on its pinned base. From experiment@41 the design and its review read the
     // code execution will start from: that base, with an earlier attempt's commits on it.
     ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),

@@ -561,8 +561,11 @@ test('a design and its review read the accepted code they depend on in a read-on
   await f.work.release(planner);
   assert.equal(pending.workflow.state, 'design_review');
 
+  // The planner measured with compute; the design reviewer only checks.
+  assert.equal(planner.session.execution.references.computeProfile, 'plan');
   // The design reviewer reads the same base.
   const reviewer = await f.work.lease(pending, await f.issue('operator'));
+  assert.equal(reviewer.session.execution.references.computeProfile, undefined);
   assert.equal(reviewer.session.execution.references.base, accepted);
   assert.equal(reviewer.workspace.snapshot!.headOid, accepted);
   assert.ok(readFileSync(join(reviewer.workspace.path, 'prepare.py'), 'utf8'));
@@ -1596,9 +1599,10 @@ test('every experiment lease admits verified captures and leaves compute to Sand
   f.experiments.bindCaptureEvidence(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
-  // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
+  // Sandboxes derives compute from the lease itself: the unit names no scope, and a planning
+  // lease only the profile that lets it measure feasibility.
   assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
-  assert.equal(first.session.execution.references.computeProfile, undefined);
+  assert.equal(first.session.execution.references.computeProfile, 'plan');
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   assert.ok(!first.session.execution.policy.tools.some((tool) => tool.name.startsWith('compute.')));
   const worker = await f.sessions.authenticate(first.secret);

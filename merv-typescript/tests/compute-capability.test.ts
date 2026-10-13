@@ -39,6 +39,8 @@ test('a unit overrides the profile with computeProfile, and an unknown one grant
   assert.equal(computeProfile(policy(false, persistent), 'none'), 'none');
   assert.equal(computeProfile(policy(true), 'execute'), 'execute');
   assert.equal(computeProfile(policy(false, persistent), 'check'), 'check');
+  // A planned experiment measures feasibility.
+  assert.equal(computeProfile(policy(true, ephemeral), 'plan'), 'plan');
   assert.equal(computeProfile(policy(false, persistent), 'gpu'), 'none');
   assert.equal(computeProfile(policy(false, persistent), ['execute']), 'none');
 });
@@ -57,4 +59,8 @@ test('guidance follows the profile', () => {
   assert.match(computeGuidance('execute'), /Execute only the authorized work/);
   assert.match(computeGuidance('check'), /at most 300 seconds/);
   assert.doesNotMatch(computeGuidance('check'), /Execute only/);
+  assert.match(computeGuidance('plan'), /GPUs included, and storage/);
+  assert.match(computeGuidance('plan'), /within an hour/);
+  assert.match(computeGuidance('plan'), /Do not run full training/);
+  assert.doesNotMatch(computeGuidance('plan'), /300 seconds/);
 });
