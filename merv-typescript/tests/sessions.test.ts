@@ -504,6 +504,34 @@ test('controller polls fence changed workflow revisions and expired offers witho
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
 });
 
+test('a runner’s control poll reads the columns kept beside a session, never its packets', async (t) => {
+  const f = await fixture(t);
+  const { session, token } = await f.offer();
+  await f.sessions.authenticate(token);
+  const { id, projectId, runnerId, hostRef, status, expiresAt, hardDeadline, closeReason } =
+    await f.sessions.get(f.source, session.id);
+  const sql: string[] = [];
+  const transaction = f.state.transaction.bind(f.state);
+  t.mock.method(f.state, 'transaction', (fn: (tx: Transaction) => unknown) =>
+    transaction((tx) => {
+      const get = tx.get.bind(tx);
+      return fn(
+        Object.assign(tx, {
+          get: (query: string, ...rest: []) => (sql.push(query), get(query, ...rest)),
+        }),
+      );
+    }),
+  );
+  assert.deepEqual(await f.sessions.control(f.source, session.id), {
+    ...{ id, projectId, runnerId, hostRef, status, expiresAt, hardDeadline, closeReason },
+    outcome: null,
+  });
+  // Its one read of the session names no packet: neither the JSON column nor the whole row.
+  const read = sql.filter((query) => query.includes('FROM worker_sessions'));
+  assert.equal(read.length, 1, sql.join('\n'));
+  assert.ok(!/session_json::|\*/.test(read[0]!), read[0]);
+});
+
 test('a runner’s release records the closure its session’s checks find, not a release', async (t) => {
   const f = await fixture(t);
   const sessions = [await f.offer(), await f.offer()];

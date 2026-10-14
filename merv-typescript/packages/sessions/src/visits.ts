@@ -67,7 +67,7 @@ export class Visits {
     );
     const { threadId: _thread, ...stored } = session;
     const json = JSON.stringify(stored);
-    // PostgreSQL JSON refuses an escaped NUL or lone surrogate: one such row fails every live scan.
+    // jsonb, which its columns (sessions@23) are read through, refuses an escaped NUL or surrogate.
     check(
       !/(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f])/.test(json),
       'session_packet_invalid',

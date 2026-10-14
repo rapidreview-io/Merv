@@ -40,8 +40,8 @@ import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from
  * lane's line about dispatch, the marks dispatch puts on work it holds back, the sidebar of a
  * lease. What worked a record's stages is its threads (threads.ts), never a section here. Every read runs on the page's
  * read-only snapshot and only reads: nothing is reconciled, marked quiet or closed here, which
- * stays the sweep's. A frozen assignment can be half a megabyte, so a lease row is parsed once,
- * in SQL, for the few fields a face needs, and never decoded whole.
+ * stays the sweep's. A frozen assignment can be half a megabyte, so a face reads the columns
+ * kept beside a lease's JSON (sessions@23), and never decodes it whole.
  *
  * A lease's words are its liveness (liveness.ts), as the Agents page has them: it is offered,
  * active, lapsed, released or expired; a runner is live or offline; quiet only ever means no

@@ -11,6 +11,7 @@ import type {
   RunningNodes,
   RunningPanelPart,
   RunningSummary,
+  SessionToolPolicy,
   SessionUsageReport,
   WorkflowAssignment,
   WorkflowExecution,
@@ -270,12 +271,6 @@ export interface SessionMessageInput {
   body: string;
   requestId: string;
 }
-/** Opaque server-owned preparation; constructing a matching object does not confer authority. */
-export interface SessionInvocation {
-  readonly caller: Caller;
-  readonly tool: string;
-  readonly input: Data;
-}
 /** Immutable execution attribution plus current attachment/final-observation availability. */
 export interface SessionObservationProvenance {
   projectId: string;
@@ -447,7 +442,7 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & { hostRef: string; workspace: SessionWorkspace },
   ): Promise<Session>;
-  /** Runner-only, live or closed session. Backend only: nothing reads a transcript back. */
+  /** Runner-only, live or closed session. Its one reader is a thread's conversation read. */
   transcript(
     caller: Caller,
     input: SessionControl & SessionTranscriptDeclaration,
@@ -483,7 +478,7 @@ export interface Sessions {
   /** The caller's own session, rechecking its credential without activating an offer. */
   session(caller: Caller, tx?: Transaction): Promise<Session>;
   /** The tool policy the registry admits each leased worker's MCP call through. */
-  readonly invocations: SessionInvocationPolicy;
+  readonly invocations: SessionToolPolicy;
   sweep(): Promise<void>;
 }
 /** Sessions' project dispatch; every read and control but a runner's refuses a managed runner. */
@@ -607,17 +602,6 @@ export interface SessionInquiries {
    * conversation read-only, and its reply lands on the question's message in the thread.
    */
   ask(caller: Caller, input: ThreadInquiryInput): Promise<ThreadInquiry>;
-}
-export interface SessionInvocationPolicy {
-  readonly instructions: string;
-  allowsTool(caller: Caller, name: string): Promise<boolean>;
-  validate(caller: Caller, tool: string, input: Data): Promise<void>;
-  cancel(invocation: SessionInvocation): Promise<void>;
-  prepare(caller: Caller, tool: string, input: Data): Promise<SessionInvocation>;
-  run<T>(
-    invocation: SessionInvocation,
-    handler: (caller: Caller, input: Data) => T | Promise<T>,
-  ): Promise<T>;
 }
 export interface UsageQuery {
   instanceId?: string;

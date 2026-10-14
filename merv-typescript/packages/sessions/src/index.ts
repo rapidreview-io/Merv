@@ -305,9 +305,11 @@ const permission = (role: Session['role']): Permission =>
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
-/** The same row without its assignment, execution and lease: the control fields a runner polls. */
-const CONTROL =
-  "SELECT id,project_id,thread_id,owner_hash,(session_json::jsonb-'assignment'-'execution'-'lease')::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions";
+/** The control fields a runner polls, from the columns kept beside the row's JSON (sessions@23):
+ *  a poll never parses its assignment, execution or lease. */
+const CONTROL = `SELECT id,project_id,thread_id,owner_hash,json_build_object('id',id,'kind',kind,'projectId',project_id,
+  'runnerId',runner_id,'hostRef',host_ref,'status',status,'expiresAt',expires_at,'hardDeadline',hard_deadline,'closedAt',
+  closed_at,'closeReason',close_reason,'outcome',outcome)::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions`;
 interface Frame {
   tx: Transaction;
   actorId: string;

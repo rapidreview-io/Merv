@@ -1237,11 +1237,19 @@ test('a conversation read takes only a large transcript’s end, and a visit it 
       events.at(-1)?.event.id,
       truncated,
     ]);
+  // A read downloads holding no database snapshot: a page that reads on would hold one per part.
+  const snapshots: boolean[] = [];
+  const fetched = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (input: string, init?: { headers?: object }) => {
+    if (init?.headers && 'range' in init.headers) snapshots.push(f.app.ctx.state.readScope);
+    return fetched(input, init as RequestInit);
+  });
   const read: ThreadConversation = await f.ok('GET', path, f.token);
   assert.deepEqual(said(read), [
     [first.session.id, 'transcript', 500, 'a13500', 'a13999', true],
     [second.session.id, 'unavailable', 0, undefined, undefined, undefined],
   ]);
+  assert.deepEqual(snapshots, [false]);
   // Only the big transcript's end was asked for; the next read goes on before it.
   const sent = f.s3.server.requests.filter(
     (request) => request.method === 'GET' && request.key === big.key,

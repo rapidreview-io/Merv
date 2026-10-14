@@ -120,7 +120,7 @@ export interface MessageInsert {
   /** An inquiry's question (whose reply is its answer), or the context its answer left. */
   inquiry?: { id: string; role: 'question' | 'context' };
 }
-/** What messaging uses of Sessions: its transactions, session rows, lease check and close. */
+/** What messaging uses of Sessions: its transactions, session rows and a visit's close. */
 export interface MessageHost {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
@@ -153,8 +153,8 @@ export interface MessageHost {
 }
 
 /**
- * Messages between the people over a project and its workers: a person's to one live visit or
- * to a thread, which the visit that reads it acknowledges, and a worker's question to its owner,
+ * Messages between the people over a project and its workers: a person's to a thread, which
+ * the visit that reads it acknowledges, and a worker's question to its owner,
  * which ends its visit and withholds its work from dispatch until a message to its thread
  * answers it.
  */

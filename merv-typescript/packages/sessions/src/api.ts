@@ -322,7 +322,8 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
         ? { threads: await read(() => sessions.threads.list(caller, instanceIds)) }
         : await read(() => sessions.threads.project(caller, before));
     }
-    // A thread's conversation, a part at a time: on from where `before` says a read stopped.
+    // A thread's conversation, a part at a time: on from where `before` says a read stopped. It
+    // reads its rows on a snapshot of its own and downloads holding none.
     const conversation = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
     if (conversation && req.method === 'GET') {
       const before = r.url.searchParams.get('before') ?? undefined;
@@ -332,8 +333,7 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
         'The conversation route takes before=<cursor> or nothing',
       );
       const caller = await r.caller();
-      const threadId = pathSegment(conversation[1]!);
-      return await read(() => sessions.threads.conversation(caller, threadId, before));
+      return await sessions.threads.conversation(caller, pathSegment(conversation[1]!), before);
     }
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');

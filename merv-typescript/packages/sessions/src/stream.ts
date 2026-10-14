@@ -182,16 +182,11 @@ export class SessionStreams implements SessionStreamReads {
     check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
   }
 
-  /**
-   * Whether an authorized session's stream may still grow. A session's close is recorded once,
-   * with its usage, so its time is read there rather than from the session's JSON.
-   */
+  /** Whether an authorized session's stream may still grow, from the columns kept beside it. */
   async growing(sessionId: string, projectId: string): Promise<boolean> {
     const row = await this.state.read((sql) =>
       sql.get<{ status: Session['status']; closed_at: string | null }>(
-        `SELECT s.status,u.closed_at
-          FROM worker_sessions s LEFT JOIN session_usage u ON u.session_id=s.id
-          WHERE s.id=? AND s.project_id=?`,
+        'SELECT status,closed_at FROM worker_sessions WHERE id=? AND project_id=?',
         sessionId,
         projectId,
       ),

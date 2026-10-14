@@ -8,6 +8,8 @@ import {
   record,
   type Caller,
   type Data,
+  type SessionToolInvocation,
+  type SessionToolPolicy,
   type Transaction,
   type WorkflowExecution,
   type WorkflowExecutionReferences,
@@ -15,7 +17,7 @@ import {
 import { admitDispatch, type WorkflowDispatchAdmission } from '@merv/workflows/execution';
 import { clone, ordinary, safeError } from './common.js';
 import type { AgentObservations } from './observations.js';
-import type { Session, SessionInvocation, SessionInvocationPolicy, WorkSession } from './types.js';
+import type { Session, WorkSession } from './types.js';
 
 const snapshotInput = (input: Data): Data =>
   plain(input, 'invalid_input', {
@@ -71,7 +73,7 @@ function admitCall(
   }
 }
 interface InvocationState {
-  public: SessionInvocation;
+  public: SessionToolInvocation;
   sessionId: string;
   /** The registration its work visit's lease is checked against; an inquiry visit binds none. */
   registrationId?: string;
@@ -133,12 +135,12 @@ const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
  */
 const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
-export class SessionInvocations implements SessionInvocationPolicy {
+export class SessionInvocations implements SessionToolPolicy {
   readonly instructions =
     'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.';
   /** The invocation whose handler runs, which Sessions' guard reads. */
   readonly toolHandler = new AsyncLocalStorage<string>();
-  private readonly invocations = new WeakMap<SessionInvocation, InvocationState>();
+  private readonly invocations = new WeakMap<SessionToolInvocation, InvocationState>();
   /** Live invocations by id, which Sessions' guard and close read. */
   readonly invocationIds = new Map<string, InvocationState>();
   constructor(
@@ -223,7 +225,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
     tool: string,
     input: Data,
     read?: boolean,
-  ): Promise<SessionInvocation> {
+  ): Promise<SessionToolInvocation> {
     ordinary(caller);
     caller = structuredClone(caller);
     input = snapshotInput(input);
@@ -233,7 +235,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
     if ('error' in prepared) throw prepared.error;
     this.host.open();
     const invocationId = newId('invocation');
-    const invocation: SessionInvocation = Object.freeze({
+    const invocation: SessionToolInvocation = Object.freeze({
       caller: Object.freeze({
         actorId: caller.actorId,
         projectId: caller.projectId,
@@ -321,7 +323,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
     }
   }
   async run<T>(
-    invocation: SessionInvocation,
+    invocation: SessionToolInvocation,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T> {
     const state = this.invocations.get(invocation);
@@ -388,7 +390,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
       await this.cancel(invocation);
     }
   }
-  async cancel(invocation: SessionInvocation): Promise<void> {
+  async cancel(invocation: SessionToolInvocation): Promise<void> {
     const state = this.invocations.get(invocation);
     if (!state || state.used) return;
     const running = state.running;
