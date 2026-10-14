@@ -76,6 +76,7 @@ export class StripePayments implements Payments {
     const session = await this.stripe.checkout.sessions.create(
       {
         mode: 'payment',
+        managed_payments: { enabled: false },
         allowed_payment_method_types: ['card'],
         customer_email: email,
         client_reference_id: requestId,
@@ -101,7 +102,7 @@ export class StripePayments implements Payments {
         success_url: `${back}?checkout=returned`,
         cancel_url: `${back}?checkout=cancelled`,
       },
-      { idempotencyKey: `merv-experiment-${requestId}-${contract.hash}-${generation}` },
+      { idempotencyKey: `merv-experiment-v2-${requestId}-${contract.hash}-${generation}` },
     );
     check(
       session.url && session.livemode === this.config.live,
