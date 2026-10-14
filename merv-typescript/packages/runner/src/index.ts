@@ -1,14 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-  readSync,
-  writeFileSync,
-} from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -45,6 +37,7 @@ import {
   conversationFile,
   forgetConversations,
   keepConversation,
+  readOwned,
   refusedResume,
   restoreConversation,
   type ConversationFacts,
@@ -449,7 +442,7 @@ export class MachineRunner implements Runner {
   private async advertise(): Promise<void> {
     // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`), and it
     // has no repository of its own for work that names no driver. A managed runner's
-    // capabilities must equal its enrolment, so it names only its drivers.
+    // capabilities must equal its enrolment (`inquiry.1` aside): its drivers and its work host.
     // `inquiry.1`: it runs an inquiry visit as one, read-only and keeping nothing (`inquiring`).
     const marker = this.config.workInstanceId ? 'workflow.workhost.1' : 'runner.2';
     const capabilities = [...this.drivers.keys(), marker, INQUIRY_CAPABILITY].sort();
@@ -461,7 +454,7 @@ export class MachineRunner implements Runner {
         platforms: this.profiles.map(platformOf),
         capacity: this.capacity(),
         appliedVersion: this.appliedVersion,
-        ...(capabilities.length ? { capabilities } : {}),
+        capabilities,
       };
       const key = JSON.stringify(body);
       if (this.presented?.[0] === key && this.clock() - this.presented[1] < 15_000) return;
@@ -1222,21 +1215,8 @@ export class MachineRunner implements Runner {
    * (a `live` budget's tally reads on), Codex's report from its last 1 MiB (16 MiB live).
    */
   private readUsage(record: LaunchRecord, live?: ClaudeTally): SessionUsageReport | undefined {
-    const read = (path: string, limit: number, tail = false) => {
-      // Never a link, and never a wait on a FIFO swapped in before the open.
-      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const stat = fstatSync(fd);
-        if (!stat.isFile() || (!tail && stat.size > limit))
-          throw new Error('Not a readable report');
-        const bytes = Buffer.alloc(Math.min(stat.size, limit));
-        readSync(fd, bytes, 0, bytes.length, stat.size - bytes.length);
-        const text = bytes.toString('utf8');
-        return bytes.length < stat.size ? text.slice(text.indexOf('\n') + 1) : text;
-      } finally {
-        closeSync(fd);
-      }
-    };
+    const read = (path: string, limit: number, part?: 'tail') =>
+      readOwned(path, undefined, limit, part).toString('utf8');
     try {
       return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));
     } catch {
@@ -1249,7 +1229,7 @@ export class MachineRunner implements Runner {
       return sessionUsageReportSchema.parse(
         profile.harness === 'claude'
           ? claudeLogUsage(path, model, live)
-          : harnessOf(profile)?.usage(read(path, live ? 16 << 20 : 1 << 20, true), model),
+          : harnessOf(profile)?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model),
       );
     } catch {
       return;

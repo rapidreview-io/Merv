@@ -257,6 +257,14 @@ test('every text is blanked of bearers and exact secrets, even split between pie
     ]),
     [{ kind: 'text', id: 'm', delta: '[REDACTED] and [REDACTED]', done: true }],
   );
+  // Nor where what a piece holds back would cut a long unspaced run through the bearer.
+  const data = 'x'.repeat(4070);
+  const run = [
+    ...scrubber.scrub([{ kind: 'text', id: 'j', delta: `{"t":"${bearer}","d":"${data}` }]),
+    ...scrubber.scrub([{ kind: 'text', id: 'j', delta: '"}', done: true }]),
+  ];
+  const joined = run.map((event) => (event.kind === 'text' ? event.delta : '')).join('');
+  assert.equal(joined, `{"t":"[REDACTED]","d":"${data}"}`);
   const long = 'y'.repeat(AGENT_EVENT_TEXT + 5);
   assert.deepEqual(
     scrubber.scrub([

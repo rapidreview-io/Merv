@@ -15,7 +15,7 @@ flowchart LR
   end
   subgraph Machine
     R[Runner plugin] --> L[Private launch ledger]
-    R --> B[Private Git repository + workspaces]
+    R --> B[Scratch and Code driver workspaces]
     R --> G[Guardian + process group]
     G --> C[Worker]
   end
@@ -63,6 +63,7 @@ session without revoking other sessions.
 | Profile   | Supported behavior                                                                                                                                                                |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `codex`   | Native Codex CLI, frozen assignment on stdin, scoped MCP catalog, bounded local shell, read-only or assigned-workspace-write filesystem policy. Model and effort are optional.    |
+| `claude`  | Claude Code headless (`stream-json`), the same frozen stdin and scoped MCP server, no user or project settings; a sealed review keeps only the read tools.                        |
 | `command` | Trusted local executable plus literal argv, the same frozen stdin and MCP environment. Read-only leases are refused because this profile supplies no verified filesystem sandbox. |
 
 Remote desired settings can enable/disable an existing profile and tune its
@@ -112,8 +113,8 @@ after the last accepted one (the server holds it fresh for 45 s) and at once
 after a failure or a `settings_pending` decline, so remote settings apply within
 15 s. A profile whose lease was declined is not asked for again for 5 s; a
 request whose answer was lost is always replayed. Each live session is read every
-tick, but heartbeated only when that would slide its expiry by more than a
-minute, as judged by the runner's clock against the server's `expiresAt`: the
+tick, but heartbeated only for a slide the server keeps (15 minutes, or any slide
+to its hard deadline), as judged by the runner's clock against the server's `expiresAt`: the
 machine's clock is assumed to be within a minute or so of the server's, as the
 local deadline check already assumes. A clock hours behind heartbeats only when
 the session is that close to expiry, and one four hours behind never does. A
@@ -133,17 +134,15 @@ profile reads the `turn.completed` usage of its own `codex exec --json` stream f
 redacted `stdout.log` (input tokens, cached ones included, output tokens and the profile's
 model, never a cost); the Claude profile reads the final `result` event of its
 `stream-json` output (input tokens plus the cache it wrote and read, output tokens and the
-profile's model; any cost it reports is dropped). Only the log's last 1 MiB is read, from its first
-whole line. Codex prints it only after the closing message it writes once the
-handoff tool returns, so a Codex launch whose own handoff closed its session gets a grace of
+profile's model; any cost it reports is dropped), or, for a run stopped before it, the sum of each
+model call's usage; Claude's log is read whole, Codex's last 1 MiB from its first whole line.
+Codex prints it only after the closing message it writes once the handoff tool returns, so a Codex launch whose own handoff closed its session gets a grace of
 a minute, within its deadline, to exit by itself; any other close, and any other profile, is
 stopped at once. The grace holds the launch's capacity slot but changes no capture: the
 worker's tools are already closed, the final capture is still taken once the process has
 ended, as a Git result submission already expects, and a sealed lease's Codex sandbox is
-read-only. A Codex launch stopped before its turn completed still reports nothing, and so
-does a Claude launch stopped before its `result` event (which, with no grace, includes one
-stopped at once when its own handoff closed its session), as does any other profile that
-writes nothing. When the launch is over the runner sends a regular
+read-only. A Codex launch stopped before its turn completed still reports nothing, as does
+any other profile that writes nothing. When the launch is over the runner sends a regular
 file of at most 4 KB in that shape, or what the profile read: with its release when the
 process ended first, and on its own when the server had already closed the session, which is
 how a landed handoff ends. The ledger remembers that the report was answered, so it is
@@ -168,12 +167,9 @@ When a driver cannot prepare a checkout because the place that work's history li
 
 ## Git workspace lifecycle
 
-Runner owns a private bare clone of the configured local source and never changes
-that source repository. A workflow selects scratch, a detached ephemeral checkout,
-or a persistent branch by namespace/project/instance, optionally separated by the
-full base OID. A frozen `reference:name` must identify an available exact commit;
-there is no fallback. `central` names the machine's private ref initialized from
-`baseRef`, not a server-published project branch.
+Runner keeps no repository of its own: the driver a policy names (`code.v2`) owns each
+checkout (see [WORKSPACES.md](WORKSPACES.md)). A workflow selects scratch, a detached
+ephemeral checkout, or a persistent one.
 
 Checkout intent is durable before Git preparation. The stable launch ID and
 initial snapshot are attached before spawn. Native workers edit files inside

@@ -71,18 +71,25 @@ export function redactConversation(bytes: Buffer, secrets: string[]): Buffer {
   return Buffer.from(lines.length ? `${lines.join('\n')}\n` : '');
 }
 
-/** A regular file `uid` owns, read without following a link: whole up to `cap`, else its head. */
-function readOwned(path: string, uid: number | undefined, cap: number, head = false): Buffer {
+/** A regular file `uid` owns, read without following a link or waiting on a FIFO: whole up to
+ *  `cap`, else its head, or its tail from its first whole line. */
+export function readOwned(
+  path: string,
+  uid: number | undefined,
+  cap: number,
+  part?: 'head' | 'tail',
+): Buffer {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (!head && stat.size > cap))
-      throw new MervError('conversation_unreadable', 'Not a conversation this runner keeps');
+    if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (!part && stat.size > cap))
+      throw new MervError('runner_file_unreadable', 'Not a file this runner keeps');
     const bytes = Buffer.alloc(Math.min(stat.size, cap));
+    const at = part === 'tail' ? stat.size - bytes.length : 0;
     let read = 0;
     for (let n = 1; n > 0 && read < bytes.length; read += n)
-      n = readSync(fd, bytes, read, bytes.length - read, read);
-    return bytes.subarray(0, read);
+      n = readSync(fd, bytes, read, bytes.length - read, at + read);
+    return bytes.subarray(at && bytes.indexOf(0x0a) + 1, read);
   } finally {
     closeSync(fd);
   }
@@ -130,7 +137,7 @@ export function keepConversation(
 
 const printed = (harness: Harness, runDirectory: string) => {
   try {
-    const output = readOwned(join(runDirectory, 'stdout.log'), undefined, 1 << 20, true);
+    const output = readOwned(join(runDirectory, 'stdout.log'), undefined, 1 << 20, 'head');
     return harness.conversationId(output.toString('utf8'));
   } catch {
     return undefined;
@@ -148,7 +155,7 @@ export function refusedResume(profile: RunnerProfile, runDirectory: string): boo
     !printed(harness, runDirectory) &&
     ['stdout.log', 'stderr.log'].some((name) => {
       try {
-        const head = readOwned(join(runDirectory, name), undefined, 64 << 10, true);
+        const head = readOwned(join(runDirectory, name), undefined, 64 << 10, 'head');
         return harness.resumeRefused.test(head.toString('utf8'));
       } catch {
         return false;

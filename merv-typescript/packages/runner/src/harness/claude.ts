@@ -179,7 +179,7 @@ export const claude: Harness = {
  * Claude Code headless. The same shape as the Codex launch: the Merv server alone, its
  * bearer read from the process environment and never from an argument, no user or
  * project settings, hooks, plugins or skills, and no permission prompts because there
- * is nobody to answer them. A read-only lease keeps only the read tools; the server
+ * is nobody to answer them. A sealed lease keeps only the read tools; the server
  * enforces the fixed manifest and argument bindings on every call either way.
  */
 function claudeArgs(

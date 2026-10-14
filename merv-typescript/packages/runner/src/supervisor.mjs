@@ -150,9 +150,7 @@ function groupOwner(group) {
     deadlineTimer = setTimeout(() => stop('deadline'), Math.max(0, deadline - Date.now()));
   };
   // Graceful group signals must leave the owner alive to perform the final group kill.
-  process.on('SIGTERM', () => {
-    if (!stopping) stop('external_stop');
-  });
+  process.on('SIGTERM', () => stop('external_stop'));
   process.on('SIGINT', () => stop('external_stop'));
   process.on('disconnect', () => stop('guardian_lost'));
   process.on('message', (message) => {

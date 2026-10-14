@@ -94,9 +94,13 @@ export class Scrubber {
         this.carry.delete(key);
         if (!event.done) {
           const tail = /\S+$/.exec(text)?.[0] ?? '';
-          const held = tail.slice(textEnd(tail, Math.max(0, tail.length - this.maxSecret)));
-          if (held) this.carry.set(key, held);
-          text = text.slice(0, text.length - held.length);
+          let cut = text.length - tail.length;
+          cut += textEnd(tail, Math.max(0, tail.length - this.maxSecret));
+          // A credential the cut would part waits whole, with what follows it.
+          for (const { index, 0: found } of text.matchAll(this.blank))
+            if (index < cut && index + found.length > cut) cut = index;
+          if (cut < text.length) this.carry.set(key, text.slice(cut));
+          text = text.slice(0, cut);
         }
         const first = !this.opened.has(key);
         if (event.done) this.opened.delete(key);
