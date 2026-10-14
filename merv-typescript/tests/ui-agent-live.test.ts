@@ -617,3 +617,30 @@ test('a tool’s JSON answer is laid out two spaces deep, folded once it is long
   assert.ok(fold.querySelector('.code-body')!.textContent!.includes('\n  "field_19": 19\n}'));
   assert.equal(document.querySelectorAll('.agent-step').length, 2);
 });
+
+test('a word streamed in redraws only what it changed: an opened step is not drawn again', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  seq = 0;
+  const [live] = streams('/sessions/ses_w/events', 1);
+  await mount(createElement(Panel, { sessions: [session('ses_w')] }));
+  // A call whose input was cut says so, in a line drawn only while its step is open.
+  const cut = 4321;
+  live!.send('snapshot', {
+    events: [
+      event({ kind: 'tool_call', id: 'c1', name: 'Bash', input: '{"command":"ls"}', cut }),
+      event({ kind: 'tool_result', id: 'c1', output: 'total 0' }),
+      event({ kind: 'text', id: 'm1', delta: 'Reading' }),
+    ],
+  });
+  await settle(10);
+  await expand(document.querySelector('.agent-step-line')!);
+  assert.ok(text().includes('4,321 characters not shown'));
+  const said = t.mock.method(Number.prototype, 'toLocaleString');
+  for (const word of [' the', ' data', ' now'])
+    (live!.send('events', { events: [event({ kind: 'text', id: 'm1', delta: word })] }),
+      await settle(10));
+  assert.ok(text().includes('Reading the data now'), text().slice(0, 300));
+  const drawn = said.mock.calls.filter((call) => Number(call.this) === cut).length;
+  assert.equal(drawn, 0, 'the opened step drew once, not once per word');
+});

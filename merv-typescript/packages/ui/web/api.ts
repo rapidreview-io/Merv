@@ -131,21 +131,25 @@ export const setTokenRefresher = (refresh: (() => Promise<string | null>) | unde
 let refreshing:
   | { identity: number; handler: () => Promise<string | null>; result: Promise<string | null> }
   | undefined;
-function refreshedToken(handler: () => Promise<string | null>): Promise<string | null> {
-  if (refreshing?.identity === identityEpoch && refreshing.handler === handler)
-    return refreshing.result;
-  const pending = {
-    identity: identityEpoch,
-    handler,
-    result: Promise.resolve()
-      .then(handler)
-      .catch(() => null)
-      .finally(() => {
-        if (refreshing === pending) refreshing = undefined;
-      }),
-  };
-  refreshing = pending;
-  return pending.result;
+/** A bearer for one the server refused: one renewed meanwhile, else one refresh shared, or null. */
+export async function renewed(bearer: string | null): Promise<string | null> {
+  const handler = refreshToken;
+  if (!bearer || !handler) return null;
+  if (memoryToken !== bearer) return memoryToken;
+  if (refreshing?.identity !== identityEpoch || refreshing.handler !== handler) {
+    const pending = {
+      identity: identityEpoch,
+      handler,
+      result: Promise.resolve()
+        .then(handler)
+        .catch(() => null)
+        .finally(() => {
+          if (refreshing === pending) refreshing = undefined;
+        }),
+    };
+    refreshing = pending;
+  }
+  return await refreshing.result;
 }
 function requireScope(epoch: number): void {
   if (epoch !== scopeEpoch)
@@ -200,9 +204,8 @@ export async function accountRequest<T>(
     const body = (await response.json().catch(() => null)) as
       (T & { error?: { code: string; message: string; details?: unknown } }) | null;
     requireScope(epoch);
-    if (response.status === 401 && attempt === 0 && bearer && refreshToken) {
-      // Another request may already have refreshed this account while this response arrived.
-      const refreshed = memoryToken !== bearer ? memoryToken : await refreshedToken(refreshToken);
+    if (response.status === 401 && attempt === 0) {
+      const refreshed = await renewed(bearer);
       requireScope(epoch);
       if (refreshed) {
         setToken(refreshed, { refresh: true });

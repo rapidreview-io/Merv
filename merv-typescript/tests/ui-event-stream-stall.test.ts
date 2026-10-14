@@ -70,3 +70,37 @@ test('a stream reopened from the last event it holds is not slow while its agent
   await jump(STALL_MS);
   assert.equal(state(), null, 'a quiet agent on an open stream is not a slow connection');
 });
+
+test('a stream refused for a credential that expired opens again once, with the renewed one', async (t) => {
+  const { setToken, setTokenRefresher } = await import('../packages/ui/web/api.js');
+  setToken('expired');
+  let renewals = 0;
+  const forget = setTokenRefresher(
+    async () => (renewals++, setToken('renewed', { refresh: true }), 'renewed'),
+  );
+  t.after(async () => {
+    forget();
+    setToken(null);
+    await unmount();
+  });
+  const live = eventStream();
+  serve('/sessions/ses_r/events', (call) =>
+    call === 1
+      ? { status: 401, body: { error: { code: 'unauthorized' } } }
+      : { stream: live.stream },
+  );
+  await mount(view('ses_r'));
+  live.send('snapshot', {
+    events: [{ seq: 1, at, event: { kind: 'text', id: 'a', delta: 'Back again.', done: true } }],
+  });
+  await settle(20);
+  assert.equal(state(), null, 'the live view is open, not refused');
+  assert.ok(document.body.textContent?.includes('Back again.'), 'what the agent said is drawn');
+  await unmount();
+  // A credential still refused once renewed is refused for good: one renewal, never a loop.
+  serve('/sessions/ses_x/events', { status: 401, body: { error: { code: 'unauthorized' } } });
+  await mount(view('ses_x'));
+  await settle(20);
+  assert.equal(state(), 'The live view isn’t available.Retry');
+  assert.equal(renewals, 2, 'one renewal for each refused stream');
+});

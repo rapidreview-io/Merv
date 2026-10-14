@@ -787,3 +787,60 @@ test('Pi stands with Work, and the Agents row in the rail’s Fleet section with
   assert.equal(link.querySelector('.rail-badge')!.textContent, '3·1');
   assert.equal(link.getAttribute('aria-label'), 'Agents, 3 working, 1 waiting on you');
 });
+
+test('a sign-in that lands while the first check reads still opens the project that check chose', async (t) => {
+  const { browserAuth, setAuthMode } = await import('../packages/ui/web/auth.js');
+  const user = { issuer: 'https://login.example/auth/v1', subject: 'user-1', createdAt: '' };
+  const login = { url: 'https://login.example', publishableKey: 'sb_publishable_fixture' };
+  boot('Operator');
+  serve('/account', { body: { kind: 'user', user, projects: [project] } });
+  const who = `${user.issuer} ${user.subject}`;
+  localStorage.setItem('merv:last-project', JSON.stringify({ who, project: project.id }));
+  // The same shared account as before in this tab, so the SDK's word renews and reloads only.
+  sessionStorage.setItem('merv:shared-account', `${login.url}\n${user.subject}`);
+  setAuthMode('shared');
+  setToken('fixture-token');
+  let emit!: (event: string, session: unknown) => void;
+  const held = await browserAuth(() => {}, {
+    fetch: (async () => Response.json({ enabled: true, login })) as typeof fetch,
+    createClient: (() => ({
+      auth: {
+        onAuthStateChange: (fn: typeof emit) => (
+          (emit = fn),
+          { data: { subscription: { unsubscribe() {} } } }
+        ),
+        stopAutoRefresh: async () => {},
+      },
+    })) as never,
+  });
+  t.after(async () => {
+    await unmount();
+    held.dispose();
+    setAuthMode('local');
+    localStorage.clear();
+    sessionStorage.removeItem('merv:shared-account');
+    setToken('fixture-token');
+  });
+  // The first check's account answers only once the second has asked, and the second's only
+  // once the first has chosen the project.
+  const real = globalThis.fetch;
+  const gate = () => {
+    let open!: () => void;
+    return Object.assign(new Promise<void>((resolve) => (open = resolve)), { open: () => open() });
+  };
+  const [first, chosen] = [gate(), gate()];
+  let accounts = 0;
+  t.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    if (input === '/account' && ++accounts === 1) await first;
+    else if (input === '/account' && accounts === 2) (first.open(), await chosen);
+    if (input === '/tools/ui.shell') chosen.open();
+    return await real(input, init);
+  });
+  await mount(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(App)));
+  await act(async () =>
+    emit('SIGNED_IN', { user: { id: user.subject }, access_token: 'fixture-token' }),
+  );
+  await settle(50);
+  assert.ok(document.querySelector('.sidebar'), `the project opened: ${text().slice(0, 200)}`);
+  assert.equal(accounts, 3, 'the check that lost the race asked once more, and no more');
+});

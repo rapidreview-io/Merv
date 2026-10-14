@@ -551,7 +551,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setState(result);
       })
       .catch((error: unknown) => {
-        if (cancelled || (error instanceof ApiError && error.code === 'scope_changed')) return;
+        if (cancelled) return;
+        // An earlier check chose the project while this one read: this one is asked again.
+        if (error instanceof ApiError && error.code === 'scope_changed') return reload();
         // A server that is down or restarting, or a membership still settling, is asked again
         // later each time, and the credential is kept: a 30-second outage once made thousands
         // of requests and signed the person out.

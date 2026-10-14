@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { sameOriginPath } from '@merv/contracts/running';
-import { currentToken, projectSelection } from './api';
+import { currentToken, projectSelection, renewed } from './api';
 
 type Frame = { event: string; data: string };
 
@@ -136,7 +136,7 @@ export const STALL_MS = 10_000;
  * stream the server rotates is opened again at once; a dropped one waits, doubling with each
  * failure up to half a minute; one the server is too busy to open (429) waits the same way from
  * five seconds, still connecting, with nothing to say; one the server ends (`end`) or refuses is
- * left closed. `after`
+ * left closed, unless the account renews the credential it refused. `after`
  * names the last event the reader holds, so a reconnect asks only for what follows it
  * (`?after=`). A stream with no frame STALL_MS after it was first opened from nothing held, and
  * not ended or refused, is `stalled`; `retry` opens the stream again at once, from the last event
@@ -158,7 +158,7 @@ export function useEventStream(
     setState('connecting');
     let stopped = false;
     let failures = 0;
-    let busy = false;
+    let renewing = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     /**
      * When reading began, until the first frame came. A stream opened again from the last event
@@ -176,7 +176,8 @@ export function useEventStream(
     const connect = async () => {
       const since = Date.now();
       const from = latest.current.after?.() ?? 0;
-      let ended = false;
+      const bearer = currentToken();
+      let [ended, busy] = [false, false];
       try {
         const rotated = await readEventStream(
           from ? `${url}${url.includes('?') ? '&' : '?'}after=${from}` : url,
@@ -184,7 +185,7 @@ export function useEventStream(
           (event, value) => {
             if (event === 'end') ended = true;
             if (stopped || event === 'end' || event === 'rotate') return;
-            failures = 0;
+            [failures, renewing] = [0, false];
             waiting = null;
             setState('open');
             latest.current.onEvent(event, value);
@@ -196,14 +197,21 @@ export function useEventStream(
           return setState('ended');
         }
         if (rotated && Date.now() - since > 5000) return void connect();
-        busy = false;
       } catch (cause) {
         if (stopped) return;
-        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status)) {
+        const status = cause instanceof StreamError ? cause.status : 0;
+        // A credential that expired while the tab was hidden is renewed once, as a request's is.
+        if (status === 401 && !renewing) {
+          renewing = true;
+          const fresh = await renewed(bearer);
+          if (stopped) return;
+          if (fresh) return void connect();
+        }
+        if ([401, 403, 404, 410].includes(status)) {
           waiting = null;
           return setState('refused');
         }
-        busy = cause instanceof StreamError && cause.status === 429;
+        busy = status === 429;
       }
       if (!busy) setState('retrying');
       timer = setTimeout(

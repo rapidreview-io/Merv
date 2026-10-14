@@ -6,7 +6,6 @@ import type { EventStreamState } from '../event-stream';
 import { CodeBlock } from '../code-block';
 import { Summary, cx } from '../components';
 import {
-  says,
   timeline,
   type Entry,
   type PersonLine,
@@ -206,7 +205,21 @@ export function Person({ line }: { line: PersonLine }) {
   );
 }
 
-const Entryline = memo(function Entryline({ entry, last }: { entry: Entry; last: boolean }) {
+/**
+ * Whether two readings of one entry draw alike: a step is drawn from its block and whether its
+ * visit is live alone, so an event redraws only the entries it changed.
+ */
+const same = (a: Entry, b: Entry): boolean =>
+  a.type === 'steps' && b.type === 'steps'
+    ? a.live === b.live &&
+      a.steps.length === b.steps.length &&
+      a.steps.every((step, at) => step.block === b.steps[at]!.block)
+    : a.type === 'divider' && b.type === 'divider'
+      ? a.text === b.text && a.tone === b.tone
+      : (a.type === 'message' && b.type === 'message' && a.block === b.block) ||
+        (a.type === 'person' && b.type === 'person' && a.line === b.line);
+
+function EntryBody({ entry, last }: { entry: Entry; last: boolean }) {
   switch (entry.type) {
     case 'divider':
       return (
@@ -226,7 +239,8 @@ const Entryline = memo(function Entryline({ entry, last }: { entry: Entry; last:
     case 'steps':
       return <Steps entry={entry} last={last} />;
   }
-});
+}
+const Entryline = memo(EntryBody, (a, b) => a.last === b.last && same(a.entry, b.entry));
 
 /** The live visit's stream as a word, where its agent has said nothing yet or it is slow. */
 const SAID: Record<EventStreamState, string> = {
@@ -307,8 +321,8 @@ export function AgentConversation({
     setBottom(true);
   };
   // A live visit whose agent has drawn nothing yet (a quiet `Started` is not a line) says where
-  // its stream stands; once it has, only trouble is said.
-  const drawn = !!streamed && says(live.blocks, true);
+  // its stream stands; once it has, only trouble is said. What it drew is keyed under its id.
+  const drawn = !!streamed && entries.some(({ key }) => key.startsWith(`${streamed.sessionId}:`));
   const quiet = !!streamed && !drawn && SAID[state];
   const trouble = drawn && ['stalled', 'retrying', 'refused'].includes(state);
   const shownEntries = entries.slice(from);
