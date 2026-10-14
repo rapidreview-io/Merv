@@ -94,10 +94,11 @@ async function fileHash(file: File, progress: (value: number) => void): Promise<
 function putFile(
   upload: UploadPlan['parts'][number],
   file: File,
+  sending: { current?: XMLHttpRequest },
   progress: (loaded: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
-    const request = new XMLHttpRequest();
+    const request = (sending.current = new XMLHttpRequest());
     request.open('PUT', upload.url);
     for (const [name, value] of Object.entries(upload.headers))
       request.setRequestHeader(name, value);
@@ -131,7 +132,9 @@ export function UploadControl({ available }: { available: boolean }) {
   const pending = useRef<{ file: File; uploadId: string }>();
   const requestId = useRef(crypto.randomUUID());
   const done = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => () => clearTimeout(done.current), []);
+  const sending = useRef<XMLHttpRequest>();
+  // An upload whose page goes is abandoned with it, and so are the bytes it was still sending.
+  useEffect(() => () => void (clearTimeout(done.current), sending.current?.abort()), []);
   const send = async (file: File) => {
     if (file.size < 1 || !current()) return;
     clearTimeout(done.current);
@@ -180,7 +183,7 @@ export function UploadControl({ available }: { available: boolean }) {
         const upload = plan.parts[0];
         if (upload) {
           setNote('Uploading');
-          await putFile(upload, file, (loaded) => {
+          await putFile(upload, file, sending, (loaded) => {
             if (current()) setFraction(0.1 + 0.9 * (loaded / file.size));
           });
         }

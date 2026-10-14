@@ -37,8 +37,8 @@ export function ReferenceLookup() {
       return;
     }
     setError(undefined);
-    setRefs(next);
-    lookup.reload();
+    if (next.join(' ') === refs?.join(' ')) lookup.reload();
+    else setRefs(next);
   };
   return (
     <section className="stack">

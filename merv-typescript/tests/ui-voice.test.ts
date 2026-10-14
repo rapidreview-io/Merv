@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { serve } from './ui-render.js';
+import { mount, requests, serve, settle, unmount } from './ui-render.js';
 
-const { sayable } = await import('../packages/ui/web/views/pi-voice.js');
+const { sayable, useVoice } = await import('../packages/ui/web/views/pi-voice.js');
 const { placeOf } = await import('../packages/ui/web/views/pi-screen.js');
 
 test('an answer written for the screen is said as words: no markup, tables or code', () => {
@@ -55,4 +55,57 @@ test('what the agent shows opens where a link to it would: a page by its name, a
     path: '/artifacts/art_1?focus=shape%201',
     title: 'Results.md',
   });
+});
+
+test('a voice session ended or refused while the microphone is asked for opens nothing and keeps nothing', async (t) => {
+  t.after(unmount);
+  const contexts: { closed: boolean }[] = [];
+  const asked: { grant(stream: unknown): void; refuse(error: unknown): void }[] = [];
+  Object.assign(globalThis, {
+    Audio: class {
+      setAttribute() {}
+    },
+    AudioContext: class {
+      held = contexts[contexts.push({ closed: false }) - 1]!;
+      async close() {
+        this.held.closed = true;
+      }
+    },
+    RTCPeerConnection: class {
+      createDataChannel = () => ({ readyState: 'connecting' });
+      close() {}
+    },
+  });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: () => new Promise((grant, refuse) => asked.push({ grant, refuse })),
+    },
+  });
+  const { createElement } = await import('react');
+  const { act } = await import('react-dom/test-utils');
+  let voice!: ReturnType<typeof useVoice>;
+  const pi = { snapshot: { conversation: { id: 'conv_1' }, commands: [] } };
+  await mount(
+    createElement(() => {
+      voice = useVoice(pi as never);
+      return null;
+    }),
+  );
+  await act(async () => voice.start());
+  await act(async () => asked[0]!.refuse(new DOMException('denied', 'NotAllowedError')));
+  assert.equal(voice.problem, 'Microphone access was refused.');
+  assert.deepEqual(contexts, [{ closed: true }], 'what a refused session opened is closed');
+
+  // End, pressed while the browser still asks, ends the session there.
+  await act(async () => voice.start());
+  await act(async () => voice.stop());
+  let stopped = 0;
+  const track = { stop: () => stopped++ };
+  await act(async () => asked[1]!.grant({ getTracks: () => [track] }));
+  await settle(0);
+  assert.equal(voice.state, 'off');
+  assert.equal(stopped, 1, 'the microphone granted afterwards is let go at once');
+  assert.deepEqual(contexts.at(-1), { closed: true });
+  assert.ok(!requests.some((line) => line.endsWith('/tools/pi.voice')), 'no session is opened');
 });

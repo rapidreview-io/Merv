@@ -16,7 +16,7 @@ const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
-const { ThreadStages } = await import('../packages/ui/web/views/threads.js');
+const { ThreadDialog, ThreadStages } = await import('../packages/ui/web/views/threads.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { Reading } = await import('../packages/ui/web/views/running-phrase.js');
 const { useTool } = await import('../packages/ui/web/api.js');
@@ -651,4 +651,34 @@ test('an answer sent refreshes Home, and a send whose result is unknown keeps it
   await settle(10);
   // Its result unknown, the same words are sent again: they cannot be changed meanwhile.
   assert.equal(area.readOnly, true);
+});
+
+test('a live thread’s dialog, ticking each second, leaves its conversation as it was', async (t) => {
+  t.after(unmount);
+  const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
+  const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role: 'operator' };
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', { body: { kind: 'actor', actor, projects: [project] } });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/sessions/threads/thr_rev/conversation', { body: { threadId: 'thr_rev', visits: [] } });
+  // As the Agents page opens one: the thread alone, no group around it.
+  const live = threads.find((item) => item.id === 'thr_rev')!;
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(
+        SessionProvider,
+        null,
+        createElement(ThreadDialog, { thread: live as never, title: 'Grokking', onClose() {} }),
+      ),
+    ),
+  );
+  await settle(50);
+  // The conversation follows its foot by writing its scroll whenever what it draws changes.
+  let writes = 0;
+  const timeline = document.querySelector('dialog .agent-timeline')!;
+  Object.defineProperty(timeline, 'scrollTop', { get: () => 0, set: () => void writes++ });
+  await settle(2200);
+  assert.equal(writes, 0, 'nothing it draws was drawn again');
 });

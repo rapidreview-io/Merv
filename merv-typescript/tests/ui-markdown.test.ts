@@ -1129,15 +1129,22 @@ test('a reference lookup asks once, and never again for what came back missing',
   await mount(createElement(MemoryRouter, null, createElement(ReferenceLookup)));
   const field = document.querySelector('textarea')!;
   const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
+  const check = async (refs: string[]) => {
+    await act(async () => {
+      set.call(field, refs.join('\n'));
+      field.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await act(async () => document.querySelector('form')!.requestSubmit());
+    await settle(10);
+  };
   const refs = [`art_${'3'.repeat(32)}`, `wf_${'4'.repeat(32)}`];
-  await act(async () => {
-    set.call(field, refs.join('\n'));
-    field.dispatchEvent(new window.Event('input', { bubbles: true }));
-  });
-  await act(async () => document.querySelector('form')!.requestSubmit());
-  await settle(10);
+  await check(refs);
   assert.match(text(), /art_…333333/);
-  assert.deepEqual(asked, [refs]);
+  // Others are asked alone; the same ones again only when they are checked again.
+  const others = [`art_${'6'.repeat(32)}`];
+  await check(others);
+  await check(others);
+  assert.deepEqual(asked, [refs, others, others]);
 });
 
 test('a text drawn again names what it named before without asking again', async (t) => {

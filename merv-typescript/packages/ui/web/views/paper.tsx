@@ -101,10 +101,11 @@ function compose(workspace: PaperWorkspace): DocView[] {
   });
 }
 
-/** The outline says where the reading is: the first section the viewport holds. */
-function useReading(anchors: string[]): string | undefined {
+/** The outline says where the reading is: the first section the viewport holds. A form that
+ *  closes (`again`) draws its section anew, so every section is watched again. */
+function useReading(docs: DocView[], again: string): string | undefined {
   const [here, setHere] = useState<string>();
-  const all = anchors.join(' ');
+  const all = docs.flatMap((doc) => doc.rows.map((row) => row.anchor)).join(' ');
   useEffect(() => {
     const ids = all ? all.split(' ') : [];
     const seen = new Set<string>();
@@ -122,7 +123,7 @@ function useReading(anchors: string[]): string | undefined {
       if (node) watch.observe(node);
     }
     return () => watch.disconnect();
-  }, [all]);
+  }, [all, again]);
   return here;
 }
 
@@ -195,7 +196,7 @@ function PaperPage({ row }: ViewProps) {
     last.current = tool;
   }, [tool]);
   const docs = workspace.data ? compose(workspace.data) : [];
-  const here = useReading(docs.flatMap((doc) => doc.rows.map((item) => item.anchor)));
+  const here = useReading(docs, tool);
   const ready = docs.length > 0;
   useEffect(() => {
     if (opened && ready) document.getElementById(opened)?.scrollIntoView();

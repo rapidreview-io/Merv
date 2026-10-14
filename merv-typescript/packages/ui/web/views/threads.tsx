@@ -592,7 +592,7 @@ export function ThreadCard({
  */
 export function ThreadDialog({
   thread,
-  group = [thread],
+  group,
   title,
   loadedAt,
   onClose,
@@ -650,7 +650,7 @@ export function ThreadDialog({
  */
 export function ThreadReading({
   thread,
-  group = [thread],
+  group,
   loadedAt,
 }: {
   thread: ThreadView;
@@ -665,7 +665,7 @@ export function ThreadReading({
     {},
     { every: isLive(thread) ? 5000 : 15_000 },
   );
-  const visits = useMemo(() => visitsOf(group), [group]);
+  const visits = useMemo(() => visitsOf(group ?? [thread]), [group, thread]);
   const names = useMemo(() => visitNames(visits), [visits]);
   const people = useMemo(
     () => peopleOf(said.data, actor?.id, namesOf(actors)),

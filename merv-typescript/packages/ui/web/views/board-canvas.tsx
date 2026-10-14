@@ -54,6 +54,8 @@ export default function BoardCanvas({ id }: { id: string }) {
   const revision = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const saving = useRef<Promise<void> | null>(null);
+  /** The shapes as Excalidraw last drew them, read after it unmounts and empties its own scene. */
+  const scene = useRef<readonly OrderedExcalidrawElement[]>([]);
 
   useEffect(() => {
     let live = true;
@@ -72,11 +74,10 @@ export default function BoardCanvas({ id }: { id: string }) {
   }, [id]);
 
   const save = useCallback(async () => {
-    if (!api) return;
     await saving.current;
-    const changed = api
-      .getSceneElementsIncludingDeleted()
-      .filter((el) => KEPT.has(el.type) && known.current.get(el.id) !== el.version);
+    const changed = scene.current.filter(
+      (el) => KEPT.has(el.type) && known.current.get(el.id) !== el.version,
+    );
     if (!changed.length) return;
     const run = (async () => {
       for (let at = 0; at < changed.length; at += 500) {
@@ -88,7 +89,7 @@ export default function BoardCanvas({ id }: { id: string }) {
     })().catch((error: Error) => setProblem(`Not saved: ${error.message}`));
     saving.current = run;
     await run;
-  }, [api, id]);
+  }, [id]);
 
   // A board opens with all of it in view, zoomed out as far as that takes and never in; with
   // ?focus=<shape or frame id> it opens on that part, large enough to read.
@@ -208,6 +209,7 @@ export default function BoardCanvas({ id }: { id: string }) {
           }),
         }}
         onChange={(elements: readonly OrderedExcalidrawElement[]) => {
+          scene.current = elements;
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);

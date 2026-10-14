@@ -9,13 +9,24 @@ import assert from 'node:assert/strict';
 import { mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
-// jsdom lays nothing out, so nothing ever scrolls into view: the outline's watcher is inert.
+// jsdom lays nothing out, so nothing ever scrolls into view: the outline's watchers only say
+// what they watch, until they are disconnected.
+const watched = new Set<Set<Element>>();
 Object.assign(globalThis, {
   IntersectionObserver: class {
-    observe() {}
-    disconnect() {}
+    seen = new Set<Element>();
+    constructor() {
+      watched.add(this.seen);
+    }
+    observe(node: Element) {
+      this.seen.add(node);
+    }
+    disconnect() {
+      watched.delete(this.seen);
+    }
   },
 });
+const followed = (node: Element) => [...watched].some((seen) => seen.has(node));
 
 const { createElement } = await import('react');
 const { MemoryRouter, Routes, Route } = await import('react-router-dom');
@@ -181,6 +192,8 @@ test('the form a glyph opens says Save or Create once, and Escape hands the curs
   await settle(0);
   assert.equal(document.querySelector('form[aria-label="Edit Problem"]'), null);
   assert.equal(document.activeElement?.getAttribute('aria-label'), 'Edit Problem');
+  // The section drawn again where the form stood is the one the outline follows.
+  assert.ok(followed(document.getElementById('problem-problem')!));
 
   const add = tools().find((tool) => tool.getAttribute('aria-label') === 'New section')!;
   await act(async () => add.click());

@@ -24,10 +24,10 @@ export type VoiceState = 'off' | 'connecting' | 'listening' | 'working' | 'speak
 interface Live {
   pc: RTCPeerConnection;
   dc: RTCDataChannel;
-  mic: MediaStream;
+  mic?: MediaStream;
   audio: HTMLAudioElement;
   context: AudioContext;
-  input: AnalyserNode;
+  input?: AnalyserNode;
   output?: AnalyserNode;
   /** What the person said since the last request was handed to Pi. */
   heard: string;
@@ -110,7 +110,7 @@ export function useVoice(pi: Conversation | null) {
     live.current = null;
     if (held) {
       clearTimeout(held.quiet);
-      for (const track of held.mic.getTracks()) track.stop();
+      for (const track of held.mic?.getTracks() ?? []) track.stop();
       held.pc.close();
       held.audio.srcObject = null;
       void held.context.close().catch(() => undefined);
@@ -216,16 +216,19 @@ export function useVoice(pi: Conversation | null) {
       audio.autoplay = true;
       audio.setAttribute('playsinline', '');
       const context = new AudioContext();
+      const pc = new RTCPeerConnection();
+      const dc = pc.createDataChannel('oai-events');
+      // Held while the microphone is asked for: End ends it there, a refusal closes it.
+      held = { pc, dc, audio, context, heard: '', last: Date.now() };
+      live.current = held;
       const mic = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      if (live.current !== held) return void mic.getTracks().forEach((track) => track.stop());
       const input = context.createAnalyser();
       input.fftSize = 512;
       context.createMediaStreamSource(mic).connect(input);
-      const pc = new RTCPeerConnection();
-      const dc = pc.createDataChannel('oai-events');
-      held = { pc, dc, mic, audio, context, input, heard: '', last: Date.now() };
-      live.current = held;
+      Object.assign(held, { mic, input });
       pc.ontrack = (event) => {
         const [stream] = event.streams;
         if (!stream || live.current !== held) return;
@@ -333,7 +336,7 @@ export function useVoice(pi: Conversation | null) {
       const held = live.current;
       if (!held) return;
       const next = !muted;
-      for (const track of held.mic.getAudioTracks()) track.enabled = !next;
+      for (const track of held.mic?.getAudioTracks() ?? []) track.enabled = !next;
       if (held.dc.readyState === 'open')
         held.dc.send(
           JSON.stringify({

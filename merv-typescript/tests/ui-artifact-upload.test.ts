@@ -49,7 +49,11 @@ for (const size of [32, 2_000_001])
     });
 
 /** Only the storage transport is simulated; the control hashes and sends the actual File. */
-async function uploading(t: TestContext, replies: (number | 'network')[], onPut?: () => void) {
+async function uploading(
+  t: TestContext,
+  replies: (number | 'network' | 'held')[],
+  onPut?: () => void,
+) {
   t.after(unmount);
   const original = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
   t.after(() => {
@@ -66,6 +70,10 @@ async function uploading(t: TestContext, replies: (number | 'network')[], onPut?
     upload: { onprogress?: (event: { loaded: number }) => void } = {};
     onload?: () => void;
     onerror?: () => void;
+    aborted = false;
+    abort() {
+      this.aborted = true;
+    }
     open(method: string, url: string) {
       this.method = method;
       this.url = url;
@@ -79,6 +87,7 @@ async function uploading(t: TestContext, replies: (number | 'network')[], onPut?
       onPut?.();
       const reply = replies.shift();
       assert.notEqual(reply, undefined, 'no unexpected storage request');
+      if (reply === 'held') return;
       queueMicrotask(() => {
         this.upload.onprogress?.({ loaded: file.size });
         if (reply === 'network') this.onerror?.();
@@ -182,6 +191,18 @@ test('Files does not complete an upload under a project selected during the stor
   assert.deepEqual(requests, ['POST /tools/artifact.upload_begin']);
   assert.equal(f.puts.length, 1);
   assert.equal(f.closed(), 0);
+});
+
+test('Files stops the storage PUT of an upload its page left', async (t) => {
+  const f = await uploading(t, ['held']);
+  serve('/tools/artifact.upload_begin', { body: { result: f.plan() } });
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', { value: [f.file] });
+  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
+  for (let tries = 0; tries < 100 && !f.puts.length; tries++) await settle(10);
+  assert.equal(f.puts.length, 1);
+  await unmount();
+  assert.ok(f.puts[0]!.aborted, 'the bytes nothing will complete stop going');
 });
 
 test('Files resumes a failed PUT with the same upload and fresh signed URL', async (t) => {
