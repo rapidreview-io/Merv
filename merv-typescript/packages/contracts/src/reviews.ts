@@ -151,8 +151,8 @@ export interface Reviews {
   /** With `subjectId`, only the reviews of that record. */
   list(caller: Caller, filter?: { subjectId?: string }): Promise<ReviewRequest[]>;
   /**
-   * What Home and the rail poll: every open review, each subject's current review and newest
-   * verdict, and the newest verdicts, oldest first; `list` holds every review.
+   * What Home and the rail poll: every open review and the 200 newest settled ones (a verdict,
+   * or superseded), oldest first; `list` holds every review.
    */
   home(caller: Caller): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */

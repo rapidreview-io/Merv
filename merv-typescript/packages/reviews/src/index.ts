@@ -66,8 +66,6 @@ const submitFields: ReadonlySet<string> = new Set([
  * The project's owner as the signed-in person: an operator's member actor with human authority.
  * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
  */
-/** How many of the newest verdicts Home's read carries, besides each subject's own. */
-const HOME_VERDICTS = 20;
 const projectOwner = (caller: Caller, actor: Actor) =>
   actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
 /** Where a snapshot keeps a review row `row` or `find` read, until the scope ends or writes. */
@@ -498,20 +496,12 @@ export class ReviewService implements Reviews {
           standings(
             (
               await sql.all<ReviewRow>(
-                // Open ones; each subject's current review (currentReview's order) and newest
-                // verdict (standings' `returned`); and the newest verdicts, as Home lists them.
-                `SELECT * FROM reviews WHERE project_id = ? AND id IN (
-                  (SELECT id FROM reviews WHERE project_id = ? AND status IN ('requested', 'started'))
-                  UNION (SELECT DISTINCT ON (subject_id) id FROM reviews WHERE project_id = ?
-                    ORDER BY subject_id, subject_revision DESC, created_at DESC, id DESC)
-                  UNION (SELECT DISTINCT ON (subject_id) id FROM reviews WHERE project_id = ? AND status = 'submitted'
-                    ORDER BY subject_id, created_at DESC, id DESC)
-                  UNION (SELECT id FROM reviews WHERE project_id = ? AND status = 'submitted' AND verdict IS NOT NULL
-                    ORDER BY created_at DESC, id DESC LIMIT ${HOME_VERDICTS})
-                ) ORDER BY created_at, id`,
-                caller.projectId,
-                caller.projectId,
-                caller.projectId,
+                // Every open review and the 200 newest settled ones (a verdict, or superseded): a
+                // subject among them comes with its newest settled review, so with its current one.
+                `(SELECT * FROM reviews WHERE project_id = ? AND status IN ('requested', 'started'))
+                UNION ALL (SELECT * FROM reviews WHERE project_id = ? AND status IN ('submitted', 'superseded')
+                  ORDER BY created_at DESC, id DESC LIMIT 200)
+                ORDER BY created_at, id`,
                 caller.projectId,
                 caller.projectId,
               )

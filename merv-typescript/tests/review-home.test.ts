@@ -9,9 +9,9 @@ import { createApp } from './fixtures/app.js';
 
 /**
  * What Home and the rail poll of Reviews does not grow with every round a project ever ran:
- * the open reviews, each subject's current review and newest verdict, and the newest verdicts.
+ * every open review, however old, and the 200 newest settled ones.
  */
-test('Home reads open reviews, each subject’s current one and the newest verdicts', async (t) => {
+test('Home reads every open review and the 200 newest settled ones', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-home-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -36,15 +36,27 @@ test('Home reads open reviews, each subject’s current one and the newest verdi
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  // One subject reviewed round after round, then open again; 30 others reviewed once.
+  // Two reviews open since before everything else; one subject returned twice and open again;
+  // 205 others settled once, every 40th superseded rather than decided.
   const rows: [string, string, number, string, string | null, string][] = [];
   let minute = 0;
   const at = () => new Date(Date.UTC(2026, 9, 1, 0, minute++)).toISOString();
-  for (let round = 0; round < 12; round++)
-    rows.push([`r-main-${round}`, 'main', round, 'submitted', 'needs_changes', at()]);
-  rows.push(['r-main-open', 'main', 12, 'requested', null, at()]);
-  for (let index = 0; index < 30; index++)
-    rows.push([`r-other-${index}`, `other-${index}`, 0, 'submitted', 'pass', at()]);
+  rows.push(['r-waiting', 'waiting', 0, 'requested', null, at()]);
+  rows.push(['r-claimed', 'claimed', 0, 'started', null, at()]);
+  rows.push(['r-main-0', 'main', 0, 'submitted', 'needs_changes', at()]);
+  for (let index = 0; index < 205; index++) {
+    const superseded = index % 40 === 39;
+    rows.push([
+      `r-other-${index}`,
+      `other-${index}`,
+      0,
+      superseded ? 'superseded' : 'submitted',
+      superseded ? null : 'pass',
+      at(),
+    ]);
+    if (index === 100) rows.push(['r-main-1', 'main', 1, 'submitted', 'needs_changes', at()]);
+  }
+  rows.push(['r-main-open', 'main', 2, 'requested', null, at()]);
   await app.ctx.state.transaction(async (tx) => {
     for (const [id, subject, revision, status, verdict, created] of rows)
       await tx.run(
@@ -55,25 +67,24 @@ test('Home reads open reviews, each subject’s current one and the newest verdi
         subject,
         revision,
         status,
-        status === 'submitted' ? 'reviewer' : null,
+        ['submitted', 'started'].includes(status) ? 'reviewer' : null,
         verdict,
         created,
       );
   });
   const listed = await app.ctx.reviews.list(owner);
   const home = await app.ctx.reviews.home(owner);
-  assert.equal(listed.length, 43);
-  // The open one, the subject's newest verdict, and every other subject's single review.
+  const open = ['r-waiting', 'r-claimed', 'r-main-open'];
+  const settled = rows.map(([id]) => id).filter((id) => !open.includes(id));
+  assert.equal(listed.length, 210);
+  // Every open one, however old, and exactly the 200 newest settled: r-main-0 and the six
+  // oldest others are left out.
   assert.deepEqual(
     home.map((review) => review.id).sort(),
-    [
-      'r-main-11',
-      'r-main-open',
-      ...Array.from({ length: 30 }, (_, index) => `r-other-${index}`),
-    ].sort(),
+    [...open, ...settled.slice(-200)].sort(),
   );
-  // What the pages derive from it is what they derived from every review.
-  for (const subject of ['main', 'other-3'])
+  // What the pages derive from it is what they derived from every review, in the same order.
+  for (const subject of ['main', 'other-199', 'other-204'])
     assert.deepEqual(currentReview(home, subject), currentReview(listed, subject));
   const flags = (reviews: typeof listed) =>
     reviews.map(({ id, open, returned }) => ({ id, open, returned }));

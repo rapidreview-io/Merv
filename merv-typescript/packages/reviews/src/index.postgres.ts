@@ -210,4 +210,6 @@ UPDATE reviews r SET claim_event_id=(SELECT MAX(e.id) FROM events e WHERE e.proj
 UPDATE reviews r SET claimed_at=e.created_at,
   claimed_by_agent=COALESCE((e.data_json::jsonb #>> '{source,kind}')='session',false)
   FROM events e WHERE e.id=r.claim_event_id;`,
+  // Home and the rail's count read a project's open reviews apart from its settled history.
+  15: `CREATE INDEX reviews_open ON reviews(project_id) WHERE status IN ('requested','started');`,
 };
