@@ -28,7 +28,9 @@ import {
   instructions,
   handoff,
   sourceVerification,
-  reportPresentation,
+  presentationAt,
+  handoffAt,
+  recipeKey,
   feasibilityFormat,
   CONTEXT_CHARS,
 } from './definitions.js';
@@ -338,7 +340,10 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   );
   // Figures are images: listed for the reader to open, never read into the context.
   const figures = new Set([
-    ...experiment.submissions.flatMap((submission) => submission.figureIds),
+    ...experiment.submissions.flatMap((submission) => [
+      ...submission.figureIds,
+      ...(submission.reportPdfId ? [submission.reportPdfId] : []),
+    ]),
     ...[...records.values()].flatMap((evidence) => evidence.figureIds),
   ]);
   // The generated metrics exhibit has its own section, where it is listed and never embedded.
@@ -429,7 +434,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         }
       : {}),
   };
-  const recipe = ctx.contexts.get(state);
+  const recipe = ctx.contexts.get(recipeKey(state, context.snapshot.version));
   check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);
   const gitInstruction =
     state === 'running'
@@ -442,7 +447,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   const needsClaim = review?.status === 'requested';
   const instruction = needsClaim
     ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-    : handoff(state);
+    : handoffAt(state, context.snapshot.version);
   const speedGuidance =
     state === 'planned'
       ? ' Prioritize fast experiment completion. Plan batching, multiple GPUs or concurrent independent jobs for execution after approval when they save time, within the authorized budget and scientific requirements. Avoid duplicating the same work.'
@@ -465,7 +470,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${reportPresentation}` : ''}\n\n${sourceVerification}`,
+    brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}\n\n${sourceVerification}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

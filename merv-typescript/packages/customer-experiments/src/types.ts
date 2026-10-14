@@ -61,6 +61,8 @@ export interface ResultSubmission {
   contractId: string;
   artifactIds: string[];
   summary: string;
+  /** The rendered report the results were submitted with. */
+  report?: { sourceArtifactId: string; pdfArtifactId: string; pageArtifactIds: string[] };
   producerId: string;
   sessionId: string;
   executionRevision: number;

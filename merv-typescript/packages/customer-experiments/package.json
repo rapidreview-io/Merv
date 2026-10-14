@@ -27,6 +27,7 @@
     "@sandboxes/db": "0.1.0",
     "@sandboxes/providers": "0.1.0",
     "@sandboxes/kernel": "0.1.0",
-    "@sandboxes/merv-host": "0.1.0"
+    "@sandboxes/merv-host": "0.1.0",
+    "@merv/reports": "0.1.0"
   }
 }

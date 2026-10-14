@@ -11,6 +11,7 @@ import { legacyHistoryPlugin } from '@merv/legacy-history';
 import { identityPlugin } from '@merv/identity';
 import { piPlugin } from '@merv/pi';
 import { paperPlugin } from '@merv/paper';
+import { reportsPlugin } from '@merv/reports';
 import { reviewsPlugin } from '@merv/reviews';
 import { codeWorkspaceDriver } from '@merv/code/driver/index';
 import { runnerWith } from '@merv/runner';
@@ -118,6 +119,8 @@ const capabilities: Record<string, readonly string[]> = {
     'codeWork',
   ],
   paper: ['state', 'scope', 'artifacts'],
+  // One persistent report draft per subject, rendered to PDF; subjects register their owners.
+  reports: ['state', 'scope', 'artifacts'],
   reflections: [
     'state',
     'scope',
@@ -186,7 +189,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['sbxMerv', 'sbxObjects', 'sbxPipelines', 'sbxRegistry', 'sbxJobs', 'sbxSnapshots'],
-  experiments: ['sandboxEvidence'],
+  experiments: ['sandboxEvidence', 'reports'],
   // A used-up limit rules out the verdicts that would return the work; every owner that says
   // which verdicts do runs on Workflows, so Reviews outlives its unload.
   reviews: ['workflows'],
@@ -295,6 +298,7 @@ const pureRules = new Set([
   '@merv/code-work/workspace',
   '@merv/code-work/record-unit',
   '@merv/paper/rules',
+  '@merv/reports/prefill',
   '@merv/context-builder/artifact-item',
   '@merv/sessions/rules',
   '@merv/sessions/compute',
@@ -914,6 +918,7 @@ test('Cordis service requirements match the architecture and every accessed capa
             'codeWork',
             'sessions',
             'sandboxEvidence',
+            'reports',
             'sbxMerv',
             'sbxAccounts',
             'sbxDb',
@@ -1005,6 +1010,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'paper',
       'pi',
       'reflections',
+      'reports',
       'research',
       'reviews',
       'scope',
@@ -1188,6 +1194,7 @@ test('each service boots with only its declared dependency closure and without A
     scope: { plugin: scopePlugin },
     artifacts: { plugin: artifactsPlugin },
     paper: { plugin: paperPlugin },
+    reports: { plugin: reportsPlugin },
     workflows: { plugin: workflowsPlugin },
     reviews: { plugin: reviewsPlugin },
     tasks: { plugin: tasksPlugin },

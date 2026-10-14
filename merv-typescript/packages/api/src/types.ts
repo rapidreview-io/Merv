@@ -33,6 +33,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** What an agent conversation is told when its person runs this tool's proposed call, in place
    *  of the whole result: a compact summary, and the reads that give the current details. */
   receipt?(result: unknown, input: z.infer<S>): ToolReceipt;
+  /** What an MCP client (an agent) is shown in place of the JSON result, such as a rendered
+   *  image beside a text summary. Other callers receive the JSON result. */
+  present?(result: unknown): CallToolResult;
 }
 export interface ToolAct {
   title: string | ((input: Record<string, unknown>) => string);
@@ -70,6 +73,8 @@ export interface CallerRules {
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
+  /** A native tool's presentation for MCP clients, from its definition's `present`. */
+  mcp?: CallToolResult;
 }
 export interface ToolCatalog {
   /** Input names are unprefixed; publication uses _<mountId>.<remoteName>. */

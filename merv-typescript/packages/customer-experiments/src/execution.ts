@@ -7,14 +7,29 @@ import {
   type WorkflowPolicy,
 } from '@merv/contracts';
 import { codeWorkspace } from '@merv/code-work/workspace';
-import { grant, reference, target } from '@merv/workflows/rules';
+import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { heldLease, insertLease, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
 import { directsIndependently, excludedFromReview, reviewActions } from '@merv/reviews/rules';
 import type { CustomerExperiments } from './domain.js';
-import { SERVICE_EXPERIMENT } from './program.js';
+import { SERVICE_EXPERIMENT, writesReport } from './program.js';
+
+/** The executor writes, reviews and renders its report for this request only (version 2). */
+const REPORT_TOOLS = [
+  'report.open',
+  'report.write',
+  'report.clear',
+  'report.check',
+  'report.review_visual',
+  'report.approve_visual',
+  'report.render',
+];
 import { SERVICE_MODEL } from './types.js';
 
-export function serviceExecution(review: boolean): WorkflowExecutionPolicy {
+/** What version 2's executor is told: the report tools and their persistent draft. */
+const reportInstruction =
+  'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results as artifacts. Write the report with the report tools (subjectKind customer_experiment, subjectId this request): report.open returns a draft prefilled from the contract, its question, inquiry and constraints locked, and the format guide; it persists, so after a review returns the work edit it (report.write) or start over (report.clear) instead of rewriting it. Compute every number from the retained results, review and approve each chart (report.review_visual, report.approve_visual), check the page (report.render), render it with final: true, then call customer_experiment.submit_results with its sourceArtifactId as reportArtifactId and your result artifacts. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the report; do not change scope.';
+
+export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
   return {
     readOnly: review,
     workspace: codeWorkspace(review ? 'review' : 'work', 'customer-experiments'),
@@ -44,6 +59,14 @@ export function serviceExecution(review: boolean): WorkflowExecutionPolicy {
             grant('artifact.upload_complete', {}),
             grant('code.commit', {}),
             grant('code.operation', {}),
+            ...(writesReport(version)
+              ? REPORT_TOOLS.map((name) =>
+                  grant(name, {
+                    subjectKind: literal('customer_experiment'),
+                    subjectId: target('instanceId'),
+                  }),
+                )
+              : []),
             grant('customer_experiment.submit_results', {
               id: target('instanceId'),
               expectedRevision: target('revision'),
@@ -54,7 +77,7 @@ export function serviceExecution(review: boolean): WorkflowExecutionPolicy {
   };
 }
 
-export function executionPolicy(ctx: CustomerExperiments): WorkflowPolicy {
+export function executionPolicy(ctx: CustomerExperiments, version = 1): WorkflowPolicy {
   const facts = (c: WorkflowCheckContext) => ctx.get(c.caller, c.snapshot.id, c.tx);
   const currentReview = async (c: WorkflowCheckContext) => {
     const exp = await facts(c);
@@ -224,7 +247,7 @@ export function executionPolicy(ctx: CustomerExperiments): WorkflowPolicy {
     assignments: ['running', 'results_review'].map((state) => ({
       state,
       check: checkAdmission,
-      execution: serviceExecution(state === 'results_review'),
+      execution: serviceExecution(state === 'results_review', version),
       lease,
       references: async (c) => {
         const exp = await facts(c);
@@ -260,7 +283,9 @@ export function executionPolicy(ctx: CustomerExperiments): WorkflowPolicy {
         const compute = ctx.compute ? computeGuidance(review ? 'check' : 'execute') : '';
         const instruction = review
           ? 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
-          : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
+          : writesReport(c.snapshot.version)
+            ? reportInstruction
+            : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
         return {
           role: review ? 'Independent results reviewer' : 'Experiment executor',
           label: `${review ? 'Review' : 'Run'}: ${exp.title}`,

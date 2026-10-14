@@ -69,8 +69,12 @@ export const submitResultsSchema = z
   .object({
     id: z.string().min(1),
     expectedRevision: z.number().int().nonnegative(),
-    artifactIds: z.array(z.string().min(1)).min(1).max(30),
-    summary: text,
+    artifactIds: z.array(z.string().min(1)).max(30).default([]),
+    /** service_experiment@2: the Markdown artifact report.render(final) returned; its PDF and
+     *  pages join the results. */
+    reportArtifactId: z.string().min(1).optional(),
+    /** Defaults to the report's answer and the description under its result chart. */
+    summary: text.optional(),
     requestId: z.string().min(1).max(200),
   })
   .strict();

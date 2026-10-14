@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,6 +84,7 @@ async function fixture(t: TestContext, publicIntake = false, maxRequestsPerDay =
       managed.sessions,
     ),
   );
+  domain.bindReports(legacyReports(state));
   const store = new RequestStore(state, 'fixture-key-never-valid-outside-this-test');
   await store.initialize();
   const profiles: PiProfile[] = [];

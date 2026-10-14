@@ -26,6 +26,7 @@ test('default configuration includes session enforcement and API adds tool trans
     [
       'research',
       'paper',
+      'reports',
       'board',
       'reflections',
       'knowledge',
@@ -61,7 +62,7 @@ test('default configuration includes session enforcement and API adds tool trans
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 41, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 43, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -162,7 +163,7 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 54);
+  assert.equal(loaded.entries.length, 56);
   for (const [id, name] of [
     ['feed', '@merv/feed'],
     ['feed-tools', '@merv/feed/tools'],
@@ -304,7 +305,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    54,
+    56,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

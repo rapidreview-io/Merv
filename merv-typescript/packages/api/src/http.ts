@@ -629,7 +629,9 @@ export class ApiServer {
         const result = await this.call(principal, name, input, selected(_meta), true);
         return result.format === 'mcp'
           ? (result.value as CallToolResult)
-          : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
+          : (result.mcp ?? {
+              content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }],
+            });
       } catch (error) {
         const { data } = rpcError(error);
         return {

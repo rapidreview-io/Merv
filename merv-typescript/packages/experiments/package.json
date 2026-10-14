@@ -17,6 +17,7 @@
     "@merv/code-work": "0.1.0",
     "@merv/sandboxes": "0.1.0",
     "@merv/reviews": "0.1.0",
-    "@merv/workflows": "0.1.0"
+    "@merv/workflows": "0.1.0",
+    "@merv/reports": "0.1.0"
   }
 }

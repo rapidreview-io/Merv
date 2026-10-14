@@ -1,5 +1,6 @@
 import type { TaskDelivery } from '@merv/tasks/types';
 import { CodeService as CoreCodeService } from '@merv/code/service';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { git } from './fixtures/code-store.js';
 import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
@@ -107,6 +108,7 @@ async function fixture(t: TestContext) {
       await createService(new PaperService(state, scope, artifacts)),
     ),
   );
+  experiments.bindReports(legacyReports(state));
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const issue = async (role: 'operator' | 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
@@ -384,6 +386,7 @@ async function fixture(t: TestContext) {
           await createService(new PaperService(state, scope, artifacts)),
         ),
       );
+      experiments.bindReports(legacyReports(state));
     },
   };
 }
@@ -460,7 +463,8 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(executing.context!.type, 'experiment.execute');
   // The executor is told how to present results and link what it names; the planner is not.
   assert.match(executing.brief, /choose the form by the shape of the content/);
-  assert.match(executing.brief, /code-file:<full commit>:<path from the repository root>/);
+  assert.match(executing.brief, /report\.review_visual/);
+  assert.match(executing.brief, /report\.clear to start over/);
   assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);

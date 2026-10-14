@@ -1,7 +1,18 @@
 import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { type WorkflowExecutionPolicy } from '@merv/contracts';
-import { type ActiveState, designCheckout, reviewing, rolesFor } from './program.js';
+import { type ActiveState, designCheckout, reviewing, rolesFor, writesReport } from './program.js';
+
+/** The runner writes, reviews and renders its report for this experiment only (experiment@43). */
+const REPORT_TOOLS = [
+  'report.open',
+  'report.write',
+  'report.clear',
+  'report.check',
+  'report.review_visual',
+  'report.approve_visual',
+  'report.render',
+];
 
 // The fixed tools each assignment of an experiment is granted.
 
@@ -72,6 +83,11 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
             ),
             ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
             ...(state === 'running' ? [grant('code.commit', {}), grant('code.operation', {})] : []),
+            ...(state === 'running' && writesReport(version)
+              ? REPORT_TOOLS.map((name) =>
+                  grant(name, { subjectKind: literal('experiment'), subjectId: target('instanceId') }),
+                )
+              : []),
           ]),
     ],
   };
