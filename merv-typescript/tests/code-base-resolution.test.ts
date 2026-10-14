@@ -1025,6 +1025,12 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
     await f.sessions.release(reviewer, { sessionId: reviewSession.id, runnerId: 'round-reviewer' });
     await f.events.drain();
+    // The move alone, which ends nothing, re-derives the units waiting on the resolution.
+    const said = (await f.workflows.blockers(f.admin, waiter.id)).map((item) => item.message);
+    assert.ok(
+      said.some((message) => message.includes(returned.workflow.state)),
+      String(said),
+    );
     if (round === 1) {
       // A waiter that arrives while the returned resolution is reworked joins the same task.
       const [future] = await Promise.all([

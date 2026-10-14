@@ -333,13 +333,19 @@ export class CodeCommandService implements CodeCommands {
   async nextCommand(caller: Caller, value: unknown): Promise<CodeCommitCommand | null> {
     caller = structuredClone(caller);
     const { checkpoint, ...input } = parse(nextInputSchema, value);
-    return await this.transaction(async (tx) => {
+    const outstanding = async (tx: Transaction) => {
       const session = await this.controlled(caller, input);
+      const sql =
+        "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')";
+      return [session, await tx.get<Row>(sql, session.id)] as const;
+    };
+    // A poll that finds nothing (each running writer's, every second) reads only a snapshot.
+    if (!checkpoint && !(await this.state.snapshot(() => this.transaction(outstanding)))[1])
+      return null;
+    return await this.transaction(async (tx) => {
+      const [session, found] = await outstanding(tx);
       const row =
-        (await tx.get<Row>(
-          "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
-          session.id,
-        )) ?? (checkpoint ? await this.checkpoint(tx, session, checkpoint) : undefined);
+        found ?? (checkpoint ? await this.checkpoint(tx, session, checkpoint) : undefined);
       if (!row) return null;
       const { command } = this.decode(row);
       // A session no longer offered or active holds no lease.

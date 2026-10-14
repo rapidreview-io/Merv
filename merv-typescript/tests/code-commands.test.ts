@@ -318,7 +318,17 @@ test('requests and dispatch are durable, detached, single outstanding and replay
   });
   assert.equal(result.status, 'succeeded');
   assert.equal((await f.code.commit(worker.caller, input())).status, 'succeeded');
+  // A runner polls every second; a poll that finds nothing takes no writer lock.
+  const transaction = f.state.transaction.bind(f.state);
+  const writes: boolean[] = [];
+  t.mock.method(
+    f.state,
+    'transaction',
+    (fn: never) => (writes.push(!f.state.readScope), transaction(fn)),
+  );
   assert.equal(await f.code.nextCommand(f.source, worker.control), null);
+  assert.deepEqual([writes.length > 0, writes.filter(Boolean)], [true, []]);
+  t.mock.restoreAll();
   assert.equal(
     (await f.code.commit(worker.caller, { ...input('next'), expectedHead: oid('b') })).status,
     'queued',

@@ -188,7 +188,7 @@ export class CodeUnitService {
     if (row?.quarantine_base_key)
       return { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] };
     if (row?.base_json) return { status: 'pinned', pin: pin(row)! };
-    return this.baseState(await this.derive(tx, caller.projectId, unitId));
+    return this.baseState(await this.derive(tx, caller.projectId, unitId, row));
   }
 
   /**
@@ -231,7 +231,7 @@ export class CodeUnitService {
       );
       return pin(existing)!;
     }
-    const derived = await this.derive(tx, caller.projectId, unitId);
+    const derived = await this.derive(tx, caller.projectId, unitId, existing);
     if (derived.status !== 'ready') {
       // A dependency that is not settled is refused by Workflows before any lease hook runs;
       // should that ever change, the refusal is still one a poll never counts as a failure.
@@ -284,9 +284,9 @@ export class CodeUnitService {
     );
     const disposition = await this.resolutionBlocker(tx, caller.projectId, input.unitId);
     if (disposition) throw new MervError(disposition.code, disposition.message, 409);
-    const health = await this.records.row(tx, caller.projectId, input.unitId);
+    const existing = await this.records.row(tx, caller.projectId, input.unitId);
     check(
-      !health?.quarantine_base_key,
+      !existing?.quarantine_base_key,
       'code_quarantined',
       'This unit retains a quarantined base and cannot be accepted',
       409,
@@ -359,7 +359,6 @@ export class CodeUnitService {
       storage: code === null ? 'none' : 'code',
       ...(admitted ? { receipt: admitted.id } : {}),
     };
-    const existing = await this.records.row(tx, caller.projectId, input.unitId);
     const stored = await this.records.retainUnitAcceptance(caller, body, tx);
     if (!existing?.acceptance_hash && stored.publishes_at)
       await this.sealPublication(caller, relations.instance.name, stored, body, digest(body), tx);
@@ -463,12 +462,7 @@ export class CodeUnitService {
         409,
       );
       check(
-        !row.base_json &&
-          !(await tx.get(
-            'SELECT 1 FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
-            caller.projectId,
-            unitId,
-          )),
+        !row.base_json && !row.fixed_reference,
         'code_publish_based',
         'This unit already stands on a base that does not include main; a successor publishes what it left',
         409,
@@ -567,7 +561,12 @@ export class CodeUnitService {
    * Whether a version declares a workspace is Workflows' persisted fact, so the answer is the
    * same while that dependency's owner is unloaded.
    */
-  private async derive(tx: Transaction, projectId: string, unitId: string): Promise<Derived> {
+  private async derive(
+    tx: Transaction,
+    projectId: string,
+    unitId: string,
+    row: UnitRow | undefined,
+  ): Promise<Derived> {
     let relations = await this.relations(tx, projectId, unitId);
     relations = {
       ...relations,
@@ -604,20 +603,14 @@ export class CodeUnitService {
           : `${IMPORT}, or names an imported commit as main with code.local.bind.`,
       );
     };
-    const publishing = !!(await this.records.row(tx, projectId, relations.instance.id))
-      ?.publishes_at;
-    const fixed = await tx.get<{ reference: string }>(
-      'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
-      projectId,
-      relations.instance.id,
-    );
-    if (fixed)
+    const publishing = !!row?.publishes_at;
+    if (row?.fixed_reference)
       return {
         status: 'ready',
         body: {
           formatVersion: 1,
           kind: 'accepted',
-          reference: fixed.reference,
+          reference: row.fixed_reference,
           repositoryId: bound.repositoryId,
           dependencies: [],
           sources: [],
@@ -893,7 +886,7 @@ export class CodeUnitService {
       await this.setBlockers(tx, projectId, unitId, resolution ? [resolution] : []);
       return;
     }
-    let derived = await this.derive(tx, projectId, relations.instance.id);
+    let derived = await this.derive(tx, projectId, unitId, row);
     // The first unit to wait on a set writes its record and plan; this is a writing path,
     // which a derivation itself never is.
     let prerequisites: string[] = [];
@@ -912,7 +905,7 @@ export class CodeUnitService {
       prerequisites = path
         .flatMap((record) => (record.resolutionTaskId ? [record.resolutionTaskId] : []))
         .sort();
-      derived = await this.derive(tx, projectId, relations.instance.id);
+      derived = await this.derive(tx, projectId, unitId, row);
       // A pending task has no automatic work to wake; waking it here would schedule another reconciliation forever.
       if (base.state === 'queued') this.bases.soon(projectId);
     }
@@ -938,13 +931,13 @@ export class CodeUnitService {
    */
   async baseSponsors(tx: Transaction, projectId: string) {
     const waiters: { unitId: string; merge: string[] }[] = [];
-    for (const row of await tx.all<{ unit_id: string }>(
-      'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL',
+    for (const row of await tx.all<UnitRow>(
+      `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL`,
       projectId,
     )) {
       const relations = await this.workflows.relations(projectId, row.unit_id, tx);
       if (!relations || relations.instance.terminal) continue;
-      const derived = await this.derive(tx, projectId, relations.instance.id);
+      const derived = await this.derive(tx, projectId, row.unit_id, row);
       if ('merge' in derived && derived.merge)
         waiters.push({ unitId: row.unit_id, merge: derived.merge });
     }
@@ -1215,16 +1208,16 @@ export class CodeUnitService {
    * the event says did not end the work costs nothing past the base check (an event recorded
    * before events said so is read as before); then only what waits on the ended work is derived
    * again, climbing past a dependent that has itself ended, because a derivation looks through
-   * those.
+   * those. A resolution task's ending passes the whole project; any other move of it is said
+   * only in the blockers of the units waiting on its base, which depend on it.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
+    const ending = event.data.terminal !== false;
     if (await this.bases.forTask(tx, event.projectId, event.subjectId)) {
-      await this.reconcileProject(tx, event.projectId);
-      return;
-    }
-    if (event.data.terminal === false) return;
+      if (ending) return await this.reconcileProject(tx, event.projectId);
+    } else if (!ending) return;
     const ended = await this.workflows.relations(event.projectId, event.subjectId, tx);
-    if (!ended?.instance.terminal) return;
+    if (!ended || (ending && !ended.instance.terminal)) return;
     const seen = new Set<string>();
     const queue = [...ended.dependents];
     for (let node = queue.shift(); node; node = queue.shift()) {
@@ -1270,7 +1263,7 @@ export class CodeUnitService {
       : base
         ? { status: 'pinned', pin: base }
         : open && !open.instance.terminal
-          ? this.baseState(await this.derive(tx, row.project_id, row.unit_id))
+          ? this.baseState(await this.derive(tx, row.project_id, row.unit_id, row))
           : null;
   }
   private async setBlockers(

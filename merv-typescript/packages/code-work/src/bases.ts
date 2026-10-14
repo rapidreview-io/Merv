@@ -291,12 +291,16 @@ export class CodeBaseService {
     };
   }
 
-  private row(sql: Sql, projectId: string, key: string): Promise<BaseRow | undefined> {
-    return sql.get<BaseRow>(
-      `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
-      projectId,
-      key,
+  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
+  private async row(sql: Sql, projectId: string, key: string): Promise<BaseRow | undefined> {
+    const row = await this.state.remember(`code-work:base:${projectId}:${key}`, () =>
+      sql.get<BaseRow>(
+        `SELECT ${columns} FROM code_bases WHERE project_id=? AND base_key=?`,
+        projectId,
+        key,
+      ),
     );
+    return row && { ...row };
   }
 
   /** A pure read: the record for a set, if anybody has asked for it yet. */
@@ -360,7 +364,8 @@ export class CodeBaseService {
       if (!row) continue;
       const record = this.record(row);
       result.push(record);
-      queue.push(record.left, record.right);
+      const lone = new Set(record.members.map((commit) => baseKey([commit])));
+      queue.push(...[record.left, record.right].filter((input) => !lone.has(input)));
     }
     return result;
   }
@@ -528,15 +533,9 @@ export class CodeBaseService {
   }
 
   private async inputsResolved(sql: Sql, projectId: string, keys: string[]): Promise<boolean> {
-    for (const key of keys) {
-      const row = await sql.get<{ state: string }>(
-        'SELECT state FROM code_bases WHERE project_id=? AND base_key=?',
-        projectId,
-        key,
-      );
-      // No row is a lone commit, which needs nothing.
-      if (row && row.state !== 'resolved') return false;
-    }
+    // No row is a lone commit, which needs nothing.
+    for (const key of keys)
+      if (((await this.row(sql, projectId, key))?.state ?? 'resolved') !== 'resolved') return false;
     return true;
   }
 
@@ -1137,7 +1136,9 @@ export class CodeBaseService {
     );
     const configured = await this.state.read((sql) => this.checkSpec(sql, projectId));
     const env = this.repositories.environment(projectId);
-    const commit = await this.heldCommit(projectId, base.key);
+    // A job being followed needs the merged commit only once it has a verdict.
+    const held = () => this.heldCommit(projectId, base.key);
+    const commit = handle?.jobId ? null : await held();
     // A failed verdict drops the ref before it is sealed: a restart in between finds the job.
     check(
       commit || handle?.jobId,
@@ -1153,7 +1154,7 @@ export class CodeBaseService {
         projectId,
         base,
         checkSkipped('no-command', now()),
-        commit!,
+        (commit ?? (await held()))!,
         env,
         handle,
       );
@@ -1196,7 +1197,7 @@ export class CodeBaseService {
       projectId,
       base,
       checkReceipt(spec, handle, verdict, now()),
-      commit,
+      await held(),
       env,
       handle,
     );

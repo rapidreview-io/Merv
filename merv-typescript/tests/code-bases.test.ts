@@ -435,7 +435,17 @@ test('a retry keeps the merge its lost epoch wrote, though a later acceptance re
   const { a, b } = f.commits;
   const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
   const env = f.repositories.environment(f.projectId);
-  const first = await mergeBases(f.repositories.git, env, a, b, base.key, undefined, 'Merge A + B');
+  // The plan's own order: commit ids, and so which input leads, differ from run to run.
+  const [left, right] = base.left === baseKey([a]) ? [a, b] : [b, a];
+  const first = await mergeBases(
+    f.repositories.git,
+    env,
+    left,
+    right,
+    base.key,
+    undefined,
+    'Merge A + B',
+  );
   assert.equal(first.outcome, 'merged');
   if (first.outcome !== 'merged') return;
   await f.repositories.git.ok(['update-ref', `refs/merv/bases/${base.key}`, first.commit, ''], {

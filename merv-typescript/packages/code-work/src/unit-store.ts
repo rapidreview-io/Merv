@@ -47,6 +47,7 @@ export interface UnitRow {
   quarantine_base_key: string | null;
   publishes_at: string | null;
   publication_id: string | null;
+  fixed_reference: string | null;
 }
 /** The hashed body of an acceptance. It carries no time, so a repeated acceptance is byte-equal. */
 export interface AcceptanceBody {
@@ -265,7 +266,7 @@ export function pin(row: UnitRow): CodeBasePin | null {
   };
 }
 export const unitColumns =
-  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
+  'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id,(SELECT reference FROM code_unit_inputs i WHERE i.project_id=code_units.project_id AND i.unit_id=code_units.unit_id) AS fixed_reference';
 
 /**
  * What the work-unit policy adds when a unit is read: the enforcement a pending publication is
@@ -529,13 +530,10 @@ export class WorkUnitRecords {
         'Only an owner can declare a fixed unit input',
         403,
       );
-      const existing = await tx.get<{ reference: string }>(
-        'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
-        caller.projectId,
-        unitId,
-      );
+      // An input is only ever written here, after its unit's row.
+      const existing = row?.fixed_reference;
       check(
-        !existing || existing.reference === baseReference,
+        !existing || existing === baseReference,
         'code_base_conflict',
         'This unit already has another fixed input',
         409,

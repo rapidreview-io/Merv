@@ -167,6 +167,7 @@ export class CodeService implements Code {
         resolved: async (tx, projectId, key, commit) => {
           await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
           await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
+          this.store?.wake();
         },
         message: async (sql, projectId, key) =>
           (await this.landing?.message(sql, projectId, key)) ??
@@ -343,8 +344,8 @@ export class CodeService implements Code {
   reconcileAll = () => this.unitStore.reconcileAll();
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
     await this.unitStore.transitioned(...args);
-    // An acceptance journals the ref it is kept under; the journal takes it up after this.
-    this.store.wake();
+    // Only a success carries an acceptance, whose retained ref the store takes up after this.
+    if (args[0].data.settled !== false) this.store.wake();
   }
   async controlBase(caller: Caller, input: unknown) {
     return this.baseStore.control(this.scope, caller, input);
