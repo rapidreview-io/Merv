@@ -51,9 +51,7 @@ The nullable storage column leaves previous requests, snapshot hashes and comman
 receipts unchanged. Responses omit the field when there is no selected route.
 The choice belongs to the reviewer's submitted assessment, not the producer's
 original evidence snapshot. Submitted-verdict immutability also protects it.
-Submitted reviews cannot be reissued. The owning program checks whether an
-unsubmitted request is current and eligible for reissue. A later domain submission
-creates a separate request with no previous verdict or selected route.
+Submitted reviews are immutable. A later domain submission creates a separate request with no previous verdict or selected route.
 
 Request hashes include a supplied route. An identical authorized retry returns
 the original receipt; changing the destination under the same successful request

@@ -408,6 +408,19 @@ test('Experiments run both independent gates, pin exact evidence/exhibit without
   assert.equal(e.conclusion, 'No improvement was observed.');
 });
 
+test('a passing results review states the conclusion as evidence.outcome, or the older conclusion', async (t) => {
+  const f = await fixture(t);
+  const cases: [ReviewApplication['evidence'], string][] = [
+    [{ outcome: ' Accuracy held at 0.5. ', conclusion: 'Older field.' }, 'Accuracy held at 0.5.'],
+    [{ conclusion: 'Older field.' }, 'Older field.'],
+  ];
+  for (const [evidence, expected] of cases) {
+    const e = await f.results(await f.running());
+    const input = { ...(await f.reviewInput(e)), evidence };
+    assert.equal(((await f.reviews.apply(f.reviewer, input)) as Experiment).conclusion, expected);
+  }
+});
+
 test('results review embeds approved design bodies once while retaining every pinned evidence reference', async (t) => {
   const f = await fixture(t);
   const submitted = await f.results(await f.running());

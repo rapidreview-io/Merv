@@ -95,9 +95,9 @@ outputs before rerunning. Terminal actions document a reason input but Python
 does not actually require it; TypeScript should require a bounded nonempty
 reason deliberately.
 
-On pass, conclusion precedence is review evidence's nonempty `conclusion`,
-then the reviewed report's Conclusion section, then review notes. `complete`
-means the research survived review; it does not imply the tested hypothesis
+On pass, conclusion precedence is review evidence's nonempty `outcome` (the
+older `conclusion` still counts), then the reviewed report's Conclusion
+section, then review notes. `complete` means the research survived review; it does not imply the tested hypothesis
 won. Completion does not automatically update linked Claims.
 
 Sources: [complete graph and change functions](../../merv/src/merv/brain/workflows/definitions/experiment.py)

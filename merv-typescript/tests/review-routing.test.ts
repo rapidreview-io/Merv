@@ -581,7 +581,9 @@ test('routing does not authorize fabricated task reviews, wrong projects, revoke
   await f.app.ctx.scope.credentials.revokeActor(f.operator, f.reviewerSource.actorId);
   await f.app.ctx.domainEvents.drain();
   const before = await f.durable();
-  await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input));
+  await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input), {
+    code: 'forbidden',
+  });
   assert.deepEqual(await f.durable(), before);
 });
 

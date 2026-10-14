@@ -282,7 +282,7 @@ test('structured preflight and delivery reject incomplete, ambiguous and unretai
         async () => await f.app.ctx.tasks.submitDelivery(f.producer.caller, proposed),
         (error: unknown) => {
           commandCode = (error as { code?: string }).code;
-          return typeof commandCode === 'string';
+          return commandCode === 'invalid_confirmations';
         },
       );
       const decision = await f.app.ctx.workflows.evaluate(f.producer.caller, task.id, {

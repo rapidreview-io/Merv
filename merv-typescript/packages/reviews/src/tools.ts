@@ -32,7 +32,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.list',
         description:
-          'List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.',
+          'List the current project’s immutable review requests with their claim/verdict status and claimable: whether the review permission, producer and contributor exclusions let you claim one. review.start may still refuse what the owning domain reserves, such as a review a leased worker’s own lease does not serve. Pass subjectId to list only the reviews of that record.',
         inputSchema: z.object({ subjectId: z.string().min(1).optional() }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { subjectId?: string }) =>

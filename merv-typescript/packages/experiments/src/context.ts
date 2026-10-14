@@ -315,20 +315,20 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   const state = context.snapshot.state as ActiveState;
   let inputs: FrozenInputs;
   if (context.caller.session) {
-    inputs = (await leaseOf(ctx, context.caller, experiment, context.tx)).details.inputs;
-    const historical = new Set(inputs.historicalArtifacts);
-    const owned = eligibleRecovery(experiment).filter(
-      (evidence) => evidence.createdBy === context.caller.actorId,
-    );
+    // The lease's frozen inputs are read, never written: the worker's own recovery joins a copy.
+    const leased = (await leaseOf(ctx, context.caller, experiment, context.tx)).details.inputs;
+    const historical = new Set(leased.historicalArtifacts);
+    const owned = eligibleRecovery(experiment)
+      .filter((evidence) => evidence.createdBy === context.caller.actorId)
+      .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
+      .filter((id) => !historical.has(id));
     const allowed = new Set(await allowedArtifacts(ctx, context.caller, experiment, context.tx));
-    inputs.evidenceArtifacts = [
-      ...new Set([
-        ...inputs.evidenceArtifacts,
-        ...owned
-          .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
-          .filter((id) => !historical.has(id)),
-      ]),
-    ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
+    inputs = {
+      ...leased,
+      evidenceArtifacts: [...new Set([...leased.evidenceArtifacts, ...owned])].filter(
+        (id) => allowed.has(id) && !leased.approvedArtifacts.includes(id),
+      ),
+    };
   } else inputs = await inputsOf(ctx, context.caller, experiment, context.tx);
   const records = new Map(
     [

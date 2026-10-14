@@ -558,13 +558,7 @@ export async function standing(
     state: row.state,
     // A lease of an earlier revision holds nothing the task still is.
     lease: leases.get(`${row.id}@${row.revision}`) ?? null,
-    review: review && {
-      id: review.id,
-      status: review.status,
-      reviewerId: review.reviewerId,
-      createdAt: review.createdAt,
-      ...(review.waiting ? { waiting: review.waiting } : {}),
-    },
+    review,
     dependencies,
     blocked,
     ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),

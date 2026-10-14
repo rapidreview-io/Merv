@@ -239,6 +239,7 @@ test('a task whose review rounds are used up is offered only what ends it, and i
       expectedRevision: task.workflow.revision,
       requestId: 'late',
     } as never),
+    { code: 'review_closed' },
   );
   assert.equal((await f.tool('review.start', hand.token, { reviewId: task.reviewId })).status, 200);
   assert.equal((await release(f.boot.token, 'by-admin')).status, 200);

@@ -210,8 +210,9 @@ actor/session, attempt, stage, round, workflow revision, manifest hash and exact
 review ID. Workflow transition, exhibit metadata, submission, review request,
 events and request receipt commit together. Review application likewise commits
 the verdict, transition and attempt/conclusion changes in one transaction.
-The conclusion uses explicit review evidence when supplied, otherwise the pinned
-report's Conclusion section, then the review notes.
+The conclusion uses the review's `evidence.outcome` (or the older
+`evidence.conclusion`) when supplied, otherwise the pinned report's Conclusion
+section, then the review notes.
 
 ## Metrics and shared next-action guidance
 

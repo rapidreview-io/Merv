@@ -80,7 +80,8 @@ const review = {
 };
 const found = new Map([file('report', 18), file('exhibit', 20)].map((item) => [item.id, item]));
 const roleOf = (unit: ReturnType<typeof experimentUnit>, id: string) =>
-  unit.artifacts!.find((item) => item.id === id)?.role;
+  // Listed, and with no role: a missing exhibit must not pass as one nobody owns.
+  unit.artifacts!.find((item) => item.id === id)!.role;
 
 test('an exhibit its submitting session made stays nobody’s own', () => {
   const unit = experimentUnit(experiment as never, graph as never, [] as never, {

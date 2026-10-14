@@ -335,9 +335,12 @@ test('returned-for-changes work has a new start and retained review feedback; te
       reason: 'The required receipt cannot be obtained.',
       requestId: 'close',
     });
-    await assert.rejects(async () => await f.begin(f.producer.caller, task.id, 3));
+    await assert.rejects(async () => await f.begin(f.producer.caller, task.id, 3), {
+      code: 'workflow_ended',
+    });
     await assert.rejects(
       async () => await f.app.ctx.workflows.assignment(f.producer.caller, task.id),
+      { code: 'workflow_ended' },
     );
     assert.equal((await f.app.ctx.tasks.get(f.operator, task.id)).workStarts.length, 3);
   } finally {

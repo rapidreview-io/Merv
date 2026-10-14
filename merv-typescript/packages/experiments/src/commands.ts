@@ -798,11 +798,11 @@ export async function submitReview(
       if (action === 'accept_results') {
         const report = one(submission.evidence, 'report');
         const body = await evidenceText(ctx, caller, report.artifactId, tx);
-        const section = reportConclusion(body);
-        conclusion =
-          typeof input.evidence?.conclusion === 'string' && visible(input.evidence.conclusion)
-            ? input.evidence.conclusion.trim()
-            : section || input.notes;
+        // review.submit tells reviewers evidence.outcome supplies it; `conclusion` is the older name.
+        const stated = [input.evidence?.outcome, input.evidence?.conclusion].find(
+          (text): text is string => typeof text === 'string' && visible(text),
+        );
+        conclusion = stated?.trim() ?? (reportConclusion(body) || input.notes);
       }
       const moved = await handleFor(ctx, experiment.workflow.version).transition(
         caller,

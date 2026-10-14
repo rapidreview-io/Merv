@@ -42,7 +42,7 @@ numbers derived from its immutable check list. A submission looks like:
 
 There must be exactly one confirmation per check, with no duplicate or unknown
 numbers. Each has a `met`/`not_met` claim and nonblank verification notes. A `met`
-claim requires at least one evidence ID. Referenced IDs must be distinct within
+claim that cites no file is backed by the delivered commit (below). Referenced IDs must be distinct within
 each confirmation and included in the producer-owned, same-project submitted
 artifacts. An honest `not_met` claim may have no evidence. There is no exact-text
 copy requirement for version 2 deliveries, and binary evidence is permitted.
@@ -62,14 +62,11 @@ unreferenced, as with existing artifact writes; they are not accessible as artif
 
 ## Delivering a commit
 
-A task whose product is a code repository should not be cut into 2 MB artifacts.
-`task.create` with `workspace: "git"` (default none; requires Code) gives the
-producing worker a runner-prepared private Git checkout and the `code.commit` and
-`code.operation` tools. The choice is carried by the task's workflow version
-(`task@3` until the project is bound and imported; then `task@5`, whose base Code
-derives from accepted prerequisites; `task@4` with an explicit `baseTaskId`),
-so it is fixed at creation; tasks created
-without it are unchanged. See [workspaces](WORKSPACES.md) for the checkouts and for
+Every new task delivers a commit. `task.create` (Code is required; `workspace` may be
+omitted or `"git"`, and `baseTaskId` is retired) gives the producing worker a
+runner-prepared private Git checkout and the `code.commit` and `code.operation` tools;
+Code derives the base from accepted `dependsOn` prerequisites and project main. Older
+scratch tasks stay readable. See [workspaces](WORKSPACES.md) for the checkouts and for
 building later work on the delivered commit.
 
 ```json
@@ -83,9 +80,8 @@ building later work on the delivered commit.
 }
 ```
 
-- A Git task always delivers a commit; files are optional alongside it, so
-  `artifactIds` may be empty. Every other task still requires at least one artifact
-  and takes no `commandId`.
+- A task always delivers a commit; files are optional alongside it, so
+  `artifactIds` may be empty.
 - The commit must be the leased worker's own, made in this assignment at this task
   revision, and already receipted by the runner. A successor never delivers its
   predecessor's commit: it commits again, which succeeds on an unchanged tree. An
@@ -126,17 +122,15 @@ building later work on the delivered commit.
 
 | Code                     | Meaning                                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
-| `invalid_workspace`      | Unknown workspace, or `baseTaskId` without `workspace: "git"`.                             |
-| `invalid_workspace_base` | The base is not a non-failed Git task of this project, or is not among `dependsOn`.        |
+| `invalid_workspace`      | A workspace other than `git`, or the retired `baseTaskId`.                                 |
 | `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.           |
 | `code_base_pending`      | Code does not hold main, or a prerequisite's accepted code is unverified or not imported.  |
-| `task_commit_required`   | A Git delivery without its worker's `commandId`, or a `commandId` on a scratch task.       |
+| `task_commit_required`   | A delivery without its leased worker's `commandId`.                                        |
 | `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
 | `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
 | `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
-| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.  |
+| `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; release the claim.   |
 | `leased_review_required` | A claim of the current review not from a review worker, before `review_rounds` is used up. |
-| `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                 |
 
 With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)
 and artifact-only tasks are unaffected.
