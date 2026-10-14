@@ -226,9 +226,6 @@ export function liveLookup(board: RunningBoard | undefined): (key: RunningKey) =
     return [...new Set([...sessions, ...sessions.flatMap((node) => on(node.key))])];
   };
 }
-/** The same for one thing. */
-export const liveOf = (board: RunningBoard | undefined, key: RunningKey): RunningNode[] =>
-  liveLookup(board)(key);
 
 /** A person's or an agent's name, where the reader of the page may see one. */
 type Named = Pick<RunningReading, 'nameOf'>;
@@ -236,6 +233,7 @@ type Named = Pick<RunningReading, 'nameOf'>;
 interface Live {
   board?: RunningBoard;
   now: Clock;
+  liveOn: ReturnType<typeof liveLookup>;
 }
 const LiveContext = createContext<Live | null>(null);
 /** The key in hand and how one is taken up, where a plane stands to dock its sidebar. */
@@ -294,7 +292,7 @@ function LiveLine({ node }: { node: RunningNode }) {
 /** Who is on a unit of work and where: a line for each session and each machine. */
 export function LiveLines({ id, nodes }: { id?: string; nodes?: RunningNode[] }) {
   const live = useContext(LiveContext);
-  const shown = nodes ?? (id ? liveOf(live?.board, runningKey('work', id)) : []);
+  const shown = nodes ?? (id && live ? live.liveOn(runningKey('work', id)) : []);
   if (!shown.length) return null;
   return (
     <ul className="live-lines">
@@ -463,7 +461,6 @@ export function WorkMap({
       ),
     [units, edges, width, times],
   );
-  const liveOn = useMemo(() => liveLookup(board), [board]);
   const drawn = !!layout;
   // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
   useEffect(() => void (width && onDrawn?.(drawn)), [drawn, width, onDrawn]);
@@ -568,7 +565,7 @@ export function WorkMap({
             unit={unit}
             box={layout.at.get(unit.key)!}
             shapes={shapes}
-            live={liveOn(unit.key)}
+            live={live?.liveOn(unit.key) ?? []}
             relations={edges
               .filter((edge) => edge.to === unit.key && edge.waiting)
               .map((edge) => `Waits on ${names.get(edge.from)}`)}
@@ -683,6 +680,7 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
   const fallback = typeof sent === 'string' && sent.startsWith('/') ? sent : undefined;
   const { board, now } = useLive();
   const data = board.data;
+  const liveOn = useMemo(() => liveLookup(data), [data]);
   const roomy = useRoomy();
   const main = useRef<HTMLDivElement>(null);
 
@@ -756,7 +754,7 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     else select(key, asked ? 'replace' : 'push');
   };
   return (
-    <LiveContext.Provider value={{ board: data, now }}>
+    <LiveContext.Provider value={{ board: data, now, liveOn }}>
       <Reading.Provider value={{ now, nameOf, open: follow }}>
         <Plane.Provider value={{ selected: target, onSelect }}>
           <div className="running work-plane">

@@ -1166,7 +1166,6 @@ test('a reference lookup asks once, and never again for what came back missing',
       body: { result: refs.map((ref) => ({ ref, id: ref, status: 'missing', kind: null })) },
     };
   });
-  serve('/tools/ui.home', { body: { result: {} } });
   serve('/tools/ui.shell', { body: { result: { rows: [] } } });
   await mount(createElement(MemoryRouter, null, createElement(ReferenceLookup)));
   const field = document.querySelector('textarea')!;

@@ -419,11 +419,6 @@ test('a list of the wave that could not be read says so, rather than its records
     },
   };
   // The reflections are there, but their read failed.
-  serve('/tools/task.list', { body: { result: [task] } });
-  serve('/tools/reflection.list', {
-    status: 500,
-    body: { error: { code: 'internal', message: 'Boom' } },
-  });
   serve('/tools/ui.home', { body: { result: { tasks: [task], reflections: null } } });
   const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
   await mount(

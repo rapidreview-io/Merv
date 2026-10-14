@@ -438,10 +438,8 @@ export function Context({ id, turns }: { id: string; turns: number }) {
 
 export function changed(all: PiCommand[], at: number, host?: PiHostView, models?: PiModel[]) {
   const since = (key: 'machine' | 'model') => {
-    const before = all
-      .slice(0, at)
-      .reverse()
-      .find((turn) => turn[key])?.[key];
+    let before: string | undefined;
+    for (let i = at - 1; i >= 0 && !before; i--) before = all[i][key];
     return before && all[at][key] !== before ? all[at][key] : undefined;
   };
   const [machine, model] = [since('machine'), since('model')];

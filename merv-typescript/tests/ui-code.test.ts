@@ -2043,7 +2043,6 @@ test('a superseded publication says main moved before it merged', async (t) => {
 
 test("a record's Code section states the branch, its base, its work and its acceptance", async (t) => {
   t.after(unmount);
-  serve('/tools/ui.home', { body: { result: {} } });
   const held = unit('u4', {
     base: pin('merged', 'm1', ['u2', 'u3']),
     generation: 2,
@@ -2078,7 +2077,6 @@ test("a record's Code section states the branch, its base, its work and its acce
 
 test('a pin on the trunk says what it is, and never a branch name this page invented', async (t) => {
   t.after(unmount);
-  serve('/tools/ui.home', { body: { result: {} } });
   await mount(
     createElement(
       MemoryRouter,
@@ -2302,7 +2300,6 @@ test('a unit’s own publication carries the blocker Code publishes about it', (
 
 test('a record’s Code section leads with the move, and folds the agent’s instruction', async (t) => {
   t.after(unmount);
-  serve('/tools/ui.home', { body: { result: {} } });
   const waiting = unit('u9', {
     baseStatus: {
       status: 'blocked',

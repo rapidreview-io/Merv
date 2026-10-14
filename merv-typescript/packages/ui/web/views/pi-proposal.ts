@@ -97,10 +97,8 @@ export function receiptOf(commands: PiCommand[], at: number): PiProposal | null 
   };
   const text = told(commands[at]);
   if (text === undefined) return null;
-  const from = commands
-    .slice(0, at)
-    .map((command) => !!command.proposals?.length)
-    .lastIndexOf(true);
+  let from = at - 1;
+  while (from >= 0 && !commands[from].proposals?.length) from--;
   // pi.send keeps the words trimmed, and a cut result can end in a space.
   const same = (said?: string) => said?.trim() === text.trim();
   const ran = (commands[from]?.proposals ?? [])

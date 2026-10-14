@@ -59,7 +59,6 @@ function boot(name: string, shell: Record<string, unknown> = {}) {
   serve('/tools/ui.shell', {
     body: { result: { actor, project, rows, plugins: [plugin('paper-ui')], ...shell } },
   });
-  serve('/tools/project.get', { body: { result: project } });
 }
 const open = async (path: string) => {
   await mount(createElement(MemoryRouter, { initialEntries: [path] }, createElement(App)));

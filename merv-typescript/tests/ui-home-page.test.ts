@@ -147,7 +147,6 @@ function boot() {
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'actor', actor, projects: [project] } });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows, plugins: [] } } });
-  serve('/tools/project.get', { body: { result: project } });
   serve('/tools/actor.list', { body: { result: home.actors } });
   serve('/tools/ui.home', { body: { result: home } });
   serve('/tools/ui.running', { body: { result: board() } });

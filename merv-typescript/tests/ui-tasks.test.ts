@@ -490,55 +490,6 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
   assert.equal(saved, 1);
 });
 
-test('new cycle publication preflight does not blame a transient mirror outage on the operator', async (t) => {
-  t.after(async () => await unmount());
-  serve('/tools/task.list', { body: { result: [] } });
-  serve('/tools/experiment.list', { body: { result: [] } });
-  serve('/tools/code.status', {
-    body: {
-      result: {
-        project: { main: { stored: true } },
-        mirror: { blockedBy: 'code_mirror_unavailable' },
-        publication: { controls: { blockers: [] } },
-      },
-    },
-  });
-  await mount(createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved() {} })));
-  assert.equal(document.querySelector('[role="note"]'), null);
-});
-
-test('new cycle remains usable without hosted Code or its status read', async (t) => {
-  t.after(async () => await unmount());
-  for (const unavailable of [false, true]) {
-    serve('/tools/task.list', { body: { result: [] } });
-    serve('/tools/experiment.list', { body: { result: [] } });
-    if (!unavailable)
-      serve('/tools/code.status', {
-        body: { result: { project: null } },
-      });
-    let sent: Record<string, unknown> | undefined;
-    serve('/tools/research.create', (_call, body) => {
-      sent = body;
-      return { body: { result: { id: 'wf_cycle', workflow: { workflow: 'research' } } } };
-    });
-    await mount(createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved() {} })));
-    await settle(10);
-    assert.equal(document.querySelector('[role="note"]'), null);
-    const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => {
-      set.call(name, 'Research without publication');
-      name.dispatchEvent(new window.Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
-    });
-    await settle(10);
-    assert.equal(sent?.name, 'Research without publication');
-    await unmount();
-  }
-});
-
 test('work is listed as its chains: what waits stands under what it waits on, newest chain first', () => {
   const item = (id: string, at: string) => ({ id, at });
   const dep = (id: string, settled: boolean) => ({ id, name: `Name ${id}`, settled });

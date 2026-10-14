@@ -25,7 +25,6 @@ const {
   absorberOf,
   cadenceOf,
   liveLookup,
-  liveOf,
   mapOf,
   staleLane,
 } = await import('../packages/ui/web/views/work-map.js');
@@ -556,11 +555,11 @@ test('the map joins the wave’s records to the board by key, and says who is on
   assert.ok(narrowed.units.find((unit) => unit.key === 'work:wf_ablate')!.node);
   assert.deepEqual(narrowed.edges, []);
   // Who is on a unit: its sessions, the machines that serve it, never what it waits on.
-  const on = (key: string) => liveOf(given, key).map((node) => node.key);
+  const on = (key: string) => liveLookup(given)(key).map((node) => node.key);
   assert.deepEqual(on('work:wf_ablate'), ['session:session_ablate', 'compute:c0ffee']);
   assert.deepEqual(on('work:wf_draft'), ['session:session_draft', 'fleet:flt_spare']);
   assert.deepEqual(on('work:wf_review'), []);
-  assert.deepEqual(liveOf(undefined, 'work:wf_index'), []);
+  assert.deepEqual(liveLookup(undefined)('work:wf_index'), []);
   assert.equal(absorberOf(given, 'fleet:flt_bound')!.key, 'session:session_ablate');
   assert.equal(absorberOf(given, 'work:wf_gone'), undefined);
 });
@@ -1572,18 +1571,6 @@ test('a wide wave is worked out in well under a frame: what each unit reaches is
   // Each task's line from two back is said through the one before it; five back, likewise.
   assert.equal(map.edges.length, 399);
   assert.ok(took < 100, `the map took ${took.toFixed(0)} ms`);
-});
-
-test('who is on each card is looked up from one index of the board', () => {
-  const given = board(Date.now());
-  const keys = given.lanes.work.nodes.map((node) => node.key);
-  const lookup = liveLookup(given);
-  for (const key of keys)
-    assert.deepEqual(
-      lookup(key).map((node) => node.key),
-      liveOf(given, key).map((node) => node.key),
-    );
-  assert.deepEqual(liveLookup(undefined)('work:wf_index'), []);
 });
 
 test('hiding merges keeps the lines through them, unsettled if any step was', async () => {

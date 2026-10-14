@@ -97,10 +97,10 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   const exhibit = useTool<ExperimentExhibit>(state === 'running' ? 'experiment.exhibit' : null, {
     experimentId: id,
   });
-  const evidence = record.data?.experiment.evidence
-    .filter((item) => item.current && item.attemptIndex === record.data!.experiment.attempt.index)
-    .map((item) => item.id)
-    .join();
+  const currentEvidence = (record.data?.experiment.evidence ?? []).filter(
+    (item) => item.current && item.attemptIndex === record.data!.experiment.attempt.index,
+  );
+  const evidence = record.data && currentEvidence.map((item) => item.id).join();
   const { reload } = exhibit;
   const read = useRef(evidence);
   useEffect(() => {
@@ -126,9 +126,6 @@ function ExperimentDetail({ row, shell }: ViewProps) {
   // What the newest review decided, or where it stands until it has; a passing verdict
   // is not an outcome, so the conclusion is said apart from it, whole.
   const said = reviewClause(newest, newest?.reviewerId ? nameOf(newest.reviewerId) : null);
-  const currentEvidence = e.evidence.filter(
-    (item) => item.current && item.attemptIndex === e.attempt.index,
-  );
   // The figures of this attempt's last submission: one a review sent back is an earlier attempt's.
   const figures =
     e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
