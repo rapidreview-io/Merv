@@ -479,7 +479,7 @@ test('a design and its review read the accepted code they depend on in a read-on
     requestId: f.request(),
   });
   const experiment = await f.create([prerequisite.id]);
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   const preparation = await f.work.lease(prerequisite);
   const proof = await f.artifacts.create(preparation.worker, {
     title: 'Preparation receipt',
@@ -1591,7 +1591,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 41);
+  assert.equal(created.workflow.version, 42);
   assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 
@@ -2029,7 +2029,7 @@ test('a resumed visit submits results its cut visit retained before attaching th
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
   const f = await fixture(t);
   let experiment = await f.running();
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   // Attempt 1 runs, commits its implementation, and submits.
   const r1 = await f.work.lease(experiment);
   await f.work.commit(r1, { 'attempt1_impl.py': 'print("attempt 1")\n' });

@@ -227,7 +227,7 @@ test('current native task leases leave compute to Sandboxes and admit registered
   const native = captureEvidenceFixture();
   t.after((app.ctx.tasks as TaskService).bindCaptureEvidence(native.service));
   const task = await create('native-connected');
-  assert.equal(task.workflow.version, 43);
+  assert.equal(task.workflow.version, 44);
   const first = await offer(task);
   // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
   assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
