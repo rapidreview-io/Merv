@@ -16,6 +16,7 @@ import {
   type CustomerExperiment,
   type ExperimentPlan,
 } from '../packages/customer-experiments/src/types.js';
+import { serviceExecution } from '../packages/customer-experiments/src/execution.js';
 import { planSchema, validateAgreement } from '../packages/customer-experiments/src/schema.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
@@ -666,4 +667,14 @@ test('readiness rejects incomplete data and training/evaluation byte reuse', () 
       ]),
     errorCode('data_leakage'),
   );
+});
+
+test('a full 24-hour, 500-million-token agreement fits both worker policies', () => {
+  const limits = { wallMinutes: 1440, maxTokens: 500_000_000, maxAttempts: 2 };
+  const accepted = planSchema.parse({ ...plan, limits });
+  for (const review of [false, true]) {
+    const policy = serviceExecution(review);
+    assert.equal(policy.maxDurationSeconds, accepted.limits.wallMinutes * 60);
+    assert.equal(policy.maxModelTokens, accepted.limits.maxTokens);
+  }
 });

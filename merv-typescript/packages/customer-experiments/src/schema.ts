@@ -35,8 +35,8 @@ export const planSchema = z
     dataRequirements: z.array(dataRequirementSchema).max(10),
     limits: z
       .object({
-        wallMinutes: z.number().int().min(1).max(30),
-        maxTokens: z.number().int().min(1000).max(50000),
+        wallMinutes: z.number().int().min(1).max(1440),
+        maxTokens: z.number().int().min(1000).max(500_000_000),
         maxAttempts: z.number().int().min(1).max(2),
       })
       .strict(),

@@ -96,7 +96,7 @@ export function hostedCustomerCompute(
           provider: null,
           source: null,
           max_concurrent: 1,
-          max_lifetime_seconds: 1800,
+          max_lifetime_seconds: 86_400,
           max_hourly_price: null,
         });
         // Only explicitly configured sponsor providers may be copied into the private namespace.

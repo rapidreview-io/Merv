@@ -41,7 +41,12 @@ function fixture() {
       }),
     },
     sbxResourceLimits: {
-      set: async () => {
+      set: async (
+        _account: string,
+        _namespace: string,
+        limits: { max_lifetime_seconds: number },
+      ) => {
+        assert.equal(limits.max_lifetime_seconds, 86_400);
         calls.push('limits');
       },
     },

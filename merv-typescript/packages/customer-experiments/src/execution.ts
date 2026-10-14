@@ -19,8 +19,8 @@ export function serviceExecution(review: boolean): WorkflowExecutionPolicy {
     readOnly: review,
     workspace: codeWorkspace(review ? 'review' : 'work', 'customer-experiments'),
     platform: { ...SERVICE_MODEL },
-    maxDurationSeconds: 1800,
-    maxModelTokens: 50000,
+    maxDurationSeconds: 86_400,
+    maxModelTokens: 500_000_000,
     tools: [
       grant('workflow.status_and_next', { instanceId: target('instanceId') }),
       grant('workflow.assignment', { instanceId: target('instanceId') }),

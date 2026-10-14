@@ -36,7 +36,7 @@ It does not publish a paper, update the main research project, or start reflecti
 ## First offer
 
 The initial price is $5 USD. Intake can discuss broad ideas, but a submitted offer is
-bounded by at most 30 worker wall minutes, 50,000 model tokens and two execution attempts.
+bounded by at most 24 worker wall hours, 500,000,000 model tokens and two execution attempts.
 These are aggregate contract limits; 20% is reserved for results review. Sessions enforce
 per-visit deadlines and Fleet's model relay enforces token budgets. Missing usage accounting
 holds further work. Interrupted work can resume within the remaining allowance.
@@ -54,7 +54,7 @@ The sponsor pays compute costs independently of the $5 customer price.
 `MERV_CUSTOMER_COMPUTE_BUDGET_USD` sets the lifetime compute ceiling per request
 (default $1,000, independent of the $5 checkout price). The account and payer budgets also apply.
 Each request permits one concurrent machine,
-and a 30-minute maximum machine lifetime. Existing account/provider rules also apply.
+and a 24-hour maximum machine lifetime. Existing account/provider rules also apply.
 These internal limits do not fix a GPU type. Native capture retention and cleanup remain in Merv.
 
 Data is UTF-8 CSV or JSONL: ten requirements, at most 20 MiB per file, 100 MiB total,
