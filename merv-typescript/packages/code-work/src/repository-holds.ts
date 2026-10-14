@@ -38,5 +38,28 @@ CREATE TRIGGER research_publication_repository_hold AFTER INSERT ON code_publica
 CREATE TRIGGER research_publication_repository_settled AFTER UPDATE OF settled ON code_publications FOR EACH ROW WHEN (OLD.settled IS DISTINCT FROM NEW.settled) EXECUTE FUNCTION research_publication_repository_hold();
 `,
     },
+    {
+      // A quarantined base merges nothing until it is released, so, like a suspended one, it
+      // holds the repository only while its check still has a machine; it kept a rebind
+      // refused before. A base's projection follows its state, health and check alone; every
+      // retry, blocker and acceptance write rewrote it before.
+      version: 3,
+      sql: `
+CREATE OR REPLACE FUNCTION research_base_repository_hold() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+  IF (NEW.health='healthy' AND NEW.state NOT IN ('resolved','cancelled','suspended')) OR NEW.check_state IN ('queued','running') THEN
+    PERFORM code_hold_repository(NEW.project_id,'research:base:' || NEW.base_key,'A retained research base is unresolved or its check is running');
+  ELSE
+    PERFORM code_release_repository(NEW.project_id,'research:base:' || NEW.base_key);
+  END IF;
+  PERFORM code_set_reference_eligibility(NEW.project_id,'mirror-base:' || NEW.base_key,
+    CASE WHEN NEW.state='resolved' AND NEW.health='healthy' THEN NULL ELSE 'The retained base is unavailable or quarantined' END);
+  RETURN NEW;
+END $$;
+DROP TRIGGER research_base_repository_hold ON code_bases;
+CREATE TRIGGER research_base_repository_hold AFTER INSERT ON code_bases FOR EACH ROW EXECUTE FUNCTION research_base_repository_hold();
+CREATE TRIGGER research_base_repository_moved AFTER UPDATE OF state,health,check_state ON code_bases FOR EACH ROW WHEN (OLD.state IS DISTINCT FROM NEW.state OR OLD.health IS DISTINCT FROM NEW.health OR OLD.check_state IS DISTINCT FROM NEW.check_state) EXECUTE FUNCTION research_base_repository_hold();
+SELECT code_release_repository(project_id,'research:base:' || base_key) FROM code_bases WHERE health='quarantined' AND check_state NOT IN ('queued','running');
+`,
+    },
   ]);
 }

@@ -270,6 +270,34 @@ test('a quarantine that reaches an approved pull request closes it, on sync and 
   }
 });
 
+test('a base quarantine withdraws the publication wait of accepted work; release says stale', async (t) => {
+  for (const github of [false, true]) {
+    const f = await fixture(t, github);
+    if (github) await f.canary();
+    const dependency = await f.declare('Dependency');
+    await f.accept(dependency, f.feature);
+    const work = await f.declare('Publishing', [dependency.id]);
+    await f.publishes(work);
+    await f.bases.work(f.admin.projectId);
+    await f.pin(work);
+    await f.accept(work, f.feature);
+    if (github) await f.sync();
+    const codes = async () => (await f.blockers(work.id)).map((item) => item.code);
+    const control = (action: 'quarantine' | 'release', key: string) =>
+      f.code.controlBase(f.admin, { key, action, reason: 'Operator', requestId: action });
+    assert.deepEqual(await codes(), [`code_publication_${github ? '' : 'local_'}pending`]);
+    const base = await f.state.read((sql) =>
+      f.bases.find(sql, f.admin.projectId, [f.feature, f.root0]),
+    );
+    await control('quarantine', base!.key);
+    // Nothing publishes quarantined code, so nobody is told to wait for it or to merge it.
+    assert.deepEqual(await codes(), [], `${github}`);
+    assert.equal((await f.sync())[0]!.stale, true);
+    await control('release', base!.key);
+    assert.deepEqual(await codes(), ['code_publication_stale']);
+  }
+});
+
 test('incomplete rules visibility needs setup even with a canary until acknowledged, while failed enforcement is disabled', async (t) => {
   const f = await fixture(t, true);
   await f.canary();

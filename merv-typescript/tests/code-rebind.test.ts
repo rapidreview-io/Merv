@@ -544,7 +544,7 @@ test('work in flight is named and refuses the rebind, and publication is neither
     `{"method":"auto","commit":"${h.two}","tree":null,"engine":"merge"}`,
     'none',
   );
-  const move = async (key: string, column: 'state' | 'check_state', value: string) =>
+  const move = async (key: string, column: 'state' | 'check_state' | 'health', value: string) =>
     await h.write(
       `UPDATE code_bases SET ${column}=? WHERE project_id=? AND base_key=?`,
       value,
@@ -556,6 +556,9 @@ test('work in flight is named and refuses the rebind, and publication is neither
     await busy(/repository holds: 1 \(research:base:base-unfinished\)/);
     await move('base-unfinished', 'state', 'cancelled');
   }
+  // Quarantined, it merges nothing until released, so it holds nothing: the rebind below completes.
+  await move('base-unfinished', 'state', 'queued');
+  await move('base-unfinished', 'health', 'quarantined');
   // A resolved base whose project check is executing in a rented machine counts too.
   await move('base-checking', 'check_state', 'running');
   await busy(/repository holds: 1 \(research:base:base-checking\)/);

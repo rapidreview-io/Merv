@@ -484,9 +484,7 @@ export class CodeBaseService {
     const wanted = members(commits);
     const found = await this.find(tx, projectId, wanted);
     if (found) return found;
-    const existing = (
-      await tx.all<BaseRow>(`SELECT ${columns} FROM code_bases WHERE project_id=?`, projectId)
-    ).map((row) => this.record(row));
+    const existing = await this.records(tx, projectId);
     const at = now();
     let sponsors: ((members: string[]) => Promise<string[]>) | undefined;
     for (const step of planBase(wanted, existing)) {

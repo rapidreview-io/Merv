@@ -13,6 +13,7 @@ import {
   createService,
   digest,
   forRead,
+  mapAsync,
   MervError,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
@@ -468,32 +469,31 @@ export class CodeService implements Code {
   async history(caller: Caller, input: { ref?: string; path?: string; limit?: number }) {
     const { ref, commit } = await this.commitOf(caller, input);
     const entries = await this.utility.log(caller.projectId, commit, input);
-    // The newest 200 units, as code.status lists them, with their heads and bases, not their
-    // derived status: a reader's snapshot is held through the Git below.
-    const units = await this.state.read((sql) =>
-      sql.all<UnitRow>(
-        `SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200`,
-        caller.projectId,
+    // The newest 200 units, as code.status lists them, with their heads and bases (not their
+    // derived status) read in one snapshot, which the Git below never holds. Oldest acceptance
+    // first, so a commit is the work of the unit that first carried it.
+    const units = await this.state.read(async (sql) =>
+      mapAsync(
+        await sql.all<UnitRow>(
+          `SELECT * FROM (SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200) u ORDER BY accepted_at,declared_at DESC,unit_id`,
+          caller.projectId,
+        ),
+        async (row) => ({
+          id: row.unit_id,
+          base: pin(row)?.reference ?? null,
+          head:
+            acceptance(row)?.reference ??
+            (await this.writerStore.facts(sql, caller.projectId, row.unit_id)).canonicalHead,
+        }),
       ),
     );
     const owner = new Map<string, string>();
     const wanted = new Set(entries.map((entry) => entry.oid));
-    // Oldest acceptance first, so a commit is the work of the unit that first carried it.
-    for (const row of units.sort((a, b) =>
-      (a.accepted_at ?? '~').localeCompare(b.accepted_at ?? '~'),
-    )) {
+    for (const { id, base, head } of units) {
       if (owner.size >= wanted.size) break;
-      const head =
-        acceptance(row)?.reference ??
-        (await this.state.read((sql) => this.writerStore.facts(sql, caller.projectId, row.unit_id)))
-          .canonicalHead;
       if (!head) continue;
-      for (const oid of await this.utility.added(
-        caller.projectId,
-        head,
-        pin(row)?.reference ?? null,
-      ))
-        if (wanted.has(oid) && !owner.has(oid)) owner.set(oid, row.unit_id);
+      for (const oid of await this.utility.added(caller.projectId, head, base))
+        if (wanted.has(oid) && !owner.has(oid)) owner.set(oid, id);
     }
     const named = new Map<string, { kind: string; title: string }>();
     await this.state.snapshotTransaction(async (tx) => {

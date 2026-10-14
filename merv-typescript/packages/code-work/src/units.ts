@@ -850,33 +850,25 @@ export class CodeUnitService {
    * names a human who can still end it, so it is a fact about done work rather than work
    * nobody may take. Every other opinion here is about work still to do, and work that has
    * ended lost its rows at that transition with nothing left to run again and withdraw one,
-   * so those are never written onto an instance that has ended.
+   * so those are never written onto an instance that has ended. A quarantine ends a
+   * publication too (it settles stale on its next pass), so its wait is withdrawn then.
    */
   private async reconcileUnit(tx: Transaction, projectId: string, unitId: string): Promise<void> {
     const relations = await this.workflows.relations(projectId, unitId, tx);
     if (!relations) return;
     const row = await this.records.row(tx, projectId, unitId);
-    if (
-      (row?.publication_id || (row?.publishes_at && row.acceptance_json)) &&
-      !row.quarantine_base_key
-    ) {
-      const publication = await this.records.publicationOf(tx, projectId, row);
-      await this.setBlockers(
-        tx,
-        projectId,
-        unitId,
-        publication ? publicationBlockers(publication) : [],
-      );
-      return;
-    }
+    const ended = relations.instance.terminal;
     if (row?.quarantine_base_key) {
-      if (!relations.instance.terminal)
-        await this.setBlockers(tx, projectId, unitId, [
-          this.quarantineBlocker(row.quarantine_base_key),
-        ]);
+      const blockers = ended ? [] : [this.quarantineBlocker(row.quarantine_base_key)];
+      if (!ended || row.publishes_at) await this.setBlockers(tx, projectId, unitId, blockers);
       return;
     }
-    if (!row || relations.instance.terminal) return;
+    if (row?.publication_id || (row?.publishes_at && row.acceptance_json)) {
+      const publication = await this.records.publicationOf(tx, projectId, row);
+      const blockers = publication ? publicationBlockers(publication) : [];
+      return await this.setBlockers(tx, projectId, unitId, blockers);
+    }
+    if (!row || ended) return;
     const resolution = await this.resolutionBlocker(tx, projectId, unitId);
     if (resolution || row.base_json !== null || row.acceptance_json !== null) {
       await this.setBlockers(tx, projectId, unitId, resolution ? [resolution] : []);
