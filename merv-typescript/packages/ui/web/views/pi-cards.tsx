@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { call } from '../api';
 import { cx, KV, Summary, useNow, type KVRow } from '../components';
 import { ChevronsIcon } from '../icons';
@@ -14,7 +14,7 @@ import type {
   PiPrompt,
   PiProposal,
 } from '@merv/pi/models';
-import { stepped } from '../record-picker';
+import { useMenu } from '../record-picker';
 import { actOf, factsOf, type Fact } from './pi-proposal';
 
 /** ½ vCPU · 4 GiB, with the disk where a machine is chosen. */
@@ -34,41 +34,6 @@ export function Seconds({ since, skew }: { since: string; skew: number }) {
     </span>
   );
 }
-/** Operated as the account menu is: the cursor goes to its first item, the arrows, Home and End
- * move it, Escape hands it back to the button, and Tab or a click elsewhere shuts it. A menu that
- * turns into its guard is a new `open`, so the cursor starts again at its first item. */
-export function useMenu(box: RefObject<HTMLElement>, open: unknown, shut: () => void) {
-  useEffect(() => {
-    if (!open) return;
-    const items = () => [
-      ...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? []),
-    ];
-    items()[0]?.focus();
-    const click = (event: MouseEvent) => {
-      if (!box.current?.contains(event.target as Node)) shut();
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        shut();
-        box.current?.querySelector('button')?.focus();
-      } else if (event.key === 'Tab') shut();
-      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-        const all = items();
-        all[
-          stepped(all.indexOf(document.activeElement as HTMLElement), all.length, event.key)
-        ]?.focus();
-        event.preventDefault();
-      }
-    };
-    document.addEventListener('mousedown', click);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', click);
-      document.removeEventListener('keydown', key);
-    };
-  }, [open]);
-}
-
 /** A result as text, its links live. */
 const linked = (text: string) =>
   text.split(/(https?:\/\/[^\s"]+)/).map((part, index) =>

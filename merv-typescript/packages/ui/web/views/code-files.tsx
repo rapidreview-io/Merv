@@ -10,7 +10,7 @@ import type { CodeProjectStatus } from '@merv/code-work/models';
 import type { CodeBrowsed } from '@merv/code/models';
 import { ApiError, codeFile, useTool } from '../api';
 import { filesPath } from '../code-paths';
-import { EmptyState, LoadState } from '../components';
+import { EmptyState, LoadState, useDismiss } from '../components';
 import { Icon } from '../icons';
 import { Markdown, recordNames, type NamedHome } from '../markdown';
 import { bytes, fileType, FileView } from './artifacts';
@@ -63,23 +63,7 @@ function RefPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: Event) => {
-      if (
-        event instanceof KeyboardEvent
-          ? event.key === 'Escape'
-          : !box.current?.contains(event.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', away, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', away, true);
-    };
-  }, [open]);
+  useDismiss(open, box, () => setOpen(false));
   const label =
     current === 'main'
       ? 'main'
@@ -317,7 +301,9 @@ function File({ data }: { data: Extract<Browsed, { kind: 'file' }> }) {
             disabled={busy}
             onClick={() => {
               setBusy(true);
-              void download(data.ref, data.path, name).finally(() => setBusy(false));
+              void download(data.ref, data.path, name)
+                .catch(() => undefined)
+                .finally(() => setBusy(false));
             }}
           >
             {busy ? 'Preparing…' : 'Download'}

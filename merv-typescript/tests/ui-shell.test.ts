@@ -428,6 +428,64 @@ test('the only operator is offered no control that would leave the project witho
   }
 });
 
+test('a poll asked before a member is removed never draws them back', async (t) => {
+  const real = globalThis.fetch;
+  t.after(async () => {
+    globalThis.fetch = real;
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  const member = (n: number, role: string) => ({
+    id: `member_${n}`,
+    projectId: project.id,
+    issuer: user.issuer,
+    subject: `subject-${n}`,
+    actorId: `actor_${n}`,
+    role,
+    active: true,
+  });
+  let list = [member(1, 'operator'), member(2, 'reader')];
+  boot('Operator');
+  serve('/account', { body: { kind: 'user', user, projects: [project] } });
+  serve('/tools/actor.list', {
+    body: { result: ['Operator', 'Reviewer'].map((name, at) => ({ id: `actor_${at + 1}`, name })) },
+  });
+  serve(`/projects/${project.id}/members`, () => ({ body: { memberships: list } }));
+  serve(`/projects/${project.id}/members/subject-2`, () => {
+    list = [member(1, 'operator')];
+    return { body: { removed: true } };
+  });
+  // The next read of the list is answered as it stood when asked, but only once released.
+  let hold = false;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    const answer = await real(input, init);
+    if (!hold || !input.endsWith('/members') || init?.method !== 'GET') return answer;
+    hold = false;
+    await released;
+    return answer;
+  }) as typeof fetch;
+  await open('/settings/members');
+  const shown = () => !!document.querySelector('select[aria-label="Role for Reviewer"]');
+  assert.ok(shown());
+  hold = true;
+  await settle(10_200);
+  const role = document.querySelector('select[aria-label="Role for Reviewer"]')!;
+  await act(async () => [...role.closest('.states')!.querySelectorAll('button')].at(-1)!.click());
+  await settle(20);
+  assert.ok(!shown(), 'the removed member leaves the list');
+  release();
+  await settle(20);
+  assert.ok(!shown(), 'the older poll does not bring them back');
+});
+
 test('a room with nothing in it is an empty state, and the session room ends the session in one size of button', async (t) => {
   t.after(async () => await unmount());
   boot('Operator');

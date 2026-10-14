@@ -7,7 +7,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { BoardSummary } from '@merv/board/models';
 import { call, refreshTools, useTool } from '../api';
-import { Ago, LoadState } from '../components';
+import { Ago, LoadState, useDismiss } from '../components';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { BackLink } from '../trail';
 import { useSession } from '../session';
@@ -29,15 +29,13 @@ function BoardList({ row }: ViewProps) {
   const [busy, setBusy] = useState(false);
   const start = async () => {
     setBusy(true);
-    try {
-      const { board } = await call<{ board: BoardSummary }>('board.draw', {
-        title: 'Untitled board',
-      });
-      refreshTools('board.read');
-      navigate(`${row.path}/${board.id}`);
-    } finally {
-      setBusy(false);
-    }
+    const made = await call<{ board: BoardSummary }>('board.draw', {
+      title: 'Untitled board',
+    }).catch(() => null);
+    setBusy(false);
+    if (!made) return;
+    refreshTools('board.read');
+    navigate(`${row.path}/${made.board.id}`);
   };
   return (
     <ListPage
@@ -71,23 +69,8 @@ function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
   const [open, setOpen] = useState(false);
   const [sure, setSure] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return setSure(false);
-    const away = (event: Event) => {
-      if (
-        event instanceof KeyboardEvent
-          ? event.key === 'Escape'
-          : !box.current?.contains(event.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', away, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', away, true);
-    };
-  }, [open]);
+  useDismiss(open, box, () => setOpen(false));
+  useEffect(() => void (open || setSure(false)), [open]);
   const archive = async () => {
     if (!sure) return setSure(true);
     await call('board.set', { id: board.id, archived: true });
@@ -123,7 +106,7 @@ function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
             type="button"
             role="menuitem"
             className="file-menu-item"
-            onClick={() => void archive()}
+            onClick={() => void archive().catch(() => undefined)}
           >
             {sure ? 'Archive: press again' : 'Archive board'}
           </button>
@@ -148,8 +131,10 @@ function BoardTitle({
     done();
     const title = draft.trim();
     if (title && title !== board.title) {
-      await call('board.set', { id: board.id, title });
-      refreshTools('board.read');
+      await call('board.set', { id: board.id, title }).then(
+        () => refreshTools('board.read'),
+        () => undefined,
+      );
     }
   };
   if (!editing)

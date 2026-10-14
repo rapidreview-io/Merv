@@ -452,9 +452,10 @@ function Projects({
               className="signin-switch"
               title={account.user.subject}
               onClick={() => {
-                void navigator.clipboard
-                  ?.writeText(account.user.subject)
-                  .then(() => setCopied(true));
+                void navigator.clipboard?.writeText(account.user.subject).then(
+                  () => setCopied(true),
+                  () => undefined,
+                );
               }}
             >
               {copied ? 'Account ID copied' : 'Copy account ID'}

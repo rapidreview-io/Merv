@@ -217,9 +217,10 @@ export default function BoardCanvas({ id }: { id: string }) {
           if (!link.startsWith('merv:')) return;
           // A card names a record by id; it opens where a link to that record would.
           event.preventDefault();
-          void placeOf({ record: link.slice('merv:'.length) }, rows).then((place) => {
-            if (typeof place !== 'string') navigate(place.path);
-          });
+          void placeOf({ record: link.slice('merv:'.length) }, rows).then(
+            (place) => typeof place !== 'string' && navigate(place.path),
+            () => undefined,
+          );
         }}
       >
         <MainMenu>

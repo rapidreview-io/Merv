@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { RunnerPlatform } from '@merv/contracts/types';
 import { accountRequest, useTool } from '../api';

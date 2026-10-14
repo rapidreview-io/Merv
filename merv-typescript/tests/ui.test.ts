@@ -276,7 +276,7 @@ test('human readers can read Settings membership without a People row or actor a
   );
 });
 
-test('a part of ui.home whose statement fails is null alone, and the rest of the snapshot reads on', async (t) => {
+test('a part of ui.home or a row status of ui.shell whose statement fails fails alone, and the snapshot reads on', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-home-'));
   const app = await createApp({
     directory: join(directory, 'data'),
@@ -314,6 +314,24 @@ test('a part of ui.home whose statement fails is null alone, and the rest of the
   assert.deepEqual(home.tasks, []);
   assert.deepEqual(home.workflows, { workflows: [] });
   assert.equal((home.project as { id: string }).id, credentials.project.id);
+  // The same for a row whose live status fails on ui.shell's snapshot: that row alone is
+  // unavailable, and the rows read after it still count.
+  app.ctx.ui.register({
+    ...row('failing-status', -1),
+    status: async () => ({
+      count: await app.ctx.state.read(async (sql) => await sql.get<number>('SELECT 1/0')),
+    }),
+  });
+  const shell = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${credentials.token}`, 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(shell.status, 200);
+  const rows = ((await shell.json()) as any).result.rows as { id: string; status: object }[];
+  const status = (id: string) => rows.find((entry) => entry.id === id)?.status;
+  assert.equal((status('failing-status') as { state?: string }).state, 'unavailable');
+  assert.deepEqual(status('tasks'), { count: 0 });
 });
 
 test('the assembled application serves the bundle, lists rows per active plugin, and survives feed and UI removal', async (t) => {

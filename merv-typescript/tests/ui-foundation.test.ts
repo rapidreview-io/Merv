@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, resize, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
 const { Link, MemoryRouter, Route, Routes, useLocation } = await import('react-router-dom');
@@ -846,4 +846,23 @@ test('a refresh that answers the same keeps the page as it is drawn', async (t) 
   await settle();
   assert.equal(text(), 'a,b');
   assert.notEqual(seen.at(-1), held);
+});
+
+test('reads a page opens in one render stay the ones a refresh reaches, past the cache’s bound', async (t) => {
+  t.after(unmount);
+  const { refreshTools, useTool } = await import('../packages/ui/web/api.js');
+  serve('/tools/probe.many', { body: { result: 1 } });
+  // More new reads in one render than the cache holds: one evicting the rest must spare those
+  // still mounting, or their places keep reads nothing refreshes.
+  function Many() {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    for (let i = 0; i < 66; i++) useTool('probe.many', { i });
+    return null;
+  }
+  await mount(createElement(Many));
+  const asked = () => requests.filter((request) => request === 'POST /tools/probe.many').length;
+  assert.equal(asked(), 66);
+  await act(async () => refreshTools('probe.many'));
+  await settle();
+  assert.equal(asked(), 132);
 });

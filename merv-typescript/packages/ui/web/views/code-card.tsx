@@ -413,7 +413,6 @@ export function CodeCard({
   signedIn,
   named,
   head = true,
-  onSelect,
   onDone,
 }: Reader & {
   id: string;
@@ -423,7 +422,6 @@ export function CodeCard({
   names: RecordNames;
   /** False where the row this opened under is already the head, so it is said once. */
   head?: boolean;
-  onSelect(id: string | null): void;
   onDone(): void;
 }) {
   useEffect(() => {

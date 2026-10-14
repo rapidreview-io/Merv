@@ -364,9 +364,10 @@ const keyOf = (epoch: number, name: string, input: Record<string, unknown>) =>
 function readOf(key: string, name: string, input: Record<string, unknown>, epoch: number): Read {
   const known = READS.get(key);
   if (known) return known;
+  // A read asked of nobody yet may be a place's still mounting in this very render: it stays.
   if (READS.size > 64)
     for (const [old, read] of READS)
-      if (!read.readers.size && !read.listeners.size) READS.delete(old);
+      if (read.asked && !read.readers.size && !read.listeners.size) READS.delete(old);
   const read: Read = {
     name,
     input,
@@ -408,8 +409,10 @@ function schedule(read: Read): void {
       for (const each of READS.values()) if (each.waiting) void ask(each);
     });
   }
-  if (hidden()) read.waiting = true;
-  else read.timer = setTimeout(() => void ask(read), Math.max(0, read.last + every - Date.now()));
+  // A poll that falls due once the tab is hidden waits for it to be shown, as one set then does.
+  const due = () => void (hidden() ? (read.waiting = true) : ask(read));
+  if (hidden()) due();
+  else read.timer = setTimeout(due, Math.max(0, read.last + every - Date.now()));
 }
 /**
  * Ask the server, joining a request already in flight unless `fresh`: a reload always asks

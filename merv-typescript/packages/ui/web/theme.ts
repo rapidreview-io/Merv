@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+
 /** The theme the page wears: the system's, as index.html follows it, until one is chosen in the shell. */
 export const worn = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
 /** Told whenever the page changes the theme it wears, for `useSyncExternalStore`. */
@@ -17,3 +19,12 @@ export function wear(theme: 'light' | 'dark') {
     /* preference lives for this page only */
   }
 }
+/** A hook reading whether the window answers `query`, drawn again as that changes. */
+export const media = (query: string) => {
+  const list = window.matchMedia(query);
+  const watch = (changed: () => void) => {
+    list.addEventListener('change', changed);
+    return () => list.removeEventListener('change', changed);
+  };
+  return () => useSyncExternalStore(watch, () => list.matches);
+};

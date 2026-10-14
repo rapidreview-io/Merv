@@ -4,7 +4,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type ComponentType,
   type MouseEvent,
   type ReactNode,
@@ -19,10 +18,19 @@ import {
   useParams,
 } from 'react-router-dom';
 import type { ApiError } from './api';
-import { KindLabel, LoadState, SearchField, cx, useOpenedForm, words } from './components';
+import {
+  KindLabel,
+  LoadState,
+  SearchField,
+  cx,
+  useDismiss,
+  useOpenedForm,
+  words,
+} from './components';
 import { homeOf } from './navigation';
 import { usePrevious } from './trail';
 import { OPEN } from './states';
+import { media } from './theme';
 import type { ShellData } from './shell-types';
 
 /** Identity-based narrowing, the only axis beside the search box. */
@@ -654,23 +662,8 @@ const Staged = ({ staged, children }: { staged: boolean; children: ReactNode }) 
 function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: Event) => {
-      if (event instanceof KeyboardEvent) {
-        if (event.key !== 'Escape') return;
-        // Shutting the panel is all this Escape means: the page keeps what else is open.
-        event.preventDefault();
-      } else if (box.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', away, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', away, true);
-    };
-  }, [open]);
+  // Shutting the panel is all its Escape means: the page keeps what else is open.
+  useDismiss(open, box, () => setOpen(false), true);
   return (
     <div className="narrowing" ref={box}>
       <button
@@ -696,15 +689,7 @@ function Narrowing({ reset, children }: { reset?(): void; children: ReactNode })
 }
 
 /** Above this the record opens beside its list; narrower than this it is the page. */
-const WIDE = window.matchMedia('(min-width: 1080px)');
-const useWide = () =>
-  useSyncExternalStore(
-    (listener) => {
-      WIDE.addEventListener('change', listener);
-      return () => WIDE.removeEventListener('change', listener);
-    },
-    () => WIDE.matches,
-  );
+const useWide = media('(min-width: 1080px)');
 
 function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; back: string }) {
   const wide = useWide();

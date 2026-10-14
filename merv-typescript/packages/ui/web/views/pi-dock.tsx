@@ -8,16 +8,10 @@
  * It is not drawn on a phone.
  */
 import type { UiRowDescription } from '@merv/ui/rows';
-import {
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CloseIcon, ExpandIcon } from '../icons';
+import { media } from '../theme';
 import type { PiSnapshot } from '@merv/pi/models';
 import { Speak, Standing, Transcript, useAgent } from './pi';
 import type { Conversation } from './pi-conversation';
@@ -26,15 +20,7 @@ import type { Conversation } from './pi-conversation';
 const PLACE = 'merv:agent-dock';
 /** How long what the agent opened is named in the window. */
 const SHOWN_MS = 8_000;
-const ROOM = window.matchMedia('(min-width: 640px)');
-const useRoomy = () =>
-  useSyncExternalStore(
-    (listener) => {
-      ROOM.addEventListener('change', listener);
-      return () => ROOM.removeEventListener('change', listener);
-    },
-    () => ROOM.matches,
-  );
+const useRoomy = media('(min-width: 640px)');
 
 /**
  * When the person's machine is released for inactivity, on this clock: the server's moment less

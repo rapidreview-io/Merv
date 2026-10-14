@@ -75,11 +75,15 @@ export class UiRegistry implements Ui {
     return [...this.entries.values()].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   }
 
-  async describe(caller: Caller): Promise<UiRowDescription[]> {
+  /** `isolated` runs each status behind its own savepoint, so one that fails costs its row alone. */
+  async describe(
+    caller: Caller,
+    isolated = <T>(read: () => Promise<T>) => read(),
+  ): Promise<UiRowDescription[]> {
     return await mapAsync(this.rows(), async ({ status, read, page, home: _home, ...row }) => {
       let live: UiRowStatus = {};
       try {
-        live = (await status?.(caller)) ?? {};
+        live = (await isolated(async () => await status?.(caller))) ?? {};
       } catch (error) {
         live = {
           state: 'unavailable',
@@ -146,7 +150,7 @@ export const uiPlugin = {
         readOnly: true,
         handler: async (caller: Caller) => ({
           ...(await identityOf(ctx.tools, caller)),
-          rows: await ui.describe(caller),
+          rows: await ui.describe(caller, isolated),
           plugins: plugins(),
         }),
       }),

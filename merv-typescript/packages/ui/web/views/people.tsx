@@ -87,6 +87,8 @@ export function PeopleView() {
   const [newRole, setNewRole] = useState<Role>('reader');
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const generation = useRef(0);
+  // The newest read of the list asked: an answer to an older one, overtaken, is not drawn.
+  const newest = useRef(0);
   const heading = useId();
   const nameOf = useActorNames();
   // A member is named from the directory, never by the account ID they signed in with.
@@ -120,22 +122,21 @@ export function PeopleView() {
     setDraftRoles({});
     setBusy(false);
     setLoading(human);
-    // The list keeps itself current; a poll never disturbs a half-written form.
-    const load = () =>
-      accountRequest<{ memberships: Membership[] }>(path, { scoped: true }).then(
-        (result) => {
-          if (current()) {
-            setMembers(result.memberships.filter((member) => member.active));
-            setLoading(false);
-          }
-        },
-        (error) => {
-          if (current()) {
-            setLoadError(failure(error));
-            setLoading(false);
-          }
-        },
+    // The list keeps itself current, one poll at a time; a poll never disturbs a half-written form.
+    let polling = false;
+    const load = async () => {
+      if (polling) return;
+      polling = true;
+      const asked = ++newest.current;
+      const show = await accountRequest<{ memberships: Membership[] }>(path, { scoped: true }).then(
+        (result) => () => setMembers(result.memberships.filter((member) => member.active)),
+        (error) => () => setLoadError(failure(error)),
       );
+      polling = false;
+      if (!current() || asked !== newest.current) return;
+      show();
+      setLoading(false);
+    };
     if (human) void load();
     const timer = human ? setInterval(() => void load(), 10000) : undefined;
     return () => {
@@ -167,9 +168,11 @@ export function PeopleView() {
         setNewSubject('');
         done?.();
       }
+      const asked = ++newest.current;
       const result = await accountRequest<{ memberships: Membership[] }>(path, { scoped: true });
       if (!current()) return;
-      setMembers(result.memberships.filter((member) => member.active));
+      if (asked === newest.current)
+        setMembers(result.memberships.filter((member) => member.active));
       setDraftRoles({});
       setLoadError(undefined);
     } catch (error) {

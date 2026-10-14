@@ -178,7 +178,6 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
           publications={published}
           names={names}
           head={head}
-          onSelect={select}
           onDone={read.reload}
           manages={manages}
           signedIn={signedIn}

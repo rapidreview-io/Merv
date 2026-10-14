@@ -18,7 +18,7 @@ import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
 import { initials, personName } from './views/people';
 import { accountLines, documentTitle, holds as held, railSections } from './navigation';
-import { stepped } from './record-picker';
+import { useMenu } from './record-picker';
 import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
 
@@ -103,40 +103,10 @@ function AccountFoot() {
   const theme = useSyncExternalStore(onWorn, worn);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const row = useRef<HTMLButtonElement>(null);
-  const items = () => [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
   // It says it is a menu, so it is operated as one: the cursor goes to its first item
   // as it opens, the arrows and Home and End move between the items, Escape gives the
   // cursor back to the row, and Tab or a click elsewhere leaves and shuts it.
-  useEffect(() => {
-    if (!open) return;
-    items()[0]?.focus();
-    const close = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        row.current?.focus();
-      } else if (event.key === 'Tab') setOpen(false);
-      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-        const all = items();
-        const at = stepped(
-          all.indexOf(document.activeElement as HTMLElement),
-          all.length,
-          event.key,
-        );
-        all[at]?.focus();
-        event.preventDefault();
-      }
-    };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', key);
-    };
-  }, [open]);
+  useMenu(ref, open, () => setOpen(false));
   // The role is a second line only where it says something the name did not.
   const [name, role] = accountLines(who, actor.role);
   const said = [name, role].filter(Boolean).join(' · ');
@@ -145,7 +115,6 @@ function AccountFoot() {
       {/* The whole row is the control: the avatar, the name and the caret are its face. */}
       <button
         type="button"
-        ref={row}
         className="account-row"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"

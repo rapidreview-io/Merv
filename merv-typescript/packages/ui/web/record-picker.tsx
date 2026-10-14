@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { KindLabel, StatusPill, cx, kindOf, words } from './components';
 import { CheckIcon, CloseIcon } from './icons';
 import { matches } from './list-filters';
@@ -51,6 +51,41 @@ export const stepped = (at: number, count: number, key: string): number =>
           : key === 'End'
             ? count - 1
             : at;
+
+/** Operated as the account menu is: the cursor goes to its first item, the arrows, Home and End
+ * move it, Escape hands it back to the button, and Tab or a click elsewhere shuts it. A menu that
+ * turns into its guard is a new `open`, so the cursor starts again at its first item. */
+export function useMenu(box: RefObject<HTMLElement>, open: unknown, shut: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const items = () => [
+      ...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? []),
+    ];
+    items()[0]?.focus();
+    const click = (event: MouseEvent) => {
+      if (!box.current?.contains(event.target as Node)) shut();
+    };
+    const key = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        shut();
+        box.current?.querySelector('button')?.focus();
+      } else if (event.key === 'Tab') shut();
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const all = items();
+        all[
+          stepped(all.indexOf(document.activeElement as HTMLElement), all.length, event.key)
+        ]?.focus();
+        event.preventDefault();
+      }
+    };
+    document.addEventListener('mousedown', click);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', click);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+}
 
 export function RecordPicker({
   label,

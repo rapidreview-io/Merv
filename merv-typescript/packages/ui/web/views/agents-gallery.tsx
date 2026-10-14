@@ -174,7 +174,7 @@ export function AgentsGallery() {
                 type="button"
                 className="btn-text"
                 disabled={busy}
-                onClick={() => void more()}
+                onClick={() => void more().catch(() => undefined)}
               >
                 {busy ? 'Loading…' : 'Show older'}
               </button>

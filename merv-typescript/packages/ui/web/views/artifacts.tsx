@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
-import { Ago, ErrorBoundary, LoadState, SearchField, Short } from '../components';
+import { Ago, ErrorBoundary, LoadState, SearchField, Short, useDismiss } from '../components';
 import { Icon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, typing, useListFilter } from '../list-filters';
 import { BackLink } from '../trail';
@@ -51,6 +51,17 @@ const base64 = (data: Uint8Array) => {
     binary += String.fromCharCode(...data.subarray(at, at + 0x8000));
   return btoa(binary);
 };
+/** A file's title, and its type: the browser's word for it, else what the end of its name says. */
+const named = (file: File) => {
+  const said = file.type.toLowerCase().split(';')[0]!.trim();
+  return {
+    title: file.name.trim().slice(0, 300) || 'File',
+    mediaType: MEDIA_TYPE.test(said)
+      ? said
+      : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
+        'application/octet-stream'),
+  };
+};
 /**
  * A file from the reader's own disk, as artifact.create takes it. The bytes travel as
  * base64 whatever they are, so nothing here guesses at an encoding and the server
@@ -59,15 +70,10 @@ const base64 = (data: Uint8Array) => {
  * one the app can read in place, and what neither names is plain bytes.
  */
 export async function fileInput(file: File) {
-  const said = file.type.toLowerCase().split(';')[0]!.trim();
   return {
-    title: file.name.trim().slice(0, 300) || 'File',
+    ...named(file),
     content: base64(new Uint8Array(await file.arrayBuffer())),
     encoding: 'base64',
-    mediaType: MEDIA_TYPE.test(said)
-      ? said
-      : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
-        'application/octet-stream'),
   };
 }
 
@@ -162,15 +168,10 @@ export function UploadControl({ available }: { available: boolean }) {
             if (current()) setFraction(value * 0.1);
           });
           if (!current()) return;
-          const said = file.type.toLowerCase().split(';')[0]!.trim();
           plan = await call<UploadPlan>('artifact.upload_begin', {
-            title: file.name.trim().slice(0, 300) || 'File',
+            ...named(file),
             size: file.size,
             sha256,
-            mediaType: MEDIA_TYPE.test(said)
-              ? said
-              : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
-                'application/octet-stream'),
             requestId: requestId.current,
           });
           pending.current = { file, uploadId: plan.uploadId };
@@ -308,22 +309,7 @@ function FileMenu({
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const take = useDownload(artifact.id);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: Event) => {
-      if (event instanceof KeyboardEvent) {
-        if (event.key !== 'Escape') return;
-        event.preventDefault();
-      } else if (box.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', away, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', away, true);
-    };
-  }, [open]);
+  useDismiss(open, box, () => setOpen(false), true);
   const item = (label: string, act: () => void) => (
     <button type="button" role="menuitem" className="file-menu-item" onClick={act}>
       {label}

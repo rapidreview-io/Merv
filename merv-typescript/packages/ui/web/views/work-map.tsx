@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
@@ -22,6 +21,7 @@ import { useTool } from '../api';
 import { Ago, LoadState, cx, kindOf, useNow, words } from '../components';
 import { clock, duration, type Clock } from '../liveness';
 import { StageMark } from '../process';
+import { media } from '../theme';
 import type { WorkflowShape } from '../shell-types';
 import type { Flow } from './map-data';
 import { Act, RunningSidebar } from './running-panel';
@@ -52,15 +52,7 @@ const TYPING = 'input, textarea, select, [contenteditable="true"]';
 /** A total not yet known is the em dash, never a zero. */
 const EM = '—';
 /** Wide enough for the sidebar to stand beside the page; narrower, it takes the page over. */
-const ROOM = window.matchMedia('(min-width: 640px)');
-const useRoomy = () =>
-  useSyncExternalStore(
-    (listener) => {
-      ROOM.addEventListener('change', listener);
-      return () => ROOM.removeEventListener('change', listener);
-    },
-    () => ROOM.matches,
-  );
+const useRoomy = media('(min-width: 640px)');
 
 const needs = (node: RunningNode) => !!node.attention && !node.attention.quiet;
 /** Something moves: a dot on the board, or a lane's own line asking for a person. */

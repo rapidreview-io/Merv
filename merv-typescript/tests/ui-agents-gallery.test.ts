@@ -165,9 +165,16 @@ const tool = (seq: number, id: string, name: string, input: string) => ({
 test('cards stand waiting on you first, then at work, then folded under Recent', async (t) => {
   t.after(unmount);
   serve('/sessions/live', () => ({ stream: eventStream().stream }));
-  serve('/sessions/threads?before=7', {
-    body: { threads: [thread('older', { seq: '6' })], next: null },
-  });
+  // The older page is refused once: the press that asked it leaves no rejection unhandled.
+  serve('/sessions/threads?before=7', (call) =>
+    call === 1
+      ? { status: 503, body: { error: { code: 'unavailable', message: 'Busy' } } }
+      : { body: { threads: [thread('older', { seq: '6' })], next: null } },
+  );
+  const unhandled: unknown[] = [];
+  const note = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', note);
+  t.after(() => void process.off('unhandledRejection', note));
   await open('operator');
   assert.equal(
     document.querySelector('.agents-count')!.textContent,
@@ -209,9 +216,12 @@ test('cards stand waiting on you first, then at work, then folded under Recent',
   await press(recent);
   assert.equal(cards().length, 6);
   assert.ok(cards()[5]!.classList.contains('agent-card--retired'));
-  await press(
-    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Show older')!,
-  );
+  const older = () =>
+    [...document.querySelectorAll('button')].find((b) => b.textContent === 'Show older')!;
+  await press(older());
+  assert.equal(cards().length, 6);
+  assert.deepEqual(unhandled, []);
+  await press(older());
   assert.equal(cards().length, 7);
 });
 

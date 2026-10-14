@@ -8,6 +8,7 @@ import {
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  type RefObject,
   type TextareaHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
@@ -695,6 +696,34 @@ export function useOpenedForm(
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [locked]);
+}
+
+/**
+ * A menu or a panel shut by a press outside `box`, or by Escape, while it is `open`. Where it
+ * `claims` Escape, that is all the key means: nothing else on the page takes it as well.
+ */
+export function useDismiss(
+  open: boolean,
+  box: RefObject<HTMLElement>,
+  shut: () => void,
+  claims = false,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== 'Escape') return;
+        if (claims) event.preventDefault();
+      } else if (box.current?.contains(event.target as Node)) return;
+      shut();
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', away, true);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', away, true);
+    };
+  }, [open]);
 }
 
 /**
