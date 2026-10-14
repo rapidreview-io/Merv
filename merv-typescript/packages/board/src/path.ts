@@ -25,7 +25,9 @@ function tokens(d: string): (string | number)[] {
   for (const [, command, number, , other] of d.matchAll(re)) {
     if (other) refuse(`"${other}" is not part of a path`);
     if (command) out.push(command);
-    else if (number !== undefined) out.push(Number(number));
+    // No drawing needs more; summed or scaled, a larger one could overflow to no coordinate.
+    else if (number !== undefined)
+      out.push(Math.abs(+number) <= 1e9 ? +number : refuse(`${number} is out of range`));
   }
   return out;
 }

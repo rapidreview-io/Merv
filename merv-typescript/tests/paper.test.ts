@@ -14,6 +14,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { paperToolsPlugin } from '@merv/paper/tools';
+import type { ToolDefinition } from '@merv/api/types';
+import type { Context } from 'cordis';
 import { contextSections, paperInput } from '@merv/paper/context';
 import { renderItems } from '../packages/context-builder/src/items.js';
 const hasCode = (code: string) => (error: unknown) =>
@@ -686,4 +689,18 @@ test('reads made outside a snapshot neither wait for nor take the writer lock', 
   release();
   await Promise.all([writer, reads]);
   assert.equal(waited, false, 'a read waited for an unrelated writer');
+});
+
+test('a revision past exact integers is refused as input, never sent to the database', () => {
+  const tools = new Map<string, ToolDefinition>();
+  paperToolsPlugin.apply({
+    effect: (fn: () => unknown) => fn(),
+    tools: {
+      register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      contributeInstructions() {},
+      contributeContext() {},
+    },
+  } as unknown as Context);
+  const read = tools.get('paper.read')!.inputSchema;
+  assert.equal(read.safeParse({ kind: 'methods', revision: 1e19 }).success, false);
 });

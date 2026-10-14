@@ -10,7 +10,7 @@ const readSchema = z
     kind: kind.optional(),
     history: z.boolean().optional(),
     section: id.optional(),
-    revision: z.number().int().min(1).optional(),
+    revision: z.number().int().safe().min(1).optional(),
     offset: z.number().int().min(0).optional(),
     length: z.number().int().min(1).optional(),
   })

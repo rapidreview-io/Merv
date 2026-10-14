@@ -13,6 +13,8 @@ import type { BoardElement } from './types.js';
 type El = BoardElement & Record<string, any>;
 type Rect = { x: number; y: number; width: number; height: number };
 const GAP = 40;
+/** The most places tried inside a frame before it grows to take a shape. */
+const SPOTS = 10_000;
 const FONT = 20;
 const LINE = 1.25;
 /** Roughly how wide a character of the hand-drawn font is, for a font size of one. */
@@ -24,8 +26,9 @@ const KEY_DIGITS = 'VWXYZabcdefghijklmnopqrstuvwxyz';
 const elementId = () => randomBytes(15).toString('base64url');
 const nonce = () => randomBytes(4).readUInt32BE() >>> 1;
 
-/** Text broken into lines of at most `chars` characters, at spaces where it can be. */
+/** Text broken into lines of at most `chars` (at least 8) characters, at spaces where it can be. */
 function wrap(text: string, chars: number): string {
+  chars = Math.max(8, chars);
   return text
     .split('\n')
     .flatMap((paragraph) => {
@@ -222,7 +225,7 @@ export class Drawing {
     const wrapped =
       container.type === 'arrow'
         ? content
-        : wrap(content, Math.max(8, Math.floor((container.width - 30) / (size * CHAR))));
+        : wrap(content, Math.floor((container.width - 30) / (size * CHAR)));
     const { width, height } = measure(wrapped, size);
     const middle = container.type === 'arrow' ? arrowMiddle(container) : center(container);
     const text = this.text(
@@ -262,8 +265,10 @@ export class Drawing {
         Math.max(r.y, r.y + r.height) + pad,
       ].map((at) => Math.floor(at / side)) as [number, number, number, number];
       const keys: string[] = [];
+      // Counted, not stepped: past 2^53 a cell number plus one is the same number.
       if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 9)
-        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) keys.push(`${x},${y}`);
+        for (let i = 0; i <= x1 - x0; i++)
+          for (let j = 0; j <= y1 - y0; j++) keys.push(`${x0 + i},${y0 + j}`);
       return keys;
     };
     const cells = new Map<string, Rect[]>();
@@ -298,8 +303,10 @@ export class Drawing {
         throw new MervError('board_not_a_frame', `"${into}" is not a frame`, 400);
       frameId = frame.id;
       const inside = this.occupied.filter((r) => contains(frame, r));
-      for (let y = frame.y + 60; !at && y + size.height <= frame.y + frame.height - 20; y += GAP)
-        for (let x = frame.x + 30; x + size.width <= frame.x + frame.width - 20; x += GAP) {
+      // A frame too vast to walk, or so far out that a step of GAP moves nothing, grows instead.
+      const [right, bottom] = [frame.x + frame.width - 20, frame.y + frame.height - 20];
+      for (let y = frame.y + 60, n = 0; !at && n < SPOTS && y + size.height <= bottom; y += GAP)
+        for (let x = frame.x + 30; n++ < SPOTS && x + size.width <= right; x += GAP) {
           const r = { x, y, ...size };
           if (!inside.some((o) => overlaps(o, r))) {
             at = r;
@@ -605,7 +612,7 @@ export class Drawing {
       case 'edit': {
         const el = this.find(op.id);
         const textOf =
-          el.type === 'text' ? el : this.carried(el).find((part) => part.type === 'text');
+          el.type === 'text' ? el : this.carried(el).find((part) => part.containerId === el.id);
         if (op.text !== undefined) {
           if (textOf) {
             const content =

@@ -9,6 +9,8 @@ import { BoardService, boardPlugin, type BoardElement } from '@merv/board';
 import { boardToolsPlugin } from '@merv/board/tools';
 import { boardUiPlugin } from '@merv/board/ui';
 import { Drawing, summarize } from '@merv/board/elements';
+import type { Context } from 'cordis';
+import type { ToolDefinition } from '@merv/api/types';
 import { openState } from './fixtures/state.js';
 
 const refused = (code: string) => (error: unknown) =>
@@ -189,6 +191,9 @@ test('a page cannot save images, embeds or script links, and an agent cannot nam
     { ...base, type: 'image' },
     { ...base, type: 'embeddable' },
     { ...base, type: 'rectangle', link: 'javascript:alert(1)' },
+    // Read as lists by board.read, board.draw and the picture.
+    { ...base, type: 'rectangle', boundElements: 'not a list' },
+    { ...base, type: 'rectangle', groupIds: 7 },
     // Points are drawn into the picture an agent looks at.
     {
       ...base,
@@ -275,6 +280,8 @@ test('a sketch path reads as the points a pen passes: lines, curves, arcs and cl
   assert.equal(strokesOf('M0 0 L1 1 M5 5 L6 6').length, 2, 'each move begins a stroke');
   assert.throws(() => strokesOf('M 0 0 X 3'), /could not be read/);
   assert.throws(() => strokesOf('L 1 1'), /does not begin with M/);
+  for (const d of ['M0 0 L1e999 5', 'M1e308 0 L-1e308 0'])
+    assert.throws(() => strokesOf(d), /out of range/, 'no number overflows to no coordinate');
 });
 
 test('an agent sketches with a pen: grouped strokes, painted petals, scaled and placed as one', () => {
@@ -454,6 +461,57 @@ test('a crowded board places shapes where it always did', () => {
       [2620, -150],
     ],
   );
+});
+
+test('a board holding a shape far out still places beside its shapes, and a vast frame grows', () => {
+  const [one] = crowd(1);
+  const drawing = new Drawing([...crowd(480), { ...one!, id: 'far', x: 1e300 }], true);
+  drawing.apply({ op: 'note', key: 'a', text: 'Beside', near: 'e250' });
+  assert.deepEqual([drawing.find('a').x, drawing.find('a').y], [1740, 2220]);
+  // Its first free place is past the most places tried: it grows down, as a full frame does.
+  const vast = { ...one!, id: 'vast', type: 'frame', width: 8000, height: 8000 };
+  const framed = new Drawing([vast, { ...one!, width: 8000, height: 7000, frameId: 'vast' }], true);
+  framed.apply({ op: 'note', key: 'n', text: 'In', in: 'vast' });
+  assert.deepEqual(
+    [framed.find('n').x, framed.find('n').y, framed.find('vast').height],
+    [30, 8000, 8150],
+  );
+});
+
+test('edit rewords a shape’s own label: a narrow hand-drawn one wraps at 8, a frame only renames', () => {
+  const ink = { version: 1, versionNonce: 1, isDeleted: false, x: 0, y: 0, height: 30 };
+  const drawing = new Drawing(
+    [
+      { ...ink, id: 'c', type: 'ellipse', width: 30, boundElements: [{ type: 'text', id: 't' }] },
+      { ...ink, id: 't', type: 'text', width: 12, text: '1', containerId: 'c' },
+    ] as BoardElement[],
+    true,
+  );
+  drawing.apply({ op: 'edit', id: 'c', text: 'second step' });
+  assert.equal(drawing.find('t').text, 'second\nstep');
+  drawing.apply({ op: 'note', key: 'n', text: 'Keep these words' });
+  drawing.apply({ op: 'frame', key: 'f', title: 'Old', holds: ['n'] });
+  drawing.apply({ op: 'edit', id: 'f', text: 'New' });
+  const read = summarize(drawing.result());
+  assert.deepEqual(
+    read.frames.map((frame) => frame.title),
+    ['New'],
+  );
+  assert.equal(read.shapes.find((s) => s.id === drawing.created.n)?.text, 'Keep these words');
+});
+
+test('a cursor past exact integers is refused as input, never sent to the database', () => {
+  const tools = new Map<string, ToolDefinition>();
+  boardToolsPlugin.apply({
+    effect: (fn: () => unknown) => fn(),
+    tools: {
+      register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      contributeInstructions() {},
+      contributePicture() {},
+    },
+  } as unknown as Context);
+  const scene = tools.get('board.scene')!.inputSchema;
+  assert.equal(scene.safeParse({ id: 'board_1', since: 1e19 }).success, false);
 });
 
 test('a move takes a shape to an exact spot, and a sketch of many points is drawn', () => {

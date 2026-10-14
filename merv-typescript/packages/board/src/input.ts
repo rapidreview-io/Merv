@@ -199,6 +199,8 @@ export const elementSchema = z
     link,
     // A line's points are drawn into the picture an agent looks at, so they are numbers only.
     points: z.array(z.tuple([z.number().finite(), z.number().finite()])).optional(),
+    boundElements: z.array(z.object({ id: z.string(), type: z.string() }).passthrough()).nullish(),
+    groupIds: z.array(z.string()).optional(),
   })
   .passthrough();
 export const saveSchema = z
