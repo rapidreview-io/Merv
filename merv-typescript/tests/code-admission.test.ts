@@ -21,6 +21,7 @@ import {
   type AdmissionLimits,
 } from '../packages/code/src/store/admission.js';
 import { CodeRepositories } from '@merv/code/store/repository';
+import { ServerGit } from '@merv/code/git';
 import { described, git, gitSource, type Bundle } from './fixtures/code-store.js';
 
 const open: AdmissionLimits = { ...defaultLimits, denyGlobs: [], secretExemptGlobs: [] };
@@ -68,10 +69,11 @@ async function fixture(t: TestContext, format: 'sha1' | 'sha256' = 'sha1') {
         expectedHead?: string | null;
         prerequisites?: string[] | 'admitted';
         limits?: Partial<AdmissionLimits>;
+        git?: ServerGit;
       } = {},
     ) =>
       admit({
-        git: repositories.git,
+        git: options.git ?? repositories.git,
         repository: paths.repository,
         quarantine: join(paths.quarantine, `run-${++runs}`),
         bundle: bundle.file,
@@ -407,6 +409,24 @@ test('sizes, counts, modes, paths, links and deny globs are findings that name a
   );
   assert.deepEqual(rules((await f.judge(f.source.bundle(lowered, [tall]))).findings), [
     'path_depth',
+  ]);
+});
+
+test('a transfer whose objects Git could not list is never admitted unexamined', async (t) => {
+  const f = await fixture(t);
+  const failing = join(f.source.directory, 'git');
+  writeFileSync(
+    failing,
+    '#!/bin/sh\ncase "$*" in *--batch-all-objects*) exit 128;; esac\nexec git "$@"\n',
+    { mode: 0o755 },
+  );
+  const tip = f.source.commit({ '.env': `TOKEN=${secrets['credentials@1.github_token']}\n` });
+  await assert.rejects(
+    f.judge(f.source.bundle(tip), { git: new ServerGit(f.source.directory, failing) }),
+    { code: 'code_git_failed' },
+  );
+  assert.deepEqual(rules((await f.judge(f.source.bundle(tip))).findings), [
+    'credentials@1.github_token',
   ]);
 });
 

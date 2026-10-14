@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  truncateSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -127,6 +129,48 @@ test('a repository is imported in parts, continued by a thin bundle, and every c
   assert.equal(status.store!.rootOid, one);
   assert.equal(git(f.paths.repository, ['cat-file', '-t', two]), 'commit');
   git(f.paths.repository, ['fsck', '--strict', '--no-dangling']);
+});
+
+test('an operation says what its part file holds, however a crash left the two apart', async (t) => {
+  const source = gitSource(t);
+  const one = source.commit({
+    'data.txt': Array.from({ length: 4000 }, (_, i) => `row ${i}`).join('\n'),
+  });
+  const f = await codeStoreFixture(t, {}, one);
+  const sent = source.bundle(one);
+  const { id } = await f.code.importRepository(f.admin, {
+    source: 'bundle',
+    tip: one,
+    bundle: { sha256: sent.sha256, bytes: sent.bytes },
+    requestId: 'drift',
+  });
+  const file = join(f.paths.quarantine, id, 'bundle.part');
+  const put = (offset: number, end = sent.bytes) =>
+    f.code.v2!.putPart(f.admin, id, offset, sent.content.subarray(offset, end));
+  const received = async () =>
+    ((await f.code.v2!.call(f.admin, `uploads/${id}`, {})) as { operation: CodeStoreOperation })
+      .operation.received;
+  const half = Math.floor(sent.bytes / 2);
+  await put(0, half);
+  // Bytes Code already holds are a replay and are not appended twice.
+  assert.deepEqual(await put(100, half), { received: half });
+  assert.equal(statSync(file).size, half);
+  // (a) The unsynced tail went with the host: the row said more than the file holds.
+  truncateSync(file, half - 100);
+  await assert.rejects(put(half), { code: 'code_upload_offset' });
+  assert.equal(await received(), half - 100);
+  // (b) A part was appended in pieces when the process died: the file holds more than the row.
+  appendFileSync(file, sent.content.subarray(half - 100, half + 7));
+  await assert.rejects(put(half - 100), { code: 'code_upload_offset' });
+  assert.equal(await received(), half + 7);
+  await assert.rejects(put(half + 8), { code: 'code_upload_offset' });
+  assert.deepEqual(await put(half + 7), { received: sent.bytes });
+  // (c) Every byte recorded and the file short: completing says where to go on.
+  truncateSync(file, sent.bytes - 50);
+  await assert.rejects(complete(f, id), { code: 'code_upload_incomplete' });
+  assert.equal(await received(), sent.bytes - 50);
+  await put(sent.bytes - 50);
+  assert.equal((await complete(f, id)).status, 'completed');
 });
 
 test('only the administrator who began an import continues it, and a worker never does', async (t) => {

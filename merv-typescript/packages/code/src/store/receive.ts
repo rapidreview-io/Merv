@@ -336,7 +336,8 @@ export class CodeReceiver {
    * Append one part of a bundle. The file's size is what was received, so a part at that
    * offset is appended, one that lies wholly inside it is a replay, and any other is refused
    * and the sender reads where to continue. Nothing is synced here: the whole file is hashed
-   * against the promised sha256 before anything reads it.
+   * against the promised sha256 before anything reads it. A crash can leave file and row apart
+   * either way, so the row learns the file's size before any refusal: senders resume from it.
    */
   async putPart(
     caller: Caller,
@@ -387,19 +388,15 @@ export class CodeReceiver {
         );
         await appendFile(file, bytes, { mode: 0o600 });
         received = held + bytes.length;
-      } else
-        check(
-          offset + bytes.length <= held,
-          'code_upload_offset',
-          `This operation holds ${held} bytes; send the part that starts there`,
-          409,
-        );
+      }
       this.core.fault('after_part');
-      await this.core.state.transaction(async (tx) => {
-        const current = await this.core.row(tx, row.id);
-        if (current?.status === 'prepared' && current.phase === 'receiving')
-          await this.progress(tx, current, { received });
-      });
+      await this.note(row.id, { received });
+      check(
+        offset === held || offset + bytes.length <= held,
+        'code_upload_offset',
+        `This operation holds ${held} bytes; send the part that starts there`,
+        409,
+      );
       return { received };
     });
     return await job.catch((error: unknown) => {
@@ -472,6 +469,14 @@ export class CodeReceiver {
     );
   }
 
+  /** Merge a change into an unfinished operation's progress, in a transaction of its own. */
+  private async note(id: string, change: Partial<Progress>): Promise<void> {
+    await this.core.state.transaction(async (tx) => {
+      const current = await this.core.row(tx, id);
+      if (current?.status === 'prepared') await this.progress(tx, current, change);
+    });
+  }
+
   private async progress(tx: Transaction, row: OperationRow, change: Partial<Progress>) {
     const merged = { ...(JSON.parse(row.progress_json ?? '{}') as Progress), ...change };
     await tx.run(
@@ -521,22 +526,18 @@ export class CodeReceiver {
       : error instanceof MervError
         ? error.code
         : 'internal_error';
-    await this.core.state.transaction(async (tx) => {
-      const row = await this.core.row(tx, id);
-      if (row?.status === 'prepared')
-        await this.progress(tx, row, {
-          waiting: {
-            code,
-            message:
-              code === 'code_drain_pending'
-                ? 'Code was unloaded while this operation ran'
-                : error instanceof MervError
-                  ? error.message
-                  : 'The operation stopped unexpectedly',
-            next: next[code] ?? resume,
-            at: now(),
-          },
-        });
+    await this.note(id, {
+      waiting: {
+        code,
+        message:
+          code === 'code_drain_pending'
+            ? 'Code was unloaded while this operation ran'
+            : error instanceof MervError
+              ? error.message
+              : 'The operation stopped unexpectedly',
+        next: next[code] ?? resume,
+        at: now(),
+      },
     });
   }
 
@@ -983,18 +984,18 @@ export class CodeReceiver {
       bundle = join(directory, 'bundle');
     if (await lstat(bundle).catch(() => null)) return { oid: payload.tip };
     const held = (await stat(part).catch(() => null))?.size ?? 0;
-    check(
-      held === payload.bundle.bytes,
-      'code_upload_incomplete',
-      `This operation holds ${held} of ${payload.bundle.bytes} bytes`,
-      409,
-    );
+    if (held !== payload.bundle.bytes) {
+      // The row may claim more than the file kept: the sender resumes from what it says.
+      await this.note(row.id, { received: held });
+      throw new MervError(
+        'code_upload_incomplete',
+        `This operation holds ${held} of ${payload.bundle.bytes} bytes`,
+        409,
+      );
+    }
     if ((await hashFile(part)) !== payload.bundle.sha256) {
       await rm(part, { force: true });
-      await this.core.state.transaction(async (tx) => {
-        const current = await this.core.row(tx, row.id);
-        if (current?.status === 'prepared') await this.progress(tx, current, { received: 0 });
-      });
+      await this.note(row.id, { received: 0 });
       throw new MervError(
         'code_bundle_hash_mismatch',
         'The received bytes do not have the promised sha256; they were dropped, send them again',
@@ -1175,11 +1176,7 @@ export class CodeReceiver {
       return null;
     }
     const github = { id: result.repository.id, fullName: result.repository.fullName };
-    await this.core.state.transaction(async (tx) => {
-      const current = await this.core.row(tx, row.id);
-      if (current?.status === 'prepared')
-        await this.progress(tx, current, { target: oid, github, received: size });
-    });
+    await this.note(row.id, { target: oid, github, received: size });
     await syncPath(part);
     await rm(scratch, { recursive: true, force: true });
     await rename(part, bundle);

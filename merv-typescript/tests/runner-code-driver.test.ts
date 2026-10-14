@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  appendFileSync,
   chmodSync,
   chownSync,
   existsSync,
@@ -1162,6 +1163,60 @@ test('an interrupted upload continues where Code stands, and a final capture is 
     operation: { status: string };
   };
   assert.equal(replayed.operation.status, 'completed');
+});
+
+test('an upload a crash left part-appended or short of its tail goes on where Code holds, pausing between turns', async (t) => {
+  const f = await writerFixture(t);
+  await f.open({ config: { partBytes: 1024 } });
+  await f.lease('ses_1');
+  const part = (id: string) => join(f.paths.quarantine, id, 'bundle.part');
+  const turns: { what: string; at: number; end?: number }[] = [];
+  let crash = true;
+  let short = true;
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    call: async (route, body) => {
+      const id = /^uploads\/(\w+)\/complete$/.exec(route)?.[1];
+      if (id && !crash && short) {
+        // Code's host lost the last ten bytes it had recorded.
+        short = false;
+        truncateSync(part(id), lstatSync(part(id)).size - 10);
+      }
+      if (id) turns.push({ what: 'complete', at: Date.now() });
+      return await inner.call(route, body);
+    },
+    putPart: async (id, offset, bytes) => {
+      turns.push({ what: `put ${offset}`, at: Date.now(), end: offset + bytes.length });
+      if (turns.length > 100) throw new Error('the driver keeps sending');
+      if (offset === 2048 && crash) {
+        // The process died with part of this part appended and unrecorded.
+        crash = false;
+        appendFileSync(part(id), Buffer.from(bytes).subarray(0, 300));
+        throw Object.assign(new Error('reset'), { code: 'control_unavailable', status: 0 });
+      }
+      return await inner.putPart(id, offset, bytes);
+    },
+  }));
+  let driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'blob.bin'), randomBytes(6000));
+  const work = await command(f, driver, 'ses_1', f.root);
+  await assert.rejects(driver.checkpointCommit(m.launch('ses_1'), work), WorkspaceDeferred);
+  driver.dispose();
+  driver = m.start();
+  turns.length = 0;
+  const receipt = await driver.checkpointCommit(m.launch('ses_1'), work);
+  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+  // Refused once each way, then sent on exactly from what Code holds, never from the start.
+  const total = turns.at(-4)!.end!;
+  assert.deepEqual(
+    [...turns.slice(0, 3), ...turns.slice(-3)].map(({ what }) => what),
+    ['put 2048', 'put 2348', 'put 3372', 'complete', `put ${total - 10}`, 'complete'],
+  );
+  assert.equal(turns.filter(({ what }) => what === 'put 2048').length, 1);
+  // Each refusal is followed by the driver's poll pause (20 ms), never a hot retry.
+  for (const at of [0, turns.length - 3]) assert.ok(turns[at + 1]!.at - turns[at]!.at >= 15);
 });
 
 test('a periodic checkpoint is asked for only while the checkout holds changes on Code’s head', async (t) => {

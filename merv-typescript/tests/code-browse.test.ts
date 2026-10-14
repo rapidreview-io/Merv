@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { browse, raw, treePath } from '../packages/code/src/browse.js';
+import { browse, log, raw, treePath } from '../packages/code/src/browse.js';
 
 /** A project repository holding one commit: README.md, src/train.py, data/blob.bin. */
 async function project(t: TestContext) {
@@ -39,7 +39,7 @@ async function project(t: TestContext) {
     '-m',
     'one',
   ]);
-  return { repositories, commit };
+  return { repositories, commit, git };
 }
 
 test("a commit's code reads as folders and files: folders first, text shown, binary withheld", async (t) => {
@@ -78,4 +78,24 @@ test('a path never steps outside the tree it names', () => {
   assert.equal(treePath('/src/a.py/'), 'src/a.py');
   for (const bad of ['../etc', 'src/../x', 'a//b', 'a\0b'])
     assert.throws(() => treePath(bad), /segment by segment/);
+});
+
+test("a path's history is that file's or folder's, whatever its name holds", async (t) => {
+  const { repositories, commit, git } = await project(t);
+  let head = commit;
+  const change = (pages: Record<string, string>, message: string) => {
+    const listed = Object.entries(pages).map(
+      ([name, text]) => `100644 blob ${git(['hash-object', '-w', '--stdin'], text)}\t${name}\n`,
+    );
+    const root = git(['mktree'], `040000 tree ${git(['mktree'], listed.join(''))}\tpages\n`);
+    const id = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
+    head = git([...id, 'commit-tree', root, '-p', head, '-m', message]);
+  };
+  change({ '[id].tsx': 'a' }, 'route');
+  change({ '[id].tsx': 'a', 'i.tsx': 'b' }, 'unrelated');
+  change({ '[id].tsx': 'c', 'i.tsx': 'b' }, 'edit');
+  const subjects = async (path: string) =>
+    (await log(repositories, 'p', head, { path })).map((entry) => entry.subject);
+  assert.deepEqual(await subjects('pages/[id].tsx'), ['edit', 'route']);
+  assert.deepEqual(await subjects('pages'), ['edit', 'unrelated', 'route']);
 });

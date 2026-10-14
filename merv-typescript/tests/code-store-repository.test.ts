@@ -120,6 +120,29 @@ test('a directory Code did not make, or one that was changed beneath it, is refu
   await reopened();
 });
 
+test('a marker a creation left empty is written, a written one never replaced, a dead creation swept', async (t) => {
+  const repositories = await opened(t, root(t));
+  const paths = repositories.paths('p');
+  mkdirSync(join(paths.directory, 'bootstrap-dead'), { recursive: true });
+  mkdirSync(join(paths.directory, 'bootstrap-live'));
+  const old = new Date(Date.now() - 2 * 3600_000);
+  utimesSync(join(paths.directory, 'bootstrap-dead'), old, old);
+  writeFileSync(paths.marker, '');
+  await repositories.ensure('p', 'r', 'sha1');
+  await repositories.ensure('p', 'other', 'sha1').catch(() => {});
+  assert.deepEqual(JSON.parse(readFileSync(paths.marker, 'utf8')), {
+    format: 1,
+    projectId: 'p',
+    repositoryId: 'r',
+  });
+  await repositories.sweep(async () => undefined);
+  assert.deepEqual(readdirSync(paths.directory).sort(), [
+    'bootstrap-live',
+    'merv-project.json',
+    'repository.git',
+  ]);
+});
+
 test('one process writes to a root at a time, and the lock of a dead process is taken over', async (t) => {
   for (const path of [root(t), root(t, 'a'.repeat(60), 'b'.repeat(60))]) {
     const first = await opened(t, path);

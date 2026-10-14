@@ -211,19 +211,10 @@ export class CodeRepositories {
   async ensure(projectId: string, repositoryId: string, format: ObjectFormat): Promise<void> {
     const paths = this.paths(projectId);
     await mkdir(paths.directory, { recursive: true, mode: 0o700 });
-    const identity = JSON.stringify({ format: 1, projectId, repositoryId });
-    try {
-      const marker = await open(paths.marker, 'wx', 0o600);
-      try {
-        await marker.writeFile(identity);
-        await marker.sync();
-      } finally {
-        await marker.close();
-      }
-      await syncPath(paths.directory);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
+    // Work on a project runs in turn. A marker that says anything is never replaced; an empty
+    // one is what a creation left that died before its bytes reached the disk.
+    if (!(await lstat(paths.marker).catch(() => null))?.size)
+      await this.mark(paths, { format: 1, projectId, repositoryId });
     if (!(await this.exists(projectId))) {
       const bootstrap = join(paths.directory, `bootstrap-${randomUUID()}`);
       const target = join(bootstrap, 'repository.git');
@@ -292,7 +283,6 @@ export class CodeRepositories {
    * row names, which is the one thing the format-1 marker proved.
    */
   async rebind(projectId: string, lineage: string[], repositoryId: string): Promise<string[]> {
-    const paths = this.paths(projectId);
     const held = await this.marker(projectId);
     check(
       held.projectId === projectId && held.repositoryIds.includes(lineage.at(-1)!),
@@ -301,20 +291,25 @@ export class CodeRepositories {
       500,
     );
     const repositoryIds = lineage.includes(repositoryId) ? lineage : [...lineage, repositoryId];
+    await this.mark(this.paths(projectId), { format: 2, projectId, repositoryIds });
+    // validate() answers from this memo for the life of the process, so the next Git operation
+    // of this project would otherwise never read the identity just written.
+    this.validated.delete(projectId);
+    return repositoryIds;
+  }
+
+  /** Put an identity in the marker whole: written and synced beside it, then renamed over it. */
+  private async mark(paths: ProjectPaths, identity: object): Promise<void> {
     const next = `${paths.marker}.next`;
     const handle = await open(next, 'w', 0o600);
     try {
-      await handle.writeFile(JSON.stringify({ format: 2, projectId, repositoryIds }));
+      await handle.writeFile(JSON.stringify(identity));
       await handle.sync();
     } finally {
       await handle.close();
     }
     await rename(next, paths.marker);
     await syncPath(paths.directory);
-    // validate() answers from this memo for the life of the process, so the next Git operation
-    // of this project would otherwise never read the identity just written.
-    this.validated.delete(projectId);
-    return repositoryIds;
   }
 
   /**
@@ -503,7 +498,8 @@ export class CodeRepositories {
   /**
    * Remove what no operation needs any more: quarantine directories of finished operations,
    * or of none when they are an hour old, expired exports with their refs, temporary packs
-   * an interrupted child left behind.
+   * an interrupted child left behind, and the hour-old half-made repository of an ensure()
+   * that died (one that lives ends within its few Git children's timeouts).
    * Held bundles, every other ref and every pack of a repository are never touched;
    * nothing here collects garbage or prunes.
    */
@@ -522,6 +518,9 @@ export class CodeRepositories {
     for (const entry of await readdir(this.config.root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[0-9a-f]{32}$/.test(entry.name)) continue;
       const directory = join(this.config.root, entry.name);
+      for (const name of await readdir(directory))
+        if (name.startsWith('bootstrap-') && (await old(join(directory, name), HOUR)))
+          await rm(join(directory, name), { recursive: true, force: true });
       for (const operationId of await readdir(join(directory, 'quarantine')).catch(() => [])) {
         const path = join(directory, 'quarantine', operationId);
         const state = await finished(operationId);

@@ -346,15 +346,22 @@ export abstract class DriverTransfer extends DriverCheckout {
       bundle: sending ? { sha256: journal.bundle_hash, bytes: journal.bundle_bytes } : null,
       ...request,
     };
-    let { operation } = (await this.ask(() =>
-      this.transport.call(request.kind === 'final' ? 'finalize' : 'uploads', begin),
-    )) as { operation: CodeStoreOperation };
+    type Answer = { operation: CodeStoreOperation };
+    const answer = async (route: string, body: unknown = {}) =>
+      ((await this.ask(() => this.transport.call(route, body))) as Answer).operation;
+    let operation = await answer(request.kind === 'final' ? 'finalize' : 'uploads', begin);
     if (operation.id !== journal.operation_id)
       this.db
         .prepare('UPDATE code_v2_transfers SET operation_id=? WHERE request_id=?')
         .run(operation.id, journal.request_id);
     const deadline = Date.now() + this.admissionMs;
-    while (operation.status === 'prepared') {
+    // Every turn after the first waits, and none begins past the deadline.
+    for (let again = false; operation.status === 'prepared'; again = true) {
+      if (again) {
+        if (Date.now() > deadline)
+          throw new WorkspaceDeferred('store_busy', 'code_admission_pending');
+        await new Promise((done) => setTimeout(done, this.pollMs));
+      }
       if (operation.phase === 'receiving' && operation.received < journal.bundle_bytes!) {
         // Each part is read where it lies in the file; a bundle is never held whole.
         const fd = openSync(journal.bundle_path!, 'r');
@@ -373,9 +380,7 @@ export abstract class DriverTransfer extends DriverCheckout {
           const code = (error as TransportFailure).code;
           if (code === 'code_upload_offset') {
             // Code holds more or less than was assumed: read where it stands and go on there.
-            ({ operation } = (await this.ask(() =>
-              this.transport.call(`uploads/${operation.id}`, {}),
-            )) as { operation: CodeStoreOperation });
+            operation = await answer(`uploads/${operation.id}`);
             continue;
           }
           if (code !== 'code_upload_closed') throw error;
@@ -384,20 +389,14 @@ export abstract class DriverTransfer extends DriverCheckout {
         }
       }
       try {
-        ({ operation } = (await this.ask(() =>
-          this.transport.call(`uploads/${operation.id}/complete`, {}),
-        )) as { operation: CodeStoreOperation });
+        operation = await answer(`uploads/${operation.id}/complete`);
       } catch (error) {
-        // The bytes did not have the promised hash and were dropped: they are sent again.
-        if ((error as TransportFailure).code !== 'code_bundle_hash_mismatch') throw error;
-        ({ operation } = (await this.ask(() =>
-          this.transport.call(`uploads/${operation.id}`, {}),
-        )) as { operation: CodeStoreOperation });
+        // The bytes did not have the promised hash and were dropped, or Code holds fewer than
+        // it was sent: they are sent again from where it says it stands.
+        const code = (error as TransportFailure).code;
+        if (code !== 'code_bundle_hash_mismatch' && code !== 'code_upload_incomplete') throw error;
+        operation = await answer(`uploads/${operation.id}`);
       }
-      if (operation.status !== 'prepared') break;
-      if (Date.now() > deadline)
-        throw new WorkspaceDeferred('store_busy', 'code_admission_pending');
-      await new Promise((done) => setTimeout(done, this.pollMs));
     }
     return operation;
   }

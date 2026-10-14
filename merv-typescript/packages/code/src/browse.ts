@@ -147,6 +147,8 @@ export async function log(
   const where = treePath(path);
   const listed = await repositories.git.run(
     [
+      // A path names that file or folder, never a pattern: `[id].tsx` is not `i.tsx`.
+      '--literal-pathspecs',
       'log',
       `-n${Math.max(1, Math.min(MOST_LOG, limit))}`,
       '--format=%H%x00%P%x00%aI%x00%s%x00%b%x1e',

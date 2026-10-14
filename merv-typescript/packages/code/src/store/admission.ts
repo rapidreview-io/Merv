@@ -322,7 +322,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   // Q: what the pack put into quarantine, read with no alternate.
   const quarantined = new Map<string, { type: string; size: number }>();
   let partial = '';
-  await git.run(['cat-file', '--batch-all-objects', '--batch-check', '--unordered'], {
+  const all = await git.run(['cat-file', '--batch-all-objects', '--batch-check', '--unordered'], {
     env: { GIT_DIR: repository, GIT_OBJECT_DIRECTORY: objects },
     timeoutMs: WALK_TIMEOUT_MS,
     output: (chunk) => {
@@ -337,6 +337,9 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
         }
     },
   });
+  // A short list would leave objects unexamined: Git not answering is retried, never admitted.
+  if (all.code !== 0)
+    throw new MervError('code_git_failed', 'Git could not list the delivered objects', 500);
   const findings: CodeFinding[] = [];
   const found = (rule: string, path: string | null, oid: string | null) => {
     if (findings.length < MAX_FINDINGS) findings.push({ rule, path, oid });
