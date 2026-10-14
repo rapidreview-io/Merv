@@ -202,51 +202,40 @@ export class CodeMirrorService {
     this.running ??= this.repositories.git.scoped(this.stop.signal, async () => {
       try {
         const at = now();
-        const linked = new Map<string, MirrorTarget>();
-        let cursor: MirrorRow | undefined;
-        let remaining = 50;
-        // Page past disconnected projects without modifying their waiting work. The cursor
-        // belongs to this pass; only eligible rows consume its bounded execution allowance.
-        while (!this.closed && remaining > 0) {
-          const after = cursor ? [cursor.next_at ?? '', cursor.created_at, cursor.id] : [];
-          const due: MirrorRow[] = await this.state.read(
-            async (sql) =>
-              await sql.all<MirrorRow>(
-                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-base','mirror-retained') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
-              ${cursor ? "AND (COALESCE(next_at,''),created_at,id) > (?,?,?)" : ''}
-              ORDER BY COALESCE(next_at,''),created_at,id LIMIT 50`,
-                at,
-                at,
-                ...after,
-              ),
-          );
-          if (!due.length) break;
-          cursor = due[due.length - 1];
-          const projects = new Map<string, MirrorRow[]>();
-          for (const row of due)
-            projects.set(row.project_id, [...(projects.get(row.project_id) ?? []), row]);
-          for (const [projectId, rows] of projects) {
-            const target =
-              linked.get(projectId) ??
-              (await this.transport
-                .target(projectId)
-                .catch(() => ({ blocked: 'code_mirror_unavailable' })));
-            linked.set(projectId, target);
-            // One credential serves a project's refs for at most HOLD_MS, and each ref still asks
-            // whether its project publishes at all. One that cannot be had fails each ref alone.
-            while (!('blocked' in target) && rows.length && remaining > 0 && !this.closed) {
-              const until = Date.now() + HOLD_MS;
-              const refs = async () => {
-                while (rows.length && remaining > 0 && !this.closed && Date.now() < until) {
-                  remaining--;
-                  await this.one(rows.shift()!).catch(() => {});
-                }
-              };
-              await (this.transport.hold?.(projectId, refs) ?? refs()).catch(refs);
-            }
+        const due = `status='prepared' AND kind IN ('mirror-work','mirror-base','mirror-retained') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?`;
+        // A disconnected project is asked about once, and its waiting work is neither read nor
+        // modified; only eligible rows consume the pass's bounded allowance of fifty.
+        const linked: string[] = [];
+        for (const { id } of await this.state.read((sql) =>
+          sql.all<{ id: string }>(
+            `SELECT DISTINCT project_id AS id FROM code_operations WHERE ${due}`,
+            at,
+            at,
+          ),
+        ))
+          if (!('blocked' in (await this.transport.target(id).catch(() => ({ blocked: true })))))
+            linked.push(id);
+        const projects = new Map<string, MirrorRow[]>();
+        for (const row of await this.state.read((sql) =>
+          sql.all<MirrorRow>(
+            `SELECT ${columns} FROM code_operations WHERE ${due} AND project_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY COALESCE(next_at,''),created_at,id LIMIT 50`,
+            at,
+            at,
+            JSON.stringify(linked),
+          ),
+        ))
+          projects.set(row.project_id, [...(projects.get(row.project_id) ?? []), row]);
+        for (const [projectId, rows] of projects)
+          // One credential serves a project's refs for at most HOLD_MS, and each ref still asks
+          // whether its project publishes at all. One that cannot be had fails each ref alone.
+          while (rows.length && !this.closed) {
+            const until = Date.now() + HOLD_MS;
+            const refs = async () => {
+              while (rows.length && !this.closed && Date.now() < until)
+                await this.one(rows.shift()!).catch(() => {});
+            };
+            await (this.transport.hold?.(projectId, refs) ?? refs()).catch(refs);
           }
-          if (due.length < 50) break;
-        }
       } finally {
         this.running = undefined;
       }

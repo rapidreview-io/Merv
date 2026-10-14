@@ -73,6 +73,8 @@ export class CodeWriterService {
   ) {}
   /** The owner of work units, lent by openStore until it releases it. */
   private owner?: Pick<CodeStorePort, 'changed'>;
+  /** The store's wake (openStore): its next pass runs once the waking transaction has ended. */
+  wake?: () => void;
 
   /** Lends the owner's `changed` until the returned release; a later lend replaces it. */
   lend(owner: Pick<CodeStorePort, 'changed'>): () => void {
@@ -181,6 +183,8 @@ export class CodeWriterService {
       await this.failUnfinished(tx, uploads.unfinished);
       await this.move(tx, row, 'closing');
       await this.changed(tx, projectId, row.unit_id);
+      // Main admits what is wholly on it itself; its machine may be gone.
+      this.wake?.();
     } else await this.end(tx, row, 'session_closed');
   }
 
@@ -259,17 +263,18 @@ export class CodeWriterService {
   async expire(): Promise<void> {
     if (this.closed) return;
     const before = new Date(Date.now() - this.finalizeGraceSeconds * 1000).toISOString();
+    // Within the grace a closing generation waits: for what was in flight, or for the final
+    // capture a worker that ended its own visit owes. An admitted upload is finished first.
+    const due = (sql: Sql) =>
+      sql.all<WriterRow>(
+        `SELECT ${writerColumns} FROM code_workspaces w WHERE ((writer_state='closing' AND COALESCE(writer_changed_at,'')<=?) OR (writer_state='recovery_required' AND quarantine_operation_id IS NULL AND blocked_by IS NULL)) AND NOT EXISTS (SELECT 1 FROM code_operations o WHERE o.project_id=w.project_id AND o.unit_id=w.unit_id AND o.kind='upload' AND o.status='prepared' AND o.phase IS DISTINCT FROM 'receiving') ORDER BY project_id,unit_id LIMIT 100`,
+        before,
+      );
+    // Nothing due is the common answer, and it takes no writer lock.
+    if (!(await this.state.read(due)).length) return;
     await this.state.transaction(async (tx) => {
-      for (const row of await tx.all<WriterRow>(
-        `SELECT ${writerColumns} FROM code_workspaces WHERE writer_state='closing' OR (writer_state='recovery_required' AND quarantine_operation_id IS NULL AND blocked_by IS NULL) ORDER BY project_id,unit_id LIMIT 100`,
-      )) {
-        const uploads = await this.uploads(tx, row);
-        if (uploads.admitted) continue;
-        // Within the grace a closing generation waits: for what was in flight, or for the final
-        // capture a worker that ended its own visit owes.
-        if (row.writer_state === 'closing' && (row.writer_changed_at ?? '') > before) continue;
+      for (const row of await due(tx))
         await this.end(tx, row, row.writer_state === 'closing' ? 'session_closed' : 'stranded');
-      }
     });
   }
 

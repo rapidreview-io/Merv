@@ -23,7 +23,6 @@ import { CodeReceiver } from './receive.js';
 import {
   columns,
   journalled,
-  kinds,
   serial,
   StoreCore,
   type CodeImportRemote,
@@ -212,12 +211,17 @@ export class CodeStore {
           this.core.hooks.changed,
         );
         await this.core.hooks.maintained?.();
-        const { rows, closing } = await this.core.state.read(async (sql) => ({
+        const { rows, closing, fenced } = await this.core.state.read(async (sql) => ({
           rows: await sql.all<OperationRow>(
-            `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL ORDER BY created_at,id`,
+            `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL AND kind IN ('import','upload','retain-ref') ORDER BY created_at,id`,
           ),
           closing: await sql.all<{ project_id: string; unit_id: string }>(
             "SELECT project_id,unit_id FROM code_workspaces WHERE writer_state='closing'",
+          ),
+          // Receiving uploads whose writer generation is no longer their unit's: the fence's
+          // code_generation_stale, which a missing or blocked workspace never answers.
+          fenced: await sql.all<{ id: string }>(
+            "SELECT o.id FROM code_operations o WHERE o.status='prepared' AND o.kind='upload' AND o.phase='receiving' AND (SELECT w.blocked_by IS NULL AND (w.generation<>(o.payload_json::jsonb->>'generation')::bigint OR w.writer_session_id IS DISTINCT FROM o.payload_json::jsonb->>'sessionId' OR w.writer_lease_id IS DISTINCT FROM o.payload_json::jsonb->>'leaseId') FROM code_workspaces w WHERE w.project_id=o.project_id AND w.unit_id=o.payload_json::jsonb->>'unitId')",
           ),
         }));
         // An upload whose every byte reached Main before its session closed needs nothing more
@@ -238,18 +242,14 @@ export class CodeStore {
         const stale = new Date(Date.now() - this.config.abandonSeconds * 1000).toISOString();
         // Each project in its own order; a slow admission in one holds up no other.
         const projects = new Map<string, OperationRow[]>();
-        for (const row of rows.filter((row) => kinds.includes(row.kind)))
+        for (const row of rows)
           projects.set(row.project_id, [...(projects.get(row.project_id) ?? []), row]);
         await Promise.all(
           [...projects.values()].map(async (rows) => {
             for (const row of rows)
               if (journalled.includes(row.phase!) || whole(row))
                 await this.receiver.start(row).catch(() => {});
-              else if (
-                row.kind === 'upload' &&
-                !this.receiver.jobs.has(row.id) &&
-                (await this.receiver.stale(row))
-              )
+              else if (fenced.some(({ id }) => id === row.id) && !this.receiver.jobs.has(row.id))
                 await this.repositories
                   .run(row.project_id, () => this.receiver.fail(row, 'code_generation_stale', null))
                   .catch(() => {});

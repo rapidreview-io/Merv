@@ -127,6 +127,7 @@ export class CodeService {
       options.fault,
     );
     await store.initialize();
+    writers.wake = () => store.wake();
     // The server publishes a project's work with no caller: the owner's link and the write
     // automation they turned on are the authorisation, and unlinking is the off switch.
     const transport =

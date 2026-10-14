@@ -353,7 +353,8 @@ export class CodeReceiver {
       413,
     );
     const job = serial(this.parts, operationId, async () => {
-      const row = await this.core.state.transaction(async (tx) => {
+      // A read: the fence's one write (reserved to active) was made when the upload began.
+      const row = await this.core.state.snapshotTransaction(async (tx) => {
         const row = await this.authorized(caller, operationId, tx);
         check(
           row.status === 'prepared' && row.phase === 'receiving',
@@ -929,21 +930,6 @@ export class CodeReceiver {
         final,
       },
     });
-  }
-
-  /** Whether the writer generation an upload was begun for is no longer the unit's. */
-  async stale(row: OperationRow): Promise<boolean> {
-    const payload = JSON.parse(row.payload_json) as UploadPayload;
-    try {
-      await this.core.state.transaction(
-        async (tx) => await this.core.hooks.fenced(tx, fenceOf(row, payload), payload.kind),
-      );
-      return false;
-    } catch (error) {
-      // Any other refusal leaves the row to whoever continues or supersedes it.
-      if (error instanceof MervError) return error.code === 'code_generation_stale';
-      throw error;
-    }
   }
 
   private async phase(id: string, from: string, to: string): Promise<void> {

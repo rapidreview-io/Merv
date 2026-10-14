@@ -36,16 +36,23 @@ export function treePath(path: string): string {
 async function at(repositories: CodeRepositories, projectId: string, commit: string, path: string) {
   check(OID.test(commit), 'invalid_code_ref', 'A commit is its full object id');
   path = treePath(path);
-  const git = (args: string[], maxBuffer = 4 * 1024 * 1024) =>
+  const git = (args: string[], maxBuffer = 4 * 1024 * 1024, input?: string) =>
     repositories.git.run(args, {
       env: repositories.environment(projectId),
       timeoutMs: 10_000,
       maxBuffer,
+      input,
     });
   check(await repositories.exists(projectId), 'code_not_found', 'This project has no code', 404);
   const target = `${commit}:${path}`;
-  const kind = await git(['cat-file', '-t', target]);
-  if (kind.code !== 0) {
+  // One child says what the path is and how large; a NUL ends the name, whatever it holds.
+  const kind = await git(
+    ['cat-file', '-z', '--batch-check=%(objecttype) %(objectsize)'],
+    undefined,
+    `${target}\0`,
+  );
+  const [, type, bytes] = /^(\w+) (\d+)\n$/.exec(kind.stdout.toString('utf8')) ?? [];
+  if (kind.code !== 0 || !type) {
     const known = await git(['cat-file', '-e', `${commit}^{commit}`]);
     throw new MervError(
       'code_path_not_found',
@@ -53,10 +60,9 @@ async function at(repositories: CodeRepositories, projectId: string, commit: str
       404,
     );
   }
-  const type = kind.stdout.toString('utf8').trim();
-  const size = async () => {
+  const size = () => {
     check(type === 'blob', 'code_path_not_found', `"${path}" is not a file`, 404);
-    return Number((await git(['cat-file', '-s', target])).stdout.toString('utf8').trim());
+    return Number(bytes);
   };
   return { git, path, target, type, size };
 }
@@ -98,7 +104,7 @@ export async function browse(
       );
     return { kind: 'folder', commit, path, entries };
   }
-  const size = await found.size();
+  const size = found.size();
   if (size > MOST_FILE_BYTES) return { kind: 'file', commit, path, size, withheld: 'too_large' };
   const bytes = (await git(['cat-file', 'blob', target], MOST_FILE_BYTES + 1024)).stdout;
   // Git's own test for binary content: a NUL in the first 8000 bytes.
@@ -115,7 +121,7 @@ export async function raw(
   path: string,
 ): Promise<Buffer> {
   const { git, target, size } = await at(repositories, projectId, commit, path);
-  const bytes = await size();
+  const bytes = size();
   check(
     bytes <= MOST_RAW_BYTES,
     'code_file_too_large',

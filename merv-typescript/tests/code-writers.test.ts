@@ -2,11 +2,21 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { refused, writerFixture } from './fixtures/code-writers.js';
 import { CodeWriterService } from '@merv/code/writers';
 import { faultAt, git, maintainStore } from './fixtures/code-store.js';
 
 const fixture = writerFixture;
+/** Holds the project's turn, which every admission waits for, until the returned release. */
+const hold = (f: Awaited<ReturnType<typeof fixture>>) => {
+  let release!: () => void;
+  const held = f.core.repositories.run(
+    f.admin.projectId,
+    () => new Promise<void>((done) => (release = done)),
+  );
+  return async () => (release(), await held);
+};
 
 test('an ordinary unit accepts a real checkpoint after its first checkpoint was a no-op', async (t) => {
   const f = await fixture(t);
@@ -400,6 +410,8 @@ test('an upload fully on Main when its session closed is admitted within the gra
   const bundle = f.source.bundle(last, [first]);
   const inFlight = await f.begin('checkpoint', 'ses_1', 1, first, bundle);
   await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
+  // Main's own pass would admit it at once; holding the project's turn keeps it in the grace.
+  const held = hold(f);
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   assert.equal((await f.unit()).writerState, 'closing', 'whole bytes on Main are not abandoned');
@@ -408,6 +420,7 @@ test('an upload fully on Main when its session closed is admitted within the gra
   assert.equal((await f.unit()).writerState, 'closing', 'the grace has not passed');
   // Nothing new begins in the grace; what was in flight finishes.
   await assert.rejects(f.begin('final', 'ses_1', 1, first, bundle), refused('code_writer_closed'));
+  await held();
   const admitted = (
     (await f.code.v2!.call(f.admin, `uploads/${inFlight.id}/complete`, {})) as {
       operation: { status: string };
@@ -430,8 +443,9 @@ test('an upload fully on Main when its machine is gone is admitted by Main itsel
   await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
   f.end('ses_1', 'managed_revoked');
   await f.event('session.closed', 'ses_1');
-  assert.equal((await f.unit()).writerState, 'closing');
-  await maintainStore(f.code);
+  // The close itself wakes Main's pass: nobody asks for the admission and no sweep is due.
+  for (let tries = 0; tries < 100 && (await f.unit()).writerState !== 'closed'; tries++)
+    await delay(50);
   const unit = await f.unit();
   assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', first]);
   assert.equal((await f.lease('ses_2')).generation, 2);
@@ -445,11 +459,13 @@ test('past the grace, an upload its session left is never admitted', async (t) =
   const bundle = f.source.bundle(first, [f.root]);
   const inFlight = await f.begin('checkpoint', 'ses_1', 1, f.root, bundle);
   await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
+  const held = hold(f);
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   assert.equal((await f.unit()).writerState, 'closing');
   // A grace of 0: the sweep ends the generation, and the late completion is refused.
   await f.sweep();
+  await held();
   const unit = await f.unit();
   assert.deepEqual([unit.writerState, unit.canonicalHead], ['closed', null]);
   assert.equal((await f.operationRow(inFlight.id))?.error, 'code_generation_stale');
@@ -486,4 +502,50 @@ test('a writer an earlier Code left in recovery_required ends at its last admitt
     f.code.fenceUnit(await f.human(), { unitId: f.unitId, requestId: 'fence' }),
     refused('code_fence_unneeded'),
   );
+});
+
+test('a hundred generations still in their grace never hold back one past it', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE code_workspaces SET writer_state='closing',writer_changed_at='2020-01-01T00:00:00.000Z' WHERE unit_id=?",
+      f.unitId,
+    );
+    // Units that sort first, whose sessions closed a moment ago.
+    for (let i = 0; i < 100; i++)
+      await tx.run(
+        "INSERT INTO code_workspaces(project_id,unit_id,declared_at,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at) VALUES (?,?,?,?,1,'closing',?,?,?)",
+        f.admin.projectId,
+        `0unit_${String(i).padStart(3, '0')}`,
+        new Date().toISOString(),
+        JSON.stringify({ reference: f.root }),
+        `ses_x${i}`,
+        `ses_x${i}`,
+        new Date().toISOString(),
+      );
+  });
+  await f.sweep();
+  assert.equal((await f.unit()).writerState, 'closed');
+});
+
+test('the store ends a receiving upload of an earlier generation, unless its unit is blocked', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const head = f.source.commit({ 'a.txt': 'one\n' });
+  const sending = await f.begin('checkpoint', 'ses_1', 1, f.root, f.source.bundle(head, [f.root]));
+  const set = (sql: string) =>
+    f.state.transaction((tx) =>
+      tx.run(`UPDATE code_workspaces SET ${sql} WHERE unit_id=?`, f.unitId),
+    );
+  await maintainStore(f.code);
+  assert.equal((await f.operationRow(sending.id))?.status, 'prepared', 'its own generation');
+  await set("generation=2,writer_session_id='ses_2',writer_lease_id='ses_2',blocked_by='base'");
+  await maintainStore(f.code);
+  assert.equal((await f.operationRow(sending.id))?.status, 'prepared', 'a blocked unit');
+  await set('blocked_by=NULL');
+  await maintainStore(f.code);
+  assert.equal((await f.operationRow(sending.id))?.error, 'code_generation_stale');
 });
