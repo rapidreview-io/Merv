@@ -134,7 +134,6 @@ export async function acquireLease(
     purpose === 'review' ? await ctx.reviews.start(caller, row.review_id!, tx) : undefined;
   const type = contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, purpose);
   const checkpoints = await checkpointRows(
-    ctx,
     caller,
     snapshot.id,
     purpose,
@@ -278,7 +277,6 @@ export async function producerOrAdmin(
 }
 
 export async function checkpointRows(
-  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   purpose: 'work' | 'review',
@@ -318,7 +316,6 @@ export async function visibleCheckpoints(
   tx: Transaction,
 ): Promise<TaskCheckpoint[]> {
   const checkpoints = await checkpointRows(
-    ctx,
     caller,
     taskId,
     purpose,

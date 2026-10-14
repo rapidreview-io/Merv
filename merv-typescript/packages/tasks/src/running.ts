@@ -2,7 +2,6 @@ import type { TaskRecord, Tasks } from './types.js';
 import { recordUnit } from '@merv/code-work/record-unit';
 import {
   absent,
-  check,
   ellipsis,
   keyId,
   keyKind,
@@ -269,10 +268,11 @@ export async function page(
 ): ReturnType<Tasks['page']> {
   caller = structuredClone(caller);
   return await ctx.state.snapshot(async () => {
+    // The page draws no action, so the task is its record: no guidance is evaluated.
     const { row, task } = await ctx.state.transaction(async (tx) => {
       await ctx.scope.require(caller, 'read', tx);
       const row = await ctx.row(tx, caller, taskId);
-      return { row, task: await ctx.hydrate(caller, row, tx) };
+      return { row, task: await ctx.projectRecord(caller, row, tx) };
     });
     const graph = await ctx.workflows.process(caller, taskId, { checks: false });
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
@@ -492,53 +492,48 @@ export async function running(
 ): Promise<RunningNode[]> {
   caller = structuredClone(caller);
   const held = [...new Set([...include].filter((key) => keyKind(key) === 'work').map(keyId))];
-  return await ctx.state.snapshot(
-    async () =>
-      await ctx.state.transaction(async (tx) => {
-        await ctx.scope.require(caller, 'read', tx);
-        const ids = [
-          ...(await ctx.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
-          ...held,
-        ];
-        const at = await ctx.workflows.revisions(caller.projectId, ids, tx);
-        const rows = (
-          await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id' | 'created_at'>>(
-            `SELECT id,title,review_id,created_at FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
-            caller.projectId,
-            ...ids,
-          )
-        ).flatMap((row) => {
-          const w = at.get(row.id);
-          return w ? [{ ...row, version: w.version, state: w.state, revision: w.revision }] : [];
-        });
-        const leases = await liveLeases(ctx, caller, tx);
-        const blocked = new Set(
-          (await ctx.workflows.blockers(caller, undefined, tx)).map(
-            (blocker) => blocker.instanceId,
+  return await ctx.state.snapshotTransaction(async (tx) => {
+    await ctx.scope.require(caller, 'read', tx);
+    const ids = [
+      ...(await ctx.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
+      ...held,
+    ];
+    const at = await ctx.workflows.revisions(caller.projectId, ids, tx);
+    const rows = (
+      await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id' | 'created_at'>>(
+        `SELECT id,title,review_id,created_at FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
+        caller.projectId,
+        ...ids,
+      )
+    ).flatMap((row) => {
+      const w = at.get(row.id);
+      return w ? [{ ...row, version: w.version, state: w.state, revision: w.revision }] : [];
+    });
+    const leases = await liveLeases(caller, tx);
+    const blocked = new Set(
+      (await ctx.workflows.blockers(caller, undefined, tx)).map((blocker) => blocker.instanceId),
+    );
+    const waitsOn = await ctx.workflows.prerequisites(
+      caller,
+      rows.map((row) => row.id),
+      tx,
+    );
+    return await mapAsync(
+      rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
+      async (row) =>
+        taskNode(
+          await standing(
+            ctx,
+            caller,
+            row,
+            waitsOn.get(row.id) ?? [],
+            leases,
+            blocked.has(row.id),
+            tx,
           ),
-        );
-        const waitsOn = await ctx.workflows.prerequisites(
-          caller,
-          rows.map((row) => row.id),
-          tx,
-        );
-        return await mapAsync(
-          rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
-          async (row) =>
-            taskNode(
-              await standing(
-                ctx,
-                caller,
-                row,
-                waitsOn.get(row.id) ?? [],
-                leases,
-                blocked.has(row.id),
-                tx,
-              ),
-            ),
-        );
-      }),
-  );
+        ),
+    );
+  });
 }
 
 /** A task's Running sidebar, whatever its state, so an open sidebar outlives the card. */
@@ -565,7 +560,7 @@ export async function runningPanel(
         caller,
         { id: row.id, title: row.title, review_id: row.review_id, version, state, revision },
         record.dependencies,
-        await liveLeases(ctx, caller, tx, taskId),
+        await liveLeases(caller, tx, taskId),
         (await ctx.workflows.blockers(caller, taskId, tx)).length > 0,
         tx,
       );
@@ -589,7 +584,6 @@ export async function runningPanel(
 
 /** The purpose of each live lease, by task and the revision it was offered for. */
 export async function liveLeases(
-  ctx: TasksContext,
   caller: Caller,
   tx: Transaction,
   taskId?: string,

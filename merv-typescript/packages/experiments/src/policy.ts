@@ -110,7 +110,7 @@ export async function move(
   );
 }
 
-export function revision(ctx: ExperimentsContext, experiment: Experiment, expected: number): void {
+export function revision(experiment: Experiment, expected: number): void {
   check(
     Number.isSafeInteger(expected) && experiment.workflow.revision === expected,
     'revision_conflict',
@@ -120,11 +120,7 @@ export function revision(ctx: ExperimentsContext, experiment: Experiment, expect
 }
 
 /** The review edge a verdict takes from the stage it assessed. */
-export function route(
-  ctx: ExperimentsContext,
-  stage: 'design' | 'results',
-  input: ExperimentReview,
-): string {
+export function route(stage: 'design' | 'results', input: ExperimentReview): string {
   check(
     REVIEW_VERDICTS.includes(input.verdict),
     'invalid_verdict',
@@ -189,7 +185,7 @@ export async function assertProducer(
     );
   }
   if (experiment.workflow.state === 'running') {
-    approvedPlan(ctx, experiment);
+    approvedPlan(experiment);
     requireDependencies(
       (await ctx.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
     );
@@ -302,7 +298,6 @@ export async function checkReview(
   pinned: ReviewRequest,
 ): Promise<void> {
   const input = proposed as unknown as ExperimentReview;
-  if (input.expectedRevision !== undefined) revision(ctx, experiment, input.expectedRevision);
   await ctx.scope.require(caller, 'review', tx);
   const review =
     input.reviewId === pinned.id ? pinned : await ctx.reviews.get(caller, input.reviewId, tx);
@@ -312,7 +307,7 @@ export async function checkReview(
     'This review no longer belongs to the current submission',
     409,
   );
-  revision(ctx, experiment, input.expectedRevision);
+  revision(experiment, input.expectedRevision);
   const submission = reviewedSubmission(experiment, review.id)!;
   check(
     submission.subjectRevision === review.subjectRevision &&
@@ -329,7 +324,7 @@ export async function checkReview(
     'Review evidence differs from the sealed submission',
     409,
   );
-  const action = route(ctx, submission.stage, input);
+  const action = route(submission.stage, input);
   // Reviews holds the criterion to met with some pinned evidence; only Experiments knows
   // which artifact is the statement, and a finding citing the plan alone has not read it.
   const statement = submission.evidence.find((e) => e.role === 'feasibility');

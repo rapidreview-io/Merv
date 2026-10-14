@@ -9,7 +9,7 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -1205,6 +1205,49 @@ test('a result attach reads only the result it adds', async (t) => {
   // The exhibit still pins every one of them.
   const exhibit = await f.experiments.exhibit(f.producer, experiment.id);
   assert.equal(JSON.parse(exhibit.content).resultFiles.length, 12);
+});
+
+test('a results readiness check lists the worker outputs once, however many results it pins', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  for (let index = 0; index < 20; index++)
+    await f.attach(experiment, 'result', `{"index":${index}}`, { path: `results/${index}.json` });
+  await f.attach(experiment, 'report', report);
+  const listings = t.mock.method(f.artifacts, 'executionOutputs');
+  const lookups = t.mock.method(f.artifacts, 'get');
+  const decision = await f.workflows.evaluate(f.worker(experiment), experiment.id);
+  assert.equal(decision.actions.find((a) => a.action === 'submit_results')?.status, 'ready');
+  const [listed, read] = [listings.mock.callCount(), lookups.mock.callCount()];
+  assert.ok(listed <= 3 && read <= 2, `${listed} output listings and ${read} reads for 20 results`);
+});
+
+test('a plan may cite a retained image above the inline byte limit', async (t) => {
+  const f = await fixture(t);
+  // Disk blobs that sign uploads: the signed PUT lands the object where DiskBlobs keeps it.
+  const blobs: Blobs = f.blobs;
+  const at = (hash: string) => join(f.directory, 'blobs', f.producer.projectId, hash.slice(0, 2));
+  blobs.upload = async () => ({ url: 'https://storage.test/put', headers: {}, expiresAt: '' });
+  blobs.stored = async (_namespace, hash) => {
+    try {
+      return statSync(join(at(hash), hash)).size;
+    } catch {
+      return null;
+    }
+  };
+  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2_500_000, 7)]);
+  const hash = createHash('sha256').update(png).digest('hex');
+  const begun = await f.artifacts.uploadBegin(f.producer, {
+    title: 'loss.png',
+    size: png.length,
+    sha256: hash,
+    mediaType: 'image/png',
+  });
+  mkdirSync(at(hash), { recursive: true });
+  writeFileSync(join(at(hash), hash), png);
+  const figure = await f.artifacts.uploadComplete(f.producer, begun.uploadId);
+  // A figure is listed and never read, so its size does not bound the plan citing it.
+  const attached = await f.attach(await f.create(), 'plan', `${plan}\n\n![Loss](${figure.id})`);
+  assert.deepEqual(attached.figureIds, [figure.id]);
 });
 
 test('an attempt refuses its 101st result file when it is attached', async (t) => {

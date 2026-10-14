@@ -6,7 +6,7 @@ import {
   roundsUsed,
   standings,
 } from './rules.js';
-import { canonical, visible, isDirectHuman } from '@merv/contracts';
+import { canonical, visible, isDirectHuman, within } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import { bound, createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -327,12 +327,7 @@ export class ReviewService implements Reviews {
       };
     };
     // Ownership reads in a transaction; a snapshot's is read-only and takes no writer lock.
-    const tx = transaction ?? this.state.ambient;
-    if (tx) {
-      this.state.assertTransaction(tx);
-      return await read(tx);
-    }
-    return await this.state.snapshotTransaction(read);
+    return await within(this.state, transaction, (sql) => read(sql as Transaction), 'read');
   }
 
   /** review.release's own rule, said to a reader it would take the hand-back from. */
@@ -448,28 +443,22 @@ export class ReviewService implements Reviews {
   async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
     caller = structuredClone(caller);
     const view = await this.reader(caller, transaction);
-    const read = async (sql: Sql) => await view(hydrate(await this.row(sql, caller, reviewId)));
-    if (transaction) {
-      this.state.assertTransaction(transaction);
-      return await read(transaction);
-    }
-    return await this.state.read(read);
+    return await within(this.state, transaction, async (sql) =>
+      view(hydrate(await this.row(sql, caller, reviewId))),
+    );
   }
 
   async find(caller: Caller, ids: readonly string[], transaction?: Transaction) {
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', transaction);
-    const read = async (sql: Sql) => {
+    return await within(this.state, transaction, async (sql) => {
       const rows = await sql.all<ReviewRow>(
         'SELECT * FROM reviews WHERE project_id = ? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
         caller.projectId,
         JSON.stringify([...new Set(ids)]),
       );
       return new Map(rows.map((row) => [row.id, hydrate(row)]));
-    };
-    if (!transaction) return await this.state.read(read);
-    this.state.assertTransaction(transaction);
-    return await read(transaction);
+    });
   }
 
   async list(caller: Caller, { subjectId }: { subjectId?: string } = {}): Promise<ReviewRequest[]> {
@@ -554,7 +543,7 @@ export class ReviewService implements Reviews {
       .slice(0, 64);
     if (!subjects.length) return [];
     const view = await this.reader(caller, transaction);
-    const read = async (sql: Sql) => {
+    return await within(this.state, transaction, async (sql) => {
       // The newest at the highest revision it pinned speaks for its subject, so an open
       // re-review outranks the verdict it will replace. Earlier rounds show only their outcome,
       // so only the newest is read whole, manifest and all.
@@ -607,12 +596,7 @@ export class ReviewService implements Reviews {
         });
       });
       return sections.flat();
-    };
-    if (transaction) {
-      this.state.assertTransaction(transaction);
-      return await read(transaction);
-    }
-    return await this.state.read(read);
+    });
   }
 
   /**

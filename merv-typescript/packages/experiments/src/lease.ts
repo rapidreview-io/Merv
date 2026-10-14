@@ -159,15 +159,13 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
     // The lease of the attempt the facts name: Workflows admitted the step just before.
     lease: async (context) =>
       await leaseOf(ctx, context.caller, await facts(ctx, context), context.tx),
-    captures: async (context, lease) => [
+    // The lease hook has just checked that the lease serves the current attempt.
+    captures: async (context) => [
       ...((await ctx.captureEvidence?.captures(
         context.caller.projectId,
         context.snapshot.id,
         context.tx,
-        captureEpochs(
-          await attemptRevisions(ctx, context.snapshot.id, lease.details.attemptIndex, context.tx),
-          context.snapshot,
-        ),
+        captureEpochs((await facts(ctx, context)).attempt, context.snapshot),
       )) ?? []),
       ...(await resumedOutputs(ctx, context.caller, context.snapshot, context.tx)),
     ],
@@ -204,12 +202,8 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
         review = await ctx.reviews.start(context.caller, pinned.id, context.tx);
       }
       const inputs = await inputsOf(ctx, context.caller, experiment, context.tx);
-      const artifacts = await ctx.artifacts.getAll(
-        context.source,
-        inputIds(ctx, inputs),
-        context.tx,
-      );
-      const recovery = reviewing(context.snapshot.state) ? [] : eligibleRecovery(ctx, experiment);
+      const artifacts = await ctx.artifacts.getAll(context.source, inputIds(inputs), context.tx);
+      const recovery = reviewing(context.snapshot.state) ? [] : eligibleRecovery(experiment);
       const receipt: Data = {
         leaseId: context.leaseId,
         experimentId: experiment.id,
@@ -235,23 +229,4 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
       return receipt;
     },
   });
-}
-
-/** The revisions an attempt ran through, as captureEpochs reads them. */
-export async function attemptRevisions(
-  ctx: ExperimentsContext,
-  id: string,
-  index: number,
-  tx: Transaction,
-) {
-  const row = (await tx.get<{ started_revision: number; ended_revision: number | null }>(
-    'SELECT started_revision,ended_revision FROM experiment_attempts WHERE experiment_id=? AND attempt_index=?',
-    id,
-    index,
-  ))!;
-  return {
-    index,
-    startedRevision: Number(row.started_revision),
-    endedRevision: row.ended_revision === null ? null : Number(row.ended_revision),
-  };
 }

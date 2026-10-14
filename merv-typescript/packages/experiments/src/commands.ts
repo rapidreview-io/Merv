@@ -162,14 +162,10 @@ export async function create(
       );
       await addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
       await ctx.code.declareUnit(caller, workflow.id, tx);
-      await recordEvent(
-        ctx,
-        caller,
-        'created',
-        workflow.id,
-        { name: input.name, dependsOn: input.dependsOn },
-        tx,
-      );
+      await recorded(ctx.state, tx, caller, 'experiment.created', workflow.id, {
+        name: input.name,
+        dependsOn: input.dependsOn,
+      });
       return await ctx.get(caller, workflow.id, tx);
     });
   });
@@ -189,7 +185,7 @@ export async function attach(
     return await command(ctx, caller, 'attach', input, tx, async () => {
       const experiment = await ctx.get(caller, input.experimentId, tx);
       handleFor(ctx, experiment.workflow.version);
-      revision(ctx, experiment, input.expectedRevision);
+      revision(experiment, input.expectedRevision);
       check(
         experiment.attempt.index === input.attemptIndex,
         'attempt_conflict',
@@ -210,7 +206,7 @@ export async function attach(
       const artifact = await ctx.artifacts.get(caller, input.artifactId, tx);
       const inherited = await pinnedRecovery(ctx, caller, experiment, tx);
       check(
-        (await authoredInExecution(ctx, caller, artifact, tx)) ||
+        (await authorship(ctx, caller, tx))(artifact) ||
           experiment.captureArtifactIds?.includes(artifact.id) ||
           (await resumedOutputs(ctx, caller, experiment.workflow, tx)).includes(artifact.id) ||
           inherited.some(
@@ -262,20 +258,13 @@ export async function attach(
         tx,
         figureIds,
       );
-      await recordEvent(
-        ctx,
-        caller,
-        'evidence_attached',
-        experiment.id,
-        {
-          evidenceId: association.id,
-          artifactId: artifact.id,
-          role: input.role,
-          path: input.path,
-          attemptIndex: input.attemptIndex,
-        },
-        tx,
-      );
+      await recorded(ctx.state, tx, caller, 'experiment.evidence_attached', experiment.id, {
+        evidenceId: association.id,
+        artifactId: artifact.id,
+        role: input.role,
+        path: input.path,
+        attemptIndex: input.attemptIndex,
+      });
       return association;
     });
   });
@@ -307,15 +296,15 @@ function one(evidence: ExperimentEvidence[], role: string): ExperimentEvidence {
   return matching[0]!;
 }
 
-async function authoredInExecution(
+/** Whether the caller authored an artifact: a worker in its session, anyone else as its actor. */
+async function authorship(
   ctx: ExperimentsContext,
   caller: Caller,
-  artifact: Artifact,
   tx: Transaction,
-): Promise<boolean> {
-  return caller.session
-    ? (await ctx.artifacts.executionOutputs(caller, tx)).some((output) => output.id === artifact.id)
-    : artifact.createdBy === caller.actorId;
+): Promise<(artifact: Artifact) => boolean> {
+  if (!caller.session) return (artifact) => artifact.createdBy === caller.actorId;
+  const outputs = new Set((await ctx.artifacts.executionOutputs(caller, tx)).map((a) => a.id));
+  return (artifact) => outputs.has(artifact.id);
 }
 
 async function evidenceText(
@@ -335,24 +324,23 @@ async function figures(
   tx: Transaction,
 ): Promise<string[]> {
   const ids = markdownImageTargets(text);
-  const allowed = caller.session
-    ? new Set(await allowedArtifacts(ctx, caller, experiment, tx))
-    : null;
-  for (const id of ids) {
+  if (caller.session && ids.length) {
+    const allowed = new Set(await allowedArtifacts(ctx, caller, experiment, tx));
     check(
-      !allowed || allowed.has(id),
+      ids.every((id) => allowed.has(id)),
       'forbidden',
       'Figure is outside this worker’s frozen inputs and authored outputs',
       403,
     );
-    const { artifact, bytes } = await ctx.artifacts.bytes(caller, id, tx);
+  }
+  // Figures are listed, never read: their metadata decides, whatever their size.
+  for (const artifact of await ctx.artifacts.getAll(caller, ids, tx))
     check(
       ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(artifact.mediaType) &&
-        bytes.length > 0,
+        artifact.size > 0,
       'invalid_experiment_evidence',
       'Figures must be retained PNG, JPEG, GIF or WebP image artifacts',
     );
-  }
   return ids;
 }
 
@@ -509,7 +497,6 @@ export async function transition(
     return await command(ctx, caller, 'transition', input, tx, async () => {
       const experiment = await ctx.get(caller, input.experimentId, tx);
       handleFor(ctx, experiment.workflow.version);
-      revision(ctx, experiment, input.expectedRevision);
       const prepared = await checkAction(ctx, {
         caller,
         snapshot: experiment.workflow,
@@ -541,34 +528,22 @@ export async function transition(
           tx,
         );
       else {
-        await tx.run(
-          'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
-          moved.revision,
-          experiment.id,
-          experiment.attempt.index,
-        );
+        await endAttempt(experiment, moved.revision, tx);
         await tx.run(
           'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',
           input.evidence?.reason ?? null,
           experiment.id,
         );
       }
-      await recordEvent(
-        ctx,
-        caller,
-        'transitioned',
-        experiment.id,
-        {
-          transition: input.transition,
-          from: experiment.workflow.state,
-          to: moved.state,
-          revision: moved.revision,
-          attemptIndex: experiment.attempt.index,
-          reason: input.evidence?.reason ?? null,
-          detail: input.evidence?.detail ?? null,
-        },
-        tx,
-      );
+      await recorded(ctx.state, tx, caller, 'experiment.transitioned', experiment.id, {
+        transition: input.transition,
+        from: experiment.workflow.state,
+        to: moved.state,
+        revision: moved.revision,
+        attemptIndex: experiment.attempt.index,
+        reason: input.evidence?.reason ?? null,
+        detail: input.evidence?.detail ?? null,
+      });
       return await ctx.get(caller, experiment.id, tx);
     });
   });
@@ -580,6 +555,7 @@ async function prepareSubmission(
   caller: Caller,
   experiment: Experiment,
   selection: ExperimentEvidence[],
+  authored: (artifact: Artifact) => boolean,
   tx: Transaction,
 ): Promise<Submission> {
   let evidence = selection;
@@ -611,7 +587,7 @@ async function prepareSubmission(
     figureIds = [
       ...new Set([...approved.figureIds, ...(await figures(ctx, caller, text, experiment, tx))]),
     ];
-    // Their bytes were read when the design was submitted, and artifacts never change.
+    // They were checked when the design was submitted, and artifacts never change.
     await ctx.artifacts.getAll(caller, approved.figureIds, tx);
     exhibit = await buildExhibit(
       ctx,
@@ -630,16 +606,20 @@ async function prepareSubmission(
     ...(approved?.evidence ?? []),
   ];
   const resumed = await resumedOutputs(ctx, caller, experiment.workflow, tx);
-  for (const item of evidence) {
-    const metadata = await ctx.artifacts.get(caller, item.artifactId, tx);
+  const metadata = await ctx.artifacts.getAll(
+    caller,
+    evidence.map((e) => e.artifactId),
+    tx,
+  );
+  for (const [index, item] of evidence.entries()) {
     check(
-      metadata.hash === item.hash,
+      metadata[index]!.hash === item.hash,
       'artifact_hash_mismatch',
       'The selected evidence metadata changed',
       409,
     );
     check(
-      (await authoredInExecution(ctx, caller, metadata, tx)) ||
+      authored(metadata[index]!) ||
         experiment.captureArtifactIds?.includes(item.artifactId) ||
         resumed.includes(item.artifactId) ||
         inherited.some(
@@ -808,22 +788,15 @@ async function submit(
     JSON.stringify(submission),
   );
   await tx.run('UPDATE experiments SET review_id=? WHERE id=?', review.id, experiment.id);
-  await recordEvent(
-    ctx,
-    caller,
-    'submitted',
-    experiment.id,
-    {
-      submissionId: submission.id,
-      stage,
-      round,
-      attemptIndex: experiment.attempt.index,
-      reviewId: review.id,
-      manifestHash: submission.manifestHash,
-      artifactIds,
-    },
-    tx,
-  );
+  await recorded(ctx.state, tx, caller, 'experiment.submitted', experiment.id, {
+    submissionId: submission.id,
+    stage,
+    round,
+    attemptIndex: experiment.attempt.index,
+    reviewId: review.id,
+    manifestHash: submission.manifestHash,
+    artifactIds,
+  });
   return await ctx.get(caller, experiment.id, tx);
 }
 
@@ -854,7 +827,7 @@ export async function submitReview(
     const experiment = await ctx.get(caller, review.subjectId, tx);
     const submission = experiment.submissions.find((s) => s.reviewId === review.id);
     check(submission, 'stale_review', 'Review is not an experiment submission', 409);
-    const action = route(ctx, submission.stage, input);
+    const action = route(submission.stage, input);
     return await command(ctx, caller, 'submit_review', input, tx, async () => {
       // The transition's guard runs checkReview before anything below is written.
       let conclusion: string | null = null;
@@ -916,12 +889,7 @@ export async function submitReview(
           experiment.attempt.index,
         );
       else if (['revise_design', 'revise_plan'].includes(action)) {
-        await tx.run(
-          'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
-          moved.revision - 1,
-          experiment.id,
-          experiment.attempt.index,
-        );
+        await endAttempt(experiment, moved.revision - 1, tx);
         const index = experiment.attempt.index + 1;
         await addAttempt(
           experiment.id,
@@ -937,12 +905,7 @@ export async function submitReview(
       } else if (action === 'revise_execution')
         await feedback(experiment, input.notes, tx, review.id);
       else if (action === 'accept_results') {
-        await tx.run(
-          'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
-          moved.revision,
-          experiment.id,
-          experiment.attempt.index,
-        );
+        await endAttempt(experiment, moved.revision, tx);
         // Every version records its success, so later work can take its base from it. The
         // reference is the one the submission stored: the review capture is read only while
         // the experiment is under review, and the guard's checkReview has just verified it there.
@@ -964,23 +927,16 @@ export async function submitReview(
         conclusion,
         experiment.id,
       );
-      await recordEvent(
-        ctx,
-        caller,
-        'review_applied',
-        experiment.id,
-        {
-          reviewId: review.id,
-          submissionId: submission.id,
-          verdict: input.verdict,
-          returnTo: input.returnTo ?? null,
-          action,
-          from: experiment.workflow.state,
-          to: moved.state,
-          revision: moved.revision,
-        },
-        tx,
-      );
+      await recorded(ctx.state, tx, caller, 'experiment.review_applied', experiment.id, {
+        reviewId: review.id,
+        submissionId: submission.id,
+        verdict: input.verdict,
+        returnTo: input.returnTo ?? null,
+        action,
+        from: experiment.workflow.state,
+        to: moved.state,
+        revision: moved.revision,
+      });
       return await ctx.get(caller, experiment.id, tx);
     });
   });
@@ -998,7 +954,7 @@ export async function checkAction(
     experiment = await current(ctx, context);
   const action = context.transition;
   if (context.input?.expectedRevision !== undefined)
-    revision(ctx, experiment, context.input.expectedRevision as number);
+    revision(experiment, context.input.expectedRevision as number);
   if (action === 'abandon' || action === 'mark_failed') {
     await ctx.scope.require(caller, 'write', tx);
     check(
@@ -1028,13 +984,9 @@ export async function checkAction(
       tx,
     );
     const own = one(selection, action === 'submit_design' ? 'plan' : 'report');
+    const authored = await authorship(ctx, caller, tx);
     check(
-      await authoredInExecution(
-        ctx,
-        caller,
-        await ctx.artifacts.get(caller, own.artifactId, tx),
-        tx,
-      ),
+      authored(await ctx.artifacts.get(caller, own.artifactId, tx)),
       'invalid_evidence_author',
       'The submitting worker must retain and attach its own plan or report after verifying any inherited evidence',
       403,
@@ -1051,7 +1003,7 @@ export async function checkAction(
       codeCaptureRef = await finalCaptureRef(ctx, caller, experiment, tx);
     }
     return {
-      ...(await prepareSubmission(ctx, caller, experiment, selection, tx)),
+      ...(await prepareSubmission(ctx, caller, experiment, selection, authored, tx)),
       codeCaptureRef,
     };
   }
@@ -1087,6 +1039,16 @@ async function addAttempt(
     JSON.stringify(feedback),
     createdAt,
     JSON.stringify(feedbackReviewIds),
+  );
+}
+
+/** Ends the current attempt at the last revision its work was at. */
+async function endAttempt(experiment: Experiment, revision: number, tx: Transaction) {
+  await tx.run(
+    'UPDATE experiment_attempts SET ended_revision=? WHERE experiment_id=? AND attempt_index=?',
+    revision,
+    experiment.id,
+    experiment.attempt.index,
   );
 }
 
@@ -1184,15 +1146,4 @@ async function command<T>(
     after: async () =>
       await ctx.scope.require(caller, operation === 'submit_review' ? 'review' : 'write', tx),
   });
-}
-
-async function recordEvent(
-  ctx: ExperimentsContext,
-  caller: Caller,
-  type: string,
-  id: string,
-  data: Data,
-  tx: Transaction,
-) {
-  await recorded(ctx.state, tx, caller, `experiment.${type}`, id, data);
 }

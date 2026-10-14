@@ -17,7 +17,6 @@ import {
   type ContextRegistration,
   type RunningNode,
   type RunningPanelPart,
-  type RunningUnitEntry,
   type Reviews,
   type Scope,
   type State,
@@ -26,7 +25,7 @@ import {
   type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
-import type { ProcessGraph, WorkflowDependency, WorkflowSnapshot } from '@merv/workflows/models';
+import type { WorkflowDependency, WorkflowSnapshot } from '@merv/workflows/models';
 import type { Code } from '@merv/code-work/types';
 import type { SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import {
@@ -681,23 +680,23 @@ export const experimentsPlugin = {
     'paper',
   ],
   async apply(ctx: Context) {
-    const experiments = await createService(
-      new ExperimentService(
-        ctx.state,
-        ctx.scope,
-        ctx.artifacts,
-        ctx.workflows,
-        ctx.reviews,
-        ctx.contextBuilder,
-        ctx.codeWork,
-        ctx.paper,
-      ),
-    );
-    ctx.inject(['sandboxEvidence'], (ctx) => {
-      ctx.effect(() => experiments.bindCaptureEvidence(ctx.sandboxEvidence));
-    });
-    ctx.effect(function* () {
+    await ctx.effect(async function* () {
+      const experiments = await createService(
+        new ExperimentService(
+          ctx.state,
+          ctx.scope,
+          ctx.artifacts,
+          ctx.workflows,
+          ctx.reviews,
+          ctx.contextBuilder,
+          ctx.codeWork,
+          ctx.paper,
+        ),
+      );
       yield () => experiments.close();
+      ctx.inject(['sandboxEvidence'], (ctx) => {
+        ctx.effect(() => experiments.bindCaptureEvidence(ctx.sandboxEvidence));
+      });
       yield ctx.provide('experiments', experiments);
       yield () => experiments.withdrawReviewOwner();
     });

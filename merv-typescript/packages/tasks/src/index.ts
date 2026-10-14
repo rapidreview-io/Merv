@@ -24,7 +24,6 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { ProcessGraph } from '@merv/workflows/models';
 import type { Context } from 'cordis';
 import { postgresMigrations } from './index.postgres.js';
 
@@ -527,24 +526,24 @@ export const tasksPlugin = {
     'paper',
   ],
   async apply(ctx: Context) {
-    const tasks = await createService(
-      new TaskService(
-        ctx.state,
-        ctx.scope,
-        ctx.artifacts,
-        ctx.workflows,
-        ctx.reviews,
-        ctx.contextBuilder,
-        ctx.codeWork,
-        ctx.paper,
-      ),
-    );
-    ctx.inject(['sandboxEvidence'], (ctx) => {
-      ctx.effect(() => tasks.bindCaptureEvidence(ctx.sandboxEvidence));
-    });
     // Keep the graph registration until every consumer of Tasks has been disposed.
-    ctx.effect(function* () {
+    await ctx.effect(async function* () {
+      const tasks = await createService(
+        new TaskService(
+          ctx.state,
+          ctx.scope,
+          ctx.artifacts,
+          ctx.workflows,
+          ctx.reviews,
+          ctx.contextBuilder,
+          ctx.codeWork,
+          ctx.paper,
+        ),
+      );
       yield () => tasks.dispose();
+      ctx.inject(['sandboxEvidence'], (ctx) => {
+        ctx.effect(() => tasks.bindCaptureEvidence(ctx.sandboxEvidence));
+      });
       yield ctx.provide('tasks', tasks);
       // Generic review.submit lives outside this provider's consumer graph. Stop
       // accepting new routed work before withdrawing Tasks and draining its tools.

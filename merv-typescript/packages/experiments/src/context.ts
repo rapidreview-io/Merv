@@ -63,7 +63,7 @@ const FEEDBACK_KEPT = 5;
 
 const FEEDBACK_CHARS = 2000;
 
-export function approvedPlan(ctx: ExperimentsContext, experiment: Experiment): string[] {
+export function approvedPlan(experiment: Experiment): string[] {
   const submission = approvedSubmission(
     experiment,
     'Execution requires this attempt’s exact approved design submission',
@@ -81,10 +81,7 @@ export function approvedPlan(ctx: ExperimentsContext, experiment: Experiment): s
   return [...new Set([...plans, ...feasibility, ...submission.figureIds])];
 }
 
-export function eligibleRecovery(
-  ctx: ExperimentsContext,
-  experiment: Experiment,
-): ExperimentEvidence[] {
+export function eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
   return currentEvidence(experiment, rolesFor(experiment.workflow.state));
 }
 
@@ -108,7 +105,7 @@ export async function allowedArtifacts(
   }
   return [
     ...new Set([
-      ...inputIds(ctx, await inputsOf(ctx, caller, experiment, tx)),
+      ...inputIds(await inputsOf(ctx, caller, experiment, tx)),
       ...(experiment.captureArtifactIds ?? []),
     ]),
   ];
@@ -132,12 +129,12 @@ export async function inputsOf(
   );
   const selected = reviewing(state)
     ? review!.artifactIds
-    : eligibleRecovery(ctx, experiment).flatMap((evidence) => [
+    : eligibleRecovery(experiment).flatMap((evidence) => [
         evidence.artifactId,
         ...evidence.figureIds,
       ]);
   const approvedArtifacts =
-    state === 'running' || state === 'experiment_review' ? approvedPlan(ctx, experiment) : [];
+    state === 'running' || state === 'experiment_review' ? approvedPlan(experiment) : [];
   const approvedIds = new Set(approvedArtifacts);
   // Current review evidence remains inline. Feedback artifacts and producing recovery from a
   // previous round stay available through artifact.read, without quoting their old bodies.
@@ -223,14 +220,18 @@ export async function rejectedRounds(
   experiment: Experiment,
   tx: Transaction,
 ): Promise<{ review: ReviewRequest; label: string }[]> {
-  const rounds = await mapAsync(
-    [...experiment.submissions].sort((a, b) => a.subjectRevision - b.subjectRevision),
-    async (submission) => ({
-      review: await ctx.reviews.get(caller, submission.reviewId, tx),
-      label: `${submission.stage} attempt ${submission.attemptIndex} round ${submission.round}`,
-    }),
+  const reviews = await ctx.reviews.find(
+    caller,
+    experiment.submissions.map((submission) => submission.reviewId),
+    tx,
   );
-  return rounds.filter(({ review }) => review.status === 'submitted' && review.verdict !== 'pass');
+  return [...experiment.submissions]
+    .sort((a, b) => a.subjectRevision - b.subjectRevision)
+    .map((submission) => ({
+      review: reviews.get(submission.reviewId)!,
+      label: `${submission.stage} attempt ${submission.attemptIndex} round ${submission.round}`,
+    }))
+    .filter(({ review }) => review.status === 'submitted' && review.verdict !== 'pass');
 }
 
 export async function feedbackOf(
@@ -239,11 +240,12 @@ export async function feedbackOf(
   experiment: Experiment,
   tx: Transaction,
 ): Promise<ReviewRequest[]> {
-  const ids = experiment.attempt.feedbackReviewIds;
-  return await mapAsync([...new Set(ids)], async (id) => {
-    const review = await ctx.reviews.get(caller, id, tx);
+  const ids = [...new Set(experiment.attempt.feedbackReviewIds)];
+  const reviews = await ctx.reviews.find(caller, ids, tx);
+  return ids.map((id) => {
+    const review = reviews.get(id);
     check(
-      review.subjectId === experiment.id &&
+      review?.subjectId === experiment.id &&
         review.status === 'submitted' &&
         review.verdict !== 'pass' &&
         review.subjectRevision < experiment.workflow.revision &&
@@ -256,7 +258,7 @@ export async function feedbackOf(
   });
 }
 
-export function inputIds(ctx: ExperimentsContext, inputs: FrozenInputs): string[] {
+export function inputIds(inputs: FrozenInputs): string[] {
   return [
     ...new Set([
       ...inputs.approvedArtifacts,
@@ -349,7 +351,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   if (context.caller.session) {
     inputs = (await leaseOf(ctx, context.caller, experiment, context.tx)).details.inputs;
     const historical = new Set(inputs.historicalArtifacts);
-    const owned = eligibleRecovery(ctx, experiment).filter(
+    const owned = eligibleRecovery(experiment).filter(
       (evidence) => evidence.createdBy === context.caller.actorId,
     );
     const allowed = new Set(await allowedArtifacts(ctx, context.caller, experiment, context.tx));

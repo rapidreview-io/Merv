@@ -1,7 +1,6 @@
 import type {
   Caller,
   ContextPackage,
-  ContextRecipeDefinition,
   ReviewApplication,
   RunningNode,
   RunningPanelPart,
@@ -132,7 +131,7 @@ export interface Tasks {
     caller: Caller,
     taskId: string,
   ): Promise<{
-    task: Task;
+    task: TaskRecord;
     process: ProcessGraph;
     history: RunningUnitEntry[];
     codeUnit: CodeUnit | null;

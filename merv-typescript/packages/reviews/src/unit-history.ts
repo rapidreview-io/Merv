@@ -1,5 +1,5 @@
 import type { ProcessGraph } from '@merv/workflows/models';
-import type { ReviewRequest, RunningUnitArtifact, RunningUnitEntry } from '@merv/contracts';
+import type { ReviewRequest, RunningUnitEntry } from '@merv/contracts';
 import { reviewStanding } from './rules.js';
 
 /**
