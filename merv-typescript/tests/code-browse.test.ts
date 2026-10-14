@@ -99,3 +99,20 @@ test("a path's history is that file's or folder's, whatever its name holds", asy
   assert.deepEqual(await subjects('pages/[id].tsx'), ['edit', 'route']);
   assert.deepEqual(await subjects('pages'), ['edit', 'unrelated', 'route']);
 });
+
+test('a history reads each message whole and cuts a long body between characters', async (t) => {
+  const { repositories, commit, git } = await project(t);
+  const id = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
+  const tree = git(['rev-parse', `${commit}^{tree}`]);
+  const body = `${'x'.repeat(1999)}😀`;
+  const head = git([...id, 'commit-tree', tree, '-p', commit, '-m', 'fix\x1eforged', '-m', body]);
+  const entries = await log(repositories, 'p', head);
+  assert.deepEqual(
+    entries.map((entry) => [entry.oid, entry.subject]),
+    [
+      [head, 'fix\x1eforged'],
+      [commit, 'one'],
+    ],
+  );
+  assert.equal(entries[0]!.body, 'x'.repeat(1999));
+});

@@ -226,17 +226,12 @@ export abstract class DriverCheckout extends DriverCore {
    */
   protected async continuesInPlace(cache: string, row: WorkspaceRow): Promise<boolean> {
     const last = this.prior(row);
-    if (!last || this.priorCaptureRefused(last) || pathStat(this.preservedPath())) return false;
+    if (!last || this.refusedFinal(last) || pathStat(this.preservedPath())) return false;
     const left = last.result_json
       ? (JSON.parse(last.result_json) as SessionWorkspace).headOid
       : last.head_oid;
     const visible = pathStat(row.path);
-    if (
-      left !== row.head_oid ||
-      !visible?.isDirectory() ||
-      visible.isSymbolicLink() ||
-      !(await this.has(cache, row.head_oid))
-    )
+    if (left !== row.head_oid || !visible?.isDirectory() || !(await this.has(cache, row.head_oid)))
       return false;
     if (row.read_only)
       this.db
@@ -275,21 +270,19 @@ export abstract class DriverCheckout extends DriverCore {
         !scratch.retain)
     )
       throw new WorkspaceError('workspace_foreign_checkout');
-    if (previous && this.priorCaptureRefused(previous) && !row.read_only && scratch) {
+    if (previous && this.refusedFinal(previous) && !row.read_only && scratch) {
       const rejected = this.rejectedPath(previous);
       const saved = pathStat(rejected);
-      if (saved && (!saved.isDirectory() || saved.isSymbolicLink()))
-        throw new WorkspaceError('workspace_foreign_checkout');
+      if (saved && !saved.isDirectory()) throw new WorkspaceError('workspace_foreign_checkout');
       const pending = pathStat(preserved);
       if (!saved && pending) {
-        if (!pending.isDirectory() || pending.isSymbolicLink())
-          throw new WorkspaceError('workspace_foreign_checkout');
+        if (!pending.isDirectory()) throw new WorkspaceError('workspace_foreign_checkout');
         renameSync(preserved, rejected);
       }
     }
     const info = pathStat(preserved);
     if (info) {
-      if ((!previous && !scratch) || !info.isDirectory() || info.isSymbolicLink())
+      if ((!previous && !scratch) || !info.isDirectory())
         throw new WorkspaceError('workspace_foreign_checkout');
     } else if (existsSync(row.path)) {
       const restored = lastVisible && this.restoredReview(lastVisible, row.path);
@@ -304,11 +297,7 @@ export abstract class DriverCheckout extends DriverCore {
       if (previous || scratch) {
         if (previous) {
           const dot = lstatSync(join(row.path, '.git'));
-          if (
-            !dot.isDirectory() ||
-            dot.isSymbolicLink() ||
-            existsSync(join(row.path, '.git/objects/info/alternates'))
-          )
+          if (!dot.isDirectory() || existsSync(join(row.path, '.git/objects/info/alternates')))
             throw new WorkspaceError('workspace_foreign_checkout');
         }
         renameSync(row.path, preserved);
@@ -318,8 +307,7 @@ export abstract class DriverCheckout extends DriverCore {
     // after the rename may have left a partial checkout; it has never run an agent.
     if (pathStat(row.path)) rmSync(row.path, { recursive: true, force: true });
     await this.checkoutAssignment(cache, row);
-    if (!pathStat(preserved) || (row.read_only && previous && this.priorCaptureRefused(previous)))
-      return;
+    if (!pathStat(preserved) || (row.read_only && previous && this.refusedFinal(previous))) return;
     const sourceHead = previous?.result_json
       ? (JSON.parse(previous!.result_json) as SessionWorkspace).headOid
       : previous?.head_oid;
@@ -328,8 +316,7 @@ export abstract class DriverCheckout extends DriverCore {
     // The checkout starts at Code's admitted head: whatever the last session left that Code did
     // not admit (its own commits and its edits, which its final capture carried) is not carried
     // over either. Only what Git ignores, the machine's data, is.
-    const unadmitted =
-      previous && this.priorCaptureRefused(previous) ? this.finalTarget(previous) : null;
+    const unadmitted = previous ? this.refusedFinal(previous) : null;
     const tracked = new Set<string>();
     for (const commit of [sourceHead, unadmitted])
       if (commit && (await this.has(cache, commit)))

@@ -15,7 +15,7 @@ import {
 } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { codeWorkspaceManifestSchema } from '../store/protocol.js';
-import { hash, oid, pathStat, WorkspaceError } from './git.js';
+import { hash, pathStat, WorkspaceError } from './git.js';
 import { UploadRefused, terminal, deferral } from './core.js';
 import { DriverTransfer } from './transfer.js';
 
@@ -122,14 +122,13 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
       if (this.workKey && !row.read_only) {
         const preserved = this.preservedPath();
         const info = pathStat(preserved);
-        if (info?.isSymbolicLink() || (info && !info.isDirectory()))
-          throw new WorkspaceError('workspace_foreign_checkout');
+        if (info && !info.isDirectory()) throw new WorkspaceError('workspace_foreign_checkout');
         if (info) {
           const previous = this.prior(row, true);
-          if (previous && this.priorCaptureRefused(previous)) {
+          if (previous && this.refusedFinal(previous)) {
             const rejected = this.rejectedPath(previous);
             const saved = pathStat(rejected);
-            if (saved && (!saved.isDirectory() || saved.isSymbolicLink()))
+            if (saved && !saved.isDirectory())
               throw new WorkspaceError('workspace_foreign_checkout');
             if (saved) rmSync(preserved, { recursive: true, force: true });
             else renameSync(preserved, rejected);
@@ -216,9 +215,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
       const row = this.row(launchId);
       if (!row || row.read_only || row.status !== 'ready' || !row.attachment_json) return null;
       const env = { GIT_OPTIONAL_LOCKS: '0' };
-      const head = oid(
-        await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path, env }),
-      );
+      const head = await this.resolve(row, 'HEAD^{commit}', env);
       if (head !== row.head_oid) return null;
       const changes = await this.git.ok(['status', '--porcelain', '--untracked-files=all'], {
         cwd: row.path,
@@ -303,11 +300,10 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
         const preserved = this.preservedPath();
         const info = pathStat(preserved);
         const writer = this.prior(row, true);
-        if (writer && this.priorCaptureRefused(writer)) {
+        if (writer && this.refusedFinal(writer)) {
           // Keep the refused writer private. Replace the disposable review tree with
           // Code's frozen head so a later scratch phase cannot inherit review edits.
-          if (!info || !info.isDirectory() || info.isSymbolicLink())
-            throw new WorkspaceError('workspace_foreign_checkout');
+          if (!info?.isDirectory()) throw new WorkspaceError('workspace_foreign_checkout');
           await this.checkoutShared(this.repository(row.project_ref)!, row, true);
         } else {
           const recorded = this.db
@@ -316,7 +312,6 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
           if (info) {
             if (
               !info.isDirectory() ||
-              info.isSymbolicLink() ||
               (recorded && (recorded.device !== info.dev || recorded.inode !== info.ino))
             )
               throw new WorkspaceError('workspace_foreign_checkout');
@@ -331,9 +326,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
           } else if (recorded) {
             const visible = pathStat(row.path);
             if (
-              !visible ||
-              !visible.isDirectory() ||
-              visible.isSymbolicLink() ||
+              !visible?.isDirectory() ||
               visible.dev !== recorded.device ||
               visible.ino !== recorded.inode
             )

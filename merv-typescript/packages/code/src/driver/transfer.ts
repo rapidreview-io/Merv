@@ -80,19 +80,13 @@ export abstract class DriverTransfer extends DriverCheckout {
       mergeTree = tree;
     }
     await this.git.ok(['read-tree', '--reset', '-u', mergeTree], { cwd: row.path });
-    const tree = oid(
-      await this.git.ok(['rev-parse', `${command.expectedHead}^{tree}`], { cwd: row.path }),
-    );
+    const tree = await this.resolve(row, `${command.expectedHead}^{tree}`);
     if (!journal.target_oid)
       this.db
         .prepare('UPDATE code_v2_transfers SET tree_oid=?,target_oid=? WHERE request_id=?')
         .run(tree, command.expectedHead, command.id);
     journal = this.transfer(command.id)!;
-    const operation = await this.upload(row, journal, {
-      kind: 'checkpoint',
-      commandId: command.id,
-      requestId: command.id,
-    });
+    const operation = await this.upload(row, journal, command.id);
     if (operation.status !== 'completed')
       throw new UploadRefused(operation.error ?? 'code_upload_failed');
     const stats = (await this.snapshot(row, command.expectedHead)).stats;
@@ -139,9 +133,7 @@ export abstract class DriverTransfer extends DriverCheckout {
     journal: TransferRow,
   ): Promise<CodeCommitReceipt> {
     const cache = this.repository(row.project_ref)!;
-    const head = oid(
-      await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
-    );
+    const head = await this.resolve(row, 'HEAD^{commit}');
     if (!journal.target_oid || head !== journal.target_oid) {
       if (row.status !== 'ready') throw new WorkspaceError('workspace_commit_fenced');
       // Once the commit is journalled it is what Code is told; a head the agent moved since
@@ -183,9 +175,7 @@ export abstract class DriverTransfer extends DriverCheckout {
       journal = this.transfer(command.id)!;
     }
     if (!journal.target_oid) {
-      const parentTree = oid(
-        await this.git.ok(['rev-parse', `${command.expectedHead}^{tree}`], { cwd: row.path }),
-      );
+      const parentTree = await this.resolve(row, `${command.expectedHead}^{tree}`);
       const target =
         parentTree === journal.tree_oid && command.merge !== 'complete'
           ? command.expectedHead
@@ -210,11 +200,7 @@ export abstract class DriverTransfer extends DriverCheckout {
         .run(target, command.id);
       journal = this.transfer(command.id)!;
     }
-    const operation = await this.upload(row, journal, {
-      kind: 'checkpoint',
-      commandId: command.id,
-      requestId: command.id,
-    });
+    const operation = await this.upload(row, journal, command.id);
     if (operation.status !== 'completed')
       throw new UploadRefused(operation.error ?? 'code_upload_failed');
     return await this.admitted(row, journal);
@@ -238,9 +224,7 @@ export abstract class DriverTransfer extends DriverCheckout {
   protected async advance(row: WorkspaceRow, journal: TransferRow): Promise<void> {
     const cache = this.repository(row.project_ref)!;
     const target = journal.target_oid!;
-    const head = oid(
-      await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
-    );
+    const head = await this.resolve(row, 'HEAD^{commit}');
     if (head !== target) {
       // The agent committed while Code admitted: Code's commit is the branch now. The agent's
       // stays reachable under a rescue ref, and its files stay in the checkout for the next capture.
@@ -267,13 +251,7 @@ export abstract class DriverTransfer extends DriverCheckout {
         renameSync(temporary, index);
       }
     }
-    await this.git.run([
-      '--git-dir',
-      cache,
-      'update-ref',
-      '-d',
-      this.pendingRef(journal.request_id),
-    ]);
+    await this.dropPending(row, journal.request_id);
     await this.know(cache, target);
     const command = journal.command_json
       ? (JSON.parse(journal.command_json) as CodeCommitCommand)
@@ -297,10 +275,11 @@ export abstract class DriverTransfer extends DriverCheckout {
    * wherever Code says it stands, and ask until the admission has ended. Everything is
    * replayable, so a restart anywhere continues rather than starts again.
    */
+  /** A checkpoint is begun under its command's id; without one this is the final capture. */
   protected async upload(
     row: WorkspaceRow,
     journal: TransferRow,
-    request: { kind: 'checkpoint'; commandId: string; requestId: string } | { kind: 'final' },
+    commandId?: string,
   ): Promise<CodeStoreOperation> {
     const cache = this.repository(row.project_ref)!;
     const target = journal.target_oid!;
@@ -344,12 +323,12 @@ export abstract class DriverTransfer extends DriverCheckout {
       proposedHead: target,
       treeOid: journal.tree_oid,
       bundle: sending ? { sha256: journal.bundle_hash, bytes: journal.bundle_bytes } : null,
-      ...request,
+      ...(commandId ? { kind: 'checkpoint', commandId, requestId: commandId } : { kind: 'final' }),
     };
     type Answer = { operation: CodeStoreOperation };
     const answer = async (route: string, body: unknown = {}) =>
       ((await this.ask(() => this.transport.call(route, body))) as Answer).operation;
-    let operation = await answer(request.kind === 'final' ? 'finalize' : 'uploads', begin);
+    let operation = await answer(commandId ? 'uploads' : 'finalize', begin);
     if (operation.id !== journal.operation_id)
       this.db
         .prepare('UPDATE code_v2_transfers SET operation_id=? WHERE request_id=?')
@@ -455,10 +434,8 @@ export abstract class DriverTransfer extends DriverCheckout {
               env: identity,
             },
           );
-        target = oid(
-          await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
-        );
-        tree = oid(await this.git.ok(['rev-parse', '--verify', 'HEAD^{tree}'], { cwd: row.path }));
+        target = await this.resolve(row, 'HEAD^{commit}');
+        tree = await this.resolve(row, 'HEAD^{tree}');
         await this.importAssignmentCommit(row, target);
       } catch (error) {
         // Moving a built commit into this machine's cache fails under the same bound: a machine
@@ -481,9 +458,7 @@ export abstract class DriverTransfer extends DriverCheckout {
         // built; what the session left stays in the checkout.
         refused = lasting ? code : 'workspace_capture_failed';
         target = row.head_oid;
-        tree = oid(
-          await this.git.ok(['rev-parse', '--verify', `${row.head_oid}^{tree}`], { cwd: row.path }),
-        );
+        tree = await this.resolve(row, `${row.head_oid}^{tree}`);
       }
       this.db
         .prepare(
@@ -495,7 +470,7 @@ export abstract class DriverTransfer extends DriverCheckout {
     if (journal.receipt_json) return (JSON.parse(journal.receipt_json) as { head: string }).head;
     let head = journal.expected_head;
     try {
-      const operation = await this.upload(row, journal, { kind: 'final' });
+      const operation = await this.upload(row, journal);
       if (operation.status === 'completed') {
         head = journal.target_oid!;
         await this.know(this.repository(row.project_ref)!, head);

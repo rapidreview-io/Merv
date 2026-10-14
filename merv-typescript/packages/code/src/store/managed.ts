@@ -72,24 +72,13 @@ export async function initializeManagedProjects(
         );
         await repositories.assertRoom(row.project_id, 4096);
         await repositories.ensure(row.project_id, root.repositoryId, 'sha1');
-        await repositories.validate(row.project_id, root.repositoryId);
         const env = repositories.environment(row.project_id);
-        const storedTree = (
-          await repositories.git.ok(['hash-object', '-w', '-t', 'tree', '--stdin'], {
-            env,
-            input: '',
-          })
-        )
-          .toString()
-          .trim();
-        const storedCommit = (
-          await repositories.git.ok(['hash-object', '-w', '-t', 'commit', '--stdin'], {
-            env,
-            input: root.body,
-          })
-        )
-          .toString()
-          .trim();
+        const write = async (type: string, input: string) =>
+          (await repositories.git.ok(['hash-object', '-w', '-t', type, '--stdin'], { env, input }))
+            .toString()
+            .trim();
+        const storedTree = await write('tree', '');
+        const storedCommit = await write('commit', root.body);
         check(
           storedTree === tree && storedCommit === root.oid,
           'code_initialization_changed',

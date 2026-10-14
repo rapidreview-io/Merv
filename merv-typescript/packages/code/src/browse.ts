@@ -3,7 +3,7 @@
  * one of its files, as text. It reads Code's own repository and writes nothing; a path is a path
  * inside that commit's tree and can name nothing outside it.
  */
-import { MervError, check } from '@merv/contracts';
+import { MervError, check, clip, oidPattern } from '@merv/contracts';
 import type { CodeRepositories } from './store/repository.js';
 import type { CodeBrowsed, CodeFolderEntry, CodeLogEntry } from './models.js';
 
@@ -11,7 +11,6 @@ import type { CodeBrowsed, CodeFolderEntry, CodeLogEntry } from './models.js';
 export const MOST_FILE_BYTES = 1024 * 1024;
 /** The most of one file the page fetches whole (raw): a PDF, a picture, a long log. */
 export const MOST_RAW_BYTES = 32 * 1024 * 1024;
-const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const KINDS: Record<string, CodeFolderEntry['kind']> = {
   tree: 'folder',
   blob: 'file',
@@ -34,7 +33,7 @@ export function treePath(path: string): string {
 
 /** Git over one project's repository, and what `path` names in `commit`: its type, or not there. */
 async function at(repositories: CodeRepositories, projectId: string, commit: string, path: string) {
-  check(OID.test(commit), 'invalid_code_ref', 'A commit is its full object id');
+  check(oidPattern.test(commit), 'invalid_code_ref', 'A commit is its full object id');
   path = treePath(path);
   const git = (args: string[], maxBuffer = 4 * 1024 * 1024, input?: string) =>
     repositories.git.run(args, {
@@ -85,13 +84,10 @@ export async function browse(
       .split('\0')
       .filter(Boolean)
       .map((line): CodeFolderEntry => {
-        const [meta, name] = [
-          line.slice(0, line.indexOf('\t')),
-          line.slice(line.indexOf('\t') + 1),
-        ];
-        const [mode, objectType, , size] = meta.split(/\s+/);
+        const tab = line.indexOf('\t');
+        const [mode, objectType, , size] = line.slice(0, tab).split(/\s+/);
         return {
-          name: name!,
+          name: line.slice(tab + 1),
           kind: mode === '120000' ? 'link' : (KINDS[objectType!] ?? 'file'),
           ...(objectType === 'blob' && { size: Number(size) }),
         };
@@ -143,37 +139,37 @@ export async function log(
   commit: string,
   { limit = 50, path = '' }: { limit?: number; path?: string } = {},
 ): Promise<CodeLogEntry[]> {
-  check(OID.test(commit), 'invalid_code_ref', 'A commit is its full object id');
+  check(oidPattern.test(commit), 'invalid_code_ref', 'A commit is its full object id');
   const where = treePath(path);
   const listed = await repositories.git.run(
     [
       // A path names that file or folder, never a pattern: `[id].tsx` is not `i.tsx`.
       '--literal-pathspecs',
       'log',
+      // Fields and commits both end in NUL, which admission refuses in a commit message.
+      '-z',
       `-n${Math.max(1, Math.min(MOST_LOG, limit))}`,
-      '--format=%H%x00%P%x00%aI%x00%s%x00%b%x1e',
+      '--format=%H%x00%P%x00%aI%x00%s%x00%b',
       commit,
       ...(where ? ['--', where] : []),
     ],
     { env: repositories.environment(projectId), timeoutMs: 10_000, maxBuffer: 4 * 1024 * 1024 },
   );
   check(listed.code === 0, 'code_path_not_found', 'Code does not hold that commit', 404);
-  return listed.stdout
-    .toString('utf8')
-    .split('\x1e')
-    .map((record) => record.replace(/^\n/, ''))
-    .filter(Boolean)
-    .map((record) => {
-      const [oid, parents, date, subject, body] = record.split('\0');
-      return {
-        oid: oid!,
-        parents: parents ? parents.split(' ') : [],
-        date: date!,
-        subject: subject ?? '',
-        // A body is the bullet points of a change; kept short whatever was written.
-        body: (body ?? '').trim().slice(0, 2_000),
-      };
+  const fields = listed.stdout.toString('utf8').split('\0');
+  const entries: CodeLogEntry[] = [];
+  for (let at = 0; at + 5 <= fields.length; at += 5) {
+    const [oid, parents, date, subject, body] = fields.slice(at, at + 5) as string[];
+    entries.push({
+      oid,
+      parents: parents ? parents.split(' ') : [],
+      date,
+      subject,
+      // A body is the bullet points of a change; kept short whatever was written.
+      body: clip(body.trim(), 2_000),
     });
+  }
+  return entries;
 }
 
 /** The commits `head` adds over `base`: the work of the unit whose head and base they are. */

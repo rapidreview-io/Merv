@@ -116,25 +116,16 @@ export const diffStats = async (
   return stats;
 };
 const options = [
-  '-c',
   'core.hooksPath=/dev/null',
-  '-c',
   'core.fsmonitor=false',
-  '-c',
   'credential.helper=',
-  '-c',
   'protocol.allow=never',
-  '-c',
   'submodule.recurse=false',
-  '-c',
   'core.attributesFile=/dev/null',
-  '-c',
   'commit.gpgsign=false',
-  '-c',
   'tag.gpgsign=false',
-  '-c',
   'gc.auto=0',
-];
+].flatMap((setting) => ['-c', setting]);
 
 /**
  * Git as the driver runs it on a machine: nothing of the machine's or the user's

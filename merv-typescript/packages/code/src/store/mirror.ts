@@ -95,6 +95,7 @@ interface MirrorPayload {
   /** The commit that was asked for; a work ref reads the unit's newest head when it runs. */
   tip: string;
 }
+type Claimed = Record<'head_oid' | 'mirrored_oid' | 'quarantine_operation_id', string | null>;
 const columns =
   'id,project_id,unit_id,kind,payload_json,status,phase,attempts,next_at,detail_json,created_at,updated_at';
 
@@ -268,9 +269,6 @@ export class CodeMirrorService {
       })
       .reverse();
     const waiting = rows.filter((row) => row.phase !== 'blocked');
-    const last = rows
-      .map((row) => this.detail(row).code)
-      .filter((code): code is string => typeof code === 'string');
     return {
       state:
         'blocked' in target
@@ -286,7 +284,9 @@ export class CodeMirrorService {
       blockedBy: 'blocked' in target ? target.blocked : null,
       pending: rows.length,
       oldestPendingAt: rows[0]?.created_at ?? null,
-      lastError: last.length ? last[last.length - 1] : null,
+      lastError:
+        rows.map((row) => this.detail(row).code).findLast((code) => typeof code === 'string') ??
+        null,
       blockedRefs,
     };
   }
@@ -313,10 +313,7 @@ export class CodeMirrorService {
         requestId,
         digest(body),
       );
-      const previous = await journal.previous<{ input_hash: string }>('input_hash');
-      if (previous) {
-        return;
-      }
+      if (await journal.previous('input_hash')) return;
       const row = await tx.get<MirrorRow>(
         `SELECT ${columns} FROM code_operations WHERE id=? AND project_id=?`,
         input.operationId,
@@ -400,11 +397,7 @@ export class CodeMirrorService {
       );
       if (changed.changes !== 1) return null;
       if (payload.kind === 'mirror-retained')
-        return await tx.get<{
-          head_oid: string | null;
-          mirrored_oid: string | null;
-          quarantine_operation_id: string | null;
-        }>(
+        return await tx.get<Claimed>(
           'SELECT retained.commit_oid AS head_oid,NULL::text AS mirrored_oid,COALESCE(workspace.blocked_by,workspace.quarantine_operation_id) AS quarantine_operation_id FROM code_retained_commits retained JOIN code_workspaces workspace ON workspace.project_id=retained.project_id AND workspace.unit_id=retained.unit_id WHERE retained.project_id=? AND retained.retention_key=?',
           row.project_id,
           payload.unitId,
@@ -422,11 +415,7 @@ export class CodeMirrorService {
             !eligibility || eligibility.blocked_reason !== null ? row.id : null,
         };
       }
-      return await tx.get<{
-        head_oid: string | null;
-        mirrored_oid: string | null;
-        quarantine_operation_id: string | null;
-      }>(
+      return await tx.get<Claimed>(
         'SELECT head_oid,mirrored_oid,COALESCE(blocked_by,quarantine_operation_id) AS quarantine_operation_id FROM code_workspaces WHERE project_id=? AND unit_id=?',
         row.project_id,
         payload.unitId,
@@ -484,10 +473,9 @@ export class CodeMirrorService {
         const remote = await this.transport.lsRemote(row.project_id, ref);
         if (remote === target) return attempt ? 'ok' : 'unchanged';
         const allowed =
-          remote === null
-            ? true
-            : payload.kind === 'mirror-work' &&
-              (await this.ancestor(row.project_id, remote, target));
+          remote === null ||
+          (payload.kind === 'mirror-work' &&
+            (await this.repositories.ancestor(row.project_id, remote, target)));
         if (!allowed) {
           await this.blocked(row, claim, {
             code: 'code_mirror_diverged',
@@ -521,14 +509,6 @@ export class CodeMirrorService {
     };
     // The ref is read, pushed and read again with one credential.
     return this.transport.hold ? this.transport.hold(row.project_id, attempts) : attempts();
-  }
-
-  /** Whether the published commit is behind what Code holds, asked of Code's own repository. */
-  private async ancestor(projectId: string, remote: string, target: string): Promise<boolean> {
-    const found = await this.repositories.git.run(['merge-base', '--is-ancestor', remote, target], {
-      env: this.repositories.environment(projectId),
-    });
-    return found.code === 0;
   }
 
   /** The ref is published: record it, and ask again if the unit moved on while this ran. */
@@ -576,44 +556,35 @@ export class CodeMirrorService {
     });
   }
 
-  /** Nothing is wrong and nothing can be done yet: the ref is looked at again later. */
-  private async wait(row: MirrorRow, claim: string, detail: Record<string, string>): Promise<void> {
-    const at = now();
-    await this.state.transaction(async (tx) => {
-      await tx.run(
-        "UPDATE code_operations SET phase='retry_wait',next_at=?,detail_json=?,updated_at=?,claim_id=NULL,claim_until=NULL WHERE id=? AND status='prepared' AND claim_id=?",
-        new Date(Date.now() + this.config.backoffMs).toISOString(),
-        canonical({ ...detail, at }),
-        at,
-        row.id,
-        claim,
-      );
-    });
-  }
-
-  /** A push that failed: it is tried again, and after enough tries it waits for an operator. */
-  private async failed(
+  /** The ref is looked at again later: after the backoff when nothing can be done yet. */
+  private async wait(
     row: MirrorRow,
     claim: string,
     detail: Record<string, string>,
+    attempts = Number(row.attempts),
+    delayMs = this.config.backoffMs,
   ): Promise<void> {
-    const attempts = Number(row.attempts) + 1;
-    if (attempts >= this.config.maxAttempts)
-      return await this.blocked(row, claim, detail, attempts);
     const at = now();
-    await this.state.transaction(async (tx) => {
-      await tx.run(
+    await this.state.transaction((tx) =>
+      tx.run(
         "UPDATE code_operations SET phase='retry_wait',attempts=?,next_at=?,detail_json=?,updated_at=?,claim_id=NULL,claim_until=NULL WHERE id=? AND status='prepared' AND claim_id=?",
         attempts,
-        new Date(
-          Date.now() + Math.min(MAX_BACKOFF_MS, this.config.backoffMs * 2 ** (attempts - 1)),
-        ).toISOString(),
+        new Date(Date.now() + delayMs).toISOString(),
         canonical({ ...detail, at }),
         at,
         row.id,
         claim,
-      );
-    });
+      ),
+    );
+  }
+
+  /** A push that failed: it is tried again, and after enough tries it waits for an operator. */
+  private async failed(row: MirrorRow, claim: string, detail: Record<string, string>) {
+    const attempts = Number(row.attempts) + 1;
+    if (attempts >= this.config.maxAttempts)
+      return await this.blocked(row, claim, detail, attempts);
+    const delayMs = Math.min(MAX_BACKOFF_MS, this.config.backoffMs * 2 ** (attempts - 1));
+    await this.wait(row, claim, detail, attempts, delayMs);
   }
 
   /** The ref waits for an operator. The work itself is untouched and goes on. */

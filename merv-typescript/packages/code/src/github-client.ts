@@ -192,7 +192,7 @@ export class GitHubClient {
   async repositoryPermission(token: string, repository: GitHubRepository, write: boolean) {
     const result = githubResponse(
       repositorySchema.extend({ permissions: z.object({ pull: z.boolean(), push: z.boolean() }) }),
-      await this.request(`https://api.github.com${repositoryPath(repository.fullName)}`, token),
+      await this.request(repositoryPath(repository.fullName), token),
     );
     check(
       result.id === repository.id && result.permissions.pull && (!write || result.permissions.push),
@@ -245,11 +245,10 @@ export class GitHubClient {
         repositories: z.array(z.object({ id })),
       }),
       await this.installed(() =>
-        this.request(
-          `https://api.github.com/app/installations/${repository.installationId}/access_tokens`,
-          jwt,
-          { repository_ids: [repository.id], permissions },
-        ),
+        this.request(`/app/installations/${repository.installationId}/access_tokens`, jwt, {
+          repository_ids: [repository.id],
+          permissions,
+        }),
       ),
     );
     const valid =
@@ -267,9 +266,7 @@ export class GitHubClient {
   async revokeInstallationToken(token: string) {
     // Revoking a token is cleanup and must still work after the grant loses authority.
     await this.#authorization.run(undefined, () =>
-      this.installed(() =>
-        this.request('https://api.github.com/installation/token', token, undefined, 'DELETE'),
-      ),
+      this.installed(() => this.request('/installation/token', token, undefined, 'DELETE')),
     );
   }
   async ensureBranch(token: string, repository: string, branch: string, sha: string) {
@@ -287,7 +284,7 @@ export class GitHubClient {
       if (!(error instanceof MervError && error.code === 'github_not_found')) throw error;
     }
     try {
-      await this.request(`https://api.github.com${repositoryPath(repository)}/git/refs`, token, {
+      await this.request(`${repositoryPath(repository)}/git/refs`, token, {
         ref: `refs/heads/${branch}`,
         sha,
       });
@@ -312,7 +309,7 @@ export class GitHubClient {
           }),
         }),
       }),
-      await this.request('https://api.github.com/graphql', token, {
+      await this.request('/graphql', token, {
         query:
           'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft}}}',
         variables: { id: nodeId },
@@ -370,6 +367,8 @@ export class GitHubClient {
     try {
       await this.#authorization.getStore()?.(!!this.#installation.getStore());
       call = this.#call(15_000);
+      // A path is GitHub's REST API; only the OAuth token exchange names a whole URL.
+      if (url.startsWith('/')) url = `https://api.github.com${url}`;
       const response = await this.fetcher(url, {
         method,
         // A renamed or transferred repository answers 3xx; it is never followed (see below).
@@ -532,7 +531,7 @@ export class GitHubClient {
     }
   }
   async user(token: string) {
-    return githubResponse(userSchema, await this.request('https://api.github.com/user', token));
+    return githubResponse(userSchema, await this.request('/user', token));
   }
   /** Bounded REST collections; callers never mistake a truncated result for a complete one. */
   private async collection(
@@ -545,7 +544,7 @@ export class GitHubClient {
     for (let page = 1; page <= 20; page++) {
       check(Date.now() < deadline, 'github_unavailable', 'GitHub listing took too long', 502);
       const value = await this.request(
-        `https://api.github.com${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
+        `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
         token,
       );
       const entries = field ? (value as Record<string, unknown>)?.[field] : value;
@@ -579,7 +578,7 @@ export class GitHubClient {
     const b = githubResponse(
       z.object({ name: z.string(), commit: z.object({ sha: githubOid }), protected: z.boolean() }),
       await this.request(
-        `https://api.github.com${repositoryPath(repository)}/branches/${encodeURIComponent(branch)}`,
+        `${repositoryPath(repository)}/branches/${encodeURIComponent(branch)}`,
         token,
       ),
     );
@@ -602,10 +601,7 @@ export class GitHubClient {
   async pull(token: string, repository: string, number: number): Promise<GitHubPullRequest> {
     githubResponse(id, number);
     const result = githubPull(
-      await this.request(
-        `https://api.github.com${repositoryPath(repository)}/pulls/${number}`,
-        token,
-      ),
+      await this.request(`${repositoryPath(repository)}/pulls/${number}`, token),
     );
     check(
       result.number === number,
@@ -621,7 +617,7 @@ export class GitHubClient {
     input: { title: string; body: string; head: string; base: string; draft: boolean },
   ) {
     return githubPull(
-      await this.request(`https://api.github.com${repositoryPath(repository)}/pulls`, token, {
+      await this.request(`${repositoryPath(repository)}/pulls`, token, {
         ...input,
         maintainer_can_modify: false,
       }),
@@ -635,12 +631,7 @@ export class GitHubClient {
   ) {
     githubResponse(id, number);
     return githubPull(
-      await this.request(
-        `https://api.github.com${repositoryPath(repository)}/pulls/${number}`,
-        token,
-        input,
-        'PATCH',
-      ),
+      await this.request(`${repositoryPath(repository)}/pulls/${number}`, token, input, 'PATCH'),
     );
   }
   async mergePull(token: string, repository: string, number: number, expectedHead: string) {
@@ -649,7 +640,7 @@ export class GitHubClient {
     return githubResponse(
       z.object({ merged: z.boolean(), sha: githubOid }),
       await this.request(
-        `https://api.github.com${repositoryPath(repository)}/pulls/${number}/merge`,
+        `${repositoryPath(repository)}/pulls/${number}/merge`,
         token,
         { sha: expectedHead, merge_method: 'merge' },
         'PUT',
@@ -665,11 +656,8 @@ export class GitHubClient {
     emit = false,
   ): Promise<boolean> {
     githubResponse(githubOid, sha);
-    const path = `https://api.github.com${repositoryPath(repository)}`;
-    const statuses = await this.collection(
-      token,
-      `${repositoryPath(repository)}/commits/${sha}/statuses`,
-    );
+    const path = repositoryPath(repository);
+    const statuses = await this.collection(token, `${path}/commits/${sha}/statuses`);
     const found = statuses.find(
       (entry) => (entry as { context?: string }).context === status.context,
     );
@@ -719,7 +707,7 @@ export class GitHubClient {
       }
       try {
         const detail = await this.request(
-          `https://api.github.com${repositoryPath(repository)}/rulesets/${set.id}`,
+          `${repositoryPath(repository)}/rulesets/${set.id}`,
           token,
         );
         details.push(detail);
@@ -736,10 +724,7 @@ export class GitHubClient {
     }
     const app = githubResponse(
       z.object({ id }),
-      await this.request(
-        `https://api.github.com/apps/${encodeURIComponent(this.#config.appSlug)}`,
-        token,
-      ),
+      await this.request(`/apps/${encodeURIComponent(this.#config.appSlug)}`, token),
     );
     const required = rules.filter(
       (r) => (r as { type?: string }).type === 'required_status_checks',
@@ -801,7 +786,7 @@ export class GitHubClient {
       this.collection(token, `${path}/pulls/${number}/commits`),
       this.collection(token, `${path}/commits/${pull.head.sha}/check-runs`, 'check_runs'),
       this.collection(token, `${path}/pulls/${number}/reviews`),
-      this.request(`https://api.github.com${path}/commits/${pull.head.sha}/status`, token),
+      this.request(`${path}/commits/${pull.head.sha}/status`, token),
     ]);
     const latest = await this.pull(token, repository, number);
     check(

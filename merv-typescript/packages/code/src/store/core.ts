@@ -181,7 +181,6 @@ export interface RebindPayload {
   reason: string;
 }
 export type Payload = ImportPayload | UploadPayload | RetainRefPayload | RebindPayload;
-export const kinds = ['import', 'upload', 'retain-ref'];
 export interface Progress {
   received: number;
   merge?: { plan: string; left: string; right: string; firstMerge: string | null };
@@ -198,11 +197,18 @@ export interface Progress {
 }
 export interface ProjectRow {
   repository_id: string;
+  binding_json: string;
   main_json: string;
   limits_json: string;
   store_json: string | null;
 }
 
+/** Whether every byte an upload's bundle promised has reached Main. */
+export const received = (row: Pick<OperationRow, 'payload_json' | 'progress_json'>) => {
+  const { bundle } = JSON.parse(row.payload_json) as { bundle?: Bundle | null };
+  const progress = JSON.parse(row.progress_json ?? '{}') as Partial<Progress>;
+  return typeof bundle?.bytes === 'number' && (progress.received ?? 0) >= bundle.bytes;
+};
 export const columns =
   'id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,error,created_at,completed_at,unit_id,generation,phase,progress_json,detail_json,updated_at';
 export const journalled = ['admitting', 'objects_durable', 'refs_applied'];
@@ -320,7 +326,7 @@ export class StoreCore {
 
   async project(sql: Sql, projectId: string): Promise<ProjectRow | undefined> {
     return await sql.get<ProjectRow>(
-      'SELECT repository_id,main_json,limits_json,store_json FROM code_projects WHERE project_id=?',
+      'SELECT repository_id,binding_json,main_json,limits_json,store_json FROM code_projects WHERE project_id=?',
       projectId,
     );
   }

@@ -7,6 +7,7 @@ import {
   newId,
   now,
   type Caller,
+  type CodePendingMerge,
   type Sql,
   type SessionWorkspace,
   type Transaction,
@@ -33,7 +34,6 @@ import { diskBytes, type ObjectFormat } from './repository.js';
 import {
   columns,
   FETCH_TIMEOUT_MS,
-  kinds,
   serial,
   type Bundle,
   type ImportPayload,
@@ -72,6 +72,14 @@ const next: Record<string, string> = {
 };
 
 const resume = 'Complete the operation again; it resumes where it stopped.';
+
+/** The frozen merge plan an upload carries, with the first merge its lineage holds. */
+const mergeOf = (pending: CodePendingMerge, firstMerge: string | null): Progress['merge'] => ({
+  plan: pending.plan,
+  left: pending.firstParent,
+  right: pending.secondParent,
+  firstMerge,
+});
 
 /** A full volume is a refusal that passes, not a fault of the operation that met it. */
 const refusal = (error: unknown) =>
@@ -300,6 +308,7 @@ export class CodeReceiver {
         await this.assertReceiving(tx, caller.projectId);
         await insert('prepared', null);
       } else {
+        const pending = await pendingMerge(tx, caller.projectId, input.unitId);
         await insert(
           'completed',
           canonical({
@@ -308,7 +317,7 @@ export class CodeReceiver {
             receiptRef: null,
             objects: 0,
             bytes: 0,
-            ...(await this.mergeReceipt(tx, caller.projectId, input.unitId)),
+            ...(pending ? { merge: mergeOf(pending, pending.firstMerge) } : {}),
           }),
         );
         await this.admitted(tx, id, caller.projectId, payload);
@@ -443,9 +452,7 @@ export class CodeReceiver {
       check(!caller.session, 'session_forbidden', 'A leased worker cannot move bundles', 403);
     } else await this.core.administrator(caller, tx);
     check(
-      kinds.includes(row.kind) &&
-        payload.source !== 'retain-ref' &&
-        payload.actorId === caller.actorId,
+      ['import', 'upload'].includes(row.kind) && payload.actorId === caller.actorId,
       'code_operation_forbidden',
       'Only the principal that began this operation continues it',
       403,
@@ -605,15 +612,7 @@ export class CodeReceiver {
           target,
         );
         if (verified.error) throw new AdmissionRejected('code_resolution_parents', verified.error);
-        return {
-          ...admission,
-          merge: {
-            plan: pending.plan,
-            left: pending.firstParent,
-            right: pending.secondParent,
-            firstMerge: verified.firstMerge,
-          },
-        };
+        return { ...admission, merge: mergeOf(pending, verified.firstMerge) };
       } catch (error) {
         if (
           error instanceof AdmissionRejected ||
@@ -854,24 +853,6 @@ export class CodeReceiver {
     }
   }
 
-  private async mergeReceipt(
-    tx: Transaction,
-    projectId: string,
-    unitId: string,
-  ): Promise<{ merge?: Progress['merge'] }> {
-    const pending = await pendingMerge(tx, projectId, unitId);
-    return pending
-      ? {
-          merge: {
-            plan: pending.plan,
-            left: pending.firstParent,
-            right: pending.secondParent,
-            firstMerge: pending.firstMerge,
-          },
-        }
-      : {};
-  }
-
   /** What the database learns when an upload is durable: the branch moved, and who moved it. */
   private async admitted(
     tx: Transaction,
@@ -1024,6 +1005,12 @@ export class CodeReceiver {
   ): Promise<{ oid: string; github: { id: number; fullName: string } } | null> {
     const progress = JSON.parse(row.progress_json ?? '{}') as Progress;
     const bundle = join(directory, 'bundle');
+    const refuse = async (error: string, message: string) => {
+      await this.fail(row, error, null, message);
+      return null;
+    };
+    const tooLarge =
+      'The history is larger than one transfer may be; import it in steps with code-import';
     if (progress.target && progress.github && (await lstat(bundle).catch(() => null)))
       return { oid: progress.target, github: progress.github };
     if (!caller || !this.core.remote)
@@ -1110,29 +1097,17 @@ export class CodeReceiver {
           payload.githubBinding,
         ),
     );
-    if (!result.fetch || result.fetch.code !== 0) {
-      await this.fail(
-        row,
-        result.fetch ? 'code_import_fetch_failed' : 'code_import_too_large',
-        null,
-        result.fetch
-          ? 'GitHub did not deliver that ref'
-          : 'The history is larger than one transfer may be; import it in steps with code-import',
-      );
-      return null;
-    }
+    if (!result.fetch) return await refuse('code_import_too_large', tooLarge);
+    if (result.fetch.code !== 0)
+      return await refuse('code_import_fetch_failed', 'GitHub did not deliver that ref');
     const oid = (await git.ok(['rev-parse', '--verify', 'refs/merv/fetched^{commit}'], { env }))
       .toString('utf8')
       .trim();
-    if (payload.expectedHead && oid !== payload.expectedHead) {
-      await this.fail(
-        row,
+    if (payload.expectedHead && oid !== payload.expectedHead)
+      return await refuse(
         'code_branch_changed',
-        null,
         'The selected remote ref moved before it was imported',
       );
-      return null;
-    }
     // Admission expects the selected commit in the bundle header, including when the
     // fetched ref names an annotated tag (or a tag of a tag).
     await git.ok(['update-ref', 'refs/merv/fetched', oid], { env });
@@ -1155,26 +1130,17 @@ export class CodeReceiver {
     // Only Git's refusal to write an empty bundle means the repository already holds that
     // history. Any other failure reported as "already current" would send an administrator
     // away from the retry the import actually needs.
-    if (made.code !== 0 && !/empty bundle/i.test(made.stderr)) {
-      await this.fail(
-        row,
+    if (made.code !== 0 && !/empty bundle/i.test(made.stderr))
+      return await refuse(
         'code_import_fetch_failed',
-        null,
         `git bundle failed: ${made.stderr.split('\n')[0] ?? ''}`.trim(),
       );
-      return null;
-    }
-    if (made.code !== 0 || size > CODE_BUNDLE_MAX_BYTES) {
-      await this.fail(
-        row,
-        made.code !== 0 ? 'code_import_current' : 'code_import_too_large',
-        null,
-        made.code !== 0
-          ? 'The repository already holds everything that ref reaches'
-          : 'The history is larger than one transfer may be; import it in steps with code-import',
+    if (made.code !== 0)
+      return await refuse(
+        'code_import_current',
+        'The repository already holds everything that ref reaches',
       );
-      return null;
-    }
+    if (size > CODE_BUNDLE_MAX_BYTES) return await refuse('code_import_too_large', tooLarge);
     const github = { id: result.repository.id, fullName: result.repository.fullName };
     await this.note(row.id, { target: oid, github, received: size });
     await syncPath(part);

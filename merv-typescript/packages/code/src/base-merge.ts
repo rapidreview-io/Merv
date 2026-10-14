@@ -1,4 +1,4 @@
-import { MervError } from '@merv/contracts';
+import { clip, MervError } from '@merv/contracts';
 import { MERGE_SETTINGS } from './merge-settings.js';
 import type { ServerGit } from './git.js';
 
@@ -70,7 +70,7 @@ export async function mergeBases(
       outcome: 'conflict',
       paths: [...new Set(paths)].sort(),
       // What Git said stays whole up to a bound: it is evidence for whoever resolves it.
-      messages: said.stdout.toString('utf8').split('\n\n').slice(1).join('\n\n').slice(0, 16_000),
+      messages: clip(said.stdout.toString('utf8').split('\n\n').slice(1).join('\n\n'), 16_000),
     };
   }
   if (merged.code !== 0 || !/^[0-9a-f]{40,64}$/.test(tree))

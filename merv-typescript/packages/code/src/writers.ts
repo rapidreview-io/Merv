@@ -21,6 +21,7 @@ import {
   type CodeWriterStatus,
 } from './store/protocol.js';
 import { parseCodeInput } from './input.js';
+import { received } from './store/core.js';
 import type { CodeStorePort } from './service.js';
 
 export interface WriterRow {
@@ -204,15 +205,10 @@ export class CodeWriterService {
       row.project_id,
       row.unit_id,
     );
-    const full = (op: (typeof open)[number]) => {
-      const bytes = (JSON.parse(op.payload_json) as { bundle?: { bytes?: number } }).bundle?.bytes;
-      const received = (JSON.parse(op.progress_json ?? '{}') as { received?: number }).received;
-      return typeof bytes === 'number' && (received ?? 0) >= bytes;
-    };
     return {
       admitted: open.some((op) => op.phase !== 'receiving'),
-      received: open.some((op) => op.phase === 'receiving' && full(op)),
-      unfinished: open.filter((op) => op.phase === 'receiving' && !full(op)).map((op) => op.id),
+      received: open.some((op) => op.phase === 'receiving' && received(op)),
+      unfinished: open.filter((op) => op.phase === 'receiving' && !received(op)).map((op) => op.id),
       receiving: open.filter((op) => op.phase === 'receiving').map((op) => op.id),
     };
   }
@@ -352,12 +348,7 @@ export class CodeWriterService {
       return;
     }
     if (!input.final) return;
-    await this.move(tx, row, 'closed');
-    await tx.run(
-      'UPDATE code_workspaces SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
-      fence.projectId,
-      fence.unitId,
-    );
+    await this.move(tx, row, 'closed', false, null);
     await this.changed(tx, row.project_id, row.unit_id);
   }
 
@@ -365,13 +356,7 @@ export class CodeWriterService {
   async quarantined(tx: Transaction, fence: WriterFence, operationId: string): Promise<void> {
     const row = await this.row(tx, fence.projectId, fence.unitId);
     if (!row || Number(row.generation) !== fence.generation) return;
-    await this.move(tx, row, 'recovery_required');
-    await tx.run(
-      'UPDATE code_workspaces SET quarantine_operation_id=? WHERE project_id=? AND unit_id=?',
-      operationId,
-      fence.projectId,
-      fence.unitId,
-    );
+    await this.move(tx, row, 'recovery_required', false, operationId);
     await this.changed(tx, row.project_id, row.unit_id);
   }
 
@@ -448,13 +433,12 @@ export class CodeWriterService {
     tx: Transaction,
   ) {
     if (!('receipt' in input) || !input.receipt) return;
-    const instanceId = command.instanceId;
     const upload = await tx.get<{ status: string; result_json: string | null }>(
       "SELECT status,result_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=? AND kind='upload' AND unit_id=?",
       command.projectId,
       `session:${input.sessionId}`,
       input.commandId,
-      instanceId,
+      command.instanceId,
     );
     check(
       upload?.status === 'completed' &&
@@ -548,15 +532,10 @@ export class CodeWriterService {
     const which = blocking
       ? "(writer_state IN ('closing','recovery_required') OR quarantine_operation_id IS NOT NULL)"
       : 'generation>0';
-    const rows =
-      projectId === undefined
-        ? await sql.all<{ project_id: string; unit_id: string }>(
-            `SELECT project_id,unit_id FROM code_workspaces WHERE ${which} ORDER BY project_id,unit_id`,
-          )
-        : await sql.all<{ project_id: string; unit_id: string }>(
-            `SELECT project_id,unit_id FROM code_workspaces WHERE project_id=? AND ${which} ORDER BY unit_id`,
-            projectId,
-          );
+    const rows = await sql.all<{ project_id: string; unit_id: string }>(
+      `SELECT project_id,unit_id FROM code_workspaces WHERE ${projectId === undefined ? '' : 'project_id=? AND '}${which} ORDER BY project_id,unit_id`,
+      ...(projectId === undefined ? [] : [projectId]),
+    );
     return rows.map((row) => ({ projectId: row.project_id, unitId: row.unit_id }));
   }
   async row(sql: Sql, projectId: string, unitId: string): Promise<WriterRow | undefined> {
@@ -615,11 +594,20 @@ export class CodeWriterService {
     };
   }
 
-  private async move(tx: Transaction, row: WriterRow, to: CodeWriterState, owed = false) {
+  /** Move the writer, and with `quarantine` name (or clear) the capture it waits on. */
+  private async move(
+    tx: Transaction,
+    row: WriterRow,
+    to: CodeWriterState,
+    owed = false,
+    quarantine?: string | null,
+  ) {
+    const held = quarantine === undefined ? [] : [quarantine];
     await tx.run(
-      `UPDATE code_workspaces SET writer_state=?,writer_changed_at=?,final_owed=${owed} WHERE project_id=? AND unit_id=?`,
+      `UPDATE code_workspaces SET writer_state=?,writer_changed_at=?,final_owed=${owed}${held.length ? ',quarantine_operation_id=?' : ''} WHERE project_id=? AND unit_id=?`,
       to,
       now(),
+      ...held,
       row.project_id,
       row.unit_id,
     );

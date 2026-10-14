@@ -7,7 +7,6 @@ import {
   newId,
   now,
   type Caller,
-  type Sql,
   type Transaction,
   requireHuman,
 } from '@merv/contracts';
@@ -74,11 +73,9 @@ export class CodeRebinder {
       await this.humanAdministrator(caller, tx);
       const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
-      if (previous) {
-        // A finished rebind replays its own answer; the refusals below are about work in
-        // flight, and one of them — the identity this project is bound to — it has itself made.
-        if (previous.status !== 'prepared') return previous;
-      }
+      // A finished rebind replays its own answer; the refusals below are about work in
+      // flight, and one of them — the identity this project is bound to — it has itself made.
+      if (previous && previous.status !== 'prepared') return previous;
       await this.rebindable(caller, input, tx);
       if (previous) return previous;
       const at = now();
@@ -130,7 +127,7 @@ export class CodeRebinder {
     row: OperationRow,
     input: CodeRepositoryRebindInput,
   ): Promise<void> {
-    const bound = (await this.core.state.read((sql) => this.bound(sql, row.project_id)))!;
+    const bound = (await this.core.state.read((sql) => this.core.project(sql, row.project_id)))!;
     const previousMain = (JSON.parse(bound.main_json) as { oid: string }).oid;
     const refs = await this.retained(row.project_id, previousMain, input.mainOid);
     const missing = await this.core.absent(
@@ -150,7 +147,7 @@ export class CodeRebinder {
     // Both commits are now known to be held, so the ancestry question is always answerable.
     const mainAhead =
       input.mainOid === previousMain ||
-      (await this.ancestor(row.project_id, previousMain, input.mainOid));
+      (await this.core.repositories.ancestor(row.project_id, previousMain, input.mainOid));
     check(
       mainAhead || input.acknowledgePreviousMain === previousMain,
       'code_rebind_main_diverged',
@@ -189,7 +186,7 @@ export class CodeRebinder {
       await this.humanAdministrator(caller, tx);
       await this.rebindable(caller, input, tx);
       const at = now();
-      const held = (await this.bound(tx, row.project_id))!;
+      const held = (await this.core.project(tx, row.project_id))!;
       check(
         held.repository_id === bound.repository_id &&
           (JSON.parse(held.main_json) as { oid: string }).oid === previousMain,
@@ -285,14 +282,6 @@ export class CodeRebinder {
     );
   }
 
-  /** The binding row a rebind reads and writes; `project()` does not carry binding_json. */
-  private async bound(sql: Sql, projectId: string) {
-    return await sql.get<{ repository_id: string; binding_json: string; main_json: string }>(
-      'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
-      projectId,
-    );
-  }
-
   /**
    * Everything a rebind refuses for, read in phase 1 and read again inside the transaction that
    * writes. There is no drain and no queue: this refusal is the whole mechanism for work in
@@ -303,11 +292,10 @@ export class CodeRebinder {
     input: CodeRepositoryRebindInput,
     tx: Transaction,
   ): Promise<void> {
-    const bound = await this.bound(tx, caller.projectId);
+    const bound = await this.core.project(tx, caller.projectId);
     check(bound, 'code_project_unbound', 'This project has no Code binding', 409);
-    const project = await this.core.project(tx, caller.projectId);
     check(
-      project?.store_json,
+      bound.store_json,
       'code_rebind_unhosted',
       'Import this project’s repository into Code before rebinding it',
       409,
@@ -325,7 +313,7 @@ export class CodeRebinder {
           (row) => Object.values(row)[0],
         ),
       );
-    const busy = [
+    const listed = [
       ...(await named(
         'open writer generations:',
         "SELECT unit_id FROM code_workspaces WHERE project_id=? AND writer_state IN ('reserved','active','closing') ORDER BY unit_id",
@@ -338,10 +326,7 @@ export class CodeRebinder {
         'repository holds:',
         'SELECT hold_key FROM code_repository_holds WHERE project_id=? ORDER BY hold_key',
       )),
-    ];
-    // Consumers holding repository-scoped snapshots must release them before rebinding.
-    const listed = [
-      ...busy,
+      // Consumers holding repository-scoped snapshots must release them before rebinding.
       ...held(
         'sessions holding a workspace:',
         await this.core.hooks.workspaces(caller.projectId, tx),
@@ -389,16 +374,5 @@ export class CodeRebinder {
     for (const retained of read.commits)
       refs.push({ kind: 'retained', id: retained.retention_key, oid: retained.commit_oid });
     return refs;
-  }
-
-  /** Whether `tip` has `base` in its history, asked of the project's own repository. */
-  private async ancestor(projectId: string, base: string, tip: string): Promise<boolean> {
-    return (
-      (
-        await this.core.repositories.git.run(['merge-base', '--is-ancestor', base, tip], {
-          env: this.core.repositories.environment(projectId),
-        })
-      ).code === 0
-    );
   }
 }

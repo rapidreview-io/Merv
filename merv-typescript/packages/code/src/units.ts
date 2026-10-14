@@ -24,7 +24,6 @@ import type { CodeWriterService } from './writers.js';
 import { retainedRef, validRetentionRef } from './store/refs.js';
 import { initializeCodeStorage } from './storage-schema.js';
 interface ProjectRow {
-  project_id: string;
   repository_id: string;
   binding_json: string;
   main_json: string;
@@ -52,19 +51,13 @@ export class CodeUnitStore {
   ): Promise<void> {
     this.assertOpen();
     this.state.assertTransaction(tx);
-    if (input.reason !== null)
-      await tx.run(
-        "UPDATE code_workspaces SET blocked_by=?,writer_state=CASE WHEN writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
-        input.reason,
-        input.projectId,
-        input.unitId,
-      );
-    else
-      await tx.run(
-        'UPDATE code_workspaces SET blocked_by=NULL WHERE project_id=? AND unit_id=?',
-        input.projectId,
-        input.unitId,
-      );
+    await tx.run(
+      "UPDATE code_workspaces SET blocked_by=?,writer_state=CASE WHEN ?::text IS NOT NULL AND writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
+      input.reason,
+      input.reason,
+      input.projectId,
+      input.unitId,
+    );
   }
   async declareWorkspace(
     caller: Caller,
@@ -231,7 +224,7 @@ export class CodeUnitStore {
         tip: input.commit,
       };
       await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         newId('cop'),
         caller.projectId,
         'system:code',
@@ -241,7 +234,6 @@ export class CodeUnitStore {
         canonical(payload),
         'prepared',
         at,
-        null,
         'objects_durable',
         canonical({
           received: 0,
@@ -396,7 +388,7 @@ export class CodeUnitStore {
   async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
     this.assertOpen();
     const row = await sql.get<ProjectRow>(
-      'SELECT project_id,repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
+      'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
       projectId,
     );
     if (!row) return null;

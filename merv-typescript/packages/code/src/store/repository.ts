@@ -252,6 +252,14 @@ export class CodeRepositories {
     await rm(this.paths(projectId).repository, { recursive: true, force: true });
   }
 
+  /** Whether `tip` has `base` in its history, asked of the project's own repository. */
+  async ancestor(projectId: string, base: string, tip: string): Promise<boolean> {
+    const found = await this.git.run(['merge-base', '--is-ancestor', base, tip], {
+      env: this.environment(projectId),
+    });
+    return found.code === 0;
+  }
+
   async objectFormat(projectId: string): Promise<ObjectFormat> {
     const format = (
       await this.git.ok(['rev-parse', '--show-object-format'], {

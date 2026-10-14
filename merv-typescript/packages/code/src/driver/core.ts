@@ -19,7 +19,7 @@ import {
   type WorkspaceHandle,
   type WorkspaceTransport,
 } from '@merv/contracts';
-import { DriverGit, hash, pathStat, WorkspaceError } from './git.js';
+import { DriverGit, hash, oid, pathStat, WorkspaceError } from './git.js';
 
 export interface CodeDriverOptions {
   /** How often an admission that outlasts its request is asked about again. */
@@ -323,27 +323,20 @@ export abstract class DriverCore {
     );
   }
 
-  /** The commit a launch's final capture built, whether or not Code admitted it. */
-  protected finalTarget(row: WorkspaceRow): string | null {
-    const transfer = this.db
-      .prepare("SELECT target_oid FROM code_v2_transfers WHERE launch_id=? AND kind='final'")
-      .get(row.launch_id) as { target_oid: string | null } | undefined;
-    return transfer?.target_oid ?? null;
-  }
-
-  protected priorCaptureRefused(row: WorkspaceRow): boolean {
+  /** The commit a launch's final capture built when Code refused it; null when Code took it. */
+  protected refusedFinal(row: WorkspaceRow): string | null {
     const transfer = this.db
       .prepare(
         "SELECT target_oid,receipt_json,error FROM code_v2_transfers WHERE launch_id=? AND kind='final'",
       )
       .get(row.launch_id) as
       { target_oid: string | null; receipt_json: string | null; error: string | null } | undefined;
-    return (
-      !!transfer &&
-      (!!transfer.error ||
-        (!!transfer.receipt_json &&
+    return transfer &&
+      (transfer.error ||
+        (transfer.receipt_json &&
           (JSON.parse(transfer.receipt_json) as { head: string }).head !== transfer.target_oid))
-    );
+      ? transfer.target_oid
+      : null;
   }
 
   protected assignmentPath(path: string): void {
@@ -352,7 +345,7 @@ export abstract class DriverCore {
       !this.assignmentRoot ||
       dirname(path) !== this.assignmentRoot ||
       !/^[0-9a-f]{64}$/.test(path.slice(this.assignmentRoot.length + 1)) ||
-      (existing && (existing.isSymbolicLink() || !existing.isDirectory()))
+      (existing && !existing.isDirectory())
     )
       throw new WorkspaceError('workspace_foreign_checkout');
   }
@@ -364,5 +357,10 @@ export abstract class DriverCore {
     } catch (error) {
       throw deferral(error) ?? error;
     }
+  }
+
+  /** The object `name` names in a launch's checkout. */
+  protected async resolve(row: WorkspaceRow, name: string, env?: Record<string, string>) {
+    return oid(await this.git.ok(['rev-parse', '--verify', name], { cwd: row.path, env }));
   }
 }

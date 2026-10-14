@@ -23,6 +23,7 @@ import { CodeReceiver } from './receive.js';
 import {
   columns,
   journalled,
+  received,
   serial,
   StoreCore,
   type CodeImportRemote,
@@ -227,18 +228,11 @@ export class CodeStore {
         // An upload whose every byte reached Main before its session closed needs nothing more
         // from its machine, which may be gone: Main asks for its admission itself.
         const ended = new Set(closing.map((row) => `${row.project_id}/${row.unit_id}`));
-        const whole = (row: OperationRow) => {
-          const bytes = (JSON.parse(row.payload_json) as { bundle?: { bytes?: number } }).bundle
-            ?.bytes;
-          const { received } = JSON.parse(row.progress_json ?? '{}') as { received?: number };
-          return (
-            row.kind === 'upload' &&
-            row.phase === 'receiving' &&
-            ended.has(`${row.project_id}/${row.unit_id}`) &&
-            typeof bytes === 'number' &&
-            (received ?? 0) >= bytes
-          );
-        };
+        const whole = (row: OperationRow) =>
+          row.kind === 'upload' &&
+          row.phase === 'receiving' &&
+          ended.has(`${row.project_id}/${row.unit_id}`) &&
+          received(row);
         const stale = new Date(Date.now() - this.config.abandonSeconds * 1000).toISOString();
         // Each project in its own order; a slow admission in one holds up no other.
         const projects = new Map<string, OperationRow[]>();
