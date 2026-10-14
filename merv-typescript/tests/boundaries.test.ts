@@ -168,8 +168,8 @@ const capabilities: Record<string, readonly string[]> = {
   ],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
-  // Literature search over Nisa's public API; it holds nothing but its calls in flight.
-  nisa: [],
+  // Literature retrieval and account-backed research require fresh caller scope checks.
+  nisa: ['scope'],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
   fleet: ['state', 'scope', 'sbxMerv'],
   tools: ['scope'],

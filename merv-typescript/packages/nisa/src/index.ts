@@ -1,4 +1,3 @@
-import type {} from '@merv/scope';
 import { researchInput, researchResult, researchScope, type ResearchInput } from './research.js';
 import type { Context } from 'cordis';
 import type { z } from 'zod';
