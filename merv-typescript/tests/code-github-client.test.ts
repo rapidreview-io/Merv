@@ -107,6 +107,8 @@ test('PR inspection preserves missing binary patches and distinguishes no CI sta
           body: 'Checked',
           submitted_at: '2026-09-16T00:00:00Z',
         },
+        // A review of a commit force-pushed away names none.
+        { id: 5, user: null, state: 'COMMENTED', commit_id: null, body: '' },
       ];
     if (url.pathname.endsWith('/check-runs'))
       return {
@@ -128,6 +130,7 @@ test('PR inspection preserves missing binary patches and distinguishes no CI sta
   assert.equal(result.statusCount, 0);
   assert.equal(result.checks[0].conclusion, 'success');
   assert.equal(result.reviews[0].commitSha, sha);
+  assert.equal(result.reviews[1].commitSha, null);
   assert.equal(result.commits[0].sha, sha);
 });
 

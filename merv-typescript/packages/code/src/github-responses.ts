@@ -56,7 +56,7 @@ export const githubReviewSchema = z.object({
   id: githubId,
   user: z.object({ login: z.string().max(100) }).nullable(),
   state: z.string().max(80),
-  commit_id: githubOid,
+  commit_id: githubOid.nullable(),
   body: z.string().max(65536),
   submitted_at: z.string().datetime().nullable().optional(),
 });
