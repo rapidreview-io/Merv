@@ -124,6 +124,8 @@ export class SessionStreams implements SessionStreamReads {
       );
       return { seq: Number(row?.seq ?? 0), until: Number(row?.until ?? 0) };
     };
+    // Taken before: it starts before what is held, or is the empty range (a skip) that ends it.
+    const before = (until: number) => batch.from < until || batch.to === until;
     let projectId = '';
     const held = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, batch.sessionId, batch.runnerId, tx);
@@ -142,11 +144,11 @@ export class SessionStreams implements SessionStreamReads {
       );
       return await head(tx);
     });
-    if (batch.from < held.until || !batch.events.length) return held;
+    if (before(held.until) || !batch.events.length) return held;
     const taken = await this.state.transaction(async (tx) => {
       // Read again under the writer lock: a retry that raced this one was added once.
       const { seq, until } = await head(tx);
-      if (batch.from < until) return { until, seq };
+      if (before(until)) return { until, seq };
       await tx.run(
         `INSERT INTO session_events(session_id,seq,at,until,event)
           SELECT ?,CAST(? AS BIGINT)+e.n,?,?,e.value FROM jsonb_array_elements(CAST(? AS JSONB)) WITH ORDINALITY AS e(value,n)`,

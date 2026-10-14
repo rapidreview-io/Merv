@@ -605,10 +605,7 @@ export class ManagedRunnerBindings {
   }
   /** A missing process acknowledgement can release a machine, but never reuse one. */
   async reusable(row: ManagedBindingRow, tx: Transaction): Promise<boolean> {
-    const pending = await tx.get<{ session_id: string }>(
-      'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND settled_at IS NULL',
-      row.allocation_id,
-    );
+    const pending = await this.currentSessionId(row, tx);
     if (!pending) return true;
     const observed = await this.inspect(row.allocation_id, Number(row.epoch), tx);
     const session = observed?.session;
@@ -623,13 +620,13 @@ export class ManagedRunnerBindings {
       throw new MervError('read_only_scope', 'Settling a work host requires a write', 409);
     const credential = await tx.get<{ token_hash: string }>(
       'SELECT token_hash FROM worker_sessions WHERE id=?',
-      pending.session_id,
+      pending,
     );
     if (credential) await this.credentials.revoke(credential.token_hash, 'sessions', tx);
     await tx.run(
       'UPDATE session_managed_assignments SET settled_at=? WHERE session_id=? AND settled_at IS NULL',
       new Date(this.clock()).toISOString(),
-      pending.session_id,
+      pending,
     );
     return true;
   }

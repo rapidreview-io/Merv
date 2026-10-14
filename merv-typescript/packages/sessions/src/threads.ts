@@ -1,5 +1,6 @@
 import {
   check,
+  clip,
   newId,
   type Blobs,
   type Caller,
@@ -228,7 +229,7 @@ export class SessionThreads {
     const id = newId('thr');
     const actor = await this.scope.createSessionActor(
       owner.source,
-      { threadId: id, name: `Agent ${runnerId}`.slice(0, 200), role: unit.role },
+      { threadId: id, name: clip(`Agent ${runnerId}`, 200), role: unit.role },
       tx,
     );
     await tx.run(

@@ -284,6 +284,10 @@ test('the runner that holds a session sends its agent’s events; a retry is tak
     await Promise.all([f.ok('POST', path, f.token, next), f.ok('POST', path, f.token, next)]),
     [{ stream: { until: 150, seq: 3 } }, { stream: { until: 150, seq: 3 } }],
   );
+  // An empty range (a runner's skip to a half-written line) sent again: answered, not added.
+  const skip = { ...next, from: 160, to: 160, events: [{ kind: 'status', id: 's', text: 'Skip' }] };
+  for (const _ of [1, 2])
+    assert.deepEqual(await f.ok('POST', path, f.token, skip), { stream: { until: 160, seq: 4 } });
   const rows = await f.app.ctx.state.read((sql) =>
     sql.all<{ seq: string; until: string; event: AgentEvent }>(
       'SELECT seq,until,event FROM session_events WHERE session_id=? ORDER BY seq',
@@ -296,6 +300,7 @@ test('the runner that holds a session sends its agent’s events; a retry is tak
       [1, 100, 'a'],
       [2, 100, 't1'],
       [3, 150, 't2'],
+      [4, 160, 's'],
     ],
   );
 
