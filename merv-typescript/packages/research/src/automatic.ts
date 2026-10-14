@@ -50,16 +50,16 @@ export async function publishBlocker(
   blocker: AutomaticBlocker,
   tx: Transaction,
 ): Promise<void> {
-  // An outage keeps when it was first seen; anything else forgets it.
+  // An outage keeps when it was first seen; anything else forgets it. Neither rewrites a no-op.
   if (blocker?.status === 503)
     await tx.run(
-      'UPDATE research_automation SET unavailable_since=COALESCE(unavailable_since,?) WHERE research_id=?',
+      'UPDATE research_automation SET unavailable_since=? WHERE research_id=? AND unavailable_since IS NULL',
       new Date().toISOString(),
       row.research_id,
     );
   else
     await tx.run(
-      'UPDATE research_automation SET unavailable_since=NULL WHERE research_id=?',
+      'UPDATE research_automation SET unavailable_since=NULL WHERE research_id=? AND unavailable_since IS NOT NULL',
       row.research_id,
     );
   await workflows.replaceBlockers(

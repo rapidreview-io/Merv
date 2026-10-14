@@ -75,7 +75,7 @@ function edge(r: Rect, to: { x: number; y: number }) {
   return Number.isFinite(t) ? { x: c.x + dx * t, y: c.y + dy * t } : c;
 }
 
-/** One call's drawing: the board's shapes, what this call changed, and the keys it gave. */
+/** One call's drawing: the shapes it is handed (now its own), what it changed, the keys it gave. */
 export class Drawing {
   readonly elements = new Map<string, El>();
   readonly changed = new Set<string>();
@@ -90,7 +90,7 @@ export class Drawing {
     existing: BoardElement[],
     private readonly agent: boolean,
   ) {
-    for (const element of existing) this.elements.set(element.id, structuredClone(element) as El);
+    for (const element of existing) this.elements.set(element.id, element as El);
     this.survey();
     this.rebind();
     const box = bounds([...this.occupied, ...this.frames]);

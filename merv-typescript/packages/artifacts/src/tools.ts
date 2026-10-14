@@ -140,24 +140,23 @@ export const artifactToolsPlugin = {
         if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId, i.fileName);
         if (i.fileName !== undefined)
           throw new MervError('invalid_artifact', 'fileName requires mode download', 400);
-        if (c.session) {
+        // Only a worker's unbounded or wide read can be refused, so only it reads the size first.
+        if (c.session && (i.length === undefined || i.length > workerRangeCharacters)) {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
           if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {
-            if (i.length === undefined || i.length > workerRangeCharacters) {
-              const downloadAvailable = ctx.artifacts.downloadAvailable;
-              throw new MervError(
-                'artifact_read_requires_range',
-                `Artifact is ${artifact.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
-                413,
-                {
-                  artifactId: artifact.id,
-                  size: artifact.size,
-                  sha256: artifact.hash,
-                  downloadAvailable,
-                  maxRangeCharacters: workerRangeCharacters,
-                },
-              );
-            }
+            const downloadAvailable = ctx.artifacts.downloadAvailable;
+            throw new MervError(
+              'artifact_read_requires_range',
+              `Artifact is ${artifact.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
+              413,
+              {
+                artifactId: artifact.id,
+                size: artifact.size,
+                sha256: artifact.hash,
+                downloadAvailable,
+                maxRangeCharacters: workerRangeCharacters,
+              },
+            );
           }
         }
         return await hinted(

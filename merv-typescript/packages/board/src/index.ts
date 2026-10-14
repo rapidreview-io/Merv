@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import {
   check,
   createService,
+  forRead,
   newId,
   now,
   recorded,
@@ -82,7 +83,7 @@ export class BoardService implements Board {
 
   async list(caller: Caller): Promise<BoardSummary[]> {
     caller = this.open(caller);
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return (
         await tx.all<{ record: string }>(
@@ -97,7 +98,7 @@ export class BoardService implements Board {
   }
   async scene(caller: Caller, boardId: string, since?: number): Promise<BoardScene> {
     caller = this.open(caller);
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const board = await this.summary(caller, boardId, tx);
       return { board, elements: await this.elements(board.id, since, tx) };

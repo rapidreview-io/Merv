@@ -5,6 +5,7 @@ import { Uploads } from './uploads.js';
 import type { Context } from 'cordis';
 import {
   check,
+  forRead,
   MervError,
   sha256Hex,
   newId,
@@ -77,25 +78,20 @@ export class ArtifactStore implements Artifacts {
   async initialize() {
     await this.state.migrate('artifacts', postgresMigrations);
   }
-  /**
-   * Where a read runs: an explicit `tx`, else the ambient transaction, else a read-only snapshot
-   * transaction of its own (reader pool, no writer lock). Scope's `within(…, 'read')` rule.
-   */
-  private async place<T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) {
-    if (tx) this.state.assertTransaction(tx);
-    const within = tx ?? this.state.ambient;
-    return within ? await fn(within) : await this.state.snapshotTransaction(fn);
-  }
-  /** A read authorised once, in the transaction it queries, of the rows its caller may see. */
+  /** A read, authorised once in the transaction forRead picks, of the rows its caller may see. */
   private async one<T>(
     caller: Caller,
     tx: Transaction | undefined,
     fn: (tx: Transaction, visible: Visible) => Promise<T>,
   ) {
-    return await this.place(tx, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return await fn(tx, await this.visible(caller, tx));
-    });
+    return await forRead(
+      this.state,
+      async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        return await fn(tx, await this.visible(caller, tx));
+      },
+      tx,
+    );
   }
   /** What every owner's read rule leaves a session caller; anyone else sees every row. */
   private async visible(caller: Caller, tx: Transaction): Promise<Visible> {
@@ -349,7 +345,7 @@ export class ArtifactStore implements Artifacts {
     }
     // The first download of bytes kept in the row mirrors them into blobs: content-addressed,
     // so a repeat or a race writes the same object.
-    const row = await this.place(undefined, (tx) =>
+    const row = await forRead(this.state, (tx) =>
       tx.get<{ content: Buffer | null }>(
         'SELECT content FROM artifacts WHERE id=? AND project_id=?',
         artifact.id,

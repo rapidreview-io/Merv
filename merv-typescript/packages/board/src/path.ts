@@ -105,14 +105,16 @@ export function strokesOf(d: string): Stroke[] {
     if (typeof value !== 'number') refuse(`${command} needs more numbers`);
     return value as number;
   };
+  let total = 0; // every point so far, counted as it comes: a path may hold thousands of strokes
   const go = (points: Point[]) => {
     if (!current) {
       current = { points: [at], closed: false };
       strokes.push(current);
+      total++;
     }
     current.points.push(...points);
     at = points.at(-1) ?? at;
-    if (strokes.reduce((n, s) => n + s.points.length, 0) > MOST) refuse(`more than ${MOST} points`);
+    if ((total += points.length) > MOST) refuse(`more than ${MOST} points`);
   };
   if (typeof list[0] === 'string' && list[0].toUpperCase() !== 'M')
     refuse('it does not begin with M');
@@ -186,6 +188,7 @@ export function strokesOf(d: string): Stroke[] {
         if (current) {
           current.points.push(start);
           current.closed = true;
+          total++;
         }
         at = start;
         current = undefined;

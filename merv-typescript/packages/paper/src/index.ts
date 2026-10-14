@@ -3,6 +3,7 @@ import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
+  forRead,
   inTransaction,
   newId,
   now,
@@ -71,6 +72,9 @@ export class PaperService implements Paper {
     check(!this.closed, 'paper_unavailable', 'Living paper is unavailable', 503);
     return structuredClone(caller);
   }
+  private async reading<T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) {
+    return await forRead(this.state, fn, tx);
+  }
   private async current(
     caller: Caller,
     documentKind: PaperKind,
@@ -93,7 +97,7 @@ export class PaperService implements Paper {
   }
   async read(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace> {
     caller = this.capture(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.reading(transaction, async (tx) => {
       const documents = await this.documents(caller, tx);
       return { documents, citations: await this.citations(caller, tx) };
     });
@@ -116,7 +120,7 @@ export class PaperService implements Paper {
     transaction?: Transaction,
   ): Promise<Partial<PaperWorkspace['documents']>> {
     caller = this.capture(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.reading(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       // In `of` order: each kind's newest revision, newest publication and its revision.
       const rows = await tx.all<
@@ -150,7 +154,7 @@ export class PaperService implements Paper {
   ): Promise<PaperRevisionSummary[]> {
     caller = this.capture(caller);
     parse(kind, documentKind);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.reading(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       // Each revision without its section bodies, which are most of it, in its own key order.
       return (
@@ -172,7 +176,7 @@ export class PaperService implements Paper {
   ): Promise<PaperRevision | null> {
     caller = this.capture(caller);
     parse(kind, documentKind);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.reading(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const row = await tx.get<{ record: string }>(
         'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',

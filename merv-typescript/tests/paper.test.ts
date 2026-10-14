@@ -9,6 +9,8 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { PaperService } from '@merv/paper';
+import { BoardService } from '@merv/board';
+import { setTimeout as delay } from 'node:timers/promises';
 import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
@@ -667,4 +669,21 @@ test('One document is read alone, as the whole paper reads it', async (t) => {
   await assert.rejects(f.paper.document(f.reader, 'abstract' as never), {
     code: 'invalid_paper_input',
   });
+});
+
+test('reads made outside a snapshot neither wait for nor take the writer lock', async (t) => {
+  const f = await fixture(t);
+  const board = await createService(new BoardService(f.state, f.scope));
+  const { id } = await board.create(f.operator, 'Ideas');
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let locked!: () => void;
+  const writer = f.state.transaction(async () => (locked(), await held));
+  await new Promise<void>((resolve) => (locked = resolve));
+  // Pi's turn context reads the paper, and screen.look a board's picture, outside any snapshot.
+  const reads = Promise.all([f.paper.documents(f.reader), board.scene(f.reader, id)]);
+  const waited = await Promise.race([reads.then(() => false), delay(2000).then(() => true)]);
+  release();
+  await Promise.all([writer, reads]);
+  assert.equal(waited, false, 'a read waited for an unrelated writer');
 });

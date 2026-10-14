@@ -124,11 +124,8 @@ export function pictureOf(elements: BoardElement[], focus?: string) {
     Math.max(200, Math.round(w * scale)),
     Math.max(200, Math.round(h * scale)),
   ];
-  // Drawn in the board's own order, so what was drawn last stands on top.
-  const ordered = [...live].sort((a, b) =>
-    String(a.index ?? '￿') < String(b.index ?? '￿') ? -1 : 1,
-  );
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${w} ${h}">${ordered.map(shape).join('')}</svg>`;
+  // Drawn in the stacking order board.scene hands them in, so what was drawn last stands on top.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${w} ${h}">${live.map(shape).join('')}</svg>`;
   return {
     html: `<!doctype html><html><body style="margin:0;background:#fff">${svg}</body></html>`,
     width,

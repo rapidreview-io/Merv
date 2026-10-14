@@ -142,4 +142,5 @@ FOR EACH ROW EXECUTE FUNCTION paper_proposal_retained_guard();
 DROP TABLE IF EXISTS paper_updates, paper_leases;
 DROP FUNCTION IF EXISTS paper_updates_immutable_guard(), paper_updates_retained_guard(), paper_leases_immutable_guard(), paper_leases_retained_guard();
 `,
+  4: `CREATE INDEX paper_publications_project_kind ON paper_publications(project_id,kind,_merv_rowid);`,
 };
