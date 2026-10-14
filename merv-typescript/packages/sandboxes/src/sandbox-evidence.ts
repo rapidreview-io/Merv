@@ -175,6 +175,15 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       return;
     const key = JSON.stringify([work.namespace, workflow.id]);
     if (this.doneWorkflows.has(key)) return;
+    const settled = await this.state.read((sql) =>
+      sql.all<{ node_id: string }>(
+        'SELECT node_id FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
+        work.project_id,
+        work.namespace,
+        workflow.id,
+      ),
+    );
+    const indexed = new Set(settled.map((row) => row.node_id));
     let after: string | null = null;
     let pending = false;
     do {
@@ -183,7 +192,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         limit: 128,
       });
       for (const node of page.captures) {
-        if (await this.settled(work, workflow.id, node.id)) continue;
+        if (indexed.has(node.id)) continue;
         try {
           await this.register(work, workflow, node);
         } catch (error) {
@@ -195,18 +204,6 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       after = page.next;
     } while (after !== null);
     if (!pending) this.doneWorkflows.add(key);
-  }
-
-  private async settled(work: Work, workflow: string, node: string) {
-    return !!(await this.state.read((sql) =>
-      sql.get(
-        'SELECT 1 FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=? AND node_id=?',
-        work.project_id,
-        work.namespace,
-        workflow,
-        node,
-      ),
-    ));
   }
 
   private async held(namespace: string, objectId: string) {

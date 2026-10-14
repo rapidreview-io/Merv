@@ -1868,3 +1868,49 @@ test('a machine that fails before anything was launched on it is replaced at onc
   const running = await f.fleet.inspect(f.caller, id);
   assert.deepEqual([running.phase, running.runtime?.sandboxId], ['running', 'sbx_2']);
 });
+
+test('a machine replaced after a refused launch is launched under a key of its own', async (t) => {
+  // Sandboxes binds a launch key to the machine it was first tried on, refused or not: the
+  // replacement's launch under the same key would be an idempotency conflict for good.
+  const f = await fixture(t);
+  const { id } = await f.fleet.request(f.caller, input('refused-then-failed'));
+  await f.fleet.tick();
+  f.runtimes.refuseLaunch = new MervError('sandbox_provider_unavailable', 'Not listed', 503);
+  f.advance(1000);
+  await f.fleet.tick();
+  const live = f.runtimes.byKey.get(createKey(f.caller.projectId, `${id}:create`))!;
+  Object.assign(live, { state: 'failed', ready: false, revision: live.revision + 1 });
+  f.advance(1000);
+  await f.fleet.tick();
+  f.advance(2000);
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const running = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([running.phase, running.runtime?.sandboxId], ['running', 'sbx_2']);
+  assert.deepEqual(f.runtimes.launchKeys, [`${id}:launch`, `${id}:launch:2`]);
+});
+
+test('a pass in flight when Fleet closes leaves a kept owner’s machine to the successor', async (t) => {
+  const f = await fixture(t);
+  f.unregister();
+  const unregister = f.fleet.registerOwner('workflow', { ...f.owner, keepsRunning: true });
+  const { id } = await f.fleet.request(f.caller, input('kept-at-shutdown'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  f.advance(300_000);
+  // A full pass reads offers (the first service actor), then waits in advance() while Main
+  // shuts down: the owner leaves, as FleetWorkflowAdapter.close does, and Fleet closes.
+  const held = deferred<void>();
+  const serviceActor = f.scope.serviceActor.bind(f.scope);
+  let calls = 0;
+  f.scope.serviceActor = async (...args: Parameters<typeof serviceActor>) => {
+    if (args[0] === 'fleet' && ++calls === 2) await held.promise;
+    return serviceActor(...args);
+  };
+  const pass = f.fleet.tick();
+  await within(1000, () => calls === 2);
+  unregister();
+  const closing = f.fleet.close();
+  held.resolve();
+  await Promise.all([pass, closing]);
+  assert.deepEqual(f.runtimes.stopped, []);
+  assert.equal((await f.fleet.inspect(f.caller, id)).intent, 'run');
+});

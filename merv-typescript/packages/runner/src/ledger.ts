@@ -296,6 +296,10 @@ export class LocalLedger {
       launchRecord,
     );
   }
+  resumeFailed(conversationId: string): boolean {
+    const sql = "SELECT 1 FROM launches WHERE json_extract(metadata_json,'$.resumeFailed')=?";
+    return !!this.db.prepare(sql).get(conversationId);
+  }
   /** Immediate predecessor only, and only after every local handoff obligation was settled. */
   previousSettled(id: string): LaunchRecord | undefined {
     const row = this.db

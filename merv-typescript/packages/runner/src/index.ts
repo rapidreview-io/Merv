@@ -1014,22 +1014,18 @@ export class MachineRunner implements Runner {
         return this.delivered(kind, record.id, `${kind}_changed`);
       const abort = (this.uploading = new AbortController());
       // Off the tick: presence, leases and other launches go on. 128 KiB/s (~1 Mbit/s) is the
-      // slowest link it waits for.
+      // slowest link it waits for. Node 22 collects a timeout only AbortSignal.any() holds, which
+      // then never fires: it is held until the PUT settles.
+      const deadline = AbortSignal.timeout(60_000 + Math.ceil(bytes.length / 128));
       void this.client
-        .putSigned(
-          reply.upload!,
-          bytes,
-          AbortSignal.any([
-            abort.signal,
-            AbortSignal.timeout(60_000 + Math.ceil(bytes.length / 128)),
-          ]),
-        )
+        .putSigned(reply.upload!, bytes, AbortSignal.any([abort.signal, deadline]))
         .catch((error: unknown) => {
           this.lastError = diagnostic(error);
           this.transcriptRetry.set(retry, this.clock() + transcriptRetryMs);
         })
         .finally(() => {
           this.uploading = undefined;
+          return deadline;
         });
     } catch (error) {
       if (error instanceof RunnerControlError && error.final)
@@ -1121,7 +1117,7 @@ export class MachineRunner implements Runner {
       check(profile.harness === resume.harness, 'resume_other_harness', 'Kept by another harness');
       // A harness here once refused it after it was restored: this time it starts afresh.
       check(
-        !this.ledger.list().some((r) => r.metadata.resumeFailed === resume.conversationId),
+        !this.ledger.resumeFailed(resume.conversationId),
         'resume_failed_before',
         'This runner could not resume it before',
       );

@@ -11,6 +11,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import {
   MAX_TRANSCRIPT_BYTES,
   type WorkspaceDriverFactory,
@@ -605,6 +607,30 @@ test('the tenth PUT, stored, is confirmed by one more delivery', async (t) => {
   await runner.tick();
   assert.equal(sessions.of('deliver'), 11);
   assert.deepEqual(transcript(f, id), { state: 'uploaded' });
+});
+
+test('a PUT that never answers ends at its deadline even after a garbage collection', async (t) => {
+  // Node 22 collects a timeout only AbortSignal.any() holds; then it never fires.
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms: number) => timeout.call(AbortSignal, Math.min(ms, 300));
+  t.after(() => void (AbortSignal.timeout = timeout));
+  setFlagsFromString('--expose-gc');
+  const gc = runInNewContext('gc') as () => void;
+  const fake = server(() => null);
+  const sessions = transcripts(fake);
+  sessions.state.store = 'never';
+  const f = machine(t, [node('a')], sessions.fetch);
+  seed(f, fake, 'deadline', 'printed\n');
+  const runner = f.make();
+  await runner.start();
+  assert.equal(sessions.of('PUT'), 1);
+  for (let i = 0; i < 10; i++) {
+    gc();
+    await delay(50);
+  }
+  assert.equal(sessions.state.aborted, 1, 'the PUT ended at its deadline');
+  assert.equal(runner.snapshot().lastError, 'transcript_upload_failed');
+  await runner.stop();
 });
 
 test('a PUT that never answers holds no tick, one PUT runs at a time, and stop aborts it', async (t) => {

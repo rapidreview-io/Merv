@@ -116,9 +116,9 @@ const ownerGraceMs = 300_000;
  * ready in seconds): it is stopped and another rented, up to `readyAttempts` machines in all. */
 const readyMs = 60_000;
 const readyAttempts = 3;
-/** Each machine's own create key, so the provider places a replacement afresh. */
-const createKey = (a: FleetAllocation) =>
-  a.replaced ? `${a.id}:create:${a.replaced + 1}` : `${a.id}:create`;
+/** Each machine's own create and launch keys: Sandboxes binds a launch key to its first machine. */
+const machineKey = (a: FleetAllocation, kind: 'create' | 'launch') =>
+  a.replaced ? `${a.id}:${kind}:${a.replaced + 1}` : `${a.id}:${kind}`;
 const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** Math.min(failures, 6));
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
@@ -313,9 +313,13 @@ export class FleetService implements Fleet {
   private stale(a: FleetAllocation): boolean {
     return !this.profiles.some((profile) => profile.id === a.profileId);
   }
-  /** Judged only once owners have had time to register after a restart. */
+  /** Judged once owners have had time to register after a restart, never while Fleet closes. */
   private orphan(a: FleetAllocation): boolean {
-    return !this.owners.has(a.owner.kind) && this.clock() - this.startedAt >= ownerGraceMs;
+    return (
+      !this.closed &&
+      !this.owners.has(a.owner.kind) &&
+      this.clock() - this.startedAt >= ownerGraceMs
+    );
   }
   /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {
@@ -922,7 +926,7 @@ export class FleetService implements Fleet {
           releaseId: profile!.releaseId,
           offerId: profile!.offerId,
           leaseSeconds: profile!.leaseSeconds,
-          operationKey: `runtime:${sha256Hex(JSON.stringify([place, createKey(a)]))}`,
+          operationKey: `runtime:${sha256Hex(JSON.stringify([place, machineKey(a, 'create')]))}`,
         })
         .catch((error) => {
           // Refusing the first attempt proves no machine exists: free the slot, do not retry.
@@ -1007,7 +1011,7 @@ export class FleetService implements Fleet {
       const bootstrap = await owner.bootstrap(structuredClone(a));
       if (!(await this.fence(null, a.id, launchable, owner))) return;
       const launch = await runtime.launch(handle.sandboxId, {
-        operation_key: `${a.id}:launch`,
+        operation_key: machineKey(a, 'launch'),
         release_id: profile!.releaseId,
         bootstrap: new SecretString(bootstrap),
         ttl_seconds: profile!.ttlSeconds,
