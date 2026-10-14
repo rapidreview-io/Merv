@@ -906,7 +906,7 @@ export class CodeUnitService {
       if (
         path.some((record) => record.state === 'awaiting_resolution' && !record.resolutionTaskId)
       ) {
-        await this.resolveBases(tx, projectId);
+        await this.resolveBases(tx, projectId, await this.bases.records(tx, projectId));
         path = await this.bases.path(tx, projectId, base.key);
       }
       prerequisites = path
@@ -932,9 +932,12 @@ export class CodeUnitService {
     );
   }
 
-  /** All current waiters contribute their roots before the shared record becomes immutable. */
-  async baseSponsors(tx: Transaction, projectId: string, members: string[]): Promise<string[]> {
-    const waiters: string[] = [];
+  /**
+   * All current waiters contribute their roots before a shared record becomes immutable: each is
+   * derived once per plan, since what it merges never depends on the bases the plan writes.
+   */
+  async baseSponsors(tx: Transaction, projectId: string) {
+    const waiters: { unitId: string; merge: string[] }[] = [];
     for (const row of await tx.all<{ unit_id: string }>(
       'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL',
       projectId,
@@ -942,19 +945,20 @@ export class CodeUnitService {
       const relations = await this.workflows.relations(projectId, row.unit_id, tx);
       if (!relations || relations.instance.terminal) continue;
       const derived = await this.derive(tx, projectId, relations.instance.id);
-      if (
-        'merge' in derived &&
-        derived.merge &&
-        members.every((member) => derived.merge!.includes(member))
-      )
-        waiters.push(row.unit_id);
+      if ('merge' in derived && derived.merge)
+        waiters.push({ unitId: row.unit_id, merge: derived.merge });
     }
-    return this.workflows.sponsoringRoots(projectId, waiters, tx);
+    return (members: string[]) =>
+      this.workflows.sponsoringRoots(
+        projectId,
+        waiters.flatMap((it) => (members.every((m) => it.merge.includes(m)) ? [it.unitId] : [])),
+        tx,
+      );
   }
 
   /** Creation and linkage share the caller's transaction, so a crash never leaves an orphan. */
-  private async resolveBases(tx: Transaction, projectId: string): Promise<void> {
-    for (const base of await this.bases.records(tx, projectId)) {
+  private async resolveBases(tx: Transaction, projectId: string, records: CodeBaseRecord[]) {
+    for (const base of records) {
       if (base.state !== 'awaiting_resolution' || base.quarantined) continue;
       if (!base.resolutionTaskId && this.resolutionTasks) {
         const [left, right] = await this.bases.inputs(tx, projectId, base);
@@ -964,7 +968,7 @@ export class CodeUnitService {
             projectId,
             requestId: `base:${base.key}`,
             baseReference: left,
-            work: await this.resolutionWork(tx, projectId, base, left, right),
+            work: await this.resolutionWork(tx, projectId, records, base, left, right),
           },
           tx,
         );
@@ -1006,11 +1010,11 @@ export class CodeUnitService {
   private async resolutionWork(
     tx: Transaction,
     projectId: string,
+    records: CodeBaseRecord[],
     base: CodeBaseRecord,
     left: string,
     right: string,
   ): Promise<ResolutionWork> {
-    const records = await this.bases.records(tx, projectId);
     const units = new Map<string, ResolutionInput['units']>();
     for (const unit of await tx.all<UnitRow>(
       `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
@@ -1066,8 +1070,7 @@ export class CodeUnitService {
    * operator quarantined retracts everything that only inherited from it, while a base an
    * operator quarantined in its own right keeps its whole reach.
    */
-  private async propagateQuarantine(tx: Transaction, projectId: string): Promise<void> {
-    const records = await this.bases.records(tx, projectId);
+  private async propagateQuarantine(tx: Transaction, projectId: string, records: CodeBaseRecord[]) {
     // Generic Code consumers share storage but do not opt into work-unit quarantine policy.
     // With no quarantined base nothing is reached, so only units still marked need clearing.
     const units: Array<UnitRow & { terminal: boolean }> = [];
@@ -1161,9 +1164,11 @@ export class CodeUnitService {
    * blockers are read back from its publication and the project's publication controls.
    */
   private async reconcileProject(tx: Transaction, projectId: string, away = false): Promise<void> {
-    await this.propagateQuarantine(tx, projectId);
-    await this.resolveBases(tx, projectId);
-    for (const base of await this.bases.records(tx, projectId)) {
+    // Read once: the passes below keep each record's health and resolution task current.
+    const records = await this.bases.records(tx, projectId);
+    await this.propagateQuarantine(tx, projectId, records);
+    await this.resolveBases(tx, projectId, records);
+    for (const base of records) {
       if (!base.resolutionTaskId) continue;
       const blocker = await this.resolutionBlocker(tx, projectId, base.resolutionTaskId);
       if (blocker || base.operatorReason)

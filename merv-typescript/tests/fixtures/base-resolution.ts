@@ -60,7 +60,7 @@ export async function baseResolutionFixture(
   });
   const bases = new CodeBaseService(f.state, repositories, {
     changed: (tx, projectId) => units.changed(tx, projectId),
-    sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
+    sponsors: (tx, projectId) => units.baseSponsors(tx, projectId),
     serviceWork: f.sessions.serviceWork,
     resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
   });

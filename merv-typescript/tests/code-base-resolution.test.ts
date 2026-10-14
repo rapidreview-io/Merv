@@ -250,7 +250,7 @@ test('accepted resolution verification runs outside transactions and recovers af
   await f.bases.close();
   const restarted = new CodeBaseService(f.state, f.repositories, {
     changed: (tx, projectId) => f.units.changed(tx, projectId),
-    sponsors: (tx, projectId, members) => f.units.baseSponsors(tx, projectId, members),
+    sponsors: (tx, projectId) => f.units.baseSponsors(tx, projectId),
     serviceWork: f.sessions.serviceWork,
     resolved: (tx, id, key, commit) => enqueueMirror(tx, id, 'mirror-base', key, commit),
   });

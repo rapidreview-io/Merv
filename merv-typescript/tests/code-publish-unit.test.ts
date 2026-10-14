@@ -228,6 +228,33 @@ test('a quarantine never reaches work that has ended, but a publication wait doe
   assert.equal((await f.code.unit(f.admin, publishing.id)).publication?.state, 'setup_required');
 });
 
+test('a publication a quarantine reached after acceptance settles stale and frees the repository', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Quarantined later');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  // What a base quarantine reaching the accepted unit writes (units.ts propagateQuarantine).
+  await f.state.transaction(async (tx) => {
+    for (const table of ['code_units SET quarantine_base_key', 'code_workspaces SET blocked_by'])
+      await tx.run(
+        `UPDATE ${table}=? WHERE project_id=? AND unit_id=?`,
+        'base_tainted',
+        f.admin.projectId,
+        work.id,
+      );
+  });
+  const [publication] = await f.sync();
+  assert.deepEqual(
+    [publication.stale, publication.verified, publication.lastError],
+    [true, false, 'code_quarantined'],
+  );
+  const holds = await f.state.read((sql) =>
+    sql.all("SELECT 1 FROM code_repository_holds WHERE hold_key LIKE 'research:publication:%'"),
+  );
+  assert.deepEqual(holds, [], 'a rebind is no longer held by it');
+});
+
 test('incomplete rules visibility needs setup even with a canary until acknowledged, while failed enforcement is disabled', async (t) => {
   const f = await fixture(t, true);
   await f.canary();
@@ -543,6 +570,21 @@ test('with Code unloaded nothing about publication can be asked or declared', as
   await f.code.close();
   await assert.rejects(f.code.acceptedSince(f.admin), { code: 'code_unavailable' });
   await assert.rejects(f.publishes(work), { code: 'code_unavailable' });
+});
+
+test('closing drains the store beside a GitHub call still out, so its deadline can end it', async (t) => {
+  const f = await fixture(t);
+  const code = f.code as unknown as {
+    network(operation: () => Promise<void>): Promise<void>;
+    store: { close(): Promise<void> };
+  };
+  let release!: () => void;
+  const call = code.network(() => new Promise<void>((resolve) => (release = resolve)));
+  const drained = t.mock.method(code.store, 'close');
+  const closing = f.code.close();
+  assert.equal(drained.mock.callCount(), 1, 'a GitHub import the store owns ends at its deadline');
+  release();
+  await Promise.all([call, closing]);
 });
 
 test('reviewed local work reaches main without GitHub and keeps the exact reviewed commit', async (t) => {

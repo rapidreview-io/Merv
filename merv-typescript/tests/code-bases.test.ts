@@ -430,6 +430,46 @@ test('a base ref an interrupted execution left behind stops the base until an op
   assert.equal(held.stdout.toString('utf8').trim(), c);
 });
 
+test('a retry keeps the merge its lost epoch wrote, though a later acceptance renamed it', async (t) => {
+  const f = await fixture(t);
+  const { a, b } = f.commits;
+  const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+  const env = f.repositories.environment(f.projectId);
+  const first = await mergeBases(f.repositories.git, env, a, b, base.key, undefined, 'Merge A + B');
+  assert.equal(first.outcome, 'merged');
+  if (first.outcome !== 'merged') return;
+  await f.repositories.git.ok(['update-ref', `refs/merv/bases/${base.key}`, first.commit, ''], {
+    env,
+  });
+  // A unit accepted since at a member commit is named in the message the retry reads.
+  const retry = new CodeBaseService(
+    f.state,
+    f.repositories,
+    { ...f.hooks, message: async () => 'Merge A + B + D' },
+    f.clock,
+  );
+  t.after(() => retry.close());
+  await retry.work(f.projectId);
+  const sealed = (await f.state.read((sql) => retry.find(sql, f.projectId, [a, b])))!;
+  assert.equal(sealed.state, 'resolved');
+  assert.equal(sealed.result!.commit, first.commit);
+});
+
+test('a drain that finds Code closing admits nothing more', async (t) => {
+  const f = await fixture(t);
+  const { a, b } = f.commits;
+  await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+  const worker = f.worker();
+  // Closing begins while the drain is past its entry and before it admits a merge.
+  t.mock.method(worker as unknown as { advanceChecks(): Promise<void> }, 'advanceChecks', () => {
+    void worker.close();
+    return Promise.resolve();
+  });
+  await worker.work(f.projectId);
+  const base = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
+  assert.deepEqual([base.state, base.attempts, base.executionEpoch], ['queued', 0, 0]);
+});
+
 test('a base planned with another merge engine is not merged again under this one', async (t) => {
   const f = await fixture(t);
   const { c, d } = f.commits;

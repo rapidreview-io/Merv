@@ -174,7 +174,8 @@ function standing(row: BaseRow): CodeCheckStanding {
 interface CodeBaseHooks {
   /** A record reached an end, so the units that wait on it may have a base, or a new reason. */
   changed(tx: Transaction, projectId: string): Promise<void>;
-  sponsors(tx: Transaction, projectId: string, members: string[]): Promise<string[]>;
+  /** Who sponsors each step of a plan: the waiters are read once, each step takes its own. */
+  sponsors(tx: Transaction, projectId: string): Promise<(members: string[]) => Promise<string[]>>;
   serviceWork?: ServiceWork;
   /** Journal publication in the transaction that seals the result. */
   resolved?(tx: Transaction, projectId: string, key: string, commit: string): Promise<void>;
@@ -205,14 +206,9 @@ export function actionsOf(
   reason: string | null,
 ): CodeBaseAction[] {
   if (quarantined) return reason?.startsWith(INHERITED_QUARANTINE) ? [] : ['release'];
-  const open = !['resolved', 'cancelled'].includes(state);
-  const actions: CodeBaseAction[] = [];
-  if (open && ['blocked_infra', 'retry_wait'].includes(state)) actions.push('retry');
-  if (open && state !== 'suspended') actions.push('suspend');
-  if (open && state === 'suspended') actions.push('resume');
-  if (open) actions.push('cancel');
-  actions.push('quarantine');
-  return actions;
+  if (['resolved', 'cancelled'].includes(state)) return ['quarantine'];
+  const retry: CodeBaseAction[] = ['blocked_infra', 'retry_wait'].includes(state) ? ['retry'] : [];
+  return [...retry, state === 'suspended' ? 'resume' : 'suspend', 'cancel', 'quarantine'];
 }
 
 interface Execution {
@@ -491,7 +487,9 @@ export class CodeBaseService {
         quarantined: record.quarantined,
       }));
     const at = now();
+    let sponsors: ((members: string[]) => Promise<string[]>) | undefined;
     for (const step of planBase(wanted, existing)) {
+      sponsors ??= await this.hooks.sponsors(tx, projectId);
       const ready = await this.inputsResolved(tx, projectId, [step.left, step.right]);
       await tx.run(
         `INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,sponsors_json)
@@ -505,7 +503,7 @@ export class CodeBaseService {
         ready ? 'queued' : 'waiting_inputs',
         at,
         at,
-        JSON.stringify(await this.hooks.sponsors(tx, projectId, step.members)),
+        JSON.stringify(await sponsors(step.members)),
       );
     }
     return (await this.find(tx, projectId, wanted))!;
@@ -589,6 +587,8 @@ export class CodeBaseService {
     for (;;) {
       const execution = await this.state.transaction(
         async (tx): Promise<Execution | false | null> => {
+          // Closing admits nothing more: an admitted base would wait out its deadline unmerged.
+          if (this.closed) return null;
           const at = new Date(this.clock()).toISOString();
           const row = await tx.get<BaseRow>(
             `SELECT ${columns} FROM code_bases WHERE project_id=? AND health='healthy' AND
@@ -736,6 +736,8 @@ export class CodeBaseService {
     const executionKey = `${projectId}:${base.key}`;
     this.executions.set(executionKey, abort);
     let timer: NodeJS.Timeout | undefined;
+    const late = () =>
+      new MervError('code_base_deadline', 'The merge exceeded its execution deadline', 409);
     try {
       const outcome = await Promise.race([
         (async () => {
@@ -755,27 +757,17 @@ export class CodeBaseService {
             abort.signal,
             message ?? undefined,
           );
-          if (abort.signal.aborted || this.clock() >= Date.parse(input.deadline))
-            throw new MervError(
-              'code_base_deadline',
-              'The merge exceeded its execution deadline',
-              409,
-            );
-          if (result.outcome !== 'conflict')
-            await this.holdRef(projectId, base.key, result.commit, abort.signal);
-          return result;
+          if (abort.signal.aborted || this.clock() >= Date.parse(input.deadline)) throw late();
+          if (result.outcome === 'conflict') return result;
+          const merged = result.outcome === 'merged';
+          const held = await this.holdRef(projectId, base.key, result.commit, abort.signal, merged);
+          return { ...result, commit: held };
         })(),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => {
               abort.abort();
-              reject(
-                new MervError(
-                  'code_base_deadline',
-                  'The merge exceeded its execution deadline',
-                  409,
-                ),
-              );
+              reject(late());
             },
             Math.max(0, Date.parse(input.deadline) - this.clock()),
           );
@@ -1146,7 +1138,13 @@ export class CodeBaseService {
     const configured = await this.state.read((sql) => this.checkSpec(sql, projectId));
     const env = this.repositories.environment(projectId);
     const commit = await this.heldCommit(projectId, base.key);
-    check(commit, 'code_check_unavailable', 'the merged base holds no commit to check', 409);
+    // A failed verdict drops the ref before it is sealed: a restart in between finds the job.
+    check(
+      commit || handle?.jobId,
+      'code_check_unavailable',
+      'the merged base holds no commit to check',
+      409,
+    );
     // The operator withdrew the command while this check was in flight. Verification was not
     // asked for any more, and the merge is already complete and sound, so the base seals the
     // way a merge with no command seals rather than waiting at blocked_infra for a person.
@@ -1155,7 +1153,7 @@ export class CodeBaseService {
         projectId,
         base,
         checkSkipped('no-command', now()),
-        commit,
+        commit!,
         env,
         handle,
       );
@@ -1169,7 +1167,7 @@ export class CodeBaseService {
     const spec = handle?.spec ?? configured;
     const plan = checkPlan(spec, base.key, base.executionEpoch);
     if (!handle) {
-      const source = await archiveCommit(this.repositories.git, env, commit);
+      const source = await archiveCommit(this.repositories.git, env, commit!);
       return await this.persist(projectId, base, {
         ...(await checks.start(projectId, { ...plan, source })),
         epoch: base.executionEpoch,
@@ -1214,8 +1212,18 @@ export class CodeBaseService {
     return held.code === 0 ? held.stdout.toString('utf8').trim() : null;
   }
 
-  /** Writes a base's ref once; a ref that already names another commit stops the base. */
-  private async holdRef(projectId: string, key: string, commit: string, signal?: AbortSignal) {
+  /**
+   * Writes a base's ref once and answers the commit it holds. A ref naming another commit stops
+   * the base, unless it is this merge (same tree, same parents) that an execution wrote before it
+   * lost its epoch, under a message that a unit accepted at a member commit since has changed.
+   */
+  private async holdRef(
+    projectId: string,
+    key: string,
+    commit: string,
+    signal?: AbortSignal,
+    merged = false,
+  ): Promise<string> {
     const held = await this.heldCommit(projectId, key, signal);
     const env = this.repositories.environment(projectId);
     if (held === null)
@@ -1223,7 +1231,14 @@ export class CodeBaseService {
         env,
         signal,
       });
-    else check(held === commit, 'code_base_diverged', 'A base ref names another commit', 500);
+    else if (held !== commit) {
+      const shapes = merged
+        ? await this.repositories.git.ok(['show', '-s', '--format=%T %P', held, commit], { env })
+        : '';
+      const [theirs, ours] = shapes.toString().split('\n');
+      check(ours && theirs === ours, 'code_base_diverged', 'A base ref names another commit', 500);
+    }
+    return held ?? commit;
   }
 
   /** What the machine has reached so far, under the epoch that owns it. */
@@ -1254,7 +1269,7 @@ export class CodeBaseService {
     projectId: string,
     base: CodeBaseRecord,
     recorded: CodeBaseCheck,
-    commit: string,
+    commit: string | null,
     env: Record<string, string>,
     handle: CheckHandle | null,
   ): Promise<void> {
@@ -1263,7 +1278,7 @@ export class CodeBaseService {
     // resolution whose commit is not the one the ref already holds, so a check-failed base
     // has to be the shape a Git-conflicted one is. Nothing pins an unsealed base, and the
     // merge is deterministic, so the dropped commit is recomputable from the same inputs.
-    if (failed)
+    if (failed && commit)
       await this.repositories.git.ok(['update-ref', '-d', `refs/merv/bases/${base.key}`, commit], {
         env,
       });
@@ -1272,7 +1287,7 @@ export class CodeBaseService {
       : (await this.repositories.git.ok(['rev-parse', `${commit}^{tree}`], { env }))
           .toString('utf8')
           .trim();
-    const result = failed ? null : { method: 'auto', commit, tree, engine: MERGE_ENGINE };
+    const result = failed ? null : { method: 'auto', commit: commit!, tree, engine: MERGE_ENGINE };
     await this.state.transaction(async (tx) => {
       const input = this.execution(projectId, base, 'code.check');
       const changed = await tx.run(
@@ -1414,47 +1429,30 @@ export class CodeBaseService {
       const base = this.record(row);
       const action = input.action;
       interrupted = base.state === 'running';
-      check(
-        action === 'quarantine' ||
-          action === 'release' ||
-          (!base.quarantined && !['resolved', 'cancelled'].includes(base.state)),
-        'code_base_changed',
-        'This base cannot make that transition',
-        409,
-      );
-      check(
-        action !== 'release' || base.quarantined,
-        'code_base_changed',
-        'This base is not quarantined',
-        409,
-      );
-      // Release tells an inherited quarantine from an operator's own by this prefix, so an
-      // operator may not write a reason that would make their own quarantine look inherited
-      // and have it retracted by the release of some unrelated base.
-      check(
-        action !== 'quarantine' || !input.reason.startsWith(INHERITED_QUARANTINE),
-        'code_base_changed',
-        'That reason is reserved for an inherited quarantine; say why this base is quarantined',
-        409,
-      );
-      check(
-        action !== 'retry' || ['blocked_infra', 'retry_wait'].includes(base.state),
-        'code_base_changed',
-        'Only infrastructure work can be retried',
-        409,
-      );
-      check(
-        action !== 'resume' || base.state === 'suspended',
-        'code_base_changed',
-        'This base is not suspended',
-        409,
-      );
-      check(
-        action !== 'suspend' || base.state !== 'suspended',
-        'code_base_changed',
-        'This base is already suspended',
-        409,
-      );
+      const ended = base.quarantined || ['resolved', 'cancelled'].includes(base.state);
+      const refused = (
+        [
+          [
+            !['quarantine', 'release'].includes(action) && ended,
+            'This base cannot make that transition',
+          ],
+          [action === 'release' && !base.quarantined, 'This base is not quarantined'],
+          // Release tells an inherited quarantine from an operator's own by this prefix, so an
+          // operator may not write a reason that would make their own quarantine look inherited
+          // and have it retracted by the release of some unrelated base.
+          [
+            action === 'quarantine' && input.reason.startsWith(INHERITED_QUARANTINE),
+            'That reason is reserved for an inherited quarantine; say why this base is quarantined',
+          ],
+          [
+            action === 'retry' && !['blocked_infra', 'retry_wait'].includes(base.state),
+            'Only infrastructure work can be retried',
+          ],
+          [action === 'resume' && base.state !== 'suspended', 'This base is not suspended'],
+          [action === 'suspend' && base.state === 'suspended', 'This base is already suspended'],
+        ] as const
+      ).find(([refuse]) => refuse)?.[1];
+      check(!refused, 'code_base_changed', refused ?? '', 409);
       const resume = ['running', 'retry_wait'].includes(base.state) ? 'queued' : base.state;
       // Repair and release put back in the queue a base that had stopped, and leave one that
       // waits on its resolution task exactly where it is.

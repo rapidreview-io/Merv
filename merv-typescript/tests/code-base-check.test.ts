@@ -388,6 +388,23 @@ test('a failing check drops the auto-merge ref, so the one resolution task can s
   assert.equal(adapter.machines(), 1);
 });
 
+test('a failed verdict whose ref was dropped before a restart still seals as that failure', async (t) => {
+  const f = await baseFixture(t);
+  const verdicts: SandboxCheckVerdict[] = [];
+  f.bases.checks = scripted(verdicts).checks;
+  await configure(f, SPEC);
+  const { a, b } = f.commits;
+  const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+  await settle(f, 5);
+  assert.ok(JSON.parse((await row(f, base.key)).check_job_json!).jobId, 'the job runs');
+  // The server stopped after dropping the merge for a failed verdict, before sealing it.
+  execFileSync('git', ['--git-dir', f.bare, 'update-ref', '-d', `refs/merv/bases/${base.key}`]);
+  verdicts.push(ran(7, 'two tests failed'));
+  await settle(f, 2);
+  const sealed = await row(f, base.key);
+  assert.deepEqual([sealed.state, sealed.check_state], ['awaiting_resolution', 'failed']);
+});
+
 test('a check holds its own reservation and never the project’s merge lane', async (t) => {
   const f = await baseFixture(t);
   // A machine that takes three passes to become ready, so the check is in flight while

@@ -220,6 +220,9 @@ export class MainLanding {
       // Main moved since it was read, or landing stopped: the next step reads again.
       if (standing.reason || standing.main !== main || (await tx.get(OPEN, projectId)))
         return !standing.reason;
+      // A quarantine that reached this work since it was offered keeps it off main.
+      if ((await this.units.records.row(tx, projectId, next.unitId))?.quarantine_base_key)
+        return true;
       const seq = Number(
         (await tx.get<{ n: number }>(
           'SELECT COUNT(*) AS n FROM code_main_landings WHERE project_id=?',
@@ -262,26 +265,25 @@ export class MainLanding {
   /** The open landing's base reached an end, or has not yet: settle it, or wait for it. */
   private async settleOpen(row: LandingRow): Promise<boolean> {
     const projectId = row.project_id;
-    const base = await this.state.read((sql) =>
-      this.units.bases.find(sql, projectId, [row.main_oid, row.head_oid]),
-    );
-    const unusable = !base
-      ? 'base_missing'
-      : base.quarantined
-        ? 'base_quarantined'
-        : base.state === 'cancelled'
-          ? 'base_cancelled'
-          : null;
-    const result = !unusable && base?.state === 'resolved' ? base.result : null;
     return await this.state.transaction(async (tx) => {
       const open = await tx.get<LandingRow>(OPEN, projectId);
       if (open?.landing_key !== row.landing_key) return true;
       const standing = await this.standing(tx, projectId);
       if (standing.reason) return false;
+      // Read with the move it decides, so a base quarantined meanwhile never reaches main.
+      const base = await this.units.bases.find(tx, projectId, [row.main_oid, row.head_oid]);
+      const unusable = !base
+        ? 'base_missing'
+        : base.quarantined
+          ? 'base_quarantined'
+          : base.state === 'cancelled'
+            ? 'base_cancelled'
+            : null;
       if (unusable) return await this.settle(tx, row, 'skipped', null, unusable);
       // A bind or a publication moved main; the next landing starts from the main it left.
       if (standing.main !== row.main_oid)
         return await this.settle(tx, row, 'superseded', null, 'main_moved');
+      const result = base?.state === 'resolved' ? base.result : null;
       if (!result) return false;
       const outcome = result.method === 'task' ? 'resolved' : 'merged';
       await this.settle(tx, row, outcome, result.commit, null);

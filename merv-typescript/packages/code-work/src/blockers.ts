@@ -74,6 +74,13 @@ const CAP: Record<string, string> = {
 export const admissionCause = (word: string | null | undefined): word is string =>
   !!word && Object.hasOwn(CAP, word);
 
+/** A move with no control of its own; most are an operator's. */
+const said = (
+  sentence: string,
+  who = 'An operator',
+  whose: PersonMove['whose'] = 'operator',
+): PersonMove => ({ sentence, who, whose });
+
 /** The record a blocker is about, by the name this app knows it by, then the server's. */
 const subject = (blocker: CodeBlocker, names?: NameLookup) => {
   const first = blocker.related?.[0];
@@ -88,21 +95,17 @@ const subject = (blocker: CodeBlocker, names?: NameLookup) => {
 export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove | null {
   switch (blocker.code) {
     case 'code_publication_local_pending':
-      return {
-        sentence: 'Waiting for the reviewed commit to reach Merv main',
-        who: 'The server',
-        whose: 'nobody',
-      };
+      return said('Waiting for the reviewed commit to reach Merv main', 'The server', 'nobody');
     case 'code_publication_pending': {
       // Between acceptance and the first sync there is no pull request yet, and the blocker
       // says so by carrying none. Nothing is merged in that window and nobody is owed it,
       // so the wait is named and neither a person nor a control is.
       if (!blocker.related?.some((item) => item.kind === 'pull-request'))
-        return {
-          sentence: 'The publication for this work has not opened its pull request yet',
-          who: 'The server',
-          whose: 'nobody',
-        };
+        return said(
+          'The publication for this work has not opened its pull request yet',
+          'The server',
+          'nobody',
+        );
       // The reviewed merge is a control this app draws, on Code, beside the pull request
       // itself; the number stands there too, so the sentence does not repeat it. The label
       // is the destination control's own words, as the verb table asks.
@@ -116,50 +119,25 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
     case 'code_publication_stale':
       // Nobody acts — the founder's ruling of 2026-09-22 calls the successor automatic —
       // and a person still deserves to know why the cycle waits.
-      return {
-        sentence: 'Main has moved past this accepted code',
-        who: 'A successor task',
-        whose: 'nobody',
-      };
+      return said('Main has moved past this accepted code', 'A successor task', 'nobody');
     case 'code_publication_disabled':
-      return {
-        sentence: 'Publication is disabled for this project until an operator clears it',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said('Publication is disabled for this project until an operator clears it');
     case 'code_publication_setup_required':
-      return {
-        sentence: 'Publication setup needs an operator before this code can reach main',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said('Publication setup needs an operator before this code can reach main');
     case 'code_publication_closed':
       // Code never reads a closed pull request again, so a reopen changes nothing here.
-      return {
-        sentence: 'The pull request was closed unmerged; an operator creates successor work',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said('The pull request was closed unmerged; an operator creates successor work');
     case 'code_publication_incident':
-      return {
-        sentence: 'A publication incident is kept here until an operator clears it',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said('A publication incident is kept here until an operator clears it');
     case 'code_publish_unverifiable':
-      return {
-        sentence: 'This work was to publish to main and no publication opened for it',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said('This work was to publish to main and no publication opened for it');
     case 'code_base_admission':
-      return {
-        sentence:
-          (admissionCause(blocker.cause) && CAP[blocker.cause]) ||
+      return said(
+        (admissionCause(blocker.cause) && CAP[blocker.cause]) ||
           'A limit somebody set is holding this merge',
-        who: 'An administrator',
-        whose: 'admin',
-      };
+        'An administrator',
+        'admin',
+      );
     case 'code_merge_conflict': {
       // A conflict waits on the resolution task, which is work already in flight and
       // nobody's to make; only a resolution its review budget suspended waits on a person.
@@ -173,19 +151,11 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
     }
     case 'code_base_pending':
       if (blocker.key === 'initialization')
-        return {
-          sentence: 'Merv is initializing this project’s Git repository',
-          who: 'The server',
-          whose: 'nobody',
-        };
+        return said('Merv is initializing this project’s Git repository', 'The server', 'nobody');
       // Every other pending base names work that has not been accepted yet, which is that
       // record's own business; only main waits on somebody binding or importing it.
       return blocker.key === 'main'
-        ? {
-            sentence: 'Main is not in this project’s repository yet',
-            who: 'An administrator',
-            whose: 'admin',
-          }
+        ? said('Main is not in this project’s repository yet', 'An administrator', 'admin')
         : null;
     case 'code_capture_quarantined':
       // The fence is drawn where the writer is read, on the unit's code card.
@@ -205,12 +175,9 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
       // Both producers of this code agree the retained base is spent; only the capture
       // quarantine has a release at all, and then only for a false alarm. What ends the
       // wait for everyone waiting on it is the operator replanning them.
-      return {
-        sentence:
-          'Quarantined: the code kept here cannot be used, and an operator replans the work waiting on it',
-        who: 'An operator',
-        whose: 'operator',
-      };
+      return said(
+        'Quarantined: the code kept here cannot be used, and an operator replans the work waiting on it',
+      );
     default:
       return null;
   }

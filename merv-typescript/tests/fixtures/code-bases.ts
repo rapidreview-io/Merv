@@ -105,7 +105,7 @@ export async function baseFixture(t: TestContext) {
   let changes = 0;
   const hooks = {
     changed: async () => void (changes += 1),
-    sponsors: async () => ['root-a', 'root-b'],
+    sponsors: async () => async () => ['root-a', 'root-b'],
     serviceWork: sessions.serviceWork,
   };
   const workers: CodeBaseService[] = [];

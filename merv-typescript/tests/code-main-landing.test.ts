@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import type { CodeUnitService } from '../packages/code-work/src/units.js';
 import { MainLanding } from '../packages/code-work/src/landing.js';
+import type { CodeRepositories } from '@merv/code/store/repository';
+import type { Transaction } from '@merv/contracts';
 import { git } from './fixtures/code-store.js';
 import { codePublishFixture } from './fixtures/code-publish.js';
 import { baseResolutionFixture } from './fixtures/base-resolution.js';
@@ -253,6 +255,50 @@ test('code-less and quarantined work never lands', async (t) => {
   const status = await f.status();
   assert.deepEqual(status.waiting, []);
   assert.deepEqual(status.landed, []);
+});
+
+test('a quarantine that commits while landing works is read with the move of main', async (t) => {
+  const f = await fixture(t);
+  t.mock.method(f.landing, 'soon', () => {});
+  const first = await f.declare('First');
+  await f.accept(first, f.feature);
+  await f.landing.work(f.project);
+  // A base quarantined after its merge, as its landing settles, is skipped and never landed.
+  const second = await f.declare('Second');
+  await f.accept(second, f.moved);
+  await f.landing.work(f.project);
+  await f.bases.work(f.project);
+  const key = (await f.status()).current!.baseKey!;
+  const standing = f.landing.standing.bind(f.landing);
+  let calls = 0;
+  t.mock.method(f.landing, 'standing', async (sql: Parameters<typeof standing>[0], id: string) => {
+    if (++calls === 2)
+      await (sql as unknown as Transaction).run(
+        "UPDATE code_bases SET health='quarantined',operator_reason='Late alarm' WHERE base_key=?",
+        key,
+      );
+    return await standing(sql, id);
+  });
+  await f.landing.work(f.project);
+  assert.deepEqual(outcomes(await f.status()), [
+    [second.id, 'skipped'],
+    [first.id, 'ff'],
+  ]);
+  // Work quarantined while Git says main fast-forwards to it is not fast-forwarded to.
+  const third = await f.declare('Third');
+  await f.accept(third, f.commitOn(f.feature, { 'third.txt': 'third\n' }, 'third'));
+  const git = (f.landing as unknown as { repositories: CodeRepositories }).repositories.git;
+  const run = git.run.bind(git);
+  t.mock.method(git, 'run', async (...args: Parameters<typeof run>) => {
+    if (args[0].includes('--is-ancestor'))
+      await f.state.transaction((tx) =>
+        tx.run("UPDATE code_units SET quarantine_base_key='late' WHERE unit_id=?", third.id),
+      );
+    return await run(...args);
+  });
+  await f.landing.work(f.project);
+  assert.equal(await f.main(), f.feature);
+  assert.equal((await f.status()).landed.length, 2);
 });
 
 test('a project linked to GitHub is left to its pull requests', async (t) => {

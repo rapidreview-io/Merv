@@ -550,15 +550,14 @@ test('units waiting on the same two accepted commits get one merged base, and a 
         baseSponsors(
           tx: import('@merv/contracts').Transaction,
           projectId: string,
-          members: string[],
-        ): Promise<string[]>;
+        ): Promise<(members: string[]) => Promise<string[]>>;
       };
     }
   ).unitStore;
   await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
   const bases = new CodeBaseService(f.state, repositories, {
     changed: async (tx, projectId) => await units.changed(tx, projectId),
-    sponsors: (tx, projectId, members) => units.baseSponsors(tx, projectId, members),
+    sponsors: (tx, projectId) => units.baseSponsors(tx, projectId),
     serviceWork: f.sessions.serviceWork,
   });
   await bases.initialize();

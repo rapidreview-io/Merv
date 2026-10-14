@@ -230,14 +230,27 @@ export class CodePublicationService implements CodePublicationApi {
           ? error.code
           : 'github_unavailable';
       await this.state.transaction(async (tx) => {
-        await tx.run(
+        const held = await tx.run(
           'UPDATE code_publications SET error=? WHERE proposal_id=? AND lock_id=?',
           code,
           id,
           lock,
         );
+        const record = this.decode(row);
+        // A base quarantine that reached the accepted unit ends its publication, which would be
+        // refused on every pass and hold the repository for good; a successor takes it.
+        if (
+          held.changes &&
+          code === 'code_quarantined' &&
+          (await tx.get(
+            'SELECT 1 FROM code_units WHERE project_id=? AND unit_id=? AND quarantine_base_key IS NOT NULL',
+            caller.projectId,
+            record.instanceId,
+          ))
+        )
+          await this.markStale(caller, record, code, null, tx);
         // A unit reads a failing sync as an operator's wait (unit-store publicationOf).
-        if (row.error !== code) await this.host.reconcile(caller, tx);
+        else if (row.error !== code) await this.host.reconcile(caller, tx);
       });
       throw error;
     } finally {
@@ -548,11 +561,13 @@ export class CodePublicationService implements CodePublicationApi {
                 if (!pull || pull.merged || this.pins(current, pull))
                   await this.host.snapshot(caller, current);
               }
-              if (!pull) {
-                const found = await client.pulls(token, current.repository, {
+              const proposed = () =>
+                client.pulls(token, current.repository, {
                   state: 'all',
                   head: `${current.repository.split('/')[0]}:${current.branch}`,
                 });
+              if (!pull) {
+                const found = await proposed();
                 check(
                   found.length <= 1,
                   'github_conflict',
@@ -579,10 +594,7 @@ export class CodePublicationService implements CodePublicationApi {
                       body: `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`,
                     });
                   } catch (error) {
-                    const recovered = await client.pulls(token, current.repository, {
-                      state: 'all',
-                      head: `${current.repository.split('/')[0]}:${current.branch}`,
-                    });
+                    const recovered = await proposed();
                     if (recovered.length !== 1) throw error;
                     pull = recovered[0];
                   }

@@ -33,6 +33,7 @@ import type {
   ResolutionWorkCreator,
 } from './types.js';
 import { CodeUnitService } from './units.js';
+import { acceptance, pin, unitColumns, type UnitRow } from './unit-store.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
 
@@ -161,7 +162,7 @@ export class CodeService implements Code {
           // A base that reached an end may be the one a landing on main waits for.
           this.landing?.soon(projectId);
         },
-        sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
+        sponsors: (tx, projectId) => this.unitStore.baseSponsors(tx, projectId),
         serviceWork: sessions.serviceWork,
         resolved: async (tx, projectId, key, commit) => {
           await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
@@ -481,21 +482,32 @@ export class CodeService implements Code {
   async history(caller: Caller, input: { ref?: string; path?: string; limit?: number }) {
     const { ref, commit } = await this.commitOf(caller, input);
     const entries = await this.utility.log(caller.projectId, commit, input);
-    const { units } = await this.unitStore.status(caller);
+    // The newest 200 units, as code.status lists them, with their heads and bases, not their
+    // derived status: a reader's snapshot is held through the Git below.
+    const units = await this.state.read((sql) =>
+      sql.all<UnitRow>(
+        `SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200`,
+        caller.projectId,
+      ),
+    );
     const owner = new Map<string, string>();
     const wanted = new Set(entries.map((entry) => entry.oid));
     // Oldest acceptance first, so a commit is the work of the unit that first carried it.
-    for (const unit of [...units].sort((a, b) =>
-      (a.acceptance?.acceptedAt ?? '~').localeCompare(b.acceptance?.acceptedAt ?? '~'),
+    for (const row of units.sort((a, b) =>
+      (a.accepted_at ?? '~').localeCompare(b.accepted_at ?? '~'),
     )) {
-      const head = unit.acceptance?.reference ?? unit.canonicalHead;
-      if (!head || owner.size >= wanted.size) continue;
+      if (owner.size >= wanted.size) break;
+      const head =
+        acceptance(row)?.reference ??
+        (await this.state.read((sql) => this.writerStore.facts(sql, caller.projectId, row.unit_id)))
+          .canonicalHead;
+      if (!head) continue;
       for (const oid of await this.utility.added(
         caller.projectId,
         head,
-        unit.base?.reference ?? null,
+        pin(row)?.reference ?? null,
       ))
-        if (wanted.has(oid) && !owner.has(oid)) owner.set(oid, unit.unitId);
+        if (wanted.has(oid) && !owner.has(oid)) owner.set(oid, row.unit_id);
     }
     const named = new Map<string, { kind: string; title: string }>();
     await this.state.snapshotTransaction(async (tx) => {
@@ -584,13 +596,15 @@ export class CodeService implements Code {
     this.releaseChanges?.();
     this.commands.close();
     // Every read is refused from here on. Running admissions and GitHub calls still reach the
-    // database, which outlives Code, and are waited for before the writer lock is given up.
+    // database, which outlives Code, and are waited for before the writer lock is given up. The
+    // store drains alongside them: its deadline ends a GitHub import it owns (up to ten minutes
+    // of fetch otherwise), which the next process retries.
     await Promise.all([
       merging,
       mirroring,
       landing,
       Promise.allSettled([...this.networkOperations]),
+      this.store?.close(),
     ]);
-    await this.store?.close();
   }
 }
