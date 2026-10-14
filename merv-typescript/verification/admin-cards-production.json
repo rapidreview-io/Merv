@@ -1,0 +1,16 @@
+{
+  "release": "20261014T072556Z-30578b40-4d693740445d",
+  "verified": {
+    "users": 10,
+    "experiments": 50,
+    "active": 8,
+    "past": 42,
+    "userFiltering": true,
+    "pastStandaloneCard": true,
+    "knownEmailLabels": true,
+    "legacyMemberIdsShortened": true
+  },
+  "tests": 13,
+  "build": "pass",
+  "uiTypecheck": "pass"
+}
