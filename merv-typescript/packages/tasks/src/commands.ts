@@ -723,14 +723,8 @@ export async function submitReview(
   input: TaskReview,
   transaction?: Transaction,
 ): Promise<Task> {
-  caller = structuredClone(caller);
+  // Reviews.apply, the only caller, copied caller and input and refused fields Tasks does not take.
   rejectReviewReturn(input);
-  input = plain<TaskReview>(input);
-  check(
-    (input as { paperChanges?: unknown }).paperChanges === undefined,
-    'paper_edits_unavailable',
-    'Only experiment and reflection reviewers update the paper with a verdict',
-  );
   return await taskCommand(
     ctx,
     caller,

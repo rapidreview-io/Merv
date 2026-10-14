@@ -1,4 +1,4 @@
-import { visible, mapAsync, record } from '@merv/contracts';
+import { visible, mapAsync } from '@merv/contracts';
 import { childRequest, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { requireDependencies } from '@merv/workflows/rules';
 import {
@@ -807,15 +807,13 @@ export async function submitReview(
   transaction?: Transaction,
 ): Promise<Experiment> {
   ctx.open();
-  caller = structuredClone(caller);
+  // Reviews.apply, the only caller, copied the caller and required review in this transaction.
   const input = plain<ExperimentReview>(value, 'invalid_experiment_input', {
     nodes: 8192,
     depth: 20,
     bytes: 262144,
   });
   return await inTransaction(ctx.state, transaction, async (tx) => {
-    await ctx.scope.require(caller, 'review', tx);
-    check(record(input), 'invalid_experiment_input', 'Review input must be an object');
     if (input.paperChanges !== undefined)
       input.paperChanges = ctx.paper.parseChanges(input.paperChanges);
     check(
