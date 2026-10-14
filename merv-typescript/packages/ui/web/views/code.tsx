@@ -3,8 +3,8 @@ import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { permits } from '@merv/scope/rules';
-import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
-import { EmptyState, LoadState, Short, StatusPill } from '../components';
+import { githubRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
+import { EmptyState, LoadState, PageLoad, Short, StatusPill } from '../components';
 import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
 import { usePageFacts } from '../shell';
@@ -12,6 +12,7 @@ import { BranchCanvas } from './code-canvas';
 import { CodeFiles } from './code-files';
 import { CodeCard, CodeOperations, type Reader } from './code-card';
 import { MAIN, chipsOf, gitModel } from './code-model';
+import { UnitCode } from './code-section';
 import { GitHubPublications } from './github-publications';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -43,7 +44,7 @@ function useGitHubStatus() {
   useEffect(() => {
     let live = true;
     setRead({ settled: false });
-    void accountRequest<GitHubStatus>('/code/github', { scoped: true, credentials: 'same-origin' })
+    void githubRequest<GitHubStatus>()
       .then((connection) => live && setRead({ connection, settled: true }))
       .catch(() => live && setRead({ settled: true }));
     return () => {
@@ -82,7 +83,8 @@ function mainSaid(status: CodeProjectStatus | undefined): string {
 /** A count not yet read is the em dash the console uses, never a zero. */
 const EM = '—';
 
-export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & Reader) {
+export function CodePage({ row, shell, manages, signedIn }: ViewProps & Omit<Reader, 'named'>) {
+  const named = useActorNames();
   const read = useTool<{
     commands: CodeCommandRecord[];
     status?: CodeProjectStatus;
@@ -152,12 +154,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   // a server with no GitHub app, or a reader who may not manage it, is shown no door
   // to a room that holds nothing for them.
   const mends = !!github?.configured && !!github.canManage;
-  if (!settled || (unlinked && read.loading))
-    return (
-      <div className="page-stage">
-        <LoadState loading />
-      </div>
-    );
+  if (!settled || (unlinked && read.loading)) return <PageLoad loading />;
   // Two empty sections under that one state would say it twice more.
   if (bare)
     return (
@@ -266,18 +263,13 @@ export const managesCode = (actor: Actor) => permits(actor.role, 'admin');
 export const signedInAdmin = (actor: Actor, account: Account) =>
   permits(actor.role, 'admin') && account.kind === 'user';
 
-/** Files and History: whose code it is as a repository, and how the work made it. */
-function CodeSwitch({ root, files }: { root: string; files: boolean }) {
-  return (
-    <nav className="code-switch" aria-label="Code">
-      <Link to={root} aria-current={files ? 'page' : undefined}>
-        Files
-      </Link>
-      <Link to={`${root}/history`} aria-current={files ? undefined : 'page'}>
-        History
-      </Link>
-    </nav>
-  );
+/**
+ * A record's Code section. The publication verbs answer a signed-in operator and nobody else,
+ * so it is told who is reading before it offers the move.
+ */
+export function RecordCode(props: Pick<Parameters<typeof UnitCode>[0], 'unit' | 'named'>) {
+  const { actor, account } = useSession();
+  return <UnitCode {...props} signedIn={signedInAdmin(actor, account)} />;
 }
 
 export const CodeView = (props: ViewProps) => {
@@ -290,8 +282,16 @@ export const CodeView = (props: ViewProps) => {
   const files = rest === '' || rest === '/' || /^\/(tree|blob)(\/|$)/.test(rest);
   return (
     <>
+      {/* Files and History: whose code it is as a repository, and how the work made it. */}
       <div className="page-stage code-switch-stage">
-        <CodeSwitch root={root} files={files} />
+        <nav className="code-switch" aria-label="Code">
+          <Link to={root} aria-current={files ? 'page' : undefined}>
+            Files
+          </Link>
+          <Link to={`${root}/history`} aria-current={files ? undefined : 'page'}>
+            History
+          </Link>
+        </nav>
       </div>
       {files ? (
         <div className="page-stage">
@@ -302,7 +302,6 @@ export const CodeView = (props: ViewProps) => {
           {...props}
           manages={managesCode(actor)}
           signedIn={signedInAdmin(actor, account)}
-          named={useActorNames()}
         />
       )}
     </>

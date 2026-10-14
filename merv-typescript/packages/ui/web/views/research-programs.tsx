@@ -5,7 +5,7 @@ import { useTool } from '../api';
 import {
   Failure,
   Field,
-  LoadState,
+  PageLoad,
   RecordPage,
   StatusPill,
   Submit,
@@ -78,12 +78,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   const wave = data.data?.reflection;
   if (held.data)
     return <Navigate to={`${row.path}/${held.data.reflectionId}?lens=${id}`} replace />;
-  if (!wave)
-    return (
-      <div className="page-stage">
-        <LoadState {...(held.loading ? held : data)} back={homeOf(shell.rows)} />
-      </div>
-    );
+  if (!wave) return <PageLoad {...(held.loading ? held : data)} back={homeOf(shell.rows)} />;
   const tabs = [
     ...(wave.report ? [{ value: 'report', label: 'Report' }] : []),
     ...wave.lenses.map((lens) => ({

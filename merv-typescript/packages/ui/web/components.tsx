@@ -470,7 +470,6 @@ export function LoadState({
   emptyTitle = 'Nothing here yet',
   emptyHint,
   emptyKind,
-  emptyIcon,
   emptyAction,
   back,
   columns = 1,
@@ -482,9 +481,8 @@ export function LoadState({
   empty?: boolean;
   emptyTitle?: string;
   emptyHint?: ReactNode;
-  /** What the empty state draws: see EmptyState's `kind`, `icon` and `action`. */
+  /** What the empty state draws: see EmptyState's `kind` and `action`. */
   emptyKind?: string;
-  emptyIcon?: string;
   emptyAction?: ReactNode;
   back?: { to: string; label: string };
   columns?: number;
@@ -535,17 +533,16 @@ export function LoadState({
       </div>
     );
   if (empty)
-    return (
-      <EmptyState
-        kind={emptyKind}
-        icon={emptyIcon ?? emptyKind}
-        title={emptyTitle}
-        hint={emptyHint}
-        action={emptyAction}
-      />
-    );
+    return <EmptyState kind={emptyKind} title={emptyTitle} hint={emptyHint} action={emptyAction} />;
   return null;
 }
+
+/** A page that has nothing to draw but its read's state. */
+export const PageLoad = (props: Parameters<typeof LoadState>[0]) => (
+  <div className="page-stage">
+    <LoadState {...props} />
+  </div>
+);
 
 /**
  * Where drawing a page or a file throws, that part says so and offers to try again;
@@ -727,6 +724,42 @@ export function useDismiss(
 }
 
 /**
+ * A page's ⋯ menu: `menu(items)` is the control and the panel it opens, shut by Escape or a
+ * press away (`claims` keeps that Escape from also leaving the record), and `item` one entry.
+ */
+export function useMoreMenu(claims = false) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const close = () => setOpen(false);
+  useDismiss(open, box, close, claims);
+  const item = (label: string, act: () => void) => (
+    <button type="button" role="menuitem" className="file-menu-item" onClick={act}>
+      {label}
+    </button>
+  );
+  const menu = (items: ReactNode) => (
+    <div className="file-menu" ref={box}>
+      <button
+        type="button"
+        className="btn-icon file-menu-open"
+        aria-label="More"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="file-menu-panel" role="menu">
+          {items}
+        </div>
+      )}
+    </div>
+  );
+  return { open, close, item, menu };
+}
+
+/**
  * A form that stands on its own rather than under a list's control row — an
  * editor beside a heading, a panel's one form — held to the same width and given
  * the same manners as the forms a list opens.
@@ -836,14 +869,12 @@ export function ResearchCommand({
   input,
   label,
   onSaved,
-  available = true,
   disabled = false,
 }: {
   tool: string;
   input: Record<string, unknown>;
   label: string;
   onSaved: () => void;
-  available?: boolean;
   disabled?: boolean;
 }) {
   const command = useCommand<{ id: string; kind?: string }>({
@@ -857,7 +888,6 @@ export function ResearchCommand({
     conflictCode: 'revision_conflict',
     onConflict: onSaved,
   });
-  if (!available && !command.locked) return null;
   return (
     <div className="stack">
       <Failure message={command.error} />

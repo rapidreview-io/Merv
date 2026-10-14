@@ -9,6 +9,7 @@ import type {
 } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
+import { safely } from '../api';
 import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
 import { clock } from '../liveness';
@@ -332,21 +333,12 @@ type Tab = 'document' | 'agents' | 'artifacts';
 const TABS: Tab[] = ['document', 'agents', 'artifacts'];
 /** The tab a reader last chose for this kind of unit, kept in the browser where it can be. */
 const tabKey = (kind: string) => `merv:unit-tab:${kind.toLowerCase()}`;
-function remembered(kind: string): Tab {
-  try {
+const remembered = (kind: string): Tab =>
+  safely(() => {
     const kept = localStorage.getItem(tabKey(kind));
-    return TABS.find((tab) => tab === kept) ?? 'document';
-  } catch {
-    return 'document';
-  }
-}
-function remember(kind: string, tab: Tab) {
-  try {
-    localStorage.setItem(tabKey(kind), tab);
-  } catch {
-    // A browser that keeps nothing still switches tabs.
-  }
-}
+    return TABS.find((tab) => tab === kept);
+  }) ?? 'document';
+const remember = (kind: string, tab: Tab) => safely(() => localStorage.setItem(tabKey(kind), tab));
 
 export function UnitView({
   unit,

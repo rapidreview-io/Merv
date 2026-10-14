@@ -122,17 +122,15 @@ function Plugins({ shell }: ViewProps) {
         >
           {/* How an entry stands is what the table is for, so it is never the column a
               narrow page loses: under a phone's width each fact stands under the last. */}
-          <Ruled
+          <Ruled<PluginState>
             label="Plugins"
             template="minmax(0, 1fr) minmax(0, 1.6fr) 120px"
             rows={unwellFirst(shell.plugins, active)}
             keyOf={(plugin) => plugin.id}
             columns={[
-              col<PluginState>('id', 'Entry', (p) => <strong className="mono">{p.id}</strong>),
-              col<PluginState>('name', 'Module', (p) => (
-                <span className="mono faint">{p.name}</span>
-              )),
-              col<PluginState>('state', 'State', (p) => <StatusPill value={p.state} />),
+              col('id', 'Entry', (p) => <strong className="mono">{p.id}</strong>),
+              col('name', 'Module', (p) => <span className="mono faint">{p.name}</span>),
+              col('state', 'State', (p) => <StatusPill value={p.state} />),
             ]}
           />
         </Fold>
@@ -143,20 +141,16 @@ function Plugins({ shell }: ViewProps) {
         open={degraded > 0}
         health={<Health well="all ready" ill="degraded" unwell={degraded} />}
       >
-        <Ruled
+        <Ruled<UiRowDescription>
           label="Sidebar rows"
           template="minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) 120px"
           rows={unwellFirst(shell.rows, ready)}
           keyOf={(row) => row.id}
           columns={[
-            col<UiRowDescription>('label', 'Row', (row) => <strong>{row.label}</strong>),
-            col<UiRowDescription>('group', 'Group', (row) => row.group),
-            col<UiRowDescription>('kind', 'View kind', (row) => (
-              <span className="mono faint">{row.view.kind}</span>
-            )),
-            col<UiRowDescription>('status', 'Status', (row) => (
-              <StatusPill value={row.status.state ?? 'ready'} />
-            )),
+            col('label', 'Row', (row) => <strong>{row.label}</strong>),
+            col('group', 'Group', (row) => row.group),
+            col('kind', 'View kind', (row) => <span className="mono faint">{row.view.kind}</span>),
+            col('status', 'Status', (row) => <StatusPill value={row.status.state ?? 'ready'} />),
           ]}
         />
       </Fold>

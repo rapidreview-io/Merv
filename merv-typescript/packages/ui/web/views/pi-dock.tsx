@@ -10,6 +10,7 @@
 import type { UiRowDescription } from '@merv/ui/rows';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { safely } from '../api';
 import { CloseIcon, ExpandIcon } from '../icons';
 import { media } from '../theme';
 import type { PiSnapshot } from '@merv/pi/models';
@@ -91,14 +92,11 @@ function Opened({ title, at }: { title: string; at: number }) {
 }
 
 type Spot = { x: number; y: number };
-const kept = (): Spot | null => {
-  try {
+const kept = (): Spot | null =>
+  safely(() => {
     const spot = JSON.parse(localStorage.getItem(PLACE) ?? 'null');
     return Number.isFinite(spot?.x) && Number.isFinite(spot?.y) ? spot : null;
-  } catch {
-    return null;
-  }
-};
+  }, null);
 /** The same place, moved only as far as keeps the whole window inside the viewport. */
 const inside = (spot: Spot, { width, height }: DOMRect): Spot => {
   const x = Math.min(Math.max(0, spot.x), window.innerWidth - width);
@@ -137,11 +135,7 @@ function Floating({
   const drop = () => {
     if (!grab.current) return;
     grab.current = null;
-    try {
-      if (held.current) localStorage.setItem(PLACE, JSON.stringify(held.current));
-    } catch {
-      /* the window stays where it is for this page only */
-    }
+    safely(() => held.current && localStorage.setItem(PLACE, JSON.stringify(held.current)));
   };
   return (
     <aside

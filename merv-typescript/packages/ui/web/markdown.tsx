@@ -325,13 +325,11 @@ export function RecordText({
  * stands as typed. Where no worker starts, as in a test's DOM, the parser loads into the page and
  * reads there.
  */
-type Parse = (source: string) => Block[];
-let parse: Parse | undefined;
-let loading: Promise<void> | undefined;
-export const loadParser = () =>
-  (loading ??= import('./markdown-parse').then((module) => {
-    parse = module.parseMarkdown;
-  }));
+let parse: ((source: string) => Block[]) | undefined;
+/** A load that failed (a dropped connection) is tried again by the next text read. */
+export const loadParser = async () => {
+  parse ??= (await import('./markdown-parse')).parseMarkdown;
+};
 /** The trees of the texts read last; null for one not read in time. */
 const trees = offThread<string, Block[]>((source) => loadParser().then(() => parse!(source)));
 

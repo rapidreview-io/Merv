@@ -126,7 +126,8 @@ const highlighter = () =>
 
 /**
  * The lines of `code` in the language `lang` names coloured, once the highlighter and its grammar
- * load, with `begin` called as the colouring starts; null where they cannot be. Some lines take a
+ * load, with `begin` called as the colouring starts; null where they cannot be, and undefined where
+ * colouring failed (a grammar's download dropped), so it is tried again. Some lines take a
  * grammar seconds even within colourable()'s bounds, so the page calls this off its thread
  * (code-block.tsx), where a block not coloured in time is left plain.
  */
@@ -134,7 +135,7 @@ export async function colour(
   code: string,
   lang: string,
   begin: () => void = () => {},
-): Promise<Piece[][] | null> {
+): Promise<Piece[][] | null | undefined> {
   const language = languageOf(lang);
   if (!language || !colourable(code)) return null;
   try {
@@ -167,6 +168,6 @@ export async function colour(
         })),
       );
   } catch {
-    return null;
+    return undefined;
   }
 }

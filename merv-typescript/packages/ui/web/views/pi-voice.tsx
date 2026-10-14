@@ -97,11 +97,12 @@ export function useVoice(pi: Conversation | null) {
   const conversation = useRef(pi);
   conversation.current = pi;
 
-  const send = (type: string, content: string, delegation: string | null) => {
+  /** One event to GPT-Live; commentary on a delegation carries it and what to say. */
+  const send = (type: string, content?: string, delegation?: string | null) => {
     const dc = live.current?.dc;
     if (dc?.readyState !== 'open') return;
     const event: Record<string, unknown> = { type, event_id: crypto.randomUUID() };
-    if (type !== 'session.close') Object.assign(event, { delegation_id: delegation, content });
+    if (delegation !== undefined) Object.assign(event, { delegation_id: delegation, content });
     dc.send(JSON.stringify(event));
   };
 
@@ -124,7 +125,7 @@ export function useVoice(pi: Conversation | null) {
     if (!held) return;
     if (held.dc.readyState === 'open') {
       setState('closing');
-      send('session.close', '', null);
+      send('session.close');
       // The session says closed once it has settled its usage; a silent end still ends it.
       setTimeout(() => live.current === held && teardown(), 4_000);
     } else teardown();
@@ -337,13 +338,7 @@ export function useVoice(pi: Conversation | null) {
       if (!held) return;
       const next = !muted;
       for (const track of held.mic?.getAudioTracks() ?? []) track.enabled = !next;
-      if (held.dc.readyState === 'open')
-        held.dc.send(
-          JSON.stringify({
-            type: next ? 'session.input_audio.mute' : 'session.input_audio.unmute',
-            event_id: crypto.randomUUID(),
-          }),
-        );
+      send(next ? 'session.input_audio.mute' : 'session.input_audio.unmute');
       setMuted(next);
     },
     /** How loud the person and the voice are right now, 0 to 1. */

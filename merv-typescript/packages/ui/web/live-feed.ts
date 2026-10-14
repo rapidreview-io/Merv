@@ -22,12 +22,8 @@ const kept = (timeline: Timeline): Timeline => {
   };
 };
 
-/** What the page holds of the feed: each live visit's thread and its newest blocks. */
-export interface LiveTails {
-  /** The newest blocks of each thread whose visit is live, by thread id. */
-  byThread: ReadonlyMap<string, AgentBlock[]>;
-}
-const NO_TAILS: LiveTails = { byThread: new Map() };
+/** What the page holds of the feed: the newest blocks of each thread whose visit is live. */
+const NO_TAILS: ReadonlyMap<string, AgentBlock[]> = new Map();
 
 /**
  * The feed's frames applied to what is held, by visit: a snapshot starts over, a visit marked
@@ -55,7 +51,7 @@ export function applyFrame(
  * The feed, read while `enabled` (`useEventStream`). Each connection starts over from the
  * server's snapshot.
  */
-export function useLiveFeed(enabled: boolean): LiveTails {
+export function useLiveFeed(enabled: boolean): ReadonlyMap<string, AgentBlock[]> {
   const [tails, setTails] = useState(NO_TAILS);
   const held = useRef(new Map<string, { threadId: string; timeline: Timeline }>());
   useEventStream(enabled ? '/sessions/live' : null, (event, value) => {
@@ -65,7 +61,7 @@ export function useLiveFeed(enabled: boolean): LiveTails {
     held.current = applyFrame(held.current, frame, event === 'snapshot');
     const byThread = new Map<string, AgentBlock[]>();
     for (const visit of held.current.values()) byThread.set(visit.threadId, visit.timeline.blocks);
-    setTails({ byThread });
+    setTails(byThread);
   });
   return enabled ? tails : NO_TAILS;
 }

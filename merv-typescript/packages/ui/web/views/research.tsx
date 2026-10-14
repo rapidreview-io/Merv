@@ -1,7 +1,7 @@
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { Link, useParams } from 'react-router-dom';
-import { LoadState, RecordPage } from '../components';
+import { PageLoad, RecordPage } from '../components';
 import { recordRoutes } from '../list-filters';
 import { homeOf, pathOf } from '../navigation';
 import { Gate, Relations, StageMark, useRecordRead } from '../process';
@@ -14,12 +14,7 @@ function CycleDetail({ row, shell }: ViewProps) {
   // The cycle and the stage it stands at, from one read that runs no action's check; an ended
   // cycle changes no more, so it is not polled.
   const read = useRecordRead<{ record: ResearchRecord; process: ProcessGraph }>(row, id);
-  if (!read.data)
-    return (
-      <div className="page-stage">
-        <LoadState {...read} back={back} />
-      </div>
-    );
+  if (!read.data) return <PageLoad {...read} back={back} />;
   const { record, process } = read.data;
   const relations = process.dependencies;
   const waitsOn = relations.filter((item) => item.direction === 'depends_on');

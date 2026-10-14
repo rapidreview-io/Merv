@@ -10,7 +10,8 @@
  * to start or dies, as a stale tab's does once a deploy removed its script, so does `here` unless
  * the jobs may only be done off the page (`fallback: false`): those then stand undone.
  * What was done is remembered by key, the most recent first, up to KEEP of them and KEEP_CHARS of
- * keys, so every length of a block streamed in is not kept.
+ * keys, so every length of a block streamed in is not kept. A job that failed (undefined, such as a
+ * download that dropped) is not: whoever next wants it has it done again.
  */
 const READ_MS = 2000;
 const READ_CHARS = 20;
@@ -19,7 +20,7 @@ const KEEP = 500;
 const KEEP_CHARS = 2_000_000;
 
 export function offThread<Message, Result>(
-  here: (message: Message) => Promise<Result>,
+  here: (message: Message) => Promise<Result | undefined>,
   { fallback = true }: { fallback?: boolean } = {},
 ) {
   /** The results of the jobs done last, by key; null for one not done in time. */
@@ -56,10 +57,10 @@ export function offThread<Message, Result>(
     const [key, { message, waiters }] = first;
     busy = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const done = (result: Result | null) => {
+    const done = (result: Result | null | undefined) => {
       clearTimeout(timer);
       busy = false;
-      keep(key, result);
+      if (result !== undefined) keep(key, result);
       waiting.delete(key);
       for (const wake of waiters) wake();
       next();
@@ -75,7 +76,7 @@ export function offThread<Message, Result>(
       }
     if (inPage()) {
       if (worker === null && !fallback) return done(null);
-      here(message).then(done, () => done(null));
+      here(message).then(done, () => done(undefined));
       return;
     }
     const time = (ms = READ_MS + key.length / READ_CHARS) => {
@@ -86,7 +87,7 @@ export function offThread<Message, Result>(
         done(null);
       }, ms);
     };
-    worker!.onmessage = (event: MessageEvent<Result | 'loaded' | 'loading'>) => {
+    worker!.onmessage = (event: MessageEvent<Result | undefined | 'loaded' | 'loading'>) => {
       // The worker fetches what this job needs: the clock waits for it, generously.
       if (event.data === 'loading') return time(LOAD_MS);
       if (event.data !== 'loaded') return done(event.data);

@@ -17,6 +17,7 @@ import { signedInEmail } from '../auth';
 import {
   EmptyState,
   Failure,
+  Field,
   LoadState,
   OpenedForm,
   PageHeader,
@@ -68,22 +69,15 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
     event.preventDefault();
     if (busy) return;
     setError(undefined);
-    let expiry: string;
-    try {
-      const when = new Date(expiresAt).getTime();
-      if (!Number.isFinite(when) || when <= Date.now() || when > Date.now() + 7 * 24 * 60 * 60_000)
-        throw new Error('Choose an expiration within the next seven days.');
-      expiry = new Date(when).toISOString();
-    } catch (failure) {
-      setError(message(failure));
-      return;
-    }
+    const when = new Date(expiresAt).getTime();
+    if (!Number.isFinite(when) || when <= Date.now() || when > Date.now() + 7 * 24 * 60 * 60_000)
+      return setError('Choose an expiration within the next seven days.');
     setBusy(true);
     try {
       const issued = await call<{ token: string }>('actor.create', {
         name: 'Fleet source',
         role: 'operator',
-        expiresAt: expiry,
+        expiresAt: new Date(when).toISOString(),
       });
       if (current() && projectSelection() === projectId) {
         setSecret(issued.token);
@@ -146,17 +140,14 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
       )}
       {!secret && creating && (
         <form className="identity-form card" onSubmit={(event) => void create(event)}>
-          <label>
-            Expires (within seven days)
-            <input
-              className="input"
-              type="datetime-local"
-              required
-              value={expiresAt}
-              disabled={busy}
-              onChange={(event) => setExpiresAt(event.target.value)}
-            />
-          </label>
+          <Field
+            label="Expires (within seven days)"
+            type="datetime-local"
+            required
+            value={expiresAt}
+            disabled={busy}
+            onChange={setExpiresAt}
+          />
           <div className="cluster">
             <Submit busy={busy} />
             <button
@@ -208,8 +199,7 @@ export function KeysPanel({
   const [creating, setCreating] = useState(false);
   const heading = useId();
   const generation = useRef(0);
-  const issuer = account.user.issuer;
-  const subject = account.user.subject;
+  const { issuer, subject } = account.user;
 
   useEffect(() => {
     const currentGeneration = ++generation.current;
@@ -407,26 +397,20 @@ export function KeysPanel({
                   <option value="account">All current and future project memberships</option>
                 </select>
               </label>
-              <label>
-                Label (optional)
-                <input
-                  className="input"
-                  maxLength={120}
-                  value={label}
-                  disabled={busy}
-                  onChange={(e) => setLabel(e.target.value)}
-                />
-              </label>
-              <label>
-                Expires (optional)
-                <input
-                  className="input"
-                  type="datetime-local"
-                  value={expiresAt}
-                  disabled={busy}
-                  onChange={(e) => setExpiresAt(e.target.value)}
-                />
-              </label>
+              <Field
+                label="Label (optional)"
+                maxLength={120}
+                value={label}
+                disabled={busy}
+                onChange={setLabel}
+              />
+              <Field
+                label="Expires (optional)"
+                type="datetime-local"
+                value={expiresAt}
+                disabled={busy}
+                onChange={setExpiresAt}
+              />
               <div>
                 <Submit busy={busy} disabled={!projectId} />
               </div>
@@ -501,16 +485,13 @@ export function KeysPanel({
                         </span>
                       </label>
                       {changeExpiry ? (
-                        <label>
-                          Expires (optional)
-                          <input
-                            className="input"
-                            type="datetime-local"
-                            value={rotationExpiry}
-                            disabled={busy}
-                            onChange={(e) => setRotationExpiry(e.target.value)}
-                          />
-                        </label>
+                        <Field
+                          label="Expires (optional)"
+                          type="datetime-local"
+                          value={rotationExpiry}
+                          disabled={busy}
+                          onChange={setRotationExpiry}
+                        />
                       ) : null}
                       <div className="cluster">
                         <button

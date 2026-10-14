@@ -41,13 +41,7 @@ function stages(marks: Mark[], edges: { from: string; to: string }[]): Step[] {
   return [
     ...marks
       .filter((mark) => !mark.terminal)
-      .map(({ state, current, entered }) => ({
-        state,
-        end: false,
-        stopped: false,
-        current,
-        entered,
-      })),
+      .map(({ terminal: _, ...mark }) => ({ ...mark, end: false, stopped: false })),
     ...(finish
       ? [
           {
@@ -208,17 +202,16 @@ function StageGlyph({
 
 /** Where a record read from a list stands: the program it names, and its state. */
 type Standing = { workflow?: string; version?: number; state: string };
-/** The shape of the record's own version, else, for a version no longer registered, its program's newest. */
-const shapeOf = (shapes: WorkflowShape[] | undefined, workflow: Standing) => {
-  const named = shapes?.filter((item) => item.name === workflow.workflow) ?? [];
-  return (
-    named.find((item) => workflow.version === undefined || item.version === workflow.version) ??
-    named.at(-1)
-  );
-};
-/** That program's steps with the record's place marked; none for a program with no shape here. */
+/**
+ * That program's steps with the record's place marked, in the shape of the record's own version,
+ * else, for a version no longer registered, its program's newest; none for a program with no
+ * shape here.
+ */
 function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
-  const shape = shapeOf(shapes, workflow);
+  const named = shapes?.filter((item) => item.name === workflow.workflow) ?? [];
+  const shape =
+    named.find((item) => workflow.version === undefined || item.version === workflow.version) ??
+    named.at(-1);
   return shape ? stagesOfShape(shape, workflow.state) : [];
 }
 /**

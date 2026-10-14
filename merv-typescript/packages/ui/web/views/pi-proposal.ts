@@ -71,14 +71,7 @@ export function labelOf(name: string, key: string): string {
 /** The input as facts in its own order, without its machinery, what the act said, or anything empty. */
 export function factsOf({ name, input, act }: Pick<PiProposal, 'name' | 'input' | 'act'>): Fact[] {
   return Object.entries(fields(input)).flatMap(([key, value]): Fact[] => {
-    if (
-      MACHINERY.has(key) ||
-      key === act?.says ||
-      value === null ||
-      value === undefined ||
-      value === ''
-    )
-      return [];
+    if (MACHINERY.has(key) || key === act?.says || value == null || value === '') return [];
     const label = labelOf(name, key);
     const text = plain(value);
     if (text !== undefined) return [{ key, label, text }];

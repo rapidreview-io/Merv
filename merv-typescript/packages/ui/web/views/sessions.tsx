@@ -6,6 +6,7 @@ import {
   Ago,
   ConfirmAction,
   Countdown,
+  Failure,
   KV,
   KindLabel,
   Live,
@@ -351,11 +352,7 @@ export function MachinesPanel({ row, shell, me }: ViewProps & { me: string }) {
                 </button>
               )}
             </div>
-            {dispatch.error && (
-              <p className="error-message" role="alert">
-                {dispatch.error}
-              </p>
-            )}
+            <Failure message={dispatch.error} />
             {already && (
               <p className="muted" role="status">
                 {already}

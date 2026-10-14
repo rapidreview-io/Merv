@@ -13,6 +13,7 @@
  * clipboard. Nothing else is ever a link.
  */
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { safely } from './api';
 import { CopyButton } from './components';
 import { ChevronRightIcon } from './icons';
 import { RecordLink, safeHref, splitIds, useRecordNames, type RecordNames } from './markdown';
@@ -28,13 +29,8 @@ const HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const ADDRESS = /^https?:\/\/\S+$/i;
 
 /** What a file holds, or nothing where it does not parse: that one stays the text it was. */
-export function readJson(content: string): { value: unknown } | undefined {
-  try {
-    return { value: JSON.parse(content) as unknown };
-  } catch {
-    return undefined;
-  }
-}
+export const readJson = (content: string) =>
+  safely(() => ({ value: JSON.parse(content) as unknown }));
 
 /**
  * An order to everything under one node, given by an Alt-press on its toggle. It

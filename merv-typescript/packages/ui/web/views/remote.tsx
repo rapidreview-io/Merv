@@ -18,7 +18,7 @@ import {
   Failure,
   KV,
   Live,
-  LoadState,
+  PageLoad,
   RecordPage,
   Table,
   col,
@@ -341,12 +341,7 @@ function RemoteRecord({ row }: ViewProps) {
   const read = useTool<Json>('ui.read', { rowId: row.id, params: { id } }, { every: 8000 });
   const now = useNow(4000);
   const data = read.data;
-  if (!spec || !data)
-    return (
-      <div className="page-stage">
-        <LoadState {...read} back={{ to: row.path, label: row.label }} />
-      </div>
-    );
+  if (!spec || !data) return <PageLoad {...read} back={{ to: row.path, label: row.label }} />;
   const noun = collection?.noun.singular ?? row.label;
   const facts: Facts = { data, states: collection?.states, now };
   // A section the service did not fill is dropped where it is written, never drawn empty.

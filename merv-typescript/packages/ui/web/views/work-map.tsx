@@ -583,11 +583,16 @@ export function WorkMap({
 }
 
 /**
- * Under the map: how many agents are working and how many things need a person, each
- * lane's own line with its one control — for sessions, how dispatch stands — and then
- * whatever is live and on no unit of work: a machine nobody is using, an agent between two.
+ * Under the map, once the board has answered: how many agents are working and how many things
+ * need a person, each lane's own line with its one control — for sessions, how dispatch
+ * stands — and then whatever is live and on no unit of work: a machine nobody is using, an
+ * agent between two; and the way to the page of agents and machines (`agents`), which the rail
+ * no longer shows.
  */
-function LiveHead({ board, now, agents }: { board: RunningBoard; now: Clock; agents?: string }) {
+export function LiveUnder({ agents }: { agents?: string }) {
+  const live = useContext(LiveContext);
+  if (!live?.board) return null;
+  const { board, now } = live;
   const lanes = LANES.map((name) => board.lanes[name]);
   const needsYou = lanes.reduce((sum, lane) => sum + lane.needsYou, 0);
   const sessions = board.lanes.sessions;
@@ -805,13 +810,4 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
       </Reading.Provider>
     </LiveContext.Provider>
   );
-}
-
-/**
- * What stands between the map and the list: the board's own lines, once it has answered, and
- * the way to the page of agents and machines (`agents`), which the rail no longer shows.
- */
-export function LiveUnder({ agents }: { agents?: string }) {
-  const live = useContext(LiveContext);
-  return live?.board ? <LiveHead board={live.board} now={live.now} agents={agents} /> : null;
 }

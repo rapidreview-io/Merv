@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, useScopeVersion } from '../api';
+import { githubRequest, useScopeVersion } from '../api';
 import { useCurrent } from '../mutations';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
+
+const ACCESS: Record<GitHubStatus['automation'], string> = {
+  off: 'Off',
+  read: 'Read only',
+  write: 'Read & publish',
+};
 
 export function GitHubAutomation({
   status,
@@ -15,25 +21,20 @@ export function GitHubAutomation({
   const revision = useRef(status.revision);
   revision.current = status.revision;
   const current = () => scoped() && revision.current === status.revision;
+  const saved = status.baseBranch ?? status.repository?.defaultBranch ?? '';
   const [mode, setMode] = useState(status.automation);
-  const [base, setBase] = useState(status.baseBranch ?? status.repository?.defaultBranch ?? '');
+  const [base, setBase] = useState(saved);
   const [branches, setBranches] = useState<GitHubBranch[]>();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   useEffect(() => {
     setMode(status.automation);
-    setBase(status.baseBranch ?? status.repository?.defaultBranch ?? '');
+    setBase(saved);
     setBranches(undefined);
     setBusy(false);
     setError('');
   }, [status.revision, epoch]);
   if (!status.repository) return null;
-  const request = <T,>(path: string, body?: unknown) =>
-    accountRequest<T>(`/code/github/${path}`, {
-      scoped: true,
-      credentials: 'same-origin',
-      ...(body === undefined ? {} : { method: 'POST', body }),
-    });
   const act = async (fn: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -47,21 +48,13 @@ export function GitHubAutomation({
       if (current()) setBusy(false);
     }
   };
-  const changed =
-    mode !== status.automation ||
-    (mode !== 'off' && base !== (status.baseBranch ?? status.repository.defaultBranch ?? ''));
+  const changed = mode !== status.automation || (mode !== 'off' && base !== saved);
   return (
     <section className="github-automation stack" aria-label="Repository automation">
       {!status.canManage && (
         <div className="github-setting">
           <span>Agent access</span>
-          <span className="muted">
-            {status.automation === 'off'
-              ? 'Off'
-              : status.automation === 'read'
-                ? 'Read only'
-                : 'Read & publish'}
-          </span>
+          <span className="muted">{ACCESS[status.automation]}</span>
         </div>
       )}
       {status.canManage && (
@@ -110,7 +103,9 @@ export function GitHubAutomation({
                     disabled={busy}
                     onClick={() =>
                       void act(async () => {
-                        const value = await request<{ branches: GitHubBranch[] }>('branches');
+                        const value = await githubRequest<{ branches: GitHubBranch[] }>(
+                          '/branches',
+                        );
                         if (current()) setBranches(value.branches);
                       })
                     }
@@ -131,7 +126,7 @@ export function GitHubAutomation({
                 }
                 onClick={() =>
                   void act(async () => {
-                    await request('automation', {
+                    await githubRequest('/automation', {
                       expectedRevision: status.revision,
                       mode,
                       baseBranch: mode === 'off' ? null : base,

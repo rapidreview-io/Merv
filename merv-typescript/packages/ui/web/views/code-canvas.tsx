@@ -35,11 +35,6 @@ const ROW = 92;
 const CUT = 32;
 const ELBOW = 20;
 
-interface Point {
-  x: number;
-  y: number;
-}
-
 /**
  * Where everything goes, from the model and one width. Pure: two runs of the same
  * model place the same drawing, whatever the clock says.
@@ -51,7 +46,7 @@ export function canvas(model: GitModel, width: number) {
   // The column is the width divided by the depth, so the deepest rank lands against the
   // right edge at every screen; the floor is what keeps a deep graph legible on a narrow one.
   const column = Math.max(110, (width - x0 - 48) / deepest);
-  const at = new Map<string, Point>();
+  const at = new Map<string, { x: number; y: number }>();
   for (const node of model.nodes)
     at.set(node.id, {
       x: x0 + (model.ranks.get(node.id) ?? 0) * column,
@@ -64,18 +59,12 @@ export function canvas(model: GitModel, width: number) {
     const start = Math.min(from.x + CUT, here.x);
     const run = Math.max(here.x - start, 0);
     // A lane says how much code it wrote once, at its tip: the sum of its commits.
-    const total = lane.stops.reduce(
-      (sum, stop) => ({
-        add: sum.add + (stop.stat?.add ?? 0),
-        del: sum.del + (stop.stat?.del ?? 0),
-      }),
-      { add: 0, del: 0 },
-    );
+    const add = lane.stops.reduce((sum, stop) => sum + (stop.stat?.add ?? 0), 0);
+    const del = lane.stops.reduce((sum, stop) => sum + (stop.stat?.del ?? 0), 0);
     const dots = lane.stops.map((stop, index) => {
       const x = lane.stops.length > 1 ? start + (run * index) / (lane.stops.length - 1) : here.x;
-      const last = index === lane.stops.length - 1;
-      const stat = last && (total.add > 0 || total.del > 0);
-      return { x, add: total.add, del: total.del, stat, title: stop.title };
+      const stat = index === lane.stops.length - 1 && (add > 0 || del > 0);
+      return { x, add, del, stat, title: stop.title };
     });
     // A lane always runs to its own node, so that a lane with nothing committed on it yet
     // still reaches the point every edge that names it is drawn to.
@@ -131,11 +120,7 @@ const tone = (state: string | undefined) => {
   const direct = toneOf(value);
   return direct !== 'neutral' ? direct : toneOf(value.split(/[ _]/).pop() ?? '');
 };
-const CHAR = 7.3;
-const clip = (text: string) => {
-  const most = Math.max(6, Math.floor((LABEL - 16) / CHAR));
-  return ellipsis(text, most);
-};
+const clip = (text: string) => ellipsis(text, Math.max(6, Math.floor((LABEL - 16) / 7.3)));
 
 /** What the reader is looking at, and what the page hangs off it. */
 interface Held {
@@ -159,14 +144,11 @@ const SAID: Record<string, string> = {
   'based on': 'built on',
   'pinned to': 'built on',
   'waiting on': 'waiting for',
-  'member of': 'merged into',
 };
 /** The one line a lane's label says about where its code came from: what it was built on. */
 const cameFrom = (lines: readonly string[]) => {
   const line = lines.find((said) => /^(based on|pinned to|waiting on) /.test(said));
-  if (!line) return 'built on main';
-  const verb = Object.keys(SAID).find((key) => line.startsWith(`${key} `));
-  return verb ? `${SAID[verb]}${line.slice(verb.length)}` : line;
+  return line ? line.replace(/^\S+ \S+/, (verb) => SAID[verb]!) : 'built on main';
 };
 
 /**

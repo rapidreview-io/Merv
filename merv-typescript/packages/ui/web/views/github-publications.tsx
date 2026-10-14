@@ -25,6 +25,8 @@ import { useCommand, useCurrent } from '../mutations';
  */
 
 type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
+/** A pull request as last read, and why its newest read failed, until one succeeds. */
+type Read = { pull?: GitHubPullDetails | null; failed?: string };
 
 /**
  * The release canary as the signed-in operator who ran it attests it: whether GitHub let
@@ -173,7 +175,7 @@ export function GitHubPublications({
 }) {
   const epoch = useScopeVersion();
   const current = useCurrent();
-  const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
+  const [details, setDetails] = useState<Record<string, Read>>({});
   const [failed, setFailed] = useState('');
   const [busy, setBusy] = useState(false);
   const seen = useRef(new Map<string, string>());
@@ -182,23 +184,25 @@ export function GitHubPublications({
     setDetails({});
     setFailed('');
   }, [epoch]);
-  // A pull request is read once, again only when GitHub says it changed, and shown as last read.
+  // A pull request is read once, again only when GitHub says it changed, and shown as last read;
+  // a read that failed is asked again when the list next changes.
   useEffect(() => {
-    for (const p of rows) {
-      const key = p.pull?.updatedAt;
-      if (!key || seen.current.get(p.proposalId) === key) continue;
-      seen.current.set(p.proposalId, key);
-      const newest = () => current() && seen.current.get(p.proposalId) === key;
+    for (const { proposalId: id, pull } of rows) {
+      const key = pull?.updatedAt;
+      if (!key || seen.current.get(id) === key) continue;
+      seen.current.set(id, key);
+      const newest = () => current() && seen.current.get(id) === key;
       void call<{ details: GitHubPullDetails | null }>('code.publication.read', {
-        proposalId: p.proposalId,
-      })
-        .then((value) => {
-          if (newest()) setDetails((all) => ({ ...all, [p.proposalId]: value.details }));
-        })
-        .catch((e: unknown) => {
-          if (newest())
-            setFailed(e instanceof Error ? e.message : 'A pull request could not be read');
-        });
+        proposalId: id,
+      }).then(
+        (value) => newest() && setDetails((all) => ({ ...all, [id]: { pull: value.details } })),
+        (e: unknown) => {
+          if (!newest()) return;
+          seen.current.delete(id);
+          const failed = e instanceof Error ? e.message : 'A pull request could not be read';
+          setDetails((all) => ({ ...all, [id]: { ...all[id], failed } }));
+        },
+      );
     }
   }, [rows, current]);
   const act = async (fn: () => Promise<void>) => {
@@ -214,8 +218,9 @@ export function GitHubPublications({
       if (current()) setBusy(false);
     }
   };
+  const said = failed || rows.map((p) => details[p.proposalId]?.failed).find(Boolean);
   const row = (p: CodePublication) => {
-    const d = details[p.proposalId] ?? null;
+    const d = details[p.proposalId]?.pull ?? null;
     const local = p.destination === 'local';
     const merged = !!p.pull?.merged || (local && !!p.verified);
     const commits = d ? d.commits.length : null;
@@ -381,7 +386,7 @@ export function GitHubPublications({
         )}
       </div>
       {operator && controls && <Canary controls={controls} onDone={onDone} />}
-      {failed && <p role="alert">{failed}</p>}
+      {said && <p role="alert">{said}</p>}
       {rows.length > 0 && <div className="rows">{rows.map(row)}</div>}
     </section>
   );

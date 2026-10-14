@@ -10,46 +10,42 @@ import type {} from '@merv/ui/types';
  * which then lends it this control.
  */
 export function limitMarks({ admin, items }: Awaited<ReturnType<Workflows['escalated']>>) {
-  return items.map(({ instanceId, limit }): RunningMark => ({
+  return items.map(({ instanceId, limit: { exhausted, name, used } }): RunningMark => ({
     key: runningKey('work', instanceId),
-    ...(limit.exhausted
+    ...(exhausted
       ? {
-          says: ['Every round of ', { mono: limit.name }, ' is used · ', { count: limit.used }],
+          says: ['Every round of ', { mono: name }, ' is used · ', { count: used }],
           who: 'A project admin allows another round, or a person takes the next step by hand or ends it',
         }
       : { says: ['Suspended · an admin resumes it'] }),
-    ...(admin
-      ? {
-          action: limit.exhausted
-            ? {
-                label: 'Allow another round',
-                verb: 'extend',
-                tool: 'workflow.extend_limit',
-                input: { instanceId, limit: limit.name, additional: 1 },
-                allowed: true,
-                guard: {
-                  title: 'Allow another round?',
-                  consequence:
-                    'The work may be returned once more. Past that round it waits for a person again.',
-                },
-                ask: { field: 'reason', label: 'Reason', value: 'One more round is worth it' },
-                requestId: true,
-              }
-            : {
-                label: 'Resume',
-                verb: 'start',
-                tool: 'workflow.extend_limit',
-                input: { instanceId, limit: limit.name, additional: 0 },
-                allowed: true,
-                guard: {
-                  title: 'Resume this work?',
-                  consequence: 'It runs again on the rounds it has left; no round is added.',
-                },
-                ask: { field: 'reason', label: 'Reason', value: 'Worth trying again' },
-                requestId: true,
+    ...(admin && {
+      action: {
+        ...(exhausted
+          ? {
+              label: 'Allow another round',
+              verb: 'extend',
+              guard: {
+                title: 'Allow another round?',
+                consequence:
+                  'The work may be returned once more. Past that round it waits for a person again.',
               },
-        }
-      : {}),
+              ask: { field: 'reason', label: 'Reason', value: 'One more round is worth it' },
+            }
+          : {
+              label: 'Resume',
+              verb: 'start',
+              guard: {
+                title: 'Resume this work?',
+                consequence: 'It runs again on the rounds it has left; no round is added.',
+              },
+              ask: { field: 'reason', label: 'Reason', value: 'Worth trying again' },
+            }),
+        tool: 'workflow.extend_limit',
+        input: { instanceId, limit: name, additional: exhausted ? 1 : 0 },
+        allowed: true,
+        requestId: true,
+      },
+    }),
   }));
 }
 

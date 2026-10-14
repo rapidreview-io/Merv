@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { safely } from './api';
 import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
-import { EmptyState, ErrorBoundary, LoadState, StatusPill } from './components';
+import { EmptyState, ErrorBoundary, LoadState, PageLoad, StatusPill } from './components';
 import { Icon } from './icons';
 import { MOVED, dormantOwner, humanizeGroup } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
@@ -48,20 +49,13 @@ function NotFound({ shell }: { shell: ShellData }) {
 function Workspace() {
   const shell = useShell();
   const { pathname, search } = useLocation();
-  const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem('merv:sidebar') !== 'closed';
-    } catch {
-      return true;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem('merv:sidebar', open ? 'open' : 'closed');
-    } catch {
-      /* ignore */
-    }
-  }, [open]);
+  const [open, setOpen] = useState(() =>
+    safely(() => localStorage.getItem('merv:sidebar') !== 'closed', true),
+  );
+  useEffect(
+    () => safely(() => localStorage.setItem('merv:sidebar', open ? 'open' : 'closed')),
+    [open],
+  );
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
@@ -114,9 +108,7 @@ function Workspace() {
               </Routes>
             </ErrorBoundary>
           ) : (
-            <div className="page-stage">
-              <LoadState loading={shell.loading} error={shell.error} />
-            </div>
+            <PageLoad loading={shell.loading} error={shell.error} />
           )}
         </PageLede>
       </ShellFrame>

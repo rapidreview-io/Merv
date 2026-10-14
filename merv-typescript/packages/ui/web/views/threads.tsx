@@ -14,6 +14,7 @@ import type {
 import { accountRequest, refreshTools, useTool } from '../api';
 import {
   Ago,
+  Failure,
   Live,
   LoadState,
   Ruled,
@@ -26,7 +27,7 @@ import {
   words,
 } from '../components';
 import { CloseIcon } from '../icons';
-import { clock, elapsed, say, type Clock, type Liveness } from '../liveness';
+import { capital, clock, elapsed, say, type Clock, type Liveness } from '../liveness';
 import { useCommand } from '../mutations';
 import { StageList } from '../process';
 import { useActor, useReadsAgents, writes, type Actor } from '../session';
@@ -53,7 +54,6 @@ export const leaseLiveness = ({ liveness }: { liveness: LeaseLiveness }, now: Cl
 export const holding = ({ liveness }: { liveness: LeaseLiveness }) =>
   liveness.verdict === 'offered' || liveness.verdict === 'active';
 
-export const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 /** The visit whose agent runs now: the one whose stream a page reads. */
 const active = (visit: VisitView) => visit.status === 'active';
 /** A visit that ended before its agent ran. */
@@ -96,10 +96,10 @@ export const lapsed = (thread: ThreadView) =>
 export const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
 
-/** How many visits a thread made that ran, and how many launches failed. */
-export function visitCount(thread: ThreadView) {
-  const launches = thread.visits.filter(failed).length;
-  return { visits: thread.visits.length - launches, launches };
+/** How many of these visits ran, and how many launches failed. */
+function visitCount(visits: readonly VisitView[]) {
+  const launches = visits.filter(failed).length;
+  return { visits: visits.length - launches, launches };
 }
 /** Whether a visit of the thread holds its lease now, as Sessions says of the thread. */
 export const isLive = (thread: ThreadView) => thread.status === 'live';
@@ -169,12 +169,7 @@ function ThreadChip({
   now: Clock;
   onOpen(): void;
 }) {
-  const { visits, launches } = group
-    .map(visitCount)
-    .reduce(
-      (sum, each) => ({ visits: sum.visits + each.visits, launches: sum.launches + each.launches }),
-      { visits: 0, launches: 0 },
-    );
+  const { visits, launches } = visitCount(group.flatMap((item) => item.visits));
   const current = currentOf(group);
   const retired = group.every((item) => item.status === 'retired');
   return (
@@ -189,9 +184,7 @@ function ThreadChip({
       title={retired ? 'Retired thread' : liveLine(current, now)}
       onClick={onOpen}
     >
-      {group.some(isLive) && (
-        <span className="live-dot live-dot--live" aria-label="Live" role="img" />
-      )}
+      {group.some(isLive) && <LeaseDot bad={false} />}
       <RoleMark role={current.role} />
       <span>{capital(words(current.role))}</span>
       {visits > 1 && <span className="faint">· {visits} visits</span>}
@@ -484,11 +477,7 @@ export function ThreadCompose({
         retry={send.retry}
         disabled={off || !draft.trim()}
       />
-      {send.error && (
-        <p className="error-message" role="alert">
-          {send.error}
-        </p>
-      )}
+      <Failure message={send.error} />
     </form>
   );
 }
@@ -551,7 +540,6 @@ export function ThreadCard({
   thread,
   title,
   subtitle,
-  label = threadName(thread),
   waiting = false,
   onOpen,
   children,
@@ -559,7 +547,6 @@ export function ThreadCard({
   thread: ThreadView;
   title: ReactNode;
   subtitle?: ReactNode;
-  label?: string;
   /** Its agent waits on the reader's answer. */
   waiting?: boolean;
   onOpen(): void;
@@ -567,7 +554,7 @@ export function ThreadCard({
 }) {
   const live = isLive(thread);
   const bad = live && lapsed(thread);
-  const { visits } = visitCount(thread);
+  const { visits } = visitCount(thread.visits);
   const last = lastActive(thread);
   return (
     <article
@@ -585,7 +572,7 @@ export function ThreadCard({
         type="button"
         className="agent-card-open"
         aria-haspopup="dialog"
-        aria-label={label}
+        aria-label={threadName(thread)}
         onClick={onOpen}
       >
         <span className="agent-card-title">

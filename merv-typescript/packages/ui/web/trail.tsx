@@ -7,6 +7,7 @@
  */
 import { useEffect, useSyncExternalStore, type MouseEvent } from 'react';
 import { Link, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { safely } from './api';
 
 interface Step {
   /** The router's key for one entry of the tab's history. */
@@ -19,23 +20,17 @@ const KEY = 'merv:trail';
 const MOST = 100;
 let steps: Step[] = [];
 let at = -1;
-try {
+safely(() => {
   const held = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
   if (Array.isArray(held?.steps) && Number.isInteger(held.at)) ({ steps, at } = held);
-} catch {
-  /* a trail for this page alone */
-}
+});
 const listeners = new Set<() => void>();
 const changed = () => {
   if (steps.length > MOST) {
     at -= steps.length - MOST;
     steps = steps.slice(-MOST);
   }
-  try {
-    sessionStorage.setItem(KEY, JSON.stringify({ steps, at }));
-  } catch {
-    /* kept in memory */
-  }
+  safely(() => sessionStorage.setItem(KEY, JSON.stringify({ steps, at })));
   for (const listener of listeners) listener();
 };
 

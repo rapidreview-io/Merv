@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
-import { Ago, ErrorBoundary, LoadState, SearchField, Short, useDismiss } from '../components';
+import {
+  Ago,
+  ErrorBoundary,
+  LoadState,
+  SearchField,
+  Short,
+  useDismiss,
+  useMoreMenu,
+} from '../components';
 import { Icon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, typing, useListFilter } from '../list-filters';
 import { BackLink } from '../trail';
@@ -309,76 +317,55 @@ function FileMenu({
   raw?: { on: boolean; flip(): void };
 }) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
   const take = useDownload(artifact.id);
-  useDismiss(open, box, () => setOpen(false), true);
-  const item = (label: string, act: () => void) => (
-    <button type="button" role="menuitem" className="file-menu-item" onClick={act}>
-      {label}
-    </button>
-  );
-  return (
-    <div className="file-menu" ref={box}>
-      <button
-        type="button"
-        className="btn-icon file-menu-open"
-        aria-label="More"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        ⋯
-      </button>
-      {open && (
-        <div className="file-menu-panel" role="menu">
-          <MenuFacts artifact={artifact} />
-          {opens && item('Open file', () => navigate(`/artifacts/${artifact.id}`))}
-          {find &&
-            item('Go to file…', () => {
-              setOpen(false);
-              find();
-            })}
-          {raw && (
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              aria-checked={raw.on}
-              className="file-menu-item"
-              onClick={() => {
-                raw.flip();
-                setOpen(false);
-              }}
-            >
-              Raw view
-              {raw.on && <span className="file-menu-check">✓</span>}
-            </button>
-          )}
-          {artifact.downloadAvailable &&
-            !artifact.files &&
-            (take.download ? (
-              <a
-                role="menuitem"
-                className="file-menu-item"
-                href={take.download.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                referrerPolicy="no-referrer"
-                onClick={() => setOpen(false)}
-              >
-                Save file ↗
-              </a>
-            ) : (
-              item(take.busy ? 'Preparing download…' : 'Download', () => void take.prepare())
-            ))}
-          {take.error && <p className="file-menu-facts">{take.error}</p>}
-          {item('Copy hash', () => {
-            void navigator.clipboard?.writeText(artifact.hash);
-            setOpen(false);
-          })}
-        </div>
+  const { close, item, menu } = useMoreMenu(true);
+  return menu(
+    <>
+      <MenuFacts artifact={artifact} />
+      {opens && item('Open file', () => navigate(`/artifacts/${artifact.id}`))}
+      {find &&
+        item('Go to file…', () => {
+          close();
+          find();
+        })}
+      {raw && (
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={raw.on}
+          className="file-menu-item"
+          onClick={() => {
+            raw.flip();
+            close();
+          }}
+        >
+          Raw view
+          {raw.on && <span className="file-menu-check">✓</span>}
+        </button>
       )}
-    </div>
+      {artifact.downloadAvailable &&
+        !artifact.files &&
+        (take.download ? (
+          <a
+            role="menuitem"
+            className="file-menu-item"
+            href={take.download.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+            onClick={close}
+          >
+            Save file ↗
+          </a>
+        ) : (
+          item(take.busy ? 'Preparing download…' : 'Download', () => void take.prepare())
+        ))}
+      {take.error && <p className="file-menu-facts">{take.error}</p>}
+      {item('Copy hash', () => {
+        void navigator.clipboard?.writeText(artifact.hash);
+        close();
+      })}
+    </>,
   );
 }
 
@@ -399,26 +386,17 @@ function FileFinder({ open, setOpen }: { open: boolean; setOpen(open: boolean): 
     .slice(0, 50);
   const at = Math.min(active, files.length - 1);
   useEffect(() => setActive(0), [search]);
+  // Shutting the finder is all its Escape means: the file stays open.
+  useDismiss(open, box, () => setOpen(false), true);
   useEffect(() => {
+    if (open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 't' && !open && !typing(event.target) && !event.metaKey && !event.ctrlKey) {
-        event.preventDefault();
-        setOpen(true);
-      } else if (event.key === 'Escape' && open) {
-        // Shutting the finder is all this Escape means: the file stays open.
-        event.preventDefault();
-        setOpen(false);
-      }
-    };
-    const away = (event: MouseEvent) => {
-      if (open && !box.current?.contains(event.target as Node)) setOpen(false);
+      if (event.key !== 't' || typing(event.target) || event.metaKey || event.ctrlKey) return;
+      event.preventDefault();
+      setOpen(true);
     };
     document.addEventListener('keydown', onKey, true);
-    document.addEventListener('mousedown', away);
-    return () => {
-      document.removeEventListener('keydown', onKey, true);
-      document.removeEventListener('mousedown', away);
-    };
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [open]);
   useEffect(() => {
     box.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' });
@@ -838,14 +816,7 @@ export function FileView({
     );
   if (text === undefined) return <div className="empty">Binary file · {bytes(size)}</div>;
   // A file that does not parse stays exactly as it was written.
-  if (
-    source ||
-    unread ||
-    reads === 'code' ||
-    reads === 'text' ||
-    reads === 'image' ||
-    reads === 'pdf'
-  )
+  if (source || unread || ['code', 'text', 'image', 'pdf'].includes(reads))
     return <CodeBlock code={text} lang={type.lang} label={type.label} numbered />;
   if (reads === 'markdown')
     return (
@@ -905,15 +876,11 @@ function InlineArtifact({
 function CaptureStatus({ metadata }: { metadata?: Record<string, unknown> }) {
   const state = metadata?.captureState;
   const label =
-    state === 'failed'
-      ? 'Capture failed'
-      : state === 'cancelled'
-        ? 'Capture cancelled'
-        : state === 'skipped'
-          ? 'Capture skipped'
-          : state === 'succeeded'
-            ? 'Capture complete'
-            : null;
+    state === 'succeeded'
+      ? 'Capture complete'
+      : ['failed', 'cancelled', 'skipped'].includes(state as string)
+        ? `Capture ${state}`
+        : null;
   if (!label) return null;
   const limitations = Array.isArray(metadata?.evidenceLimitations)
     ? metadata.evidenceLimitations
@@ -945,30 +912,28 @@ function CaptureStatus({ metadata }: { metadata?: Record<string, unknown> }) {
 /** The one move a file offers: take a copy of it, where storage can serve one. */
 function Take({ artifact }: { artifact: Artifact }) {
   const scope = useScopeVersion();
-  if (artifact.files)
-    return (
-      <div className="empty">
-        <CaptureStatus metadata={artifact.metadata} />
-        <p>
-          {artifact.files.length} retained {artifact.files.length === 1 ? 'file' : 'files'}
-        </p>
-        <ul>
-          {artifact.files.map((file) => (
-            <li key={file.name}>
-              <strong>{file.name}</strong> <span className="faint tabular">{bytes(file.size)}</span>{' '}
-              <Short value={file.hash} copy="Copy hash" />
-              <ArtifactDownload
-                key={`${scope}:${artifact.id}:${file.name}`}
-                artifactId={artifact.id}
-                fileName={file.name}
-              />
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  if (!artifact.downloadAvailable) return null;
-  return <ArtifactDownload key={`${scope}:${artifact.id}`} artifactId={artifact.id} />;
+  if (!artifact.files) return null;
+  return (
+    <div className="empty">
+      <CaptureStatus metadata={artifact.metadata} />
+      <p>
+        {artifact.files.length} retained {artifact.files.length === 1 ? 'file' : 'files'}
+      </p>
+      <ul>
+        {artifact.files.map((file) => (
+          <li key={file.name}>
+            <strong>{file.name}</strong> <span className="faint tabular">{bytes(file.size)}</span>{' '}
+            <Short value={file.hash} copy="Copy hash" />
+            <ArtifactDownload
+              key={`${scope}:${artifact.id}:${file.name}`}
+              artifactId={artifact.id}
+              fileName={file.name}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /**

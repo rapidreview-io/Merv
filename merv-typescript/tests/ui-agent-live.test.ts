@@ -618,6 +618,20 @@ test('a tool’s JSON answer is laid out two spaces deep, folded once it is long
   assert.equal(document.querySelectorAll('.agent-step').length, 2);
 });
 
+test('a frame reads again only the blocks it changed', async () => {
+  const { timeline } = await import('../packages/ui/web/conversation.js');
+  const { blocks } = mergeEvents(NO_TIMELINE, [
+    { seq: 1, at, event: { kind: 'tool_call', id: 'a', name: 'shell', input: 'ls' } },
+  ]);
+  const stepOf = (live: boolean) => {
+    const [, group] = timeline([{ key: 'v', at, divider: 'Visit', blocks, live }], []);
+    return group?.type === 'steps' ? group.steps[0] : undefined;
+  };
+  assert.equal(stepOf(true)?.running, true, 'a call in flight on the live visit');
+  assert.equal(stepOf(true), stepOf(true), 'an unchanged block is read once');
+  assert.equal(stepOf(false)?.running, false, 'and again once its visit is not live');
+});
+
 test('a word streamed in redraws only what it changed: an opened step is not drawn again', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/ui.shell', { body: { result: { rows: [] } } });

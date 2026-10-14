@@ -19,6 +19,7 @@ import {
 } from 'react-router-dom';
 import type { ApiError } from './api';
 import {
+  EmptyState,
   KindLabel,
   LoadState,
   SearchField,
@@ -172,6 +173,12 @@ export function useListFilter<T extends { id: string }>(
     const among = new Set(rows);
     return held.filter((item) => item.id === openId || (among.has(item) && holds(item)));
   };
+  /** Every filter let go, the state to `to`: '' for none, undefined for where the list opens. */
+  const back = (to?: string) => () => {
+    setQuery('');
+    setChosen(to);
+    setScope('everyone');
+  };
   return {
     query,
     setQuery,
@@ -187,16 +194,8 @@ export function useListFilter<T extends { id: string }>(
     tabbed: kept(within),
     filtering: !!(query || state || scope === 'mine'),
     unowned: scope === 'mine' && !!shape.mine && !held.filter(also).some(shape.mine),
-    clear() {
-      setQuery('');
-      setChosen('');
-      setScope('everyone');
-    },
-    reset() {
-      setQuery('');
-      setChosen(undefined);
-      setScope('everyone');
-    },
+    clear: back(''),
+    reset: back(),
     openId,
   };
 }
@@ -314,8 +313,6 @@ export interface Creation {
   shown?: boolean;
   /** True where the control opens something other than a new record. */
   plain?: boolean;
-  /** Open on arrival, where arriving at the page is itself the request. */
-  opened?: boolean;
   form(close: () => void): ReactNode;
 }
 
@@ -418,7 +415,7 @@ export function ListPage<T extends { id: string }>({
   line?(item: T): Line;
   /** True where a row is the way into a record of its own. */
   opens?: boolean;
-  /** Where a page holds more than one list: the tabs that stand over the control row. */
+  /** Where a page holds more than one list: the choice between them, beside its filters. */
   narrow?: ReactNode;
   create?: Creation;
   /** A second control on the same row that opens something other than a record. */
@@ -448,7 +445,7 @@ export function ListPage<T extends { id: string }>({
   const frame = useRef<HTMLDivElement>(null);
   const place = useLocation().pathname.split('/')[1];
   // One control is open at a time, and its form opens under the row it sits in.
-  const [open, setOpen] = useState<string | undefined>(create?.opened ? 'create' : undefined);
+  const [open, setOpen] = useState<string>();
   const close = useCallback(() => setOpen(undefined), []);
   const [locked, setLocked] = useState(false);
   // The cursor goes back to the control that opened what just closed, wherever that
@@ -562,9 +559,6 @@ export function ListPage<T extends { id: string }>({
       )}
       <Staged staged={!!lede}>
         <div className="stack controls">
-          {/* Where a page holds more than one list, the strip that chooses between them
-            runs the width of the page over the row that narrows the one chosen. */}
-          {!lede && narrow && <div className="tabs tabs--strip">{narrow}</div>}
           {!lede && (
             <div className="action-row">
               {/* The filters wrap among themselves, so the one control at the end of the
@@ -594,12 +588,10 @@ export function ListPage<T extends { id: string }>({
           columns={columns}
         />
         {total > 0 && !load.loading && rows.length === 0 && (
-          <LoadState
-            loading={false}
-            empty
-            emptyIcon="search"
-            emptyTitle={nothing}
-            emptyAction={
+          <EmptyState
+            icon="search"
+            title={nothing}
+            action={
               <button type="button" className="btn" onClick={filter.clear}>
                 Clear filters
               </button>

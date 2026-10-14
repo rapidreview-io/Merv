@@ -9,15 +9,13 @@ import type katexModule from 'katex';
  * one in red instead), and reports nothing it merely frowns on.
  */
 let katex: typeof katexModule | undefined;
-let loading: Promise<void> | undefined;
+/** A load that failed (a dropped connection) is tried again by the next formula drawn. */
 const load = () =>
-  (loading ??= Promise.all([
-    import('katex').then((module) => {
-      katex = module.default;
-    }),
+  Promise.all([
+    import('katex').then((module) => void (katex ??= module.default)),
     // The stylesheet is a nicety: math without it is still read.
     import('./katex-style').catch(() => undefined),
-  ]).then(() => undefined));
+  ]);
 
 const typeset = (tex: string, display: boolean): string | undefined => {
   try {

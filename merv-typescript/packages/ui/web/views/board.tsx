@@ -3,11 +3,11 @@
  * opens as the whole page, its title on one line with ← back and ⋯, and the canvas under it. The
  * canvas is Excalidraw, loaded only when a board opens (board-canvas.tsx).
  */
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { BoardScene, BoardSummary } from '@merv/board/models';
 import { call, refreshTools, useTool } from '../api';
-import { Ago, LoadState, useDismiss } from '../components';
+import { Ago, PageLoad, useMoreMenu } from '../components';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { BackLink } from '../trail';
 import { useSession } from '../session';
@@ -67,10 +67,8 @@ function BoardList({ row }: ViewProps) {
 
 function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const { open, close, item, menu } = useMoreMenu();
   const [sure, setSure] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useDismiss(open, box, () => setOpen(false));
   useEffect(() => void (open || setSure(false)), [open]);
   const archive = async () => {
     if (!sure) return setSure(true);
@@ -78,42 +76,17 @@ function BoardMenu({ board, rename }: { board: BoardSummary; rename(): void }) {
     refreshTools('board.read');
     navigate('/boards');
   };
-  return (
-    <div className="file-menu" ref={box}>
-      <button
-        type="button"
-        className="btn-icon file-menu-open"
-        aria-label="More"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        ⋯
-      </button>
-      {open && (
-        <div className="file-menu-panel" role="menu">
-          <p className="file-menu-facts">
-            Updated <Ago at={board.updatedAt} />
-          </p>
-          <button
-            type="button"
-            role="menuitem"
-            className="file-menu-item"
-            onClick={() => (setOpen(false), rename())}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="file-menu-item"
-            onClick={() => void archive().catch(() => undefined)}
-          >
-            {sure ? 'Archive: press again' : 'Archive board'}
-          </button>
-        </div>
+  return menu(
+    <>
+      <p className="file-menu-facts">
+        Updated <Ago at={board.updatedAt} />
+      </p>
+      {item('Rename', () => (close(), rename()))}
+      {item(
+        sure ? 'Archive: press again' : 'Archive board',
+        () => void archive().catch(() => undefined),
       )}
-    </div>
+    </>,
   );
 }
 
@@ -170,12 +143,7 @@ function BoardPage({ row }: ViewProps) {
   useEffect(() => {
     if (board) document.title = `${board.title} · Merv`;
   }, [board]);
-  if (!board)
-    return (
-      <div className="page-stage">
-        <LoadState {...read} back={{ to: row.path, label: 'Boards' }} />
-      </div>
-    );
+  if (!board) return <PageLoad {...read} back={{ to: row.path, label: 'Boards' }} />;
   return (
     <div className="board-page">
       <header className="file-page-head board-page-head">

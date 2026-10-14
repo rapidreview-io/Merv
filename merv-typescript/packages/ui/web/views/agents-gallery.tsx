@@ -2,14 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ProjectThread, ProjectThreads } from '@merv/sessions/models';
 import { accountRequest, refreshTools, useTool } from '../api';
-import { LoadState, cx, kindOf, words } from '../components';
+import { LoadState, capital, cx, kindOf, words } from '../components';
 import { tailLines } from '../conversation';
 import { useLiveFeed } from '../live-feed';
 import { rowOf, useRows } from '../navigation';
 import { useReadsAgents } from '../session';
 import type { UiRowDescription } from '@merv/ui/rows';
-import { AgentTail } from './agent-live';
-import { ThreadCard, ThreadCompose, ThreadDialog, capital, delivery, isLive } from './threads';
+import { ThreadCard, ThreadCompose, ThreadDialog, delivery, isLive } from './threads';
 
 /**
  * The project's agents, one card each: those waiting on their owner's answer first, outlined,
@@ -26,10 +25,23 @@ const workOf = (rows: readonly UiRowDescription[], thread: ProjectThread) => {
   return [kind, thread.name].filter(Boolean).join(' · ');
 };
 
-/** The last lines its agent said or did, from the feed, drawn as its thread draws them. */
+/** A card's glance at its live agent: the last lines it said or did, from the feed, drawn as its
+ *  thread draws them. */
 function Tail({ blocks }: { blocks: Parameters<typeof tailLines>[0] | undefined }) {
   const lines = useMemo(() => tailLines(blocks ?? []), [blocks]);
-  return <AgentTail lines={lines} />;
+  return (
+    <ol className="agent-tail" aria-label="Live" aria-live="off">
+      {lines.length ? (
+        lines.map((line) => (
+          <li key={line.key} className={`agent-tail--${line.kind}`}>
+            {line.text}
+          </li>
+        ))
+      ) : (
+        <li className="agent-tail--starting">Starting…</li>
+      )}
+    </ol>
+  );
 }
 
 /** The newest message to the thread, and whether its agent has read it, with its reply; a
@@ -133,7 +145,7 @@ export function AgentsGallery() {
           </p>
         )}
         {thread.question && <ThreadCompose thread={thread} answering />}
-        {reads && isLive(thread) && <Tail blocks={tails.byThread.get(thread.id)} />}
+        {reads && isLive(thread) && <Tail blocks={tails.get(thread.id)} />}
         {thread.message && !thread.question && <Said message={thread.message} />}
       </ThreadCard>
     </li>

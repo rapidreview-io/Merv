@@ -386,13 +386,7 @@ function Section({
   // A workflow's stages are one card with one name, whichever plugin sends them: the owner's
   // title for it is not drawn.
   if (section.kind === 'ladder') return <Body section={section} title={title} />;
-  if (bare)
-    return (
-      <section className="running-section" aria-label={section.title}>
-        <Body section={section} title={title} />
-      </section>
-    );
-  if (section.folded)
+  if (section.folded && !bare)
     return (
       <details className="running-section">
         <Summary className={heading}>{head}</Summary>
@@ -401,7 +395,7 @@ function Section({
     );
   return (
     <section className="running-section" aria-label={section.title}>
-      <h3 className={heading}>{head}</h3>
+      {!bare && <h3 className={heading}>{head}</h3>}
       <Body section={section} title={title} />
     </section>
   );

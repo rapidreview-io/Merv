@@ -22,6 +22,7 @@ import {
   onAccessLost,
   recentProjects,
   resolveAccountSession,
+  safely,
   setProject,
   setToken,
   useScopeVersion,
@@ -74,12 +75,10 @@ export const useScopeKey = () => {
 function extractToken(text: string): string {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return trimmed;
-  try {
+  return safely(() => {
     const parsed = JSON.parse(trimmed);
     return typeof parsed.token === 'string' ? parsed.token : '';
-  } catch {
-    return '';
-  }
+  }, '');
 }
 const message = (error: unknown) => (error instanceof Error ? error.message : 'Request failed.');
 
@@ -112,13 +111,17 @@ function SignIn({
     setError(initialError);
     if (initialError) credential.current?.querySelector('input')?.focus();
   }, [initialError]);
-  const passwordSignIn = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!client) return;
+  /** A sign-in begun, in the mode it signs in by. */
+  const begin = (mode: 'local' | 'shared') => {
     onAttempt();
     setBusy(true);
     setError(undefined);
-    setAuthMode('shared');
+    setAuthMode(mode);
+  };
+  const passwordSignIn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!client) return;
+    begin('shared');
     try {
       const result = await client.auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
@@ -131,10 +134,7 @@ function SignIn({
   };
   const googleSignIn = async () => {
     if (!client) return;
-    onAttempt();
-    setBusy(true);
-    setError(undefined);
-    setAuthMode('shared');
+    begin('shared');
     try {
       const { error } = await client.auth.signInWithOAuth({
         provider: 'google',
@@ -153,10 +153,7 @@ function SignIn({
       setError('Paste a bearer token or a credential file.');
       return;
     }
-    onAttempt();
-    setBusy(true);
-    setError(undefined);
-    setAuthMode('local');
+    begin('local');
     // Storing the credential is the sign-in: the app checks it and reports the outcome.
     setToken(token);
     setValue('');

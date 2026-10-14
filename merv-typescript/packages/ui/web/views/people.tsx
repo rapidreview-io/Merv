@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useActor, useSession, type Actor } from '../session';
-import { EmptyState, Submit, term } from '../components';
+import { EmptyState, Field, Submit, term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 
@@ -76,8 +76,7 @@ export function NeedsAccount({ icon, said }: { icon: string; said: string }) {
 export function PeopleView() {
   const { account, project, actor } = useSession();
   const human = account.kind === 'user';
-  const subject = human ? account.user.subject : '';
-  const issuer = human ? account.user.issuer : '';
+  const { subject, issuer } = human ? account.user : { subject: '', issuer: '' };
   const [members, setMembers] = useState<Membership[]>();
   const [loadError, setLoadError] = useState<ApiError>();
   const [mutationError, setMutationError] = useState<string>();
@@ -91,14 +90,15 @@ export function PeopleView() {
   const newest = useRef(0);
   const heading = useId();
   const nameOf = useActorNames();
+  const mine = (member: Membership) => member.subject === subject && member.issuer === issuer;
   // A member is named from the directory, never by the account ID they signed in with.
-  const label = (member: Membership) =>
-    nameOf(member.actorId) ??
-    (member.subject === subject && member.issuer === issuer ? 'You' : 'Member');
-  const currentMember = members?.find(
-    (member) => member.subject === subject && member.issuer === issuer,
-  );
-  const isOperator = (human ? currentMember?.role : actor.role) === 'operator';
+  const label = (member: Membership) => nameOf(member.actorId) ?? (mine(member) ? 'You' : 'Member');
+  const isOperator = (human ? members?.find(mine)?.role : actor.role) === 'operator';
+  const options = roles.map((role) => (
+    <option key={role} value={role}>
+      {term(role)}
+    </option>
+  ));
   const canManage = human && isOperator;
   // The project always keeps an operator, so the only one can be neither demoted nor removed.
   const operators = members?.filter((member) => member.role === 'operator').length;
@@ -213,21 +213,19 @@ export function PeopleView() {
             onSubmit={(event) => add(event, close)}
           >
             <h2 id={heading}>New member</h2>
-            <label>
-              Their account ID
-              <input
-                className="input mono"
-                value={newSubject}
-                maxLength={512}
-                required
-                disabled={busy}
-                autoComplete="off"
-                spellCheck={false}
-                // Nobody knows one by heart: it is shown to its owner, to be handed over.
-                placeholder="Paste the ID they see under Account details"
-                onChange={(event) => setNewSubject(event.target.value)}
-              />
-            </label>
+            <Field
+              label="Their account ID"
+              className="mono"
+              value={newSubject}
+              maxLength={512}
+              required
+              disabled={busy}
+              autoComplete="off"
+              spellCheck={false}
+              // Nobody knows one by heart: it is shown to its owner, to be handed over.
+              placeholder="Paste the ID they see under Account details"
+              onChange={setNewSubject}
+            />
             <label>
               Project role
               <select
@@ -236,11 +234,7 @@ export function PeopleView() {
                 disabled={busy}
                 onChange={(event) => setNewRole(event.target.value as Role)}
               >
-                {roles.map((role) => (
-                  <option key={role} value={role}>
-                    {term(role)}
-                  </option>
-                ))}
+                {options}
               </select>
             </label>
             <div>
@@ -267,11 +261,7 @@ export function PeopleView() {
                   }))
                 }
               >
-                {roles.map((role) => (
-                  <option key={role} value={role}>
-                    {term(role)}
-                  </option>
-                ))}
+                {options}
               </select>
               <button
                 className="btn"

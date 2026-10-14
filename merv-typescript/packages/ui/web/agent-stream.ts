@@ -59,24 +59,18 @@ export function mergeEvents(timeline: AgentTimeline, events: AgentStreamEvent[])
     const place = index.get(key);
     const before = place === undefined ? undefined : blocks[place];
     let next: AgentBlock;
-    if (event.kind === 'thinking' || event.kind === 'text')
-      next =
+    if (event.kind === 'thinking' || event.kind === 'text') {
+      const was =
         before?.kind === event.kind
-          ? {
-              ...before,
-              text: before.text + event.delta,
-              done: before.done || !!event.done,
-              cut: before.cut + (event.cut ?? 0),
-            }
-          : {
-              kind: event.kind,
-              key,
-              at,
-              text: event.delta,
-              done: !!event.done,
-              cut: event.cut ?? 0,
-            };
-    else if (event.kind === 'status') next = { kind: 'status', key, at, text: event.text };
+          ? before
+          : { kind: event.kind, key, at, text: '', done: false, cut: 0 };
+      next = {
+        ...was,
+        text: was.text + event.delta,
+        done: was.done || !!event.done,
+        cut: was.cut + (event.cut ?? 0),
+      };
+    } else if (event.kind === 'status') next = { kind: 'status', key, at, text: event.text };
     else {
       const tool = before?.kind === 'tool' ? before : { kind: 'tool' as const, key, at, cut: 0 };
       next =

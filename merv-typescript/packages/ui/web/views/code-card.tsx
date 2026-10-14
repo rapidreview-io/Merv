@@ -183,26 +183,6 @@ const SAID: Record<CodeBaseAction, [string, string, string]> = {
   ],
 };
 
-/**
- * A commit that went into a merge, said as the record that was accepted with it. The
- * name and its commit are one value and hug each other, so a column of them reads as
- * one commit per line and not as twice as many facts.
- */
-const Member = ({
-  commit,
-  unit,
-  names,
-}: {
-  commit: string;
-  unit?: CodeUnit;
-  names: RecordNames;
-}) => (
-  <span className="cluster code-member">
-    {unit ? <RecordLink id={unit.unitId} names={names} /> : null}
-    <Short value={commit} />
-  </span>
-);
-
 /** What one line can say about a verdict: how it ended, where, how long and what it cost. */
 function checkSaid(base: CodeBaseRecord): string {
   const receipt = base.check?.receipt;
@@ -248,30 +228,27 @@ function BaseBody({
 }) {
   const [open, setOpen] = useState<CodeBaseAction | null>(null);
   const of = (commit: string) => units.find((unit) => unit.acceptance?.reference === commit);
+  // Each commit that went into a merge, said as the record that was accepted with it: the name
+  // and its commit hug each other, so a column reads as one commit per line, not twice as many.
+  const listed = (commits: string[]) => (
+    <span className="stack code-members">
+      {commits.map((commit) => (
+        <span className="cluster code-member" key={commit}>
+          {!!of(commit) && <RecordLink id={of(commit)!.unitId} names={names} />}
+          <Short value={commit} />
+        </span>
+      ))}
+    </span>
+  );
   const parents = (base.parents ?? []).flatMap((commit) => (commit ? [commit] : []));
   const waiters = waitersOf(base, units);
   const resolver = base.resolutionTaskId;
   const rows: KVRow[] = [
-    !!base.members.length && [
-      'Made from',
-      <span className="stack code-members">
-        {base.members.map((commit) => (
-          <Member key={commit} commit={commit} unit={of(commit)} names={names} />
-        ))}
-      </span>,
-    ],
+    !!base.members.length && ['Made from', listed(base.members)],
     // The two commits the merge actually joined, which is what makes the frozen pairwise
     // plan a small tree rather than a flat fan. On the ordinary pairwise merge they are
     // the members themselves, and the card does not say its one fact twice.
-    !!parents.length &&
-      !sameMerge(parents, base.members) && [
-        'Joined',
-        <span className="stack code-members">
-          {parents.map((commit) => (
-            <Member key={commit} commit={commit} unit={of(commit)} names={names} />
-          ))}
-        </span>,
-      ],
+    !!parents.length && !sameMerge(parents, base.members) && ['Joined', listed(parents)],
     !!base.result && [
       'Result',
       <span className="cluster">
@@ -364,6 +341,7 @@ function BaseBody({
 
 function PublishedBody({ published }: { published: CodePublication }) {
   const pull = published.pull;
+  const merged = published.merge?.commitSha ?? pull?.mergeCommitSha;
   return (
     <>
       <KV
@@ -383,10 +361,7 @@ function PublishedBody({ published }: { published: CodePublication }) {
               {pull.title} <ExternalIcon size={14} />
             </a>,
           ],
-          !!(published.merge?.commitSha ?? pull?.mergeCommitSha) && [
-            'Merged',
-            <Short value={(published.merge?.commitSha ?? pull?.mergeCommitSha)!} />,
-          ],
+          !!merged && ['Merged', <Short value={merged} />],
           !!published.stale && ['Superseded', 'main moved before it merged'],
         ]}
       />
@@ -562,14 +537,7 @@ export function CodeOperations({
     !!store?.hosted && ['Disk', `${bytes(store.diskBytes)} of ${bytes(store.quotaBytes)}`],
   ];
   // A fold that opens onto nothing promises machinery it does not hold.
-  if (
-    !rows.some(Boolean) &&
-    !blocked.length &&
-    !moving.length &&
-    !refused.length &&
-    !warnings.length
-  )
-    return null;
+  if (![...rows, ...blocked, ...moving, ...refused, ...warnings].some(Boolean)) return null;
   return (
     <details className="code-ops">
       <Summary>Operations</Summary>

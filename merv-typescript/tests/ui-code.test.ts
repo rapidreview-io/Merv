@@ -221,6 +221,49 @@ test('a file opened again never stands, even for a moment, over the text of the 
   assert.ok(!drawn.some((said) => said.includes('main/a.txt') && said.includes('"b.txt"')));
 });
 
+test('the names History reads are let go on Files: nothing still asks for them', async (t) => {
+  const { CodeView } = await import('../packages/ui/web/views/code.js');
+  const { SessionProvider } = await import('../packages/ui/web/session.js');
+  t.after(unmount);
+  nothingMade();
+  const project = { id: 'project_1', name: 'Grokking', createdAt: new Date(0).toISOString() };
+  const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role: 'operator' };
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/tools/actor.list', { body: { result: [actor] } });
+  serve('/code/github', github());
+  let go!: (to: string) => void;
+  function Steer() {
+    go = useNavigate();
+    return null;
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/history'] },
+      createElement(Steer),
+      createElement(
+        SessionProvider,
+        null,
+        createElement(CodeView, { row, shell: { rows: [row], plugins: [] } } as never),
+      ),
+    ),
+  );
+  await settle(10);
+  const asked = () => requests.filter((line) => line === 'POST /tools/actor.list').length;
+  assert.ok(asked() > 0, 'History names who did what');
+  await act(async () => go('/code'));
+  await settle(10);
+  const before = asked();
+  // A page that changed a person asks every mounted read of the people again: none is left.
+  await act(async () => refreshTools('actor.list'));
+  await settle(10);
+  assert.equal(asked(), before);
+});
+
 test('with GitHub not connected the page is one empty state and its one control', async (t) => {
   t.after(unmount);
   nothingMade();
@@ -1905,6 +1948,28 @@ test('a pull request read twice shows the newer read, whichever answer arrives l
   release();
   await settle(10);
   assert.match(text(), /\+5 −1\s*across 1 file/);
+});
+
+test('a pull request read that failed is read again when the list next changes, and its alert goes', async (t) => {
+  t.after(unmount);
+  const pull = openPull('c0', '2026-09-05T00:00:00Z');
+  serve('/tools/code.publication.read', (call) =>
+    call === 1 ? { network: true } : { body: { result: { details: publicationDetails(pull) } } },
+  );
+  let setRows!: (rows: CodePublication[]) => void;
+  const Host = () => {
+    const [rows, set] = useState([published({ pull })]);
+    setRows = set;
+    return publicationWidget(rows);
+  };
+  await mount(createElement(Host));
+  await settle(10);
+  assert.ok(document.querySelector('[role="alert"]'), 'the failed read is said');
+  assert.doesNotMatch(text(), /across 0 files/);
+  await act(async () => setRows([published({ pull })]));
+  await settle(10);
+  assert.equal(document.querySelector('[role="alert"]'), null, text());
+  assert.match(text(), /across 0 files/);
 });
 
 test('a changed merge base or reviewed head starts a new request intent', async (t) => {

@@ -10,7 +10,6 @@ import {
   type Entry,
   type PersonLine,
   type Step,
-  type TailLine,
   type VisitBlocks,
 } from '../conversation';
 import { Icon, type IconName } from '../icons';
@@ -67,18 +66,16 @@ function Output({
   const lines = output.split('\n').length;
   const label = result.error ? 'Error' : 'Output';
   const block = <CodeBlock code={output} label={label} />;
+  const className = cx('agent-output', result.error && 'agent-output--error');
   if (lines <= LONG_LINES && output.length <= LONG_CHARS)
     return (
-      <div className={cx('agent-output', result.error && 'agent-output--error')}>
+      <div className={className}>
         {block}
         <Cut count={result.cut} />
       </div>
     );
   return (
-    <details
-      className={cx('agent-output', result.error && 'agent-output--error')}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
+    <details className={className} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <Summary>
         {label} · {lines.toLocaleString('en-US')} lines
       </Summary>
@@ -378,22 +375,5 @@ export function AgentConversation({
         </button>
       )}
     </div>
-  );
-}
-
-/** A card's glance at its live agent: its last lines, drawn as the thread draws them. */
-export function AgentTail({ lines }: { lines: readonly TailLine[] }) {
-  return (
-    <ol className="agent-tail" aria-label="Live" aria-live="off">
-      {lines.length ? (
-        lines.map((line) => (
-          <li key={line.key} className={`agent-tail--${line.kind}`}>
-            {line.text}
-          </li>
-        ))
-      ) : (
-        <li className="agent-tail--starting">Starting…</li>
-      )}
-    </ol>
   );
 }

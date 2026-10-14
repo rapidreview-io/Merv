@@ -10,6 +10,7 @@ import {
   Evidence,
   Failure,
   LoadState,
+  PageLoad,
   RecordPage,
   StatusPill,
   cx,
@@ -270,12 +271,7 @@ function ReviewRecord({ id }: { id: string }) {
     { instanceId: subjectId ?? '' },
     { every: 8000 },
   );
-  if (!review.data)
-    return (
-      <div className="page-stage">
-        <LoadState {...review} back={homeOf(rows)} />
-      </div>
-    );
+  if (!review.data) return <PageLoad {...review} back={homeOf(rows)} />;
   const r = review.data;
   // The kind label over the title already says Review; only the gate its owner says it reads
   // adds to that.
@@ -321,13 +317,9 @@ function ReviewRecord({ id }: { id: string }) {
         <>
           {gate && `${gate} · `}
           Requested <Ago at={r.createdAt} /> ·{' '}
-          {!r.reviewerId
-            ? 'unclaimed'
-            : reviewer
-              ? `${r.verdict ? 'reviewed' : 'claimed'} by ${reviewer}`
-              : r.verdict
-                ? 'reviewed'
-                : 'claimed'}
+          {r.reviewerId
+            ? `${r.verdict ? 'reviewed' : 'claimed'}${reviewer ? ` by ${reviewer}` : ''}`
+            : 'unclaimed'}
           {r.override && ' as owner'}
         </>
       }
@@ -557,9 +549,6 @@ function Release({ review, onDone }: { review: Review; onDone(): void }) {
   );
 }
 
-/** The longest synopsis review.submit takes. */
-const SYNOPSIS_MAX = SYNOPSIS_LENGTH.max;
-
 /**
  * The first rule of review.submit a desk's verdict breaks, said to the reviewer, and the
  * criterion it is about. The rules are Reviews' own (`@merv/reviews/rules`); only the words
@@ -585,22 +574,20 @@ export function deskProblem(
   const finding = assessmentProblem(review, { verdict, findings });
   const verdictRule = finding?.rule === 'unmet' || finding?.rule === 'required';
   if (finding && !verdictRule)
-    return finding.rule === 'uncited'
-      ? {
-          text: `Check ${finding.criterion} is met, so it must cite at least one pinned file.`,
-          at: finding.criterion,
-        }
-      : finding.rule === 'unanswered'
-        ? {
-            text: `Check ${finding.criterion} still needs a finding and notes.`,
-            at: finding.criterion,
-          }
-        : { text: finding.message, at: finding.criterion };
+    return {
+      text:
+        finding.rule === 'uncited'
+          ? `Check ${finding.criterion} is met, so it must cite at least one pinned file.`
+          : finding.rule === 'unanswered'
+            ? `Check ${finding.criterion} still needs a finding and notes.`
+            : finding.message,
+      at: finding.criterion,
+    };
   const problem = synopsisProblem(synopsis);
   if (problem === 'length')
     return said.length < SYNOPSIS_LENGTH.min
       ? { text: `The synopsis needs ${SYNOPSIS_LENGTH.min - said.length} more characters.` }
-      : { text: `The synopsis is ${said.length - SYNOPSIS_MAX} characters too long.` };
+      : { text: `The synopsis is ${said.length - SYNOPSIS_LENGTH.max} characters too long.` };
   if (problem === 'format')
     return {
       text: 'The synopsis is one plain paragraph: no line breaks, Markdown, lists or headings.',
@@ -667,15 +654,13 @@ function Desk({
     // this same slot on the task's page: the field keeps its name once something is typed.
     <div
       className="stack creation entry-form"
-      data-draft={
-        !!synopsis.trim() || !!verdict || drafted(values) || command.locked ? '' : undefined
-      }
+      data-draft={!!said || !!verdict || drafted(values) || command.locked ? '' : undefined}
     >
       <Area label="Synopsis" rows={3} value={synopsis} onChange={setSynopsis} />
       {/* A limit is said as it nears, not before: the rule under the control says the rest. */}
-      {said.length > SYNOPSIS_MAX - 60 && (
+      {said.length > SYNOPSIS_LENGTH.max - 60 && (
         <p className="verdict-count tabular">
-          {said.length} / {SYNOPSIS_MAX}
+          {said.length} / {SYNOPSIS_LENGTH.max}
         </p>
       )}
       {/* Where the work can no longer be returned, the owner says what is left. */}

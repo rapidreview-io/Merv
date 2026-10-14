@@ -59,6 +59,22 @@ test('what was done is remembered by its size, not only by how many: a streamed 
   assert.equal(jobs.known(big('c')), undefined);
 });
 
+test('a job that failed is not remembered: whoever next wants it has it done again', async () => {
+  let calls = 0;
+  const jobs = offThread<string, string>(async (text) => {
+    if (++calls === 1) throw new Error('the download dropped');
+    return text;
+  });
+  let woken = 0;
+  jobs.want('one', 'one', () => woken++);
+  await flush();
+  assert.equal(woken, 1, 'whoever waited is answered');
+  assert.equal(jobs.known('one'), undefined, 'and nothing is remembered');
+  jobs.want('one', 'one', () => woken++);
+  await flush();
+  assert.equal(jobs.known('one'), 'one');
+});
+
 test('where the worker fails, a job that may only be done off the page stands undone', async (t) => {
   let here = 0;
   const started = fakeWorker(t, (worker) => queueMicrotask(() => worker.onerror?.()));

@@ -401,8 +401,8 @@ type Isolated = <T>(read: () => Promise<T>) => Promise<T>;
 /** One part at a time, each alone: behind a savepoint in the application, as it is in a test. */
 const isolation =
   (sources: RunningSources): Isolated =>
-  async (read) =>
-    sources.isolated ? await sources.isolated(read) : await read();
+  (read) =>
+    sources.isolated ? sources.isolated(read) : read();
 
 /** A part refused to this caller, or naming nothing, is absent; any other failure is reported. */
 type Part<T> = { value: T } | { refused: true } | { failed: true };
@@ -420,30 +420,23 @@ async function part<T>(isolated: Isolated, read: () => Promise<T>): Promise<Part
 function readers(caller: Caller, { route = () => undefined }: RunningSources) {
   const memos = new Map<RunningContribution, Map<string, Promise<unknown>>>();
   return (contribution: RunningContribution, include: Iterable<string> = []): RunningRead => {
-    let memo = memos.get(contribution);
-    if (!memo) memos.set(contribution, (memo = new Map()));
-    const own = memo;
+    const memo = memos.get(contribution) ?? new Map<string, Promise<unknown>>();
+    memos.set(contribution, memo);
     return {
       caller,
       route,
       include: new Set(include),
       once<T>(name: string, read: () => Promise<T>): Promise<T> {
-        let value = own.get(name);
-        if (!value) own.set(name, (value = Promise.resolve().then(read)));
-        return value as Promise<T>;
+        if (!memo.has(name)) memo.set(name, Promise.resolve().then(read));
+        return memo.get(name) as Promise<T>;
       },
     };
   };
 }
 
-function toolNames(sources: RunningSources): () => Promise<ReadonlySet<string>> {
-  let names: Promise<ReadonlySet<string>> | undefined;
-  return () =>
-    (names ??= sources.tools().then(
-      (list) => new Set(list),
-      () => new Set<string>(),
-    ));
-}
+/** The registered tool names, read once per answer; none where they cannot be read. */
+const toolNames = async (sources: RunningSources): Promise<ReadonlySet<string>> =>
+  new Set(await sources.tools().catch(() => []));
 
 /** Where a part stands on the board: the lanes it declares, and any its nodes landed in. */
 const lanesOf = (
@@ -469,7 +462,6 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   const contributions = sources.contributions();
   const owners = contributions.map(({ owner }) => owner);
   const read = readers(caller, sources);
-  const tools = toolNames(sources);
   const isolated = isolation(sources);
   const failed = new Map<RunningLaneName, Set<string>>(LANES.map((lane) => [lane, new Set()]));
   const fail = (lanes: readonly RunningLaneName[], owner: string) =>
@@ -507,7 +499,7 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   const pending = new Set<RunningLaneName>();
   const cached: { lanes: RunningLaneName[]; asOf: string; freshForMs?: number }[] = [];
   const summaries: RunningSummary[] = [];
-  const names = await tools();
+  const names = await toolNames(sources);
   for (const { contribution, nodes, summary } of parts) {
     const { owner } = contribution;
     if (nodes && !('refused' in nodes)) {
@@ -626,7 +618,6 @@ export async function runningPanel(
   );
   const contributions = sources.contributions();
   const read = readers(caller, sources);
-  const tools = toolNames(sources);
   const isolated = isolation(sources);
   // A work key goes to the owners of its record's workflow, read once for every key it needs.
   const workflows = new Map<string, string>();
@@ -711,7 +702,7 @@ export async function runningPanel(
       ({ contribution, sections }) => ({ owner: contribution.owner, sections }),
     ),
   );
-  const names = await tools();
+  const names = await toolNames(sources);
   const unit = own.unit === undefined ? null : unitOf(own.unit);
   return {
     key,

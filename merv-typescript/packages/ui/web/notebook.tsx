@@ -1,3 +1,4 @@
+import { safely } from './api';
 import { CodeBlock, AnsiText } from './code-block';
 import { Markdown } from './markdown';
 
@@ -33,8 +34,8 @@ const joined = (text: unknown) =>
   Array.isArray(text) ? text.join('') : typeof text === 'string' ? text : '';
 
 /** A notebook's cells and language, or nothing where the text is not a notebook. */
-export function readNotebook(content: string): Notebook | undefined {
-  try {
+export const readNotebook = (content: string): Notebook | undefined =>
+  safely(() => {
     const book = JSON.parse(content) as {
       cells?: unknown;
       metadata?: { language_info?: { name?: unknown }; kernelspec?: { language?: unknown } };
@@ -45,10 +46,7 @@ export function readNotebook(content: string): Notebook | undefined {
       cells: book.cells.filter((cell): cell is Cell => !!cell && typeof cell === 'object'),
       ...(typeof language === 'string' ? { language } : {}),
     };
-  } catch {
-    return undefined;
-  }
-}
+  });
 
 /** The images a notebook may carry, drawn from its own base64. SVG is not among them. */
 const IMAGES = ['image/png', 'image/jpeg', 'image/gif'];

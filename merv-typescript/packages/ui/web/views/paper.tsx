@@ -12,7 +12,7 @@ import {
   Ago,
   Evidence,
   KV,
-  LoadState,
+  PageLoad,
   RecordPage,
   StatusPill,
   Summary,
@@ -66,10 +66,6 @@ function compose(workspace: PaperWorkspace): DocView[] {
   let figure = 0;
   return KINDS.map((kind, at) => {
     const held = workspace.documents[kind];
-    // The address and the anchor are derived from the final order, once it is settled.
-    const rows: Omit<SectionRow, 'n' | 'anchor'>[] = held.current.sections.map((section) => ({
-      section,
-    }));
     // A publication names the sections its review moved; an early one that names none
     // stands behind every section it still holds word for word.
     const moved = held.published?.publication.sectionIds;
@@ -81,21 +77,19 @@ function compose(workspace: PaperWorkspace): DocView[] {
       figures: (held.published?.publication.evidence ?? [])
         .filter((file) => pinned.get(file.id) === kind)
         .map((file) => ({ id: file.id, n: (figure += 1) })),
-      rows: rows.map((row, index) => ({
-        ...row,
+      rows: held.current.sections.map((section, index, all) => ({
+        section,
         n: `${at + 1}.${index + 1}`,
         // A section is found by its title; only a title its document repeats adds the end of its id.
         anchor:
-          `${kind}-${slug(row.section.title)}` +
-          (rows.findIndex((other) => slug(other.section.title) === slug(row.section.title)) < index
-            ? `-${row.section.id.slice(-6)}`
+          `${kind}-${slug(section.title)}` +
+          (all.findIndex((other) => slug(other.title) === slug(section.title)) < index
+            ? `-${section.id.slice(-6)}`
             : ''),
         published:
-          (!moved || moved.includes(row.section.id)) &&
-          JSON.stringify(row.section) ===
-            JSON.stringify(
-              held.published?.document.sections.find((section) => section.id === row.section.id),
-            ),
+          (!moved || moved.includes(section.id)) &&
+          JSON.stringify(section) ===
+            JSON.stringify(held.published?.document.sections.find(({ id }) => id === section.id)),
       })),
     };
   });
@@ -201,16 +195,9 @@ function PaperPage({ row }: ViewProps) {
   useEffect(() => {
     if (opened && ready) document.getElementById(opened)?.scrollIntoView();
   }, [opened, ready]);
-  if (!workspace.data)
-    return (
-      <div className="page-stage">
-        <LoadState {...workspace} />
-      </div>
-    );
+  if (!workspace.data) return <PageLoad {...workspace} />;
   const { citations } = workspace.data;
   const writable = writes(actor);
-  const editable = (_kind: string) => writable;
-  const extendable = (kind: string) => writable && kind !== 'problem';
   const literature = workspace.data.documents.literature.current;
 
   /** A source this page cannot name is left out, never printed as its identifier. */
@@ -247,15 +234,13 @@ function PaperPage({ row }: ViewProps) {
       publishedHere ? 'published' : 'never reviewed',
     ]);
   };
-  const attribution = (doc: DocView, item: SectionRow): ReactNode => {
-    const clauses: ReactNode[] = [];
-    // An early publication names no sections, so it credits nobody with any one of them.
-    if (item.published && doc.publication)
-      clauses.push(
-        doc.publication.publication.sectionIds ? said(doc.publication.document) : 'published',
-      );
-    return clauses.length ? <p className="from">{dotted(clauses)}</p> : null;
-  };
+  // An early publication names no sections, so it credits nobody with any one of them.
+  const attribution = (doc: DocView, item: SectionRow): ReactNode =>
+    item.published && doc.publication ? (
+      <p className="from">
+        {doc.publication.publication.sectionIds ? said(doc.publication.document) : 'published'}
+      </p>
+    ) : null;
 
   // The standing of the whole paper: what has passed review, and what has not.
   const published = KINDS.filter((kind) => workspace.data!.documents[kind].published);
@@ -325,7 +310,7 @@ function PaperPage({ row }: ViewProps) {
                 <h3 className="doc-h">
                   <span className="dn">{doc.n}</span>
                   {labels[doc.kind]}
-                  {extendable(doc.kind) && !editing && (
+                  {writable && doc.kind !== 'problem' && !editing && (
                     <HeadTool
                       label="New section"
                       glyph="plus"
@@ -353,7 +338,7 @@ function PaperPage({ row }: ViewProps) {
                       from={attribution(doc, item)}
                       markers={doc.kind === 'literature' && <Markers section={item.section.id} />}
                       edit={
-                        editable(doc.kind) &&
+                        writable &&
                         !editing && (
                           <HeadTool
                             label={`Edit ${item.section.title}`}
@@ -454,38 +439,34 @@ function PaperPage({ row }: ViewProps) {
       }
       related={
         published.length > 0 ? (
-          <>
-            {published.length > 0 && (
-              <Group label="Paper reviews">
-                {/* One review publishes every document it accepted, so it is one row. */}
-                {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
-                  (reviewId) => {
-                    const took = published.filter(
-                      (kind) => accepted(kind).publication.reviewId === reviewId,
-                    );
-                    const publication = accepted(took[0]).publication;
-                    const subject = sourceOf(publication.source);
-                    return subject ? (
-                      <Row
-                        key={reviewId}
-                        name={
-                          <Opens to={named.get(reviewId)?.to}>
-                            <strong>{subject.name} review</strong>
-                          </Opens>
-                        }
-                        stand={dotted([
-                          <StatusPill value={publication.verdict ?? named.get(reviewId)?.state} />,
-                          nameOf(publication.createdBy),
-                          `published ${took.map((kind) => labels[kind]).join(' and ')}`,
-                          <Ago at={publication.createdAt} />,
-                        ])}
-                      />
-                    ) : null;
-                  },
-                )}
-              </Group>
+          <Group label="Paper reviews">
+            {/* One review publishes every document it accepted, so it is one row. */}
+            {[...new Set(published.map((kind) => accepted(kind).publication.reviewId))].map(
+              (reviewId) => {
+                const took = published.filter(
+                  (kind) => accepted(kind).publication.reviewId === reviewId,
+                );
+                const publication = accepted(took[0]).publication;
+                const subject = sourceOf(publication.source);
+                return subject ? (
+                  <Row
+                    key={reviewId}
+                    name={
+                      <Opens to={named.get(reviewId)?.to}>
+                        <strong>{subject.name} review</strong>
+                      </Opens>
+                    }
+                    stand={dotted([
+                      <StatusPill value={publication.verdict ?? named.get(reviewId)?.state} />,
+                      nameOf(publication.createdBy),
+                      `published ${took.map((kind) => labels[kind]).join(' and ')}`,
+                      <Ago at={publication.createdAt} />,
+                    ])}
+                  />
+                ) : null;
+              },
             )}
-          </>
+          </Group>
         ) : undefined
       }
       details={

@@ -98,19 +98,12 @@ export function valueText(value: RunningValue, reading: Omit<RunningReading, 'op
   if ('actor' in value) return actorText(value, reading.nameOf);
   return value.text;
 }
-/** A phrase's words, for a name a screen reader hears and for whether it says anything. */
-const phraseText = (
-  phrase: RunningPhrase | undefined,
-  reading: Omit<RunningReading, 'open'>,
-): string =>
-  (phrase ?? [])
-    .map((value) => valueText(value, reading))
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
 /** A phrase that renders nothing — an actor this reader may not name, a missing instant. */
 export const silent = (phrase: RunningPhrase | undefined, reading: Omit<RunningReading, 'open'>) =>
-  !phraseText(phrase, reading);
+  !(phrase ?? [])
+    .map((value) => valueText(value, reading))
+    .join('')
+    .trim();
 /** Whether a value ticks: a phrase's clocks stand outside what a screen reader is told of a change. */
 export const ticks = (value: RunningValue) =>
   typeof value === 'object' && ('ago' in value || 'since' in value || 'until' in value);

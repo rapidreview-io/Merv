@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
-import { accountRequest, call, useTool } from '../api';
+import { call, githubRequest, useTool } from '../api';
 import { useCommand, useCurrent } from '../mutations';
 import { Short } from '../components';
 import { useReferences } from '../markdown';
@@ -34,9 +34,7 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
   });
   useEffect(() => {
     if (result?.state !== 'importing' || command.busy || command.error || !input) return;
-    const timer = setTimeout(() => {
-      void command.submit({ ...input });
-    }, 3000);
+    const timer = setTimeout(() => void command.submit({ ...input }), 3000);
     return () => clearTimeout(timer);
   }, [result, command.busy, command.error, input]);
   const prepare = async () => {
@@ -52,10 +50,7 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
     setError(undefined);
     try {
       const [{ branches }, current] = await Promise.all([
-        accountRequest<{ branches: GitHubBranch[] }>('/code/github/branches', {
-          scoped: true,
-          credentials: 'same-origin',
-        }),
+        githubRequest<{ branches: GitHubBranch[] }>('/branches'),
         call<CodeProjectStatus>('code.status'),
       ]);
       if (!live()) return;

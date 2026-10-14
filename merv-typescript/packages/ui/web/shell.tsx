@@ -110,6 +110,11 @@ function AccountFoot() {
   // The role is a second line only where it says something the name did not.
   const [name, role] = accountLines(who, actor.role);
   const said = [name, role].filter(Boolean).join(' · ');
+  const item = (label: ReactNode, act: () => void) => (
+    <button type="button" role="menuitem" tabIndex={-1} className="account-menu-item" onClick={act}>
+      {label}
+    </button>
+  );
   return (
     <div className="account-foot" ref={ref}>
       {/* The whole row is the control: the avatar, the name and the caret are its face. */}
@@ -135,37 +140,11 @@ function AccountFoot() {
         // The row it opens from already says whose menu this is, so the menu does not.
         // It is drawn over the row and written after it, so the keyboard meets them in order.
         <div className="account-menu" role="menu" aria-label="Account">
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            className="account-menu-item"
-            onClick={() => wear(theme === 'dark' ? 'light' : 'dark')}
-          >
-            Theme · {theme}
-          </button>
-          {switchable(account) && (
-            <button
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              className="account-menu-item"
-              onClick={chooseProject}
-            >
-              Switch project
-            </button>
-          )}
+          {item(<>Theme · {theme}</>, () => wear(theme === 'dark' ? 'light' : 'dark'))}
+          {switchable(account) && item('Switch project', chooseProject)}
           <div className="account-menu-sep" role="separator" />
           {/* Keys are a setting, and live under Settings › Keys with the rest. */}
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            className="account-menu-item"
-            onClick={signOut}
-          >
-            Sign out
-          </button>
+          {item('Sign out', signOut)}
         </div>
       )}
     </div>

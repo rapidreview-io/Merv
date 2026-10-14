@@ -11,17 +11,15 @@ import { homeOf } from '../navigation';
 import {
   Evidence,
   KV,
-  LoadState,
+  PageLoad,
   RecordPage,
   relativeTime,
   timeRows,
   useArtifacts,
 } from '../components';
-import { Markdown, RecordText, useRecordNames } from '../markdown';
+import { Markdown, RecordText } from '../markdown';
 import { Gate, StageMark, useRecordRead } from '../process';
-import { useSession } from '../session';
-import { signedInAdmin } from './code';
-import { UnitCode } from './code-section';
+import { RecordCode } from './code';
 import { currentReview } from '@merv/reviews/rules';
 import { ThreeStates, reviewClause } from '../states';
 import { Thread, historyEntries } from '../thread';
@@ -80,93 +78,6 @@ export function EvidenceFiles({
   );
 }
 
-function ExperimentRecord({
-  experiment: e,
-  process,
-  reviews,
-  exhibit,
-  unit,
-  history,
-  nameOf,
-  back,
-}: {
-  back: { to: string; label: string };
-  experiment: Experiment;
-  process?: ProcessGraph;
-  reviews?: Review[];
-  /** Its history as its owner tells it. */
-  history: RunningUnitEntry[];
-  exhibit?: ExperimentExhibit;
-  unit?: CodeUnit | null;
-  nameOf(id: string | null | undefined): string | undefined;
-}) {
-  // The publication verbs answer a signed-in operator and nobody else, so the Code
-  // section is told who is reading before it offers the move.
-  const { actor, account } = useSession();
-  const newest = currentReview(reviews, e.id);
-  const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
-  // What the newest review decided, or where it stands until it has; a passing verdict
-  // is not an outcome, so the conclusion is said apart from it, whole.
-  const said = reviewClause(newest, newest?.reviewerId ? nameOf(newest.reviewerId) : null);
-  const currentEvidence = e.evidence.filter(
-    (item) => item.current && item.attemptIndex === e.attempt.index,
-  );
-  // The figures of this attempt's last submission: one a review sent back is an earlier attempt's.
-  const figures =
-    e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
-  const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
-  const ended = e.failed;
-  const thread = historyEntries(history, nameOf);
-  const names = useRecordNames(e.intent);
-  return (
-    <RecordPage
-      back={<Link to={back.to}>← {back.label}</Link>}
-      kind="experiments"
-      name={e.name}
-      state={<StageMark graph={process} workflow={e.workflow} />}
-      // The question it was opened to answer, as a task's goal stands under its title, and
-      // what it came to directly under that, with the verdict that accepted it.
-      standing={
-        <>
-          <span>
-            <RecordText text={e.intent} names={names} />
-          </span>
-          {said && <ThreeStates review={said} meta={stage ? STAGE[stage] : 'Review'} />}
-          {ended && e.conclusion && <span className="ev-role">Why this experiment ended</span>}
-          {e.conclusion && <Markdown source={e.conclusion} />}
-        </>
-      }
-      act={process && <Gate graph={process} />}
-      title="Evidence"
-      content={
-        currentEvidence.length || figures.length || shown ? (
-          <>
-            <EvidenceFiles evidence={currentEvidence} figures={figures} />
-            {shown && (
-              <figure className="stack">
-                {/\.(md|markdown)$/i.test(shown.path) ? (
-                  <Markdown source={shown.content} />
-                ) : (
-                  <CodeBlock code={shown.content} lang={shown.path} label="Text" numbered />
-                )}
-                <figcaption className="muted">{shown.path}</figcaption>
-              </figure>
-            )}
-          </>
-        ) : undefined
-      }
-      history={thread.length ? <Thread entries={thread} /> : undefined}
-      description={e.details ? <Markdown source={e.details} /> : undefined}
-      code={
-        unit && <UnitCode unit={unit} named={nameOf} signedIn={signedInAdmin(actor, account)} />
-      }
-      details={
-        <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />
-      }
-    />
-  );
-}
-
 /** The record and the gate it stands at arrive together, from the row that owns them. */
 function ExperimentDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
@@ -200,26 +111,72 @@ function ExperimentDetail({ row, shell }: ViewProps) {
     if (had !== undefined) reload();
   }, [evidence, reload]);
   const nameOf = useActorNames();
+  const back = homeOf(shell.rows);
   if (!record.data)
     return (
-      <div className="page-stage">
-        <LoadState
-          loading={record.loading}
-          error={record.error ?? reviews.error ?? exhibit.error}
-          back={homeOf(shell.rows)}
-        />
-      </div>
+      <PageLoad
+        loading={record.loading}
+        error={record.error ?? reviews.error ?? exhibit.error}
+        back={back}
+      />
     );
+  const { experiment: e, process, codeUnit: unit } = record.data;
+  const newest = currentReview(reviews.data, e.id);
+  const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
+  // What the newest review decided, or where it stands until it has; a passing verdict
+  // is not an outcome, so the conclusion is said apart from it, whole.
+  const said = reviewClause(newest, newest?.reviewerId ? nameOf(newest.reviewerId) : null);
+  const currentEvidence = e.evidence.filter(
+    (item) => item.current && item.attemptIndex === e.attempt.index,
+  );
+  // The figures of this attempt's last submission: one a review sent back is an earlier attempt's.
+  const figures =
+    e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
+  const shown = exhibit.data?.attemptIndex === e.attempt.index ? exhibit.data : undefined;
+  const thread = historyEntries(record.data.history ?? [], nameOf);
   return (
-    <ExperimentRecord
-      back={homeOf(shell.rows)}
-      experiment={record.data.experiment}
-      process={record.data.process}
-      reviews={reviews.data}
-      history={record.data.history ?? []}
-      exhibit={exhibit.data}
-      unit={record.data.codeUnit}
-      nameOf={nameOf}
+    <RecordPage
+      back={<Link to={back.to}>← {back.label}</Link>}
+      kind="experiments"
+      name={e.name}
+      state={<StageMark graph={process} workflow={e.workflow} />}
+      // The question it was opened to answer, as a task's goal stands under its title, and
+      // what it came to directly under that, with the verdict that accepted it.
+      standing={
+        <>
+          <span>
+            <RecordText text={e.intent} />
+          </span>
+          {said && <ThreeStates review={said} meta={stage ? STAGE[stage] : 'Review'} />}
+          {e.failed && e.conclusion && <span className="ev-role">Why this experiment ended</span>}
+          {e.conclusion && <Markdown source={e.conclusion} />}
+        </>
+      }
+      act={process && <Gate graph={process} />}
+      title="Evidence"
+      content={
+        currentEvidence.length || figures.length || shown ? (
+          <>
+            <EvidenceFiles evidence={currentEvidence} figures={figures} />
+            {shown && (
+              <figure className="stack">
+                {/\.(md|markdown)$/i.test(shown.path) ? (
+                  <Markdown source={shown.content} />
+                ) : (
+                  <CodeBlock code={shown.content} lang={shown.path} label="Text" numbered />
+                )}
+                <figcaption className="muted">{shown.path}</figcaption>
+              </figure>
+            )}
+          </>
+        ) : undefined
+      }
+      history={thread.length ? <Thread entries={thread} /> : undefined}
+      description={e.details ? <Markdown source={e.details} /> : undefined}
+      code={unit && <RecordCode unit={unit} named={nameOf} />}
+      details={
+        <KV rows={[['Owner', nameOf(e.ownerId)], ...timeRows(e.createdAt, e.workflow.updatedAt)]} />
+      }
     />
   );
 }

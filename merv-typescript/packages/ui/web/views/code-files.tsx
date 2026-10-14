@@ -161,6 +161,7 @@ function Folder({ root, data }: { root: string; data: Extract<Browsed, { kind: '
     (entry) => entry.kind === 'file' && /^readme(\.md|\.markdown)?$/i.test(entry.name),
   );
   const up = data.path.split('/').slice(0, -1).join('/');
+  const at = (name: string) => (data.path ? `${data.path}/${name}` : name);
   return (
     <>
       <div className="code-tree" role="table" aria-label="Files">
@@ -175,12 +176,7 @@ function Folder({ root, data }: { root: string; data: Extract<Browsed, { kind: '
             key={entry.name}
             role="row"
             className="code-tree-row"
-            to={filesPath(
-              root,
-              data.ref,
-              data.path ? `${data.path}/${entry.name}` : entry.name,
-              entry.kind !== 'folder',
-            )}
+            to={filesPath(root, data.ref, at(entry.name), entry.kind !== 'folder')}
           >
             <Icon name={entry.kind === 'folder' ? 'folder' : 'file'} size={15} />
             <span className="code-tree-name">{entry.name}</span>
@@ -190,9 +186,7 @@ function Folder({ root, data }: { root: string; data: Extract<Browsed, { kind: '
           </Link>
         ))}
       </div>
-      {readme && (
-        <Readme refName={data.ref} path={data.path ? `${data.path}/${readme.name}` : readme.name} />
-      )}
+      {readme && <Readme refName={data.ref} path={at(readme.name)} />}
     </>
   );
 }

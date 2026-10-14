@@ -131,7 +131,7 @@ interface Recorded {
   key: string;
   kind: string;
   name: string;
-  to?: string;
+  to: string;
   says: ReactNode;
   at: string;
 }
@@ -198,7 +198,7 @@ function Latest({
               key: `paper:${kind}`,
               kind: 'paper',
               name: paperTitles[kind as PaperKind] ?? words(kind),
-              to: paperPath,
+              to: paperPath!,
               says: `Revision ${current.revision}${nameOf(current.updatedBy ?? '') ? ` · ${nameOf(current.updatedBy!)}` : ''}`,
               at: current.updatedAt,
             },
@@ -222,13 +222,9 @@ function Latest({
       {shown.map((item) => (
         <li key={item.key} className="home-latest">
           <KindLabel kind={item.kind} />
-          {item.to ? (
-            <Link className="ov-name" to={item.to}>
-              {item.name}
-            </Link>
-          ) : (
-            <span className="ov-name">{item.name}</span>
-          )}
+          <Link className="ov-name" to={item.to}>
+            {item.name}
+          </Link>
           <span className="home-latest-says">{item.says}</span>
           <Ago className="home-latest-at" at={item.at} />
         </li>

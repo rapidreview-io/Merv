@@ -14,17 +14,11 @@ const RAIL = [
 ];
 
 /**
- * Rows of the `lead` group stand under Home at the head of the rail, and a page the rail does
- * not show is reached from them.
- */
-export const leadRows = (rows: UiRowDescription[]) => rows.filter((row) => row.group === 'lead');
-
-/**
  * Where a page the rail does not show goes back to, and where what is running opens: the lead
- * row (Work), or Home in a composition without one.
+ * row (Work), under Home at the head of the rail, or Home in a composition without one.
  */
 export const homeOf = (rows: UiRowDescription[]) => {
-  const lead = leadRows(rows)[0];
+  const lead = rows.find((row) => row.group === 'lead');
   return lead ? { to: lead.path, label: lead.label } : { to: '/', label: 'Home' };
 };
 /** Where the records of a view kind open in this composition, if any row lists them. */

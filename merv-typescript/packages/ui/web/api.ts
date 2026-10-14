@@ -12,60 +12,49 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * What `use` returns, or `otherwise` where the browser refuses it, as it refuses storage in a
+ * private window or with site data blocked: what is kept then lives for this page alone.
+ */
+export function safely<T>(use: () => T): T | undefined;
+export function safely<T>(use: () => T, otherwise: T): T;
+export function safely<T>(use: () => T, otherwise?: T) {
+  try {
+    return use();
+  } catch {
+    return otherwise;
+  }
+}
+
 const TOKEN_KEY = 'merv:token';
-const readToken = (): string | null => {
-  try {
-    return sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-};
-const writeToken = (token: string | null) => {
-  try {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token);
-    else sessionStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* session storage unavailable; the token lives in memory only */
-  }
-};
+const readToken = () => safely(() => sessionStorage.getItem(TOKEN_KEY), null);
+const writeToken = (token: string | null) =>
+  safely(() =>
+    token ? sessionStorage.setItem(TOKEN_KEY, token) : sessionStorage.removeItem(TOKEN_KEY),
+  );
 
 const PROJECT_KEY = 'merv:project';
 /** The project an account last opened in this browser, so a new tab or a reload opens it again. */
 const LAST_KEY = 'merv:last-project';
-const storedProject = (): string | null => {
-  try {
-    return sessionStorage.getItem(PROJECT_KEY);
-  } catch {
-    return null;
-  }
-};
-const lastProject = (who: string): string | null => {
-  try {
+const storedProject = () => safely(() => sessionStorage.getItem(PROJECT_KEY), null);
+const lastProject = (who: string): string | null =>
+  safely(() => {
     const last = JSON.parse(localStorage.getItem(LAST_KEY) ?? 'null');
     return last?.who === who && typeof last.project === 'string' ? last.project : null;
-  } catch {
-    return null;
-  }
-};
+  }, null);
 /** When an account last opened each of its projects in this browser, so the chooser leads with them. */
 const RECENT_KEY = 'merv:recent-projects';
-export const recentProjects = (who: string): Record<string, number> => {
-  try {
+export const recentProjects = (who: string): Record<string, number> =>
+  safely(() => {
     const recent = JSON.parse(localStorage.getItem(RECENT_KEY) ?? 'null');
     return recent?.who === who && recent.at && typeof recent.at === 'object' ? recent.at : {};
-  } catch {
-    return {};
-  }
-};
-const opened = (who: string, project: string) => {
-  try {
+  }, {});
+const opened = (who: string, project: string) =>
+  safely(() => {
     const at = { ...recentProjects(who), [project]: Date.now() };
     localStorage.setItem(LAST_KEY, JSON.stringify({ who, project }));
     localStorage.setItem(RECENT_KEY, JSON.stringify({ who, at }));
-  } catch {
-    /* this tab alone remembers it */
-  }
-};
+  });
 let memoryToken: string | null = readToken();
 let selectedProject = storedProject();
 let scopeEpoch = 0;
@@ -94,16 +83,14 @@ export const projectSelection = () => selectedProject;
 export const setProject = (projectId: string | null) => {
   if (selectedProject === projectId) return;
   selectedProject = projectId;
-  try {
+  safely(() => {
     if (projectId) sessionStorage.setItem(PROJECT_KEY, projectId);
     else {
       // Choosing another project, or losing this one, forgets it for the browser too.
       sessionStorage.removeItem(PROJECT_KEY);
       localStorage.removeItem(LAST_KEY);
     }
-  } catch {
-    /* memory-only selection */
-  }
+  });
   changed();
 };
 export const setToken = (token: string | null, options: { refresh?: boolean } = {}) => {
@@ -112,11 +99,7 @@ export const setToken = (token: string | null, options: { refresh?: boolean } = 
   if (!options.refresh) {
     identityEpoch++;
     selectedProject = null;
-    try {
-      sessionStorage.removeItem(PROJECT_KEY);
-    } catch {
-      /* memory-only selection */
-    }
+    safely(() => sessionStorage.removeItem(PROJECT_KEY));
     changed();
   }
 };
@@ -241,6 +224,14 @@ export const codeFile = (ref: string, path: string) =>
     body: { ref, path },
     scoped: true,
     bytes: true,
+  });
+
+/** The project's GitHub connection, read, or changed where a body is sent. */
+export const githubRequest = <T>(action = '', body?: unknown) =>
+  accountRequest<T>(`/code/github${action}`, {
+    scoped: true,
+    credentials: 'same-origin',
+    ...(body === undefined ? {} : { method: 'POST', body }),
   });
 
 /** One tool call over the same-origin JSON endpoint agents use. */

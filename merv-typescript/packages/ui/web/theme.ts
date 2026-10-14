@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { safely } from './api';
 
 /** The theme the page wears: the system's, as index.html follows it, until one is chosen in the shell. */
 export const worn = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
@@ -13,11 +14,7 @@ const KEY = 'merv:theme';
 /** Wear a theme and keep it as the person's choice. */
 export function wear(theme: 'light' | 'dark') {
   document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem(KEY, theme);
-  } catch {
-    /* preference lives for this page only */
-  }
+  safely(() => localStorage.setItem(KEY, theme));
 }
 /** A hook reading whether the window answers `query`, drawn again as that changes. */
 export const media = (query: string) => {

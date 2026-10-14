@@ -13,11 +13,7 @@ import type {
 
 type PiDelta = PiEvent & { streamId: string };
 const isDelta = (value: object): value is PiDelta =>
-  'streamId' in value &&
-  'sequence' in value &&
-  'commandId' in value &&
-  'type' in value &&
-  'text' in value;
+  ['streamId', 'sequence', 'commandId', 'type', 'text'].every((key) => key in value);
 
 /** The answer as it streams; `written` is the sequence of its latest words. */
 type TransientResponse = { commandId: string; text: string; progress: string; written: number };
@@ -201,10 +197,11 @@ export function useConversation() {
     };
   }, [reload]);
 
-  const refresh = async (id: string) => {
-    const next = await call<PiSnapshot>('pi.snapshot', { id });
-    if (valid() && selection.current === id) replace(next);
-  };
+  /** The conversation read again, drawn while still chosen; a failed read changes nothing. */
+  const refresh = (id: string) =>
+    call<PiSnapshot>('pi.snapshot', { id })
+      .then(replace)
+      .catch(() => {});
   // A conversation chosen (or retried) is read first, then streamed: the stream's snapshots
   // and deltas keep it current from there.
   useEffect(() => {
@@ -214,15 +211,13 @@ export function useConversation() {
     setSnapshot(null);
     setResponse(null);
     setStreaming(null);
-    void refresh(selected)
-      .catch(() => {})
-      .then(() => {
-        if (stopped || !valid() || selection.current !== selected) return;
-        setStreaming(selected);
-        // New conversation hands the composer the cursor, which begins a question there too.
-        if (eager.current || document.activeElement === composer.current) warmUp();
-        eager.current = false;
-      });
+    void refresh(selected).then(() => {
+      if (stopped || !valid() || selection.current !== selected) return;
+      setStreaming(selected);
+      // New conversation hands the composer the cursor, which begins a question there too.
+      if (eager.current || document.activeElement === composer.current) warmUp();
+      eager.current = false;
+    });
     return () => {
       stopped = true;
     };
@@ -236,14 +231,13 @@ export function useConversation() {
         return replace(value as PiSnapshot);
       if (event !== 'delta' || !isDelta(value)) return;
       const current = canonical.current;
-      if (!current || current.streamId !== value.streamId)
-        return void refresh(streaming).catch(() => {});
+      if (!current || current.streamId !== value.streamId) return void refresh(streaming);
       if (value.sequence <= current.sequence) return;
       canonical.current = { ...current, sequence: value.sequence };
       // A turn's own step changes no record: the stage is shown as of this event.
       if (value.stage)
         setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
-      else if (value.type === 'changed') void refresh(streaming).catch(() => {});
+      else if (value.type === 'changed') void refresh(streaming);
       else setResponse((before) => accumulateResponse(before, value));
     },
   );
@@ -253,7 +247,7 @@ export function useConversation() {
   // While the stream is away the conversation is still read, now and then.
   useEffect(() => {
     if (!retrying || !streaming) return;
-    const timer = setInterval(() => void refresh(streaming).catch(() => {}), 10_000);
+    const timer = setInterval(() => void refresh(streaming), 10_000);
     return () => clearInterval(timer);
   }, [retrying, streaming]);
 

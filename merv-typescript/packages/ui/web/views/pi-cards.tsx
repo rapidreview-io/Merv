@@ -418,19 +418,17 @@ export function Context({ id, turns }: { id: string; turns: number }) {
           <pre className="pi-context-text">{prompt.instructions}</pre>
           <h3>Latest turn's notes</h3>
           {prompt.turn ? (
-            <ul>
-              {prompt.turn.notes.map((note, index) => (
-                <li key={index}>{note}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">No turn has been given to the agent yet.</p>
-          )}
-          {prompt.turn && (
             <>
+              <ul>
+                {prompt.turn.notes.map((note, index) => (
+                  <li key={index}>{note}</li>
+                ))}
+              </ul>
               <h3>Tools offered ({prompt.turn.tools.length})</h3>
               <p className="pi-context-tools">{prompt.turn.tools.join(', ')}</p>
             </>
+          ) : (
+            <p className="muted">No turn has been given to the agent yet.</p>
           )}
         </>
       )}

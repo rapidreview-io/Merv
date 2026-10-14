@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { accountRequest, useScopeVersion } from '../api';
+import { githubRequest as request, useScopeVersion } from '../api';
 import { useCurrent } from '../mutations';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
 import { LoadState } from '../components';
@@ -7,12 +7,7 @@ import { Icon } from '../icons';
 import { GitHubAutomation } from './github-automation';
 import { GitHubPreparation } from './github-prepare';
 
-const request = <T,>(action = '', body?: unknown) =>
-  accountRequest<T>(`/code/github${action}`, {
-    scoped: true,
-    credentials: 'same-origin',
-    ...(body === undefined ? {} : { method: 'POST', body }),
-  });
+const idOf = (repo: GitHubRepository) => `${repo.installationId}:${repo.id}`;
 
 export function GitHubConnection() {
   const epoch = useScopeVersion();
@@ -24,6 +19,15 @@ export function GitHubConnection() {
   const finishing = useRef<{ epoch: number; result: Promise<GitHubStatus> }>();
   const callback = new URLSearchParams(window.location.search).get('github') === 'complete';
   const current = useCurrent();
+  /** The connection read again, where the page still stands; a failure is the caller's. */
+  const refresh = async () => {
+    const value = await request<GitHubStatus>();
+    if (current()) setStatus(value);
+  };
+  const cancel = () => {
+    setRepositories(undefined);
+    setSelection('');
+  };
   const finish = useCallback(() => {
     if (finishing.current?.epoch !== epoch)
       finishing.current = { epoch, result: request<GitHubStatus>('/finish', {}) };
@@ -56,14 +60,7 @@ export function GitHubConnection() {
           failure instanceof Error ? failure.message : 'GitHub connection could not be loaded',
         );
         // An exchanged code cannot be retried after an uncertain failure. Keep Connect available.
-        if (callback) {
-          try {
-            const value = await request<GitHubStatus>();
-            if (current()) setStatus(value);
-          } catch {
-            /* preserve the authorization error */
-          }
-        }
+        if (callback) await refresh().catch(() => undefined);
       })
       .finally(() => {
         if (current()) setBusy(false);
@@ -80,12 +77,7 @@ export function GitHubConnection() {
       if (current()) {
         setError(failure instanceof Error ? failure.message : 'GitHub did not confirm this change');
         // Refresh revisions after an uncertain write so retry never silently overwrites newer work.
-        try {
-          const value = await request<GitHubStatus>();
-          if (current()) setStatus(value);
-        } catch {
-          /* keep the original error */
-        }
+        await refresh().catch(() => undefined);
       }
     } finally {
       if (current()) setBusy(false);
@@ -95,11 +87,10 @@ export function GitHubConnection() {
     const value = await request<GitHubStatus>(action, body);
     if (current()) {
       setStatus(value);
-      setRepositories(undefined);
-      setSelection('');
+      cancel();
     }
   }
-  const selected = repositories?.find((repo) => `${repo.installationId}:${repo.id}` === selection);
+  const selected = repositories?.find((repo) => idOf(repo) === selection);
   const connect = () =>
     void act(async () => {
       const result = await request<{ url: string }>('/begin', {
@@ -224,10 +215,7 @@ export function GitHubConnection() {
                           >
                             <option value="">Select a repository</option>
                             {repositories.map((repo) => (
-                              <option
-                                key={`${repo.installationId}:${repo.id}`}
-                                value={`${repo.installationId}:${repo.id}`}
-                              >
+                              <option key={idOf(repo)} value={idOf(repo)}>
                                 {repo.fullName}
                                 {repo.private ? ' (private)' : ''}
                               </option>
@@ -251,14 +239,7 @@ export function GitHubConnection() {
                           >
                             Link repository
                           </button>
-                          <button
-                            className="btn"
-                            disabled={busy}
-                            onClick={() => {
-                              setRepositories(undefined);
-                              setSelection('');
-                            }}
-                          >
+                          <button className="btn" disabled={busy} onClick={cancel}>
                             Cancel
                           </button>
                         </div>
@@ -283,11 +264,7 @@ export function GitHubConnection() {
                           <button className="btn" disabled={busy} onClick={browse}>
                             Refresh repositories
                           </button>
-                          <button
-                            className="btn"
-                            disabled={busy}
-                            onClick={() => setRepositories(undefined)}
-                          >
+                          <button className="btn" disabled={busy} onClick={cancel}>
                             Cancel
                           </button>
                         </div>
@@ -297,15 +274,7 @@ export function GitHubConnection() {
                 )}
               </>
             )}
-            <GitHubAutomation
-              status={status}
-              onChanged={() =>
-                void act(async () => {
-                  const value = await request<GitHubStatus>();
-                  if (current()) setStatus(value);
-                })
-              }
-            />
+            <GitHubAutomation status={status} onChanged={() => void act(refresh)} />
             {status.repository &&
               status.canManage &&
               status.automation !== 'off' &&

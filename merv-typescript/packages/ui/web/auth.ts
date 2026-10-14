@@ -1,5 +1,5 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
-import { currentToken, identityVersion, setToken, setTokenRefresher } from './api';
+import { currentToken, identityVersion, safely, setToken, setTokenRefresher } from './api';
 
 export interface AuthConfiguration {
   enabled: boolean;
@@ -9,28 +9,14 @@ const MODE_KEY = 'merv:auth-mode';
 const USER_KEY = 'merv:shared-account';
 const memory = new Map<string, string>();
 const storage = {
-  getItem(key: string) {
-    try {
-      return sessionStorage.getItem(key);
-    } catch {
-      return memory.get(key) ?? null;
-    }
-  },
+  getItem: (key: string) => safely(() => sessionStorage.getItem(key), memory.get(key) ?? null),
   setItem(key: string, value: string) {
     memory.set(key, value);
-    try {
-      sessionStorage.setItem(key, value);
-    } catch {
-      /* memory only */
-    }
+    safely(() => sessionStorage.setItem(key, value));
   },
   removeItem(key: string) {
     memory.delete(key);
-    try {
-      sessionStorage.removeItem(key);
-    } catch {
-      /* memory only */
-    }
+    safely(() => sessionStorage.removeItem(key));
   },
 };
 /** The address the signed-in session already carries; never read from the server. */

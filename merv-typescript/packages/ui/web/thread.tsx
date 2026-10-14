@@ -181,6 +181,21 @@ export function Thread({
   shown?: string;
 }) {
   const artifacts = useArtifacts();
+  const handed = (file: Handed) =>
+    onDocument ? (
+      <button
+        key={file.id}
+        type="button"
+        className="thread-doc"
+        aria-pressed={shown === file.id}
+        onClick={() => onDocument(file)}
+      >
+        <Icon name="file-text" size={14} />
+        <span>{file.title}</span>
+      </button>
+    ) : (
+      <Evidence key={file.id} artifactId={file.id} artifact={artifacts.get(file.id)} meta />
+    );
   return (
     <ol className="thread">
       {entries.map((entry) =>
@@ -201,45 +216,8 @@ export function Thread({
               </p>
               <div className="thread-body">
                 {entry.said && <p>{entry.said}</p>}
-                {entry.document &&
-                  (onDocument ? (
-                    <button
-                      type="button"
-                      className="thread-doc"
-                      aria-pressed={shown === entry.document.id}
-                      onClick={() => onDocument(entry.document!)}
-                    >
-                      <Icon name="file-text" size={14} />
-                      <span>{entry.document.title}</span>
-                    </button>
-                  ) : (
-                    <Evidence
-                      artifactId={entry.document.id}
-                      artifact={artifacts.get(entry.document.id)}
-                      meta
-                    />
-                  ))}
-                {entry.files?.map((file) =>
-                  onDocument ? (
-                    <button
-                      key={file.id}
-                      type="button"
-                      className="thread-doc"
-                      aria-pressed={shown === file.id}
-                      onClick={() => onDocument(file)}
-                    >
-                      <Icon name="file-text" size={14} />
-                      <span>{file.title}</span>
-                    </button>
-                  ) : (
-                    <Evidence
-                      key={file.id}
-                      artifactId={file.id}
-                      artifact={artifacts.get(file.id)}
-                      meta
-                    />
-                  ),
-                )}
+                {entry.document && handed(entry.document)}
+                {entry.files?.map(handed)}
                 {entry.verdict && <VerdictLine verdict={entry.verdict} />}
               </div>
             </div>

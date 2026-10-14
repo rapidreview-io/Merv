@@ -58,15 +58,23 @@ export type Entry =
   | { type: 'person'; key: string; line: PersonLine }
   | { type: 'steps'; key: string; steps: Step[]; live: boolean };
 
-/** A block as a step, or what else it is: a message, a divider, or nothing to draw. */
-function read(
-  block: AgentBlock,
-  live: boolean,
-):
+type Reading =
   | { step: Step }
   | { message: Extract<AgentBlock, { kind: 'text' }> }
   | { divider: string }
-  | undefined {
+  | undefined;
+/** What each block was last read as: a block that changes is a new object, read again. */
+const readings = new WeakMap<AgentBlock, { live: boolean; line: Reading }>();
+function read(block: AgentBlock, live: boolean): Reading {
+  const known = readings.get(block);
+  if (known?.live === live) return known.line;
+  const line = readOnce(block, live);
+  readings.set(block, { live, line });
+  return line;
+}
+
+/** A block as a step, or what else it is: a message, a divider, or nothing to draw. */
+function readOnce(block: AgentBlock, live: boolean): Reading {
   const kind = lineKind(block);
   if (block.kind === 'text') return block.text.trim() ? { message: block } : undefined;
   if (block.kind === 'status') {

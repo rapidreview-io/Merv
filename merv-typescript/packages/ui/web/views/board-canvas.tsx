@@ -29,16 +29,7 @@ import { placeOf } from './pi-screen';
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
 /** The shapes Board keeps; anything else stays on this page only. */
-const KEPT = new Set([
-  'rectangle',
-  'ellipse',
-  'diamond',
-  'text',
-  'arrow',
-  'line',
-  'freedraw',
-  'frame',
-]);
+const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame'.split(' '));
 const SAVE_MS = 600;
 const ASK_MS = 1500;
 

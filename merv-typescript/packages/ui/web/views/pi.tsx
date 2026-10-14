@@ -184,10 +184,9 @@ export function Transcript({ pi }: { pi: Conversation }) {
     following.current = true;
   }, [following]);
   useLayoutEffect(follow);
-  // What Run told the agent, by turn; and whether a call's card is drawn: the latest calls the
-  // agent proposed stay under their turn until it proposes again, and a full result held here
-  // stays in its card while the conversation is open.
-  const told = snapshot?.commands.map((_, at, all) => receiptOf(all, at)) ?? [];
+  // Whether a call's card is drawn: the latest calls the agent proposed stay under their turn
+  // until it proposes again, and a full result held here stays in its card while the
+  // conversation is open.
   const carded = (proposal: PiProposal) =>
     !!proposing?.proposals?.some(({ id }) => id === proposal.id) || proposal.id in localResults;
   return (
@@ -204,7 +203,8 @@ export function Transcript({ pi }: { pi: Conversation }) {
       {snapshot?.commands.flatMap((item, at, all) => [
         changed(all, at, host, snapshot.models),
         ...item.messages.map((message, index) => {
-          const receipt = index === 0 && told[at];
+          // What Run told the agent, where the turn's first message is that.
+          const receipt = index === 0 && receiptOf(all, at);
           return receipt ? (
             !carded(receipt) && <Outcome key={`${item.id}-${index}`} named proposal={receipt} />
           ) : (
@@ -361,12 +361,7 @@ function PiConversationPage() {
   const [context, setContext] = useState(false);
   const switcher = useRef<HTMLDivElement>(null);
   useMenu(switcher, menu, () => setMenu(null));
-  if (!pi)
-    return (
-      <div className="page-stage pi-page">
-        <p role="status">Opening conversations…</p>
-      </div>
-    );
+  if (!pi) return <Notice>Opening conversations…</Notice>;
   const { listed, error, streamError, unavailable, busy, blocked, snapshot, host, title } = pi;
   const { conversations, selected } = pi;
   return (
@@ -513,21 +508,20 @@ export function Speak({ pi, rows = 3 }: { pi: Conversation; rows?: number }) {
   );
 }
 
+/** The page while all it has to say is how it stands. */
+const Notice = ({ children }: { children: ReactNode }) => (
+  <div className="page-stage pi-page">
+    <p role="status">{children}</p>
+  </div>
+);
+
 export function PiView({ row }: ViewProps) {
   const scope = useScopeVersion();
   const agent = useAgent();
   if (row.status.state === 'unavailable')
-    return (
-      <div className="page-stage pi-page">
-        <p role="status">Agent unavailable. {row.status.detail}</p>
-      </div>
-    );
+    return <Notice>Agent unavailable. {row.status.detail}</Notice>;
   if (!projectSelection() || !currentToken())
-    return (
-      <div className="page-stage pi-page">
-        <p role="status">Agent unavailable. Select a project and sign in to continue.</p>
-      </div>
-    );
+    return <Notice>Agent unavailable. Select a project and sign in to continue.</Notice>;
   // A page drawn where nothing holds the conversation above it holds its own.
   return agent ? (
     <PiConversationPage />

@@ -4,10 +4,8 @@ import { recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { Evidence, KV, LoadState, RecordPage, Stamp, timeRows, useArtifacts } from '../components';
 import { Gate, Relations, StageMark, useRecordRead } from '../process';
-import { useSession } from '../session';
 import { Thread, historyEntries } from '../thread';
-import { signedInAdmin } from './code';
-import { UnitCode } from './code-section';
+import { RecordCode } from './code';
 import { useActorNames } from './people';
 import { CriterionRows, type Review } from './reviews';
 import type { ViewProps } from './index';
@@ -70,9 +68,6 @@ function TaskDetail({ row, shell }: ViewProps) {
   }>(row, id, 60_000);
   const nameOf = useActorNames();
   const back = homeOf(shell.rows);
-  // The publication verbs answer a signed-in operator and nobody else, so the Code
-  // section is told who is reading before it offers the move.
-  const { actor, account } = useSession();
   const t = record.data?.task;
   // Every round of review this task has been through, the newest verdict and the earlier ones
   // in one answer; once the task has ended, none of them changes again.
@@ -118,15 +113,7 @@ function TaskDetail({ row, shell }: ViewProps) {
           </>
         ) : undefined
       }
-      code={
-        record.data?.codeUnit && (
-          <UnitCode
-            unit={record.data.codeUnit}
-            named={nameOf}
-            signedIn={signedInAdmin(actor, account)}
-          />
-        )
-      }
+      code={record.data?.codeUnit && <RecordCode unit={record.data.codeUnit} named={nameOf} />}
       related={
         t.dependencies?.length || t.dependents?.length ? (
           <>
