@@ -366,15 +366,6 @@ export class WorkUnitRecords {
    * closed unmerged rejected its unit and every acceptance its base was made from, so none of
    * them is offered again.
    */
-  async acceptedCandidates(caller: Caller, tx?: Transaction): Promise<AcceptedCandidates> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await inTransaction(this.state, tx, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return await this.candidatesOf(tx, caller.projectId);
-    });
-  }
-  /** The same answer for the server's own reader, which has no caller (landing.ts). */
   async candidatesOf(sql: Sql, projectId: string): Promise<AcceptedCandidates> {
     this.assertOpen();
     const project = await this.code.project(sql, projectId);
@@ -453,30 +444,27 @@ export class WorkUnitRecords {
     return row && { ...row };
   }
 
-  /** What the sealed publication of this unit says now, as the policy reads it. */
+  /** What this unit's sealed publication says now, as the policy reads it; null if none was declared. */
   async publicationOf(
     sql: Sql,
     projectId: string,
     row: UnitRow,
   ): Promise<PublicationStanding | null> {
-    const stored = await this.storedPublicationOf(sql, projectId, row);
+    const publication =
+      row.publication_id &&
+      (await sql.get<PublicationRow>(
+        `SELECT ${publicationColumns} FROM code_publications p WHERE proposal_id=? AND project_id=?`,
+        row.publication_id,
+        projectId,
+      ));
+    // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
+    const unsealed = !row.publication_id && row.publishes_at && row.acceptance_json;
+    const stored = publication
+      ? storedPublication(publication)
+      : unsealed
+        ? { state: 'unsealed' as const }
+        : null;
     return await this.policy.publication(sql, projectId, stored);
-  }
-  /** What the sealed publication of this unit says of itself; null while nothing declared one. */
-  private async storedPublicationOf(
-    sql: Sql,
-    projectId: string,
-    row: UnitRow,
-  ): Promise<PublicationStanding | null> {
-    if (!row.publication_id)
-      // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
-      return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
-    const publication = await sql.get<PublicationRow>(
-      `SELECT ${publicationColumns} FROM code_publications p WHERE proposal_id=? AND project_id=?`,
-      row.publication_id,
-      projectId,
-    );
-    return publication ? storedPublication(publication) : null;
   }
 
   close(): void {
@@ -569,18 +557,15 @@ export class WorkUnitRecords {
       unitId,
     );
     const stored = (await this.row(tx, caller.projectId, unitId))!;
-    await this.code.pinWorkspace(
-      caller,
-      { unitId, reference: (JSON.parse(stored.base_json!) as BaseBody).reference },
-      tx,
-    );
+    const pinned = pin(stored)!;
+    await this.code.pinWorkspace(caller, { unitId, reference: pinned.reference }, tx);
     await this.code.retainStoredCommit(tx, {
       projectId: caller.projectId,
       key: `pin:${unitId}`,
       unitId,
-      commit: (JSON.parse(stored.base_json!) as BaseBody).reference,
+      commit: pinned.reference,
       storage: 'external',
-      createdAt: stored.based_at!,
+      createdAt: pinned.pinnedAt,
     });
     if (stored.base_lease_id === leaseId)
       for (const target of [
@@ -595,7 +580,7 @@ export class WorkUnitRecords {
           target,
           at,
         );
-    return pin(stored)!;
+    return pinned;
   }
 
   async retainUnitAcceptance(
@@ -617,37 +602,11 @@ export class WorkUnitRecords {
     }
     const at = now();
     if (!existing) await this.insertUnit(tx, caller.projectId, body, at);
-    await this.writeAcceptance(caller, body, at, tx);
-    return (await this.row(tx, caller.projectId, body.unitId))!;
-  }
-
-  private async insertUnit(
-    tx: Transaction,
-    projectId: string,
-    unit: { unitId: string; workflow: string; version: number },
-    at: string,
-  ): Promise<void> {
-    await tx.run(
-      'INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at) VALUES (?,?,?,?,?)',
-      projectId,
-      unit.unitId,
-      unit.workflow,
-      unit.version,
-      at,
-    );
-  }
-
-  /** Store the accepted identity and its durable Git ref together. */
-  private async writeAcceptance(
-    caller: Caller,
-    body: AcceptanceBody,
-    at: string,
-    tx: Transaction,
-  ): Promise<void> {
+    // The accepted identity and its durable Git ref are stored together.
     await tx.run(
       'UPDATE code_units SET acceptance_json=?,acceptance_hash=?,accepted_at=? WHERE project_id=? AND unit_id=? AND acceptance_json IS NULL',
       canonical(body),
-      digest(body),
+      hash,
       at,
       caller.projectId,
       body.unitId,
@@ -664,5 +623,22 @@ export class WorkUnitRecords {
         storage: body.storage === 'code' ? 'code' : 'external',
         ...(body.receipt ? { receipt: body.receipt } : {}),
       });
+    return (await this.row(tx, caller.projectId, unitId))!;
+  }
+
+  private async insertUnit(
+    tx: Transaction,
+    projectId: string,
+    unit: { unitId: string; workflow: string; version: number },
+    at: string,
+  ): Promise<void> {
+    await tx.run(
+      'INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at) VALUES (?,?,?,?,?)',
+      projectId,
+      unit.unitId,
+      unit.workflow,
+      unit.version,
+      at,
+    );
   }
 }

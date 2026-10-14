@@ -301,35 +301,45 @@ export class CodeCommandService implements CodeCommands {
         'code_object_format',
         'The expected head must use the workspace Git object format',
       );
-      const command: CodeCommitCommand = {
-        id: newId('codecmd'),
-        projectId: session.projectId,
-        sessionId: session.id,
-        actorId: session.actorId,
-        instanceId: session.instanceId,
-        expectedRevision: session.expectedRevision,
-        runnerId: session.runnerId,
-        hostRef: session.hostRef!,
-        workspace: session.workspace!.attachment,
-        ...(merge ? { merge } : {}),
-        expectedHead: input.expectedHead,
-        message: input.message,
-        createdAt: now(),
-      };
-      await tx.run(
-        `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
-         VALUES (?,?,?,?,?,?,?,'queued')`,
-        command.id,
-        command.projectId,
-        command.sessionId,
-        command.actorId,
-        input.requestId,
-        hash,
-        canonical(command),
-      );
-      await this.event(tx, command, 'queued');
-      return this.decode(await this.row(tx, command.id));
+      const { expectedHead, message } = input;
+      const commit = { ...(merge ? { merge } : {}), expectedHead, message };
+      return this.decode(await this.queue(tx, session, input.requestId, hash, commit));
     });
+  }
+  /** Queues a commit of the session's checkout, its agent's or a checkpoint, for its runner. */
+  private async queue(
+    tx: Transaction,
+    session: Session,
+    requestId: string,
+    hash: string,
+    commit: Pick<CodeCommitCommand, 'merge' | 'expectedHead' | 'message'>,
+  ): Promise<Row> {
+    const command: CodeCommitCommand = {
+      id: newId('codecmd'),
+      projectId: session.projectId,
+      sessionId: session.id,
+      actorId: session.actorId,
+      instanceId: session.instanceId,
+      expectedRevision: session.expectedRevision,
+      runnerId: session.runnerId,
+      hostRef: session.hostRef!,
+      workspace: session.workspace!.attachment,
+      ...commit,
+      createdAt: now(),
+    };
+    await tx.run(
+      `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
+       VALUES (?,?,?,?,?,?,?,'queued')`,
+      command.id,
+      command.projectId,
+      command.sessionId,
+      command.actorId,
+      requestId,
+      hash,
+      canonical(command),
+    );
+    await this.event(tx, command, 'queued');
+    return await this.row(tx, command.id);
   }
   async nextCommand(caller: Caller, value: unknown): Promise<CodeCommitCommand | null> {
     caller = structuredClone(caller);
@@ -409,33 +419,8 @@ export class CodeCommandService implements CodeCommands {
       );
       return undefined;
     }
-    const command: CodeCommitCommand = {
-      id: newId('codecmd'),
-      projectId: session.projectId,
-      sessionId: session.id,
-      actorId: session.actorId,
-      instanceId: session.instanceId,
-      expectedRevision: session.expectedRevision,
-      runnerId: session.runnerId,
-      hostRef: session.hostRef,
-      workspace: session.workspace.attachment,
-      expectedHead: input.expectedHead,
-      message,
-      createdAt: now(),
-    };
-    await tx.run(
-      `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
-       VALUES (?,?,?,?,?,?,?,'queued')`,
-      command.id,
-      command.projectId,
-      command.sessionId,
-      command.actorId,
-      input.requestId,
-      hash,
-      canonical(command),
-    );
-    await this.event(tx, command, 'queued');
-    return await this.row(tx, command.id);
+    const commit = { expectedHead: input.expectedHead, message };
+    return await this.queue(tx, session, input.requestId, hash, commit);
   }
   async completeCommand(caller: Caller, value: unknown): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);

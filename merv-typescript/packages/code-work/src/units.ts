@@ -134,8 +134,7 @@ export class CodeUnitService {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
-    const relations = await this.workflows.relations(caller.projectId, unitId, tx);
-    check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
+    const relations = await this.relations(tx, caller.projectId, unitId);
     await this.records.retainDeclaration(
       caller,
       {
@@ -810,10 +809,7 @@ export class CodeUnitService {
     }
     const [accepted] = [...commits];
     if (!accepted && main.stored !== true)
-      return {
-        status: 'blocked',
-        blockers: [await missingMain()],
-      };
+      return { status: 'blocked', blockers: [await missingMain()] };
     return {
       status: 'ready',
       body: {

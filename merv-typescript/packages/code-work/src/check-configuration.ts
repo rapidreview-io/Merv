@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import {
   canonical,
-  check,
-  digest,
   idSchema,
   newId,
   now,
@@ -93,20 +91,8 @@ export async function configureWorkRepository(
   caller = structuredClone(caller);
   const { requestId, ...body } = parseCodeInput(codeRepositoryConfigureInputSchema, value);
   return state.transaction(async (tx) => {
-    await scope.require(caller, 'admin', tx);
-    check(
-      !caller.session,
-      'session_forbidden',
-      'A leased worker cannot configure this repository',
-      403,
-    );
-    const journal = new CodeWorkReceipt(
-      tx,
-      caller.projectId,
-      `actor:${caller.actorId}`,
-      requestId,
-      digest(body),
-    );
+    const refusal = 'A leased worker cannot configure this repository';
+    const journal = await CodeWorkReceipt.open(scope, tx, caller, requestId, body, refusal);
     const previous = await journal.previous();
     if (previous) return JSON.parse(previous.result_json) as CodeStoreLimits;
     const limits = await store.setAdmission(

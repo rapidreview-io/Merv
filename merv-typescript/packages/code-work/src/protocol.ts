@@ -22,6 +22,7 @@ import type { CodeStore } from '@merv/code/store/operations';
 import { workBranch } from '@merv/code/store/refs';
 import type { CodeWriterService } from '@merv/code/writers';
 
+/** The session a machine names as its own; an export is read only by the machine that runs it. */
 const codeWorkspaceManifestInputSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id.optional() })
   .strict();
@@ -32,21 +33,14 @@ const codeUploadBeginSchema = codeUploadFenceSchema
 const codeUploadFinalizeSchema = codeUploadFenceSchema
   .extend({ kind: z.literal('final') })
   .strict();
-const codeDownloadBeginSchema = z
-  .object({
-    sessionId: id,
-    runnerId: id,
-    hostRef: id.optional(),
+const codeDownloadBeginSchema = codeWorkspaceManifestInputSchema
+  .extend({
     /** Commits the machine says it holds. A wrong claim only breaks that machine's import. */
     haves: z.array(oid).max(256),
   })
   .strict();
-const codeDownloadReadSchema = z
-  .object({
-    /** An export is read only by the machine that runs the session it was made for. */
-    sessionId: id,
-    runnerId: id,
-    hostRef: id.optional(),
+const codeDownloadReadSchema = codeWorkspaceManifestInputSchema
+  .extend({
     offset: z.number().int().nonnegative().safe(),
     length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
   })

@@ -12,6 +12,7 @@ import {
   codeCommandCompletionSchema,
   createService,
   digest,
+  forRead,
   MervError,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
@@ -25,13 +26,7 @@ import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
 import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
-import type {
-  CheckedCodeCapture,
-  Code,
-  CodeCaptureOrigin,
-  CodeCaptureRef,
-  ResolutionWorkCreator,
-} from './types.js';
+import type { Code, ResolutionWorkCreator } from './types.js';
 import { CodeUnitService } from './units.js';
 import { acceptance, pin, unitColumns, type UnitRow } from './unit-store.js';
 import type { CodeWriterService } from '@merv/code/writers';
@@ -238,14 +233,8 @@ export class CodeService implements Code {
   }
   capture: Code['capture'] = (...args) => this.captureReader.capture(...args);
   captures: Code['captures'] = (...args) => this.captureReader.captures(...args);
-  async checkCapture(
-    caller: Caller,
-    ref: CodeCaptureRef,
-    origin: CodeCaptureOrigin,
-    tx?: Transaction,
-  ): Promise<CheckedCodeCapture> {
-    return checkedCapture(await this.capture(caller, ref, tx), caller.projectId, origin);
-  }
+  checkCapture: Code['checkCapture'] = async (caller, ref, origin, tx) =>
+    checkedCapture(await this.capture(caller, ref, tx), caller.projectId, origin);
   list: Code['list'] = (...args) => this.commands.list(...args);
   operation: Code['operation'] = (...args) => this.commands.operation(...args);
   commit: Code['commit'] = (...args) => this.commands.commit(...args);
@@ -311,7 +300,11 @@ export class CodeService implements Code {
    */
   async acceptedSince(caller: Caller): Promise<CodeAcceptedSince> {
     caller = structuredClone(caller);
-    const { main, candidates } = await this.unitStore.records.acceptedCandidates(caller);
+    // A pure read: a snapshot, never the writer lock.
+    const { main, candidates } = await forRead(this.state, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return await this.unitStore.records.candidatesOf(tx, caller.projectId);
+    });
     const beyond = await beyondMain(
       this.utility.repositories,
       caller.projectId,
@@ -347,12 +340,8 @@ export class CodeService implements Code {
     // Only a success carries an acceptance, whose retained ref the store takes up after this.
     if (args[0].data.settled !== false) this.store.wake();
   }
-  async controlBase(caller: Caller, input: unknown) {
-    return this.baseStore.control(this.scope, caller, input);
-  }
-  async retryMirror(caller: Caller, input: unknown) {
-    return await this.mirrorStore.retry(caller, input);
-  }
+  controlBase: Code['controlBase'] = (...args) => this.baseStore.control(this.scope, ...args);
+  retryMirror: Code['retryMirror'] = (...args) => this.mirrorStore.retry(...args);
   async requireLeasable(
     caller: Caller,
     input: { unitId: string; writer: boolean },
@@ -403,9 +392,8 @@ export class CodeService implements Code {
   hosted: Code['hosted'] = (...args) => this.utility.units.hosted(...args);
   async ensureRepository(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'write', tx);
-    if (await this.utility.units.hosted(caller, tx)) return;
-    await this.utility.declareManaged(tx, caller.projectId);
-    this.store.wake();
+    if (!(await this.utility.units.hosted(caller, tx)))
+      await this.projectCreated(caller.projectId, tx);
   }
   async projectCreated(projectId: string, tx: Transaction): Promise<void> {
     await this.utility.declareManaged(tx, projectId);
@@ -425,17 +413,13 @@ export class CodeService implements Code {
     );
     if (!base) return null;
     const members = JSON.parse(base.members_json) as string[];
-    const accepted = await sql.all<{ unit_id: string; acceptance_json: string }>(
-      'SELECT unit_id,acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY accepted_at,unit_id',
-      projectId,
-    );
-    const ids = accepted.flatMap((row) =>
-      members.includes(
-        (JSON.parse(row.acceptance_json) as { code?: { commit?: string } }).code?.commit ?? '',
+    const ids = (
+      await sql.all<{ unit_id: string }>(
+        `SELECT unit_id FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL AND (acceptance_json::jsonb #>> '{code,commit}') IN (${members.map(() => '?').join(',')}) ORDER BY accepted_at,unit_id`,
+        projectId,
+        ...members,
       )
-        ? [row.unit_id]
-        : [],
-    );
+    ).map((row) => row.unit_id);
     if (!ids.length) return null;
     const names = await this.state.snapshotTransaction(async (tx) => {
       const found: string[] = [];

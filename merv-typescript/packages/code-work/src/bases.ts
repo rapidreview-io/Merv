@@ -6,14 +6,14 @@ import {
 } from './check-configuration.js';
 import { migrateBases } from './base-schema.js';
 import { CodeWorkReceipt } from './receipts.js';
-import { canonical, check, digest, newId, now, MervError } from '@merv/contracts';
+import { canonical, check, newId, now, MervError } from '@merv/contracts';
 import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
 import type { SandboxChecks } from './check-types.js';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
 import { parseCodeInput } from '@merv/code/input';
 import { verifyResolution } from '@merv/code/pending-merge';
-import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
+import { baseKey, members, planBase } from './base-plan.js';
 import { MERGE_ENGINE, mergeBases } from '@merv/code/base-merge';
 import {
   archiveCommit,
@@ -192,6 +192,7 @@ export const baseControlSchema = z
   })
   .strict();
 export type CodeBaseControl = z.infer<typeof baseControlSchema>;
+const CONTROL = 'A leased worker cannot control server work';
 /** Written by propagation, never by an operator, so a released quarantine knows what to retract. */
 export const INHERITED_QUARANTINE = 'Input inherits quarantine from ';
 /**
@@ -370,15 +371,18 @@ export class CodeBaseService {
     return result;
   }
 
+  /** The commit each input stands for: a lone commit is itself, a record is its result. */
   async inputs(
     sql: Sql,
     projectId: string,
     base: CodeBaseRecord,
   ): Promise<[string | null, string | null]> {
-    return [
-      await this.input(sql, projectId, base.left, base.members),
-      await this.input(sql, projectId, base.right, base.members),
-    ];
+    const input = async (key: string) => {
+      const lone = base.members.find((commit) => baseKey([commit]) === key);
+      const row = lone ? undefined : await this.row(sql, projectId, key);
+      return lone ?? this.stands(row ? this.record(row) : null);
+    };
+    return [await input(base.left), await input(base.right)];
   }
 
   async linkTask(tx: Transaction, projectId: string, key: string, taskId: string): Promise<void> {
@@ -480,17 +484,9 @@ export class CodeBaseService {
     const wanted = members(commits);
     const found = await this.find(tx, projectId, wanted);
     if (found) return found;
-    const inside = new Set(wanted);
-    const existing: PlannedBase[] = (
+    const existing = (
       await tx.all<BaseRow>(`SELECT ${columns} FROM code_bases WHERE project_id=?`, projectId)
-    )
-      .map((row) => this.record(row))
-      .filter((record) => record.members.every((commit) => inside.has(commit)))
-      .map((record) => ({
-        key: record.key,
-        members: record.members,
-        quarantined: record.quarantined,
-      }));
+    ).map((row) => this.record(row));
     const at = now();
     let sponsors: ((members: string[]) => Promise<string[]>) | undefined;
     for (const step of planBase(wanted, existing)) {
@@ -517,19 +513,6 @@ export class CodeBaseService {
   /** The commit a base stands for; one that is unfinished or unhealthy stands for none. */
   private stands(record: CodeBaseRecord | null): string | null {
     return record && !record.quarantined && record.result ? record.result.commit : null;
-  }
-
-  /** The commit an input stands for: a lone commit is itself, a record is its result. */
-  private async input(
-    sql: Sql,
-    projectId: string,
-    key: string,
-    of: string[],
-  ): Promise<string | null> {
-    const lone = of.find((commit) => baseKey([commit]) === key);
-    if (lone) return lone;
-    const row = await this.row(sql, projectId, key);
-    return this.stands(row ? this.record(row) : null);
   }
 
   private async inputsResolved(sql: Sql, projectId: string, keys: string[]): Promise<boolean> {
@@ -633,11 +616,8 @@ export class CodeBaseService {
             return false;
           }
           const input: ServiceWorkInput = {
-            provider: 'code',
-            projectId,
-            operationId: `${projectId}:${base.key}`,
+            ...this.execution(projectId, base),
             executionEpoch: base.executionEpoch + 1,
-            sponsors: base.sponsors,
             deadline: new Date(this.clock() + this.deadlineMs).toISOString(),
           };
           const admitted = await this.hooks.serviceWork?.admit(tx, input);
@@ -846,11 +826,7 @@ export class CodeBaseService {
       });
     } catch (error) {
       await this.state.transaction(async (tx) => {
-        const current = await tx.get<{ state: string; execution_epoch: number }>(
-          'SELECT state,execution_epoch FROM code_bases WHERE project_id=? AND base_key=?',
-          projectId,
-          base.key,
-        );
+        const current = await this.row(tx, projectId, base.key);
         if (
           current?.state !== 'running' ||
           Number(current.execution_epoch) !== base.executionEpoch
@@ -939,11 +915,7 @@ export class CodeBaseService {
     const spec = await this.checkSpec(tx, projectId);
     if (!spec || !this.hooks.serviceWork) return false;
     const held: ServiceWorkInput = {
-      provider: 'code.check',
-      projectId,
-      operationId: `${projectId}:${base.key}`,
-      executionEpoch: base.executionEpoch,
-      sponsors: base.sponsors,
+      ...this.execution(projectId, base, 'code.check'),
       deadline: new Date(
         this.clock() + (spec.timeoutSeconds + CODE_CHECK_SLACK_SECONDS) * 1000,
       ).toISOString(),
@@ -1382,24 +1354,10 @@ export class CodeBaseService {
     caller: Caller,
     input: CodeBaseControl,
   ): Promise<string | null> {
-    const principal = `actor:${caller.actorId}`;
-    const replay = await this.state.transaction(async (tx) => {
-      await scope.require(caller, 'admin', tx);
-      check(
-        !caller.session,
-        'session_forbidden',
-        'A leased worker cannot control server work',
-        403,
-      );
-      const { requestId, ...body } = input;
-      return await new CodeWorkReceipt(
-        tx,
-        caller.projectId,
-        principal,
-        requestId,
-        digest(body),
-      ).previous();
-    });
+    const { requestId, ...body } = input;
+    const replay = await this.state.transaction(async (tx) =>
+      (await CodeWorkReceipt.open(scope, tx, caller, requestId, body, CONTROL)).previous(),
+    );
     if (replay) return null;
     const row = await this.state.read((sql) => this.row(sql, caller.projectId, input.key));
     check(row, 'code_base_not_found', 'No such base in this project', 404);
@@ -1427,16 +1385,8 @@ export class CodeBaseService {
     const discarded = input.action === 'repair' ? await this.discard(scope, caller, input) : null;
     let interrupted = false;
     const result = await this.state.transaction(async (tx) => {
-      await scope.require(caller, 'admin', tx);
-      check(
-        !caller.session,
-        'session_forbidden',
-        'A leased worker cannot control server work',
-        403,
-      );
       const { requestId, ...body } = input;
-      const principal = `actor:${caller.actorId}`;
-      const journal = new CodeWorkReceipt(tx, caller.projectId, principal, requestId, digest(body));
+      const journal = await CodeWorkReceipt.open(scope, tx, caller, requestId, body, CONTROL);
       const previous = await journal.previous();
       if (previous) {
         // A receipt kept before records carried their verbs gets them from what it records.
@@ -1514,7 +1464,9 @@ export class CodeBaseService {
         );
       await this.promote(tx, caller.projectId);
       await this.hooks.changed(tx, caller.projectId);
-      const result = (await this.records(tx, caller.projectId)).find((b) => b.key === input.key)!;
+      const result = this.record((await this.row(tx, caller.projectId, input.key))!);
+      if (result.result || result.state !== 'cancelled')
+        result.parents = await this.inputs(tx, caller.projectId, result);
       const at = now();
       // Hash only the request; retain the discarded commit as evidence of what the repair did.
       await journal.complete(
