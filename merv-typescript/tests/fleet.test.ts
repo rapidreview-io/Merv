@@ -1599,6 +1599,12 @@ test('only a full pass reads the offers again', async (t) => {
   assert.equal(described, 0, 'a fast pass reads no offers');
   await run(true);
   assert.equal(described, profiles.length);
+  const fleet = f.fleet as unknown as { all(sql: unknown): Promise<unknown> };
+  const all = fleet.all.bind(fleet);
+  let reads = 0;
+  fleet.all = (sql) => (reads++, all(sql));
+  await run(false);
+  assert.equal(reads, 1, 'a pass that admits nothing reads the open allocations once');
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {

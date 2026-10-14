@@ -50,7 +50,7 @@ import {
   type ConversationFacts,
 } from './conversation.js';
 import { harnessOf, launcherOf } from './harness/index.js';
-import { claudeLogUsage } from './harness/claude.js';
+import { claudeLogUsage, claudeTally, type ClaudeTally } from './harness/claude.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
@@ -276,6 +276,7 @@ export class MachineRunner implements Runner {
   private readonly transcriptRetry = new Map<string, number>();
   /** Each launched agent's live stream, kept until its log is sent to the end. */
   private readonly streams = new Map<string, AgentStream>();
+  private readonly tallies = new Map<string, ClaudeTally>();
 
   constructor(
     config: RunnerConfig,
@@ -443,9 +444,6 @@ export class MachineRunner implements Runner {
     const workspace = this.driverOf(record)?.get(record.id);
     return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
   }
-  private managed(): boolean {
-    return !!this.config.workInstanceId;
-  }
   /** The ledger detaches and bounds the patch; only the source bearer is known here. */
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
     check(
@@ -460,8 +458,8 @@ export class MachineRunner implements Runner {
     // has no repository of its own for work that names no driver. A managed runner's
     // capabilities must equal its enrolment, so it names only its drivers.
     // `inquiry.1`: it runs an inquiry visit as one, read-only and keeping nothing (`inquiring`).
-    const marker = [this.managed() ? 'workflow.workhost.1' : 'runner.2', INQUIRY_CAPABILITY];
-    const capabilities = [...this.drivers.keys(), ...marker].sort();
+    const marker = this.config.workInstanceId ? 'workflow.workhost.1' : 'runner.2';
+    const capabilities = [...this.drivers.keys(), marker, INQUIRY_CAPABILITY].sort();
     // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
     const heartbeat = async () => {
       const body = {
@@ -703,8 +701,9 @@ export class MachineRunner implements Runner {
     // where no model relay holds it to it: on a machine of the owner's (self-hosted Claude). A
     // hosted machine's calls go through Fleet's relay, which refuses the call past it.
     const budget = session.tokenBudget;
-    if (record.status === 'running' && typeof budget === 'number' && !this.managed()) {
-      const used = this.readUsage(record, 16 << 20);
+    if (record.status === 'running' && typeof budget === 'number' && !this.config.workInstanceId) {
+      if (!this.tallies.has(record.id)) this.tallies.set(record.id, claudeTally());
+      const used = this.readUsage(record, this.tallies.get(record.id));
       if (used && used.inputTokens + used.outputTokens > budget) {
         record = await this.halt(record.id, {
           releaseOutcome: 'host_failed',
@@ -899,6 +898,7 @@ export class MachineRunner implements Runner {
    * transcript itself; true once nothing is. One whose driver is gone is released and waits.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
+    this.tallies.delete(record.id); // only a running launch's budget reads on
     // First, before the hosted reset wipes the harness's home: the conversation it wrote.
     if (record.metadata.conversation === undefined)
       record = this.save(record.id, { conversation: this.keep(record) });
@@ -1164,7 +1164,7 @@ export class MachineRunner implements Runner {
     // raced it still counts. Hosted stops and source-refusal halts stay counted: `released`
     // has no backoff, so a repeated eviction or a poison 401 would re-offer the work at once.
     const byStop =
-      !this.managed() &&
+      !this.config.workInstanceId &&
       (this.stopping || metadata.runnerStopped === true) &&
       ['controller_stop', 'external_stop', 'cancelled_before_spawn'].includes(record.reason ?? '');
     // A successful process exit does not prove that its workflow gate was completed.
@@ -1174,7 +1174,7 @@ export class MachineRunner implements Runner {
       (byStop ? undefined : failed);
     let session: Session | undefined;
     // A managed runner acknowledges its local stop even when a handoff left no usage.
-    if (!remote || usage || this.managed()) {
+    if (!remote || usage || this.config.workInstanceId) {
       const input = remote
         ? { usage }
         : {
@@ -1207,25 +1207,23 @@ export class MachineRunner implements Runner {
       const profile = record.metadata.profile as RunnerProfile | undefined;
       const harness = profile && harnessOf(profile);
       if (
-        this.streams.has(record.id) ||
-        !harness ||
-        record.status === 'reserved' ||
-        record.status === 'starting'
+        !this.streams.has(record.id) &&
+        harness &&
+        record.status !== 'reserved' &&
+        record.status !== 'starting'
       )
-        continue;
-      this.streams.set(
-        record.id,
-        new AgentStream(
-          record.runDirectory,
-          harness,
-          [this.sourceBearer],
-          (batch) => this.client.stream(record.sessionId, this.ledger.runnerId, record.id, batch),
-          this.clock,
-        ),
-      );
-    }
-    for (const record of [...this.ledger.open(), ...ended])
+        this.streams.set(
+          record.id,
+          new AgentStream(
+            record.runDirectory,
+            harness,
+            [this.sourceBearer],
+            (batch) => this.client.stream(record.sessionId, this.ledger.runnerId, record.id, batch),
+            this.clock,
+          ),
+        );
       if (terminalLaunch(record)) this.streams.get(record.id)?.end();
+    }
     for (const [id, stream] of this.streams)
       if (stream.finished) this.streams.delete(id);
       else stream.tick();
@@ -1243,10 +1241,10 @@ export class MachineRunner implements Runner {
   /**
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
    * anything here, so a link, a device or a malformed report is simply not sent. Without one,
-   * what the profile's harness printed of its spending. Claude's per-call usage needs the whole
-   * log; Codex's cumulative report is read from its last `tailBytes` (1 MiB), at a whole line.
+   * what the profile's harness printed of its spending: Claude's per-call usage from the whole log
+   * (a `live` budget's tally reads on), Codex's report from its last 1 MiB (16 MiB live).
    */
-  private readUsage(record: LaunchRecord, tailBytes = 1 << 20): SessionUsageReport | undefined {
+  private readUsage(record: LaunchRecord, live?: ClaudeTally): SessionUsageReport | undefined {
     const read = (path: string, limit: number, tail = false) => {
       // Never a link, and never a wait on a FIFO swapped in before the open.
       const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -1273,8 +1271,8 @@ export class MachineRunner implements Runner {
       const path = join(record.runDirectory, 'stdout.log');
       return sessionUsageReportSchema.parse(
         profile.harness === 'claude'
-          ? claudeLogUsage(path, model)
-          : harnessOf(profile)?.usage(read(path, tailBytes, true), model),
+          ? claudeLogUsage(path, model, live)
+          : harnessOf(profile)?.usage(read(path, live ? 16 << 20 : 1 << 20, true), model),
       );
     } catch {
       return;
@@ -1361,7 +1359,7 @@ export class MachineRunner implements Runner {
       // What this stop ends is released uncounted (see release()). The flag outlives a
       // controller that exits before those releases go out, and ended launches carry it too:
       // the same stop's group SIGTERM may have reached their guardian first.
-      if (!this.managed())
+      if (!this.config.workInstanceId)
         for (const record of this.ledger.open())
           if (record.metadata.usageReported !== true) this.save(record.id, { runnerStopped: true });
       await this.current;

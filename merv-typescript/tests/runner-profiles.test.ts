@@ -36,6 +36,7 @@ import {
   type LaunchRequest,
 } from '../packages/runner/src/profiles.js';
 import { harnessOf } from '../packages/runner/src/harness/index.js';
+import { claudeTally, type ClaudeTally } from '../packages/runner/src/harness/claude.js';
 import { hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 
 const harnessUsage = (profile: RunnerProfile, output: string) =>
@@ -912,13 +913,13 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
     { autoPoll: false },
   );
   try {
-    const read = (profile: RunnerProfile, tailBytes?: number) =>
-      (runner as unknown as { readUsage(record: unknown, tailBytes?: number): unknown }).readUsage(
+    const read = (profile: RunnerProfile, live?: ClaudeTally) =>
+      (runner as unknown as { readUsage(record: unknown, live?: ClaudeTally): unknown }).readUsage(
         {
           runDirectory: directory,
           metadata: { profile },
         },
-        tailBytes,
+        live,
       );
     const log = join(directory, 'stdout.log'),
       file = join(directory, 'usage.json');
@@ -968,18 +969,23 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
         latest,
       ) + '{"type":"assistant","message":',
     );
-    for (const tail of [undefined, 16 << 20])
+    const live = claudeTally();
+    for (const tally of [undefined, live, live])
       assert.deepEqual(
-        read(claude, tail),
+        read(claude, tally),
         { inputTokens: 140_000, outputTokens: 1002 },
         'The latest report per message is counted once, across the whole log',
       );
+    // A live budget's tally reads on from the unfinished line, folding it again as it grows.
+    const before = live.at;
     appendFileSync(log, `\n${result({ input_tokens: 150_000, output_tokens: 2000 })}`);
-    assert.deepEqual(
-      read(claude),
-      { inputTokens: 150_000, outputTokens: 2000 },
-      'A final cumulative result still wins, including without a trailing newline',
-    );
+    for (const tally of [undefined, live])
+      assert.deepEqual(
+        read(claude, tally),
+        { inputTokens: 150_000, outputTokens: 2000 },
+        'A final cumulative result still wins, including without a trailing newline',
+      );
+    assert.ok(live.at > before && before > 17 << 20, 'the tally read on, not from the start');
 
     // A line too large to inspect cannot silently remove a call from the fallback sum.
     writeFileSync(log, stream(earlier, 'x'.repeat(17 << 20), latest));

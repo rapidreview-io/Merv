@@ -652,22 +652,21 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }
     // A host that has claimed no work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
-    // A work host is rented under the owner for its reviews too, which only the reviewer sees;
-    // it is wanted only for its own instance.
-    let wanted = false;
-    for (const director of [a.source, await this.reviewer(a.source)])
-      wanted ||= (
-        await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
-      ).candidates.some((c) => c.instanceId === workId(a));
-    // Counted from the launch, or the runner's enrollment. Work claimed after the first read
-    // keeps its machine; a claim after the second is refused once the stop commits.
+    // Kept through its grace, counted from the launch or the runner's enrollment; only past it is
+    // demand read. Work claimed after the first read keeps its machine; a claim after the second
+    // is refused once the stop commits.
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
-    if (
-      !wanted &&
-      this.clock() - Date.parse(a.updatedAt) >= grace &&
-      !(await this.sessions.managed.inspect(a.id, a.epoch))?.session
-    )
-      return 'finished';
+    if (this.clock() - Date.parse(a.updatedAt) >= grace) {
+      // A work host is rented under the owner for its reviews too, which only the reviewer sees;
+      // it is wanted only for its own instance.
+      let wanted = false;
+      for (const director of [a.source, await this.reviewer(a.source)])
+        wanted ||= (
+          await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
+        ).candidates.some((c) => c.instanceId === workId(a));
+      if (!wanted && !(await this.sessions.managed.inspect(a.id, a.epoch))?.session)
+        return 'finished';
+    }
     return observed?.runnerId ? 'running' : 'starting';
   }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */

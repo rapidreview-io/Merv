@@ -32,34 +32,41 @@ const cache = ['cache_creation_input_tokens', 'cache_read_input_tokens'];
 /** A bounded line and bounded retained message ids; an incomplete sum is never reported. */
 const usageLimit = 16 << 20;
 
-function usage(lines: Iterable<string | undefined>, model?: string) {
-  let total: SessionUsageReport | undefined,
-    incomplete = false,
-    retained = 0;
-  const each = new Map<string, SessionUsageReport>();
+/** What a log's lines spent: kept between reads of a growing log, which resume at `at`, where its
+ *  first unfinished line begins. A line folded again changes nothing, so that one is on each read. */
+export const claudeTally = () => ({
+  at: 0,
+  total: undefined as SessionUsageReport | undefined,
+  incomplete: false,
+  retained: 0,
+  each: new Map<string, SessionUsageReport>(),
+});
+export type ClaudeTally = ReturnType<typeof claudeTally>;
+function usage(lines: Iterable<string | undefined>, model?: string, t = claudeTally()) {
   for (const line of lines) {
     if (line === undefined) {
-      incomplete = true;
-      each.clear();
-      total = undefined;
+      t.incomplete = true;
+      t.each.clear();
+      t.total = undefined;
       continue;
     }
     if (!line.includes('"result"') && !line.includes('"assistant"')) continue;
     const event = readLine(line);
-    if (event?.type === 'result') total = counted(event.usage, cache) ?? total;
+    if (event?.type === 'result') t.total = counted(event.usage, cache) ?? t.total;
     const item = event?.type === 'assistant' && counted(event.message?.usage, cache);
     const id = event?.message?.id;
-    if (!incomplete && item && typeof id === 'string') {
-      if (!each.has(id)) retained += id.length + 64;
-      if (retained > usageLimit) {
-        incomplete = true;
-        each.clear();
-      } else each.set(id, item);
+    if (!t.incomplete && item && typeof id === 'string') {
+      if (!t.each.has(id)) t.retained += id.length + 64;
+      if (t.retained > usageLimit) {
+        t.incomplete = true;
+        t.each.clear();
+      } else t.each.set(id, item);
     }
   }
-  if (!total && !incomplete && each.size) {
+  let total = t.total;
+  if (!total && !t.incomplete && t.each.size) {
     total = { inputTokens: 0, outputTokens: 0 };
-    for (const item of each.values()) {
+    for (const item of t.each.values()) {
       total.inputTokens += item.inputTokens;
       total.outputTokens += item.outputTokens;
     }
@@ -67,8 +74,8 @@ function usage(lines: Iterable<string | undefined>, model?: string) {
   return total && { ...total, ...(model && { model }) };
 }
 
-/** Read the whole log: assistant usage is per call, so a tail cannot give its total. */
-export function claudeLogUsage(path: string, model?: string) {
+/** Read the whole log, or on from `t`: assistant usage is per call, so a tail cannot give it. */
+export function claudeLogUsage(path: string, model?: string, t = claudeTally()) {
   function* lines() {
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
@@ -81,7 +88,7 @@ export function claudeLogUsage(path: string, model?: string) {
         if (pending !== undefined)
           pending = pending.length + text.length > usageLimit ? undefined : pending + text;
       };
-      for (let at = 0; at < stat.size;) {
+      for (let at = t.at; at < stat.size;) {
         const got = readSync(fd, bytes, 0, Math.min(bytes.length, stat.size - at), at);
         if (!got) {
           yield undefined;
@@ -96,6 +103,8 @@ export function claudeLogUsage(path: string, model?: string) {
           pending = '';
         }
         append(text.slice(start));
+        const last = bytes.lastIndexOf(0x0a, got - 1);
+        if (last >= 0) t.at = at - got + last + 1;
       }
       append(decoder.end());
       if (pending !== '') yield pending;
@@ -103,7 +112,7 @@ export function claudeLogUsage(path: string, model?: string) {
       closeSync(fd);
     }
   }
-  return usage(lines(), model);
+  return usage(lines(), model, t);
 }
 
 /**

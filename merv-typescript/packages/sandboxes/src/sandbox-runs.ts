@@ -22,6 +22,7 @@ export const sandboxRunMigrations = {
     retired SMALLINT NOT NULL DEFAULT 0
   );
   CREATE INDEX sandbox_run_work ON sandbox_run_intents(project_id,work_ref);`,
+  2: `CREATE INDEX sandbox_run_pending ON sandbox_run_intents(run_ref) WHERE target > retired;`,
 };
 
 interface Run {

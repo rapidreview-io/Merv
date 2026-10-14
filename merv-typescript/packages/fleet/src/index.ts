@@ -566,11 +566,12 @@ export class FleetService implements Fleet {
   async list(caller: Caller, recent?: number): Promise<FleetAllocation[]> {
     return this.state.snapshotTransaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      // Two indexed reads: an OR across them would read the project's whole history.
       return (
         await tx.all<Row>(
-          `SELECT data_json FROM fleet_allocations WHERE project_id=? AND (phase<>'released' OR id IN
-              (SELECT id FROM fleet_allocations WHERE project_id=? AND phase='released'
-               ORDER BY created_at DESC,id DESC LIMIT ?)) ORDER BY created_at,id`,
+          `SELECT data_json,created_at,id FROM fleet_allocations WHERE project_id=? AND phase<>'released'
+           UNION ALL (SELECT data_json,created_at,id FROM fleet_allocations WHERE project_id=? AND
+             phase='released' ORDER BY created_at DESC,id DESC LIMIT ?) ORDER BY created_at,id`,
           caller.projectId,
           caller.projectId,
           recent ?? null,
@@ -665,13 +666,14 @@ export class FleetService implements Fleet {
       this.pending = undefined;
     }));
   }
-  private async reserve(): Promise<void> {
+  /** Admits or drops queued requests; what it read, when it changed nothing, is the pass's. */
+  private async reserve(): Promise<FleetAllocation[] | undefined> {
     if (this.closed) return;
     const [waiting, limits] = await this.state.read(
       async (sql) => [await this.all(sql), await this.limits(sql)] as const,
     );
     const queued = waiting.filter((a) => a.phase === 'queued');
-    if (!queued.length) return;
+    if (!queued.length) return waiting;
     const cap = this.config.dailyUsdPerPerson;
     const capped = (a: FleetAllocation) => !!a.person && cap !== undefined;
     const place = (a: FleetAllocation) => a.rentedIn ?? a.projectId;
@@ -700,7 +702,7 @@ export class FleetService implements Fleet {
         (a) =>
           admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId, limits),
       );
-    if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
+    if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return waiting;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
       const caps = await this.limits(tx);
@@ -792,8 +794,7 @@ export class FleetService implements Fleet {
       for (const p of this.ready.keys())
         this.ready.set(p, await this.read(p).catch(() => this.ready.get(p)));
     this.awake ||= full;
-    await this.reserve();
-    const allocations = await this.state.read((sql) => this.all(sql));
+    const allocations = (await this.reserve()) ?? (await this.state.read((sql) => this.all(sql)));
     await Promise.all(
       allocations
         .filter(

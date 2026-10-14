@@ -1465,9 +1465,12 @@ test('an idle machine gets its grace from its launch, and work claimed while dem
   a.phase = 'running';
   a.updatedAt = new Date(Date.parse(a.createdAt) + 30_000).toISOString();
   f.advance(30_000);
-  assert.equal(await f.owner().observe(a), 'running', 'counted from the launch, not the request');
-  f.advance(30_000);
   const dispatch = f.sessions.dispatch.dispatchDemand;
+  let reads = 0;
+  f.sessions.dispatch.dispatchDemand = async (...args) => (reads++, await dispatch(...args));
+  assert.equal(await f.owner().observe(a), 'running', 'counted from the launch, not the request');
+  assert.equal(reads, 0, 'within its grace no demand is read: it cannot change the answer');
+  f.advance(30_000);
   f.sessions.dispatch.dispatchDemand = async (...args) => {
     const demand = await dispatch(...args);
     f.inspections.get(a.id)!.session = {
