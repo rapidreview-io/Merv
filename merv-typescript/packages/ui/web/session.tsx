@@ -469,7 +469,7 @@ function Projects({
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const invitationId = new URLSearchParams(window.location.search).get('invitation');
-  if (invitationId) sessionStorage.setItem('merv:invitation', invitationId);
+  if (invitationId) safely(() => sessionStorage.setItem('merv:invitation', invitationId));
   const navigate = useNavigate();
   const [auth, setAuth] = useState<Awaited<ReturnType<typeof browserAuth>>>();
   const [authReady, setAuthReady] = useState(false);
@@ -547,7 +547,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setState((old) => (old.phase === 'ready' && old.epoch === epoch ? old : { phase: 'checking' }));
     checking.current = true;
     resolveAccountSession({
-      invitations: !!(invitationId ?? sessionStorage.getItem('merv:invitation')),
+      invitations: !!(invitationId ?? safely(() => sessionStorage.getItem('merv:invitation'))),
     })
       .then((result) => {
         failures.current = 0;
@@ -622,7 +622,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const url = new URL(window.location.href);
     url.searchParams.delete('invitation');
     window.history.replaceState(null, '', url);
-    sessionStorage.removeItem('merv:invitation');
+    safely(() => sessionStorage.removeItem('merv:invitation'));
     setProject(id);
     reload();
   };

@@ -1023,8 +1023,16 @@ test('feature adapters inject their owner and one registry, without acquiring si
         `${owner}: ${kind} adapter must inject its own feature`,
       );
       assert.ok(declared.includes(registry), `${owner}: ${kind} adapter must inject ${registry}`);
+      // Project invitations (founder, 2026-10-14) look recipients up in the identity directory
+      // from Scope's HTTP adapter: the one recorded exception.
+      const allowed = [
+        capability,
+        registry,
+        'scope',
+        ...(owner === 'scope' && kind === 'api' ? ['identity'] : []),
+      ];
       assert.ok(
-        declared.every((name) => [capability, registry, 'scope'].includes(name)),
+        declared.every((name) => allowed.includes(name)),
         `${owner}: cross-feature orchestration belongs in a program service`,
       );
       visit(declaration, (child) => {

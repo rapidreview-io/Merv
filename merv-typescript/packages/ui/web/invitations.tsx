@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ProjectInvitation } from '@merv/contracts/scope-models';
-import { accountRequest, scopeVersion } from './api';
+import { accountRequest, safely, scopeVersion } from './api';
 import { term } from './components';
 
 /** An invitation is an offer, not project access. Opening this view never accepts it. */
@@ -23,7 +23,7 @@ export function Invitations({
     : '/account/invitations';
   const highlighted =
     new URLSearchParams(window.location.search).get('invitation') ??
-    sessionStorage.getItem('merv:invitation');
+    safely(() => sessionStorage.getItem('merv:invitation'));
   useEffect(() => {
     let active = true;
     setLoaded(false);
@@ -70,7 +70,7 @@ export function Invitations({
         const url = new URL(window.location.href);
         url.searchParams.delete('invitation');
         window.history.replaceState(null, '', url);
-        sessionStorage.removeItem('merv:invitation');
+        safely(() => sessionStorage.removeItem('merv:invitation'));
       }
       if (action === 'accept') accepted?.(item.projectId);
     } catch (failure) {

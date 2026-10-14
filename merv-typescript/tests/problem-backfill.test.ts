@@ -32,14 +32,14 @@ Two GPUs.`;
 /** A database at the release before scope@10, with each kind of project production holds. */
 async function fixture() {
   const state = await openState();
-  // The running release's Scope does not know scope@10 yet.
+  // The running release's Scope does not know scope@10, or anything after it, yet.
   const migrate = state.migrate.bind(state);
   state.migrate = async (component, migrations) =>
     await migrate(
       component,
       component === 'scope'
         ? Object.fromEntries(
-            Object.entries(migrations as MigrationRecord).filter(([version]) => version !== '10'),
+            Object.entries(migrations as MigrationRecord).filter(([version]) => +version < 10),
           )
         : migrations,
     );

@@ -67,10 +67,11 @@ async function fixture(t: TestContext) {
   const project = created.body.project;
   const other = (await http('/projects', operator, { name: 'Dispatch B', requestId: 'project-b' }))
     .body.project;
-  assert.equal(
-    (await http(`/projects/${project.id}/members`, operator, { subject: 'reader', role: 'reader' }))
-      .status,
-    200,
+  // A member joins by invitation over HTTP; the fixture adds one directly.
+  await app.ctx.scope.members.addMember(
+    await app.ctx.scope.members.acceptVerifiedIdentity(await app.ctx.identity.verify(operator)),
+    project.id,
+    { subject: 'reader', role: 'reader' },
   );
   const key = (await http('/account/keys', operator, { projectId: project.id })).body;
   const readerKey = (await http('/account/keys', reader, { projectId: project.id })).body;
