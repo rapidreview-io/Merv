@@ -514,7 +514,7 @@
       "exposedTools": [
         {
           "name": "board.draw",
-          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area; holds lists shapes to put inside it), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near or in), delete (ids), sketch (a freehand drawing, as with a pen: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
+          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (a freehand drawing, as with a pen: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
           "readOnly": false
         },
         {
@@ -559,7 +559,7 @@
       "exposedTools": [
         {
           "name": "board.draw",
-          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area; holds lists shapes to put inside it), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near or in), delete (ids), sketch (a freehand drawing, as with a pen: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
+          "description": "Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (a freehand drawing, as with a pen: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.",
           "readOnly": false
         },
         {
@@ -715,7 +715,7 @@
         },
         {
           "name": "code.repository.rebind",
-          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
+          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base that can still merge is unresolved (a suspended or quarantined one is not) or has its project check queued or running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
           "readOnly": false
         },
         {
@@ -858,7 +858,7 @@
         },
         {
           "name": "code.repository.rebind",
-          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
+          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base that can still merge is unresolved (a suspended or quarantined one is not) or has its project check queued or running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
           "readOnly": false
         },
         {
@@ -1357,7 +1357,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references, or unavailable ones while Code, which resolves code-commit: and session-final:, is not loaded. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -1387,7 +1387,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references, or unavailable ones while Code, which resolves code-commit: and session-final:, is not loaded. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references; a bare ID is unavailable while a service that might hold it is restarting. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -2151,7 +2151,7 @@
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.",
+          "description": "List the current project’s immutable review requests with their claim/verdict status and claimable: whether the review permission, producer and contributor exclusions let you claim one. review.start may still refuse what the owning domain reserves, such as a review a leased worker’s own lease does not serve. Pass subjectId to list only the reviews of that record.",
           "readOnly": true
         },
         {
@@ -2221,7 +2221,7 @@
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.",
+          "description": "List the current project’s immutable review requests with their claim/verdict status and claimable: whether the review permission, producer and contributor exclusions let you claim one. review.start may still refuse what the owning domain reserves, such as a review a leased worker’s own lease does not serve. Pass subjectId to list only the reviews of that record.",
           "readOnly": true
         },
         {
@@ -2385,7 +2385,8 @@
       "provides": [],
       "requires": [
         "scope",
-        "api"
+        "api",
+        "identity"
       ],
       "optional": [],
       "kind": "api",
@@ -2530,7 +2531,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.",
           "readOnly": false
         },
         {
@@ -2654,7 +2655,7 @@
       "exposedTools": [
         {
           "name": "session.ask_owner",
-          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.",
           "readOnly": false
         },
         {
@@ -4052,6 +4053,11 @@
       "optional": false
     },
     {
+      "from": "merv-scope-api",
+      "to": "identity",
+      "optional": false
+    },
+    {
       "from": "merv-scope-tools",
       "to": "scope",
       "optional": false
@@ -4266,7 +4272,7 @@
     "plugins": 74,
     "providers": 33,
     "adapters": 41,
-    "dependencies": 214
+    "dependencies": 215
   },
   "network": [
     {

@@ -10,7 +10,7 @@
   "apiEntries": 41,
   "serverPlugins": 73,
   "machinePlugins": 1,
-  "directDependencyCount": 214,
+  "directDependencyCount": 215,
   "optionalDependencyCount": 12,
   "directConsumers": {
     "api": 8,
@@ -24,7 +24,7 @@
     "experiments": 4,
     "feed": 2,
     "fleet": 4,
-    "identity": 1,
+    "identity": 2,
     "knowledge": 1,
     "legacyHistory": 1,
     "mounts": 1,
@@ -876,7 +876,8 @@
       "provides": [],
       "requires": [
         "scope",
-        "api"
+        "api",
+        "identity"
       ],
       "optional": [],
       "kind": "api",
