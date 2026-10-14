@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
-import { unknownEndpoint } from '@merv/api/errors';
+import { unknownEndpoint, validated } from '@merv/api/errors';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -38,15 +38,7 @@ function keyQuery(params: URLSearchParams, allowProject = false): string | undef
   const projectId = params.get('projectId');
   if (projectId === null) return undefined;
   // The same 400, details included, as a key body naming a malformed project.
-  const parsed = keyProject.safeParse(projectId);
-  if (!parsed.success)
-    throw new MervError(
-      'invalid_input',
-      'Request body failed validation',
-      400,
-      parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
-    );
-  return parsed.data;
+  return validated(keyProject.safeParse(projectId));
 }
 
 /**

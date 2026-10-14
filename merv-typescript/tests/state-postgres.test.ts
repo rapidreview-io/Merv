@@ -550,6 +550,19 @@ test('PostgreSQL errors keep a sanitized, non-enumerable cause, and a failed mig
   assert.equal('message' in cause, false);
   assert.equal(JSON.stringify(cause).includes('secret-row-value'), false);
   assert.equal(JSON.stringify(conflict).includes('cause'), false);
+
+  // A bound value PostgreSQL cannot hold is refused as such, not as an outage to retry.
+  await state.migrate('jd', [{ version: 1, sql: 'CREATE TABLE jd(t TEXT, j JSONB, n INTEGER)' }]);
+  for (const [column, value] of [
+    ['t', 'nul\0value'],
+    ['j', JSON.stringify({ nul: '\0' })],
+    ['j', JSON.stringify({ half: '\ud800' })],
+    ['n', 2 ** 40],
+  ] as const)
+    await assert.rejects(
+      state.transaction((tx) => tx.run(`INSERT INTO jd(${column}) VALUES(?)`, value)),
+      { code: 'state_invalid_value', status: 400 },
+    );
 });
 
 test('State refuses malformed events, cursors and migration versions', async (t) => {

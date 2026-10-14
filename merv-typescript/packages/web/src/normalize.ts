@@ -169,6 +169,11 @@ export function tavilyResults(
   return { results: kept, truncated };
 }
 
+const cited = (value: unknown) => ({
+  title: cleanText(record(value)?.title, 500),
+  url: String(record(value)?.url),
+});
+
 /** The fallback's answer text and its distinct sources, in the order the response gives them:
  * the searches' own sources, then the answer's citations. */
 function openaiAnswer(response: Record<string, unknown>): {
@@ -181,11 +186,7 @@ function openaiAnswer(response: Record<string, unknown>): {
     const item = record(entry);
     if (item?.type === 'web_search_call') {
       const sources = record(item.action)?.sources;
-      for (const source of Array.isArray(sources) ? sources : [])
-        found.push({
-          title: cleanText(record(source)?.title, 500),
-          url: String(record(source)?.url),
-        });
+      for (const source of Array.isArray(sources) ? sources : []) found.push(cited(source));
     }
     if (item?.type === 'message')
       for (const part of Array.isArray(item.content) ? item.content : []) {
@@ -193,11 +194,7 @@ function openaiAnswer(response: Record<string, unknown>): {
         if (content?.type !== 'output_text') continue;
         if (typeof content.text === 'string') texts.push(content.text);
         for (const note of Array.isArray(content.annotations) ? content.annotations : [])
-          if (record(note)?.url)
-            found.push({
-              title: cleanText(record(note)?.title, 500),
-              url: String(record(note)?.url),
-            });
+          if (record(note)?.url) found.push(cited(note));
       }
   }
   const seen = new Set<string>();
@@ -285,15 +282,16 @@ export function planExtract(input: WebExtractInput): ExtractPlan {
 }
 
 /** The text between the markers with 200 characters either side, or the whole page with a
- * warning when a marker is missing. */
+ * warning when a marker is missing. A cut never leaves half a character at either end. */
 function section(content: string, start: string, end: string): string {
   const from = content.indexOf(start);
   if (from < 0)
-    return `${content}\n\n[WARNING: start marker "${start.slice(0, 50)}" not found — returning full content]`;
+    return `${content}\n\n[WARNING: start marker "${clip(start, 50)}" not found — returning full content]`;
   const to = content.indexOf(end, from + start.length);
+  const cut = (text: string) => text.replace(/^\p{Surrogate}|\p{Surrogate}$/gu, '');
   if (to < 0)
-    return `${content.slice(Math.max(0, from - 200))}\n\n[WARNING: end marker "${end.slice(0, 50)}" not found — returning from start marker to end]`;
-  return content.slice(Math.max(0, from - 200), Math.min(content.length, to + end.length + 200));
+    return `${cut(content.slice(Math.max(0, from - 200)))}\n\n[WARNING: end marker "${clip(end, 50)}" not found — returning from start marker to end]`;
+  return cut(content.slice(Math.max(0, from - 200), to + end.length + 200));
 }
 
 /** The page's text, cut to its section when both markers are given, and always capped at `limit`

@@ -19,6 +19,7 @@ import type {
 import type { ValidateFunction } from 'ajv';
 import { cloneJson, compileSchema } from './schema.js';
 import { toolsGuide } from './guide.js';
+import { validated } from './errors.js';
 
 export type { ToolDescription } from './types.js';
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
@@ -127,17 +128,8 @@ export class ToolRegistry implements Tools {
       definition,
       description: describeTool({ ...definition, inputSchema }),
       tool: { name: definition.name, remote: false, conversation },
-      async parse(input) {
-        const parsed = await inputSchema.safeParseAsync(input);
-        if (!parsed.success)
-          throw new MervError(
-            'invalid_input',
-            'Tool input failed validation',
-            400,
-            parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
-          );
-        return parsed.data;
-      },
+      parse: async (input) =>
+        validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) => ({ format: 'json', value }),
       running: new Set(),
     };

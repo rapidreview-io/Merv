@@ -75,7 +75,7 @@ interface DatabaseErrorCause {
  */
 function databaseError(error: unknown): MervError {
   if (error instanceof MervError) return error;
-  const pg = (error ?? {}) as { code?: string } & Omit<DatabaseErrorCause, 'sqlstate'>;
+  const pg = (error ?? {}) as { code?: string; where?: string } & DatabaseErrorCause;
   const fail = (code: string, message: string, status: number) =>
     Object.defineProperty(new MervError(code, message, status), 'cause', {
       value: {
@@ -90,6 +90,14 @@ function databaseError(error: unknown): MervError {
     });
   const code = pg.code;
   if (code === '23505') return fail('state_conflict', 'Database record already exists', 409);
+  // A bound value PostgreSQL cannot hold (NUL in text, an escaped NUL or lone surrogate in JSON,
+  // a number past its column's range) fails the same way on every retry.
+  if (code?.startsWith('22') && /portal parameter \$\d/.test(pg.where ?? ''))
+    return fail(
+      'state_invalid_value',
+      'A value holds NUL, malformed Unicode or an out-of-range number',
+      400,
+    );
   if (['23503', '23514', '23502', 'P0001'].includes(code ?? ''))
     return fail('state_constraint', 'Database constraint rejected the operation', 409);
   if (code === '40001' || code === '40P01')
@@ -819,11 +827,7 @@ END $merv$;`);
   }
 
   async events(projectId: string, after = 0): Promise<StoredEvent[]> {
-    check(
-      Number.isSafeInteger(after) && after >= 0,
-      'invalid_cursor',
-      'Event cursor must be a nonnegative integer',
-    );
+    cursor(after);
     return this.read(async (sql) =>
       (
         await sql.all<EventRow>(
@@ -836,11 +840,7 @@ END $merv$;`);
   }
   /** The newest page (below `before`), oldest first: what a reader without a cursor wants. */
   async latestEvents(projectId: string, before = Number.MAX_SAFE_INTEGER): Promise<StoredEvent[]> {
-    check(
-      Number.isSafeInteger(before) && before >= 0,
-      'invalid_cursor',
-      'Event cursor must be a nonnegative integer',
-    );
+    cursor(before);
     return this.read(async (sql) =>
       (
         await sql.all<EventRow>(
@@ -917,6 +917,12 @@ interface EventRow {
   data_json: string;
   created_at: string;
 }
+const cursor = (value: number) =>
+  check(
+    Number.isSafeInteger(value) && value >= 0,
+    'invalid_cursor',
+    'Event cursor must be a nonnegative integer',
+  );
 const eventFromRow = (row: EventRow): StoredEvent => ({
   id: row.id,
   projectId: row.project_id,

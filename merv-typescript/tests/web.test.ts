@@ -367,6 +367,11 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   const one = await read({ url, start_text: '## Methods' });
   assert.equal(one.content, text);
   assert.equal(one.normalization_note, 'start_text and end_text select a section only together');
+  // The 200 characters either side never leave half a character at a cut.
+  const astral = `${'😀'.repeat(200)}x## Methods ## Resultsy${'😀'.repeat(200)}`;
+  extracted = { body: { results: [{ url, raw_content: astral }] } };
+  const cut = await read({ url, start_text: '## Methods', end_text: '## Results' });
+  assert.ok(!/\p{Surrogate}/u.test(cut.content), 'a cut split a character');
 
   extracted = { body: { results: [], failed_results: [{ url, error: 'Blocked by robots.txt' }] } };
   const failed = await read({ url });

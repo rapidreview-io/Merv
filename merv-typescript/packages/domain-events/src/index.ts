@@ -23,6 +23,8 @@ type Progress = {
 };
 
 const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
+/** How many passes that reach their head answer a drain() while commits keep arriving. */
+const DRAIN_PASSES = 16;
 
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
@@ -30,9 +32,12 @@ export class DurableEvents implements DomainEvents {
   /** Registrations in flight, by consumer ID; close() joins them. */
   private registering = new Map<string, Promise<void>>();
   /** The one delivery transaction in flight; a disposer joins it. */
-  private admitted?: { consumer: EventConsumer; transaction: Promise<boolean> };
+  private admitted?: { consumer: EventConsumer; transaction: Promise<number | false> };
   private handlerContext = new AsyncLocalStorage<{ consumer: EventConsumer; live: boolean }>();
   private running?: Promise<void>;
+  /** Passes that reached the head they began with, and drain() callers in call order. */
+  private covered = 0;
+  private waiting: { until: number; resolve(): void }[] = [];
   private initialization?: Promise<void>;
   private closing?: Promise<void>;
   private closed = false;
@@ -140,7 +145,7 @@ export class DurableEvents implements DomainEvents {
     this.requireOutsideHandler();
     if (this.running) {
       this.wakeRequested = true;
-      return this.running;
+      return this.bounded(this.running);
     }
     if (this.closed) return Promise.resolve();
     if (this.timer) clearTimeout(this.timer);
@@ -151,30 +156,36 @@ export class DurableEvents implements DomainEvents {
         do {
           this.wakeRequested = false;
           backlog = await this.deliver();
+          if (!backlog) this.covered++;
+          while ((this.waiting[0]?.until ?? Infinity) <= this.covered)
+            this.waiting.shift()!.resolve();
         } while (!this.closed && (backlog || this.wakeRequested));
       } finally {
         // Cleared in the same step as the last check above: a drain() from here on starts a
         // new pass instead of joining one that will not look for its commit.
         this.running = undefined;
+        this.waiting = [];
         // A slow poll also discovers commits made through another State connection.
         this.wake(Math.max(0, Math.min(this.retryAt - Date.now(), 1000)));
       }
     });
-    return this.running;
+    return this.bounded(this.running);
+  }
+
+  /** Settles with `running`, the passes until no commit wakes another, or while commits keep
+   * arriving once DRAIN_PASSES more reach their head (one more, for a pass begun before the call). */
+  private bounded(running: Promise<void>): Promise<void> {
+    const until = this.covered + DRAIN_PASSES + 1;
+    return Promise.race([
+      running,
+      new Promise<void>((resolve) => this.waiting.push({ until, resolve })),
+    ]);
   }
 
   /** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
   private async due(consumer: EventConsumer, after: number, through: number, tx?: Transaction) {
     const next = await this.state.nextEventId(after, consumer.types, tx);
     return next !== undefined && next <= through;
-  }
-
-  /**
-   * Passes a consumer with nothing it subscribes to between its cursor and `head`. Under the
-   * writer lock every event up to the head is committed and no smaller ID can commit later.
-   */
-  private async toHead(tx: Transaction, consumer: EventConsumer, cursor: number, head: number) {
-    if (head > cursor) await this.advance(tx, consumer, head);
   }
 
   private async advance(tx: Transaction, consumer: EventConsumer, cursor: number) {
@@ -223,7 +234,9 @@ export class DurableEvents implements DomainEvents {
           );
           if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
             continue;
-          await this.toHead(tx, consumer, row.cursor, head);
+          // Under the writer lock every event up to the head is committed, and no smaller ID
+          // can commit later.
+          if (head > row.cursor) await this.advance(tx, consumer, head);
           passed.add(consumer.id);
         }
       });
@@ -249,7 +262,8 @@ export class DurableEvents implements DomainEvents {
             // with none left the cursor moves to the head.
             const event = await this.state.nextEvent(progress.cursor, consumer.types, tx);
             if (!event) {
-              await this.toHead(tx, consumer, progress.cursor, await this.state.eventHead(tx));
+              const end = await this.state.eventHead(tx);
+              if (end > progress.cursor) await this.advance(tx, consumer, end);
               return false;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
@@ -261,17 +275,18 @@ export class DurableEvents implements DomainEvents {
               frame.live = false;
             }
             await this.advance(tx, consumer, cursor);
-            return true;
+            return cursor;
           });
           this.admitted = { consumer, transaction };
-          let advanced: boolean;
+          let delivered: number | false;
           try {
-            advanced = await transaction;
+            delivered = await transaction;
           } finally {
             this.admitted = undefined;
           }
-          if (!advanced) break;
-          if (count === 99) backlog = true;
+          if (delivered === false) break;
+          // Past the head this pass began with, later commits wake the next pass themselves.
+          if (count === 99 && delivered < head) backlog = true;
         } catch (error) {
           // Failed handler effects and cursor both rolled back. Record retry separately.
           await this.state.transaction(async (tx) => {

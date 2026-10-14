@@ -385,7 +385,7 @@ test('drain joins async handlers and close waits for their atomic commit without
     });
     const draining = events.drain();
     await entered.promise;
-    assert.equal(events.drain(), draining);
+    const joined = events.drain();
     let closed = false;
     const closing = events.close().then(() => {
       closed = true;
@@ -400,7 +400,7 @@ test('drain joins async handlers and close waits for their atomic commit without
       0,
     );
     released.resolve();
-    await Promise.all([draining, closing]);
+    await Promise.all([draining, joined, closing]);
     assert.equal(closed, true);
     assert.deepEqual(
       (await observer.read((sql) => sql.all<{ event: number }>('SELECT * FROM probe'))).map(
@@ -891,6 +891,29 @@ test('a drain() just after a pass decides it is done still delivers a commit mad
     await events.close();
     await Promise.all([state.close(), other.close()]);
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a drain() is answered while later commits keep the passes running', async () => {
+  const state = await openState(':memory:');
+  const dispatcher = new DurableEvents(state);
+  const events = await createService(dispatcher);
+  const internals = dispatcher as unknown as { deliver(): Promise<boolean> };
+  const deliver = internals.deliver.bind(dispatcher);
+  let commits = 0;
+  try {
+    await events.subscribe({ id: 'w', types: ['probe.created'], from: 'beginning', handle() {} });
+    // As on a busy project, every pass ends with another commit.
+    internals.deliver = async () => {
+      const backlog = await deliver();
+      if (commits < 100 && ++commits) await emitProbe(state);
+      return backlog;
+    };
+    await events.drain();
+    assert.ok(commits < 100, `drain() waited through ${commits} later commits`);
+  } finally {
+    await events.close();
+    await state.close();
   }
 });
 

@@ -14,7 +14,6 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { z } from 'zod';
 import { MervError, plain, type Caller, type Scope } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
@@ -28,7 +27,7 @@ import type {
 } from './types.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
-import { unknownEndpoint } from './errors.js';
+import { unknownEndpoint, validated } from './errors.js';
 
 export { describeTool } from './registry.js';
 
@@ -116,7 +115,7 @@ function logFailure(error: unknown, status: number, code: string, where: string)
 }
 
 /** A JSON-RPC error that carries a MervError's code and status, and nothing internal. */
-function rpcError(error: unknown): Error {
+function rpcError(error: unknown) {
   const { status, error: body } = errorBody(error);
   logFailure(error, status, body.code, 'mcp');
   return Object.assign(new Error(body.message), {
@@ -195,18 +194,6 @@ function bearer(req: IncomingMessage): string {
   if (!authorization || !/^Bearer [^\s]+$/i.test(authorization))
     throw new MervError('unauthorized', 'A bearer token is required', 401);
   return authorization.slice(7);
-}
-
-function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success)
-    throw new MervError(
-      'invalid_input',
-      'Request body failed validation',
-      400,
-      parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
-    );
-  return parsed.data;
 }
 
 function projectSelection(...selections: unknown[]): string | undefined {
@@ -574,7 +561,7 @@ export class ApiServer {
       },
       json: async (schema, maxBytes = this.maxBodyBytes) => {
         const body = current(await readJson(req, maxBytes));
-        return schema ? parseInput(schema, body) : (body as never);
+        return schema ? validated(schema.safeParse(body)) : (body as never);
       },
       bytes: async (maxBytes, mediaType) => current(await readBody(req, maxBytes, mediaType)),
     };
@@ -652,11 +639,10 @@ export class ApiServer {
           ? (result.value as CallToolResult)
           : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
       } catch (error) {
-        const { status, error: body } = errorBody(error);
-        logFailure(error, status, body.code, 'mcp');
+        const { data } = rpcError(error);
         return {
           isError: true,
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: body }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: data }) }],
         };
       }
     });
