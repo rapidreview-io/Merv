@@ -221,8 +221,9 @@ export class BoardService implements Board {
         ? await this.summary(caller, input.board, tx)
         : await this.created(caller, input.title!, tx);
       if (input.board && input.title && input.title !== board.title) {
-        board = { ...board, title: input.title };
+        board = { ...board, title: input.title, updatedBy: caller.actorId, updatedAt: now() };
         await this.write(board, tx);
+        await recorded(this.state, tx, caller, 'board.set', board.id, { title: board.title });
       }
       const drawing = new Drawing(
         await this.elements(board.id, undefined, tx),

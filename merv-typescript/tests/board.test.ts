@@ -39,6 +39,7 @@ async function fixture(t: TestContext) {
     rmSync(dir, { recursive: true, force: true });
   });
   return {
+    state,
     board,
     operator,
     producer: await actor('producer'),
@@ -168,9 +169,14 @@ test('readers and reviewers see boards but cannot draw; archived boards leave th
       f.board.draw(who, { board: made.id, ops: [{ op: 'note', text: 'x' }] }),
       refused('forbidden'),
     );
+  // A draw that renames a board renames it as board.set does: dated, by whom, and recorded.
+  await f.board.draw(f.operator, { board: made.id, title: 'Ideas, kept' });
+  const [listed] = await f.board.list(f.reader);
+  assert.deepEqual([listed!.title, listed!.updatedBy], ['Ideas, kept', f.operator.actorId]);
+  const sets = await f.state.findEvents({ projectId: made.projectId, type: 'board.set' }, 5);
   assert.deepEqual(
-    (await f.board.list(f.reader)).map((b) => b.title),
-    ['Ideas'],
+    sets.map((event) => event.data.title),
+    ['Ideas, kept'],
   );
   await f.board.set(f.operator, made.id, { archived: true });
   assert.deepEqual(await f.board.list(f.reader), []);
@@ -493,6 +499,30 @@ test('a board holding a shape far out still places beside its shapes, and a vast
     [framed.find('n').x, framed.find('n').y, framed.find('vast').height],
     [30, 8000, 8150],
   );
+  // Shapes at both far ends leave no finite free place: refused, never stored as null.
+  const ends = new Drawing(
+    [
+      { ...one!, id: 'w', x: -1.7e308 },
+      { ...one!, x: 1.7e308 },
+    ],
+    true,
+  );
+  assert.throws(() => ends.apply({ op: 'note', text: 'Next' }), refused('board_out_of_range'));
+});
+
+test('drawing call after call keeps fractional indexes short, each new shape on top', () => {
+  let elements: BoardElement[] = [];
+  for (let call = 0; call < 100; call++) {
+    const drawing = new Drawing(elements, true);
+    drawing.apply({ op: 'note', text: `Note ${call}` });
+    elements = [...drawing.elements.values()];
+  }
+  const indices = elements.map((el) => String(el.index));
+  assert.deepEqual(indices, [...new Set(indices)].sort(), 'distinct, in the order drawn');
+  assert.deepEqual([indices[0], indices.at(-1)], ['a0', 'b2D'], '200 keys: a0 … az, b00 … b2D');
+  const after = new Drawing([{ ...elements[0]!, index: 'a0VVVV' }], true);
+  after.apply({ op: 'note', key: 'n', text: 'Top' });
+  assert.equal(after.find('n').index, 'a1', 'an agent key of old steps to a short one');
 });
 
 test('a shape drawn in a frame or beside a framed one stands in it; a long word wraps whole', () => {

@@ -21,7 +21,18 @@ const LINE = 1.25;
 const CHAR = 0.65;
 /** What Excalidraw binds an arrow's end to. */
 const BINDABLE = new Set(['rectangle', 'ellipse', 'diamond', 'text', 'frame']);
-const KEY_DIGITS = 'VWXYZabcdefghijklmnopqrstuvwxyz';
+const DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+/** The whole fractional index after `key`'s, as Excalidraw steps one: … Zz, a0 … az, b00 … */
+function after(key: string): string | undefined {
+  if (/^[A-Z]/.test(key)) return 'a0';
+  const size = key.charCodeAt(0) - 95;
+  const digits = [...key.slice(1, size)].map((digit) => DIGITS.indexOf(digit));
+  if (!/^[a-z]/.test(key) || digits.length !== size - 1 || digits.includes(-1)) return undefined;
+  for (let i = digits.length - 1; i >= 0; i--)
+    if (digits[i]! < DIGITS.length - 1)
+      return key[0] + digits.map((d, j) => DIGITS[j < i ? d : j === i ? d + 1 : 0]).join('');
+  return key[0] === 'z' ? undefined : String.fromCharCode(key.charCodeAt(0) + 1) + '0'.repeat(size);
+}
 
 const elementId = () => randomBytes(15).toString('base64url');
 const nonce = () => randomBytes(4).readUInt32BE() >>> 1;
@@ -89,7 +100,8 @@ export class Drawing {
   private occupied: Rect[] = [];
   private frames: Rect[] = [];
   private cursor: { x: number; y: number; startX: number; rowBottom: number; inRow: number };
-  private nextKey: (() => string) | undefined;
+  /** The last fractional index given out ('' when no shape has one). */
+  private top: string | undefined;
 
   constructor(
     existing: BoardElement[],
@@ -143,20 +155,14 @@ export class Drawing {
   }
   /** A fractional index after every shape the board has, so what is drawn stands on top. */
   private index(): string {
-    if (!this.nextKey) {
-      const top = this.live()
-        .map((el) => el.index)
-        .filter((index): index is string => typeof index === 'string')
+    this.top ??=
+      this.live()
+        .flatMap((el) => (typeof el.index === 'string' ? [el.index] : []))
         .sort()
-        .at(-1);
-      let n = 0;
-      const base = top ?? 'a0';
-      this.nextKey = () => {
-        const at = n++;
-        return `${base}${'z'.repeat(Math.floor(at / KEY_DIGITS.length))}${KEY_DIGITS[at % KEY_DIGITS.length]}`;
-      };
-    }
-    return this.nextKey();
+        .at(-1) ?? '';
+    // Stepped, keys stay short however often a board is drawn on; one that cannot be stepped,
+    // which Excalidraw re-ranks anyway, is followed by a longer one.
+    return (this.top = (this.top ? after(this.top) : 'a0') ?? `${this.top}V`);
   }
   /** A shape this call keyed, or one already on the board; anything else is refused by name. */
   find(ref: string): El {
@@ -363,6 +369,9 @@ export class Drawing {
       if (c.inRow === 4) Object.assign(c, { x: c.startX, y: c.rowBottom + 2 * GAP, inRow: 0 });
       else c.x = at.x + at.width + GAP;
     }
+    // Past the largest number a place is Infinity, which a stored shape would keep as null.
+    if (![at.x, at.y].every(Number.isFinite))
+      throw new MervError('board_out_of_range', 'No finite place is left; use at', 400);
     this.occupied.push(at);
     return { ...at, frameId };
   }
@@ -559,11 +568,8 @@ export class Drawing {
           op.edges,
         );
         const columns = new Map<number, string[]>();
-        for (const node of op.nodes)
-          columns.set(depth.get(node.key)!, [
-            ...(columns.get(depth.get(node.key)!) ?? []),
-            node.key,
-          ]);
+        for (const { key } of op.nodes)
+          columns.set(depth.get(key)!, [...(columns.get(depth.get(key)!) ?? []), key]);
         const span = { width: 220, height: 100 };
         const deepest = Math.max(...columns.keys());
         const widest = Math.max(...[...columns.values()].map((c) => c.length));
@@ -816,16 +822,13 @@ export function summarize(elements: BoardElement[]) {
     )
     .map((el) => ({
       id: el.id,
-      kind:
-        el.type === 'freedraw'
-          ? 'drawing'
-          : el.customData?.target
-            ? 'link'
-            : el.type === 'rectangle' && el.strokeColor === 'transparent'
-              ? 'note'
-              : el.type === 'rectangle'
-                ? 'box'
-                : el.type,
+      kind: el.customData?.target
+        ? 'link'
+        : el.type === 'rectangle' && el.strokeColor === 'transparent'
+          ? 'note'
+          : el.type === 'rectangle'
+            ? 'box'
+            : el.type,
       ...(said(el) && { text: said(el) }),
       ...(el.customData?.target && { target: el.customData.target }),
       ...(el.frameId && { frame: el.frameId }),
