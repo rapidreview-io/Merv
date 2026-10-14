@@ -30,6 +30,7 @@ export const customerConfig = z
     computeBudgetUsd: z.number().int().min(1).max(100000).nullable().default(null),
     computeProviders: z.array(z.string().min(1)).min(1).max(8),
     sponsor: z.object({ issuer: z.string().min(1), subject: z.string().min(1) }).strict(),
+    publicIntake: z.boolean().default(false),
     intakeKeyEnv: env.default('MERV_CUSTOMER_INTAKE_KEY'),
     accessKeyEnv: env.default('MERV_CUSTOMER_ACCESS_KEY'),
     maxRequestsPerDay: z.number().int().min(1).max(1000).default(25),
@@ -154,11 +155,14 @@ export const customerExperimentsPlugin = {
       yield ctx.api.mount('/customer-experiments', customerHttp(service), { public: true });
       yield ctx.api.mount(
         '/start',
-        startHttp({
-          publicOrigin: config.publicOrigin,
-          publicIntake: false,
-          livePayments: config.stripe?.live ?? false,
-        }),
+        startHttp(
+          {
+            publicOrigin: config.publicOrigin,
+            publicIntake: config.publicIntake,
+            livePayments: config.stripe?.live ?? false,
+          },
+          service,
+        ),
         { public: true },
       );
       let pending: Promise<void> | undefined;

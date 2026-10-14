@@ -399,6 +399,7 @@ if (customerExperimentsEnabled) {
         ? null
         : integer('MERV_CUSTOMER_COMPUTE_BUDGET_USD', 1000, 1, 100000),
     computeProviders: json('MERV_CUSTOMER_COMPUTE_PROVIDERS'),
+    publicIntake: process.env.MERV_CUSTOMER_PUBLIC_INTAKE === 'true',
     maxRequestsPerDay: integer('MERV_CUSTOMER_REQUESTS_PER_DAY', 25, 1, 1000),
   };
   if (process.env.MERV_CUSTOMER_DATA_ENDPOINT !== undefined) {

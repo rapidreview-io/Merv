@@ -37,9 +37,14 @@ const uploadSchema = z
   .strict();
 
 /** Public, credential-free documentation; request creation retains its own admission gate. */
-export function startHttp(options: StartPageOptions): MountHandler {
+export function startHttp(options: StartPageOptions, service?: CustomerService): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
+    if (path === '/start/requests' && req.method === 'POST' && options.publicIntake && service) {
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return service.createPublic(await r.json(createSchema, 40000));
+    }
     if (
       !['GET', 'HEAD'].includes(req.method ?? 'GET') ||
       !['/start', '/start/', '/start/agent.md'].includes(path)

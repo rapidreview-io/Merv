@@ -48,7 +48,7 @@ const plan: ExperimentPlan = {
 const base = '/customer-experiments/requests';
 const intakeKey = 'test-intake-invitation-only';
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, publicIntake = false, maxRequestsPerDay = 20) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-customer-service-'));
   const state = await openState(dir);
   const scope = await createService(new ProjectScope(state));
@@ -190,7 +190,7 @@ async function fixture(t: TestContext) {
     storage,
     payments,
     undefined,
-    { publicOrigin: 'https://merv.example', sponsor, intakeKey, maxRequestsPerDay: 20 },
+    { publicOrigin: 'https://merv.example', sponsor, intakeKey, publicIntake, maxRequestsPerDay },
     compute,
   );
   const tools = new ToolRegistry(scope);
@@ -205,7 +205,7 @@ async function fixture(t: TestContext) {
   api.mount('/customer-experiments', customerHttp(service), { public: true });
   api.mount(
     '/start',
-    startHttp({ publicOrigin: 'https://merv.example', publicIntake: false, livePayments: false }),
+    startHttp({ publicOrigin: 'https://merv.example', publicIntake, livePayments: false }, service),
     { public: true },
   );
   const url = await api.start();
@@ -802,4 +802,53 @@ test('public start page and agent guide are readable without exposing or bypassi
     (await f.send(base, undefined, { requestId: randomUUID(), title: 'No invitation' })).status,
     401,
   );
+});
+
+test('public intake issues private capabilities, preserves admission limits and requires human approval', async (t) => {
+  const f = await fixture(t, true, 1);
+  const input = {
+    requestId: randomUUID(),
+    title: plan.title,
+    message: 'Test a bounded hypothesis.',
+  };
+  const created = await f.send('/start/requests', undefined, input);
+  assert.equal(created.status, 200);
+  assert.match(created.headers.get('cache-control') ?? '', /no-store/);
+  assert.ok(created.body.agentToken);
+  assert.ok(created.body.customerUrl.includes('#token='));
+  const retry = await f.send('/start/requests', undefined, input);
+  assert.deepEqual(retry.body, created.body);
+  assert.equal(
+    (await f.send('/start/requests', undefined, { ...input, title: 'Different' })).status,
+    409,
+  );
+  assert.equal(
+    (await f.send('/start/requests', undefined, { ...input, requestId: randomUUID() })).status,
+    429,
+  );
+  assert.equal(
+    (await f.send('/start/requests', undefined, { ...input, requestId: 'guessable' })).status,
+    400,
+  );
+  const path = base + '/' + created.body.id;
+  assert.equal((await f.send(path)).status, 401);
+  assert.equal((await f.send(path, created.body.agentToken)).status, 200);
+  for (const action of ['accept', 'checkout']) {
+    assert.equal(
+      (
+        await f.send(path + '/' + action, created.body.agentToken, {
+          contractVersion: 1,
+          email: 'test@example.com',
+        })
+      ).status,
+      401,
+    );
+  }
+  assert.equal((await f.send(base, undefined, input)).status, 401);
+  const guide = await fetch(f.url + '/start/agent.md').then((r) => r.text());
+  assert.ok(guide.includes('Public intake; no invitation required.'));
+  assert.ok(guide.includes('POST https://merv.example/start/requests'));
+  assert.ok(!guide.includes(intakeKey));
+  assert.ok(!guide.includes('MERV_EXPERIMENT_INVITE'));
+  assert.equal((await f.experiment(created.body.id)).workflow.state, 'planning');
 });
