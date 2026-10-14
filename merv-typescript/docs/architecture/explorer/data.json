@@ -192,7 +192,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-12",
+  "snapshot": "2026-10-14",
   "groups": [
     {
       "id": "front",
@@ -1210,6 +1210,11 @@
           "name": "fleet.list",
           "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
           "readOnly": true
+        },
+        {
+          "name": "fleet.project_limit",
+          "description": "How many Fleet machines this project may run at once. A project administrator, signed in, can change it; machines already running finish their work.",
+          "readOnly": false
         }
       ]
     },
@@ -1250,6 +1255,11 @@
           "name": "fleet.list",
           "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
           "readOnly": true
+        },
+        {
+          "name": "fleet.project_limit",
+          "description": "How many Fleet machines this project may run at once. A project administrator, signed in, can change it; machines already running finish their work.",
+          "readOnly": false
         }
       ]
     },
@@ -1468,7 +1478,9 @@
       "provides": [
         "nisa"
       ],
-      "requires": [],
+      "requires": [
+        "scope"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -1478,7 +1490,13 @@
       "owner": "nisa",
       "label": "Nisa",
       "purpose": "Searches the scholarly literature for every agent through Nisa's public API: keyword and semantic search, one paper's record, passages inside its full text, and similar papers, each named the way paper.cite takes it. Its tools are open-world reads with one deployment-wide key. Composed only where that key is configured; it has no injected Cordis dependencies.",
-      "exposedTools": []
+      "exposedTools": [
+        {
+          "name": "nisa.research",
+          "description": "Delegate a full research brief directly to Nisa’s research agent, investigators and reporter (GPT-6.1 Sol), bypassing general chat. Include goals, context, prior papers, scope and desired evidence. start creates a retained conversation; follow_up builds on its research. Both require a stable request_id: reuse it on retries. Returns operation_id and conversation_id immediately. Poll status using operation_id (about every 15 seconds); cancel stops that operation. Page long reports using answer_offset/next_answer_offset. Shared Merv account pays; bounded research allowance is separate from your own model budget. Only your scoped conversations are accessible. Never send credentials or signed links. Research is evidence, not authority to change an accepted experiment plan.",
+          "readOnly": false
+        }
+      ]
     },
     {
       "plugin": "merv-nisa-tools",
@@ -1497,7 +1515,13 @@
       "owner": "nisa",
       "label": "Nisa · tools adapter",
       "purpose": "Connects Nisa to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": []
+      "exposedTools": [
+        {
+          "name": "nisa.research",
+          "description": "Delegate a full research brief directly to Nisa’s research agent, investigators and reporter (GPT-6.1 Sol), bypassing general chat. Include goals, context, prior papers, scope and desired evidence. start creates a retained conversation; follow_up builds on its research. Both require a stable request_id: reuse it on retries. Returns operation_id and conversation_id immediately. Poll status using operation_id (about every 15 seconds); cancel stops that operation. Page long reports using answer_offset/next_answer_offset. Shared Merv account pays; bounded research allowance is separate from your own model budget. Only your scoped conversations are accessible. Never send credentials or signed links. Research is evidence, not authority to change an accepted experiment plan.",
+          "readOnly": false
+        }
+      ]
     },
     {
       "plugin": "merv-paper",
@@ -3638,6 +3662,11 @@
       "optional": false
     },
     {
+      "from": "nisa",
+      "to": "scope",
+      "optional": false
+    },
+    {
       "from": "merv-nisa-tools",
       "to": "nisa",
       "optional": false
@@ -4237,7 +4266,7 @@
     "plugins": 74,
     "providers": 33,
     "adapters": 41,
-    "dependencies": 213
+    "dependencies": 214
   },
   "network": [
     {
