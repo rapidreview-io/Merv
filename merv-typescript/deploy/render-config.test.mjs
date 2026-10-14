@@ -124,9 +124,9 @@ test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) =
 test('the UI is served from the directory the release scripts write, when the VM names one', (t) => {
   const { run, plugin } = renderer(t);
   assert.equal(run().status, 0);
-  assert.deepEqual(plugin('ui').config, {});
+  assert.deepEqual(plugin('ui').config, { admins: [] });
   assert.equal(run({ MERV_UI_ASSETS: '/ui/' }).status, 0);
-  assert.deepEqual(plugin('ui').config, { assets: '/ui/' });
+  assert.deepEqual(plugin('ui').config, { assets: '/ui/', admins: [] });
   assert.notEqual(run({ MERV_UI_ASSETS: 'ui' }).status, 0);
 });
 
