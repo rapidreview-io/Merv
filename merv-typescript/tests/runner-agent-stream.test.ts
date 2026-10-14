@@ -265,6 +265,14 @@ test('every text is blanked of bearers and exact secrets, even split between pie
   ];
   const joined = run.map((event) => (event.kind === 'text' ? event.delta : '')).join('');
   assert.equal(joined, `{"t":"[REDACTED]","d":"${data}"}`);
+  // A long unspaced run is searched once, not from each of its characters: /\S+$/ took minutes
+  // over a batch's 768 KiB, holding up the whole runner, and would hold this for most of an hour.
+  const blob = 'b'.repeat(2 << 20);
+  const caught = scrubber.scrub([{ kind: 'text', id: 'k', delta: `${blob} x` }]);
+  assert.equal(
+    caught.map((event) => (event.kind === 'text' ? event.delta : '')).join(''),
+    `${blob} `,
+  );
   const long = 'y'.repeat(AGENT_EVENT_TEXT + 5);
   assert.deepEqual(
     scrubber.scrub([

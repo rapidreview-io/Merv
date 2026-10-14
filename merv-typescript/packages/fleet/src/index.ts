@@ -1068,10 +1068,10 @@ export class FleetService implements Fleet {
         ? 'released'
         : 'releasing';
   }
-  /** Disposal fences admission durably, then makes one bounded provider cleanup pass.
-   * Pending deletes remain counted and are reconciled when the plugin is loaded again. A kind
-   * never registered in this process is left alone, and a kept kind's running work in every
-   * phase: the successor takes both back.
+  /** Disposal fences admission durably, then makes one bounded provider cleanup pass, which
+   * reads no offers. Pending deletes remain counted and are reconciled when the plugin is loaded
+   * again. A kind never registered in this process is left alone, and a kept kind's running work
+   * in every phase: the successor takes both back.
    */
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -1091,7 +1091,7 @@ export class FleetService implements Fleet {
           await this.save(tx, a, before);
         }
       });
-      await this.reconcile();
+      await this.reconcile(false);
       this.owners.clear();
     })();
     return this.closing;

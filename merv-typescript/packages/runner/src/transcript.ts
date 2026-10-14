@@ -36,7 +36,7 @@ const pattern = (secrets: string[]) =>
 /** Bearers and each exact secret of at least 16 characters, raw or JSON-escaped. */
 export const blankPattern = (secrets: string[]) => pattern(secretForms(secrets));
 /** Covers the longest private HF token (4096 bytes) as well as provider credentials. */
-const CARRY = 4096;
+export const CARRY = 4096;
 /** Enough of what was already written for the bearer's lookbehind (`\u0022` is six). */
 const CONTEXT = 16;
 /** Room kept for the marker line, which is under 80 bytes. */
@@ -141,8 +141,9 @@ const marker = (omittedBytes: number) =>
  * Moves each segment's lines to its start, but the partial-message lines that a later whole
  * message repeats (the live view read them from stdout.log); those after the last whole message,
  * as of a run stopped mid-message, are kept, each block's run of pieces as one line where it fits
- * in theirs, so the blanking sees a bearer streamed across pieces whole. A run holds what an event
- * does, and more only where a word would be parted.
+ * in theirs, so the blanking sees a bearer streamed across pieces whole. A run holds at most what
+ * an event does (Sessions cuts a longer one); in its last CARRY characters it takes a piece only
+ * where an ASCII word runs on into it, so it ends between words rather than inside a bearer.
  */
 function dropDeltas(out: Buffer, segments: [number, number][], harness: Harness) {
   let last = -1;
@@ -161,11 +162,12 @@ function dropDeltas(out: Buffer, segments: [number, number][], harness: Harness)
         if (find) last = kind === 'whole' ? line : last;
         else if (kind !== 'delta' || line > last) {
           const piece = kind === 'delta' && harness.piece?.(out.toString('utf8', line, stop));
+          const room = piece && run ? AGENT_EVENT_TEXT - run.text.length - piece.text.length : -1;
           if (
             piece &&
             piece.block === run?.block &&
-            (run.text.length + piece.text.length <= AGENT_EVENT_TEXT ||
-              /\S\S/.test(run.text.slice(-1) + piece.text.slice(0, 1)))
+            room >= 0 &&
+            (room >= CARRY || /[!-~]{2}/.test(run.text.slice(-1) + piece.text.slice(0, 1)))
           )
             [run.text, run.n] = [run.text + piece.text, run.n + 1];
           else {

@@ -1588,7 +1588,7 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   assert.equal(f.runtimes.createKeys.length, 2);
 });
 
-test('only a full pass reads the offers again', async (t) => {
+test('only a full pass reads the offers again, never closing', async (t) => {
   const f = await fixture(t);
   let described = 0;
   f.runtimes.describe = async () => (described++, null);
@@ -1605,6 +1605,8 @@ test('only a full pass reads the offers again', async (t) => {
   fleet.all = (sql) => (reads++, all(sql));
   await run(false);
   assert.equal(reads, 1, 'a pass that admits nothing reads the open allocations once');
+  await f.fleet.close();
+  assert.equal(described, profiles.length, 'closing waits on no provider for its offers');
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {

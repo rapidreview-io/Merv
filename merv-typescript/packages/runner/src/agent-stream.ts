@@ -4,7 +4,7 @@ import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/sessions/agent-stream';
 import type { SessionStreamBatch } from '@merv/sessions/types';
 import { RunnerControlError } from './client.js';
 import type { Harness } from './harness/index.js';
-import { blankPattern } from './transcript.js';
+import { blankPattern, CARRY } from './transcript.js';
 
 /**
  * A worker agent's output as it prints it, read back from its run directory's stdout.log (which
@@ -16,8 +16,6 @@ import { blankPattern } from './transcript.js';
 const CHUNK = 768 << 10;
 /** A stream further behind than this jumps to the end of the log and says what it skipped. */
 const BEHIND = 4 << 20;
-/** What an unfinished block holds back, so a credential split between pieces is blanked whole. */
-const CARRY = 4096;
 /** Tries after the process ended; the final transcript upload still keeps everything. */
 const ENDED_TRIES = 5;
 
@@ -93,9 +91,10 @@ export class Scrubber {
         let text = (this.carry.get(key) ?? '') + event.delta;
         this.carry.delete(key);
         if (!event.done) {
-          const tail = /\S+$/.exec(text)?.[0] ?? '';
-          let cut = text.length - tail.length;
-          cut += textEnd(tail, Math.max(0, tail.length - this.maxSecret));
+          // Its trailing unspaced run, found from its space (/\S+$/ is quadratic in a long one),
+          // waits up to a credential's length.
+          const tail = text.length - 1 - text.search(/\s\S*$/);
+          let cut = textEnd(text, text.length - Math.min(tail, this.maxSecret));
           // A credential the cut would part waits whole, with what follows it.
           for (const { index, 0: found } of text.matchAll(this.blank))
             if (index < cut && index + found.length > cut) cut = index;

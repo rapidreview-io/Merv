@@ -169,20 +169,18 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         after,
         limit: 500,
       });
-      for (const workflow of page.workflows) {
-        await this.workflow(work, workflow);
-        done &&= this.doneWorkflows.has(JSON.stringify([work.namespace, workflow.id]));
-      }
+      for (const workflow of page.workflows) done = (await this.workflow(work, workflow)) && done;
       after = page.next;
     } while (after !== null);
     return done;
   }
 
+  /** Whether every capture of a finished workflow has settled, registering those not yet. */
   private async workflow(work: Work, workflow: WorkflowRecord) {
     if (!workflow.attempt_ref || !['completed', 'failed', 'cancelled'].includes(workflow.state))
-      return;
+      return false;
     const key = JSON.stringify([work.namespace, workflow.id]);
-    if (this.doneWorkflows.has(key)) return;
+    if (this.doneWorkflows.has(key)) return true;
     const settled = await this.state.read((sql) =>
       sql.all<{ node_id: string }>(
         'SELECT node_id FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
@@ -210,6 +208,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       after = page.next;
     } while (after !== null);
     if (!pending) this.doneWorkflows.add(key);
+    return !pending;
   }
 
   private async held(namespace: string, objectId: string) {
