@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,6 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeRepositories } from '@merv/code/store/repository';
+import { ServerGit } from '@merv/code/git';
 import { git } from './fixtures/code-store.js';
 
 const limits = { quotaBytes: 1024 * 1024 * 1024, reservedFreeBytes: 1 };
@@ -222,7 +224,7 @@ test('work on one project runs in turn, transfers are bounded, and room is check
   await assert.rejects(starved.assertRoom('p', 0), { code: 'code_store_full', status: 507 });
 });
 
-test('the sweep removes what no operation needs and never a held bundle, a ref or a pack', async (t) => {
+test('the sweep removes what no operation needs and never a held bundle, a ref or, below sixteen, a pack', async (t) => {
   const repositories = await opened(t, root(t));
   await repositories.ensure('p', 'r', 'sha1');
   const paths = repositories.paths('p');
@@ -324,4 +326,109 @@ test('unloading waits for running work, and ends Git children only when the dead
   await outcome;
   // The lock is released either way, so the next start can replay what was interrupted.
   await (await opened(t, path)).close(1000);
+});
+
+/**
+ * A project whose repository holds `count` packs: one per commit a receipt ref keeps, and one
+ * that nothing reaches, beside two loose objects nothing reaches either. Returns every object.
+ */
+async function packed(repositories: CodeRepositories, projectId: string, count: number) {
+  await repositories.ensure(projectId, 'r', 'sha1');
+  const env = repositories.paths(projectId).repository;
+  const write = (text: string) => git(env, ['hash-object', '-w', '--stdin'], text);
+  const pack = (...oids: string[]) =>
+    git(env, ['pack-objects', '-q', 'objects/pack/pack'], oids.join('\n'));
+  const objects = [];
+  for (let at = 1; at < count; at++) {
+    const blob = write(`${projectId} ${at}\n`);
+    const tree = git(env, ['mktree'], `100644 blob ${blob}\tfile.txt\n`);
+    const commit = git(env, ['commit-tree', tree, '-m', `${projectId} ${at}`]);
+    git(env, ['update-ref', `refs/merv/receipts/cop_${at}`, commit]);
+    pack(blob, tree, commit);
+    objects.push(blob, tree, commit);
+  }
+  objects.push(write(`${projectId} unreachable\n`));
+  pack(objects.at(-1)!);
+  git(env, ['prune-packed']);
+  objects.push(write(`${projectId} loose\n`), write(`${projectId} loose too\n`));
+  return objects;
+}
+const indexes = (repositories: CodeRepositories, projectId: string) =>
+  readdirSync(join(repositories.paths(projectId).repository, 'objects', 'pack')).filter((name) =>
+    name.endsWith('.idx'),
+  ).length;
+/** Every object is still there, Git finds nothing wrong, and the configuration is Code's. */
+function intact(
+  repositories: CodeRepositories,
+  projectId: string,
+  objects: string[],
+  config: string,
+) {
+  const env = repositories.paths(projectId).repository;
+  const types = git(env, ['cat-file', '--batch-check=%(objecttype)'], objects.join('\n') + '\n');
+  assert.ok(!types.includes('missing'), `${projectId} lost an object`);
+  git(env, ['fsck', '--strict', '--no-dangling']);
+  assert.equal(readFileSync(join(env, 'config'), 'utf8'), config, `${projectId} config changed`);
+}
+
+test('a sweep folds the packs of the project that holds the most, in its turn and unwaited, keeping every object', async (t) => {
+  const repositories = await opened(t, root(t));
+  const p = await packed(repositories, 'p', 18);
+  const q = await packed(repositories, 'q', 16);
+  const config = readFileSync(join(repositories.paths('p').repository, 'config'), 'utf8');
+  // While p's turn is held, a sweep starts its fold and resolves; the next starts no other.
+  let release!: () => void;
+  const held = repositories.run('p', () => new Promise<void>((done) => (release = done)));
+  await repositories.sweep(async () => undefined);
+  await repositories.sweep(async () => undefined);
+  assert.deepEqual([indexes(repositories, 'p'), indexes(repositories, 'q')], [18, 16]);
+  release();
+  await held;
+  await repositories.run('p', async () => {});
+  assert.ok(indexes(repositories, 'p') < 4, 'p folded');
+  assert.equal(indexes(repositories, 'q'), 16, 'one project a pass');
+  await repositories.sweep(async () => undefined);
+  await repositories.run('q', async () => {});
+  assert.ok(indexes(repositories, 'q') < 4, 'q folded');
+  intact(repositories, 'p', p, config);
+  intact(repositories, 'q', q, config);
+});
+
+test('a fold that fails or lacks room loses nothing and leaves only what was there; an hour later one completes', async (t) => {
+  // This Git's first repack makes temporary files and fails; every other call is Git's own.
+  const path = root(t);
+  const failed = join(path, '..', 'failed');
+  const wrapper = join(path, '..', 'git');
+  writeFileSync(
+    wrapper,
+    `#!/bin/sh\ncase " $* " in *" repack "*) if [ ! -e ${failed} ]; then : > ${failed}; cd "$GIT_DIR/objects/pack" && : > .tmp-1-pack-x.pack && : > tmp_pack_x; exit 1; fi;; esac\nexec git "$@"\n`,
+  );
+  chmodSync(wrapper, 0o755);
+  const repositories = new CodeRepositories(
+    { root: path, ...limits },
+    new ServerGit(join(path, 'tmp'), wrapper),
+  );
+  t.after(() => repositories.close(1000));
+  await repositories.open();
+  const objects = await packed(repositories, 'p', 17);
+  const config = readFileSync(join(repositories.paths('p').repository, 'config'), 'utf8');
+  const pack = join(repositories.paths('p').repository, 'objects', 'pack');
+  writeFileSync(join(pack, 'tmp_pack_live'), 'another child');
+  const before = readdirSync(pack).sort();
+  const pass = async (nowMs = Date.now()) => {
+    await repositories.sweep(async () => undefined, nowMs);
+    await repositories.run('p', async () => {});
+  };
+  repositories.config.reservedFreeBytes = Number.MAX_SAFE_INTEGER;
+  await pass();
+  assert.equal(existsSync(failed), false, 'without room no fold starts');
+  repositories.config.reservedFreeBytes = 1;
+  await pass();
+  assert.equal(existsSync(failed), true);
+  assert.deepEqual(readdirSync(pack).sort(), before, 'only the fold’s own temporary files go');
+  await pass();
+  assert.deepEqual(readdirSync(pack).sort(), before, 'the project rests for an hour');
+  await pass(Date.now() + 2 * 3600_000);
+  assert.ok(indexes(repositories, 'p') < 4, 'folded');
+  intact(repositories, 'p', objects, config);
 });

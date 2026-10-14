@@ -38,6 +38,8 @@ export interface ProjectPaths {
 }
 
 const HOUR = 3600_000;
+/** A sweep folds the packs of a project that holds this many, keeping every object. */
+const FOLD_PACKS = 16;
 export const EXPORT_TTL_MS = 15 * 60_000;
 /** How long a disk measurement is good enough for a reader, who asks every ten seconds. */
 const USAGE_TTL = 60_000;
@@ -72,8 +74,8 @@ export async function diskBytes(path: string): Promise<number> {
     if ((error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error;
     return (await lstat(path)).size;
   }
-  // Siblings are measured at once: a repository that never collects garbage keeps a pack per
-  // transfer and a file per loose ref, and one at a time that is most of an upload's wait.
+  // Siblings are measured at once: a repository keeps a file per loose ref and, until a sweep
+  // folds them, a pack per transfer, and one at a time that is most of an upload's wait.
   const sizes = await Promise.all(
     entries.map((entry) => {
       const child = join(path, entry.name);
@@ -104,6 +106,9 @@ export class CodeRepositories {
   private readonly waiting: (() => void)[] = [];
   private readonly validated = new Set<string>();
   private readonly measured = new Map<string, { bytes: number; atMs: number }>();
+  /** The one pack fold running, and when a project whose fold failed is next tried. */
+  private folding?: Promise<unknown>;
+  private readonly resting = new Map<string, number>();
 
   constructor(
     readonly config: CodeRepositoryConfig,
@@ -507,9 +512,9 @@ export class CodeRepositories {
    * Remove what no operation needs any more: quarantine directories of finished operations,
    * or of none when they are an hour old, expired exports with their refs, temporary packs
    * an interrupted child left behind, and the hour-old half-made repository of an ensure()
-   * that died (one that lives ends within its few Git children's timeouts).
-   * Held bundles, every other ref and every pack of a repository are never touched;
-   * nothing here collects garbage or prunes.
+   * that died (one that lives ends within its few Git children's timeouts). Held bundles,
+   * every other ref and every object are kept: nothing here prunes. The project with the most
+   * packs, once it holds FOLD_PACKS, has them folded in its turn, which no sweep waits for.
    */
   async sweep(
     finished: (operationId: string) => Promise<boolean | undefined>,
@@ -523,6 +528,7 @@ export class CodeRepositories {
         (stat) => nowMs - stat.mtimeMs > age,
         () => false,
       );
+    let fullest = { directory: '', count: 0 };
     for (const entry of await readdir(this.config.root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[0-9a-f]{32}$/.test(entry.name)) continue;
       const directory = join(this.config.root, entry.name);
@@ -551,10 +557,55 @@ export class CodeRepositories {
         });
       }
       const packs = join(repository, 'objects', 'pack');
+      let count = 0;
       for (const name of await readdir(packs).catch(() => []))
-        if (name.startsWith('tmp_') && (await old(join(packs, name), HOUR)))
+        if (name.endsWith('.idx')) count++;
+        else if (name.startsWith('tmp_') && (await old(join(packs, name), HOUR)))
           await rm(join(packs, name), { force: true });
+      if (
+        count >= Math.max(FOLD_PACKS, fullest.count + 1) &&
+        (this.resting.get(directory) ?? 0) <= nowMs
+      )
+        fullest = { directory, count };
     }
+    if (!fullest.directory || this.folding) return;
+    const rest = () => this.resting.set(fullest.directory, nowMs + HOUR);
+    try {
+      const { projectId, repositoryId, repositoryIds } = JSON.parse(
+        await readFile(join(fullest.directory, 'merv-project.json'), 'utf8'),
+      ) as { projectId: string; repositoryId?: string; repositoryIds?: string[] };
+      if (this.paths(projectId).directory !== fullest.directory) throw stopped();
+      await this.validate(projectId, repositoryId ?? repositoryIds?.[0] ?? '');
+      this.folding = this.run(projectId, () => this.fold(projectId))
+        .catch(rest)
+        .finally(() => (this.folding = undefined));
+    } catch {
+      rest();
+    }
+  }
+
+  /**
+   * Fold a project's packs with Git's geometric repack, with one thread, a bounded delta window
+   * and no configuration written. Every object stays, reachable or not: `-d` removes only packs
+   * and loose objects the new pack holds. A fold that fails removes the temporary files it made
+   * (Git reads a `.tmp-` pack as a real one, so no other is touched), and its project rests for
+   * an hour, as does one whose directory a sweep cannot vouch for.
+   */
+  private async fold(projectId: string): Promise<void> {
+    const objects = join(this.paths(projectId).repository, 'objects');
+    const pack = join(objects, 'pack');
+    const { bavail, bsize } = await statfs(this.config.root);
+    if (bavail * bsize < this.config.reservedFreeBytes + (await diskBytes(objects))) return;
+    const before = new Set(await readdir(pack));
+    const args = '-c pack.threads=1 -c pack.windowMemory=64m repack --geometric=2 -d -n -q';
+    const folded = await this.git
+      .run(args.split(' '), { env: this.environment(projectId), timeoutMs: 5 * 60_000 })
+      .catch(() => null);
+    if (folded?.code === 0) return;
+    for (const name of await readdir(pack))
+      if (/^(tmp_|\.tmp-)/.test(name) && !before.has(name))
+        await rm(join(pack, name), { force: true });
+    throw stopped();
   }
 
   /**

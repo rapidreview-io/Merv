@@ -150,7 +150,7 @@ Temporary export refs are private implementation refs, not additional work branc
 
 **Durability and database/filesystem recovery**
 
-Git defaults are insufficient for the stated acknowledgment guarantee. Configure `core.fsync=all`, `core.fsyncMethod=fsync`, and explicitly sync migrated files and containing directories. Git documents that its usual defaults can lose recent loose objects after an unclean shutdown. [Git configuration documentation](https://git-scm.com/docs/git-config)
+Git defaults are insufficient for the stated acknowledgment guarantee. Configure `core.fsync=all`, `core.fsyncMethod=fsync`, and explicitly sync migrated files and containing directories. The sweep's pack fold (`git repack --geometric=2 -d`) is not known to sync the pack directory between renaming the new pack into place and deleting the old ones, so it assumes a filesystem that journals metadata in order, such as ext4 or XFS, for `/var/lib/merv-ts/code`. Git documents that its usual defaults can lose recent loose objects after an unclean shutdown. [Git configuration documentation](https://git-scm.com/docs/git-config)
 
 A database transaction and a Git ref transaction are not atomic together. Use the operation journal:
 

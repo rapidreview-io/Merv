@@ -210,9 +210,10 @@ class Recovery:
             return json.loads(self.sql(f"SELECT COALESCE(json_agg(t),'[]'::json) FROM \"{schema}\".{table} t WHERE project_id='{quoted}';", database))
         def body(value):
             return json.loads(value) if isinstance(value, str) else value or {}
+        commits = set()
         def commit(oid):
             require(isinstance(oid, str) and re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}', oid), 'invalid stored commit')
-            require(self.run(['git', 'cat-file', '-t', oid], env=env).strip() == b'commit', 'stored commit missing')
+            commits.add(oid)
         def work(unit):
             encode = '..' in unit or unit.endswith(('.', '.lock')) or unit.startswith('encoded-') or not re.fullmatch('[A-Za-z0-9_][A-Za-z0-9_.-]*', unit)
             return 'refs/merv/work/' + ('encoded-' + base64.urlsafe_b64encode(unit.encode()).decode().rstrip('=') if encode else unit)
@@ -302,6 +303,10 @@ class Recovery:
                     result = body(row.get('result_json'))
                     commit(result['commit'])
                     require(refs.get('refs/merv/bases/' + row['base_key']) == result['commit'], 'resolved base ref missing')
+        # Every promised commit is asked of Git at once: one process per repository, not per upload.
+        if commits:
+            types = self.run(['git', 'cat-file', '--batch-check=%(objecttype)'], data=''.join(f'{oid}\n' for oid in commits).encode(), env=env)
+            require(types.decode().splitlines() == ['commit'] * len(commits), 'stored commit missing')
 
     def container(self):
         raw = self.run(['docker', 'inspect', '--format', '{{json .}}', self.c['container']])

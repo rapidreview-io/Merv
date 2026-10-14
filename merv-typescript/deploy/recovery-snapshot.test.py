@@ -244,7 +244,7 @@ class RecoveryTests(unittest.TestCase):
             self.r.create()
         self.write(f"UPDATE audit.code_workspaces SET head_oid='{self.oid}',base_json='{{\"reference\":\"{self.oid}\"}}';")
         self.write(f"INSERT INTO audit.code_retained_commits VALUES ('{self.project}','other-acceptance','unlisted-unit','{missing}','code');")
-        with self.assertRaises(m.Failure):
+        with self.assertRaisesRegex(m.Failure, 'stored commit missing'):
             self.r.create()
         self.assertEqual(self.r.verify(good)['state'], 'verified')
         self.assertEqual([p.parent.name for p in self.r.bucket.glob('*/COMPLETE.json')], [good])
