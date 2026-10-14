@@ -102,9 +102,10 @@ export async function adminOverview(
         }
       }
     } else unavailable.push('Agent sessions');
-    const short = (id: string) => id.replace(/^[a-z]+_/, '').slice(0, 4);
+    const short = (id: string) =>
+      (id.match(/[a-f0-9]{8}-[a-f0-9-]{27}/i)?.[0] ?? id.replace(/^[a-z]+_/, '')).slice(0, 4);
     const opaque = (value: string) =>
-      /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value) || /^(actor|user|wf|ce)_[a-z0-9_-]+$/i.test(value);
+      /[a-f0-9]{8}-[a-f0-9-]{27}/i.test(value) || /^(actor|user|wf|ce)_[a-z0-9_-]+$/i.test(value);
     const users = new Map<
       string,
       { key: string; label: string; experiments: number; active: number }

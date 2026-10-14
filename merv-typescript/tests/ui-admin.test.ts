@@ -28,8 +28,12 @@ test('admin snapshot combines customers, preserves terminal rows and excludes ex
     await tx.run(
       "INSERT INTO shared_users VALUES ('issuer','named-user'),('issuer','abcd1234-0000-4000-8000-000000000000')",
     );
-    await tx.run("INSERT INTO member_actors VALUES ('issuer','named-user','a1')");
-    await tx.run("INSERT INTO actors VALUES ('a1','Owner A')");
+    await tx.run(
+      "INSERT INTO member_actors VALUES ('issuer','named-user','a1'),('issuer','abcd1234-0000-4000-8000-000000000000','a2')",
+    );
+    await tx.run(
+      "INSERT INTO actors VALUES ('a1','Owner A'),('a2','Member abcd1234-0000-4000-8000-000000000000')",
+    );
     await tx.run(
       "INSERT INTO wf_instances VALUES ('e1','running','2026-10-14T01:00:00Z'),('e2','complete','2026-10-14T02:00:00Z')",
     );
