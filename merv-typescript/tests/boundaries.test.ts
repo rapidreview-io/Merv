@@ -1383,3 +1383,13 @@ test('each service boots with only its declared dependency closure and without A
       }
     });
 });
+
+test('every package dependency installs at the root, the only node_modules the image ships', () => {
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')) as {
+    packages: Record<string, unknown>;
+  };
+  assert.deepEqual(
+    Object.keys(lock.packages).filter((path) => /^packages\/[^/]+\/node_modules\//.test(path)),
+    [],
+  );
+});

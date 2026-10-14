@@ -15,10 +15,10 @@
     "@fontsource/geist-mono": "5.2.7",
     "@fontsource/geist-sans": "5.2.5",
     "@fontsource/source-serif-4": "5.2.9",
-    "marked": "16.4.1",
+    "marked": "16.4.2",
     "playwright-core": "1.57.0",
     "vega": "6.2.0",
     "vega-lite": "6.4.1",
-    "yaml": "2.8.1"
+    "yaml": "2.9.0"
   }
 }
