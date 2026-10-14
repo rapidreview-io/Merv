@@ -19,17 +19,20 @@ const refuse = (why: string) => {
   throw new MervError('board_bad_path', `A sketch path could not be read: ${why}`, 400);
 };
 
-/** No drawing needs a larger number or a finer one: summed, scaled or squared, either could
- * overflow or underflow to no coordinate. */
-const drawable = (n: number) => !n || (Math.abs(n) <= 1e9 && Math.abs(n) >= 1e-9);
+/** A number as drawn. None needs one past 1e9, and one finer than 1e-9 (as computed points carry,
+ * cos(π/2) is 6e-17) is 0: summed, scaled or squared, either could overflow or underflow to no
+ * coordinate. */
+function drawable(text: string): number {
+  const size = Math.abs(+text);
+  return size > 1e9 ? refuse(`${text} is out of range`) : size < 1e-9 ? 0 : +text;
+}
 function tokens(d: string): (string | number)[] {
   const out: (string | number)[] = [];
   const re = /([MmLlHhVvCcSsQqTtAaZz])|([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)|([\s,]+)|(.)/g;
   for (const [, command, number, , other] of d.matchAll(re)) {
     if (other) refuse(`"${other}" is not part of a path`);
     if (command) out.push(command);
-    else if (number !== undefined)
-      out.push(drawable(+number) ? +number : refuse(`${number} is out of range`));
+    else if (number !== undefined) out.push(drawable(number));
   }
   return out;
 }
@@ -101,7 +104,7 @@ export function strokesOf(d: string): Stroke[] {
   let current: Stroke | undefined;
   let at: Point = [0, 0];
   let start: Point = [0, 0];
-  let control: Point | undefined;
+  let control: Point = [0, 0];
   let command = '';
   let i = 0;
   const number = () => {
@@ -123,6 +126,7 @@ export function strokesOf(d: string): Stroke[] {
   if (typeof list[0] === 'string' && list[0].toUpperCase() !== 'M')
     refuse('it does not begin with M');
   while (i < list.length) {
+    const last = command.toUpperCase();
     if (typeof list[i] === 'string') command = list[i++] as string;
     else if (!command) refuse('it does not begin with M');
     const relative = command === command.toLowerCase();
@@ -131,32 +135,26 @@ export function strokesOf(d: string): Stroke[] {
       const x = number();
       return [base[0] + x, base[1] + number()];
     };
+    // S mirrors the control point a C or S just before it left, T that of a Q or T; else none.
+    const mirrored = (after: RegExp): Point =>
+      after.test(last) ? [2 * at[0] - control[0], 2 * at[1] - control[1]] : at;
     switch (command.toUpperCase()) {
       case 'M': {
-        at = point();
-        start = at;
+        start = at = point();
         current = undefined;
-        control = undefined;
         // Pairs after a move's first are lines, as SVG reads them.
         command = relative ? 'l' : 'L';
         break;
       }
       case 'L':
         go([point()]);
-        control = undefined;
         break;
-      case 'H': {
-        const x = number();
-        go([[relative ? at[0] + x : x, at[1]]]);
-        control = undefined;
+      case 'H':
+        go([[base[0] + number(), at[1]]]);
         break;
-      }
-      case 'V': {
-        const y = number();
-        go([[at[0], relative ? at[1] + y : y]]);
-        control = undefined;
+      case 'V':
+        go([[at[0], base[1] + number()]]);
         break;
-      }
       case 'C': {
         const [c1, c2, end] = [point(), point(), point()];
         go(cubic(at, c1, c2, end));
@@ -164,7 +162,7 @@ export function strokesOf(d: string): Stroke[] {
         break;
       }
       case 'S': {
-        const c1: Point = control ? [2 * at[0] - control[0], 2 * at[1] - control[1]] : at;
+        const c1 = mirrored(/[CS]/);
         const [c2, end] = [point(), point()];
         go(cubic(at, c1, c2, end));
         control = c2;
@@ -177,7 +175,7 @@ export function strokesOf(d: string): Stroke[] {
         break;
       }
       case 'T': {
-        const c: Point = control ? [2 * at[0] - control[0], 2 * at[1] - control[1]] : at;
+        const c = mirrored(/[QT]/);
         go(quadratic(at, c, point()));
         control = c;
         break;
@@ -185,7 +183,6 @@ export function strokesOf(d: string): Stroke[] {
       case 'A': {
         const [rx, ry, angle, large, sweep] = [number(), number(), number(), number(), number()];
         go(arc(at, rx, ry, angle, !!large, !!sweep, point()));
-        control = undefined;
         break;
       }
       case 'Z':
@@ -198,7 +195,6 @@ export function strokesOf(d: string): Stroke[] {
         }
         at = start;
         current = undefined;
-        control = undefined;
         break;
       default:
         refuse(`unknown command ${command}`);

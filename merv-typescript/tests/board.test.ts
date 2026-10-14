@@ -356,18 +356,21 @@ test('a sketch path reads as the points a pen passes: lines, curves, arcs and cl
   assert.equal(strokesOf('M0 0 L1 1 M5 5 L6 6').length, 2, 'each move begins a stroke');
   assert.throws(() => strokesOf('M 0 0 X 3'), /could not be read/);
   assert.throws(() => strokesOf('L 1 1'), /does not begin with M/);
-  // Too fine a number underflowed too: an arc whose ends nearly met, or a sketch too small to scale.
-  for (const d of [
-    'M0 0 L1e999 5',
-    'M1e308 0 L-1e308 0',
-    'M0 0 a1 1 0 0 1 1e-200 1e-200',
-    'M0 0 L1e-310 1e-310',
-  ])
-    assert.throws(
-      () => strokesOf(d),
-      /out of range/,
-      `${d} overflows or underflows to no coordinate`,
-    );
+  for (const d of ['M0 0 L1e999 5', 'M1e308 0 L-1e308 0'])
+    assert.throws(() => strokesOf(d), /out of range/, `${d} overflows to no coordinate`);
+  // Finer than 1e-9 is 0, as computed points carry it, and nothing underflows to no coordinate:
+  // an arc whose ends nearly met, or a sketch too small to scale.
+  assert.deepEqual(strokesOf('M6e-17 0 L1e-310 1e-310 L1 1')[0]!.points, [
+    [0, 0],
+    [0, 0],
+    [1, 1],
+  ]);
+  assert.throws(() => strokesOf('M0 0 a1 1 0 0 1 1e-200 1e-200'), /draws nothing/);
+  // S mirrors only a C or S control point, T only a Q or T one; after any other, it is the pen's.
+  const same = (a: string, b: string) => assert.deepEqual(strokesOf(a), strokesOf(b), a);
+  same('M0 0 Q10 10 20 0 S30 10 40 0', 'M0 0 Q10 10 20 0 C20 0 30 10 40 0');
+  same('M0 0 C0 10 10 10 10 0 T20 0', 'M0 0 C0 10 10 10 10 0 Q10 0 20 0');
+  same('M0 0 C0 10 10 10 10 0 S20 10 20 0', 'M0 0 C0 10 10 10 10 0 C10 -10 20 10 20 0');
   // Apart, with a deadline: a parser that read the number as another Z looped forever.
   const run = spawnSync(
     process.execPath,
@@ -500,6 +503,22 @@ test('a board draws itself for its agent: pen strokes and text as SVG, cropped t
   assert.ok(typeof whole !== 'string');
   assert.match(whole.html, /<polyline points="0,0 20,30/, 'the pen stroke is drawn');
   assert.match(whole.html, /&lt;objective&gt;/, 'text is drawn, escaped');
+  // A pen stroke is drawn bolder than its width, said once; a shape at opacity 0 is not seen.
+  const pen = whole.html.match(/<polyline points="0,0 20,30[^>]*>/)![0];
+  assert.deepEqual(pen.match(/stroke-width="[^"]*"/g), ['stroke-width="3"']);
+  const ghost = pictureOf([{ ...word('h', 0, 0), opacity: 0 }]) as { html: string };
+  assert.match(ghost.html, /opacity="0"/);
+  // A line saved before its points were checked draws numbers, never markup.
+  const old = pictureOf([
+    {
+      ...word('o', 0, 0),
+      points: [
+        [0, 0],
+        ['"/><b>', 0],
+      ],
+    },
+  ] as never);
+  assert.doesNotMatch((old as { html: string }).html, /<b>/);
   assert.ok(Math.max(whole.width, whole.height) <= 1600);
   const part = pictureOf(elements, drawing.created.f);
   assert.ok(typeof part !== 'string');
@@ -601,7 +620,7 @@ test('drawing call after call keeps fractional indexes short, each new shape on 
   assert.equal(after.find('n').index, 'a1', 'an agent key of old steps to a short one');
 });
 
-test('a shape drawn in a frame or beside a framed one stands in it; a long word wraps whole', () => {
+test('a shape drawn in a frame, or beside a framed one inside it, stands in it; a long word wraps whole', () => {
   const drawing = new Drawing([], true);
   drawing.apply({ op: 'frame', key: 'f', title: 'Area' });
   drawing.apply({ op: 'note', key: 'n', text: `a${'🚀'.repeat(30)}`, in: 'f' });
@@ -620,6 +639,14 @@ test('a shape drawn in a frame or beside a framed one stands in it; a long word 
     'a label holds half an emoji',
   );
   parse(elementSchema.array(), labels);
+  // Beside a held shape but outside its frame, which Excalidraw would cut it to, it joins none.
+  drawing.apply({ op: 'note', key: 'h', text: 'Held' });
+  drawing.apply({ op: 'frame', key: 'g', title: 'Tight', holds: ['h'] });
+  drawing.apply({ op: 'sketch', key: 's', strokes: [{ path: 'M0 0 L9 9' }], near: 'h' });
+  assert.deepEqual(
+    [drawing.find('h').frameId, drawing.find('s').frameId],
+    [drawing.created.g, null],
+  );
 });
 
 test('edit rewords a shape’s own label: a narrow hand-drawn one wraps at 8, a frame only renames', () => {

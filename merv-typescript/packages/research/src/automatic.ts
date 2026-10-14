@@ -51,17 +51,12 @@ export async function publishBlocker(
   tx: Transaction,
 ): Promise<void> {
   // An outage keeps when it was first seen; anything else forgets it. Neither rewrites a no-op.
-  if (blocker?.status === 503)
-    await tx.run(
-      'UPDATE research_automation SET unavailable_since=? WHERE research_id=? AND unavailable_since IS NULL',
-      new Date().toISOString(),
-      row.research_id,
-    );
-  else
-    await tx.run(
-      'UPDATE research_automation SET unavailable_since=NULL WHERE research_id=? AND unavailable_since IS NOT NULL',
-      row.research_id,
-    );
+  const outage = blocker?.status === 503;
+  await tx.run(
+    `UPDATE research_automation SET unavailable_since=${outage ? '?' : 'NULL'} WHERE research_id=? AND unavailable_since IS ${outage ? '' : 'NOT '}NULL`,
+    ...(outage ? [new Date().toISOString()] : []),
+    row.research_id,
+  );
   await workflows.replaceBlockers(
     {
       projectId: row.project_id,

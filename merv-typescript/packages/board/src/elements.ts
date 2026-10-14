@@ -323,7 +323,6 @@ export class Drawing {
       }
     } else if (near) {
       const target = this.find(near);
-      frameId = target.frameId ?? null;
       const t = rectOf(target);
       const mid = {
         x: t.x + t.width / 2 - size.width / 2,
@@ -357,6 +356,9 @@ export class Drawing {
           }
         }
       at ??= { ...beside[side ?? 'right'], ...size };
+      // It joins the frame only inside it: Excalidraw cuts members, a sketch wholly, at its edge.
+      const frame = this.elements.get(target.frameId);
+      frameId = frame && contains(frame, at) ? frame.id : null;
     } else {
       const c = this.cursor;
       for (let tries = 0; !at; tries++) {

@@ -19,13 +19,17 @@ const paint = (color: unknown, none = 'none') =>
   typeof color === 'string' && color !== 'transparent' && /^#[0-9a-fA-F]{3,8}$|^[a-z]+$/.test(color)
     ? color
     : none;
+/** Numbers only, however a line saved before its points were checked holds them. */
 const pointsOf = (el: El): [number, number][] =>
   Array.isArray(el.points)
-    ? (el.points as [number, number][]).map(([px, py]) => [el.x + px, el.y + py])
+    ? el.points.map(([px, py]) => [el.x + Number(px), el.y + Number(py)])
     : [];
 
 function shape(el: El): string {
-  const common = `stroke="${paint(el.strokeColor, '#1e1e1e')}" stroke-width="${Math.max(1, Number(el.strokeWidth) || 2)}" opacity="${(Number(el.opacity) || 100) / 100}"`;
+  // A pen stroke is drawn bolder than a line of its width; at opacity 0 a shape is not seen.
+  const width = Number(el.strokeWidth) || 2;
+  const opacity = `opacity="${Number(el.opacity ?? 100) / 100}"`;
+  const common = `stroke="${paint(el.strokeColor, '#1e1e1e')}" stroke-width="${el.type === 'freedraw' ? Math.max(2, width * 1.5) : Math.max(1, width)}" ${opacity}`;
   const fill = `fill="${paint(el.backgroundColor)}"`;
   switch (el.type) {
     case 'rectangle': {
@@ -47,7 +51,7 @@ function shape(el: El): string {
         el.textAlign === 'center' ? 'middle' : el.textAlign === 'right' ? 'end' : 'start';
       const x = align === 'middle' ? el.x + el.width / 2 : align === 'end' ? el.x + el.width : el.x;
       const lines = String(el.text ?? '').split('\n');
-      return `<text font-size="${size}" font-family="'Comic Sans MS','Segoe Print',sans-serif" fill="${paint(el.strokeColor, '#1e1e1e')}" text-anchor="${align}">${lines
+      return `<text font-size="${size}" font-family="'Comic Sans MS','Segoe Print',sans-serif" fill="${paint(el.strokeColor, '#1e1e1e')}" text-anchor="${align}" ${opacity}>${lines
         .map(
           (line, i) => `<tspan x="${x}" y="${el.y + step * i + size * 0.9}">${xml(line)}</tspan>`,
         )
@@ -59,8 +63,6 @@ function shape(el: El): string {
       const points = pointsOf(el);
       if (points.length < 2) return '';
       const line = points.map(([x, y]) => `${x},${y}`).join(' ');
-      const width =
-        el.type === 'freedraw' ? Math.max(2, (Number(el.strokeWidth) || 2) * 1.5) : undefined;
       let head = '';
       if (el.type === 'arrow' && el.endArrowhead) {
         const [[ax, ay], [bx, by]] = points.slice(-2) as [[number, number], [number, number]];
@@ -69,7 +71,7 @@ function shape(el: El): string {
           `${bx - 14 * Math.cos(angle + turn)},${by - 14 * Math.sin(angle + turn)}`;
         head = `<polyline points="${wing(0.45)} ${bx},${by} ${wing(-0.45)}" fill="none" ${common}/>`;
       }
-      return `<polyline points="${line}" ${el.type === 'line' ? fill : 'fill="none"'} ${common}${width ? ` stroke-width="${width}"` : ''} stroke-linecap="round" stroke-linejoin="round"/>${head}`;
+      return `<polyline points="${line}" ${el.type === 'line' ? fill : 'fill="none"'} ${common} stroke-linecap="round" stroke-linejoin="round"/>${head}`;
     }
     default:
       return '';
