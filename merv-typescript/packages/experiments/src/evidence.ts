@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   visible,
   check,
-  MervError,
   markdownSection,
   plain,
   visibleMarkdown,
@@ -38,10 +37,7 @@ function safeJson(input: unknown, aggregate = false): Json {
       ...(aggregate ? { bytes: 2_000_000, nodes: 262144 } : { bytes: 262144, nodes: 8192 }),
     });
   } catch {
-    throw new MervError(
-      'invalid_experiment_evidence',
-      'Evidence must contain bounded, finite plain JSON',
-    );
+    error(false, 'Evidence must contain bounded, finite plain JSON');
   }
 }
 
