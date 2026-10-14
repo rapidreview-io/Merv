@@ -57,6 +57,14 @@ test('a repository is imported in parts, continued by a thin bundle, and every c
   });
   // Completing before the bytes arrived is refused and says how far they got.
   await assert.rejects(complete(f, begun.id), { code: 'code_upload_incomplete' });
+  assert.match(
+    (
+      (await f.code.v2!.call(f.admin, `uploads/${begun.id}`, {})) as {
+        operation: CodeStoreOperation;
+      }
+    ).operation.waiting!.next,
+    /parts from `received` on/,
+  );
 
   const half = Math.floor(first.bytes / 2);
   const put = (offset: number, end: number) =>
@@ -636,14 +644,14 @@ test('findings refuse the whole import, keep its bundle for an operator, and a p
     code: 'code_bundle_hash_mismatch',
     status: 409,
   });
-  assert.equal(
-    (
-      (await f.code.v2!.call(f.admin, `uploads/${begun.id}`, {})) as {
-        operation: CodeStoreOperation;
-      }
-    ).operation.received,
-    0,
-  );
+  const dropped = (
+    (await f.code.v2!.call(f.admin, `uploads/${begun.id}`, {})) as {
+      operation: CodeStoreOperation;
+    }
+  ).operation;
+  assert.equal(dropped.received, 0);
+  // What moves it is the bytes again, not another completion.
+  assert.match(dropped.waiting!.next, /whole bundle again from offset 0/);
   await f.code.v2!.putPart(f.admin, begun.id, 0, wanted.content);
   assert.equal((await complete(f, begun.id)).status, 'completed');
 });

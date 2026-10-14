@@ -15,13 +15,14 @@ never ask for Code.
 Knowledge reports Code references it cannot read now as `unavailable`, distinct from
 `missing`. No workflow is silently converted from Git to non-Git.
 
-| Plugin        | Direct Cordis dependencies     | Responsibility                                                                             |
-| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
-| Code          | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
-| code-tools    | Code, Tools                    | `code.commit` and `code.operation`                                                         |
-| code-work-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
-| code-ui       | Code, UI                       | Recent operations and publications in the Git page                                         |
-| Runner        | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
+| Plugin        | Direct Cordis dependencies                                      | Responsibility                                                                                |
+| ------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Code          | State, Scope, Domain Events                                     | Repository files, retained Git facts, writer generations, transfers and the GitHub connection |
+| Code work     | Code, State, Scope, Sessions, Workflows, Reviews, Domain Events | Durable command identity, worker admission, source ownership and immutable receipts           |
+| code-tools    | Code work, Tools                                                | `code.commit` and `code.operation`                                                            |
+| code-work-api | Code work, API                                                  | Source-authenticated command retrieval and completion over `/code`                            |
+| code-ui       | Code work, UI                                                   | Recent operations and publications in the Git page                                            |
+| Runner        | None; separate machine context                                  | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts    |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
 
@@ -133,14 +134,15 @@ What this adapter cannot guarantee is on every receipt and on the base card, nev
 ```text
 writer.sock                       the writer lock, held for the life of the process
 tmp/                              home and temporary directory of every Git child
-<key>/merv-project.json           {format, projectId, repositoryId}; key = first 32 hex of sha256(projectId)
+<key>/merv-project.json           {format, projectId, repositoryId}, after a rebind {format: 2, projectId,
+                                  repositoryIds} (every identity served); key = first 32 hex of sha256(projectId)
 <key>/repository.git              the project's bare repository
 <key>/quarantine/<operation>/     one transfer: bundle.part, bundle, objects/, scratch.git
 <key>/held/<operation>.bundle     a bundle admission found something in, mode 0600, served by no route
 <key>/exports/                    bundles cut for machines (swept after 15 minutes)
 ```
 
-A repository is created from an empty template with a configuration Code wrote (`core.bare`, `core.fsync=all`, `core.fsyncMethod=fsync`, `gc.auto=0`, `transfer.fsckObjects`) and is checked whenever a process first opens it: another project's marker, an `objects/info/alternates` file, a hook, or any configuration key Code did not write (`remote.*`, `include.*`, `core.sshCommand`, …) refuses it with `code_repository_foreign` or `code_repository_unsafe`. Only objects that passed admission ever enter it; no configuration, hook, alternate or ref of another repository does. The server runs Git only through `packages/code/src/git.ts`: fixed `PATH`, empty home, no system or user configuration, no prompt, no hooks, and no transport unless the caller names the one it needs. Start-up requires Git 2.38 or newer and fails with `code_git_unsupported` otherwise.
+A repository is created from an empty template with a configuration Code wrote (`core.bare`, `core.fsync=all`, `core.fsyncMethod=fsync`, `core.logAllRefUpdates=false`, `gc.auto=0`, `transfer.fsckObjects`) and is checked whenever a process first opens it: another project's marker, an `objects/info/alternates` file, a hook, or any configuration key Code did not write (`remote.*`, `include.*`, `core.sshCommand`, …) refuses it with `code_repository_foreign` or `code_repository_unsafe`. Only objects that passed admission ever enter it; no configuration, hook, alternate or ref of another repository does. The server runs Git only through `packages/code/src/git.ts`: fixed `PATH`, empty home, no system or user configuration, no prompt, no hooks, and no transport unless the caller names the one it needs. Start-up requires Git 2.38 or newer and fails with `code_git_unsupported` otherwise.
 
 **One writer per volume.** Code binds `<root>/writer.sock`; the operating system releases it however the process dies. A second server on the same root fails to load Code with `code_repository_locked`; a socket left by a dead process refuses connections and is taken over. Two servers started on one volume in the same instant are not protected from each other, and one server per volume is the supported deployment. Work on one project runs in turn, and at most two transfers index or write packs at once.
 
@@ -176,10 +178,10 @@ Admission examines the whole history a transfer introduces, never the difference
 
 1. **The bundle is what was promised.** Node reads the header: version 2, or version 3 with only `@object-format`; a `@filter` (a partial bundle) or any other capability, two refs, a head other than the promised commit, or a prerequisite the repository does not hold is refused. The bundle's ref name authorises nothing.
 2. **Indexing.** The pack is indexed with `git index-pack --fix-thin --strict --fsck-objects` into the operation's quarantine, which borrows the kept objects through an alternate this server names; nothing in an upload can name one. Strict fsck refuses malformed objects, `.`/`..`/empty names, names containing `/` and `.git` with its HFS+ and NTFS spellings.
-3. **Connectivity and surplus.** `git rev-list --objects <head> --not --all` must succeed, so nothing the history needs is missing. Every object in the pack must be part of that history or a copy `--fix-thin` made of a kept object; anything else is `code_bundle_surplus`, because it would be kept without ever being examined. What is _new_ is the intersection: the objects of the pack that the history reaches and nothing kept reaches. Limits and scans run over exactly those.
-4. **Findings.** Object count, expanded size and object size; tree modes other than `100644`, `100755`, `40000`, `120000` (`mode`), submodules (`gitlink`); names with a backslash, a control character, a trailing dot or space, `.git` spellings, more than 255 bytes or 64 levels; names that collide when case is folded (`path_collision`); symbolic links that are absolute, longer than 4096 bytes, have a `..` after a name or leave the checkout (`symlink_escape`); the project's deny globs; and `credentials@1`: private-key blocks, GitHub tokens (`gh[pousr]_…`, `github_pat_…`), Slack tokens, Anthropic keys and Merv session secrets, in new blobs and commit messages. Depth, links and deny globs are about where a path stands rather than about an object, so a kept directory that a new commit puts somewhere else is judged again there: a link inside it that now climbs out of the checkout, a path inside it that is now too deep, and a path inside it that is now under a denied one are all findings, and a rename is no way past a glob. A finding names the rule, the path and the object, never the matched text. A glob is matched against the whole path from the repository root: a literal matches itself, `?` one character and `*` any run within a segment, `**` any run across segments.
+3. **Connectivity and surplus.** `git rev-list --objects <head> --not --all` must succeed, so nothing the history needs is missing. Every object in the pack must be part of that history or a copy `--fix-thin` made of a kept object; anything else is `code_bundle_surplus`, because it would be kept without ever being examined. What is _new_ is the intersection: the objects of the pack that the history reaches and nothing kept reaches. Limits run over exactly those; what a path decides is judged again wherever the new commits put kept objects (step 4).
+4. **Findings.** Object count, expanded size and object size; tree modes other than `100644`, `100755`, `40000`, `120000` (`mode`), submodules (`gitlink`); names with a backslash, a control character, a trailing dot or space, `.git` spellings, more than 255 bytes or 64 levels; names that collide when case is folded (`path_collision`); symbolic links that are absolute, longer than 4096 bytes, have a `..` after a name or leave the checkout (`symlink_escape`); the project's deny globs; and `credentials@1`: private-key blocks, GitHub tokens (`gh[pousr]_…`, `github_pat_…`), Slack tokens, Anthropic keys and Merv session secrets, in new commit messages and in every blob the new commits hold outside `secretExemptGlobs`, kept ones included. Depth, links, deny globs and exemptions are about where a path stands rather than about an object, so a kept directory that a new commit puts somewhere else is judged again there, under the globs configured now: a link inside it that now climbs out of the checkout, a path inside it that is now too deep, a path inside it that is now under a denied one, and a credential in a file that is no longer under an exemption are all findings, and a rename is no way past a glob. A finding names the rule, the path and the object, never the matched text. A glob is matched against the whole path from the repository root: a literal matches itself, `?` one character and `*` any run within a segment, `**` any run across segments.
 
-A transfer that is not what was promised fails with its own code (`code_bundle_header`, `code_bundle_head`, `code_bundle_prerequisite`, `code_bundle_corrupt`, `code_bundle_disconnected`, `code_bundle_surplus`, `code_bundle_lineage`, `code_bundle_format`) and nothing of it is kept. A transfer with findings fails with `code_import_rejected`, the findings are on the operation, nothing is admitted and no ref moves, and its bundle is moved to `held/` for an operator to read from the disk; no route serves it. The scanner is not proof that a history holds no secret: it keeps the unmistakable ones out of Code and, later, out of GitHub. A false positive on a fixture is answered with `secretExemptGlobs`; note that an exempted blob is kept, and the same bytes are not examined again wherever they later appear.
+A transfer that is not what was promised fails with its own code (`code_bundle_header`, `code_bundle_head`, `code_bundle_prerequisite`, `code_bundle_corrupt`, `code_bundle_disconnected`, `code_bundle_surplus`, `code_bundle_lineage`, `code_bundle_format`) and nothing of it is kept. A transfer with findings fails with `code_import_rejected` (an upload with `code_capture_quarantined`), the findings are on the operation, nothing is admitted and no ref moves, and its bundle is moved to `held/` for an operator to read from the disk; no route serves it. The scanner is not proof that a history holds no secret: it keeps the unmistakable ones out of Code and, later, out of GitHub. A false positive on a fixture is answered with `secretExemptGlobs`; note that an exempted blob is kept, but the same bytes are examined again wherever a later commit holds them outside an exemption, and narrowing the exemptions makes the next transfer that still holds such a file refuse it.
 
 ## Writer generations and fencing
 
@@ -210,18 +212,20 @@ session, review and acceptance goes on exactly as before.
 
 - **What is published.** `refs/merv/work/<unit>` becomes `refs/heads/merv/work/<unit>` and only
   ever fast-forwards; `refs/merv/accepted/<unit>` becomes `refs/heads/merv/accepted/<unit>` and
-  is only ever created. Nothing else is touched, and nothing is ever deleted or forced.
+  a resolved base's `refs/merv/bases/<key>` becomes `refs/heads/merv/bases/<key>`, both only
+  ever created. Nothing else is touched, and nothing is ever deleted or forced.
 - **What authorises it.** The owner's linked repository together with the write automation they
-  turned on (`github.configure_automation` with `mode: write`), while that owner still
+  turned on (`POST /code/github/automation` with `mode: write`), while that owner still
   administers the project. The server reads that link with no caller: turning the automation
   off, unlinking the repository or the owner leaving is the off switch. Without either,
   `code.status`'s `mirror.state` is `off` and `blockedBy` says which (`github_owner` for the
   owner) — that is quiet, not an error. A repository GitHub answers as moved (renamed or
   transferred) is never followed: the API refuses with `github_repository_moved` until it is
   linked again, and Git does not follow the redirect.
-- **What it uses.** One installation token per push, scoped to that one repository and to
-  `contents`, passed only in the environment of the one Git child and given up again however the
-  push ends. No GitHub credential ever reaches a machine.
+- **What it uses.** One installation token per project in a pass (ten minutes at most), scoped to
+  that one repository and to `contents`, passed only in the environment of the pass's Git
+  children for that project and given up again however the pass ends. No GitHub credential ever
+  reaches a machine.
 - **How it decides.** The published ref is read first. Equal to what Code holds: done. Absent:
   created. For a work branch, the published commit must be an ancestor of what Code holds, asked
   of Code's own repository; `--force-with-lease` is then the compare-and-set on top of that. Anything

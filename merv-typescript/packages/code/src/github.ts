@@ -632,23 +632,17 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     return JSON.parse(row.repository_json) as GitHubRepository;
   }
   /**
-   * One installation token for the project's mirror target, for the length of one operation.
-   * It is minted per operation and given up again however that operation ends, and it never
-   * leaves the server: no runner is ever lent write access to the linked repository.
+   * One installation token for the project's mirror target while `use` runs (a mirror pass
+   * holds it for a project's refs, ten minutes at most), given up again however `use` ends.
+   * It never leaves the server: no runner is ever lent write access to the linked repository.
    */
   async mirrorToken<T>(projectId: string, use: (token: string) => Promise<T>): Promise<T> {
     const found = await this.mirrorTarget(projectId);
     if ('blocked' in found)
       throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
-    return await this.run(found, async (repository) => {
-      const client = this.client();
-      const grant = await client.installationToken(repository, true);
-      try {
-        return await use(grant.token);
-      } finally {
-        await client.revokeInstallationToken(grant.token).catch(() => {});
-      }
-    });
+    return await this.run(found, async (repository) =>
+      this.client().withInstallation(repository, true, use),
+    );
   }
   async assertBinding(
     caller: Caller,
@@ -777,17 +771,14 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
             'Repository settings changed; the selected import remains pinned to its original connection',
             409,
           );
-          const grant = await client.installationToken(binding.repository, false);
-          try {
-            return await use({
+          return await client.withInstallation(binding.repository, false, (token) =>
+            use({
               url: `https://github.com/${binding.repository.fullName}.git`,
               protocol: 'https',
               repository: binding.repository,
-              env: githubGitEnv(grant.token),
-            });
-          } finally {
-            await client.revokeInstallationToken(grant.token).catch(() => {});
-          }
+              env: githubGitEnv(token),
+            }),
+          );
         },
         undefined,
         true,
@@ -818,20 +809,13 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       caller,
       access,
       binding,
-      async (client, _token, current) => {
-        const grant = await client.installationToken(current.repository, {
-          contents: access,
-          pull_requests: access,
-          statuses: access,
-          checks: 'read',
-        });
-        try {
+      async (client, _token, current) =>
+        await client.withInstallation(
+          current.repository,
+          { contents: access, pull_requests: access, statuses: access, checks: 'read' },
           // Everything fn does carries the installation token, never the human's OAuth token.
-          return await client.installed(() => fn(client, grant.token, current));
-        } finally {
-          await client.revokeInstallationToken(grant.token).catch(() => {});
-        }
-      },
+          (token) => client.installed(() => fn(client, token, current)),
+        ),
       authorize,
       true,
     );

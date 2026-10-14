@@ -76,7 +76,7 @@ export interface CodeImportRemote {
     binding?: CodeRepositoryImportInput['githubBinding'],
   ): Promise<T>;
 }
-/** What a machine needs to read a download, or the word that it already has the head. */
+/** What the owner of work units answers for the store; all but `maintained` in its transaction. */
 export interface CodeStoreHooks {
   /** A project's repository gained history or a binding: what waited for it is derived again. */
   changed(tx: Transaction, projectId: string): Promise<void>;

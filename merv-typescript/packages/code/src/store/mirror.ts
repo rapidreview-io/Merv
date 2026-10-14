@@ -661,14 +661,14 @@ async function warnRef(
 /** What a project's work is published to, and the App credential for it, both server-side. */
 export interface MirrorAuthority {
   target(projectId: string): Promise<{ id: number; fullName: string } | { blocked: string }>;
-  /** Runs the one Git child with a credential minted for it and given up again after it. */
+  /** Runs `use` with a credential minted for it and given up again after it. */
   token<T>(projectId: string, use: (token: string) => Promise<T>): Promise<T>;
 }
 
 /**
  * The real transport: `git push` from the project's own repository. The credential exists only
- * in the environment of that one child, never in an argument, a configuration file or on disk,
- * and no machine is ever lent it. Only https is allowed, and only the ref Code names is touched.
+ * in the environment of the children it is held for, never in an argument, a configuration file
+ * or on disk, and no machine is ever lent it. Only https, and only the ref Code names, is used.
  */
 export class GitMirrorTransport implements MirrorTransport {
   private readonly held = new AsyncLocalStorage<{

@@ -90,12 +90,12 @@ export interface GitHubTokens {
   refreshExpiresAt: number;
 }
 
-/** Adapted from Merv GitHub's OAuth/PKCE client. Only GitHub.com is supported. */
 /** A GitHub check run that finished and does not hold a merge back. */
 export const checkPassed = (check: { status: string; conclusion?: string | null }) =>
   check.status === 'completed' &&
   ['success', 'neutral', 'skipped'].includes(check.conclusion ?? '');
 
+/** Adapted from Merv GitHub's OAuth/PKCE client. Only GitHub.com is supported. */
 export class GitHubClient {
   readonly origin: string;
   readonly installUrl: string;
@@ -268,6 +268,19 @@ export class GitHubClient {
     await this.#authorization.run(undefined, () =>
       this.installed(() => this.request('/installation/token', token, undefined, 'DELETE')),
     );
+  }
+  /** One installation token for `use`, given up again however `use` ends. */
+  async withInstallation<T>(
+    repository: GitHubRepository,
+    permission: Parameters<GitHubClient['installationToken']>[1],
+    use: (token: string) => Promise<T>,
+  ): Promise<T> {
+    const grant = await this.installationToken(repository, permission);
+    try {
+      return await use(grant.token);
+    } finally {
+      await this.revokeInstallationToken(grant.token).catch(() => {});
+    }
   }
   async ensureBranch(token: string, repository: string, branch: string, sha: string) {
     githubResponse(githubOid, sha);

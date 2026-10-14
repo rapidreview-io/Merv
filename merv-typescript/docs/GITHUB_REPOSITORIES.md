@@ -1,6 +1,6 @@
 # GitHub repositories and publication PRs
 
-GitHub belongs to the **Code** utility (`@merv/code`), which needs only State and Scope. Code's own repository on the server is the authority for a project's history; GitHub receives copies and pull requests. No runner ever holds a GitHub credential.
+GitHub belongs to the **Code** utility (`@merv/code`), which needs only State, Scope and Domain Events. Code's own repository on the server is the authority for a project's history; GitHub receives copies and pull requests. No runner ever holds a GitHub credential.
 
 ## From connection to merge
 
@@ -21,9 +21,9 @@ GitHub's merge API atomically checks the expected **head**, but does not offer a
 
 OAuth uses the existing browser-bound PKCE flow, human identity/project binding and encrypted single-use exchange state. Expiring user access/refresh tokens remain AES-256-GCM encrypted on the server. Refresh is claimed transactionally before network I/O. An uncertain refresh requires reconnection rather than replaying a consumed refresh token.
 
-Automation stores the original owner's stable Scope delegation separately from token rotation. Before live operations, both the caller and that owner's current Merv membership are checked. GitHub must still grant the owner the required read/push permission and expose the repository through the selected installation. Normal OAuth refresh preserves publication authority. Explicit reconnect by the same Merv and GitHub user retains the repository, base branch and automation settings; a different identity starts with no repository and automation off. Reconnect still increments the connection revision and fences outstanding authority, as do relinking, disconnecting and changing automation; reconnecting and disconnecting also revoke the user token they replace, as far as GitHub answers. Every repository operation rechecks live user and App permissions.
+Automation stores the original owner's stable Scope delegation separately from token rotation. Before live operations, both the caller and that owner's current Merv membership are checked. GitHub must still grant the owner the required read/push permission and expose the repository through the selected installation. Normal OAuth refresh preserves publication authority. Explicit reconnect by the same Merv and GitHub user retains the repository, base branch and automation settings; a different identity starts with no repository and automation off. Reconnect still increments the connection revision and fences outstanding authority, as do relinking, disconnecting and changing automation; reconnecting and disconnecting also revoke the user token they replace, as far as GitHub answers. Every import, publication and picker call rechecks live user and App permissions; the mirror, which runs with no caller, rests on the owner's link, write automation and Merv administration and on the App installation's own access, never the owner's GitHub token (see [Mirroring](CODE_OPERATIONS.md#mirroring)).
 
-Installation tokens restricted to **one repository** are minted on the server for one import, mirror push or publication operation and revoked when it ends; GitHub expiry bounds a failed revocation. Neither they nor the user's OAuth token leave the server. A token is passed only to the fixed Git child's process environment through Git's environment configuration; it is absent from command arguments, saved Git config, journals and every worker.
+Installation tokens restricted to **one repository** are minted on the server for one import, one project's part of a mirror pass (ten minutes at most) or one publication operation and revoked when it ends; GitHub expiry bounds a failed revocation. Neither they nor the user's OAuth token leave the server. A token is passed only to the fixed Git children's process environment through Git's environment configuration; it is absent from command arguments, saved Git config, journals and every worker.
 
 Runners have no local source repository; the former `repository` plus `baseRef` configuration was removed. GitHub.com only is supported. Git LFS, recursive submodules, repository administration and Actions workflow editing are outside this feature.
 
@@ -39,7 +39,7 @@ Optional automation variable:
 
 - `MERV_GITHUB_PRIVATE_KEY_BASE64` — base64-encoded RSA PEM App key, held in the protected server secret environment. Absent keys preserve metadata connection behavior and disable enabling automation.
 
-App repository permissions: **Metadata read**, **Contents write**, **Pull requests write**, **Checks read**, **Commit statuses read**. Install only on selected repositories. No administration, Actions/workflow-write permission or webhook is needed. The OAuth callback remains `<origin>/code/github/callback`, with expiring user tokens and Merv-initiated authorization.
+App repository permissions: **Metadata read**, **Contents write**, **Pull requests write**, **Checks read**, **Commit statuses write** (publication sets `merv/consolidation-approved` on the reviewed head, and its token asks for statuses at the level it asks for contents). Install only on selected repositories. No administration, Actions/workflow-write permission or webhook is needed. The OAuth callback remains `<origin>/code/github/callback`, with expiring user tokens and Merv-initiated authorization.
 
 The previously verified production deployment had metadata-only permissions. Do not infer that write automation is active until a subsequent activation record confirms permissions, private-key installation and a real isolated-repository test.
 
