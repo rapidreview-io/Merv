@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
+import { lstatSync, readFileSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -241,6 +241,13 @@ export class ProcessHost {
       socketDirectory,
       `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`,
     );
+    // The guardian listens only in a folder of this user's own that nobody else may enter:
+    // anywhere else, no guardian of this launch listens yet.
+    const folder = lstatSync(socketDirectory, { throwIfNoEntry: false });
+    if (!folder?.isDirectory() || folder.uid !== process.getuid!() || folder.mode & 0o077)
+      return Promise.reject(
+        Object.assign(new Error('No private guardian socket'), { code: 'ENOENT' }),
+      );
     return new Promise((resolve, reject) => {
       const socket = createConnection(path);
       let settled = false,

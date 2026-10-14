@@ -2,9 +2,10 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { createConnection } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -611,6 +612,42 @@ test('a guardian that cannot own its socket ends its claim as stopped, and repla
   await host.launch(input(stale.id, stale.deadline));
   await until(() => ledger.get(stale.id)?.status === 'exited');
   assert.equal(ledger.get(stale.id)?.exitCode, 0);
+});
+
+test('the controller speaks to no listener outside a private socket folder of its own', async (t) => {
+  const { directory, ledger, host, reserve } = setup(t);
+  const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(ledger.directory).digest('hex').slice(0, 16)}`;
+  t.after(() => rmSync(sockets, { recursive: true, force: true }));
+  const records = [reserve('linked-folder'), reserve('open-folder')];
+  const db = new DatabaseSync(ledger.path);
+  for (const { id } of records)
+    db.prepare("UPDATE launches SET status='starting' WHERE id=?").run(id);
+  db.close();
+  const heard: string[] = [];
+  for (const [index, { id }] of records.entries()) {
+    // A folder linked elsewhere, then one anybody may enter, each with a listener where this
+    // launch's guardian would be.
+    if (index === 0) symlinkSync(mkdtempSync(join(directory, 'elsewhere-')), sockets);
+    else {
+      mkdirSync(sockets);
+      chmodSync(sockets, 0o777);
+    }
+    const server = createServer((socket) =>
+      socket.on('data', (data) => {
+        heard.push(String(data));
+        socket.end('{"ok":true}\n');
+      }),
+    );
+    t.after(() => server.close());
+    const path = join(
+      sockets,
+      `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`,
+    );
+    await new Promise((resolve) => server.listen(path, () => resolve(undefined)));
+    assert.equal((await host.inspect(id)).status, 'uncertain');
+    rmSync(sockets, { recursive: true, force: true });
+  }
+  assert.deepEqual(heard, []);
 });
 
 test('a claimed launch with no pinned command ends a minute after it was first found unreachable', async (t) => {
