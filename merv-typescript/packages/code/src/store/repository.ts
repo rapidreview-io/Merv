@@ -16,7 +16,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ServerGit } from '../git.js';
+import { ServerGit, stopped } from '../git.js';
 import { syncPath } from '../files.js';
 
 export type ObjectFormat = 'sha1' | 'sha256';
@@ -406,11 +406,10 @@ export class CodeRepositories {
     if (this.closing)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
     const signal = this.git.signal;
-    const aborted = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
-    if (signal?.aborted) return Promise.reject(aborted());
+    if (signal?.aborted) return Promise.reject(stopped());
     let started = false;
     const perform = () => {
-      if (signal?.aborted) throw aborted();
+      if (signal?.aborted) throw stopped();
       started = true;
       return job();
     };
@@ -430,7 +429,7 @@ export class CodeRepositories {
       // A cancelled waiter leaves its place in the chain until its predecessor ends, so a
       // later client cannot overtake that predecessor. The cancelled job itself never runs.
       const cancel = () => {
-        if (!started) reject(aborted());
+        if (!started) reject(stopped());
       };
       signal.addEventListener('abort', cancel, { once: true });
       void next.then(resolve, reject).then(() => signal.removeEventListener('abort', cancel));
@@ -440,8 +439,7 @@ export class CodeRepositories {
   /** At most two imports or exports index or write packs at once, across every project. */
   async transfer<T>(job: () => Promise<T>): Promise<T> {
     const signal = this.git.signal;
-    const aborted = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
-    if (signal?.aborted) throw aborted();
+    if (signal?.aborted) throw stopped();
     if (this.transfers >= 2)
       await new Promise<void>((resolve, reject) => {
         const ready = () => {
@@ -451,14 +449,14 @@ export class CodeRepositories {
         const cancel = () => {
           const index = this.waiting.indexOf(ready);
           if (index >= 0) this.waiting.splice(index, 1);
-          reject(aborted());
+          reject(stopped());
         };
         this.waiting.push(ready);
         signal?.addEventListener('abort', cancel, { once: true });
       });
     else this.transfers++;
     try {
-      if (signal?.aborted) throw aborted();
+      if (signal?.aborted) throw stopped();
       return await job();
     } finally {
       const next = this.waiting.shift();
@@ -485,8 +483,8 @@ export class CodeRepositories {
     return bytes;
   }
 
-  /** Refuse bytes the volume cannot take, whoever they belong to; the refusal passes with time. */
-  async assertVolume(incoming = 0): Promise<void> {
+  /** Refuse bytes the volume or the project's quota cannot take; the refusal passes with time or an operator. */
+  async assertRoom(projectId: string, incoming: number): Promise<void> {
     const volume = await statfs(this.config.root);
     if (volume.bavail * volume.bsize - incoming < this.config.reservedFreeBytes)
       throw new MervError(
@@ -494,11 +492,6 @@ export class CodeRepositories {
         'The Code volume is below its reserved free space',
         507,
       );
-  }
-
-  /** Refuse bytes the volume or the project's quota cannot take; the refusal passes with time or an operator. */
-  async assertRoom(projectId: string, incoming: number): Promise<void> {
-    await this.assertVolume(incoming);
     if (incoming && (await this.measure(projectId)) + incoming > this.config.quotaBytes)
       throw new MervError(
         'code_store_full',

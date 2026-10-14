@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { MervError } from '@merv/contracts';
 import type { CodeMirrorStatus, CodeStoreWarning } from '@merv/code/store/protocol';
 import type { GitResult, ServerGit } from '@merv/code/git';
@@ -627,4 +628,32 @@ test('disconnected projects cannot hide connected mirrors beyond the first batch
     before,
     'unlinked work stays untouched and available after linking',
   );
+});
+
+test('unloading ends the Git child of a mirror pass instead of waiting it out', async (t) => {
+  let f!: Awaited<ReturnType<typeof writerFixture>>;
+  let entered!: () => void;
+  const inside = new Promise<void>((resolve) => (entered = resolve));
+  // As `git ls-remote` against a GitHub that never answers: a child waiting for its input.
+  const silent = async () => {
+    entered();
+    await f.core.repositories.git.run(['hash-object', '--stdin'], {
+      input: new PassThrough(),
+      timeoutMs: 5000,
+    });
+    return null;
+  };
+  f = await writerFixture(t, 900, {
+    mirror: { target: async () => ({ repository: 'r' }), lsRemote: silent, push: async () => 'ok' },
+    mirrorConfig: { mirrorSeconds: 0 },
+  });
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  const pass = mirrorStep(f.code);
+  await inside;
+  const started = Date.now();
+  await f.code.close();
+  assert.ok(Date.now() - started < 2000, 'the unload did not wait for the child');
+  await pass;
 });

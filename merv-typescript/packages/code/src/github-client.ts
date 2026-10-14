@@ -102,7 +102,8 @@ export class GitHubClient {
   #config: GitHubConfig;
   #key: Buffer;
   #appKey?: KeyObject;
-  #stop = new AbortController();
+  #closed = false;
+  #calls = new Set<AbortController>();
   #authorization = new AsyncLocalStorage<((installed: boolean) => Promise<void>) | undefined>();
   #installation = new AsyncLocalStorage<true>();
   constructor(
@@ -154,7 +155,18 @@ export class GitHubClient {
     this.installUrl = `https://github.com/apps/${config.appSlug}/installations/new`;
   }
   close() {
-    this.#stop.abort();
+    this.#closed = true;
+    for (const call of this.#calls) call.abort();
+  }
+  /** One call's deadline, which close() also ends. A timer holds it: Node 22 can collect a timeout
+   *  signal held only by AbortSignal.any() (it then never fires), and a signal that lives as long
+   *  as the client retains every signal composed from it. */
+  #call(ms: number) {
+    if (this.#closed) throw new Error('The GitHub client is closed');
+    const call = new AbortController();
+    const timer = setTimeout(() => call.abort(), ms);
+    this.#calls.add(call);
+    return { signal: call.signal, done: () => (clearTimeout(timer), this.#calls.delete(call)) };
   }
   /** `authorize` runs before every request, told whether it carries a server-minted credential. */
   authorized<T>(
@@ -354,14 +366,15 @@ export class GitHubClient {
     body?: Record<string, unknown>,
     method = body ? 'POST' : 'GET',
   ): Promise<unknown> {
+    let call: { signal: AbortSignal; done: () => unknown } | undefined;
     try {
       await this.#authorization.getStore()?.(!!this.#installation.getStore());
-      this.#stop.signal.throwIfAborted();
+      call = this.#call(15_000);
       const response = await this.fetcher(url, {
         method,
         // A renamed or transferred repository answers 3xx; it is never followed (see below).
         redirect: 'manual',
-        signal: AbortSignal.any([this.#stop.signal, AbortSignal.timeout(15_000)]),
+        signal: call.signal,
         headers: {
           accept: 'application/vnd.github+json',
           'user-agent': 'merv-code',
@@ -454,6 +467,8 @@ export class GitHubClient {
         'GitHub could not complete the request; try again later',
         502,
       );
+    } finally {
+      call?.done();
     }
   }
   private async tokens(body: Record<string, string>): Promise<GitHubTokens> {
@@ -490,13 +505,15 @@ export class GitHubClient {
   }
   /** Revoke only the discarded token, never the user's grant or another project's tokens. */
   async revoke(token: string): Promise<void> {
+    let call: { signal: AbortSignal; done: () => unknown } | undefined;
     try {
+      call = this.#call(5000);
       const response = await this.fetcher(
         `https://api.github.com/applications/${encodeURIComponent(this.#config.clientId)}/token`,
         {
           method: 'DELETE',
           redirect: 'manual',
-          signal: AbortSignal.timeout(5000),
+          signal: call.signal,
           headers: {
             accept: 'application/vnd.github+json',
             'content-type': 'application/json',
@@ -510,6 +527,8 @@ export class GitHubClient {
       await response.body?.cancel();
     } catch {
       /* Local authority is already withdrawn. The remote token is also short-lived. */
+    } finally {
+      call?.done();
     }
   }
   async user(token: string) {

@@ -124,30 +124,18 @@ export async function enqueueMirror(
     'The mirrored ref must be a safe name in Code’s namespace',
   );
   const requestId = `${kind}:${unitId}:${tip}`;
-  const open = await tx.get<{ id: string; payload_json: string }>(
-    "SELECT id,payload_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind=? AND status='prepared'",
+  // The open row of this unit and kind (at most one) coalesces it, else this request was made.
+  const existing = await tx.get<{ payload_json: string }>(
+    "SELECT payload_json FROM code_operations WHERE project_id=? AND ((unit_id=? AND kind=? AND status='prepared') OR (principal_scope=? AND request_id=?)) ORDER BY status='prepared' DESC LIMIT 1",
     projectId,
     unitId,
     kind,
-  );
-  if (open) {
-    check(
-      JSON.parse(open.payload_json).ref === ref,
-      'code_mirror_ref_conflict',
-      'An existing mirror request has another destination',
-      409,
-    );
-    return;
-  }
-  const done = await tx.get<{ id: string; payload_json: string }>(
-    'SELECT id,payload_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
-    projectId,
     PRINCIPAL,
     requestId,
   );
-  if (done) {
+  if (existing) {
     check(
-      JSON.parse(done.payload_json).ref === ref,
+      JSON.parse(existing.payload_json).ref === ref,
       'code_mirror_ref_conflict',
       'An existing mirror request has another destination',
       409,
@@ -184,6 +172,8 @@ export async function enqueueMirror(
  */
 export class CodeMirrorService {
   private closed = false;
+  /** Ends the pass's Git children on close: a push whose answer is lost is read again. */
+  private readonly stop = new AbortController();
   private timer?: NodeJS.Timeout;
   private running?: Promise<void>;
   readonly config: CodeMirrorConfig;
@@ -209,7 +199,7 @@ export class CodeMirrorService {
   /** One pass over everything due. Refusals stay on their rows; nothing here throws. */
   async run(): Promise<void> {
     if (this.closed) return;
-    this.running ??= (async () => {
+    this.running ??= this.repositories.git.scoped(this.stop.signal, async () => {
       try {
         const at = now();
         const linked = new Map<string, MirrorTarget>();
@@ -260,7 +250,7 @@ export class CodeMirrorService {
       } finally {
         this.running = undefined;
       }
-    })();
+    });
     await this.running;
   }
 
@@ -393,6 +383,7 @@ export class CodeMirrorService {
   async close(): Promise<void> {
     this.closed = true;
     clearInterval(this.timer);
+    this.stop.abort();
     await this.running?.catch(() => {});
   }
 
@@ -467,6 +458,8 @@ export class CodeMirrorService {
       if (outcome === 'blocked') return;
       await this.done(row, claim, payload, target, outcome);
     } catch (error) {
+      // Ended by close: the claim lapses and the next start reads the published ref again.
+      if (this.closed) return;
       await this.failed(
         row,
         claim,

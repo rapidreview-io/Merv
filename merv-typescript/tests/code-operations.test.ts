@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -760,4 +761,16 @@ test('a size check of a GitHub fetch that fails is not an unhandled rejection', 
   assert.equal(imported.status, 'completed');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(unhandled, []);
+});
+
+test("a wake's pass does not swallow the sweep asked for while it runs", async (t) => {
+  const f = await codeStoreFixture(t);
+  const orphan = join(f.paths.quarantine, 'cop_orphan');
+  mkdirSync(orphan, { recursive: true });
+  const old = new Date(Date.now() - 2 * 3600_000);
+  utimesSync(orphan, old, old);
+  const store = (f.code as unknown as { store: { maintain(sweep?: boolean): Promise<void> } })
+    .store;
+  await Promise.all([store.maintain(false), store.maintain()]);
+  assert.equal(existsSync(orphan), false);
 });

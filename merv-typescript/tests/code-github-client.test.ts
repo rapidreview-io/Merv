@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { GitHubClient } from '../packages/code/src/github-client.js';
 const sha = 'a'.repeat(40),
   base = 'b'.repeat(40),
@@ -346,3 +348,33 @@ test('a moved repository asks to link it again instead of retrying forever', asy
     });
   }
 });
+
+test(
+  'a silent GitHub call ends at its deadline after a collection, and at close',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let entered!: () => void;
+    const api = client((_url, init) => {
+      entered();
+      return new Promise((_, reject) => init.signal!.addEventListener('abort', reject));
+    });
+    const silent = async () => {
+      const inside = new Promise<void>((resolve) => (entered = resolve));
+      const call = assert.rejects(api.branch('private-test-token', 'example/research', 'main'), {
+        code: 'github_unavailable',
+      });
+      await inside;
+      return { call };
+    };
+    const late = await silent();
+    // A deadline held only weakly is lost to an ordinary collection while the call waits.
+    setFlagsFromString('--expose-gc');
+    runInNewContext('gc')();
+    t.mock.timers.tick(15_000);
+    await late.call;
+    const closed = await silent();
+    api.close();
+    await closed.call;
+  },
+);

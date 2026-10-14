@@ -14,7 +14,6 @@ import {
   type CodeAdmissionLimits,
   type CodeStoreOperation,
   type CodeStoreStatus,
-  type CodeUpload,
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories, ObjectFormat } from './repository.js';
@@ -61,6 +60,7 @@ export class CodeStore {
   private waker?: NodeJS.Timeout;
   private woken = false;
   private maintaining?: Promise<void>;
+  private sweeping = false;
   constructor(
     state: State,
     scope: Scope,
@@ -79,36 +79,18 @@ export class CodeStore {
     this.rebinder = new CodeRebinder(this.core);
   }
 
-  importRepository(caller: Caller, value: unknown) {
-    return this.receiver.importRepository(caller, value);
-  }
-  contains(projectId: string, oid: string) {
-    return this.receiver.contains(projectId, oid);
-  }
-  stats(projectId: string, base: string, head: string) {
-    return this.receiver.stats(projectId, base, head);
-  }
-  beginUpload(caller: Caller, input: CodeUpload, ownEnd = false) {
-    return this.receiver.beginUpload(caller, input, ownEnd);
-  }
-  operation(caller: Caller, operationId: string) {
-    return this.receiver.operation(caller, operationId);
-  }
-  putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer) {
-    return this.receiver.putPart(caller, operationId, offset, bytes);
-  }
-  complete(caller: Caller, operationId: string) {
-    return this.receiver.complete(caller, operationId);
-  }
-  export(caller: Caller, input: Parameters<CodeExporter['export']>[1]) {
-    return this.exporter.export(caller, input);
-  }
-  readExport(caller: Caller, exportId: string, input: Parameters<CodeExporter['readExport']>[2]) {
-    return this.exporter.readExport(caller, exportId, input);
-  }
-  rebindRepository(caller: Caller, value: unknown) {
-    return this.rebinder.rebindRepository(caller, value);
-  }
+  importRepository: CodeReceiver['importRepository'] = (...args) =>
+    this.receiver.importRepository(...args);
+  contains: CodeReceiver['contains'] = (...args) => this.receiver.contains(...args);
+  stats: CodeReceiver['stats'] = (...args) => this.receiver.stats(...args);
+  beginUpload: CodeReceiver['beginUpload'] = (...args) => this.receiver.beginUpload(...args);
+  operation: CodeReceiver['operation'] = (...args) => this.receiver.operation(...args);
+  putPart: CodeReceiver['putPart'] = (...args) => this.receiver.putPart(...args);
+  complete: CodeReceiver['complete'] = (...args) => this.receiver.complete(...args);
+  export: CodeExporter['export'] = (...args) => this.exporter.export(...args);
+  readExport: CodeExporter['readExport'] = (...args) => this.exporter.readExport(...args);
+  rebindRepository: CodeRebinder['rebindRepository'] = (...args) =>
+    this.rebinder.rebindRepository(...args);
 
   /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
@@ -218,8 +200,11 @@ export class CodeStore {
    * keeps Code from starting.
    */
   async maintain(sweep = true): Promise<void> {
+    // A pass that does not sweep (a wake's) is no answer to one that must: it runs after it.
+    while (sweep && this.maintaining && !this.sweeping) await this.maintaining.catch(() => {});
     if (this.core.closed) return;
     this.maintaining ??= this.core.owned(async () => {
+      this.sweeping = sweep;
       try {
         await initializeManagedProjects(
           this.core.state,

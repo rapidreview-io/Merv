@@ -321,6 +321,8 @@ export abstract class DriverTransfer extends DriverCheckout {
         '--not',
         journal.expected_head,
       ]);
+      // Its hash is promised for good once journalled, so the bytes reach the disk first.
+      syncPath(file);
       this.db
         .prepare(
           'UPDATE code_v2_transfers SET bundle_path=?,bundle_hash=?,bundle_bytes=? WHERE request_id=? AND bundle_hash IS NULL',

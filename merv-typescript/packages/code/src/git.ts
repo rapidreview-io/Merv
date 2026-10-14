@@ -24,6 +24,8 @@ export interface GitOptions {
 }
 
 const MINIMUM = [2, 38] as const;
+/** The refusal of Git work whose client was cancelled. */
+export const stopped = () => new MervError('code_git_aborted', 'A Git operation was stopped', 503);
 
 /**
  * The installation token of one Git child against GitHub: in its environment and nowhere
@@ -67,11 +69,7 @@ export class ServerGit {
 
   /** One client's operations inherit its cancellation without affecting other clients. */
   scoped<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
-    const parent = this.signal;
-    return this.cancellation.run(
-      parent && parent !== signal ? AbortSignal.any([parent, signal]) : signal,
-      operation,
-    );
+    return this.cancellation.run(signal, operation);
   }
   get signal(): AbortSignal | undefined {
     return this.cancellation.getStore();
@@ -109,9 +107,9 @@ export class ServerGit {
     const signals = [this.signal, options.signal].filter(
       (signal): signal is AbortSignal => !!signal,
     );
-    const abortSignal = signals.length ? AbortSignal.any(signals) : undefined;
-    if (abortSignal?.aborted)
-      return Promise.reject(new MervError('code_git_aborted', 'A Git operation was stopped', 503));
+    // On Node 22 a long-lived signal retains every signal composed from it: compose only two.
+    const abortSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    if (abortSignal?.aborted) return Promise.reject(stopped());
     if (this.closed)
       return Promise.reject(new MervError('code_unavailable', 'Code is unavailable', 503));
     const maxBuffer = options.maxBuffer ?? 32 * 1024 * 1024;
@@ -158,8 +156,7 @@ export class ServerGit {
         () => stop(new MervError('code_git_timeout', 'A Git operation took too long', 503)),
         options.timeoutMs ?? 60_000,
       );
-      const aborted = () =>
-        stop(new MervError('code_git_aborted', 'A Git operation was stopped', 503));
+      const aborted = () => stop(stopped());
       if (abortSignal?.aborted) aborted();
       else abortSignal?.addEventListener('abort', aborted, { once: true });
       child.stdout.on('data', (chunk: Buffer) => {
