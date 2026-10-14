@@ -280,7 +280,7 @@ The server derives a scope from project, actor and Pi conversation or worker thr
 Nisa enforces that scope on every operation. All conversations and model usage belong
 to `gural@rapidreview.io`; no Nisa key is sent to agents. Research requires a producer,
 reviewer or operator role. Leased workers also need an explicit `nisa.research` grant.
-New task@44/service-task@12, experiment@42, reflection@5 and reflection.lens@4
+New task@44/service-task@45, experiment@42, reflection@5 and reflection.lens@4
 contracts grant it. Older pinned contracts retain their original authority.
 
 Nisa provides durable idempotency, per-scope admission limits and cooperative
