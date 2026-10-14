@@ -286,12 +286,13 @@ export class PiWorkerProtocol {
         command.id,
       );
       if (before?.status !== 'interrupted') return null;
+      // Its events are its tool calls', each after calledAt: one that made none is never scanned.
+      if (!before.calledAt) return [];
       const events = await this.core.state.findEvents(
         {
           projectId: conversation.projectId,
           actorId: conversation.source.actorId,
           since: before.startedAt ?? before.createdAt,
-          // Read by id from where it began, not by time over the project's every event.
           ...(before.eventsAfter !== undefined && { after: before.eventsAfter }),
           source: { conversationId: conversation.id, commandId: before.id },
         },

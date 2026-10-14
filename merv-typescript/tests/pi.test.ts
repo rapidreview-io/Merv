@@ -1376,6 +1376,21 @@ test('each turn says whom the agent serves, where, on what, what the project hol
   assert.match(other.work.notes[1], /a reviewer in project/);
 });
 
+test('a turn stopped before it called anything made nothing: no event is read for it', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  await f.send(conversation);
+  await f.pi.stop(f.operator, conversation.id);
+  const next = await f.send(conversation);
+  const find = f.state.findEvents.bind(f.state);
+  let reads = 0;
+  f.state.findEvents = (filter, ...rest) => (reads++, find(filter, ...rest));
+  const { work } = await f.claimed(next);
+  f.state.findEvents = find;
+  assert.equal(reads, 0, 'no event is read for a turn that called nothing');
+  assert.equal(work.previousInterrupted, true);
+});
+
 test('recoverable tool failures and oversized results come back to the model as results', async (t) => {
   const f = await fixture(t);
   const content = 'line "quoted"\n'.repeat(12_000);
