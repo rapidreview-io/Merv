@@ -67,21 +67,17 @@ export class AgentObservations {
     if (this.state.readScope) return;
     const now = this.clock(),
       tokens = result === undefined ? null : estimate(result);
-    await this.state.transaction(async (tx) => {
-      const row = await tx.get<{ started_at: string }>(
-        "SELECT started_at FROM session_tool_calls WHERE id=? AND status='running'",
-        id,
-      );
-      if (!row) return;
-      await tx.run(
-        'UPDATE session_tool_calls SET status=?,finished_at=?,duration_ms=?,output_tokens=? WHERE id=?',
+    // One statement under the writer lock: the duration is counted from the row's own start.
+    await this.state.transaction((tx) =>
+      tx.run(
+        "UPDATE session_tool_calls SET status=?,finished_at=?,duration_ms=GREATEST(0,CAST(? AS BIGINT)-CAST(EXTRACT(EPOCH FROM CAST(started_at AS timestamptz))*1000 AS BIGINT)),output_tokens=? WHERE id=? AND status='running'",
         status,
         new Date(now).toISOString(),
-        Math.max(0, now - Date.parse(row.started_at)),
+        now,
         tokens,
         id,
-      );
-    });
+      ),
+    );
   }
 
   /** Running calls whose process has ended, named in `ids` or started before `before` and not

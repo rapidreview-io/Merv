@@ -792,7 +792,7 @@ export class SessionDispatch {
         409,
       );
     const jobs = await tx.all<{ platform_json: string | null }>(
-      "SELECT d.platform_json FROM worker_sessions s LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND s.status IN ('offered','active') AND (CAST(? AS TEXT) IS NULL OR s.id<>?)",
+      "SELECT d.platform_json FROM worker_sessions s LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND s.status IN ('offered','active') AND (s.kind='work' OR s.kind='inquiry') AND (CAST(? AS TEXT) IS NULL OR s.id<>?)",
       ownerHash,
       input.runnerId,
       excludeSessionId ?? null,

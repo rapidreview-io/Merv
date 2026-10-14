@@ -1181,19 +1181,13 @@ export class LeasedSessions implements Sessions {
    */
   async holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]> {
     this.ensureOpen();
-    return (
-      await tx.all<{ id: string; session_json: string }>(
-        "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active') ORDER BY id",
-        projectId,
-      )
-    )
-      .filter((row) => {
-        const workspace = effectiveWorkspace(
-          (JSON.parse(row.session_json) as Session).execution.policy,
-        );
-        return workspace.mode !== 'none' && workspace.driver === driver;
-      })
-      .map((row) => row.id);
+    // Only a workspace that is not `none` names a driver.
+    const rows = await tx.all<{ id: string }>(
+      "SELECT id FROM worker_sessions WHERE project_id=? AND status IN ('offered','active') AND (session_json::json #>> '{execution,policy,workspace,driver}')=? ORDER BY id",
+      projectId,
+      driver,
+    );
+    return rows.map((row) => row.id);
   }
   async findSession(
     caller: Caller,
@@ -1957,7 +1951,7 @@ export class LeasedSessions implements Sessions {
       threads: full
         ? // A dormant thread, which holds no credential, waits for its work, not its delegation.
           await tx.all<{ id: string }>(
-            "SELECT DISTINCT thread_id AS id FROM worker_sessions WHERE status IN ('offered','active')",
+            "SELECT DISTINCT thread_id AS id FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry')",
           )
         : [],
     }));
@@ -1978,7 +1972,8 @@ export class LeasedSessions implements Sessions {
       await this.alone('tool-calls', () => this.observations.interrupt(abandoned, [], held));
     }
   }
-  /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved. */
+  /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved.
+   *  Each kind is named so the live partial indexes, one per kind, serve it, not a history scan. */
   private async live(tx: Transaction, lapsing: boolean): Promise<{ id: string }[]> {
     const live = await tx.all<{
       id: string;
@@ -1988,7 +1983,7 @@ export class LeasedSessions implements Sessions {
       kind: 'work' | 'inquiry';
       expired: boolean | null;
     }>(
-      "SELECT id,project_id,instance_id,revision,kind,(session_json::json->>'expiresAt')<=? AS expired FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid",
+      "SELECT id,project_id,instance_id,revision,kind,(session_json::json->>'expiresAt')<=? AS expired FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry') ORDER BY _merv_rowid",
       isoNow(this.clock),
     );
     if (!lapsing) return live;

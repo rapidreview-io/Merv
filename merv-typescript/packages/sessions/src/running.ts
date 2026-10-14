@@ -446,7 +446,7 @@ export class SessionRunning {
     return await this.facts(
       tx,
       await tx.all<LeaseRow>(
-        `SELECT ${LEASE} ${FROM} WHERE s.project_id=? AND s.status IN ('offered','active') ORDER BY s._merv_rowid LIMIT 200`,
+        `SELECT ${LEASE} ${FROM} WHERE s.project_id=? AND s.status IN ('offered','active') AND (s.kind='work' OR s.kind='inquiry') ORDER BY s._merv_rowid LIMIT 200`,
         projectId,
       ),
       operator,

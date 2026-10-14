@@ -171,7 +171,7 @@ async function runnersOf(
   tx: Transaction,
 ): Promise<Runner[]> {
   const rows = await tx.all<RunnerRow & { busy: number; rented: boolean }>(
-    `SELECT r.*,CASE WHEN r.last_seen_at>? THEN (SELECT COUNT(*) FROM worker_sessions s WHERE (s.owner_hash=r.owner_hash OR EXISTS (SELECT 1 FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id WHERE a.session_id=s.id AND m.project_id=r.project_id AND m.runner_id=r.runner_id)) AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) ELSE 0 END AS busy,
+    `SELECT r.*,CASE WHEN r.last_seen_at>? THEN (SELECT COUNT(*) FROM worker_sessions s WHERE (s.owner_hash=r.owner_hash OR EXISTS (SELECT 1 FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id WHERE a.session_id=s.id AND m.project_id=r.project_id AND m.runner_id=r.runner_id)) AND s.runner_id=r.runner_id AND s.status IN ('offered','active') AND (s.kind='work' OR s.kind='inquiry')) ELSE 0 END AS busy,
       EXISTS (${rented}) AS rented
       FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
     new Date(ctx.clock() - freshForMs).toISOString(),
