@@ -599,8 +599,15 @@ export class LeasedSessions implements Sessions {
       session: { id: session.id, threadId: session.threadId },
     };
   }
-  private async framed<T>(frame: Frame, fn: () => T | Promise<T>): Promise<T> {
-    this.state.assertTransaction(frame.tx);
+  /** `fn` as `session`'s worker in `tx`, which Sessions' guard answers Scope for. */
+  private async framed<T>(
+    session: Pick<Session, 'id' | 'actorId' | 'source' | 'role' | 'kind'>,
+    tx: Transaction,
+    fn: () => T | Promise<T>,
+  ): Promise<T> {
+    this.state.assertTransaction(tx);
+    const { id: sessionId, actorId, source, role, kind } = session;
+    const frame = { tx, actorId, sessionId, source, role, readsRetired: kind === 'inquiry' };
     return this.frames.run([...(this.frames.getStore() ?? []), frame], fn);
   }
   private async source(session: Session, tx: Transaction): Promise<void> {
@@ -625,15 +632,8 @@ export class LeasedSessions implements Sessions {
     // and its source's delegation are all that keep it, wherever the work has gone since.
     if (session.kind === 'inquiry') return {};
     const execution = await this.ownMove(session, tx, () =>
-      this.framed(
-        {
-          tx,
-          actorId: session.actorId,
-          sessionId: session.id,
-          source: session.source,
-          role: session.role,
-        },
-        () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
+      this.framed(session, tx, () =>
+        this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
       ),
     );
     this.ensureOpen();
@@ -701,17 +701,7 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     this.state.assertTransaction(tx);
     const session = await this.ownSession(caller, tx, 'read');
-    await this.framed(
-      {
-        tx,
-        actorId: session.actorId,
-        sessionId: session.id,
-        source: session.source,
-        role: session.role,
-        readsRetired: session.kind === 'inquiry',
-      },
-      async () => await this.scope.require(caller, 'read', tx),
-    );
+    await this.framed(session, tx, async () => await this.scope.require(caller, 'read', tx));
     return session;
   }
   /**
@@ -1122,7 +1112,8 @@ export class LeasedSessions implements Sessions {
       threadId: thread.id,
     });
     const frozen = await this.framed(
-      { tx, actorId: actor.id, sessionId: id, source: owner.source, role },
+      { id, actorId: actor.id, source: owner.source, role, kind: 'work' },
+      tx,
       () =>
         this.workflows.offerLease(
           caller,
@@ -1900,15 +1891,8 @@ export class LeasedSessions implements Sessions {
       if (session.status === 'offered') {
         // An inquiry visit starts no work: nothing of the workflow is marked started.
         if (session.kind === 'work')
-          await this.framed(
-            {
-              tx,
-              actorId: session.actorId,
-              sessionId: session.id,
-              source: session.source,
-              role: session.role,
-            },
-            () => this.workflows.activateLease(this.worker(session), session.lease, tx),
+          await this.framed(session, tx, () =>
+            this.workflows.activateLease(this.worker(session), session.lease, tx),
           );
         this.ensureOpen();
         check(this.unexpired(session), 'session_expired', 'Session expired during activation', 401);
@@ -1988,6 +1972,10 @@ export class LeasedSessions implements Sessions {
       await this.alone('threads', () => this.readFirst((tx) => this.threads.expire(tx)));
       await this.alone('inquiries', () => this.readFirst((tx) => this.inquiries.expire(tx)));
       await this.alone('question-responses', () => this.messaging.responders.sweep());
+      // A process that died left its calls running: past any client's wait, all but our own.
+      const abandoned = isoNow(() => this.clock() - 180_000);
+      const held = this.invocations.invocationIds;
+      await this.alone('tool-calls', () => this.observations.interrupt(abandoned, [], held));
     }
   }
   /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved. */

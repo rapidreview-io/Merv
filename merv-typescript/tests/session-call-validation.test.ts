@@ -86,7 +86,10 @@ async function fixture(t: TestContext) {
       leaseValidations: checks.mock.callCount(),
       sessionReads: statements.filter((sql) => /FROM worker_sessions s\b/.test(sql)).length,
       leaseReads: statements.filter((sql) => /FROM wf_leases\b/.test(sql)).length,
-      statements: statements.length,
+      // A domain-events drain may or may not land inside the call (0-6 cursor reads): not counted.
+      statements: statements.filter(
+        (sql) => !/event_consumers|SELECT[\s\S]*\bFROM events\b/.test(sql),
+      ).length,
     };
   };
   return { app, operator, task, lease, work, calls };

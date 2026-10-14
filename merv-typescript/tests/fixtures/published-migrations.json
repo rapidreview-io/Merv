@@ -654,6 +654,12 @@
       "published": true
     },
     {
+      "component": "session_tool_calls",
+      "version": 2,
+      "hash": "3b98b0090bbed6dd9b5525657dae7680414765923b607b64823d634caae36c85",
+      "published": false
+    },
+    {
       "component": "session_events",
       "version": 1,
       "hash": "377cae242243ca802725c9d63c02f70e33b8b08e9ab1b0ca7ab945e79559d450",

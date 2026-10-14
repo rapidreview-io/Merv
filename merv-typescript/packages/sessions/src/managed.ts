@@ -7,7 +7,6 @@ import {
   MervError,
   effectiveWorkspace,
   sessionSecretPattern,
-  type Actor,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -151,20 +150,22 @@ export class ManagedRunnerBindings {
       expiresAt: row.control_expires_at,
     };
   }
-  private async current(row: ManagedBindingRow, tx: Transaction): Promise<Actor> {
-    check(this.validator, 'managed_unavailable', 'Managed validator is unavailable', 503);
+  /** The validator that found the allocation current: held, as Fleet may unload meanwhile. */
+  private async current(row: ManagedBindingRow, tx: Transaction) {
+    const validator = this.validator;
+    check(validator, 'managed_unavailable', 'Managed validator is unavailable', 503);
     check(
-      await this.validator.current(this.identity(row), tx),
+      await validator.current(this.identity(row), tx),
       'managed_revoked',
       'Managed allocation is no longer current',
       401,
     );
-    return await this.scope.requireDelegation(JSON.parse(row.source_json), 'read', tx);
+    await this.scope.requireDelegation(JSON.parse(row.source_json), 'read', tx);
+    return validator;
   }
   async admits(row: ManagedBindingRow, tx: Transaction): Promise<void> {
-    await this.current(row, tx);
     check(
-      await this.validator!.admits(row.allocation_id, Number(row.epoch), tx),
+      await (await this.current(row, tx)).admits(row.allocation_id, Number(row.epoch), tx),
       'managed_not_admitted',
       'Managed allocation is not accepting new work',
       409,
@@ -706,8 +707,9 @@ export class ManagedRunnerBindings {
    *  undefined while it is (or none is bound), else whether a release retired it. */
   async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
-    if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
-    return await this.validator.retired(this.identity(row), tx);
+    const validator = this.validator;
+    if (!row || !validator || (await validator.current(this.identity(row), tx))) return;
+    return await validator.retired(this.identity(row), tx);
   }
   /** When the machine's person has no model tokens left today, the validator's wait; else null. */
   async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<ManagedModelWait | null> {

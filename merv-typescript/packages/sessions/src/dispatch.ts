@@ -1,6 +1,7 @@
 import { postgresMigrations } from './dispatch.postgres.js';
 import { z } from 'zod';
 import {
+  bound,
   recorded,
   replayed,
   clip,
@@ -171,11 +172,6 @@ export type DispatchContext = Pick<
   | 'presence'
   | 'reportHold'
 >;
-/** A module's function run on one dispatch, which it takes as its first argument. */
-const bound =
-  <A extends unknown[], R>(ctx: DispatchContext, run: (ctx: DispatchContext, ...args: A) => R) =>
-  (...args: A) =>
-    run(ctx, ...args);
 /** An offer for one candidate that cannot be built; the queue moves past it. */
 class PoisonedOffer extends Error {
   constructor(

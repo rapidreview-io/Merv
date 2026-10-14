@@ -283,3 +283,39 @@ test('boot interrupts only calls older than any client waits; close only its own
     { id: 'lost', status: 'interrupted' },
   ]);
 });
+
+test('a full pass interrupts the calls a dead process left, once past any client’s wait, never its own', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.offer();
+  await f.state.transaction(async (tx) => {
+    for (const [id, ago] of [
+      ['dead', 180_001],
+      ['own', 180_001],
+      ['young', 60_000],
+    ] as const)
+      await tx.run(
+        "INSERT INTO session_tool_calls(id,execution_id,tool,status,started_at,input_tokens) VALUES(?,?,'finish','running',?,0)",
+        id,
+        session.id,
+        new Date(f.now() - ago).toISOString(),
+      );
+  });
+  const statuses = async () =>
+    (
+      await f.state.read((sql) =>
+        sql.all<{ status: string }>('SELECT status FROM session_tool_calls ORDER BY id'),
+      )
+    ).map((call) => call.status);
+  // This process still runs `own`; `young` may be another live process's.
+  f.sessions.invocations.invocationIds.set('own', {} as never);
+  f.writers();
+  await f.pass(true);
+  assert.deepEqual(await statuses(), ['interrupted', 'running', 'running']);
+  assert.equal(f.writers(), 1);
+  f.sessions.invocations.invocationIds.delete('own');
+  f.advance(120_001);
+  await f.pass(true);
+  assert.deepEqual(await statuses(), ['interrupted', 'interrupted', 'interrupted']);
+  await f.pass(true);
+  assert.equal(f.writers(), 1, 'a pass with nothing left to interrupt takes no writer');
+});

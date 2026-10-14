@@ -21,4 +21,6 @@ $merv$;
 CREATE TRIGGER session_tool_calls_immutable BEFORE UPDATE ON session_tool_calls
 FOR EACH ROW EXECUTE FUNCTION session_tool_calls_immutable_guard();
 `,
+  /** The calls still running, which every full sweep reads for those a crashed process left. */
+  2: `CREATE INDEX session_tool_calls_running ON session_tool_calls(started_at) WHERE status='running';`,
 };

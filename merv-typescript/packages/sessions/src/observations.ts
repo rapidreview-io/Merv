@@ -43,7 +43,7 @@ export class AgentObservations {
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate('session_tool_calls', [{ version: 1, sql: postgresMigrations[1] }]);
+    await this.state.migrate('session_tool_calls', postgresMigrations);
   }
 
   async start(id: string, executionId: string, tool: string, input: unknown): Promise<void> {
@@ -84,16 +84,21 @@ export class AgentObservations {
     });
   }
 
-  /** Running calls started before `before` or named in `ids`, whose process has ended: an
-   * interrupted call has no known completion time or outcome. */
-  async interrupt(before: string, ids: string[] = []): Promise<void> {
-    await this.state.transaction(
-      async (tx) =>
-        await tx.run(
-          `UPDATE session_tool_calls SET status='interrupted' WHERE status='running' AND (started_at<? OR id IN (${['NULL', ...ids.map(() => '?')].join()}))`,
-          before,
-          ...ids,
-        ),
+  /** Running calls whose process has ended, named in `ids` or started before `before` and not
+   * `held` here: an interrupted call has no known completion time or outcome. Read first, so a
+   * sweep that finds none takes no writer. */
+  async interrupt(before: string, ids: string[] = [], held = new Map<string, unknown>()) {
+    const old =
+      "SELECT id FROM session_tool_calls WHERE status='running' AND started_at<? LIMIT 1000";
+    const rows = await this.state.read((sql) => sql.all<{ id: string }>(old, before));
+    ids = [...ids, ...rows.map((row) => row.id).filter((id) => !held.has(id))];
+    if (!ids.length) return;
+    const list = ids.map(() => '?').join();
+    await this.state.transaction((tx) =>
+      tx.run(
+        `UPDATE session_tool_calls SET status='interrupted' WHERE status='running' AND id IN (${list})`,
+        ...ids,
+      ),
     );
   }
 

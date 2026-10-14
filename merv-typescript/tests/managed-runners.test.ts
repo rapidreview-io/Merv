@@ -273,7 +273,7 @@ async function fixture(
         : []),
     ],
   };
-  sessions.managed.registerValidator(validator);
+  let withdraw = sessions.managed.registerValidator(validator);
   t.after(async () => {
     await sessions.close();
     await events.close();
@@ -361,9 +361,12 @@ async function fixture(
           clock: options.clock,
         }),
       );
-      sessions.managed.registerValidator(validator);
+      withdraw = sessions.managed.registerValidator(validator);
       return sessions;
     },
+    validator,
+    /** Fleet unloads: its validator is withdrawn. */
+    withdraw: () => withdraw(),
     caller,
     runnerId,
     heartbeat,
@@ -731,6 +734,39 @@ test('a machine a release retired mid-step closes its session as machine_retired
     ),
   );
   assert.equal(Number(hold?.attempts ?? 0), 0, 'a retired machine is no failed attempt');
+});
+
+test('a validator Fleet withdraws while it answers is the one that admits, never a TypeError', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  const current = f.validator.current;
+  t.mock.method(f.validator, 'current', async (...args: Parameters<typeof current>) => {
+    f.withdraw();
+    return await current(...args);
+  });
+  // A replayed enrolment admits the machine again, by the validator that found it current.
+  const replay = { workerNonce: f.workerNonce };
+  assert.equal(
+    (await f.sessions.managed.enroll(f.enrollment.enrollmentToken, replay)).controlToken,
+    f.enrolled.controlToken,
+  );
+  // A sweep that finds the machine retired as Fleet unloads logs no failure.
+  f.sessions.managed.registerValidator(f.validator);
+  f.retire();
+  const logged: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: string) => {
+    logged.push(String(chunk));
+    return true;
+  });
+  await f.sessions.sweep();
+  assert.deepEqual(
+    logged.filter((line) => line.includes('sweep_failed')),
+    [],
+  );
+  // Fleet is gone by the writer's turn, so nothing says the machine retired: the next pass may.
+  assert.equal((await f.sessions.get(f.source, bound.id)).status, 'offered');
 });
 
 test('a visit the model budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {

@@ -260,8 +260,11 @@ export class SessionThreads {
       isoNow(this.clock),
       thread.id,
     );
-    if (!(await this.executing(thread.id, tx)))
-      await this.scope.retireSessionActor(thread.actor_id, reason, tx);
+    const held = await tx.get(
+      `SELECT 1 FROM session_threads t WHERE t.id=? AND ${LIVE}`,
+      thread.id,
+    );
+    if (!held) await this.scope.retireSessionActor(thread.actor_id, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: thread.project_id,
       actorId: 'system:sessions',
@@ -269,12 +272,6 @@ export class SessionThreads {
       subjectId: thread.id,
       data: { threadId: thread.id, reason },
     });
-  }
-  private async executing(id: string, tx: Transaction): Promise<boolean> {
-    return !!(await tx.get(
-      "SELECT 1 FROM worker_sessions WHERE thread_id=? AND status IN ('offered','active') AND kind='work'",
-      id,
-    ));
   }
   private async row(id: string, tx: Transaction): Promise<Row> {
     const row = await tx.get<Row>('SELECT * FROM session_threads WHERE id=?', id);
