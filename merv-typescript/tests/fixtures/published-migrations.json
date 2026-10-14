@@ -564,6 +564,12 @@
       "published": true
     },
     {
+      "component": "scope",
+      "version": 11,
+      "hash": "d880c3fc40eca6114b31862069defa83daf0cf5f29d898f80e37573d05eeb501",
+      "published": false
+    },
+    {
       "component": "session_dispatch",
       "version": 1,
       "hash": "9a8881c18c9c4f190f946896c39332353d9d9bcf2911941687363d945ee33644",
