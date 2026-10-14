@@ -234,12 +234,14 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     tx?: Transaction,
   ): Promise<number> {
     this.assertOpen();
-    // History data is stored canonical, so a recorded string field reads `"key":"value"`.
+    // History data is stored canonical, so a recorded string field reads `"key":"value"`, which
+    // LIKE matches as written (its \, % and _ escaped).
+    const text = (value: string) => JSON.stringify(value).replace(/[\\%_]/g, '\\$&');
     const patterns = match.keys.flatMap((key) =>
-      match.values.map((value) => `%${JSON.stringify(key)}:${JSON.stringify(value)}%`),
+      match.values.map((value) => `%${text(key)}:${text(value)}%`),
     );
     if (!patterns.length) return 0;
-    const sql = `SELECT COUNT(*) AS n FROM wf_history WHERE project_id=? AND action=? AND (${patterns.map(() => 'data_json LIKE ?').join(' OR ')})`;
+    const sql = `SELECT COUNT(*) AS n FROM wf_history WHERE project_id=? AND action=? AND (${patterns.map(() => "data_json LIKE ? ESCAPE '\\'").join(' OR ')})`;
     return await this.read(
       tx,
       async (tx) => (await tx.get<{ n: number }>(sql, projectId, match.action, ...patterns))!.n,
@@ -308,9 +310,10 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
           id,
           state: '',
           policy: {
-            limits: this.definition(workflow, version).policy?.limits?.filter(
-              (limit) => limit.name === name,
-            ),
+            // A version whose program is not loaded has no limit here: its work is left out.
+            limits: this.registrations
+              .get(`${workflow}@${version}`)
+              ?.policy?.limits?.filter((limit) => limit.name === name),
           },
         })),
         true,

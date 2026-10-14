@@ -1354,7 +1354,7 @@ test('each turn says whom the agent serves, where, on what, what the project hol
   f.state.findEvents = (filter, ...rest) => (after.push(filter.after), find(filter, ...rest));
   const { work } = await f.pi.next(first.token, { workerId: 'worker_1' });
   f.state.findEvents = find;
-  assert.ok(after.length === 1 && after[0]! > 0);
+  assert.ok(after.length === 1 && after[0]! > 0, 'one read, by id from where the turn began');
   assert.equal(
     work!.notes[3],
     'Your previous answer here stopped before it finished, after it had made: probe.write probe',

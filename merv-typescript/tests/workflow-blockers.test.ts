@@ -409,7 +409,7 @@ test('system reads name where instances stand and count the moves that recorded 
     action: 'finish',
     requestId: 'finish',
     expectedRevision: 0,
-    data: { sheetId: 'art_sheet', other: 'art_other' },
+    data: { sheetId: 'art_sheet', other: 'art_other', path: 'dir\\file' },
   });
   const { projectId } = f.owner;
   const read = await f.state.transaction(
@@ -438,6 +438,9 @@ test('system reads name where instances stand and count the moves that recorded 
   assert.equal(await moves(['sheetId'], ['art_other']), 0);
   assert.equal(await moves(['sheetId'], ['art_sheet'], 'abandon'), 0);
   assert.equal(await moves(['sheetId'], []), 0);
+  // LIKE's own characters in a value match only themselves.
+  assert.equal(await moves(['sheetId'], ['art%', 'artXsheet']), 0);
+  assert.equal(await moves(['path'], ['dir\\file']), 1);
   assert.equal(
     await f.workflows.moves('elsewhere', {
       action: 'finish',

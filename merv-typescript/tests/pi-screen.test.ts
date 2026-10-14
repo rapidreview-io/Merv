@@ -140,7 +140,7 @@ test("the agent puts a record on the person's screen: their page goes there and 
   // A Pi that closes ends its agent's wait at once, not when the wait runs out.
   const waiting = f.pi.show(agent, { page: 'Work' });
   await f.pi.close();
-  const hung = new Promise<{ said: string }>((resolve) => setTimeout(resolve, 1000, { said: '' }));
+  const hung = new Promise<{ said: string }>((resolve) => setImmediate(resolve, { said: '' }));
   assert.match((await Promise.race([waiting, hung])).said!, /Nothing was shown/);
 });
 

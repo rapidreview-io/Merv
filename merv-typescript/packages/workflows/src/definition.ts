@@ -4,15 +4,6 @@ import { check, type WorkflowDefinition } from '@merv/contracts';
 export const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
 /** The public Tools naming contract, including reserved mounted namespaces. */
 export const toolName = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
-/**
- * The actions the engine itself writes into wf_history beside the state it found. A graph
- * cannot declare them: its own edge would be indistinguishable from the engine's bookkeeping.
- */
-export const ENGINE_ACTIONS: readonly string[] = Object.freeze([
-  'start',
-  'add_dependencies',
-  'replan_dependencies',
-]);
 /** Code-unit order: the stored definition, and so its fingerprint, never depends on the locale. */
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -77,7 +68,12 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
       typeof edge.action === 'string' && identifier.test(edge.action),
       'Workflow action must be a nonempty identifier',
     );
-    valid(!ENGINE_ACTIONS.includes(edge.action), `${edge.action} is reserved by the engine`);
+    // The engine writes these into wf_history beside the state it found: a graph's own edge
+    // would be indistinguishable from its bookkeeping.
+    valid(
+      !['start', 'add_dependencies', 'replan_dependencies'].includes(edge.action),
+      `${edge.action} is reserved by the engine`,
+    );
     valid(
       !input.terminal.includes(edge.from),
       'Terminal workflow states cannot have outgoing transitions',

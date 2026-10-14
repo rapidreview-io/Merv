@@ -610,7 +610,7 @@ test('work waiting in a state whose rule extends a limit is marked with the admi
 
 test('the exhausted limit leaving the current state is read in one place', async (t) => {
   const f = await fixture(t);
-  await f.register(definition, policy([returns(1)]));
+  const handle = await f.register(definition, policy([returns(1)]));
   const instance = await f.start('start');
   assert.equal(await f.workflows.exhaustedLimit(f.owner, instance.id), undefined);
   await f.move(instance.id, 'submit');
@@ -635,4 +635,9 @@ test('the exhausted limit leaving the current state is read in one place', async
     mark.who,
     'A project admin allows another round, or a person takes the next step by hand or ends it',
   );
+  // A version whose program is not loaded is left out, not refused.
+  const status = () => f.workflows.limitStatusOf(f.owner, [instance.id], 'review_returns');
+  assert.equal((await status()).get(instance.id)?.used, 1);
+  handle.dispose();
+  assert.equal((await status()).size, 0);
 });
