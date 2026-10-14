@@ -1,0 +1,22 @@
+{
+  "scope": "local implementation; not deployed",
+  "checks": {
+    "targetedTests": 93,
+    "serverTypecheck": "pass",
+    "uiTypecheck": "pass",
+    "uiBuild": "pass",
+    "diffCheck": "pass"
+  },
+  "emailPreview": {
+    "recipient": "gural@rapidreview.io",
+    "sender": "Merv <invites@rapidreview.io>",
+    "id": "01a13b6d-98b7-7309-b5fa-56568c855a3a",
+    "delivery": "delivered (Resend dashboard)",
+    "realMembershipCreated": false
+  },
+  "deploymentRequired": [
+    "Deploy the implementation and scope migration 11",
+    "Enable MERV_PROJECT_INVITATIONS with the Supabase directory credential and Resend sender configuration"
+  ],
+  "liveAcceptanceTest": false
+}

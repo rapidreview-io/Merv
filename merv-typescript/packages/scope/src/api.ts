@@ -1,8 +1,14 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
+import { check, MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 import { projectSelection, unknownEndpoint, validated } from '@merv/api/errors';
+import type { IdentityProvider } from '@merv/identity/types';
+import {
+  invitationEmailSchema,
+  ResendInvitationSender,
+  type InvitationSender,
+} from './invitation-email.js';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -11,6 +17,17 @@ const createProjectInput = z
   .object({ name: nonblank, requestId: z.string().trim().min(1).max(256) })
   .strict();
 const addMemberInput = z.object({ subject: nonblank, role }).strict();
+const inviteInput = z
+  .object({
+    email: z
+      .string()
+      .trim()
+      .email()
+      .max(320)
+      .transform((value) => value.toLowerCase()),
+    role,
+  })
+  .strict();
 const changeMemberInput = z.object({ role }).strict();
 const keyExpiry = z.string().datetime({ precision: 3 }).nullable().optional();
 const keyProject = z
@@ -45,7 +62,13 @@ function keyQuery(params: URLSearchParams, allowProject = false): string | undef
  * `/account` and `/projects`: the authenticated person's, key's or actor's own account, keys,
  * projects and memberships. Scope authorizes each call, and its reads take no writer lock.
  */
-export function scopeRoutes(scope: Scope): MountHandler {
+export function scopeRoutes(
+  scope: Scope,
+  invitations?: { identity: IdentityProvider; sender: InvitationSender },
+): MountHandler {
+  // Bound the directory calls, including misses, before reaching Supabase. Per-process abuse guard;
+  // durable per-inviter limits also apply when creating an invitation.
+  const lookups = new Map<string, number[]>();
   return async (req, _res, r) => {
     const path = r.url.pathname;
     const principal = r.principal!;
@@ -60,6 +83,93 @@ export function scopeRoutes(scope: Scope): MountHandler {
             : { kind: 'actor', actor: principal.actor }),
         projects: await scope.projects(principal),
       };
+    if (path === '/account/invitations' && req.method === 'GET')
+      return { invitations: await scope.members.invitations(principal) };
+    const responseRoute = /^\/account\/invitations\/([^/]+)\/(accept|decline)$/.exec(path);
+    if (responseRoute && req.method === 'POST') {
+      await r.json(z.object({}).strict());
+      return {
+        membership: await scope.members.respondToInvitation(
+          principal,
+          pathSegment(responseRoute[1]!),
+          responseRoute[2] as 'accept' | 'decline',
+        ),
+      };
+    }
+    const invitationRoute = /^\/projects\/([^/]+)\/invitations(?:\/([^/]+)(\/send)?)?$/.exec(path);
+    if (invitationRoute) {
+      const projectId = pathSegment(invitationRoute[1]!);
+      const id = invitationRoute[2] && pathSegment(invitationRoute[2]);
+      check(
+        principal.kind === 'user',
+        'forbidden',
+        'Sign in with an account to invite members',
+        403,
+      );
+      const caller = await r.caller(projectId);
+      await scope.require(caller, 'admin');
+      if (!id && req.method === 'GET')
+        return { invitations: await scope.members.invitations(principal, projectId) };
+      if (id && !invitationRoute[3] && req.method === 'DELETE') {
+        await scope.members.revokeInvitation(principal, projectId, id);
+        return { revoked: true };
+      }
+      if (req.method === 'POST' && (!id || invitationRoute[3])) {
+        check(
+          invitations?.identity.findUserByEmail,
+          'invitation_email_unavailable',
+          'Email invitations are not configured',
+          503,
+        );
+        const now = Date.now();
+        for (const [key, stamps] of lookups)
+          if (!stamps.some((stamp) => now - stamp < 60_000)) lookups.delete(key);
+        const key = JSON.stringify([principal.user.issuer, principal.user.subject]);
+        const recent = (lookups.get(key) ?? []).filter((stamp) => now - stamp < 60_000);
+        check(
+          recent.length < 10,
+          'invitation_rate_limited',
+          'Too many invitation requests; try again shortly',
+          429,
+        );
+        lookups.set(key, [...recent, now]);
+        let invitation;
+        if (id) {
+          await r.json(z.object({}).strict());
+          invitation = (await scope.members.invitations(principal, projectId)).find(
+            (value) => value.id === id,
+          );
+          check(
+            invitation?.status === 'pending',
+            'invitation_closed',
+            'Invitation is no longer pending',
+            409,
+          );
+        } else {
+          const input = await r.json(inviteInput);
+          const recipient = await invitations.identity.findUserByEmail(input.email);
+          check(
+            recipient,
+            'not_found',
+            'No account found for that email. Ask them to sign up first.',
+            404,
+          );
+          invitation = await scope.members.inviteMember(principal, projectId, {
+            ...recipient,
+            ...input,
+          });
+        }
+        if (!invitation.sentAt) {
+          await invitations.sender.send(invitation);
+          await scope.members.invitationSent(principal, projectId, invitation.id);
+        }
+        return {
+          invitation: (await scope.members.invitations(principal, projectId)).find(
+            (value) => value.id === invitation.id,
+          ),
+        };
+      }
+    }
     if (path === '/account/keys') {
       const projectId = keyQuery(r.url.searchParams, req.method === 'GET');
       if (req.method === 'GET') return { keys: await scope.userKeys.keys(principal, projectId) };
@@ -90,14 +200,15 @@ export function scopeRoutes(scope: Scope): MountHandler {
       projectSelection(req.headers['x-merv-project-id'], projectId);
       if (subject === undefined && req.method === 'GET')
         return { memberships: await scope.members.memberships(principal, projectId) };
-      if (subject === undefined && req.method === 'POST')
-        return {
-          membership: await scope.members.addMember(
-            principal,
-            projectId,
-            await r.json(addMemberInput),
-          ),
-        };
+      if (subject === undefined && req.method === 'POST') {
+        await r.json(addMemberInput);
+        // Do not leave an account-ID bypass around the recipient's consent.
+        throw new MervError(
+          'invitation_required',
+          'Invite this person by email; they must accept before joining',
+          403,
+        );
+      }
       if (subject !== undefined && req.method === 'PATCH')
         return {
           membership: await scope.members.changeMemberRole(principal, projectId, {
@@ -116,9 +227,18 @@ export function scopeRoutes(scope: Scope): MountHandler {
 
 export const scopeApiPlugin = {
   name: 'merv-scope-api',
-  inject: ['scope', 'api'],
-  apply(ctx: Context) {
-    const routes = scopeRoutes(ctx.scope);
+  inject: ['scope', 'api', 'identity'],
+  apply(ctx: Context, config: { invitations?: z.infer<typeof invitationEmailSchema> } = {}) {
+    const parsed = z
+      .object({ invitations: invitationEmailSchema.optional() })
+      .strict()
+      .parse(config);
+    const routes = scopeRoutes(
+      ctx.scope,
+      parsed.invitations
+        ? { identity: ctx.identity, sender: new ResendInvitationSender(parsed.invitations) }
+        : undefined,
+    );
     ctx.effect(() => ctx.api.mount('/account', routes));
     ctx.effect(() => ctx.api.mount('/projects', routes));
   },

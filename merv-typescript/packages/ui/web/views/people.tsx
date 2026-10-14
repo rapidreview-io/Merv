@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useActor, useSession, type Actor } from '../session';
-import { EmptyState, Field, Submit, term } from '../components';
+import { EmptyState, term } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
+import { Invitations } from '../invitations';
 
 /** A directory entry whose name is an identifier names nobody, so the page says nothing. */
 const IDENTIFIER = /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/;
@@ -83,6 +84,7 @@ export function PeopleView() {
   const [loading, setLoading] = useState(human);
   const [busy, setBusy] = useState(false);
   const [newSubject, setNewSubject] = useState('');
+  const [invitationRevision, setInvitationRevision] = useState(0);
   const [newRole, setNewRole] = useState<Role>('reader');
   const [draftRoles, setDraftRoles] = useState<Record<string, Role>>({});
   const generation = useRef(0);
@@ -159,11 +161,16 @@ export function PeopleView() {
     setBusy(true);
     setMutationError(undefined);
     try {
-      await accountRequest(target === undefined ? path : `${path}/${encodeURIComponent(target)}`, {
-        method,
-        body,
-        scoped: true,
-      });
+      await accountRequest(
+        method === 'POST'
+          ? `/projects/${encodeURIComponent(project.id)}/invitations`
+          : `${path}/${encodeURIComponent(target!)}`,
+        {
+          method,
+          body,
+          scoped: true,
+        },
+      );
       if (!current()) return;
       if (method === 'POST') {
         setNewSubject('');
@@ -179,15 +186,17 @@ export function PeopleView() {
     } catch (error) {
       if (current()) setMutationError(failure(error).message);
     } finally {
-      if (current()) setBusy(false);
+      if (current()) {
+        setBusy(false);
+        setInvitationRevision((value) => value + 1);
+      }
     }
   };
-  // What is pasted is the ID the person being added was shown; the space a paste
-  // drags along with it is nobody's mistake, so it is dropped and not complained of.
+  // Trimming a pasted address does not change the recipient's account identity.
   const add = (event: FormEvent, close: () => void) => {
     event.preventDefault();
     const pasted = newSubject.trim();
-    if (pasted) void mutate('POST', undefined, { subject: pasted, role: newRole }, close);
+    if (pasted) void mutate('POST', undefined, { email: pasted, role: newRole }, close);
   };
 
   // An account with no sign-in of its own has no memberships to manage; the
@@ -204,7 +213,7 @@ export function PeopleView() {
       filter={filter}
       emptyTitle="No active memberships"
       create={{
-        label: 'New member',
+        label: 'Invite member',
         shown: canManage,
         form: (close) => (
           <form
@@ -212,20 +221,27 @@ export function PeopleView() {
             aria-labelledby={heading}
             onSubmit={(event) => add(event, close)}
           >
-            <h2 id={heading}>New member</h2>
-            <Field
-              label="Their account ID"
-              className="mono"
-              value={newSubject}
-              maxLength={512}
-              required
-              disabled={busy}
-              autoComplete="off"
-              spellCheck={false}
-              // Nobody knows one by heart: it is shown to its owner, to be handed over.
-              placeholder="Paste the ID they see under Account details"
-              onChange={setNewSubject}
-            />
+            <h2 id={heading}>Invite member</h2>
+            <p>
+              They will receive an email and join only after accepting. Invitations expire in seven
+              days.
+            </p>
+            <label>
+              Email address
+              <input
+                className="input mono"
+                value={newSubject}
+                type="email"
+                maxLength={320}
+                required
+                disabled={busy}
+                autoComplete="off"
+                spellCheck={false}
+                // Supabase resolves the email; joining still requires the recipient to accept.
+                placeholder="colleague@example.com"
+                onChange={(event) => setNewSubject(event.target.value)}
+              />
+            </label>
             <label>
               Project role
               <select
@@ -239,7 +255,13 @@ export function PeopleView() {
             </label>
             <div>
               {/* One lock serves every change on the page, so the word stays what it was. */}
-              <Submit disabled={busy || !newSubject.trim()} />
+              <button
+                type="submit"
+                className="btn btn--primary"
+                disabled={busy || !newSubject.trim()}
+              >
+                Send invitation
+              </button>
             </div>
           </form>
         ),
@@ -288,11 +310,14 @@ export function PeopleView() {
           ),
       })}
       after={
-        mutationError && (
-          <div className="error-message" role="alert">
-            {mutationError}
-          </div>
-        )
+        <>
+          {mutationError && (
+            <div className="error-message" role="alert">
+              {mutationError}
+            </div>
+          )}
+          {canManage && <Invitations projectId={project.id} refresh={invitationRevision} />}
+        </>
       }
     />
   );

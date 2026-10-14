@@ -12,6 +12,7 @@ import {
   type Principal,
   type Project,
   type ProjectMembership,
+  type ProjectInvitation,
   type Role,
   type SharedUser,
   type Sql,
@@ -20,6 +21,35 @@ import {
   type VerifiedIdentity,
 } from '@merv/contracts';
 import { insertProject, projectValue, type ProjectRow } from './project-context.js';
+
+interface InvitationRow {
+  id: string;
+  project_id: string;
+  project_name: string;
+  issuer: string;
+  subject: string;
+  email: string;
+  role: Role;
+  inviter_membership_id: string;
+  status: ProjectInvitation['status'];
+  created_at: string;
+  expires_at: string;
+  sent_at: string | null;
+  membership_id: string | null;
+}
+const invitation = (r: InvitationRow, now: string): ProjectInvitation => ({
+  id: r.id,
+  projectId: r.project_id,
+  projectName: r.project_name,
+  issuer: r.issuer,
+  subject: r.subject,
+  email: r.email,
+  role: r.role,
+  status: r.status === 'pending' && r.expires_at <= now ? 'expired' : r.status,
+  createdAt: r.created_at,
+  expiresAt: r.expires_at,
+  sentAt: r.sent_at,
+});
 
 interface MembershipRow {
   id: string;
@@ -382,6 +412,257 @@ export class Memberships {
       value.createdAt,
     );
     return value;
+  }
+
+  /** A pending invitation is never a membership or an actor. */
+  async inviteMember(
+    principal: Principal,
+    projectId: string,
+    input: {
+      issuer: string;
+      subject: string;
+      email: string;
+      role: Role;
+    },
+  ): Promise<ProjectInvitation> {
+    const { issuer, subject, email, role } = { ...input };
+    this.input(subject);
+    check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
+    check(
+      typeof email === 'string' && email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+      'invalid_email',
+      'A valid email is required',
+    );
+    return await this.state.transaction(async (tx) => {
+      const caller = await this.operator(principal, projectId, tx);
+      check(
+        issuer === caller.human!.issuer,
+        'forbidden',
+        'The recipient must use the same sign-in provider',
+        403,
+      );
+      check(
+        !(await tx.get(
+          'SELECT id FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
+          projectId,
+          issuer,
+          subject,
+        )),
+        'membership_exists',
+        'This person is already a project member',
+        409,
+      );
+      const now = this.time();
+      await tx.run(
+        "UPDATE project_invitations SET status='expired' WHERE project_id=? AND status='pending' AND expires_at<=?",
+        projectId,
+        now,
+      );
+      // An operator losing their membership/role also withdraws their outstanding offers.
+      await tx.run(
+        "UPDATE project_invitations SET status='revoked' WHERE project_id=? AND status='pending' AND inviter_membership_id NOT IN (SELECT id FROM project_memberships WHERE active=1 AND role='operator')",
+        projectId,
+      );
+      const old = await tx.get<InvitationRow>(
+        "SELECT * FROM project_invitations WHERE project_id=? AND issuer=? AND subject=? AND status='pending'",
+        projectId,
+        issuer,
+        subject,
+      );
+      if (old) {
+        check(
+          old.role === role && old.email === email,
+          'invitation_exists',
+          'Revoke the pending invitation before changing its role or email',
+          409,
+        );
+        return invitation(old, now);
+      }
+      const recent = await tx.get<{ count: number }>(
+        'SELECT COUNT(*)::int AS count FROM project_invitations WHERE inviter_membership_id=? AND created_at>?',
+        caller.human!.membershipId,
+        new Date(Date.parse(now) - 3600_000).toISOString(),
+      );
+      check(
+        (recent?.count ?? 0) < 30,
+        'invitation_rate_limited',
+        'Too many invitations; try again later',
+        429,
+      );
+      const project = await this.project(tx, projectId);
+      const row: InvitationRow = {
+        id: newId('invite'),
+        project_id: projectId,
+        project_name: project.name,
+        issuer,
+        subject,
+        email,
+        role,
+        inviter_membership_id: caller.human!.membershipId,
+        status: 'pending',
+        created_at: now,
+        expires_at: new Date(Date.parse(now) + 7 * 86400_000).toISOString(),
+        sent_at: null,
+        membership_id: null,
+      };
+      await tx.run(
+        'INSERT INTO project_invitations(id,project_id,project_name,issuer,subject,email,role,inviter_membership_id,status,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        row.id,
+        projectId,
+        project.name,
+        issuer,
+        subject,
+        email,
+        role,
+        row.inviter_membership_id,
+        row.status,
+        now,
+        row.expires_at,
+      );
+      await this.state.appendEvent(tx, {
+        projectId,
+        actorId: caller.actorId,
+        type: 'project.invitation_created',
+        subjectId: row.id,
+        data: { role },
+      });
+      return invitation(row, now);
+    });
+  }
+
+  async invitations(principal: Principal, projectId?: string): Promise<ProjectInvitation[]> {
+    return await forRead(this.state, async (tx) => {
+      const human = await this.human(principal, tx);
+      if (projectId !== undefined) await this.operator(human, projectId, tx);
+      const rows =
+        projectId === undefined
+          ? await tx.all<InvitationRow>(
+              "SELECT i.* FROM project_invitations i JOIN project_memberships m ON m.id=i.inviter_membership_id WHERE i.issuer=? AND i.subject=? AND i.status='pending' AND i.expires_at>? AND m.active=1 AND m.role='operator' ORDER BY i.created_at DESC",
+              human.user.issuer,
+              human.user.subject,
+              this.time(),
+            )
+          : await tx.all<InvitationRow>(
+              'SELECT * FROM project_invitations WHERE project_id=? ORDER BY created_at DESC LIMIT 200',
+              projectId,
+            );
+      return rows.map((r) => invitation(r, this.time()));
+    });
+  }
+
+  async respondToInvitation(
+    principal: Principal,
+    id: string,
+    response: 'accept' | 'decline',
+  ): Promise<ProjectMembership | null> {
+    check(
+      response === 'accept' || response === 'decline',
+      'invalid_response',
+      'Choose accept or decline',
+    );
+    return await this.state.transaction(async (tx) => {
+      const human = await this.human(principal, tx);
+      const row = await tx.get<InvitationRow>(
+        'SELECT * FROM project_invitations WHERE id=? AND issuer=? AND subject=?',
+        id,
+        human.user.issuer,
+        human.user.subject,
+      );
+      check(row, 'not_found', 'Invitation not found for this account', 404);
+      if (row.status === 'declined' && response === 'decline') return null;
+      if (row.status === 'accepted' && response === 'accept') {
+        const previous = await tx.get<MembershipRow>(
+          'SELECT * FROM project_memberships WHERE id=? AND active=1',
+          row.membership_id,
+        );
+        check(previous, 'invitation_closed', 'This invitation has already been used', 409);
+        return membership(previous);
+      }
+      check(
+        row.status === 'pending' && row.expires_at > this.time(),
+        'invitation_closed',
+        'This invitation has expired or is no longer pending',
+        409,
+      );
+      const author = await tx.get<MembershipRow>(
+        "SELECT * FROM project_memberships WHERE id=? AND active=1 AND role='operator'",
+        row.inviter_membership_id,
+      );
+      check(author, 'invitation_closed', 'The inviter no longer administers this project', 409);
+      let value: ProjectMembership | null = null;
+      if (response === 'accept') {
+        const existing = await tx.get<MembershipRow>(
+          'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
+          row.project_id,
+          row.issuer,
+          row.subject,
+        );
+        value = existing
+          ? membership(existing)
+          : await this.activate(tx, row.project_id, row, row.role);
+        if (!existing)
+          await this.state.appendEvent(tx, {
+            projectId: row.project_id,
+            actorId: value.actorId,
+            type: 'actor.membership_added',
+            subjectId: value.actorId,
+            data: {
+              membershipId: value.id,
+              issuer: row.issuer,
+              subject: row.subject,
+              role: row.role,
+              invitationId: id,
+            },
+          });
+      }
+      await tx.run(
+        'UPDATE project_invitations SET status=?,membership_id=? WHERE id=?',
+        response === 'accept' ? 'accepted' : 'declined',
+        value?.id ?? null,
+        id,
+      );
+      await this.state.appendEvent(tx, {
+        projectId: row.project_id,
+        actorId: value?.actorId ?? author.actor_id,
+        type: `project.invitation_${response === 'accept' ? 'accepted' : 'declined'}`,
+        subjectId: id,
+        data: { issuer: row.issuer, subject: row.subject },
+      });
+      return value;
+    });
+  }
+
+  async revokeInvitation(principal: Principal, projectId: string, id: string): Promise<void> {
+    await this.state.transaction(async (tx) => {
+      const caller = await this.operator(principal, projectId, tx);
+      const row = await tx.get<InvitationRow>(
+        'SELECT * FROM project_invitations WHERE id=? AND project_id=?',
+        id,
+        projectId,
+      );
+      check(row, 'not_found', 'Invitation not found', 404);
+      if (row.status !== 'pending') return;
+      await tx.run("UPDATE project_invitations SET status='revoked' WHERE id=?", id);
+      await this.state.appendEvent(tx, {
+        projectId,
+        actorId: caller.actorId,
+        type: 'project.invitation_revoked',
+        subjectId: id,
+        data: {},
+      });
+    });
+  }
+
+  async invitationSent(principal: Principal, projectId: string, id: string): Promise<void> {
+    await this.state.transaction(async (tx) => {
+      await this.operator(principal, projectId, tx);
+      await tx.run(
+        'UPDATE project_invitations SET sent_at=COALESCE(sent_at,?) WHERE id=? AND project_id=?',
+        this.time(),
+        id,
+        projectId,
+      );
+    });
   }
 
   async addMember(

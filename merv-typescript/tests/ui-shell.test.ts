@@ -840,3 +840,48 @@ test('a sign-in that lands while the first check reads still opens the project t
   assert.ok(document.querySelector('.sidebar'), `the project opened: ${text().slice(0, 200)}`);
   assert.equal(accounts, 3, 'the check that lost the race asked once more, and no more');
 });
+
+test('project chooser lists pending invitations but joins only after Accept', async (t) => {
+  t.after(async () => {
+    sessionStorage.removeItem('merv:invitation');
+    await unmount();
+  });
+  boot('Operator');
+  const user = {
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'recipient',
+    createdAt: project.createdAt,
+  };
+  let joined = false;
+  serve('/account', () => ({ body: { kind: 'user', user, projects: joined ? [project] : [] } }));
+  serve('/account/invitations', {
+    body: {
+      invitations: [
+        {
+          id: 'invite_ui',
+          projectId: project.id,
+          projectName: project.name,
+          role: 'reader',
+          status: 'pending',
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  serve('/account/invitations/invite_ui/accept', () => {
+    joined = true;
+    return { body: { membership: {} } };
+  });
+  setToken('invited-user');
+  setProject(null);
+  sessionStorage.setItem('merv:invitation', 'invite_ui');
+  await open('/');
+  assert.ok(text().includes('Accept invitation'));
+  assert.equal(joined, false);
+  assert.ok(!requests.some((r) => r === 'POST /account/invitations/invite_ui/accept'));
+  await click('Accept invitation');
+  await settle(20);
+  assert.equal(joined, true);
+  assert.equal(sessionStorage.getItem('merv:invitation'), null);
+  assert.ok(document.querySelector('.sidebar'), 'accepting opens the newly joined project');
+});

@@ -89,3 +89,17 @@ export type DelegationSource = { actorId: string; projectId: string } & (
   /** Valid only while the person who vouched for it may still write in its project. */
   | { kind: 'service'; vouchedBy: DelegationSource }
 );
+
+export interface ProjectInvitation {
+  id: string;
+  projectId: string;
+  projectName: string;
+  issuer: string;
+  subject: string;
+  email: string;
+  role: Role;
+  status: 'pending' | 'accepted' | 'declined' | 'revoked' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+  sentAt: string | null;
+}

@@ -266,11 +266,17 @@ export const whoOf = (account: Account) =>
       : '';
 
 /** Resolve account discovery before project-scoped reads, including a user's first empty account. */
-export async function resolveAccountSession(): Promise<AccountSession> {
+export async function resolveAccountSession(
+  options: { invitations?: boolean } = {},
+): Promise<AccountSession> {
   const epoch = scopeEpoch;
   const account = await accountRequest<Account>('/account');
   requireScope(epoch);
   const who = whoOf(account);
+  if (account.kind === 'user' && options.invitations) {
+    setProject(null);
+    return { phase: 'projects', account, epoch: scopeEpoch };
+  }
   const selected =
     account.kind === 'actor'
       ? account.actor.projectId
