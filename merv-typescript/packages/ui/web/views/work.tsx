@@ -15,7 +15,7 @@ import type { ShellData, WorkflowShape } from '../shell-types';
 import { Dependency, StageMark, ended } from '../process';
 import { ArrowRightIcon } from '../icons';
 import { newest, useHome, type Flow, type MapCycle } from './map-data';
-import { ResearchCommand } from './paper';
+import { ResearchCommand } from '../components';
 import { useActorNames } from './people';
 import { CreateReflection } from './research-programs';
 import type { Task } from '@merv/tasks/models';

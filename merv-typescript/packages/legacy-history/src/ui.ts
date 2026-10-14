@@ -65,7 +65,6 @@ export const legacyHistoryUiPlugin = {
         group: 'research',
         order: 19,
         path: '/legacy-history',
-        whenCounted: true,
         view: { kind: 'legacy-history' },
         status: async (caller) => {
           try {

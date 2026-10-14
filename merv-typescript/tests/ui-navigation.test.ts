@@ -45,11 +45,7 @@ test('the rail is Home with Work, Pi and Board, then Fleet and Ops; every other 
     row('feed', 'feed', 'activity', 30),
     row('reflections', 'reflections', 'hidden', 35),
     row('connections', 'connections', 'hidden', 40, '/external-connections'),
-    {
-      ...row('legacy-history', 'legacy-history', 'research', 19),
-      whenCounted: true,
-      status: { count: 412 },
-    },
+    { ...row('legacy-history', 'legacy-history', 'research', 19), status: { count: 412 } },
   ];
   const before = structuredClone(rows);
   const sections = railSections(rows);

@@ -85,8 +85,7 @@ const RAILED = new Set(RAIL.flatMap((section) => section.ids));
  * Whether the rail draws a row at all: the layout lists it and its owner did not hide it. A row
  * the rail does not draw still serves its record routes and its ui.read.
  */
-const shows = (row: UiRowDescription) =>
-  RAILED.has(row.id) && row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
+const shows = (row: UiRowDescription) => RAILED.has(row.id) && row.group !== 'hidden';
 
 /**
  * The rail row an address lights: the row it stands under, and — for a page the rail does

@@ -5,6 +5,7 @@ import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
 import { firstPersonMove } from '@merv/code-work/blockers';
 import type { CodeUnit } from '@merv/code-work/models';
+import { monoText } from './running-phrase';
 
 /**
  * What Git holds for one record, on the record's own page: the branch a writer stands
@@ -29,14 +30,6 @@ const CANVAS = '/code';
  * is a publication that will not reach main as it stands, and reads in the refusal's colour.
  */
 const refused = (state: string) => state !== 'pending' && state !== 'published';
-
-/**
- * The branch is the string an operator fetches, so it is stated — but the id inside it
- * is read the way every digest here is read: its head and its tail, the whole of it in
- * the hover and on the clipboard. Nobody types thirty-two hex digits.
- */
-const shortBranch = (branch: string) =>
-  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
 
 /** The records whose acceptances a base was made of, named rather than printed as oids. */
 const sources = (of: { unitId: string }[], names: RecordNames) =>
@@ -149,8 +142,9 @@ export function UnitCode({
           [
             'Branch',
             <>
+              {/* The string an operator fetches, its id read by its head and its tail. */}
               <code className="mono" title={unit.branch}>
-                {shortBranch(unit.branch)}
+                {monoText(unit.branch)}
               </code>
               <CopyButton text={unit.branch} label="Copy branch name" />
             </>,

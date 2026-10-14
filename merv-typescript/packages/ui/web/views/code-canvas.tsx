@@ -15,7 +15,7 @@ import { MAIN, relationsOf, type GitModel } from './code-model';
  * Columns are a topological rank rather than a clock: a merge this server made is
  * stamped with a fixed author date so that a repeat is byte-identical, and a base
  * keeps only when it was last touched, so no honest merge timeline exists in the
- * data and none is drawn. Below 900px `canvas()` answers null and the same model is
+ * data and none is drawn. Below 800px `canvas()` answers null and the same model is
  * stacked as a list, where each node says in words what the lines would have said.
  */
 

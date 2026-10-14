@@ -86,8 +86,8 @@ stored with it; older receipts may predate that field. Refresh `task.get` or
 `workflow.status_and_next` for current guidance. A saved context is similarly not
 fresh authority to act.
 
-The task detail UI renders a “What happens next” section from `task.get.guidance`.
-It displays the current gate, next step and blockers and remains read-only.
+The task page draws its gate from `workflow.process` (its row's `page` read), not
+from `task.get.guidance`; a blocker is the agent's instruction, so it prints none.
 
 ## Registering another program
 

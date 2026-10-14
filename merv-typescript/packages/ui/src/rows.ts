@@ -19,9 +19,8 @@ export interface UiRowFields {
   id: string;
   label: string;
   /**
-   * Where the rail places the row: `lead` just under Home, `top` under that, `settings` in the
-   * foot, `hidden` nowhere (its routes and its read still serve); any other group is the
-   * section it is listed under.
+   * The rail lists rows by its own layout (web/navigation.ts), never a `hidden` one, whose
+   * routes and read still serve; `lead` (Work) is where a page the rail does not list goes back.
    */
   group: string;
   order: number;
@@ -38,8 +37,6 @@ export interface UiRowFields {
   opens?: string;
   /** Deeper addresses are rooms of this one page, not records, so the shell still titles them. */
   rooms?: true;
-  /** The rail lists the row only while its status counts something: an empty archive is no place. */
-  whenCounted?: true;
   view: { kind: string; [key: string]: Json };
   /** How Needs you says a row's records (its `home`) are the reader's move, in the owner's words. */
   needs?: UiRowNeeds;

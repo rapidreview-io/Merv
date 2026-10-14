@@ -39,9 +39,6 @@ import {
   type SectionRow,
 } from './paper-entries';
 
-/** A control two other views share; it lives in components.tsx and is reached through here. */
-export { ResearchCommand } from '../components';
-
 const KINDS = Object.keys(labels) as PaperKind[];
 /** How often the paper, and the states of what it names, are read again. */
 const EVERY = 10_000;

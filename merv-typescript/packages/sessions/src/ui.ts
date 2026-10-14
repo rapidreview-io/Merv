@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { keyId, keyKind, type Json } from '@merv/contracts';
+import { keyId, type Json } from '@merv/contracts';
 import type { RunningRead } from '@merv/ui/types';
 import type {} from './types.js';
 
@@ -46,9 +46,7 @@ export const sessionsUiPlugin = {
         nodes: async (read) => await ctx.sessions.running.nodes(read.caller),
         summary: async (read) => (await dispatch(read)).summary,
         panel: async (read, key) =>
-          keyKind(key) === 'session'
-            ? await ctx.sessions.running.panel(read.caller, keyId(key), read.route)
-            : null,
+          await ctx.sessions.running.panel(read.caller, keyId(key), read.route),
       }),
     );
   },

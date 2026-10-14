@@ -308,7 +308,7 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
           }
         }}
       />
-      {/* Beside the box: audio mode (not yet built) over Send, which is Stop while an answer runs. */}
+      {/* Beside the box: voice mode over Send, which is Stop while an answer runs. */}
       <div className="pi-compose-actions">
         <button
           className="btn"
@@ -518,8 +518,6 @@ const Notice = ({ children }: { children: ReactNode }) => (
 export function PiView({ row }: ViewProps) {
   const scope = useScopeVersion();
   const agent = useAgent();
-  if (row.status.state === 'unavailable')
-    return <Notice>Agent unavailable. {row.status.detail}</Notice>;
   if (!projectSelection() || !currentToken())
     return <Notice>Agent unavailable. Select a project and sign in to continue.</Notice>;
   // A page drawn where nothing holds the conversation above it holds its own.

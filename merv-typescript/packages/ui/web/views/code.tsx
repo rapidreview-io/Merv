@@ -72,8 +72,7 @@ const addressed = (pathname: string, root: string): string | null => {
  * (founder, 2026-10-11: accepted work lands on main); until then, that accepted work lands there.
  */
 function mainSaid(status: CodeProjectStatus | undefined): string {
-  type Landing = { waiting: unknown[]; landed: { outcome: string }[]; current: unknown };
-  const landing = (status as { landing?: Landing } | undefined)?.landing;
+  const landing = status?.landing;
   if (!landing) return 'Accepted work lands here';
   const landed = landing.landed.filter((row) => !['skipped', 'superseded'].includes(row.outcome));
   const waiting = landing.waiting.length + (landing.current ? 1 : 0);

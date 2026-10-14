@@ -515,10 +515,7 @@ test('a room with nothing in it is an empty state, and the session room ends the
 
 test('the archive narrows by the app’s own tabs, turns pages only where there are pages, and closes by a glyph', async (t) => {
   t.after(async () => await unmount());
-  const archive = {
-    ...row('legacy-history', 'legacy-history', 'research', 19, 'Archive'),
-    whenCounted: true,
-  };
+  const archive = row('legacy-history', 'legacy-history', 'research', 19, 'Archive');
   boot('Operator', { rows: [...rows, { ...archive, status: { count: 3 }, readable: true }] });
   serve('/tools/ui.read', (_call, sent) => {
     const asked = (sent.params ?? {}) as { action?: string; type?: string };

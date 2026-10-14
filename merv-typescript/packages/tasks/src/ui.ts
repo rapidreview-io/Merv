@@ -1,6 +1,5 @@
 import type { Context } from 'cordis';
-import { keyId, keyKind } from '@merv/contracts';
-import type { Caller } from '@merv/contracts';
+import { keyId, type Caller } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import { TASK_STATES } from './running.js';
 
@@ -50,10 +49,7 @@ export const taskUiPlugin = {
         workflows: ['task'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await tasks.running(read.caller, read.include) }),
-        panel: async (read, key) =>
-          keyKind(key) === 'work'
-            ? await tasks.runningPanel(read.caller, keyId(key), read.route)
-            : null,
+        panel: async (read, key) => await tasks.runningPanel(read.caller, keyId(key), read.route),
       }),
     );
   },

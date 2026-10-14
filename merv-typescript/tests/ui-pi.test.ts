@@ -2007,14 +2007,6 @@ test('the transcript marks a switch of model, with a move of machine, from the t
   assert.equal(dividers[0].nextElementSibling?.textContent, 'Yousecond');
 });
 
-test('unavailable Agent is inert, including SSE and list', async (t) => {
-  t.after(cleanup);
-  setProject('p1');
-  await open({ state: 'unavailable', detail: 'Pilot disabled' });
-  assert.match(text(), /Agent unavailable. Pilot disabled/);
-  assert.equal(requests.length, 0);
-});
-
 /** What a screen reader calls an element: aria-labelledby, else aria-label, else its text. */
 const accessible = (element: Element, attribute = 'aria-labelledby') =>
   element
