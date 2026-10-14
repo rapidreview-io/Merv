@@ -787,3 +787,48 @@ test('Pi stands with Work, and the Agents row in the rail’s Fleet section with
   assert.equal(link.querySelector('.rail-badge')!.textContent, '3·1');
   assert.equal(link.getAttribute('aria-label'), 'Agents, 3 working, 1 waiting on you');
 });
+
+test('project chooser lists pending invitations but joins only after Accept', async (t) => {
+  t.after(async () => {
+    sessionStorage.removeItem('merv:invitation');
+    await unmount();
+  });
+  boot('Operator');
+  const user = {
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'recipient',
+    createdAt: project.createdAt,
+  };
+  let joined = false;
+  serve('/account', () => ({ body: { kind: 'user', user, projects: joined ? [project] : [] } }));
+  serve('/account/invitations', {
+    body: {
+      invitations: [
+        {
+          id: 'invite_ui',
+          projectId: project.id,
+          projectName: project.name,
+          role: 'reader',
+          status: 'pending',
+          expiresAt: '2027-01-01T00:00:00.000Z',
+        },
+      ],
+    },
+  });
+  serve('/account/invitations/invite_ui/accept', () => {
+    joined = true;
+    return { body: { membership: {} } };
+  });
+  setToken('invited-user');
+  setProject(null);
+  sessionStorage.setItem('merv:invitation', 'invite_ui');
+  await open('/');
+  assert.ok(text().includes('Accept invitation'));
+  assert.equal(joined, false);
+  assert.ok(!requests.some((r) => r === 'POST /account/invitations/invite_ui/accept'));
+  await click('Accept invitation');
+  await settle(20);
+  assert.equal(joined, true);
+  assert.equal(sessionStorage.getItem('merv:invitation'), null);
+  assert.ok(document.querySelector('.sidebar'), 'accepting opens the newly joined project');
+});

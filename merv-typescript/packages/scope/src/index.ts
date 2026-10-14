@@ -3,6 +3,7 @@ import { Ledger } from './ledger.js';
 import { needs, permits, sourceCaller, workerRoles } from './rules.js';
 import { visible, createService, sha256Hex, within } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
+import { postgresMigrations as invitations } from './invitations.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
 import { postgresMigrations as userKeys } from './user-keys.postgres.js';
 import { postgresMigrations as projectContext } from './project-context.postgres.js';
@@ -150,6 +151,7 @@ export class ProjectScope implements Scope {
       ...memberships,
       ...userKeys,
       ...projectContext,
+      ...invitations,
     });
   }
   async projectOwners(

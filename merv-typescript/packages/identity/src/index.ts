@@ -26,6 +26,7 @@ const fields = new Set([
   'mode',
   'secretEnv',
   'publishableKeyEnv',
+  'directoryKeyEnv',
   'audience',
   'allowLocalHttp',
 ]);
@@ -202,12 +203,15 @@ export class SupabaseIdentity implements IdentityProvider {
   #audience = 'authenticated';
   #algorithms: string[] = [];
   #clock: () => number;
+  #directoryKey?: string;
+  #fetch: typeof globalThis.fetch;
 
   constructor(
     config: IdentityConfig = {},
     options: { clock?: () => number; fetch?: typeof globalThis.fetch } = {},
   ) {
     this.#clock = options.clock ?? Date.now;
+    this.#fetch = options.fetch ?? globalThis.fetch;
     if (!object(config) || Object.keys(config).some((key) => !fields.has(key)))
       throw invalidConfig();
     if (Object.keys(config).length === 0) return;
@@ -232,6 +236,8 @@ export class SupabaseIdentity implements IdentityProvider {
       )
         throw invalidConfig();
       this.#issuer = `${url.origin}/auth/v1`;
+      if (config.directoryKeyEnv !== undefined)
+        this.#directoryKey = environment(config.directoryKeyEnv);
       if (config.audience !== undefined) {
         if (
           typeof config.audience !== 'string' ||
@@ -267,6 +273,48 @@ export class SupabaseIdentity implements IdentityProvider {
 
   configuration(): IdentityConfiguration {
     return structuredClone(this.#public);
+  }
+
+  /** Exact email lookup through the existing server-only shared Supabase directory RPC. */
+  async findUserByEmail(email: string): Promise<{ issuer: string; subject: string } | null> {
+    if (!this.#directoryKey)
+      throw new MervError('directory_unavailable', 'Email invitations are not configured', 503);
+    try {
+      const result = await this.#fetch(
+        `${this.#issuer.replace(/\/auth\/v1$/, '')}/rest/v1/rpc/lookup_user_for_share`,
+        {
+          method: 'POST',
+          redirect: 'error',
+          signal: AbortSignal.timeout(5000),
+          headers: {
+            apikey: this.#directoryKey,
+            authorization: `Bearer ${this.#directoryKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ target_email: email }),
+        },
+      );
+      if (!result.ok) throw new Error('Directory request failed');
+      const rows: unknown = await result.json();
+      if (!Array.isArray(rows) || rows.length > 1) throw new Error('Invalid directory result');
+      if (!rows.length) return null;
+      const row = rows[0];
+      if (!object(row)) throw new Error('Invalid directory record');
+      if (row.is_anonymous) return null;
+      const subject = row.user_id ?? row.id;
+      if (
+        typeof subject !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(subject)
+      )
+        throw new Error('Invalid directory identity');
+      return { issuer: this.#issuer, subject };
+    } catch {
+      throw new MervError(
+        'directory_unavailable',
+        'Account lookup is temporarily unavailable',
+        503,
+      );
+    }
   }
 
   async verify(token: string): Promise<VerifiedIdentity> {

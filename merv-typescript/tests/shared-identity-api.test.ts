@@ -63,7 +63,23 @@ async function fixture(t: TestContext, database = ':memory:') {
     handler: async (caller) => await scope.require(caller, 'write'),
   });
   const server = new ApiServer(scope, tools, {}, identity);
-  for (const prefix of ['/account', '/projects'] as const) server.mount(prefix, scopeRoutes(scope));
+  const sent: string[] = [];
+  let failEmail = false;
+  const routes = scopeRoutes(scope, {
+    identity: {
+      verify: (token) => identity.verify(token),
+      configuration: () => identity.configuration(),
+      findUserByEmail: async (email) =>
+        email === 'bob@example.com' ? { issuer, subject: bob } : null,
+    },
+    sender: {
+      send: async (invitation) => {
+        if (failEmail) throw new Error('synthetic mail failure');
+        sent.push(invitation.id);
+      },
+    },
+  });
+  for (const prefix of ['/account', '/projects'] as const) server.mount(prefix, routes);
   const url = await server.start();
   let closed = false;
   const close = async () => {
@@ -114,6 +130,10 @@ async function fixture(t: TestContext, database = ':memory:') {
     close,
     aliceToken,
     bobToken,
+    sent,
+    failEmail: (value: boolean) => {
+      failEmail = value;
+    },
   };
 }
 
@@ -149,9 +169,14 @@ test('verified users discover two projects, administer memberships, and retain p
     400,
   );
   assert.equal((await f.request('/account', { token: f.bobToken })).status, 200);
-  const add = await f.request<{ membership: ProjectMembership }>(`/projects/${a.id}/members`, {
-    body: { subject: bob, role: 'reader' },
+  const offer = await f.request<{ invitation: { id: string } }>(`/projects/${a.id}/invitations`, {
+    body: { email: 'bob@example.com', role: 'reader' },
   });
+  assert.equal(offer.status, 200);
+  const add = await f.request<{ membership: ProjectMembership }>(
+    `/account/invitations/${offer.body.invitation.id}/accept`,
+    { token: f.bobToken, body: {} },
+  );
   assert.equal(add.status, 200);
   assert.equal(add.body.membership.issuer, issuer);
   assert.equal((await f.request(`/projects/${b.id}/members`, { token: f.bobToken })).status, 403);
@@ -465,8 +490,8 @@ test('JWT validation rejects untrusted claims and public configuration cannot be
 test('membership removal after admission blocks queued dispatch and expires captured authority', async (t) => {
   const f = await fixture(t);
   const project = await f.create('Queued work');
-  await f.request(`/projects/${project.id}/members`, { body: { subject: bob, role: 'producer' } });
   const owner = await f.scope.members.acceptVerifiedIdentity(await f.identity.verify(f.aliceToken));
+  await f.scope.members.addMember(owner, project.id, { subject: bob, role: 'producer' });
   let ran = false;
   f.tools.register({
     name: 'queued',
@@ -494,5 +519,122 @@ test('membership removal after admission blocks queued dispatch and expires capt
   assert.equal(
     (await f.request('/tools', { token: f.bobToken, projectId: project.id })).status,
     403,
+  );
+});
+
+test('email invitation is private until explicit recipient acceptance; direct-add cannot bypass consent', async (t) => {
+  const f = await fixture(t);
+  const project = await f.create('Consent');
+  assert.equal(
+    (
+      await f.request(`/projects/${project.id}/members`, {
+        body: { subject: bob, role: 'operator' },
+      })
+    ).status,
+    403,
+  );
+  const offer = await f.request<{ invitation: { id: string; sentAt: string } }>(
+    `/projects/${project.id}/invitations`,
+    { body: { email: 'Bob@Example.com', role: 'producer' } },
+  );
+  assert.equal(offer.status, 200, JSON.stringify(offer.body));
+  const id = offer.body.invitation.id;
+  assert.ok(offer.body.invitation.sentAt);
+  assert.deepEqual(f.sent, [id]);
+  const before = await f.request<{ projects: Project[] }>('/account', { token: f.bobToken });
+  assert.deepEqual(before.body.projects, []);
+  assert.equal(
+    (await f.request(`/projects/${project.id}/members`, { token: f.bobToken })).status,
+    403,
+  );
+  assert.equal(
+    (await f.request(`/account/invitations/${id}/accept`, { body: {} })).status,
+    404,
+    'the inviter cannot accept for the recipient',
+  );
+  const pending = await f.request<{ invitations: { id: string }[] }>('/account/invitations', {
+    token: f.bobToken,
+  });
+  assert.deepEqual(
+    pending.body.invitations.map((i) => i.id),
+    [id],
+  );
+  assert.deepEqual(
+    (await f.request<{ projects: Project[] }>('/account', { token: f.bobToken })).body.projects,
+    [],
+    'reading the invitation grants no access',
+  );
+  await f.request(`/projects/${project.id}/invitations`, {
+    body: { email: 'bob@example.com', role: 'producer' },
+  });
+  assert.deepEqual(f.sent, [id], 'repeated invite does not resend a confirmed email');
+  const accepted = await f.request<{ membership: ProjectMembership }>(
+    `/account/invitations/${id}/accept`,
+    { token: f.bobToken, body: {} },
+  );
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.membership.role, 'producer');
+  const replay = await f.request<{ membership: ProjectMembership }>(
+    `/account/invitations/${id}/accept`,
+    { token: f.bobToken, body: {} },
+  );
+  assert.equal(replay.body.membership.id, accepted.body.membership.id);
+  await f.request(`/projects/${project.id}/members/${bob}`, { method: 'DELETE' });
+  assert.equal(
+    (await f.request(`/account/invitations/${id}/accept`, { token: f.bobToken, body: {} })).status,
+    409,
+    'an old accepted link must not revive access',
+  );
+});
+
+test('email failures preserve a retryable pending invitation; decline and revoke do not create members', async (t) => {
+  const f = await fixture(t);
+  const project = await f.create('Delivery');
+  f.failEmail(true);
+  assert.equal(
+    (
+      await f.request(`/projects/${project.id}/invitations`, {
+        body: { email: 'bob@example.com', role: 'reader' },
+      })
+    ).status,
+    500,
+  );
+  const pending = await f.request<{ invitations: { id: string; sentAt: null }[] }>(
+    `/projects/${project.id}/invitations`,
+  );
+  const id = pending.body.invitations[0]!.id;
+  assert.equal(pending.body.invitations[0]!.sentAt, null);
+  f.failEmail(false);
+  assert.equal(
+    (await f.request(`/projects/${project.id}/invitations/${id}/send`, { body: {} })).status,
+    200,
+  );
+  assert.deepEqual(f.sent, [id]);
+  assert.equal(
+    (await f.request(`/account/invitations/${id}/decline`, { token: f.bobToken, body: {} })).status,
+    200,
+  );
+  assert.equal(
+    (await f.request(`/account/invitations/${id}/accept`, { token: f.bobToken, body: {} })).status,
+    409,
+  );
+  const next = await f.request<{ invitation: { id: string } }>(
+    `/projects/${project.id}/invitations`,
+    { body: { email: 'bob@example.com', role: 'reader' } },
+  );
+  const nextId = next.body.invitation.id;
+  assert.notEqual(nextId, id);
+  assert.equal(
+    (await f.request(`/projects/${project.id}/invitations/${nextId}`, { method: 'DELETE' })).status,
+    200,
+  );
+  assert.equal(
+    (await f.request(`/account/invitations/${nextId}/accept`, { token: f.bobToken, body: {} }))
+      .status,
+    409,
+  );
+  assert.deepEqual(
+    (await f.request<{ projects: Project[] }>('/account', { token: f.bobToken })).body.projects,
+    [],
   );
 });
