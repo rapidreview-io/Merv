@@ -1,5 +1,5 @@
 import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
-import { currentTask } from './fixtures/current-work.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { currentExperiment } from './fixtures/current-experiment.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { mapAsync } from '@merv/contracts';
@@ -1062,6 +1062,13 @@ test('lens directors outside the wave owner remain independent-review exclusions
 
 test('leased lens calls use exact execution evidence, retain context through release and recover independent review claims', async (t) => {
   const f = await fixture(t);
+  // Other work, created before the wave pauses new tasks.
+  const task = await currentTask(f.app.ctx, f.owner, {
+    title: 'Other work',
+    goal: 'Check feasibility',
+    checks: ['Report outcome'],
+    requestId: 'other-work',
+  });
   let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   const secret = token();
   const first = wave.lenses[0]!;
@@ -1116,6 +1123,16 @@ test('leased lens calls use exact execution evidence, retain context through rel
   await f.app.ctx.sessions.release(lead, { sessionId: reviewExecution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
   assert.equal((await f.app.ctx.reviews.get(f.owner, wave.review!.id)).status, 'requested');
+  // A worker leased on another review claims no reflection review, even in-process.
+  const directory = mkdtempSync(join(tmpdir(), 'merv-other-review-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const { task: delivered } = await deliverCurrentTask(f.app.ctx, directory, f.owner, task.id);
+  const work = currentWork(f.app.ctx, { directory, source: lead });
+  const other = await work.lease(delivered);
+  await assert.rejects(f.app.ctx.reviews.start(other.worker, wave.review!.id), {
+    code: 'stale_lease',
+  });
+  await work.close();
   const next = await f.app.ctx.sessions.offer(lead, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,

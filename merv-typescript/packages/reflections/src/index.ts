@@ -165,6 +165,14 @@ export class ReflectionService implements Reflections {
             review.subjectId,
             review.projectId,
           )),
+        // A worker claims only while taking this review's lease (no row yet) or holding it.
+        claim: async (caller, review, tx) => {
+          const { projectId, session } = caller;
+          if (session && (await leaseRows(tx, { projectId, id: session.id })).length) {
+            const snapshot = await this.workflows.get(caller, review.subjectId, tx);
+            await program.lease(this, { caller, snapshot, tx });
+          }
+        },
         submit: async (caller, input, tx) => await commands.submitReview(this, caller, input, tx),
         returns: async () => REVIEW_RETURNS,
         // Both rejecting verdicts return the wave.
