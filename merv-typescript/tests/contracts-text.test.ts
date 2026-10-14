@@ -91,5 +91,6 @@ test('ellipsis() ends cut text in one ellipsis within max, and cleanText() keeps
   assert.equal(ellipsis('aaa😀b', 5), 'aaa…');
   assert.equal(cleanText('a\u0000b\tc\nd\u007f', 100), 'ab\tc\nd');
   assert.equal(cleanText('aaa😀b', 4), 'aaa');
+  assert.equal(cleanText('a\uD800b\uDC00c😀', 100), 'abc😀', 'half pairs go, whole ones stay');
   assert.equal(cleanText(42, 10), '');
 });

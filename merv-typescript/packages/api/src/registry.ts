@@ -1,4 +1,4 @@
-import { MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
+import { ellipsis, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -438,33 +438,30 @@ export class ToolRegistry implements Tools {
     const shown: Entry[] = [];
     for (const entry of offered)
       if (
-        (!caller ||
-          !session ||
+        (!session ||
           (await this.fenced(
             session,
-            session.provider.allowsTool(caller, entry.name, this.reads(entry)),
+            session.provider.allowsTool(caller!, entry.name, this.reads(entry)),
           ))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
       )
         shown.push(entry);
-    return shown;
+    return shown.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /** agent: a person's own agent over MCP, never a leased worker. */
   async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
-    return (await this.visible(caller, agent && !caller?.session))
-      .map((entry) => structuredClone(entry.description))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return (await this.visible(caller, agent && !caller?.session)).map((entry) =>
+      structuredClone(entry.description),
+    );
   }
 
   async list(): Promise<ListedTool[]> {
-    return (await this.visible())
-      .map(({ definition, description }) =>
-        isRemoteTool(definition)
-          ? { ...structuredClone(description), kind: 'mcp' as const }
-          : definition,
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return (await this.visible()).map(({ definition, description }) =>
+      isRemoteTool(definition)
+        ? { ...structuredClone(description), kind: 'mcp' as const }
+        : definition,
+    );
   }
 
   /** agent: as for describe; such a caller cannot run what it is not offered. */
@@ -479,7 +476,7 @@ export class ToolRegistry implements Tools {
     // Scope refuses a conversation that also carries another authority, at its read decision.
     const rules = this.rulesFor(caller);
     const entry = this.entries.get(name);
-    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
+    if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${ellipsis(name, 200)}`, 404);
     if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !this.offered(entry, false))

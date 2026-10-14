@@ -72,6 +72,13 @@ test('verified identities onboard independently of projects; creation receipts r
   const b = await f.scope.members.createProject(bob, { name: 'Bob project', requestId: 'create' });
   assert.notEqual(b.id, project.id, 'Project receipts are scoped to verified identity');
   await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  // An invited actor is named after its subject, cut at 200 units without half an emoji.
+  await f.scope.members.addMember(alice, project.id, {
+    subject: `${'s'.repeat(199)}😀`,
+    role: 'reader',
+  });
+  const names = (await f.scope.actors(caller)).map((actor) => actor.name);
+  assert.ok(names.includes('s'.repeat(199)), 'the name ends before the cut emoji');
   await f.scope.members.removeMember(bob, project.id, 'alice');
   await assert.rejects(
     async () =>

@@ -131,7 +131,7 @@ export interface Api {
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
-  /** Detached public descriptions for the authenticated caller. agent: a person's own agent over
+  /** Detached descriptions for a caller, making its read decision. agent: a person's own agent over
    *  MCP, offered every native tool not marked `never` (a reader: its reads alone) plus the mounted
    *  tools its Access grants. That curates; it is no authority boundary (see POST /tools). */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;

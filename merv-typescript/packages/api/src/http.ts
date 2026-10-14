@@ -399,19 +399,18 @@ export class ApiServer {
     };
   }
 
-  /** A request's one read decision, made before any body is read. Every effect then authorizes
-   *  itself in its own transaction, so nothing here re-checks after the body. A tool call's
-   *  caller is only named: the registry makes its one decision where the tool acts. */
+  /** A route's one read decision (`decide`), a credential owner's liveness rules (a session's is
+   *  Sessions' guard) included, made before any body is read; every effect then authorizes itself
+   *  in its own transaction. A tool call's or a listing's caller is only named: the registry
+   *  makes its one decision. */
   private async selectedCaller(
     principal: ApiPrincipal,
     projectId?: string,
-    toolCall = false,
+    decide = false,
   ): Promise<Caller> {
-    if (!('caller' in principal)) return await this.scope.caller(principal, projectId, !toolCall);
+    if (!('caller' in principal)) return await this.scope.caller(principal, projectId, decide);
     projectSelection(principal.caller.projectId, projectId);
-    // A credential owner's liveness rules (a session's is Sessions' guard) are part of this read
-    // decision.
-    if (!toolCall) await this.scope.require(principal.caller, 'read');
+    if (decide) await this.scope.require(principal.caller, 'read');
     return principal.caller;
   }
 
@@ -462,7 +461,6 @@ export class ApiServer {
     const caller = await this.selectedCaller(
       principal,
       projectSelection(selectedProject, remote ? undefined : projectId),
-      true,
     );
     const operation = this.tools.invoke(name, caller, remote ? input : native, agent);
     this.calls.add(operation);
@@ -547,6 +545,7 @@ export class ApiServer {
         return await this.selectedCaller(
           principal,
           projectSelection(req.headers['x-merv-project-id'], projectId),
+          true,
         );
       },
       json: async (schema, maxBytes = this.maxBodyBytes) => {
@@ -562,7 +561,10 @@ export class ApiServer {
     // A verified user's first request records that user, which is a write, so the caller is
     // authenticated before the read-only scope opens.
     if (path === '/tools' && req.method === 'GET') {
-      const describe = async () => ({ tools: await this.tools.describe(await r.caller()) });
+      const project = projectSelection(req.headers['x-merv-project-id']);
+      const describe = async () => ({
+        tools: await this.tools.describe(await this.selectedCaller(r.principal!, project)),
+      });
       return this.options.snapshot ? await this.options.snapshot(describe) : await describe();
     }
     if (!path.startsWith('/tools/') || req.method !== 'POST') throw unknownEndpoint();

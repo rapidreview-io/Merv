@@ -1,4 +1,4 @@
-import { visible } from '@merv/contracts';
+import { clip, visible } from '@merv/contracts';
 import {
   check,
   digest,
@@ -343,7 +343,7 @@ export class Memberships {
         'INSERT INTO actors(id,project_id,name,role,active) VALUES(?,?,?,?,1)',
         mapping.actor_id,
         projectId,
-        subject.slice(0, 200),
+        clip(subject, 200),
         role,
       );
       await tx.run(

@@ -643,6 +643,10 @@ async function calls(t: TestContext) {
       body: (await response.json()) as { error?: { code: string } },
     };
   };
+  const list = async (token: string) => {
+    const response = await fetch(`${url}/tools`, { headers: { authorization: `Bearer ${token}` } });
+    return { status: response.status, body: (await response.json()) as { tools?: unknown[] } };
+  };
   const mcp = async (token: string) => {
     const client = new Client({ name: 'decisions', version: '1' });
     clients.push(client);
@@ -660,6 +664,7 @@ async function calls(t: TestContext) {
     tools,
     counted,
     post,
+    list,
     mcp,
     alice,
     bob,
@@ -691,6 +696,9 @@ test('a tool call makes one Scope decision on every path', async (t) => {
   counts['MCP tools/list'] = await decisions(async () =>
     assert.equal((await client.listTools()).tools.length, 24),
   );
+  counts['GET /tools'] = await decisions(async () =>
+    assert.equal((await f.list(f.boot.token)).body.tools?.length, 24),
+  );
   // Mounts' own connection pool adds its two when the tool is a real mount.
   for (const name of ['fixture.read', '_fixture.look'])
     counts[`MCP ${name}`] = await decisions(call(name));
@@ -704,8 +712,9 @@ test('a tool call makes one Scope decision on every path', async (t) => {
         path.endsWith('fixture.nest') || path.endsWith('fixture.open') ? 2 : 1,
       ]),
     ),
-    // The caller's, the listing's own, and one grant check for all twenty mounted tools.
-    'MCP tools/list': 3,
+    // A listing's own, and one grant check for all twenty mounted tools.
+    'MCP tools/list': 2,
+    'GET /tools': 2,
   });
 });
 
@@ -747,6 +756,11 @@ test('a credential or membership revoked after its call named it is refused, on 
         }),
       );
     });
+  await t.test('MCP tools/list', async () => {
+    await refused('tools/list', async (token) =>
+      assert.rejects((await f.mcp(token)).listTools(), { code: -32600, data: forbidden }),
+    );
+  });
   for (const name of paths)
     await t.test(`in-process ${name}`, async () => {
       const { caller, revoke } = await credential();

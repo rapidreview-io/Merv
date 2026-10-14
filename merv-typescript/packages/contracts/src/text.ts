@@ -16,11 +16,11 @@ export function firstSentence(text: string | null | undefined, limit = 140): str
 }
 /**
  * Text a remote service sent, at most `max` UTF-16 units of it, without control characters
- * other than line breaks and tabs; anything but a string is ''.
+ * other than line breaks and tabs or half a surrogate pair; anything but a string is ''.
  */
 export const cleanText = (value: unknown, max: number): string =>
   typeof value === 'string'
-    ? clip(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), max)
+    ? clip(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]|\p{Surrogate}/gu, ''), max)
     : '';
 /**
  * An artifact's title as a context item's title, or its ID when the title is only line breaks and

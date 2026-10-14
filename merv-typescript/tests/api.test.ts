@@ -135,6 +135,11 @@ test('registry enforces unique registration, input validation, scope and awaited
   await Promise.resolve();
   assert.equal(disposed, false);
   await assert.rejects(tools.call('slow', caller, {}), /Unknown tool/);
+  // A name sent in a 3 MB body is not echoed back whole.
+  await assert.rejects(tools.call('x'.repeat(100_000), caller, {}), {
+    code: 'unknown_tool',
+    message: `Unknown tool: ${'x'.repeat(199)}…`,
+  });
   release();
   assert.equal(await operation, 'finished');
   await disposing;
