@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { recorded, check, type Caller, type Transaction } from '@merv/contracts';
+import { recorded, check, inTransaction, type Caller, type Transaction } from '@merv/contracts';
 import type { DispatchState, Session, SessionBudgetInput, BudgetStatus } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { isoNow } from './common.js';
@@ -127,6 +127,7 @@ export async function setBudget(
   ctx: DispatchContext,
   caller: Caller,
   input: SessionBudgetInput,
+  transaction?: Transaction,
 ): Promise<BudgetStatus> {
   ctx.enter(caller);
   caller = structuredClone(caller);
@@ -137,7 +138,7 @@ export async function setBudget(
     'A budget names at least one of maxWallMinutes and maxTokens, each a positive bound or null',
   );
   const { instanceId, maxWallMinutes, maxTokens } = parsed.data;
-  return await ctx.state.transaction(async (tx) => {
+  return await inTransaction(ctx.state, transaction, async (tx) => {
     await ctx.ordinary(caller, 'admin', tx);
     if (instanceId !== undefined) await ctx.workflows.get(caller, instanceId, tx);
     const scopeId = instanceId ?? caller.projectId;

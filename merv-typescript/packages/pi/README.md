@@ -50,6 +50,21 @@ Pi sits between the person and a machine it rents from Fleet. A sent message bec
 - `@merv/pi/api`: `/pi`, the conversation event stream; `/pi-worker`, the worker's routes, which only its registered `piw_` credential reaches; and `/pi-model`, a public mount whose relay authenticates its `pir_` bearer itself.
 - `@merv/pi/ui`: the rail's Pi row at `/agent`, present wherever Pi is loaded.
 
+## Trusted conversation roles
+
+Server plugins may register a versioned role with `pi.registerProfile` and create an instance
+with `pi.createProfiled`. Neither operation is exposed as a public Pi tool. A role declares fixed
+instructions, a model and reasoning effort, an explicit tool list, request context, and an optional
+per-call authorization hook. Its request binding and definition hash are retained with the
+conversation. A changed or unloaded role cannot run old conversations.
+
+The customer experiment interviewer uses `gpt-6-astra` at `medium`; that exact pair must be in
+`MERV_PI_MODELS`. It cannot change model, use voice, switch machines, or propose privileged
+actions. Request context replaces project context, and its allowed tools replace ordinary Pi's
+tool list. The SDK worker already disables every native coding tool and loads only the server's
+explicit custom tools. Ordinary conversations and worker-question investigations retain their
+existing behavior.
+
 ## Worker questions
 
 When Sessions is present, Pi investigates new worker questions in a separate conversation owned by the person who delegated the work (a service's voucher identifies that person). It uses the ordinary Pi tools and authority, including existing human-only proposal rules. No restricted investigator role is introduced. Pi creates and binds the conversation before sending its first turn; stable question-derived IDs make repeated delivery safe.

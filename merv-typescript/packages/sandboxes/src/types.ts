@@ -1,6 +1,6 @@
 import type { Caller, Json, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
-import type { NativeSandboxesConfig } from './native-types.js';
+import type { NativeConnectionStatus, NativeSandboxesConfig } from './native-types.js';
 
 /** One project's authorized connection. Secrets are named, never carried. */
 export interface SandboxConnection {
@@ -245,7 +245,23 @@ export interface CaptureEvidence {
   refused: { nativeWorkflowId: string; captureNode: string; error: string }[];
 }
 
+/** Server-owned managed funding and catalog access; never a worker compute connection. */
+export interface ManagedCompute {
+  options(caller: Caller): Promise<Json>;
+  enable(caller: Caller): Promise<NativeConnectionStatus>;
+}
+
 export interface Sandboxes {
+  /** Present only when this Sandboxes owner has managed ML configured. */
+  managedCompute?: ManagedCompute;
+  /** Whether native admission, execution and evidence for this epoch have settled since a session closed. */
+  settled?(
+    projectId: string,
+    instanceId: string,
+    attempt: string,
+    notBefore: string,
+    tx: Transaction,
+  ): Promise<boolean>;
   /**
    * The artifact collections native compute verified and registered for one workflow
    * instance, in the caller's transaction. Empty where native compute is not configured.

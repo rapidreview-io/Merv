@@ -20,6 +20,8 @@ import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { piConfig, type PiConfig } from './schema.js';
 import { PiStreams } from './stream.js';
 import { piTokens } from './relay.js';
+import { PiProfiles } from './profiles.js';
+import { piInstructions } from './prompt.js';
 import type {
   PiCommand,
   PiCommandRecord,
@@ -88,6 +90,7 @@ export const publicCommand = (record: PiCommandRecord): PiCommand => {
     tools: _tools,
     notes: _notes,
     context: _context,
+    instructions: _instructions,
     projectPaper: _paper,
     calledAt: _called,
     retried: _retried,
@@ -134,6 +137,7 @@ export function conversationCaller(
  * the worker protocol and the person's service share. */
 export class PiCore {
   readonly streams = new PiStreams();
+  readonly profiles = new PiProfiles();
   readonly config: z.output<typeof piConfig>;
   /** The API origin machines reach Main at, as origin() read it from `baseUrl`. */
   readonly apiOrigin: string;
@@ -222,6 +226,29 @@ export class PiCore {
   /** A catalog model; a missing or withdrawn id means the default, models[0]. */
   model(id?: string) {
     return this.config.models.find((model) => model.id === id) ?? this.config.models[0];
+  }
+  /** Only ordinary Pi conversations may fall back when a model is withdrawn. Trusted roles
+   * require their exact model and reasoning effort at send, claim and every relay grant. */
+  conversationModel(conversation: PiConversationRecord, command?: PiCommandRecord) {
+    if (!conversation.profile) return this.model(command?.model ?? conversation.model);
+    const profile = this.profiles.get(conversation.profile);
+    const model = this.config.models.find(
+      (model) => model.id === profile.model.id && model.effort === profile.model.effort,
+    );
+    check(
+      model &&
+        conversation.model === model.id &&
+        (!command?.model || (command.model === model.id && command.effort === model.effort)),
+      'pi_profile_model_unavailable',
+      'This conversation requires its configured model and reasoning effort; it cannot use a fallback',
+      503,
+    );
+    return model;
+  }
+  instructions(conversation: PiConversationRecord): string {
+    return conversation.profile
+      ? this.profiles.get(conversation.profile).instructions
+      : piInstructions(this.tools.instructions());
   }
   slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;

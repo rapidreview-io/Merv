@@ -67,6 +67,16 @@ const policySchema = z
   .object({
     readOnly: z.boolean(),
     workspace: workspaceSchema.optional(),
+    platform: z
+      .object({
+        harness: z.enum(['codex', 'claude']),
+        model: z.string().min(1).max(200),
+        effort: z.string().min(1).max(50),
+      })
+      .strict()
+      .optional(),
+    maxDurationSeconds: z.number().int().min(300).max(604800).optional(),
+    maxModelTokens: z.number().int().min(1).max(1_000_000_000).optional(),
     tools: z
       .array(
         z
@@ -114,6 +124,13 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
   return freezeData({
     readOnly: parsed.data.readOnly,
     ...(parsed.data.workspace === undefined ? {} : { workspace: parsed.data.workspace }),
+    ...(parsed.data.platform === undefined ? {} : { platform: parsed.data.platform }),
+    ...(parsed.data.maxDurationSeconds === undefined
+      ? {}
+      : { maxDurationSeconds: parsed.data.maxDurationSeconds }),
+    ...(parsed.data.maxModelTokens === undefined
+      ? {}
+      : { maxModelTokens: parsed.data.maxModelTokens }),
     tools,
   }) as WorkflowExecutionPolicy;
 }

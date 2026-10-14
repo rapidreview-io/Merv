@@ -47,6 +47,15 @@ async function fixture(t: TestContext) {
         status,
         headers: { 'content-type': 'application/json' },
       });
+    if (path === '/v1/options') {
+      const url = new URL(String(input));
+      assert.equal(headers.get('authorization'), 'Bearer sbxt_managed_test_token');
+      assert.equal(headers.get('x-sandbox-namespace'), 'managed');
+      assert.match(headers.get('x-sandbox-subject')!, /^merv_account_[a-f0-9]{64}$/);
+      assert.equal(url.searchParams.get('refresh'), 'true');
+      assert.equal(url.searchParams.get('all_options'), 'true');
+      return json({ offers: [{ offer_id: 'gpu-1', available: true }] });
+    }
     if (path === '/v1/delegations/connections') {
       assert.equal(headers.get('authorization'), 'Bearer sbxt_managed_test_token');
       assert.equal(headers.get('x-sandbox-namespace'), 'managed');
@@ -133,6 +142,28 @@ test('managed funding shares creator identity across projects and separates acco
     f.state.transaction((tx) => managedAccountSubject(f.scope, 'imported-without-owner', tx)),
     { code: 'compute_account_missing' },
   );
+});
+
+test('managed catalog reads authorize the project without issuing connections or rentals', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.service.managedOptions(f.a), {
+    offers: [{ offer_id: 'gpu-1', available: true }],
+  });
+  assert.deepEqual(f.calls, ['GET /v1/options']);
+  assert.equal(f.roots.size, 0);
+  assert.equal((await f.service.status(f.a)).connected, false);
+  await assert.rejects(f.service.managedOptions({ ...f.a, projectId: 'missing' }));
+  await assert.rejects(
+    f.state.transaction(() => f.service.managedOptions(f.a)),
+    {
+      code: 'sandbox_transaction_forbidden',
+    },
+  );
+  await assert.rejects(
+    f.service.client.request('/v1/options', 'sbxt_managed_test_token', { method: 'POST' }),
+    { code: 'invalid_sandbox_route' },
+  );
+  assert.deepEqual(f.calls, ['GET /v1/options']);
 });
 
 test('lost managed issuance reply reuses the durable request and bearer after restart', async (t) => {

@@ -64,6 +64,8 @@ export interface ManagedBoundSession {
   projectId: string;
   /** The Fleet allocation whose machine runs it. */
   allocationId: string;
+  /** Exact platform from the immutable managed-runner binding, never supplied by the worker. */
+  platform?: RunnerPlatform;
   /** Its hard deadline, or its allocation's end when that comes first. */
   expiresAt: string;
   /** When it closed by its own handoff; absent while it is live. */

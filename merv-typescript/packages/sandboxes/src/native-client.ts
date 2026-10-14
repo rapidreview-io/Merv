@@ -88,8 +88,9 @@ export class NativeSandboxClient {
     } = {},
   ): Promise<T> {
     check(
-      /^\/v1\/(?:delegations|auth\/connections)(?:\/[A-Za-z0-9._~-]+)*$/.test(path) &&
-        !path.includes('..'),
+      (/^\/v1\/(?:delegations|auth\/connections)(?:\/[A-Za-z0-9._~-]+)*$/.test(path) &&
+        !path.includes('..')) ||
+        (path === '/v1/options' && (options.method ?? 'GET') === 'GET'),
       'invalid_sandbox_route',
       'Invalid native connection route',
     );

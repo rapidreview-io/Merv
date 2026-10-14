@@ -1,0 +1,104 @@
+import { z } from 'zod';
+import { check, MervError } from '@merv/contracts';
+import type { MountHandler } from '@merv/api/types';
+import { customerPage } from './customer-page.js';
+import type { CustomerService } from './service.js';
+
+// The invitation can be shared. Idempotency must be an unguessable client secret, not a title
+// or counter another invite holder could replay to recover this customer's capabilities.
+const createSchema = z
+  .object({
+    requestId: z
+      .string()
+      .regex(
+        /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i,
+        'Generate a fresh UUIDv4 requestId with crypto.randomUUID()',
+      ),
+    title: z.string().trim().min(1).max(160),
+    message: z.string().trim().min(1).max(32000).optional(),
+  })
+  .strict();
+const approvalSchema = z
+  .object({ contractVersion: z.number().int().positive(), email: z.string().email().max(254) })
+  .strict();
+const uploadSchema = z
+  .object({
+    requirementId: z.string().min(1).max(64),
+    filename: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    size: z
+      .number()
+      .int()
+      .min(1)
+      .max(20 * 1024 * 1024),
+    mediaType: z.string().max(100).optional(),
+  })
+  .strict();
+
+export function customerHttp(service: CustomerService): MountHandler {
+  return async (req, res, r) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    const path = r.url.pathname,
+      method = req.method ?? 'GET';
+    const page = /^\/customer-experiments\/r\/(ce_[a-f0-9]{32})$/.exec(path);
+    if (page && method === 'GET') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(customerPage(page[1]!));
+      return;
+    }
+    if (path === '/customer-experiments/stripe-webhook' && method === 'POST') {
+      check(service.payments, 'checkout_unavailable', 'Payments are not configured', 503);
+      const signature = req.headers['stripe-signature'];
+      check(typeof signature === 'string', 'invalid_webhook', 'Stripe signature is required', 400);
+      const event = service.payments.verify(
+        await r.bytes(256 * 1024, 'application/json'),
+        signature,
+      );
+      if (event) await service.paid(event);
+      return { received: true };
+    }
+    if (path === '/customer-experiments/requests' && method === 'POST')
+      return service.create(r.bearer(), await r.json(createSchema, 40000));
+    const match =
+      /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
+        path,
+      );
+    if (!match) throw new MervError('not_found', 'Route not found', 404);
+    const [, id, action, child, end] = match;
+    const customerOnly = action === 'accept' || action === 'checkout';
+    const record = await service.store.authorize(
+      id!,
+      r.bearer(),
+      customerOnly ? ['customer'] : ['agent', 'customer'],
+    );
+    if (!action && method === 'GET') return service.snapshot(record);
+    if (action === 'messages' && !child && method === 'POST')
+      return service.message(
+        record,
+        await r.json(
+          z
+            .object({
+              commandId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
+              text: z.string().trim().min(1).max(32000),
+            })
+            .strict(),
+          40000,
+        ),
+      );
+    if (action === 'accept' && !child && method === 'POST')
+      return service.accept(record, await r.json(approvalSchema));
+    if (action === 'checkout' && !child && method === 'POST')
+      return service.checkout(record, await r.json(approvalSchema));
+    if (action === 'uploads' && !child && method === 'POST')
+      return service.upload(record, await r.json(uploadSchema));
+    if (action === 'uploads' && child && end === 'complete' && method === 'POST')
+      return service.completeUpload(record, child);
+    if (action === 'artifacts' && child && !end && method === 'GET')
+      return service.artifact(record, child, r.url.searchParams.get('fileName') ?? undefined);
+    throw new MervError('not_found', 'Route not found', 404);
+  };
+}

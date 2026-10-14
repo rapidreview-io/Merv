@@ -307,6 +307,74 @@ test('native work pins one payer and returns only verified capture IDs from the 
   assert.equal(f.calls.length, 0);
 });
 
+test('handoff settlement waits for credential revocation, terminal work, and retained evidence', async (t) => {
+  const f = await fixture(t, { workflow: 'service_experiment', id: 'service_work' });
+  const closedAt = new Date().toISOString();
+  const settled = (epoch = '1', notBefore = closedAt) =>
+    f.state.transaction((tx) => f.work.settled('project', 'service_work', epoch, notBefore, tx));
+  assert.equal(
+    await f.state.transaction((tx) =>
+      f.work.settled('other-project', 'service_work', '1', closedAt, tx),
+    ),
+    true,
+    'A different project has no native work for this instance',
+  );
+  await f.work.launchConnections(
+    f.leased('producer', { references: { computeKind: 'experiment' } }),
+  );
+  await f.work.reconcile();
+  assert.equal(await settled(), false, 'A clean resource poll cannot settle an active credential');
+  let terminal = false;
+  let publish = false;
+  f.resources(() => ({
+    namespace: 'ns_work',
+    workflows: [
+      {
+        id: 'remote_workflow',
+        namespace: 'ns_work',
+        state: terminal ? 'completed' : 'cleaning_up',
+        origin_grant_id: 'token_producer',
+        attempt_ref: '1',
+        admission_profile: 'execute',
+      },
+    ],
+    jobs: [],
+    sandboxes: [],
+    next: { workflows: null, jobs: null, sandboxes: null },
+  }));
+  f.evidence(async () => {
+    if (terminal && !publish) throw Error('Capture registration still retrying');
+  });
+  await f.state.transaction((tx) => f.work.revokeAssignment('producer', tx));
+  await f.work.reconcile();
+  assert.ok((await f.readAssignment('producer'))!.revoked_at);
+  assert.equal(await settled(), false, 'Remote finalizers must finish after revocation');
+  terminal = true;
+  await f.work.reconcile();
+  assert.equal((await f.readWork())!.transition_pending, false);
+  assert.equal(await settled(), false, 'An evidence publication retry still blocks handoff');
+  publish = true;
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE sandbox_native_work SET evidence_checked_at=? WHERE work_id=?',
+      new Date(Date.now() - 31_000).toISOString(),
+      'service_work',
+    ),
+  );
+  await f.work.reconcile();
+  assert.equal(await settled(), true);
+  assert.equal(
+    await settled('different-contract:1'),
+    false,
+    'Settlement belongs to an exact epoch',
+  );
+  assert.equal(
+    await settled('1', new Date(Date.now() + 60_000).toISOString()),
+    false,
+    'A pre-handoff poll cannot stand in for post-handoff verification',
+  );
+});
+
 test('unknown assignment issuance retries the identical encrypted secret and hash, then handoff revokes only that lease', async (t) => {
   const f = await fixture(t),
     session = f.leased();

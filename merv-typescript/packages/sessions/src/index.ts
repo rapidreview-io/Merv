@@ -1155,6 +1155,14 @@ export class LeasedSessions implements Sessions {
         ),
     );
     const workspace = effectiveWorkspace(frozen.execution.policy);
+    // A direct offer has no server-selected platform receipt. Model-pinned work is only
+    // admitted through automatic dispatch, which matches the immutable manifest exactly.
+    check(
+      !frozen.execution.policy.platform || dispatched,
+      'platform_required',
+      'This workflow requires automatic dispatch on its exact model and reasoning effort',
+      409,
+    );
     // Dispatch chose this work by the capabilities the runner advertised; a work host's
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
     if (!dispatched && workspace.mode !== 'none')
@@ -1177,11 +1185,34 @@ export class LeasedSessions implements Sessions {
         'session_packet_large',
         'Each frozen assignment, policy, reference set and receipt must fit 512 KiB',
       );
+    const limits = frozen.lease.receipt.sessionLimits as
+      { durationSeconds?: number; modelTokens?: number } | undefined;
+    for (const limit of [limits?.durationSeconds, limits?.modelTokens])
+      check(
+        limit === undefined || (Number.isSafeInteger(limit) && limit > 0),
+        'invalid_session_limits',
+        'Workflow lease has invalid session limits',
+        500,
+      );
+    const tokenBudget = Math.min(
+      frozen.execution.policy.maxModelTokens ?? Infinity,
+      limits?.modelTokens ?? Infinity,
+    );
     const time = this.clock();
-    const hard = Math.min(time + duration * 1000, delegationEnd(owner.source));
+    const hard = Math.min(
+      time +
+        Math.min(
+          duration,
+          frozen.execution.policy.maxDurationSeconds ?? Infinity,
+          limits?.durationSeconds ?? Infinity,
+        ) *
+          1000,
+      delegationEnd(owner.source),
+    );
     const session: WorkSession = {
       kind: 'work',
       id,
+      ...(Number.isFinite(tokenBudget) && { tokenBudget }),
       threadId: thread.id,
       projectId: caller.projectId,
       actorId: actor.id,

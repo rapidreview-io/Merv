@@ -8,7 +8,12 @@ import { Context } from 'cordis';
 import { ArtifactStore } from '@merv/artifacts';
 import { DurableEvents } from '@merv/domain-events';
 import { DiskBlobs } from '@merv/blobs';
-import { createService, type ArtifactFileProvider, type Transaction } from '@merv/contracts';
+import {
+  createService,
+  type ArtifactFileProvider,
+  type Caller,
+  type Transaction,
+} from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { LaunchConnectionsProvider } from '@merv/sessions/types';
 import { ApiServer } from '../packages/api/src/http.js';
@@ -273,6 +278,7 @@ test('legacy Fleet/Code connections remain available without native owners and n
   assert.ok(f.ctx.sandboxes.runtimes);
   assert.equal(f.ctx.sandboxes.runtimes.connected(f.project.id), true);
   assert.equal(f.launcher(), undefined);
+  assert.equal(f.ctx.sandboxes.managedCompute, undefined);
   assert.equal(f.files.size, 0);
   await f.ctx.sandboxes.refresh();
   assert.equal(f.ctx.sandboxes.status().state, 'ready');
@@ -280,6 +286,65 @@ test('legacy Fleet/Code connections remain available without native owners and n
   assert.equal(status.status, 200);
   assert.equal(((await status.json()) as { available: boolean }).available, false);
   await fiber.dispose();
+});
+
+test('managed compute capability shares the native owner and drains reads on unload', async (t) => {
+  const f = await foundation(t);
+  const principal = await f.scope.members.acceptVerifiedIdentity({
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'owner',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  });
+  const caller = await f.scope.caller(principal, f.project.id);
+  const entered = deferred<void>();
+  const released = deferred<void>();
+  t.mock.method(NativeConnections.prototype, 'managedOptions', async function (received: Caller) {
+    assert.equal(received.projectId, caller.projectId);
+    entered.resolve();
+    await released.promise;
+    return { offers: [] };
+  });
+  const enabled = t.mock.method(NativeConnections.prototype, 'enableManaged', async () => ({
+    available: true,
+    connected: true,
+    connectionId: 'connection',
+    accountId: 'account',
+    memberId: 'member',
+    connectedAt: new Date().toISOString(),
+    url: null,
+    funding: 'managed' as const,
+  }));
+  f.owners();
+  const ready = f.published();
+  const fiber = f.ctx.plugin(sandboxesPlugin, {
+    ...f.config,
+    native: {
+      ...f.config.native,
+      managed: { namespace: 'managed', tokenEnv: 'MERV_NATIVE_PLUGIN_TOKEN' },
+    },
+  });
+  await ready;
+  const capability = f.ctx.sandboxes.managedCompute!;
+  assert.equal((await capability.enable(caller)).funding, 'managed');
+  assert.equal(enabled.mock.callCount(), 1);
+  await assert.rejects(
+    f.state.transaction(() => capability.enable(caller)),
+    {
+      code: 'sandbox_transaction_forbidden',
+    },
+  );
+  const reading = capability.options(caller);
+  await entered.promise;
+  let disposed = false;
+  const disposing = fiber.dispose().then(() => {
+    disposed = true;
+  });
+  await nextTurn();
+  assert.equal(disposed, false);
+  released.resolve();
+  assert.deepEqual(await reading, { offers: [] });
+  await disposing;
+  await assert.rejects(capability.options(caller), { code: 'sandboxes_closed' });
 });
 
 test('native plugin unload drains reconciliation and fences captured work handles', async (t) => {

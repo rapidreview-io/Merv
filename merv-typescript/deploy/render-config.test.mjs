@@ -250,7 +250,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const [luna] = models;
   for (const catalog of [
     [],
-    [{ ...luna, effort: 'medium' }],
+    [{ ...luna, effort: 'high' }],
     [{ ...luna, label: 'GPT-6 Luna, the quick one' }],
     [{ ...luna, id: '-luna' }],
     [{ ...luna, provider: 'openai' }],
@@ -690,4 +690,53 @@ test('files the retired compute path captured stay downloadable under the ML gra
     { MERV_SANDBOXES_ML_TOKEN: '' },
   ])
     assert.notEqual(run({ ...settings, ...invalid }).status, 0);
+});
+
+test('customer experiments opt in to Astra without exposing secrets or altering default composition', (t) => {
+  const { run, plugin, output } = renderer(t);
+  assert.equal(run({}).status, 0);
+  assert.equal(plugin('customer-experiments'), undefined);
+  const customer = {
+    ...pi,
+    MERV_FLEET_WORKFLOW_ENABLED: 'true',
+    MERV_FLEET_WORKFLOW_PEOPLE: '["*"]',
+    MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV: 'MODEL_KEY',
+    MERV_FLEET_WORKFLOW_BASE_URL: 'https://merv.example',
+    MODEL_KEY: 'fixture',
+    MERV_PI_MODELS: JSON.stringify([{ id: 'gpt-6-astra', label: 'GPT-6 Astra', effort: 'medium' }]),
+    MERV_CUSTOMER_EXPERIMENTS_ENABLED: 'true',
+    MERV_CUSTOMER_SPONSOR_ISSUER: 'https://identity.example/auth/v1',
+    MERV_CUSTOMER_SPONSOR_SUBJECT: 'founder',
+    MERV_CUSTOMER_INTAKE_KEY: 'i'.repeat(40),
+    MERV_CUSTOMER_ACCESS_KEY: 'private-customer-access-signing-fixture-12345',
+    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
+    MERV_SANDBOXES_APPLICATION_ID: 'merv',
+    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
+    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
+    MERV_SANDBOXES_MANAGED_ML_ENABLED: 'true',
+    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
+    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_ml',
+  };
+  assert.equal(run(customer).status, 0);
+  assert.equal(plugin('fleet-workflow').config.astraMediumEnabled, true);
+  assert.equal(plugin('customer-experiments').config.sponsor.subject, 'founder');
+  assert.ok(!readFileSync(output, 'utf8').includes(customer.MERV_CUSTOMER_ACCESS_KEY));
+  assert.ok(!readFileSync(output, 'utf8').includes(customer.MERV_CUSTOMER_INTAKE_KEY));
+  for (const broken of [
+    { MERV_PI_ENABLED: 'false' },
+    { MERV_FLEET_WORKFLOW_ENABLED: 'false' },
+    { MERV_CUSTOMER_ACCESS_KEY: 'short' },
+    { MERV_SANDBOXES_NATIVE_ENABLED: 'false' },
+    { MERV_SANDBOXES_MANAGED_ML_ENABLED: 'false' },
+    {
+      MERV_PI_MODELS: JSON.stringify([{ id: 'gpt-6-astra', label: 'GPT-6 Astra', effort: 'low' }]),
+    },
+    { MERV_FLEET_WORKFLOW_PEOPLE: '["https://identity.example/auth/v1 another-person"]' },
+    {
+      MERV_CUSTOMER_STRIPE_SECRET_KEY: 'sk_live_fixture',
+      MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET: 'whsec_fixture',
+      MERV_CUSTOMER_STRIPE_LIVE: 'true',
+    },
+  ])
+    assert.notEqual(run({ ...customer, ...broken }).status, 0);
 });

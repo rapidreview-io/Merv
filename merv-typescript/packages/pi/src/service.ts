@@ -27,7 +27,12 @@ import {
 } from './schema.js';
 import { piModelRelay } from './relay.js';
 import { conversationRules } from './conversation-rules.js';
-import { piInstructions } from './prompt.js';
+import {
+  profiledCreateInput,
+  type PiProfile,
+  type PiProfiledCreate,
+  type PiStoredProfile,
+} from './profiles.js';
 import { piModelToolName } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
 import { describeScreen, renderScreen, type ScreenAnswer } from './screen.js';
@@ -81,8 +86,11 @@ const interrupted = (name: string): Outcome => {
   const said = 'it may have run, but how it came out is unknown';
   return { ok: false, code: 'interrupted', told: `${name} was interrupted: ${said}.`, said };
 };
-const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
-  value;
+const publicConversation = ({
+  source: _source,
+  profile: _profile,
+  ...value
+}: PiConversationRecord): PiConversation => value;
 
 /** The person's conversations. It composes Pi's shared records (core), each person's host and its
  * Fleet machines (hosts), and the routes the host's worker calls (protocol). */
@@ -198,6 +206,26 @@ export class PiService implements Pi {
   async create(caller: Caller, input: unknown): Promise<PiConversation> {
     this.core.ready();
     const value = parse(createInput, input);
+    return this.createConversation(caller, value);
+  }
+
+  /** Trusted server integration only: neither this method nor profile registration is a tool
+   * or an HTTP operation. The normal create input remains strict. */
+  registerProfile(profile: PiProfile): () => void {
+    this.core.ready();
+    return this.core.profiles.register(profile);
+  }
+  async createProfiled(caller: Caller, input: PiProfiledCreate): Promise<PiConversation> {
+    this.core.ready();
+    const value = parse(profiledCreateInput, input);
+    return this.createConversation(caller, value, this.core.profiles.bind(value.profile));
+  }
+  private async createConversation(
+    caller: Caller,
+    value: { requestId: string; title: string },
+    profile?: PiStoredProfile,
+  ): Promise<PiConversation> {
+    const creationHash = digest(profile ? { ...value, profile } : value);
     return this.core.state.transaction(async (tx) => {
       const userId = await this.user(caller, tx);
       const existing = await tx.get<{ data_json: string; input_hash: string }>(
@@ -208,12 +236,14 @@ export class PiService implements Pi {
       );
       if (existing) {
         check(
-          existing.input_hash === digest(value),
+          existing.input_hash === creationHash,
           'pi_request_conflict',
           'Conversation request was reused with different input',
           409,
         );
-        return publicConversation(decode(existing));
+        const conversation = decode<PiConversationRecord>(existing);
+        if (profile) this.core.conversationModel(conversation);
+        return publicConversation(conversation);
       }
       const conversation: PiConversationRecord = {
         id: newId('pic'),
@@ -224,18 +254,22 @@ export class PiService implements Pi {
         activeCommandId: null,
         checkpoint: null,
         previousCheckpoint: null,
-        model: this.core.model(await this.picked(tx, userId, caller.projectId)).id,
+        model: profile
+          ? this.core.profiles.get(profile).model.id
+          : this.core.model(await this.picked(tx, userId, caller.projectId)).id,
+        ...(profile && { profile }),
         source: await this.core.scope.delegationSource(caller, tx),
         createdAt: this.core.time(),
         updatedAt: this.core.time(),
       };
+      if (profile) this.core.conversationModel(conversation);
       await tx.run(
         'INSERT INTO pi_conversations(id,project_id,user_id,request_id,input_hash,data_json) VALUES(?,?,?,?,?,?)',
         conversation.id,
         conversation.projectId,
         userId,
         value.requestId,
-        digest(value),
+        creationHash,
         JSON.stringify(conversation),
       );
       return publicConversation(conversation);
@@ -314,11 +348,14 @@ export class PiService implements Pi {
       available: this.core.fleet.connected(this.core.hostProject),
       conversation: {
         ...publicConversation(conversation),
-        model: this.core.model(conversation.model).id,
+        model: this.core.conversationModel(conversation).id,
       },
       commands: commands.map(publicCommand),
       host: view,
-      models: this.core.config.models.map(({ effort: _effort, ...model }) => model),
+      models: (conversation.profile
+        ? [this.core.conversationModel(conversation)]
+        : this.core.config.models
+      ).map(({ effort: _effort, ...model }) => model),
       ...(this.asks.has(id) ? { screen: this.asks.get(id)!.asked } : {}),
       ...transient,
       tail: whole
@@ -371,7 +408,7 @@ export class PiService implements Pi {
     const active = commands.find(({ id }) => id === conversation.activeCommandId);
     const served = active?.notes ? active : commands.findLast((command) => command.notes);
     return {
-      instructions: piInstructions(this.core.tools.instructions()),
+      instructions: served?.instructions ?? this.core.instructions(conversation),
       turn: served
         ? {
             commandId: served.id,
@@ -427,7 +464,7 @@ export class PiService implements Pi {
         409,
       );
       // A page showing another model than the conversation's sends nothing on it.
-      const current = this.core.model(conversation.model);
+      const current = this.core.conversationModel(conversation);
       check(
         !model || model === current.id,
         'pi_model_changed',
@@ -584,6 +621,12 @@ export class PiService implements Pi {
     const { id, sdp } = parse(voiceInput, input);
     const { commands, userId } = await this.core.read(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
+      check(
+        !conversation.profile,
+        'pi_profile_fixed',
+        'This conversation role uses its fixed text model',
+        403,
+      );
       const rows = await tx.all<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
         id,
@@ -614,6 +657,7 @@ export class PiService implements Pi {
     const renter = await this.hosts.hostCaller();
     await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
+      if (conversation.profile) this.core.conversationModel(conversation);
       const source = await this.core.scope.delegationSource(caller, tx);
       await this.hosts.ensure(renter, conversation, source, tx, true);
     });
@@ -625,6 +669,7 @@ export class PiService implements Pi {
     check(caller.conversation, 'pi_forbidden', 'Conversation authority is required', 403);
     const conversation = await this.core.conversation(tx, caller.conversation.id);
     const command = await this.core.command(tx, conversation.id, caller.conversation.commandId);
+    if (conversation.profile) this.core.conversationModel(conversation, command);
     const host = command.hostId ? await this.core.host(tx, command.hostId) : null;
     const role = host?.status === 'live' ? roleOf(host, command.runtimeId) : undefined;
     const slot = role && host![role];
@@ -660,6 +705,12 @@ export class PiService implements Pi {
       command.proposals?.find(({ id }) => id === value.proposalId);
     const proposal = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, value.id, tx);
+      check(
+        !conversation.profile,
+        'pi_profile_fixed',
+        'Profile conversations do not offer privileged action proposals',
+        403,
+      );
       check(
         !conversation.activeCommandId,
         'pi_turn_busy',
@@ -835,6 +886,12 @@ export class PiService implements Pi {
     await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       check(
+        !conversation.profile,
+        'pi_profile_fixed',
+        'This conversation role has a fixed model',
+        403,
+      );
+      check(
         this.core.config.models.some((offered) => offered.id === model),
         'pi_model_unavailable',
         'That model is not offered',
@@ -917,7 +974,7 @@ export class PiService implements Pi {
         runtimeId: command.runtimeId,
         epoch: command.epoch,
         expiresAt: command.expiresAt,
-        model: this.core.model(command.model).id,
+        model: this.core.conversationModel(conversation, command).id,
         // Only the tools this turn was offered, the same for every call of the turn.
         toolNames: (command.tools ?? []).map(piModelToolName),
       };
@@ -942,7 +999,7 @@ export class PiService implements Pi {
           grant.runtimeId === command.runtimeId &&
           grant.epoch === command.epoch &&
           grant.expiresAt === command.expiresAt &&
-          grant.model === this.core.model(command.model).id &&
+          grant.model === this.core.conversationModel(conversation, command).id &&
           command.status === 'working',
         'pi_authority_stale',
         'Model authority is no longer active',

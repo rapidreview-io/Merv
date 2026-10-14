@@ -58,6 +58,8 @@ export interface PiCommand {
   machine?: string;
   /** The model it answers on, fixed when a worker claims it. */
   model?: string;
+  /** Profile turns record the enforced reasoning effort alongside their model. */
+  effort?: PiModelConfig['effort'];
   status: PiStatus;
   messages: PiMessage[];
   outcomes: PiToolOutcome[];

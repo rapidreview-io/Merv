@@ -23,7 +23,7 @@ import { piTitle, titleRequest } from './relay.js';
 import { conversationUse } from './conversation-rules.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
-import { piInstructions, turnNotes } from './prompt.js';
+import { turnNotes } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   PiCommandRecord,
@@ -134,6 +134,7 @@ export class PiWorkerProtocol {
     const { host, slot } = await this.worker(token, tx);
     const conversation = await this.core.conversation(tx, input.conversationId);
     const command = await this.core.command(tx, conversation.id, input.commandId);
+    if (person && conversation.profile) this.core.conversationModel(conversation, command);
     check(
       conversation.activeCommandId === command.id &&
         command.hostId === host.id &&
@@ -203,6 +204,7 @@ export class PiWorkerProtocol {
       const turn = { conversationId: conversation.id, commandId: command.id, workerId };
       const { actor } = await this.core.read((tx) => this.bound(token, turn, tx));
       const caller = conversationCaller(conversation, command);
+      const profile = conversation.profile && this.core.profiles.get(conversation.profile);
       // Every tool the person may use here, read-only for a reader, whose every other call a
       // handler would refuse.
       const uses = new Map(
@@ -215,6 +217,7 @@ export class PiWorkerProtocol {
       // each tool's own registration says what only the person may run.
       const described = (await this.core.tools.describe(caller))
         .filter(({ name }) => !name.startsWith('pi.'))
+        .filter(({ name }) => !profile || profile.tools.includes(name))
         .flatMap((description) => {
           const tool = piTool(description, uses.get(description.name));
           return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
@@ -223,7 +226,11 @@ export class PiWorkerProtocol {
       const previous = await this.told(conversation, command, actor!.role);
       const told = [...previous.notes, ...notes];
       // What the installed plugins tell the turn about the project now, under the worker's cap.
-      const context = (await this.core.tools.context(caller)).slice(0, 32_000) || undefined;
+      const context =
+        (profile
+          ? ((await profile.context?.({ binding: conversation.profile!, caller })) ?? '')
+          : await this.core.tools.context(caller)
+        ).slice(0, 32_000) || undefined;
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
       // grant names exactly it. switch_machine comes first, so no native tool's model name takes
       // its place. Its notes are kept the same way, so pi.prompt shows what the turn was given.
@@ -231,6 +238,7 @@ export class PiWorkerProtocol {
         tools,
         sent,
         context: sentContext,
+        instructions,
       } = await this.core.state.transaction(async (tx) => {
         const current = (await this.bound(token, turn, tx)).command;
         if (!current.tools || !current.notes) {
@@ -242,12 +250,18 @@ export class PiWorkerProtocol {
             .map(({ name }) => name);
           current.notes ??= told;
           current.context ??= context;
+          if (profile) current.instructions ??= this.core.instructions(conversation);
           await this.core.saveCommand(tx, current);
         }
-        return { tools: current.tools, sent: current.notes, context: current.context };
+        return {
+          tools: current.tools,
+          sent: current.notes,
+          context: current.context,
+          instructions: current.instructions ?? this.core.instructions(conversation),
+        };
       });
       this.core.streams.changed(conversation.id, command.id);
-      const model = this.core.model(command.model);
+      const model = this.core.conversationModel(conversation, command);
       return {
         command: publicCommand(command),
         checkpoint,
@@ -257,7 +271,7 @@ export class PiWorkerProtocol {
         tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
           tools.includes(name),
         ),
-        instructions: piInstructions(this.core.tools.instructions()),
+        instructions,
         notes: sent,
         context: sentContext,
         ...(previous.interrupted && { previousInterrupted: true as const }),
@@ -308,7 +322,7 @@ export class PiWorkerProtocol {
         role,
         actorId: conversation.source.actorId,
         projectId: conversation.projectId,
-        model: this.core.model(command.model),
+        model: this.core.conversationModel(conversation, command),
         today: this.core.time().slice(0, 10),
         interrupted: interrupted ?? [],
       }),
@@ -384,7 +398,9 @@ export class PiWorkerProtocol {
     if (!command) return {};
     const claim = await this.claim(tx, host, command, serving.machine);
     // The model is the conversation's as the turn is claimed: a pick while it waited applies.
-    command.model = this.core.model(claim.conversation.model).id;
+    const model = this.core.conversationModel(claim.conversation);
+    command.model = model.id;
+    if (claim.conversation.profile) command.effort = model.effort;
     command.status = 'starting';
     command.workerId = value.workerId;
     // Queueing and cold start spent the send-time budget; from here only a stall ends the turn
@@ -406,6 +422,10 @@ export class PiWorkerProtocol {
     machine: string,
   ) {
     const conversation = await this.core.conversation(tx, command.conversationId);
+    if (conversation.profile) {
+      this.core.conversationModel(conversation);
+      return { conversation, command, offered: null, notes: [] };
+    }
     const context = await this.moveContext(tx, host, conversation, machine);
     const offered = context && (!command.workerId || command.canMove) ? moveTool(context) : null;
     return { conversation, command, offered, notes: context ? moveNotes(context) : [] };
@@ -480,6 +500,21 @@ export class PiWorkerProtocol {
       'This tool was not offered in this turn',
       403,
     );
+    if (conversation.profile) {
+      const profile = this.core.profiles.get(conversation.profile);
+      check(
+        profile.tools.includes(value.name),
+        'pi_tool_forbidden',
+        'This tool is outside the conversation role',
+        403,
+      );
+      await profile.authorizeTool?.({
+        binding: conversation.profile,
+        caller: conversationCaller(conversation, command),
+        name: value.name,
+        input: value.input,
+      });
+    }
     const key = `${conversation.id}:${command.id}`;
     const call = digest([value.name, value.input]);
     const refused = this.core.refusals.get(key)?.get(call);
@@ -515,6 +550,12 @@ export class PiWorkerProtocol {
       const found = conversationUse(definition, parsed.data);
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
+    check(
+      !conversation.profile || !use,
+      'pi_tool_forbidden',
+      'Profile turns cannot propose privileged actions',
+      403,
+    );
     this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.core.report(
@@ -815,7 +856,8 @@ export class PiWorkerProtocol {
         'Conversation changed while saving its checkpoint',
         409,
       );
-      const first = !conversation.checkpoint && conversation.title === defaultTitle;
+      const first =
+        !conversation.profile && !conversation.checkpoint && conversation.title === defaultTitle;
       conversation.previousCheckpoint = conversation.checkpoint;
       conversation.checkpoint = { ...stored, commandId: command.id };
       conversation.activeCommandId = null;

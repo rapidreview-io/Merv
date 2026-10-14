@@ -118,7 +118,7 @@ export function piModels(entries, name) {
       Object.keys(rest).length ||
       !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(typeof id === 'string' ? id : '') ||
       !/^\S(?:.{0,22}\S)?$/.test(typeof label === 'string' ? label : '') ||
-      !['none', 'low'].includes(effort)
+      !['none', 'low', 'medium'].includes(effort)
     ) {
       throw new Error(`Invalid ${name} entry`);
     }

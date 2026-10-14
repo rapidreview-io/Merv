@@ -223,6 +223,12 @@ export interface WorkflowExecutionPolicy {
   readOnly: boolean;
   /** Omission preserves old manifest hashes and means scratch space with no repository. */
   workspace?: WorkflowWorkspacePolicy;
+  /** Optional immutable platform requirement. Absence preserves existing scheduling. */
+  platform?: { harness: 'codex' | 'claude'; model: string; effort: string };
+  /** A hard upper bound on each worker session, enforced by Sessions. */
+  maxDurationSeconds?: number;
+  /** Hosted model relay budget for a visit. Optional lease receipt.sessionLimits may lower it. */
+  maxModelTokens?: number;
   tools: {
     name: string;
     /** A tool is admitted when one complete argument-binding alternative matches. */

@@ -124,7 +124,7 @@ export const piConfig = z
           .object({
             id: modelId,
             label: z.string().trim().min(1).max(24),
-            effort: z.enum(['none', 'low']),
+            effort: z.enum(['none', 'low', 'medium']),
           })
           .strict(),
       )

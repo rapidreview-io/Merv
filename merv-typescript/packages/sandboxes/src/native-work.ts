@@ -265,6 +265,44 @@ export class NativeWorkService {
       .artifactIds;
   }
   /**
+   * Whether a handoff has quiesced after its producer closed. This reads the reconciler's
+   * existing receipt: it revokes assignment admission before reading resources, and keeps
+   * transition_pending while workflows/jobs are active and last_error while publishing
+   * evidence is retrying. A successful poll alone is deliberately insufficient.
+   */
+  async settled(
+    projectId: string,
+    instanceId: string,
+    attempt: string,
+    notBefore: string,
+    tx: Transaction,
+  ): Promise<boolean> {
+    this.state.assertTransaction(tx);
+    valid(Number.isFinite(Date.parse(notBefore)));
+    const rows = await tx.all<NativeWorkRow>(
+      'SELECT * FROM sandbox_native_work WHERE project_id=? AND work_id=?',
+      projectId,
+      instanceId,
+    );
+    if (!rows.length) return true;
+    if (
+      rows.some(
+        (row) =>
+          row.desired_attempt !== attempt ||
+          row.transition_pending ||
+          row.last_error !== null ||
+          !row.evidence_checked_at ||
+          Date.parse(row.evidence_checked_at) < Date.parse(notBefore),
+      )
+    )
+      return false;
+    return !(await tx.get(
+      'SELECT 1 FROM sandbox_native_assignments WHERE project_id=? AND work_id=? AND revoked_at IS NULL LIMIT 1',
+      projectId,
+      instanceId,
+    ));
+  }
+  /**
    * For each instance, in one read: what `captures` answers, and the Captures refused as ones
    * that can never register under the same epochs (node '*' is a workflow refused as a whole;
    * one refused before its attempt was known answers for any).

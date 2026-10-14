@@ -525,7 +525,7 @@ export interface SessionDispatchControls {
     input: { instanceId: string; expectedRevision: number; reason: string; requestId: string },
   ): Promise<DispatchHold>;
   /** Only a project admin who is not a leased worker sets what pauses automatic dispatch. */
-  setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus>;
+  setBudget(caller: Caller, input: SessionBudgetInput, tx?: Transaction): Promise<BudgetStatus>;
 }
 export interface SessionRunningReads {
   /**

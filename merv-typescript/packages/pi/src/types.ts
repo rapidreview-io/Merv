@@ -1,6 +1,7 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
 import type { ModelRelayHandle } from '@merv/fleet/types';
 import type { PiModelConfig } from './schema.js';
+import type { PiProfile, PiProfiledCreate, PiStoredProfile } from './profiles.js';
 import type {
   PiCommand,
   PiConversation,
@@ -16,10 +17,13 @@ import type {
 } from './models.js';
 
 export type * from './models.js';
+export type * from './profiles.js';
 
 export interface PiConversationRecord extends PiConversation {
   /** The person's own authority, refreshed on every send: every data read of a turn runs as it. */
   source: DelegationSource;
+  /** Immutable server-owned role and request binding. Public Pi creation cannot set it. */
+  profile?: PiStoredProfile;
 }
 export interface PiCommandRecord extends PiCommand {
   inputHash: string;
@@ -36,6 +40,8 @@ export interface PiCommandRecord extends PiCommand {
   /** The project context (Tools.context) fixed when this turn was first served. Source material,
    * not instructions. */
   context?: string;
+  /** Trusted profile instructions fixed at first serve. Default conversations use Pi's guide. */
+  instructions?: string;
   /** What a turn served before context was generic kept as its paper; never served again. */
   projectPaper?: string;
   /** Its first tool call, recorded before the call runs: from then it never starts again. */
@@ -226,6 +232,8 @@ export interface Pi {
 }
 /** Server-facing contract: transport and UI do not need the service implementation. */
 export interface PiRuntime extends Pi {
+  registerProfile(profile: PiProfile): () => void;
+  createProfiled(caller: Caller, input: PiProfiledCreate): Promise<PiConversation>;
   readonly config: {
     models: readonly PiModelConfig[];
     modelApiKeyEnv: string;

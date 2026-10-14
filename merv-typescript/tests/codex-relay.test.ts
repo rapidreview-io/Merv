@@ -16,7 +16,7 @@ import {
   setDailyTokens,
 } from '../packages/fleet/src/codex-relay.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
-import { hostedCodexPlatform } from '@merv/fleet/hosted-codex';
+import { hostedAstraPlatform, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { openState } from './fixtures/state.js';
 
 const key = 'private-provider-key';
@@ -745,6 +745,42 @@ test('a person’s own daily limit governs their calls, above or below the deplo
   );
   await setDailyTokens(f.state, grant.person, 100);
   assert.equal((await f.call()).status, 403);
+});
+
+test('Astra model grants come from the bound platform and force medium even with omitted reasoning', () => {
+  const bound = {
+    sessionId: 'session_astra',
+    projectId: 'project_service',
+    allocationId: 'flt_astra',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    platform: hostedAstraPlatform,
+    tokenBudget: 500_000,
+  };
+  const actual = hostedGrant(bound, 'person', Date.now());
+  assert.equal(actual.model, 'gpt-6-astra');
+  assert.equal(actual.effort, 'medium');
+  assert.equal(actual.tokenBudget, 500_000);
+  assert.equal(codexPayload(codex, actual), null, 'no model substitution');
+  const { reasoning: _ignored, ...withoutReasoning } = codex;
+  assert.deepEqual(codexPayload({ ...withoutReasoning, model: actual.model }, actual)?.reasoning, {
+    effort: 'medium',
+  });
+  assert.equal(
+    codexPayload({ ...codex, model: actual.model }, actual)?.reasoning?.effort,
+    'medium',
+  );
+  assert.throws(
+    () =>
+      hostedGrant(
+        {
+          ...bound,
+          platform: { ...hostedAstraPlatform, effort: 'low' },
+        },
+        'person',
+        Date.now(),
+      ),
+    { code: 'unauthorized' },
+  );
 });
 
 test('Fleet grants hosted Codex the model while its session is live or a minute past its handoff', () => {

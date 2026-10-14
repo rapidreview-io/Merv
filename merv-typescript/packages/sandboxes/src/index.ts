@@ -33,6 +33,7 @@ import type {
   SandboxTarget,
   SandboxRuntimeHandle,
   SandboxRuntimes,
+  ManagedCompute,
 } from './types.js';
 import { NativeConnections } from './native-connections.js';
 import { NativeEvidence } from './native-evidence.js';
@@ -65,6 +66,7 @@ export type {
   SandboxRuntimeLaunch,
   SandboxRuntimeHandle,
   SandboxRuntimes,
+  ManagedCompute,
 } from './types.js';
 export { checkScript } from './checks.js';
 export { sandboxTools } from './manifest.js';
@@ -240,6 +242,7 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
  * records its open panels ask for, read on this service's own timer, never inside a request.
  */
 export class SandboxService implements Sandboxes {
+  readonly managedCompute?: ManagedCompute;
   readonly nativeMachines?: NativeMachineReads;
   readonly #nativeWork?: NativeWorkService;
   readonly #client: SandboxClient;
@@ -271,11 +274,20 @@ export class SandboxService implements Sandboxes {
   /** `native` is native compute's work and machine reads, where the deployment configured it. */
   constructor(
     config: SandboxesConfig,
-    native: { work?: NativeWorkService; machines?: NativeMachineReads } = {},
+    native: {
+      work?: NativeWorkService;
+      machines?: NativeMachineReads;
+      managedCompute?: ManagedCompute;
+    } = {},
   ) {
     const parsed = configuration.safeParse(config);
     check(parsed.success, 'invalid_sandboxes_config', 'The sandboxes configuration is invalid');
     this.#nativeWork = native.work;
+    if (native.managedCompute)
+      this.managedCompute = {
+        options: this.#drained(native.managedCompute.options),
+        enable: this.#drained(native.managedCompute.enable),
+      };
     const reader = native.machines;
     if (reader)
       this.nativeMachines = {
@@ -439,6 +451,21 @@ export class SandboxService implements Sandboxes {
     return work
       ? await this.nativeOperation(() => work.captures(projectId, instanceId, tx, attempts))
       : [];
+  };
+
+  settled: NonNullable<Sandboxes['settled']> = async (
+    projectId,
+    instanceId,
+    attempt,
+    notBefore,
+    tx,
+  ) => {
+    const work = this.#nativeWork;
+    return work
+      ? await this.nativeOperation(() =>
+          work.settled(projectId, instanceId, attempt, notBefore, tx),
+        )
+      : true;
   };
 
   evidence: Sandboxes['evidence'] = async (projectId, works, tx) => {
@@ -817,6 +844,20 @@ export const sandboxesPlugin = {
         const service = new SandboxService(config, {
           work,
           machines: new NativeMachineReader(ctx.state, connections),
+          ...(settings.managed && {
+            managedCompute: {
+              options: (caller: Caller) => connections.managedOptions(caller),
+              enable: (caller: Caller) => {
+                check(
+                  !ctx.state.ambient,
+                  'sandbox_transaction_forbidden',
+                  'Managed compute preparation requires an independent connection',
+                  500,
+                );
+                return connections.enableManaged(caller);
+              },
+            },
+          }),
         });
         ctx.effect(() =>
           ctx.artifacts.registerFileProvider('sandboxes-native', {

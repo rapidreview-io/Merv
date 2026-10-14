@@ -178,6 +178,26 @@ export class NativeConnections {
     }
     return status;
   }
+  /** Server-side planning reads the managed catalog without issuing compute authority. */
+  async managedOptions(caller: Caller): Promise<Json> {
+    check(
+      !this.state.ambient,
+      'sandbox_transaction_forbidden',
+      'Managed compute options require an independent connection',
+      500,
+    );
+    const managed = this.config.managed;
+    const token = managed && this.environment[managed.tokenEnv];
+    check(managed && token, 'sandbox_setup_required', 'Managed ML is not configured', 503);
+    const subject = await this.state.snapshotTransaction(async (tx) => {
+      await this.authorize(caller, tx, false);
+      return managedAccountSubject(this.scope, caller.projectId, tx);
+    });
+    return this.client.request<Json>('/v1/options', token, {
+      scope: { namespace: managed.namespace, subject },
+      query: { refresh: 'true', all_options: 'true' },
+    });
+  }
   async enableManaged(caller: Caller): Promise<NativeConnectionStatus> {
     const managed = this.config.managed;
     const token = managed && this.environment[managed.tokenEnv];
