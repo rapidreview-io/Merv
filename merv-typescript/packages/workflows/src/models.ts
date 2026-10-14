@@ -28,7 +28,6 @@ export interface WorkflowHistoryEntry {
   requestId: string;
   fromState: string | null;
   toState: string;
-  data: Data;
   createdAt: string;
 }
 

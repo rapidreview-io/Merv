@@ -799,7 +799,9 @@ async function run() {
       protocolObservations,
       task: finalTask,
       review: await app.ctx.reviews.get(caller, firstReviewId),
-      history: await app.ctx.workflows.history(caller, firstTaskId),
+      history: await app.ctx.state.read((sql) =>
+        sql.all('SELECT * FROM wf_history WHERE instance_id=? ORDER BY revision', firstTaskId),
+      ),
       events,
     };
     await app.stop();

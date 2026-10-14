@@ -154,7 +154,14 @@ test('retired work survives restart as readable history, with no new claims or m
     handle.dispose();
   }
   const [taskId, experimentId] = ids as [string, string];
-  const before = await Promise.all(ids.map((id) => app.ctx.workflows.history(owner, id)));
+  const history = () =>
+    app.ctx.state.read((sql) =>
+      sql.all(
+        'SELECT * FROM wf_history WHERE instance_id IN (?,?) ORDER BY instance_id,revision',
+        ...ids,
+      ),
+    );
+  const before = await history();
   await app.stop();
   app = await createApp({ directory });
   assert.equal(
@@ -246,10 +253,7 @@ test('retired work survives restart as readable history, with no new claims or m
     await assert.rejects(app.ctx.reviews.start(reviewer, reviewId), retired);
     assert.equal((await app.ctx.reviews.get(owner, reviewId)).status, 'requested');
   }
-  assert.deepEqual(
-    await Promise.all(ids.map((id) => app.ctx.workflows.history(owner, id))),
-    before,
-  );
+  assert.deepEqual(await history(), before);
   assert.equal((await app.ctx.tasks.get(owner, taskId)).workflow.revision, 0);
   assert.deepEqual((await app.ctx.experiments.get(owner, experimentId)).evidence, []);
 });

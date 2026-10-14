@@ -149,10 +149,6 @@ const reads: [string, (f: Fixture) => Promise<unknown>][] = [
   ['get', async (f) => assert.equal((await f.workflows.get(f.owner, f.instance.id)).revision, 0)],
   ['list', async (f) => assert.equal((await f.workflows.list(f.owner)).length, 2)],
   [
-    'history',
-    async (f) => assert.equal((await f.workflows.history(f.owner, f.instance.id)).length, 1),
-  ],
-  [
     'evaluate',
     async (f) =>
       assert.equal((await f.workflows.evaluate(f.owner, f.instance.id)).instanceId, f.instance.id),

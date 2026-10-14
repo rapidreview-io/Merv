@@ -127,7 +127,11 @@ export function Outcome({
           ? 'Refused'
           : 'Ran';
   return (
-    <div className="pi-receipt" title={named ? proposal.name : undefined}>
+    <div
+      className="pi-receipt"
+      title={named ? proposal.name : undefined}
+      data-merv-secret={proposal.secret}
+    >
       <div className="pi-receipt-line">
         <span className={cx('pi-receipt-word', failed && 'pi-refused')}>{word}</span>
         {named && <span className="pi-receipt-act">{actOf(proposal)}</span>}

@@ -116,6 +116,7 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
           <textarea
             className="textarea mono"
             aria-label="Fleet source credential secret"
+            data-merv-secret
             value={secret}
             rows={3}
             readOnly
@@ -345,6 +346,7 @@ export function KeysPanel({
           <textarea
             className="textarea mono"
             aria-label="New machine key secret"
+            data-merv-secret
             value={secret.token}
             rows={3}
             readOnly

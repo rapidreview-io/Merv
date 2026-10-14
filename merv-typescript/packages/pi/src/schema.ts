@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { idSchema } from '@merv/contracts/schemas';
 import { messageChars } from './limits.js';
 
 export const id = z
@@ -23,7 +24,7 @@ export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).
  * part of the page to bring into view, as the page names its parts (a board's shape or frame). */
 export const showInput = z
   .object({
-    record: z.string().trim().min(1).max(200).optional(),
+    record: idSchema.optional(),
     page: z.string().trim().min(1).max(100).optional(),
     focus: z.string().trim().min(1).max(200).optional(),
   })

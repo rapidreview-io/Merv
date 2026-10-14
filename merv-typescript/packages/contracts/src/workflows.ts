@@ -7,7 +7,6 @@ import type {
   WorkflowDependency,
   WorkflowDispatchCandidate,
   WorkflowExecutionTarget,
-  WorkflowHistoryEntry,
   WorkflowLimitStatus,
   WorkflowOverview,
   WorkflowProvidedBlocker,
@@ -375,7 +374,6 @@ export interface Workflows {
   ): Promise<Map<string, WorkflowSnapshot>>;
   /** The project's instances, oldest first; with `workflow`, only that workflow's. */
   list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]>;
-  history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
   /**
    * System reads for a caller already authorized for what it asks. `open`: the instances of
    * `workflow` in a nonterminal state of their own pinned version, in one project or (null)

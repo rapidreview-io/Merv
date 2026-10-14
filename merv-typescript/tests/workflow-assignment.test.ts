@@ -179,7 +179,10 @@ test('assignment reads are pure; begin records first activation before rendering
   assert.equal(begun.workStart?.revision, 0);
   assert.match(begun.context!.prompt, /test.finish/);
   assert.doesNotMatch(begun.context!.prompt, /workflow.begin/);
-  assert.equal((await f.workflows.history(f.caller, f.instance.id)).length, 1);
+  const moves = await f.state.read((sql) =>
+    sql.all('SELECT action FROM wf_history WHERE instance_id=?', f.instance.id),
+  );
+  assert.equal(moves.length, 1, 'begin records no move');
   assert.deepEqual(await f.workflows.get(f.caller, f.instance.id), before);
   const events = await f.state.events(f.caller.projectId, head);
   assert.equal(events.length, 1);

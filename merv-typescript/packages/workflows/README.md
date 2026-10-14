@@ -55,8 +55,7 @@ both services are available. Its tool adapter exposes six tools:
 `workflow.status_and_next` (caller-specific gate guidance, or a project overview),
 `workflow.catalog`, `workflow.assignment`, `workflow.process`, `workflow.begin` and
 `workflow.extend_limit`. Programs such as Tasks register their checks and retain their
-own commands. `get`, `list` and `history` are in-process methods only; no tool exposes
-them.
+own commands. `get` and `list` are in-process methods only; no tool exposes them.
 
 `await register(definition, policy)` registers awaited domain checks, action/tool
 descriptions and optional argument/reference builders. `evaluate` returns the

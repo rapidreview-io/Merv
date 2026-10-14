@@ -83,16 +83,18 @@ function fixture(t: TestContext, rotateMs?: number) {
   };
   const scope = {
     authenticate(token: string) {
-      if (token !== 'actor-http-token') throw new MervError('unauthorized', 'Invalid actor', 401);
+      // A second person in the project, for what one person's streams leave to others.
+      const id = { 'actor-http-token': caller.actorId, 'other-http-token': 'actor-other' }[token];
+      if (!id) throw new MervError('unauthorized', 'Invalid actor', 401);
       return {
-        id: caller.actorId,
+        id,
         projectId: caller.projectId,
         name: 'HTTP operator',
         role: 'producer',
         active: true,
         credential: {
           id: caller.credentialId,
-          actorId: caller.actorId,
+          actorId: id,
           projectId: caller.projectId,
           kind: 'actor',
           createdAt: '2026-09-23T00:00:00.000Z',
@@ -105,7 +107,7 @@ function fixture(t: TestContext, rotateMs?: number) {
     async caller(principal: Principal, projectId?: string) {
       if (principal.kind !== 'actor' || (projectId && projectId !== caller.projectId))
         throw new MervError('forbidden', 'Wrong project', 403);
-      return caller;
+      return { ...caller, actorId: principal.actor.id };
     },
     async require(selected: Caller) {
       if (!permitted || selected.projectId !== caller.projectId)
@@ -389,24 +391,29 @@ test('SSE announces its deliberate rotation before closing', async (t) => {
   assert.equal((await within(reader.read())).done, true);
 });
 
-test('SSE subscriber capacity refuses new HTTP connections instead of returning empty success', async (t) => {
+test("a person's live streams are capped: one more is refused, never empty success", async (t) => {
   const f = fixture(t);
   const base = await f.api.start();
   const url = `${base}/pi/${conversationId}/events`;
   const headers = { authorization: 'Bearer actor-http-token' };
   const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
   try {
-    for (let count = 0; count < 8; count++) {
+    // One person can never hold every reader the process keeps for everyone's pages.
+    for (let count = 0; count < 4; count++) {
       const response = await fetch(url, { headers });
       assert.equal(response.status, 200);
       const reader = response.body!.getReader();
       readers.push(reader);
       assert.equal((await readEvent(reader, { text: '' })).event, 'snapshot');
     }
-    assert.equal(f.subscriptions(), 8);
+    assert.equal(f.subscriptions(), 4);
     const overflow = await fetch(url, { headers });
     assert.equal(overflow.status, 429, 'an unadmitted SSE reader backs off quietly');
     assert.equal(((await json(overflow)).error as { code: string }).code, 'pi_stream_busy');
+    // Another person's page still opens.
+    const other = await fetch(url, { headers: { authorization: 'Bearer other-http-token' } });
+    assert.equal(other.status, 200);
+    readers.push(other.body!.getReader());
   } finally {
     await Promise.allSettled(readers.map((reader) => reader.cancel()));
   }

@@ -108,15 +108,14 @@ export class WorkflowEngine {
   }
 
   /**
-   * The instance's history in revision order. A traversal reads it without `data`: a row's
-   * data can be as large as the data it merged, and a traversal shows none of it.
+   * The instance's history in revision order, without `data`: a row's data can be as large as
+   * the data it merged, and a traversal shows none of it.
    */
-  protected async historyIn<D extends boolean>(
+  protected async historyIn(
     tx: Transaction,
     projectId: string,
     instanceId: string,
-    data: D,
-  ): Promise<(D extends true ? WorkflowHistoryEntry : Omit<WorkflowHistoryEntry, 'data'>)[]> {
+  ): Promise<WorkflowHistoryEntry[]> {
     const rows = await tx.all<{
       instance_id: string;
       revision: number;
@@ -125,10 +124,9 @@ export class WorkflowEngine {
       request_id: string;
       from_state: string | null;
       to_state: string;
-      data_json?: string;
       created_at: string;
     }>(
-      `SELECT instance_id,revision,action,actor_id,request_id,from_state,to_state,${data ? 'data_json,' : ''}created_at FROM wf_history WHERE project_id = ? AND instance_id = ? ORDER BY revision`,
+      'SELECT instance_id,revision,action,actor_id,request_id,from_state,to_state,created_at FROM wf_history WHERE project_id = ? AND instance_id = ? ORDER BY revision',
       projectId,
       instanceId,
     );
@@ -140,9 +138,8 @@ export class WorkflowEngine {
       requestId: row.request_id,
       fromState: row.from_state,
       toState: row.to_state,
-      ...(row.data_json === undefined ? {} : { data: JSON.parse(row.data_json) as Data }),
       createdAt: row.created_at,
-    })) as never;
+    }));
   }
 
   protected definition(name: string, version: number): Registration {

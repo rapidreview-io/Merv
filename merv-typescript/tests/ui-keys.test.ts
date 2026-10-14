@@ -13,6 +13,7 @@ const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { KeysPanel } = await import('../packages/ui/web/views/keys.js');
 const { setProject } = await import('../packages/ui/web/api.js');
+const { snapshotPage } = await import('../packages/ui/web/views/pi-screen.js');
 
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
 const account = {
@@ -156,8 +157,30 @@ test('Fleet source creation is operator-only, finite, and reveals its secret onl
       ?.value,
     'one-time-fleet-secret',
   );
+  // An agent's look at this page leaves the credential behind.
+  assert.ok(!snapshotPage(window).html.includes('one-time-fleet-secret'), 'a look carries it');
   await act(async () => setProject('project_elsewhere'));
   assert.equal(document.querySelector('[aria-label="Fleet source credential secret"]'), null);
+});
+
+test('a new key is shown once to the person, and never to an agent looking at the page', async (t) => {
+  t.after(async () => await unmount());
+  await open([]);
+  serve('/account/keys', (_call, sent) => ({
+    body: sent.projectId ? { key, token: 'mk_shown_once' } : { keys: [key] },
+  }));
+  await click('New key');
+  await act(async () => {
+    document
+      .querySelector('form')!
+      .dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await settle(10);
+  assert.equal(
+    document.querySelector<HTMLTextAreaElement>('[aria-label="New machine key secret"]')?.value,
+    'mk_shown_once',
+  );
+  assert.ok(!snapshotPage(window).html.includes('mk_shown_once'), 'a look carries the key');
 });
 
 test('Fleet credential control is hidden from non-operators and projects without Fleet', async (t) => {

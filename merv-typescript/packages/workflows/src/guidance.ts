@@ -38,7 +38,7 @@ export class WorkflowGuidance extends WorkflowEngine {
         tx,
         checks,
       );
-      const history = await this.historyIn(tx, caller.projectId, instanceId, false);
+      const history = await this.historyIn(tx, caller.projectId, instanceId);
       return processGraph({
         definition: facts.definition,
         rules: facts.registration?.policy?.actions ?? [],

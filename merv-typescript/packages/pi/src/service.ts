@@ -1,5 +1,6 @@
 import {
   check,
+  clip,
   digest,
   newId,
   MervError,
@@ -734,8 +735,7 @@ export class PiService implements Pi {
     } catch {
       // The call ran; a receipt that fails says nothing, and the result stands for it.
     }
-    // A cut inside a character would leave half of it, which pi.send refuses.
-    const json = (JSON.stringify(result) ?? 'null').slice(0, 4000).replace(/[\uD800-\uDBFF]$/, '');
+    const json = clip(JSON.stringify(result) ?? 'null', 4000);
     return { told: `Ran ${proposal.name}: ${json}`, said: json, whole: true };
   }
 

@@ -1,3 +1,4 @@
+import { clip } from '@merv/contracts';
 import type {
   PiHostRecord,
   PiMachine,
@@ -126,5 +127,5 @@ export function moveNotes({ now, host, person, current, targets }: PiMoveContext
     notes.push(
       `The move to ${label(last.to)} ${last.outcome === 'failed' ? `failed${last.reason ? ` (${last.reason})` : ''}` : 'was cancelled'}; still on ${current.label}.`,
     );
-  return notes.map((note) => note.slice(0, 300));
+  return notes.map((note) => clip(note, 300));
 }

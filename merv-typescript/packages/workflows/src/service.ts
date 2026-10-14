@@ -12,7 +12,6 @@ import type {
 import type {
   WorkflowSnapshot,
   WorkflowWorkStart,
-  WorkflowHistoryEntry,
   WorkflowDependency,
   WorkflowLimitStatus,
   WorkflowProvidedBlocker,
@@ -158,17 +157,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
         )
       ).map(this.snapshot),
     );
-  }
-
-  async history(
-    caller: Caller,
-    instanceId: string,
-    tx?: Transaction,
-  ): Promise<WorkflowHistoryEntry[]> {
-    return await this.reading(caller, tx, async (tx, caller) => {
-      await this.readSnapshot(tx, caller.projectId, instanceId);
-      return await this.historyIn(tx, caller.projectId, instanceId, true);
-    });
   }
 
   async open(workflow: string, projectId: string | null, tx?: Transaction) {

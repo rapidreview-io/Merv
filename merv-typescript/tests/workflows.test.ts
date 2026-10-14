@@ -44,6 +44,16 @@ async function setup(path = ':memory:', given?: PostgresState) {
 }
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
+/** Who made each recorded move of an instance, oldest first, as wf_history keeps them. */
+const movers = async (state: PostgresState, instanceId: string) =>
+  (
+    await state.read((sql) =>
+      sql.all<{ actor_id: string }>(
+        'SELECT actor_id FROM wf_history WHERE instance_id=? ORDER BY revision',
+        instanceId,
+      ),
+    )
+  ).map((row) => row.actor_id);
 
 test('durable graph transitions record exact command responses, history, and events once', async (t) => {
   const { state, scope, workflows, approval, caller } = await setup();
@@ -88,11 +98,7 @@ test('durable graph transitions record exact command responses, history, and eve
   assert.deepEqual(await approval.start(caller, start), initial);
   assert.deepEqual(await approval.transition(caller, command), submitted);
   assert.equal((await workflows.get(caller, initial.id)).revision, 2);
-  assert.equal((await workflows.history(caller, initial.id)).length, 3);
-  assert.deepEqual(
-    (await workflows.history(caller, initial.id)).map((entry) => entry.actorId),
-    [caller.actorId, caller.actorId, caller.actorId],
-  );
+  assert.deepEqual(await movers(state, initial.id), Array(3).fill(caller.actorId));
   assert.equal(
     (await state.events(caller.projectId)).filter((event) => event.type === 'workflow.transition')
       .length,
@@ -163,7 +169,7 @@ test('versions are pinned and changed declarations are rejected across restart',
     await approval.start(first.caller, { workflow: 'approval', requestId: 'start' }),
     initial,
   );
-  assert.equal((await workflows.history(first.caller, initial.id)).length, 2);
+  assert.equal((await movers(state, initial.id)).length, 2);
 });
 
 test('competing connections reject stale revisions and transaction rollback includes ledger and events', async (t) => {
@@ -212,7 +218,7 @@ test('competing connections reject stale revisions and transaction rollback incl
     /Caller-owned operation failed/,
   );
   assert.equal((await workflows.get(caller, initial.id)).revision, 1);
-  assert.equal((await workflows.history(caller, initial.id)).length, 2);
+  assert.equal((await movers(state, initial.id)).length, 2);
   assert.equal((await state.events(caller.projectId)).length, eventCount);
   assert.equal((await approval.transition(caller, retry)).revision, 2);
   await assert.rejects(
@@ -231,15 +237,7 @@ test('all project reads and mutation replays check actor scope and permission', 
     actorName: 'Other operator',
   });
   const other: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
-  for (const method of [
-    'get',
-    'history',
-    'evaluate',
-    'workStarts',
-    'process',
-    'list',
-    'overview',
-  ] as const) {
+  for (const method of ['get', 'evaluate', 'workStarts', 'process', 'list', 'overview'] as const) {
     await t.test(method, async () => {
       const pendingCaller = { ...other };
       const reading =
@@ -256,7 +254,6 @@ test('all project reads and mutation replays check actor scope and permission', 
     });
   }
   await assert.rejects(async () => await workflows.get(other, initial.id), code('not_found'));
-  await assert.rejects(async () => await workflows.history(other, initial.id), code('not_found'));
   assert.equal((await workflows.list(other)).length, 0);
   await assert.rejects(
     async () => await workflows.get({ ...other, projectId: caller.projectId }, initial.id),
@@ -831,7 +828,7 @@ test('awaited transition checks share the writer and withdrawal rolls back the e
   assert.deepEqual(await state.read((sql) => sql.all('SELECT id FROM callback_receipts')), []);
   program = await workflows.register(definition, policy);
   assert.equal((await execute()).state, 'done');
-  assert.equal((await workflows.history(caller, instance.id)).length, 2);
+  assert.equal((await movers(state, instance.id)).length, 2);
   assert.deepEqual(
     await program.transition(caller, command),
     await workflows.get(caller, instance.id),

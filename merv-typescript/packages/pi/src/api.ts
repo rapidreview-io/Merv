@@ -31,7 +31,8 @@ function depth(text: string): number {
 }
 
 export class PiHttp {
-  private readonly responses = new Set<ServerResponse>();
+  /** Each open stream, with the actor it answers. */
+  private readonly responses = new Map<ServerResponse, string>();
   private closed = false;
 
   constructor(
@@ -116,7 +117,10 @@ export class PiHttp {
     check(!this.closed, 'pi_unavailable', 'Agent conversations are unavailable', 503);
     await this.pi.authorizeStream(caller, id);
     check(!res.destroyed, 'pi_unavailable', 'Connection closed', 503);
-    this.responses.add(res);
+    // A person's live streams at once: a page per tab, never every reader the process keeps.
+    const held = [...this.responses.values()].filter((actor) => actor === caller.actorId);
+    check(held.length < 4, 'pi_stream_busy', 'Too many agent streams are open', 429);
+    this.responses.set(res, caller.actorId);
     let sequence = -1;
     // A page's authority is read at most once a second, however often words arrive.
     let authorized = Date.now();
@@ -154,7 +158,7 @@ export class PiHttp {
 
   close(): void {
     this.closed = true;
-    for (const res of this.responses) res.destroy();
+    for (const res of this.responses.keys()) res.destroy();
     this.responses.clear();
   }
 }

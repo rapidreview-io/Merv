@@ -118,6 +118,11 @@ test("the agent puts a record on the person's screen: their page goes there and 
   const id = input.conversationId;
   await assert.rejects(f.pi.show(f.operator, { page: 'Work' }), /own agent/);
   await assert.rejects(f.pi.show(agent, {}), /one record or one page/);
+  // A record is an id, never a path or a query the person's page would follow.
+  for (const record of ['task_1/../../github?github=complete', '../settings']) {
+    await assert.rejects(f.pi.show(agent, { record }), code('invalid_pi_input'));
+    await assert.rejects(f.pi.look(agent, { at: { record } }), code('invalid_pi_input'));
+  }
   const shown = f.pi.show(agent, { record: 'art_1' });
   let asked: PiSnapshot['screen'];
   while (!(asked = (await f.pi.snapshot(f.operator, id)).screen))

@@ -94,7 +94,6 @@ export class PiStreams {
 
   subscribe(id: string, listener: () => void): () => void {
     const tail = this.get(id, true);
-    check(tail.listeners.size < 8, 'pi_stream_busy', busy, 429);
     tail.listeners.add(listener);
     return () => {
       tail.listeners.delete(listener);

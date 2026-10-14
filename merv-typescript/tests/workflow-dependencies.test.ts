@@ -93,6 +93,17 @@ async function start(
   });
 }
 
+/** An instance's recorded moves, oldest first, as wf_history keeps them. */
+async function history(state: Awaited<ReturnType<typeof openState>>, instanceId: string) {
+  const rows = await state.read((sql) =>
+    sql.all<{ action: string; actor_id: string; data_json: string }>(
+      'SELECT action,actor_id,data_json FROM wf_history WHERE instance_id=? ORDER BY revision',
+      instanceId,
+    ),
+  );
+  return rows.map(({ data_json, ...row }) => ({ ...row, data: JSON.parse(data_json) as unknown }));
+}
+
 /** The statements `run` sends through the transaction it is given, as their SQL. */
 async function statements(
   state: Awaited<ReturnType<typeof openState>>,
@@ -339,15 +350,15 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
   Object.assign(command, requested);
   assert.equal(attached.revision, 1);
   assert.deepEqual(await handle.addDependencies(caller, command), attached);
-  assert.equal(((await workflows.history(caller, a.id)).at(-1) as any).action, 'add_dependencies');
-  assert.equal((await workflows.history(caller, a.id)).at(-1)!.actorId, caller.actorId);
+  const last = (await history(state, a.id)).at(-1)!;
+  assert.deepEqual([last.action, last.actor_id], ['add_dependencies', caller.actorId]);
   const head = await state.eventHead();
   assert.deepEqual(
     await handle.addDependencies(caller, { ...command, requestId: 'noop', expectedRevision: 1 }),
     attached,
   );
   assert.equal(await state.eventHead(), head);
-  assert.equal((await workflows.history(caller, a.id)).length, 2);
+  assert.equal((await history(state, a.id)).length, 2);
   await assert.rejects(
     async () => await handle.addDependencies(caller, { ...command, requestId: 'stale' }),
     {
@@ -1082,9 +1093,9 @@ test('replanning removes declared edges in one bounded write, preserving ownersh
   assert.equal((await workflows.prerequisites(caller, [source.id])).get(source.id)!.length, 22);
   const writes = await statements(state, (tx) => handle.addDependencies(caller, input, tx));
   assert.equal(writes.filter((sql) => sql.startsWith('DELETE FROM wf_dependencies')).length, 1);
-  const history = await workflows.history(caller, source.id);
-  assert.equal(history.at(-1)?.action, 'replan_dependencies');
-  assert.deepEqual(history.at(-1)?.data, { dependsOn: [], dropped: targets.toReversed() });
+  const moves = await history(state, source.id);
+  assert.equal(moves.at(-1)?.action, 'replan_dependencies');
+  assert.deepEqual(moves.at(-1)?.data, { dependsOn: [], dropped: targets.toReversed() });
   const remaining = (await workflows.prerequisites(caller, [source.id])).get(source.id)!;
   assert.deepEqual(remaining.map(({ id }) => id).sort(), targets.slice(0, 2).sort());
   assert.ok(remaining.every(({ kind, owner }) => kind === 'system' && owner === 'provider'));
@@ -1107,7 +1118,7 @@ test('replanning removes declared edges in one bounded write, preserving ownersh
     after,
     'already removed edges neither advance revision nor erase system ownership',
   );
-  assert.deepEqual(await workflows.history(caller, source.id), history);
+  assert.deepEqual(await history(state, source.id), moves);
   await assert.rejects(
     handle.addDependencies(caller, {
       ...input,

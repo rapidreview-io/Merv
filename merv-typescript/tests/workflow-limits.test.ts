@@ -129,7 +129,10 @@ async function fixture(t: TestContext) {
   const events = async (type: string) =>
     (await state.events(owner.projectId)).filter((event) => event.type === type);
   const transition = async (input: WorkflowTransition) => await handle!.transition(owner, input);
-  return { state, scope, workflows, owner, register, start, move, transition, loop, events };
+  /** How many moves wf_history records for the instance. */
+  const moves = async (id: string) =>
+    (await state.read((sql) => sql.all('SELECT 1 FROM wf_history WHERE instance_id=?', id))).length;
+  return { state, scope, workflows, owner, register, start, move, transition, loop, events, moves };
 }
 const refused = (code: string, status: number) => (error: unknown) =>
   error instanceof MervError && error.code === code && error.status === status;
@@ -200,7 +203,7 @@ test('a capped loop permits its rounds, refuses the next, and leaves the record 
   const last = await f.move(instance.id, 'restart', 'last-return');
   assert.deepEqual(await f.events('workflow.escalated'), []);
   const arrived = await f.move(instance.id, 'submit');
-  const history = (await f.workflows.history(f.owner, instance.id)).length;
+  const history = await f.moves(instance.id);
   const eventCount = (await f.state.events(f.owner.projectId)).length;
   for (const action of ['return', 'restart'])
     await assert.rejects(
@@ -210,7 +213,7 @@ test('a capped loop permits its rounds, refuses the next, and leaves the record 
         /review_returns is exhausted on this draft \(2\/2\)/.test((error as Error).message),
     );
   assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
-  assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
+  assert.equal(await f.moves(instance.id), history);
   assert.equal((await f.state.events(f.owner.projectId)).length, eventCount);
   // A retry of the last permitted return is still answered with what it recorded.
   assert.deepEqual(
@@ -416,7 +419,7 @@ test('a grant is idempotent, append-only, additive, and changes no revision', as
     f.workflows.extendLimit(f.owner, { ...grant, reason: '   ' }),
     refused('invalid_input', 400),
   );
-  const history = (await f.workflows.history(f.owner, instance.id)).length;
+  const history = await f.moves(instance.id);
   const first = await f.workflows.extendLimit(f.owner, grant);
   assert.deepEqual(
     [first.base, first.granted, first.max, first.used, first.remaining, first.exhausted],
@@ -439,7 +442,7 @@ test('a grant is idempotent, append-only, additive, and changes no revision', as
   assert.deepEqual(await f.workflows.extendLimit(f.owner, grant), first);
 
   assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
-  assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
+  assert.equal(await f.moves(instance.id), history);
   const extended = await f.events('workflow.limit_extended');
   assert.deepEqual(
     extended.map((event) => event.data),

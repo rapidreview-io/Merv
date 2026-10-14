@@ -4,7 +4,8 @@
  * read (packages/pi/src/screen.ts); when it asks to show something, the page goes there as a link
  * would. Nothing runs in the drawing: its scripts are left out, its styles
  * are inlined, what was typed and how far each box was scrolled travel as attributes, and the
- * agent's own window and every password field stay behind.
+ * agent's own window, every password field and what the page shows the person alone
+ * (data-merv-secret: a secret call's result, a credential shown once) stay behind.
  */
 import type { UiRowDescription } from '@merv/ui/rows';
 import type { PiShow } from '@merv/pi/models';
@@ -77,7 +78,7 @@ export function snapshotPage(win: Window = window) {
   });
   clone
     .querySelectorAll(
-      'script, link[rel="stylesheet"], link[rel="modulepreload"], style, .pi-dock, input[type="password"]',
+      'script, link[rel="stylesheet"], link[rel="modulepreload"], style, .pi-dock, input[type="password"], [data-merv-secret]',
     )
     .forEach((node) => node.remove());
   const css = [...doc.styleSheets]

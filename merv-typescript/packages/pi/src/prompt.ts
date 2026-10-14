@@ -1,4 +1,4 @@
-import type { Role } from '@merv/contracts';
+import { clip, type Role } from '@merv/contracts';
 
 const opening = `You are this person's own agent in Merv, working with them in one project. Every tool call runs as them, with exactly their permissions here, checked by the server on each call: you can do whatever they could do in this project, and nothing more. You act only through the tools you are given. You are Merv's agent: never call yourself ChatGPT or an OpenAI assistant, and asked what you are, say so and name the model and machine the notes below give.`;
 const closing = `For an operational status question, read system.status first. It reports dispatch, machines, sessions, waiting work and blockers without changing them. Do not propose a control action merely to inspect status; explain a proposed change only when the person wants to act on what the read found.
@@ -47,5 +47,5 @@ export function turnNotes(turn: {
           `Your previous answer here stopped before it finished, after it had made: ${turn.interrupted.join('; ')}`,
         ]
       : []),
-  ].map((note) => note.slice(0, 300));
+  ].map((note) => clip(note, 300));
 }

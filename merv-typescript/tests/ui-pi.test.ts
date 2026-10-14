@@ -13,6 +13,7 @@ const { PiView } = await import('../packages/ui/web/views/pi.js');
 const { actOf, factsOf, labelOf, receiptOf } =
   await import('../packages/ui/web/views/pi-proposal.js');
 const { App } = await import('../packages/ui/web/app.js');
+const { snapshotPage } = await import('../packages/ui/web/views/pi-screen.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
 
 const row = {
@@ -1624,6 +1625,8 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
     ['Ran artifact.read; its result is shown only to me.'],
   );
   assert.ok(!JSON.stringify(sent).includes('sig=abc'));
+  // Nor its look at this page: the snapshot sent to be drawn and read leaves the result behind.
+  assert.ok(!snapshotPage(window).html.includes('sig=abc'), 'the secret result reaches the look');
   // The turn that answered proposes nothing: the other call stays under its own turn, to run,
   // and the one that ran says so where its control stood, and nowhere else.
   const told = command('c2', 'completed', [
