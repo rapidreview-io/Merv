@@ -1,6 +1,7 @@
 export interface AdminIdentity {
   issuer: string;
   subject: string;
+  label?: string;
 }
 export interface AdminExperiment {
   id: string;
@@ -9,6 +10,7 @@ export interface AdminExperiment {
   title: string;
   source: 'project' | 'standalone';
   customer: string;
+  customerKey: string;
   state: string;
   updatedAt: string;
   createdAt: string;
@@ -18,7 +20,14 @@ export interface AdminExperiment {
   sessions: number;
   requestId?: string;
 }
+export interface AdminUser {
+  key: string;
+  label: string;
+  experiments: number;
+  active: number;
+}
 export interface AdminOverview {
+  users: AdminUser[];
   at: string;
   rows: AdminExperiment[];
   truncated: boolean;

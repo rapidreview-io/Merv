@@ -345,3 +345,244 @@
 .admin-page a:hover {
   text-decoration: underline;
 }
+/* User navigation and experiment cards. */
+.admin-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 40px;
+  padding-top: 5px;
+}
+.admin-users {
+  border-right: 1px solid var(--al);
+  padding-right: 22px;
+}
+.admin-users-heading {
+  display: flex;
+  justify-content: space-between;
+  color: var(--am);
+  font-size: 11px;
+  margin: 10px 8px 22px;
+}
+.admin-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--ai);
+  padding: 12px 9px;
+  text-align: left;
+  border-radius: 7px;
+  margin-bottom: 5px;
+  font-size: 12px !important;
+}
+.admin-user[aria-pressed='true'] {
+  background: #e8ece2;
+}
+.admin-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 29px;
+  height: 29px;
+  background: #e3e7dd;
+  border-radius: 8px;
+  font-size: 10px;
+  color: #55694e;
+}
+.admin-user-name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.admin-user small {
+  font-size: 10px;
+  margin-top: 4px;
+  color: var(--am);
+}
+.admin-user b {
+  font-size: 10px;
+  font-weight: 400;
+  margin-left: auto;
+  color: var(--am);
+}
+.admin-experiments {
+  min-width: 0;
+}
+.admin-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+}
+.admin-tabs button span {
+  font-size: 10px;
+  color: var(--am);
+}
+.admin-toolbar select {
+  border: 0;
+  background: transparent;
+  color: var(--am);
+  font-size: 12px;
+  padding: 8px;
+}
+.admin-search {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--al);
+  background: transparent;
+  border-radius: 7px;
+  padding: 12px 14px;
+  font: 12px inherit;
+  color: var(--ai);
+  margin-bottom: 24px;
+}
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px;
+}
+.experiment-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 23px;
+  background: #fefefd;
+  color: var(--ai);
+  border: 1px solid var(--al);
+  border-radius: 10px;
+  min-height: 228px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.experiment-card:hover {
+  border-color: #acb8a4;
+  box-shadow: 0 4px 18px #24311d07;
+}
+.experiment-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 21px;
+}
+.experiment-arrow {
+  color: #92998b;
+  font-size: 17px;
+}
+.experiment-card h2 {
+  font-size: 17px;
+  letter-spacing: -0.4px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0 0 9px;
+  overflow-wrap: anywhere;
+}
+.experiment-card p {
+  font-size: 11px;
+  color: var(--am);
+  margin: 0 0 22px;
+  line-height: 1.5;
+}
+.experiment-card-owner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  margin-top: auto;
+  padding-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+.owner-dot {
+  width: 6px;
+  height: 6px;
+  background: #b5bdb0;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.experiment-card-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #eeefe9;
+  padding-top: 14px;
+  font-size: 10px;
+  color: var(--am);
+}
+.admin-heading {
+  padding-top: 42px;
+}
+.admin-heading h1 {
+  font-size: 40px;
+}
+.admin-status {
+  font-size: 10px;
+}
+.admin-page footer {
+  font-size: 10px;
+}
+@media (min-width: 1650px) {
+  .admin-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .admin-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 20px;
+  }
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 620px) {
+  .admin-layout {
+    display: block;
+  }
+  .admin-users {
+    border-right: 0;
+    border-bottom: 1px solid var(--al);
+    padding: 0 0 15px;
+    margin-bottom: 24px;
+    display: flex;
+    overflow: auto;
+    gap: 8px;
+  }
+  .admin-users-heading {
+    display: none;
+  }
+  .admin-user {
+    width: auto;
+    min-width: 160px;
+    margin: 0;
+  }
+  .admin-user b {
+    display: none;
+  }
+  .admin-user-name {
+    white-space: nowrap;
+  }
+  .admin-toolbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+  }
+  .admin-tabs {
+    gap: 0;
+  }
+  .admin-tabs button {
+    padding: 8px;
+    gap: 7px;
+  }
+  .admin-toolbar select {
+    max-width: 90px;
+  }
+  .experiment-card {
+    min-height: 210px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .experiment-card {
+    transition: none;
+  }
+}

@@ -16,7 +16,10 @@ export function requireAdmin(principal: ApiPrincipal | undefined, admins: AdminI
   );
 }
 /** Intentionally global. Never expose this projection through project-scoped tools or machine keys. */
-export async function adminOverview(state: State): Promise<AdminOverview> {
+export async function adminOverview(
+  state: State,
+  identities: AdminIdentity[] = [],
+): Promise<AdminOverview> {
   return state.read(async (sql) => {
     const tables = new Set(
       (
@@ -33,6 +36,7 @@ export async function adminOverview(state: State): Promise<AdminOverview> {
       project: string;
       title: string;
       customer: string;
+      owner_id: string;
       state: string;
       updated_at: string;
       created_at: string;
@@ -47,6 +51,12 @@ export async function adminOverview(state: State): Promise<AdminOverview> {
           project: r.project,
           title: r.title,
           customer: r.customer,
+          customerKey:
+            source === 'project'
+              ? 'actor:' + r.owner_id
+              : r.customer === 'Not provided yet'
+                ? 'guest:' + r.id
+                : 'email:' + r.customer.toLowerCase(),
           source,
           state: r.state,
           updatedAt: r.updated_at,
@@ -61,13 +71,13 @@ export async function adminOverview(state: State): Promise<AdminOverview> {
       " ORDER BY CASE WHEN w.state IN ('complete','failed','abandoned') THEN 1 ELSE 0 END,w.updated_at DESC LIMIT 1001";
     if (tables.has('experiments'))
       await collect(
-        `SELECT e.id,e.project_id,p.name AS project,e.name AS title,COALESCE(a.name,'Unassigned') AS customer,w.state,w.updated_at,e.created_at,e.attempt_index AS attempt,NULL AS paid FROM experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id LEFT JOIN actors a ON a.id=e.owner_id${order}`,
+        `SELECT e.id,e.owner_id,e.project_id,p.name AS project,e.name AS title,COALESCE(a.name,'Unassigned') AS customer,w.state,w.updated_at,e.created_at,e.attempt_index AS attempt,NULL AS paid FROM experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id LEFT JOIN actors a ON a.id=e.owner_id${order}`,
         'project',
       );
     else unavailable.push('Project experiments');
     if (tables.has('customer_experiments'))
       await collect(
-        `SELECT e.id,e.project_id,p.name AS project,e.title,COALESCE(e.email,'Not provided yet') AS customer,w.state,w.updated_at,e.created_at,e.attempts AS attempt,CASE WHEN e.payment_id IS NULL THEN 0 ELSE 1 END AS paid FROM customer_experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id${order}`,
+        `SELECT e.id,e.owner_id,e.project_id,p.name AS project,e.title,COALESCE(e.email,'Not provided yet') AS customer,w.state,w.updated_at,e.created_at,e.attempts AS attempt,CASE WHEN e.payment_id IS NULL THEN 0 ELSE 1 END AS paid FROM customer_experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id${order}`,
         'standalone',
       );
     else unavailable.push('Standalone experiments');
@@ -92,6 +102,54 @@ export async function adminOverview(state: State): Promise<AdminOverview> {
         }
       }
     } else unavailable.push('Agent sessions');
+    const short = (id: string) => id.replace(/^[a-z]+_/, '').slice(0, 4);
+    const opaque = (value: string) =>
+      /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value) || /^(actor|user|wf|ce)_[a-z0-9_-]+$/i.test(value);
+    const users = new Map<
+      string,
+      { key: string; label: string; experiments: number; active: number }
+    >();
+    if (tables.has('shared_users') && tables.has('member_actors')) {
+      const people = await sql.all<{
+        issuer: string;
+        subject: string;
+        actor_id: string | null;
+        name: string | null;
+      }>(
+        'SELECT u.issuer,u.subject,m.actor_id,a.name FROM shared_users u LEFT JOIN member_actors m ON m.issuer=u.issuer AND m.subject=u.subject LEFT JOIN actors a ON a.id=m.actor_id',
+      );
+      for (const p of people) {
+        const key = p.issuer + '|' + p.subject;
+        const configured = identities.find(
+          (i) => i.issuer === p.issuer && i.subject === p.subject,
+        )?.label;
+        const label =
+          configured ||
+          (p.name && !opaque(p.name) && p.name !== p.subject ? p.name : short(p.subject));
+        if (!users.has(key) || configured || (p.name && !opaque(p.name) && p.name !== p.subject))
+          users.set(key, { key, label, experiments: 0, active: 0 });
+        for (const row of rows)
+          if (row.source === 'project' && row.customerKey === 'actor:' + p.actor_id)
+            row.customerKey = key;
+      }
+    }
+    for (const row of rows) {
+      if (!users.has(row.customerKey))
+        users.set(row.customerKey, {
+          key: row.customerKey,
+          label: row.customerKey.startsWith('guest:')
+            ? 'Guest · ' + short(row.requestId ?? row.id)
+            : opaque(row.customer)
+              ? short(row.customer)
+              : row.customer,
+          experiments: 0,
+          active: 0,
+        });
+      const user = users.get(row.customerKey)!;
+      row.customer = user.label;
+      user.experiments++;
+      if (!['complete', 'failed', 'abandoned'].includes(row.state)) user.active++;
+    }
     rows.sort(
       (a, b) =>
         Number(['complete', 'failed', 'abandoned'].includes(a.state)) -
@@ -99,6 +157,10 @@ export async function adminOverview(state: State): Promise<AdminOverview> {
         b.updatedAt.localeCompare(a.updatedAt),
     );
     return {
+      users: [...users.values()].sort(
+        (a, b) =>
+          b.active - a.active || b.experiments - a.experiments || a.label.localeCompare(b.label),
+      ),
       at: new Date().toISOString(),
       rows: rows.slice(0, 1000),
       truncated: rows.length > 1000,
@@ -112,6 +174,6 @@ export function adminHttp(state: State, admins: AdminIdentity[]): MountHandler {
     if (req.method !== 'GET' || r.url.pathname !== '/admin/experiments')
       throw new MervError('not_found', 'Route not found', 404);
     res.setHeader('Cache-Control', 'private, no-store');
-    return adminOverview(state);
+    return adminOverview(state, admins);
   };
 }

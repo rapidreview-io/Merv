@@ -121,7 +121,15 @@ export const uiPlugin = {
     .object({
       assets: z.string().refine(visible).optional(),
       admins: z
-        .array(z.object({ issuer: z.string().min(1), subject: z.string().min(1) }).strict())
+        .array(
+          z
+            .object({
+              issuer: z.string().min(1),
+              subject: z.string().min(1),
+              label: z.string().min(1).max(254).optional(),
+            })
+            .strict(),
+        )
         .default([]),
     })
     .strict()
