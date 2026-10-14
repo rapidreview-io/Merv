@@ -293,23 +293,17 @@ export class UserKeys {
         'User key is already revoked or rotated',
         409,
       );
-      let authorizationProject = previous.project_id;
-      if (previous.grant_scope === 'account') {
-        const membership = await tx.get<{ project_id: string }>(
-          `SELECT m.project_id FROM project_memberships m JOIN actors a ON a.id=m.actor_id
-           AND a.project_id=m.project_id AND a.role=m.role AND a.active=1
-           WHERE m.issuer=? AND m.subject=? AND m.active=1 ORDER BY m.created_at,m.project_id LIMIT 1`,
-          previous.issuer,
-          previous.subject,
-        );
-        check(
-          membership,
-          'membership_required',
-          'Account key rotation requires an active membership',
-          403,
-        );
-        authorizationProject = membership.project_id;
-      }
+      // An account key is authorized through its owner's first active membership.
+      const authorizationProject =
+        previous.grant_scope === 'account'
+          ? (await this.members.memberProjects(tx, previous.issuer, previous.subject, null))[0]?.id
+          : previous.project_id;
+      check(
+        authorizationProject,
+        'membership_required',
+        'Account key rotation requires an active membership',
+        403,
+      );
       await this.members.resolve(principal, authorizationProject, tx);
       const time = this.time();
       const expiresAt = expiry(

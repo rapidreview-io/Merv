@@ -143,6 +143,20 @@ test('account grants cover only current and future owner memberships and always 
     code: 'forbidden',
   });
   assert.equal((await f.scope.caller(metadataForgery)).actorId, f.operator.actorId);
+  // Rotation authorizes an account key through its owner's first active membership, if any.
+  const rotated = await f.scope.userKeys.rotate(f.owner, { keyId: account.key.id });
+  assert.equal(rotated.key.grantScope, 'account');
+  const guest = await f.login('guest');
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'guest', role: 'reader' });
+  const roaming = await f.scope.userKeys.create(guest, {
+    projectId: f.project.id,
+    grantScope: 'account',
+  });
+  await f.scope.members.removeMember(f.owner, f.project.id, 'guest');
+  await assert.rejects(f.scope.userKeys.rotate(guest, { keyId: roaming.key.id }), {
+    code: 'membership_required',
+    message: 'Account key rotation requires an active membership',
+  });
 });
 
 test('key authority rejects mixed tags, another owner or actor, stale epochs, revoked credentials and forged metadata', async (t) => {
