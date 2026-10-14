@@ -52,7 +52,7 @@ sponsor providers are provisioned there; credentials stay in the Sandboxes vault
 provider connections are refused rather than bypassing their entitlement and wallet checks.
 The sponsor pays compute costs independently of the $5 customer price.
 `MERV_CUSTOMER_COMPUTE_BUDGET_USD` sets the lifetime compute ceiling per request
-(default $5 until explicitly configured). The account and payer budgets also apply.
+(default $1,000, independent of the $5 checkout price). The account and payer budgets also apply.
 Each request permits one concurrent machine,
 and a 30-minute maximum machine lifetime. Existing account/provider rules also apply.
 These internal limits do not fix a GPU type. Native capture retention and cleanup remain in Merv.
