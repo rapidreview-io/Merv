@@ -240,7 +240,10 @@ export function useConversation() {
         return void refresh(streaming).catch(() => {});
       if (value.sequence <= current.sequence) return;
       canonical.current = { ...current, sequence: value.sequence };
-      if (value.type === 'changed') void refresh(streaming).catch(() => {});
+      // A turn's own step changes no record: the stage is shown as of this event.
+      if (value.stage)
+        setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
+      else if (value.type === 'changed') void refresh(streaming).catch(() => {});
       else setResponse((before) => accumulateResponse(before, value));
     },
   );

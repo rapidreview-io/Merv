@@ -192,11 +192,11 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
 
   async open(workflow: string, projectId: string | null, tx?: Transaction) {
     this.assertOpen();
-    // Each version's terminal states are read once, from its own pinned definition.
+    // Each version's terminal states are read once from its pinned definition, not per instance.
     return await this.read(tx, async (tx) =>
       (
         await tx.all<InstanceRow>(
-          `WITH d AS (SELECT version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions WHERE name=?)
+          `WITH d AS MATERIALIZED (SELECT version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions WHERE name=?)
           SELECT i.* FROM wf_instances i JOIN d ON d.version=i.version WHERE i.workflow=? AND NOT d.terminal @> to_jsonb(i.state)
           AND (?::text IS NULL OR i.project_id=?) ORDER BY i.created_at,i.id`,
           workflow,

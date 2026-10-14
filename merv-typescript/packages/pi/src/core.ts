@@ -93,6 +93,7 @@ export const publicCommand = (record: PiCommandRecord): PiCommand => {
     projectPaper: _paper,
     calledAt: _called,
     retried: _retried,
+    eventsAfter: _events,
     ...value
   } = record;
   return value;
@@ -228,9 +229,11 @@ export class PiCore {
   slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
   }
-  /** The one record `from` (a table and its condition) names, decoded; undefined for none. */
+  /** The one record `from` (a table and its condition) names, decoded; read once per scope. */
   async row<T>(sql: Sql, from: string, ...params: SqlValue[]): Promise<T | undefined> {
-    const row = await sql.get<{ data_json: string }>(`SELECT data_json FROM ${from}`, ...params);
+    const row = await this.state.remember(`pi:${from}:${JSON.stringify(params)}`, () =>
+      sql.get<{ data_json: string }>(`SELECT data_json FROM ${from}`, ...params),
+    );
     return row ? decode<T>(row) : undefined;
   }
   async conversation(sql: Sql, id: string): Promise<PiConversationRecord> {
@@ -265,21 +268,24 @@ export class PiCore {
   /** The relay hash follows the turn's slot, which a cut-over may change before it is claimed. */
   async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
     const old = await this.row<PiCommandRecord>(tx, turnAt, command.conversationId, command.id);
-    if (old) {
-      if (
-        old.status === 'working' &&
-        (command.status !== 'working' || this.modelToken(old) !== this.modelToken(command))
-      )
-        await this.revokeModelCredential(tx, old);
-    }
+    const moved = !!old && this.modelToken(old) !== this.modelToken(command);
+    if (old?.status === 'working' && (command.status !== 'working' || moved))
+      await this.revokeCredential(tx, this.modelToken(old));
     if (
       command.status === 'working' &&
-      (!old ||
-        old.status !== 'working' ||
-        this.modelToken(old) !== this.modelToken(command) ||
-        old.expiresAt !== command.expiresAt)
+      (old?.status !== 'working' || moved || old.expiresAt !== command.expiresAt)
     )
-      await this.syncModelCredential(tx, command);
+      await this.credentials.adopt(
+        {
+          owner: 'pi',
+          subject: this.modelSubject(command),
+          kind: 'pi-model',
+          tokenHash: tokenDigest(this.modelToken(command)),
+          expiresAt: command.expiresAt,
+          hardDeadline: command.expiresAt,
+        },
+        tx,
+      );
     await tx.run(
       'UPDATE pi_commands SET status=?,relay_hash=?,data_json=? WHERE conversation_id=? AND id=?',
       command.status,
@@ -340,26 +346,9 @@ export class PiCore {
   modelSubject(command: PiCommandRecord): string {
     return `${command.conversationId}:${command.id}:${command.epoch}:${command.runtimeId}`;
   }
-  async syncModelCredential(tx: Transaction, command: PiCommandRecord): Promise<void> {
-    const tokenHash = tokenDigest(this.modelToken(command));
-    await this.credentials.adopt(
-      {
-        owner: 'pi',
-        subject: this.modelSubject(command),
-        kind: 'pi-model',
-        tokenHash,
-        expiresAt: command.expiresAt,
-        hardDeadline: command.expiresAt,
-      },
-      tx,
-    );
-  }
   async revokeCredential(tx: Transaction, token: string): Promise<void> {
     // An unknown hash is a no-op; revoking an already expired row is harmless.
     await this.credentials.revoke(tokenDigest(token), 'pi', tx);
-  }
-  revokeModelCredential(tx: Transaction, command: PiCommandRecord) {
-    return this.revokeCredential(tx, this.modelToken(command));
   }
   /** The agent assumes the person's permissions. The default machine is always allowed;
    * another requires write permission in this project. Otherwise the picker shows the reason,
@@ -460,8 +449,9 @@ export class PiCore {
     // An enrolled worker picks a new turn up at once, so the turn reads as thinking, not loading.
     return this.show(id, { name: !slot.workerId ? 'agent' : command ? 'thinking' : 'ready' });
   }
-  /** Keeps a stage's start while it lasts, and wakes open pages when it moves. */
-  show(id: string, next: Omit<PiStage, 'since'> & { since?: string }): PiStage {
+  /** Keeps a stage's start while it lasts, and wakes open pages when it moves: with a re-read,
+   * or, for a step of the turn `commandId` (which changes no record), with the stage alone. */
+  show(id: string, next: Omit<PiStage, 'since'> & { since?: string }, commandId?: string): PiStage {
     const live = this.live.get(id);
     const last = live?.stage ?? { name: 'idle', since: next.since ?? this.time() };
     if (last.name === next.name && last.detail === next.detail) return last;
@@ -469,14 +459,15 @@ export class PiCore {
     if (next.detail) stage.detail = next.detail;
     if (next.name === 'idle') this.live.delete(id);
     else this.live.set(id, { ...live, stage });
-    this.streams.publish(id, { commandId: '', type: 'changed', text: '' });
+    const event = commandId ? { type: 'stage' as const, stage } : { type: 'changed' as const };
+    this.streams.publish(id, { commandId: commandId ?? '', text: '', ...event });
     return stage;
   }
   /** What the worker does within its turn: kept in memory and shown at once. */
   report(id: string, commandId: string, name: PiStageName, detail?: string): void {
     const turn = { name, since: this.time(), commandId, detail };
     this.live.set(id, { ...this.live.get(id), turn });
-    this.show(id, turn);
+    this.show(id, turn, commandId);
   }
   /** Open pages re-read what a committed transaction changed: the turns it ended or moved, and
    * `ids`; and, keeping any text streaming there, every conversation of a host it saved. Fleet

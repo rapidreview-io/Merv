@@ -1212,10 +1212,21 @@ test('the bar and the transcript say what the turn waits on, counting the second
   assert.match(bar(), /^Starting a machine · 6 s/);
   await push('agent', 'starting');
   assert.match(bar(), /^Loading the agent · 0 s/);
-  await push('tool', 'working', 'Reading a file');
+  // A turn's own steps arrive as stages alone: shown as they come, and nothing is read again.
+  const reads = requests.length;
+  const stage = (name: string, detail?: string) =>
+    act(async () =>
+      stream.push('delta', {
+        streamId: 'stream_1',
+        ...{ sequence: ++sequence, commandId: 'command_1', type: 'stage', text: '' },
+        stage: { name, since: new Date().toISOString(), detail },
+      }),
+    );
+  await stage('tool', 'Reading a file');
   assert.match(bar(), /^Reading a file$/);
-  await push('thinking');
+  await stage('thinking');
   assert.match(bar(), /^Thinking · 0 s/);
+  assert.equal(requests.length, reads);
   const partial: PiEvent = {
     sequence: ++sequence,
     commandId: 'command_1',

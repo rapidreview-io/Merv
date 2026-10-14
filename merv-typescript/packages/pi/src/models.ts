@@ -92,8 +92,10 @@ export interface PiProposal {
 export interface PiEvent {
   sequence: number;
   commandId: string;
-  type: 'text' | 'progress' | 'changed';
+  type: 'text' | 'progress' | 'changed' | 'stage';
   text: string;
+  /** A turn's own step (`stage`): pages show it without reading the conversation again. */
+  stage?: PiStage;
 }
 /** What the person is waiting on right now, in the order a cold turn passes through. `moving`: the
  * host is starting another machine to move to (PiHostView.moving says which); turns keep running

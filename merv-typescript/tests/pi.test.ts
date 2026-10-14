@@ -1337,7 +1337,13 @@ test('each turn says whom the agent serves, where, on what, what the project hol
   await f.pi.tool(first.token, { ...first.input, name: 'probe.write', input: {} });
   await f.pi.stop(producer, first.input.conversationId);
   await f.pi.send(producer, first.input.conversationId, { commandId: 'again', text: 'Go on' });
+  // Read by id from where the stopped turn began, not by time over every event.
+  const find = f.state.findEvents.bind(f.state);
+  const after: (number | undefined)[] = [];
+  f.state.findEvents = (filter, ...rest) => (after.push(filter.after), find(filter, ...rest));
   const { work } = await f.pi.next(first.token, { workerId: 'worker_1' });
+  f.state.findEvents = find;
+  assert.ok(after.length === 1 && after[0]! > 0);
   assert.equal(
     work!.notes[3],
     'Your previous answer here stopped before it finished, after it had made: probe.write probe',
@@ -2315,6 +2321,17 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
     const before = sequence();
     await f.pi.tool(token, { ...input, name, input: {} });
     assert.equal(sequence(), before + 2);
+    // As stages, which open pages show without reading the conversation again.
+    assert.deepEqual(
+      f.pi.streams
+        .snapshot(id)
+        .tail.slice(-2)
+        .map(({ type, stage }) => [type, stage?.name]),
+      [
+        ['stage', 'tool'],
+        ['stage', 'thinking'],
+      ],
+    );
   }
   assert.deepEqual(shown, ['Reading', 'Making a change']);
   // Once the machine stops, the conversation's stage is forgotten.

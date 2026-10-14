@@ -31,9 +31,10 @@ export const piRelayGrantSchema = z
   })
   .strict();
 
-const json: z.ZodType<unknown> = z.lazy(() =>
-  z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(json), z.record(json)]),
-);
+// Built once: a union made in the lazy getter was rebuilt at every node of every tool schema.
+const json: z.ZodType<unknown> = z.lazy(() => node);
+const scalars = [z.null(), z.boolean(), z.number().finite(), z.string()] as const;
+const node = z.union([...scalars, z.array(json), z.record(json)]);
 
 const input = z.discriminatedUnion('type', [
   z.object({ type: z.literal('input_text'), text }).strict(),

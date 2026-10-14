@@ -292,4 +292,6 @@ CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,re
   // SELECT count(*) AS live, count(s.instance_id) AS started FROM wf_leases l LEFT JOIN wf_work_starts s ON s.instance_id=l.instance_id AND s.revision=l.revision WHERE l.released_at IS NULL;
   17: `ALTER TABLE wf_leases ADD COLUMN started_at TEXT;
 UPDATE wf_leases l SET started_at=s.started_at FROM wf_work_starts s WHERE l.released_at IS NULL AND s.instance_id=l.instance_id AND s.revision=l.revision;`,
+  // (unpublished) Workflows.moves reads one project's moves of an action, not all history.
+  18: `CREATE INDEX wf_history_project_action ON wf_history(project_id, action);`,
 };

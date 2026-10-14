@@ -4,7 +4,6 @@ import {
   MervError,
   type Caller,
   type DelegationSource,
-  type Sql,
   type Transaction,
 } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
@@ -59,7 +58,7 @@ export class PiHosts implements FleetOwner {
       for (const role of roles) {
         const slot = previous[role];
         if (slot && !live.some((current) => current.allocationId === slot.allocationId))
-          await this.revokeWorkerCredential(tx, previous, slot);
+          await this.core.revokeCredential(tx, this.core.workerToken(previous.id, slot));
       }
     host.revision++;
     await tx.run(
@@ -70,16 +69,13 @@ export class PiHosts implements FleetOwner {
       host.createdAt,
       JSON.stringify(host),
     );
-    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.core.sharers.add(id);
-  }
-  /** The person's conversations that share the host `key`. */
-  private async sharing(sql: Sql, userId: string, key: string) {
-    return (
-      await sql.all<{ id: string; project_id: string }>(
-        'SELECT id,project_id FROM pi_conversations WHERE user_id=?',
-        userId,
-      )
-    ).filter(({ project_id }) => this.core.key(userId, project_id) === key);
+    // The person's conversations that share the host: its key is `${userId}:${projectId}`.
+    for (const { id } of await tx.all<{ id: string }>(
+      'SELECT id FROM pi_conversations WHERE user_id=? AND project_id=?',
+      host.userId,
+      host.key.slice(host.userId.length + 1),
+    ))
+      this.core.sharers.add(id);
   }
   /** A move, stamped at its outcome, joins the person's last day of moves; an agent's cut-over
    * also makes its machine where a new host starts (`sticky`). */
@@ -118,9 +114,6 @@ export class PiHosts implements FleetOwner {
       !credential.revokedAt
     )
       await this.core.credentials.renew(tokenHash, 'pi', slot.expiresAt, tx);
-  }
-  private revokeWorkerCredential(tx: Transaction, host: PiHostRecord, slot: PiSlot) {
-    return this.core.revokeCredential(tx, this.core.workerToken(host.id, slot));
   }
   /** The conversation's live host and the allocation of the slot serving its new turns. */
   async machineOf(tx: Transaction, conversation: PiConversationRecord) {

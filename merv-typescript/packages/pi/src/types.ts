@@ -42,6 +42,8 @@ export interface PiCommandRecord extends PiCommand {
   calledAt?: string;
   /** It started again once, on a fresh machine, after its own was lost. */
   retried?: true;
+  /** The event head when its worker began it: the events it records come after (told). */
+  eventsAfter?: number;
 }
 /** PiCore.machineChoice: whether a person, and so their agent, may run on a machine here. */
 export type PiMachineChoice = { allowed: true } | { allowed: false; reason: string };

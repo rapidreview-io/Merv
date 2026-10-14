@@ -296,6 +296,8 @@ export class PiWorkerProtocol {
           projectId: conversation.projectId,
           actorId: conversation.source.actorId,
           since: before.startedAt ?? before.createdAt,
+          // Read by id from where it began, not by time over the project's every event.
+          ...(before.eventsAfter !== undefined && { after: before.eventsAfter }),
           source: { conversationId: conversation.id, commandId: before.id },
         },
         6,
@@ -451,6 +453,7 @@ export class PiWorkerProtocol {
       }
       command.status = 'working';
       command.startedAt = this.core.time();
+      command.eventsAfter = await this.core.state.eventHead(tx);
       await this.core.saveCommand(tx, command);
       this.core.progressAt.set(`${command.conversationId}:${command.id}`, this.core.clock());
       return true;
