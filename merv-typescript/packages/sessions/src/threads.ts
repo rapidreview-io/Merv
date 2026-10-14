@@ -77,11 +77,12 @@ export const dormantMs = 14 * 86_400_000;
 const reviewVisits = 4;
 /** What one conversation read sends: the newest events it has not sent, at most this many or
  *  bytes; and what it downloads of transcripts: as many bytes, in at most READ_GETS ranged GETs
- *  of at most CHUNK_BYTES each. */
+ *  of at most CHUNK_BYTES each, or, while it holds no line it can send, to LINE_BYTES. */
 const READ_EVENTS = 500;
 const READ_BYTES = 2_000_000;
 const READ_GETS = 8;
 const CHUNK_BYTES = 1_000_000;
+const LINE_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const CHUNK_TIMEOUT_MS = 30_000;
 /** What one read has left to send (`events`, `bytes`) and to download (`download`, `gets`). */
@@ -990,11 +991,12 @@ const piece = (text: string) =>
  * both harnesses' readers (their line types do not overlap), its newest lines whose events fit
  * `room`, which they take up, from disjoint chunks `range(start, stop)` downloads while `room`
  * allows. A line is read once its start is held, and Claude's streamed pieces once their
- * message's start is, so a transcript read in parts reads as it does whole; a line is named by
- * where it starts (the readers' `at`, its events' `seq`), so any part numbers events as the
- * whole does. Events carry the declaration's time (`at`); `rest` is where the read stopped, unless
- * it reached the start. A read that `must` move sends its newest line whatever its size, or passes
- * over a line longer than any read downloads.
+ * message's start is, and named by where it starts (the readers' `at`, its events' `seq`), so a
+ * transcript read in parts draws as it does whole (a Codex call whose start and end two parts
+ * hold is sent by both, one block by its id). Events carry the declaration's time (`at`); `rest`
+ * is where the read stopped, unless it reached the start. A read that `must` move sends its
+ * newest line whatever its size, downloading past its room until it holds one, each chunk as
+ * large as all before it, to LINE_BYTES: only a longer line is passed over.
  */
 export async function transcriptEvents(
   range: (start: number, stop: number) => Promise<Buffer>,
@@ -1009,13 +1011,13 @@ export async function transcriptEvents(
   // Bytes [start, end) are held: downloaded, not yet sent.
   let start = end,
     held = Buffer.alloc(0);
-  while (start > 0 && room.gets > 0 && room.download > 0 && room.events > 0 && room.bytes > 0) {
-    const from = Math.max(0, start - Math.min(CHUNK_BYTES, room.download));
+  const left = () => (stuck() ? LINE_BYTES - (top - start) : room.gets > 0 ? room.download : 0);
+  while (start > 0 && left() > 0 && room.events > 0 && room.bytes > 0) {
+    const from = Math.max(0, start - Math.min(Math.max(CHUNK_BYTES, top - start), left()));
     held = Buffer.concat([await range(from, start), held]);
     room.download -= start - from;
     room.gets--;
     start = from;
-    const last = start === 0 || !room.gets || room.download <= 0;
     // Its whole lines: from the first that starts in what is held.
     const lines: { offset: number; text: string }[] = [];
     for (let line = start === 0 ? 0 : held.indexOf(10) + 1 || held.length; line < held.length;) {
@@ -1025,7 +1027,7 @@ export async function transcriptEvents(
     }
     let first = 0;
     if (start > 0) while (first < lines.length && piece(lines[first]!.text)) first++;
-    if (first === lines.length && last && stuck()) {
+    if (first === lines.length && stuck() && left() <= 0) {
       if (!lines.length) end = start;
       first = 0;
     }

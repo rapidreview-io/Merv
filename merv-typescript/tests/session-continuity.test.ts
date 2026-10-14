@@ -1557,26 +1557,62 @@ test('read on from where each read stopped, a conversation is read whole, each b
   assert.deepEqual(held.ses_live, []);
 });
 
-test('a line longer than any read downloads is passed over, and the reads still reach the start', async () => {
-  const bytes = Buffer.concat([
-    codexTranscript('a', 1),
-    Buffer.from(`${JSON.stringify({ type: 'noise', pad: 'x'.repeat(2_500_000) })}\n`),
-    codexTranscript('b', 1),
-  ]);
-  const read = async (end: number) => {
-    const out = await transcriptEvents(
-      async (start, stop) => bytes.subarray(start, stop),
-      end,
-      'at',
-    );
-    return [out.events.map(({ event }) => event.id), out.rest] as const;
+test('a line longer than a read’s room is read whole and cut, and only one over 16 MB is passed over', async () => {
+  // An answer of `length` characters between two short ones.
+  const transcript = (length: number) =>
+    Buffer.concat([
+      codexTranscript('a', 1),
+      Buffer.from(
+        `${JSON.stringify({ type: 'item.completed', item: { id: 'long', type: 'agent_message', text: 'x'.repeat(length) } })}\n`,
+      ),
+      codexTranscript('b', 1),
+    ]);
+  /** Each read on from the end until the start: what it sent and the size of each GET. */
+  const reads = async (bytes: Buffer) => {
+    const out: { events: AgentStreamEvent['event'][]; gets: number[] }[] = [];
+    for (let end = bytes.length as number | undefined; end !== undefined;) {
+      assert.ok(out.length < 5, 'the reads come to an end');
+      const gets: number[] = [];
+      let below = end;
+      const read = await transcriptEvents(
+        async (start, stop) => {
+          assert.equal(stop, below, 'each GET ends where the one after it starts: no byte twice');
+          gets.push(stop - (below = start));
+          return bytes.subarray(start, stop);
+        },
+        end,
+        'at',
+      );
+      out.push({ events: read.events.map(({ event }) => event), gets });
+      end = read.rest;
+    }
+    return out;
   };
-  const [first, stopped] = await read(bytes.length);
-  assert.deepEqual(first, ['b0']);
-  // The next read finds no line start in all it may download, and goes on before it.
-  const passed = stopped! - 2_000_000;
-  assert.deepEqual(await read(stopped!), [[], passed]);
-  assert.deepEqual(await read(passed), [['a0'], undefined]);
+  const MB = 1_000_000;
+  // The read that stands at a 2.5 MB line downloads on past its room, each GET as large as all
+  // before it, until it holds the line's start: the line is sent cut, as a whole read sends it.
+  const long = await reads(transcript(2_500_000));
+  assert.deepEqual(
+    long.map(({ events, gets }) => [events.map((event) => event.id), gets.length]),
+    [
+      [['b0'], 2],
+      [['a0', 'long'], 3],
+    ],
+  );
+  assert.deepEqual(long[1]!.events[1], {
+    kind: 'text',
+    id: 'long',
+    delta: 'x'.repeat(AGENT_EVENT_TEXT),
+    done: true,
+    cut: 2_500_000 - AGENT_EVENT_TEXT,
+  });
+  // A line over 16 MB is passed over after 16 MB, and the next read goes on before it.
+  const longer = await reads(transcript(17_000_000));
+  assert.deepEqual(
+    longer.map(({ events }) => events.map((event) => event.id)),
+    [['b0'], [], ['a0']],
+  );
+  assert.deepEqual(longer[1]!.gets, [MB, MB, 2 * MB, 4 * MB, 8 * MB]);
 });
 
 test('a stored transcript’s long text is cut a whole character at a time', async () => {
