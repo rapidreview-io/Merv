@@ -24,7 +24,7 @@ const input = {
 };
 
 test('trusted intake binds the request and exact Astra/medium model, offers only its tools and context', async (t) => {
-  const f = await fixture(t, { pi: { models: astraModels } });
+  const f = await fixture(t, { pi: { models: [...models] } });
   let calls = 0;
   let authorizations = 0;
   f.tools.register({
@@ -139,7 +139,7 @@ test('public creation cannot set a profile, and the trusted request binding and 
   );
 });
 
-test('missing profile, changed profile version contents, and model effort mismatch fail closed', async (t) => {
+test('missing profile, changed profile version contents, and withdrawn profile model fail closed', async (t) => {
   const f = await fixture(t, { pi: { models: astraModels } });
   await assert.rejects(f.pi.createProfiled(f.operator, input), code('pi_profile_unavailable'));
   let unregister = f.pi.registerProfile(profile);
@@ -150,7 +150,7 @@ test('missing profile, changed profile version contents, and model effort mismat
   await assert.rejects(f.send(conversation), code('pi_profile_unavailable'));
   unregister();
   f.pi.registerProfile(profile);
-  await f.restart({ models: [...models] }); // Astra exists, but is configured at low.
+  await f.restart({ models: models.filter((model) => model.id !== 'gpt-6-astra') });
   f.pi.registerProfile(profile);
   await assert.rejects(f.send(conversation), code('pi_profile_model_unavailable'));
   await assert.rejects(

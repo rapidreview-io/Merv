@@ -29,6 +29,7 @@ import {
   instructions,
   handoff,
   sourceVerification,
+  reportPresentation,
   feasibilityFormat,
   CONTEXT_CHARS,
 } from './definitions.js';
@@ -183,7 +184,7 @@ export async function inputsOf(
           },
         ],
       },
-      ...(state === 'planned' ? { feasibilityFormat } : {}),
+      ...(state === 'planned' ? { feasibilityFormat, computeAccess: PLANNING_COMPUTE } : {}),
       // Its notes are the feedback section's, which embeds the newest few.
       attempt: { ...experiment.attempt, feedback: undefined },
       workflow: experiment.workflow,
@@ -285,6 +286,13 @@ async function resumesFrom(
   return head ? { base: head } : {};
 }
 
+/**
+ * What a design may do with compute, said in the assignment a planner reads first: its Sandboxes
+ * tools come on their own connection, so the declared tools above never list them.
+ */
+const PLANNING_COMPUTE =
+  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them.';
+
 export async function references(
   ctx: ExperimentsContext,
   context: WorkflowCheckContext,
@@ -296,6 +304,8 @@ export async function references(
   return {
     // The native Sandboxes work kind an experiment binds compute under.
     computeKind: 'experiment',
+    // A design measures its compute rather than guessing it: bounded probes, not the run.
+    ...(context.snapshot.state === 'planned' ? { computeProfile: 'plan' } : {}),
     // Execution works on its pinned base. From experiment@41 the design and its review read the
     // code execution will start from: that base, with an earlier attempt's commits on it.
     ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),
@@ -487,13 +497,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief:
-      `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
-      ((await ctx.sandboxes?.guidance(
-        experiment.projectId,
-        state === 'running' ? 'execute' : 'check',
-        context.tx,
-      )) ?? ''),
+    brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${reportPresentation}` : ''}\n\n${sourceVerification}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

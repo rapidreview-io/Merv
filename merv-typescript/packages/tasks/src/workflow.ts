@@ -27,6 +27,8 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
 export const taskVersions: Record<number, { workspace: TaskWorkspace }> = {
   11: { workspace: 'resolution' },
   43: { workspace: 'code' },
+  44: { workspace: 'code' },
+  12: { workspace: 'resolution' },
 };
 export function taskContract(version: number) {
   const contract = taskVersions[version];
@@ -35,7 +37,7 @@ export function taskContract(version: number) {
 }
 export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
 /** Service tasks are the resolution contracts; every other task runs on a Code one. */
-export const taskVersion = (service = false): number => (service ? 11 : 43);
+export const taskVersion = (service = false): number => (service ? 12 : 44);
 export const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
 /** The workflow node a Git task's commit is made in. */
 export const producing = {

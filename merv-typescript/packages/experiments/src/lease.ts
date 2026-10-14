@@ -160,7 +160,7 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
     lease: async (context) =>
       await leaseOf(ctx, context.caller, await facts(ctx, context), context.tx),
     captures: async (context, lease) => [
-      ...((await ctx.sandboxes?.captures(
+      ...((await ctx.captureEvidence?.captures(
         context.caller.projectId,
         context.snapshot.id,
         context.tx,

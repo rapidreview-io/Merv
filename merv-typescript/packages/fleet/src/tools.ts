@@ -48,6 +48,17 @@ export const fleetToolsPlugin = {
         handler: async (caller: Caller, input: { id: string }) =>
           present(await ctx.fleet.cancel(caller, input.id)),
       },
+      {
+        name: 'fleet.project_limit',
+        conversation: 'never' as const,
+        description:
+          'How many Fleet machines this project may run at once. A project administrator, signed in, can change it; machines already running finish their work.',
+        inputSchema: z.object({ machines: z.number().int().min(1).max(64).optional() }).strict(),
+        handler: async (caller: Caller, input: { machines?: number }) =>
+          input.machines === undefined
+            ? await ctx.fleet.projectLimit(caller)
+            : await ctx.fleet.setProjectLimit(caller, input.machines),
+      },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
   },

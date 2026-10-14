@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Caller, Json } from '@merv/contracts';
-import type { NativeConnectionStatus } from '@merv/sandboxes/native-types';
+import type { ComputeFundingStatus as NativeConnectionStatus } from '@merv/customer-experiments/compute';
 import { ManagedCustomerCompute } from '../packages/customer-experiments/src/compute.js';
 
 const caller: Caller = { projectId: 'customer_project', actorId: 'sponsor' };

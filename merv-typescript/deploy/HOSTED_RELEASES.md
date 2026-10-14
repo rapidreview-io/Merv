@@ -1,7 +1,7 @@
 # Hosted Pi/Codex image releases
 
 One row per run of [`hosted-release.mjs`](hosted-release.mjs) that changed, or tried to change,
-the hosted worker image. `release.mjs` runs it after every passing production release. Source is
+the hosted worker image. `release.mjs` runs it after passing production releases unless `--skip-hosted` is set. Source is
 the commit and the content hash of its allowlisted archive; both are also image labels
 (`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`), beside
 `org.merv.hosted.sandboxes-commit`. Image is the amd64 manifest digest that Cloudflare and the
@@ -15,6 +15,14 @@ unverified, so each later run rebuilds and canaries them (`rechecked`) until a c
 release replaces them. Each run commits this file and `hosted-release.json` by path, with a
 `[skip ci]` message, and pushes them when its checkout is at origin/main's tip; otherwise it
 leaves them for you to commit.
+
+Later hosted releases default
+to `vendor/merv-sandboxes` and archive its agent, base/bridge and runtime assets at the selected
+commit. Probes execute Node/TS in the standalone container without starting services or migrating.
+Catalog changes atomically update the root-only raw `/etc/sandboxes/shared.env`, validate both
+compositions, and recreate standalone and Merv on their current images under the maintenance
+lock. The drain, isolation gates, canary and recovery journal remain required. Retire old
+archived timers before the cutover.
 
 | UTC               | Run                         | Source                    | Lane     | Image          | Release        | App     | Gates             | Canary                 | Result                     | Notes                                                                                                                                                                                                                                                                                                                                              |
 | ----------------- | --------------------------- | ------------------------- | -------- | -------------- | -------------- | ------- | ----------------- | ---------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -82,3 +90,5 @@ leaves them for you to commit.
 | 2026-10-07T16:53Z | `20261007T165252Z-06d804cb` | `06d804cb` `e9e25f378472` | boundary | —              | —              | —       | —                 | —                      | FAILED                     | gates: command_failed: docker run --rm; nothing changed                                                                                                                                                                                                                                                                                            |
 | 2026-10-07T19:52Z | `20261007T195107Z-68093a63` | `68093a63` `d3b0d83de93a` | boundary | `6021cb8a1aa9` | `2a625e7ea68f` | v71 v57 | 3 pass            | completed in 38s       | pass                       | Sandboxes 5157f1ed; staging cloudflare-fleet-staging + cloudflare-fleet-staging-large switched on it                                                                                                                                                                                                                                               |
 | 2026-10-11T08:04Z | `20261011T080351Z-5eb5c0d4` | `5eb5c0d4` `279c22cb8f4f` | boundary | `9bb0fe9a6396` | `bf36a2878dda` | v72 v58 | 3 pass            | completed in 30s       | pass                       | Sandboxes 5157f1ed; staging cloudflare-fleet-staging + cloudflare-fleet-staging-large switched on it                                                                                                                                                                                                                                               |
+| 2026-10-13T17:37Z | `20261013T173637Z-783f2e93` | `783f2e93` `4fc023321c7e` | boundary | —              | —              | —       | —                 | —                      | FAILED                     | gates: command_failed: docker run --rm; nothing changed                                                                                                                                                                                                                                                                                            |
+| 2026-10-13T17:59Z | `20261013T175910Z-5c3adde2` | `5c3adde2` `f48e8eb9a5e3` | boundary | `66956a410d61` | `b23e866944d5` | v73 v59 | 3 pass            | completed in 25s       | pass                       | Sandboxes 783c67c5; staging cloudflare-fleet-staging + cloudflare-fleet-staging-large switched on it                                                                                                                                                                                                                                               |

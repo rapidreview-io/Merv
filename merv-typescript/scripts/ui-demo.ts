@@ -9,9 +9,6 @@ import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { createApp } from '../src/app.js';
 import { defaultConfigFile } from '../src/config.js';
-import { sandboxesPlugin } from '@merv/sandboxes';
-import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
-import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
@@ -37,12 +34,6 @@ import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
  *
  * `--agent` adds the Agent page with the real Agent service, on a machine that is this process
  * and a scripted model (scripts/ui-demo-agent.ts).
- *
- * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
- * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
- * project, which publishes its own sidebar rows and its two tools from the service's manifest;
- * MERV_SANDBOXES_NAMESPACE overrides the `demo` namespace. `npm run fake:sandboxes` serves
- * all of it on port 3210. Without MERV_SANDBOXES_URL the demo composes exactly as before.
  *
  * State goes to the PostgreSQL that MERV_DB_URL names, in a schema derived from the data
  * directory (scripts/database.ts): set MERV_DEMO_DIR to reopen the same demo database, or
@@ -296,26 +287,6 @@ async function main() {
     title: 'Demo sweep checkpoint',
     content: 'The four weight-decay settings and output locations are recorded for the demo.',
   });
-  // Rows published by a service outside this process, read with this project's own grant.
-  const sandboxes: string[] = [];
-  if (process.env.MERV_SANDBOXES_URL) {
-    const fiber = app.ctx.plugin(sandboxesPlugin, {
-      urlEnv: 'MERV_SANDBOXES_URL',
-      connections: [
-        {
-          projectId: boot.project.id,
-          namespace: process.env.MERV_SANDBOXES_NAMESPACE ?? 'demo',
-          tokenEnv: 'MERV_SANDBOXES_TOKEN',
-        },
-      ],
-    });
-    app.ctx.plugin(sandboxesToolsPlugin);
-    app.ctx.plugin(sandboxesUiPlugin);
-    await fiber.await();
-    await app.ctx.sandboxes.refresh();
-    sandboxes.push(...app.ctx.sandboxes.rows().map((row) => `${url}/ui${row.path}`));
-  }
-
   const git = seedsGit ? await seedGit(app, owner) : undefined;
   const {
     machines,
@@ -378,7 +349,6 @@ async function main() {
         work: `${url}/ui/work`,
         directory,
         schema,
-        ...(sandboxes.length ? { sandboxes } : {}),
         ...(git ? { git: git.report } : {}),
         tokens: {
           operator: boot.token,

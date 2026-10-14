@@ -1,7 +1,19 @@
 import { z } from 'zod';
 import { check, MervError, type Caller } from '@merv/contracts';
-import type { Sandboxes } from '@merv/sandboxes/types';
-import type { NativeConnectionStatus } from '@merv/sandboxes/native-types';
+export interface ComputeFundingStatus {
+  connected: boolean;
+  funding?: string;
+  memberId?: string | null;
+  namespaceId?: string;
+  allowance?: unknown;
+  [key: string]: unknown;
+}
+export interface ComputeProvisioning {
+  managedCompute?: {
+    options(caller: Caller): Promise<unknown>;
+    enable(caller: Caller): Promise<ComputeFundingStatus>;
+  };
+}
 
 const name = z.string().min(1).max(255);
 const quantity = z.number().finite().nonnegative().nullable();
@@ -49,7 +61,7 @@ const allowanceSchema = z.object({
         target: z.string(),
         window: z.string(),
         metric: z.string(),
-        currency: z.string(),
+        currency: z.string().nullable(),
         provider: z.string().nullable(),
         source: z.string().nullable(),
         cap: amount.nullable(),
@@ -62,7 +74,7 @@ const allowanceSchema = z.object({
 const positive = (value: string | null) => value !== null && /[1-9]/.test(value);
 
 /** The existing member allowance is a shared account ceiling, not a per-experiment quote. */
-function funded(status: NativeConnectionStatus): void {
+function funded(status: ComputeFundingStatus): void {
   const parsed = allowanceSchema.safeParse(status.allowance);
   check(
     status.connected && status.funding === 'managed' && status.memberId && parsed.success,
@@ -73,9 +85,12 @@ function funded(status: NativeConnectionStatus): void {
   const budgets = parsed.data.budgets;
   const member = budgets.filter(
     (budget) =>
-      budget.scope === 'member' &&
-      budget.target === status.memberId &&
-      budget.window === 'month' &&
+      ((budget.scope === 'member' &&
+        budget.target === status.memberId &&
+        budget.window === 'month') ||
+        (budget.scope === 'namespace' &&
+          budget.target === status.namespaceId &&
+          budget.window === 'all_time')) &&
       budget.metric === 'money' &&
       budget.currency === 'USD' &&
       budget.provider === null &&
@@ -85,7 +100,7 @@ function funded(status: NativeConnectionStatus): void {
   check(
     member.length > 0 && member.every((budget) => positive(budget.cap)),
     'customer_compute_unavailable',
-    'Managed compute needs a funded monthly member allowance',
+    'Managed compute needs a finite funded allowance',
     503,
   );
   // Provider-specific policies are checked once the executor chooses an offer. A depleted
@@ -103,7 +118,7 @@ function funded(status: NativeConnectionStatus): void {
 /** Narrow product adapter over the already configured Sandboxes owner. No credentials,
  * independent connection client, rental API, or provider configuration are exposed here. */
 export class ManagedCustomerCompute implements CustomerCompute {
-  constructor(private readonly sandboxes: Pick<Sandboxes, 'managedCompute'>) {}
+  constructor(private readonly sandboxes: ComputeProvisioning) {}
 
   private capability() {
     const capability = this.sandboxes.managedCompute;

@@ -1748,12 +1748,24 @@ export class LeasedSessions implements Sessions {
         'Workspace must be attached before its final capture',
         409,
       );
+      // A merge's checkpoint and first merge move with the head as it commits; its plan and
+      // parents are what the workspace was attached to merge.
       const identity = ({
         headOid: _headOid,
         treeOid: _treeOid,
         stats: _stats,
+        pendingMerge,
         ...identity
-      }: SessionWorkspace) => identity;
+      }: SessionWorkspace) => ({
+        ...identity,
+        ...(pendingMerge && {
+          pendingMerge: {
+            plan: pendingMerge.plan,
+            firstParent: pendingMerge.firstParent,
+            secondParent: pendingMerge.secondParent,
+          },
+        }),
+      });
       check(
         canonical(identity(workspace)) === canonical(identity(session.workspace.attachment)),
         'workspace_identity_conflict',

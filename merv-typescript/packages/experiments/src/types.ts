@@ -9,7 +9,7 @@ import type {
 } from '@merv/contracts';
 import type { ProcessGraph } from '@merv/workflows/models';
 import type {} from 'cordis';
-import type { Sandboxes } from '@merv/sandboxes/types';
+import type { SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import type { PaperChanges } from '@merv/paper/types';
 import type {
   Experiment,
@@ -29,7 +29,7 @@ export interface ExperimentReview extends ReviewApplication {
 }
 
 export interface Experiments {
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance'>): () => void;
+  bindCaptureEvidence(service: Pick<SandboxCaptureEvidence, 'captures' | 'evidence'>): () => void;
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;

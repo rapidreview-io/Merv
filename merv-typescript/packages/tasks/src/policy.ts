@@ -99,7 +99,11 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
         },
         build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy('work', taskWorkspace(version)),
+        execution: taskExecutionPolicy(
+          'work',
+          taskWorkspace(version),
+          version === 12 || version >= 44,
+        ),
         references: async (context) => await workflowExecutionReferences(ctx, context),
         lease: leaseHooks(ctx),
       },
@@ -109,7 +113,11 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           await workflowAssignmentFacts(ctx, context);
         },
         build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy('review', taskWorkspace(version)),
+        execution: taskExecutionPolicy(
+          'review',
+          taskWorkspace(version),
+          version === 12 || version >= 44,
+        ),
         references: async (context) => await workflowExecutionReferences(ctx, context),
         lease: leaseHooks(ctx),
       },

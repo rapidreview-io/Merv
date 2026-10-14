@@ -803,7 +803,13 @@ export class MachineRunner implements Runner {
                 releaseOutcome: 'preparation_deferred',
                 deferral: { cause: error.cause, code: error.code },
               }
-            : { releaseOutcome: outcome },
+            : // The cause travels with the close, so a hold says why its launches failed.
+              {
+                releaseOutcome: outcome,
+                ...(diagnostic(error) !== 'runner_operation_failed'
+                  ? { releaseReason: diagnostic(error) }
+                  : {}),
+              },
         );
         return terminalLaunch(record) && this.settle(record);
       }

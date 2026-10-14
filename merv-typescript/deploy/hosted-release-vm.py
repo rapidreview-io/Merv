@@ -36,7 +36,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
+MAIN, CONTROL = 'merv-typescript-control-1', 'sandboxes-control-1'
+SHARED = Path('/etc/sandboxes/shared.env')
 ENV = Path('/etc/merv/typescript.env')
 HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
 MAINTENANCE = Path('/run/lock/merv-maintenance.lock')
@@ -70,10 +71,17 @@ STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 's
          'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
-const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();const w=!!process.env.MERV_W;
+const c=new pg.Client({connectionString:process.env[process.env.MERV_URL??'MERV_DB_URL']});await c.connect();const w=!!process.env.MERV_W;
 try{await c.query(w?'BEGIN':'BEGIN READ ONLY');const s=(process.env.MERV_TS_DB_SCHEMA??'merv_ts').replace(/[^a-z0-9_]/g,'');
 const r=await c.query(process.env.MERV_Q.replaceAll('{s}',s),JSON.parse(process.env.MERV_P));
 console.log(JSON.stringify(r.rows[0]));await c.query(w?'COMMIT':'ROLLBACK')}finally{await c.end()}'''
+# Use Main's rendered profiles (including deployment defaults) and Fleet's own identity function.
+# Allocations persist this release-bound profileId, not a releaseId in their runtime launch.
+FLEET_PROFILES = r'''import { readFileSync } from 'node:fs';
+import { runtimeProfiles, runtimeProfileId } from '@merv/fleet/runtime';
+const config=JSON.parse(readFileSync('/tmp/merv-config.json','utf8'));
+const profiles=runtimeProfiles.parse(config.plugins.find(p=>p.id==='fleet').config.profiles);
+console.log(JSON.stringify(Object.fromEntries(profiles.map(p=>[runtimeProfileId(p),p.releaseId]))));'''
 # Ends each idle Pi host's idle clock: Main releases its machine at its next pass, as at the idle
 # timeout, instead of a rollout killing it. A host that took a turn meanwhile keeps it.
 IDLE = ("e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
@@ -91,52 +99,6 @@ UNHOLD = "WITH h AS (DELETE FROM {s}.fleet_holds WHERE name = 'hosted-release') 
 WORKFLOW = "data_json::jsonb#>>'{owner,kind}' = 'workflow'"
 WORK = ("SELECT coalesce((SELECT json_agg(id) FROM {s}.fleet_allocations WHERE phase <> 'released' AND "
         + WORKFLOW + "), '[]'::json)::text AS work")
-SBX = r'''import asyncio,json,os
-from sqlalchemy import text
-from merv_sandboxes.config import Settings
-from merv_sandboxes.runtime import Container
-from merv_sandboxes.errors import ProviderUnavailableError
-async def application_status(d):
-    # Only this read-only GET retries. Preserve the native request timeout;
-    # cap the whole read at 45s inside sbx's 60s process deadline.
-    async with asyncio.timeout(45):
-        for attempt in range(1,4):
-            try:
-                return await d._native_result(
-                    f'/accounts/{d._account_id}/containers/applications/{d._application_id}')
-            except ProviderUnavailableError as exc:
-                status=exc.details.get('status')
-                transient=type(status) is int and (status==429 or 500<=status<=599)
-                if not transient or attempt==3:
-                    if type(status) is int:
-                        exc.add_note(f'Cloudflare application status GET: HTTP {status}, attempt {attempt}/3')
-                    raise
-                await asyncio.sleep(attempt)
-async def main():
-    c=Container(Settings.load())
-    try:
-        if os.environ.get('MERV_Q'):
-            async with c.db.connect() as conn:
-                print(json.dumps((await conn.execute(text(os.environ['MERV_Q']))).scalar_one()))
-        elif os.environ.get('MERV_RELEASES'):
-            from merv_sandboxes.runtimes.releases import RuntimeRelease
-            print(json.dumps([RuntimeRelease(**{**e,'arguments':tuple(e.get('arguments',()))}).release_id
-                              for e in json.loads(os.environ['MERV_RELEASES'])]))
-        else:
-            # The host-configured app itself, whichever namespaces it serves.
-            b=c.providers._host.get(os.environ['MERV_PROVIDER'])
-            if not b:
-                raise SystemExit(os.environ['MERV_PROVIDER']+' is not an enabled Sandboxes provider')
-            d=b.driver
-            a,_=await application_status(d)
-            g=a.get('configuration') or {}
-            print(json.dumps({'id':a.get('id'),'name':a.get('name'),'version':a.get('version'),'image':g.get('image'),
-              'maxInstances':a.get('max_instances'),'ssh':bool((g.get('wrangler_ssh') or {}).get('enabled')),
-              'keys':len(g.get('authorized_keys') or [])+len(g.get('trusted_user_ca_keys') or []),
-              'rollout':a.get('active_rollout_id'),'health':a.get('health')}))
-    finally:
-        await c.stop()
-asyncio.run(main())'''
 # Mints the canary's reader key inside Main with Main's own scope service, as the pilot's operator.
 MINT = r'''import { PostgresState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
@@ -205,15 +167,18 @@ def healthy(name, tries, pause):
     raise RuntimeError('health_timeout: ' + name)
 
 
-def main_read(query, *params, write=False):
+def main_read(query, *params, write=False, url=None):
     return json.loads(run(['docker', 'exec', '-e', 'MERV_Q=' + query, '-e', 'MERV_P=' + json.dumps(params),
-                           *(['-e', 'MERV_W=1'] if write else []), '-w', '/app', MAIN, 'node',
+                           *(['-e', 'MERV_W=1'] if write else []), *(['-e', 'MERV_URL=' + url] if url else []),
+                           '-w', '/app', MAIN, 'node',
                            '--input-type=module', '-e', MAIN_READ]))
 
 
 def sbx(**env):
     flags = [part for key, value in env.items() for part in ('-e', f'{key}={value}')]
-    return json.loads(run(['docker', 'exec', *flags, CONTROL, 'python', '-c', SBX], timeout=60))
+    source = Path(__file__).with_name('hosted-sandboxes-probe.mjs').read_bytes()
+    return json.loads(run(['docker', 'exec', '-i', *flags, '-w', '/opt/sandboxes/typescript', CONTROL,
+                           'node', '--import', 'tsx', '--input-type=module', '-'], payload=source, timeout=60))
 
 
 def native(provider=PROVIDER):
@@ -399,23 +364,15 @@ def staging(releases):
         return result
 
 
-def with_release(doc, entry, keep=KEEP, protect=()):
-    """Add entry to both services' catalogs, keeping earlier releases; returns (doc, changed).
-
-    Oldest releases of the same provider beyond `keep` are pruned, except protected digests.
-    """
-    services = [doc['services'][name]['environment'] for name in ('control', 'pipelines-worker')]
-    lists = [json.loads(service[CATALOG]) for service in services]
-    need(lists[0] == lists[1], 'catalog_services_differ')
-    if entry in lists[0]:
-        return doc, False
-    releases = lists[0] + [entry]
+def with_release(raw, entry, keep=KEEP, protect=()):
+    """Append to the raw shared env catalog, pruning old unprotected releases of this provider."""
+    before = json.loads(env_value(raw, CATALOG))
+    if entry in before:
+        return raw, False
+    releases = before + [entry]
     same = [r for r in releases if r['provider'] == entry['provider']]
     drop = [r for r in same[:max(0, len(same) - keep)] if r['image_digest'] not in (*protect, entry['image_digest'])]
-    releases = [r for r in releases if r not in drop]
-    for service in services:
-        service[CATALOG] = json.dumps(releases, separators=(',', ':'))
-    return doc, True
+    return with_env(raw, CATALOG, json.dumps([r for r in releases if r not in drop], separators=(',', ':'))), True
 
 
 def image_lane(changed, config_changed):
@@ -490,11 +447,11 @@ def busy(release=False):
     main = main_read((f'WITH {IDLE}, {HOLD} ' if release else '') + 'SELECT ' +
                      ', '.join(agg.format(*read) + ' AS ' + key for key, read in reads.items()), write=release)
     kept = {part for pair in json.loads(main.pop('kept', '[]')) for part in pair if part}
-    lists = {**main,
-             'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider LIKE 'cloudflare-fleet%' AND "
-                                                                             "state IN ('provisioning','deleting')")),
-             'bootstraps': sbx(MERV_Q='SELECT ' + agg.format('launch_id', 'runtime_bootstraps',
-                                                            "state='pending' AND expires_at > now()"))}
+    lists = {**main, **main_read('SELECT ' + agg.format('id', 'public.sandboxes',
+                                 "provider LIKE 'cloudflare-fleet%' AND state IN ('provisioning','deleting')") +
+                                 ' AS machines, ' + agg.format('launch_id', 'public.runtime_bootstraps',
+                                 "state='pending' AND expires_at > now()") + ' AS bootstraps',
+                                 url='SANDBOXES_DATABASE_URL')}
     return {key: ids for key, ids in ((k, [i for i in json.loads(v) if i not in kept]) for k, v in lists.items())
             if ids}
 
@@ -610,7 +567,7 @@ class Step:
         """The live pins, reading only: each app serving Main's or the env file's machines, natively,
         the releases both name, and the catalog's release ids."""
         catalog = json.loads(env_of(CONTROL)[CATALOG])
-        need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
+        need(catalog == json.loads(env_of(MAIN)[CATALOG]), 'catalog_services_differ')
         main, raw = env_of(MAIN), ENV.read_bytes()
         releases, file_releases = machines(main), machines(file_env(raw))
         return {'apps': {p: native(p) for p in {**releases, **file_releases}}, 'mainReleaseId': main.get(KEY),
@@ -709,23 +666,37 @@ class Step:
             shutil.rmtree(config, ignore_errors=True)
 
     def sandboxes_file(self):
-        """The Sandboxes Compose file, and how to make a version of it live in both services."""
-        labels = inspect(CONTROL)['Config']['Labels']
-        path, project = Path(labels['com.docker.compose.project.config_files']), labels['com.docker.compose.project']
-        need(path.is_file(), 'catalog file is not a single file')
+        """The shared raw env and a coordinated recreate of its two readers on their current images."""
         need(not main_release_running(), 'a Main release job is running')
-        up = ['docker', 'compose', '-p', project, '-f', path, 'up', '-d', '--no-deps', 'control', 'pipelines-worker']
-        mode = stat.S_IMODE(path.stat().st_mode)
+        commands = []
+        for name, key in ((CONTROL, 'SANDBOXES_TS_IMAGE'), (MAIN, 'MERV_TS_IMAGE')):
+            state = inspect(name)
+            labels = state['Config']['Labels']
+            command = ['docker', 'compose', '-p', labels['com.docker.compose.project']]
+            for file in labels['com.docker.compose.project.config_files'].split(','):
+                command += ['-f', file]
+            if name == CONTROL:
+                command += ['--env-file', '/etc/sandboxes/release.env']
+            commands.append((name, command, dict(os.environ, **{key: state['Image']}),
+                             labels['com.docker.compose.project.working_dir']))
 
         def apply(raw):
-            atomic(path, raw, mode)
-            run(up, timeout=240)
-            healthy(CONTROL, 90, 2)
-            expected = json.loads(json.loads(raw)['services']['control']['environment'][CATALOG])
-            for name in (CONTROL, PIPELINE):
-                need(inspect(name)['State']['Running'] and json.loads(env_of(name)[CATALOG]) == expected,
+            atomic(SHARED, raw)
+            for name, command, env, cwd in commands:
+                if name == MAIN:
+                    run(command + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'control',
+                                   '/app/deploy/render-config.mjs', '/tmp/hosted-release-render.json'],
+                        env=env, cwd=cwd)
+                else:
+                    run(command + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'sbx', 'control',
+                                   'migrate', '--status'], env=env, cwd=cwd)
+            for name, command, env, cwd in commands:
+                run(command + ['up', '-d', '--no-deps', 'control'],
+                    env=env, cwd=cwd, timeout=240)
+                healthy(name, 90, 2)
+                need(json.loads(env_of(name)[CATALOG]) == json.loads(env_value(raw, CATALOG)),
                      'catalog not live in ' + name)
-        return path, apply
+        return SHARED, apply
 
     def add_releases(self, arg, backup, broken=lambda: None):
         """Adds arg's entries (each one release id arg['releases'] names) to both services' catalogs,
@@ -735,20 +706,19 @@ class Step:
         need(release_ids(entries) == [releases[e['provider']] for e in entries],
              'Sandboxes derives a different release id')
         raw = path.read_bytes()
-        doc, changed = json.loads(raw), False
+        doc, changed = raw, False
         for entry in entries:
             doc, added = with_release(doc, entry, protect=arg.get('protect', ()))
             changed = changed or added
         result = {'releases': releases, 'digest': entries[0]['image_digest'],
-                  'size': len(json.loads(doc['services']['control']['environment'][CATALOG]))}
-        if not changed and all(json.loads(env_of(c)[CATALOG]) == json.loads(doc['services']['control']['environment']
-                                                                              [CATALOG]) for c in (CONTROL, PIPELINE)):
+                  'size': len(json.loads(env_value(doc, CATALOG)))}
+        if not changed and all(json.loads(env_of(c)[CATALOG]) == json.loads(env_value(doc, CATALOG)) for c in (CONTROL, MAIN)):
             return {**result, 'changed': False}
         quiet(self.plan['drainSeconds'])
         if not backup.exists():
             atomic(backup, raw)
         try:
-            apply((json.dumps(doc, indent=2) + '\n').encode())
+            apply(doc)
         except BaseException:
             try:
                 apply(raw)
@@ -759,7 +729,7 @@ class Step:
         return {**result, 'changed': True, 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
 
     def catalog(self, arg):
-        """Adds the release, an entry per live app, to both Sandboxes services, keeping earlier releases,
+        """Adds the release, an entry per live app, to both shared-env readers, keeping earlier releases,
         and recreates them. {"restore": true} puts back the file this run replaced, for a restore that failed."""
         backup = self.run / 'catalog.before'
         if arg.get('restore'):
@@ -835,14 +805,17 @@ class Step:
                 with contextlib.suppress(RuntimeError):
                     tool(cred, name, body, tries=3)
         allocation = command.get('runtimeId')  # the machine that served the turn
+        profiles = json.loads(run(['docker', 'exec', '-w', '/app', MAIN, 'node', '--import', 'tsx',
+                                   '--input-type=module', '-e', FLEET_PROFILES]))
         served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
-                           "data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", allocation, target)['n']
+                           "data_json::jsonb->>'profileId' = ANY($2::text[])", allocation,
+                           [profile for profile, release in profiles.items() if release == target])['n']
         # Native deletion and Fleet retries can each back off for a minute. Wait for
         # observed stop, not just Fleet's lease-expiry fallback freeing its slot.
         released, release_deadline = False, time.monotonic() + 600
         while time.monotonic() < release_deadline:
             released = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
-                                 "phase = 'released' AND data_json::jsonb->'runtime'->>'deleted' = 'true'",
+                                 "phase = 'released' AND data_json::jsonb->'runtime'->>'state' = 'stopped'",
                                  allocation)['n'] == 1
             if released:
                 break
@@ -931,7 +904,7 @@ class Step:
     def abandon(self, _):
         """Changes nothing: names the release production agrees on, so the driver may close the run
         without finishing or rolling it back. Every live app runs one of this run's images with no
-        rollout, Main and the env file name its releases, and both Sandboxes services' catalog holds them."""
+        rollout, Main and the env file name its releases, and both shared-env readers' catalog holds them."""
         live = {p: native(p) for p in self.apps()}
         image = live[PROVIDER]['image']
         target, catalog = self.releases().get(image), json.loads(env_of(CONTROL)[CATALOG])
@@ -947,7 +920,7 @@ class Step:
             main != want and f'Main runs {names(main)}',
             file != want and f'the env file names {names(file)}',
             not set((target or {PROVIDER: None}).items()) <= held and 'the Sandboxes catalog lacks that release',
-            catalog != json.loads(env_of(PIPELINE)[CATALOG]) and 'the two Sandboxes services hold different catalogs',
+            catalog != json.loads(env_of(MAIN)[CATALOG]) and 'the shared-env readers hold different catalogs',
         ) if p]
         need(not problems, 'production disagrees, so the run stays open: ' + '; '.join(problems))
         return {'releaseId': target[PROVIDER], 'releases': target, 'image': image}

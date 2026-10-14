@@ -31,7 +31,25 @@ export function safeHref(raw: string): { href: string; external: boolean } | nul
     return { href: `https:${href.replaceAll('\\', '/')}`, external: true };
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href)?.[1]?.toLowerCase();
   if (scheme === undefined) return { href, external: false };
+  if (scheme === 'code-file') return codeFile(href) ? { href, external: false } : null;
   return scheme === 'http' || scheme === 'https' || scheme === 'mailto'
     ? { href, external: true }
     : null;
+}
+
+/**
+ * A file in the project's code, as a report names it: `code-file:<ref>:<path>`, where ref is a
+ * full commit, a work unit id or main, and path is relative to the repository root. The Git page
+ * opens it at that ref; a page without one shows the name as text.
+ */
+export function codeFile(href: string): { ref: string; path: string } | null {
+  const match = /^code-file:([^:]+):(.+)$/i.exec(href);
+  if (!match) return null;
+  const [, ref, path] = match as unknown as [string, string, string];
+  const refOk =
+    ref === 'main' || /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(ref) || new RegExp(`^${ID}$`).test(ref);
+  const pathOk =
+    !path.startsWith('/') &&
+    !path.split('/').some((part) => part === '' || part === '.' || part === '..');
+  return refOk && pathOk ? { ref, path } : null;
 }

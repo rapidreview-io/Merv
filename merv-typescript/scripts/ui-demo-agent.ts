@@ -8,7 +8,8 @@ import piApiPlugin from '@merv/pi/api';
 import piToolsPlugin from '@merv/pi/tools';
 import piUiPlugin from '@merv/pi/ui';
 import { runPiWorker } from '@merv/pi/worker';
-import type { SandboxRuntimeHandle } from '@merv/sandboxes/types';
+import type { FleetRuntimeHandle } from '@merv/fleet/types';
+import { profiles } from '../tests/fixtures/runtime-records.js';
 import type { createApp } from '../src/app.js';
 import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
 
@@ -312,7 +313,7 @@ class Machines extends FakeRuntimes {
   private readonly workers = new Map<string, AbortController>();
   override async launch(
     projectId: string,
-    current: SandboxRuntimeHandle,
+    current: FleetRuntimeHandle,
     key: string,
     bootstrap?: string,
   ) {
@@ -330,7 +331,7 @@ class Machines extends FakeRuntimes {
     }
     return super.launch(projectId, current, key);
   }
-  override async stop(projectId: string, current: SandboxRuntimeHandle) {
+  override async stop(projectId: string, current: FleetRuntimeHandle) {
     this.workers.get(current.sandboxId)?.abort();
     await super.stop(projectId, current);
     this.release(current.sandboxId);
@@ -352,6 +353,7 @@ export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url:
     inject: ['state', 'scope'],
     async apply(ctx: Context) {
       const fleet = new FleetService(ctx.state, ctx.scope, new Machines(), {
+        profiles,
         pollIntervalMs: 1000,
         hostProjectId: host.project.id,
       });

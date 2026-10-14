@@ -5,6 +5,7 @@ import {
   chmodSync,
   chownSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -98,7 +99,7 @@ function machine(
   return self;
 }
 
-test('one hosted work unit reuses its cwd across writer and review while Code freezes source', async (t) => {
+test('one hosted work unit continues in its cwd, untouched, from writer to review to writer', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_shared_1');
   let predecessor: WorkspaceHandle | undefined;
@@ -129,8 +130,11 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
 
   f.reviewer('ses_shared_review_1', submitted!.headOid);
   const reviewLaunch = m.launch('ses_shared_review_1');
+  const inode = lstatSync(writer.path).ino;
   const review = await driver.prepare(reviewLaunch, m.session('ses_shared_review_1'));
   assert.equal(review.path, writer.path);
+  // The reviewer continues in the writer's directory itself: nothing moved or rebuilt.
+  assert.equal(lstatSync(review.path).ino, inode);
   assert.equal(review.snapshot!.headOid, submitted!.headOid);
   assert.equal(readFileSync(join(review.path, '.cache/data.bin'), 'utf8'), 'writer data');
   assert.equal(readlinkSync(join(review.path, '.cache/interpreter')), '/usr/bin/env');
@@ -144,7 +148,7 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
     WHEN NEW.status='closed' AND NEW.launch_id='launch-ses_shared_review_1'
     BEGIN SELECT RAISE(ABORT, 'interrupted before closed'); END`);
   await assert.rejects(driver.close(reviewLaunch), /interrupted before closed/);
-  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer source\n');
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'reviewer edit\n');
   reviewSql.exec('DROP TRIGGER interrupt_review_close');
   reviewSql.close();
   await driver.close(reviewLaunch);
@@ -153,10 +157,12 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
     assert.deepEqual(
       [lstatSync(review.path).uid, lstatSync(review.path).gid],
       [12001, 12001],
-      'review close restores the agent-owned writer checkout',
+      'review close leaves the agent-owned checkout as it was',
     );
-  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer source\n');
-  assert.equal(existsSync(join(review.path, 'reviewer.tmp')), false);
+  // Within one work unit nothing is restored: what the reviewer left stays for the next agent.
+  assert.equal(lstatSync(review.path).ino, inode);
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'reviewer edit\n');
+  assert.equal(existsSync(join(review.path, 'reviewer.tmp')), true);
   assert.equal((await f.unit()).canonicalHead, submitted!.headOid);
 
   // An execution review may send the same experiment through a new planning attempt.
@@ -221,15 +227,16 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   sqlLedger.close();
   const next = await driver.prepare(second, m.session('ses_shared_2'));
   assert.equal(next.path, writer.path);
-  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'writer source\n');
-  assert.equal(readFileSync(join(next.path, '.cache/data.bin'), 'utf8'), 'writer data');
+  assert.equal(lstatSync(next.path).ino, inode);
+  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'reviewer edit\n');
+  assert.equal(readFileSync(join(next.path, '.cache/data.bin'), 'utf8'), 'reviewer cache edit');
   assert.equal(readFileSync(join(next.path, 'research/replan.json'), 'utf8'), '{"attempt":2}\n');
   assert.equal(readlinkSync(join(next.path, '.cache/interpreter')), '/usr/bin/env');
-  assert.equal(existsSync(join(next.path, 'reviewer.tmp')), false);
+  assert.equal(existsSync(join(next.path, 'reviewer.tmp')), true);
   assert.equal(git(next.path, ['rev-parse', 'HEAD']), submitted!.headOid);
   assert.equal(
     readFileSync(join(next.path, '.git/config'), 'utf8').includes('reviewer-config'),
-    false,
+    true,
   );
   await f.event('session.workspace_attached', 'ses_shared_2');
   writeFileSync(join(next.path, 'second.txt'), 'writer two\n');
@@ -244,7 +251,10 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   const reviewTwoLaunch = m.launch('ses_shared_review_2');
   const reviewTwo = await driver.prepare(reviewTwoLaunch, m.session('ses_shared_review_2'));
   assert.equal(reviewTwo.path, writer.path);
-  assert.equal(readFileSync(join(reviewTwo.path, '.cache/data.bin'), 'utf8'), 'writer data');
+  assert.equal(
+    readFileSync(join(reviewTwo.path, '.cache/data.bin'), 'utf8'),
+    'reviewer cache edit',
+  );
   assert.equal(readFileSync(join(reviewTwo.path, 'second.txt'), 'utf8'), 'writer two\n');
   m.terminal.add(reviewTwoLaunch.id);
   assert.equal((await driver.capture(reviewTwoLaunch))!.headOid, secondResult!.headOid);
@@ -318,7 +328,7 @@ test('a fresh hosted ledger derives the same work path and a foreign symlink can
   assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
 });
 
-test('a writer follows a closed Code review after the private writer view is restored', async (t) => {
+test('a writer follows a closed Code review in the same directory, with what the reviewer left', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_restore_writer');
   const m = machine(t, f, undefined, true, f.unitId);
@@ -339,11 +349,11 @@ test('a writer follows a closed Code review after the private writer view is res
   m.terminal.add(reviewLaunch.id);
   await driver.capture(reviewLaunch);
   await driver.close(reviewLaunch);
-  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer\n');
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'reviewer\n');
   await f.lease('ses_restore_next');
   const next = await driver.prepare(m.launch('ses_restore_next'), m.session('ses_restore_next'));
   assert.equal(next.path, writer.path);
-  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'writer\n');
+  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'reviewer\n');
 });
 
 test('a closed scratch plan and scratch review hand their data to the first Code writer', async (t) => {
@@ -515,7 +525,7 @@ test('a symlink at the private preservation slot is refused without touching its
   assert.ok(existsSync(foreign));
 });
 
-test('special retained nodes cannot be copied into review and a retry keeps the writer sidecar', async (t) => {
+test('a review continues in place with the writer environment, hard links and special nodes included', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_fifo_writer');
   const m = machine(t, f, undefined, true, f.unitId);
@@ -526,6 +536,9 @@ test('special retained nodes cannot be copied into review and a retry keeps the 
   writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
   mkdirSync(join(writer.path, '.cache'));
   execFileSync('mkfifo', [join(writer.path, '.cache/pipe')]);
+  // A uv environment links its packages from a cache.
+  writeFileSync(join(writer.path, '.cache/package.py'), 'x = 1\n');
+  linkSync(join(writer.path, '.cache/package.py'), join(writer.path, '.cache/linked.py'));
   m.terminal.add(writerLaunch.id);
   const result = await driver.capture(writerLaunch);
   await f.event('session.closed', 'ses_fifo_writer');
@@ -533,20 +546,51 @@ test('special retained nodes cannot be copied into review and a retry keeps the 
   await driver.close(writerLaunch);
   f.reviewer('ses_fifo_review', result!.headOid);
   const reviewLaunch = m.launch('ses_fifo_review');
-  await assert.rejects(
-    driver.prepare(reviewLaunch, m.session('ses_fifo_review')),
-    failed('workspace_foreign_path'),
-  );
-  const sidecar = join(
-    m.directory,
-    'code-v2/preserved',
-    createHash('sha256').update(f.unitId).digest('hex'),
-  );
-  assert.ok(lstatSync(join(sidecar, '.cache/pipe')).isFIFO());
-  rmSync(join(sidecar, '.cache/pipe'));
   const review = await driver.prepare(reviewLaunch, m.session('ses_fifo_review'));
   assert.equal(review.path, writer.path);
   assert.equal(review.snapshot!.headOid, result!.headOid);
+  assert.ok(lstatSync(join(review.path, '.cache/pipe')).isFIFO());
+  assert.equal(lstatSync(join(review.path, '.cache/linked.py')).nlink, 2);
+  m.terminal.add(reviewLaunch.id);
+  await driver.capture(reviewLaunch);
+  await driver.close(reviewLaunch);
+  assert.ok(lstatSync(join(review.path, '.cache/pipe')).isFIFO());
+});
+
+test('a rebuilt checkout leaves special and hard-linked nodes in the writer sidecar', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_link_writer');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const writerLaunch = m.launch('ses_link_writer');
+  const writer = await driver.prepare(writerLaunch, m.session('ses_link_writer'));
+  await f.event('session.workspace_attached', 'ses_link_writer');
+  writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
+  mkdirSync(join(writer.path, '.cache'));
+  execFileSync('mkfifo', [join(writer.path, '.cache/pipe')]);
+  writeFileSync(join(writer.path, '.cache/package.py'), 'x = 1\n');
+  linkSync(join(writer.path, '.cache/package.py'), join(writer.path, '.cache/linked.py'));
+  writeFileSync(join(writer.path, '.cache/data.bin'), 'kept');
+  // An edit the writer never committed: its final capture builds a commit Code refuses, so
+  // the next writer is rebuilt at Code's head instead of continuing in place.
+  const admitted = await driver.checkpointCommit(
+    writerLaunch,
+    await command(f, driver, 'ses_link_writer', f.root),
+  );
+  driver.acknowledgeCommit(admitted.commandId);
+  writeFileSync(join(writer.path, 'wip.txt'), 'late\n');
+  await f.event('session.closed', 'ses_link_writer');
+  f.end('ses_link_writer');
+  m.terminal.add(writerLaunch.id);
+  await driver.capture(writerLaunch);
+  await driver.close(writerLaunch);
+  await f.lease('ses_link_next');
+  const next = await driver.prepare(m.launch('ses_link_next'), m.session('ses_link_next'));
+  assert.equal(next.path, writer.path);
+  assert.equal(readFileSync(join(next.path, '.cache/data.bin'), 'utf8'), 'kept');
+  assert.equal(existsSync(join(next.path, '.cache/pipe')), false);
+  assert.equal(existsSync(join(next.path, '.cache/linked.py')), false);
+  assert.deepEqual(handoffRefusals(next.path), []);
 });
 
 /**

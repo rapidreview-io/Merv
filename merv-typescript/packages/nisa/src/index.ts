@@ -1,3 +1,4 @@
+import { researchInput, researchResult, researchScope, type ResearchInput } from './research.js';
 import type { Context } from 'cordis';
 import type { z } from 'zod';
 import {
@@ -70,7 +71,10 @@ export class NisaService implements Nisa {
   private readonly stopping = new AbortController();
   private readonly slots: Slots;
 
-  constructor(config: NisaConfig = {}) {
+  constructor(
+    config: NisaConfig = {},
+    private readonly authorizeResearch?: (caller: Caller) => Promise<void>,
+  ) {
     const parsed = nisaConfig.safeParse(config);
     check(parsed.success, 'invalid_nisa_config', 'The Nisa configuration is invalid');
     this.config = parsed.data;
@@ -196,6 +200,27 @@ export class NisaService implements Nisa {
     }));
   }
 
+  async research(caller: Caller, input: ResearchInput) {
+    const value = parse(researchInput, input);
+    check(
+      this.authorizeResearch,
+      'nisa_research_forbidden',
+      'Research authorization is unavailable',
+      403,
+    );
+    await this.authorizeResearch(caller);
+    const data = await this.call(caller, '/api/research', this.config.timeoutMs, {
+      body: { ...value, scope: researchScope(caller) },
+      authorize: () => this.authorizeResearch!(caller),
+    });
+    await this.authorizeResearch(caller);
+    try {
+      return researchResult(data, value.action === 'status' ? value.answer_offset : 0);
+    } catch {
+      throw new MervError('nisa_invalid_response', 'Nisa returned an invalid research result', 502);
+    }
+  }
+
   close(): void {
     this.stopping.abort();
   }
@@ -206,7 +231,11 @@ export class NisaService implements Nisa {
     caller: Caller,
     path: string,
     timeoutMs: number,
-    { body, missing }: { body?: unknown; missing?: () => MervError } = {},
+    {
+      body,
+      missing,
+      authorize,
+    }: { body?: unknown; missing?: () => MervError; authorize?: () => Promise<void> } = {},
   ): Promise<Record<string, unknown>> {
     check(!this.stopping.signal.aborted, 'nisa_stopped', 'Nisa is stopping', 503);
     const key = process.env[this.config.keyEnv]?.trim();
@@ -224,6 +253,7 @@ export class NisaService implements Nisa {
             429,
           ),
       );
+      await authorize?.();
       return await request(`${this.config.origin}${path}`, key, {
         body,
         timeoutMs,
@@ -325,8 +355,17 @@ function fitted<T extends { papers: unknown[] }>(answer: T, keep: (count: number
 export const nisaPlugin = {
   name: 'merv-nisa',
   Config: nisaConfig.default({}),
+  inject: ['scope'],
   apply(ctx: Context, config: NisaConfig) {
-    const nisa = new NisaService(config);
+    const nisa = new NisaService(config, async (caller) => {
+      const actor = await ctx.scope.require(caller, 'read');
+      check(
+        actor.role !== 'reader',
+        'forbidden',
+        'Research requires a producing or reviewing role',
+        403,
+      );
+    });
     check(
       nisa.configured,
       'nisa_configuration',

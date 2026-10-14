@@ -42,13 +42,13 @@ test('without signed uploads, new work is granted the upload tools, which refuse
     checks: ['Result retained'],
     requestId: 'original',
   });
-  assert.equal(ordinary.workflow.version, 43);
+  assert.equal(ordinary.workflow.version, 44);
   const experiment = await disk.ctx.experiments.create(owner, {
     name: 'disk_experiment',
     intent: 'Analyze retained rows',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   assert.equal(disk.ctx.artifacts.largeUploadAvailable, false);
   await assert.rejects(
     disk.ctx.artifacts.uploadBegin(owner, {
@@ -69,13 +69,13 @@ test('S3 blobs give new producers upload grants while reviewers stay read-only',
     checks: ['Rows retained'],
     requestId: 'large',
   });
-  assert.equal(task.workflow.version, 43);
+  assert.equal(task.workflow.version, 44);
   const experiment = await s3.ctx.experiments.create(owner, {
     name: 'large_experiment',
     intent: 'Analyze retained rows',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   const taskPolicy = await s3.ctx.workflows.assignment(owner, task.id);
   const experimentPolicy = await s3.ctx.workflows.assignment(owner, experiment.id);
   for (const assignment of [taskPolicy, experimentPolicy]) {

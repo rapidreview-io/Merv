@@ -583,6 +583,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, [attempt, epoch, authReady]);
   const signOut = () => {
+    const csrf = document.cookie.match(/(?:^|;\s*)__Host-sbx_csrf=([^;]*)/)?.[1];
+    if (csrf)
+      void fetch('/sbx/v1/auth/browser/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'x-sandbox-csrf': decodeURIComponent(csrf) },
+      }).catch(() => undefined);
     setAuthMode('local');
     setState({ phase: 'anonymous' });
     navigate('/', { replace: true });

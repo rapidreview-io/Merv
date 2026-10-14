@@ -2,40 +2,13 @@ import { z } from 'zod';
 import { check, digest, type Caller } from '@merv/contracts';
 import { createInput, id, type PiModelConfig } from './schema.js';
 
-/** Server-owned role, never accepted from pi.create or a worker. Bump version whenever the
- * role's behavior changes. Context is untrusted request material, separate from instructions. */
-export interface PiProfile {
-  id: string;
-  version: number;
-  model: Pick<PiModelConfig, 'id' | 'effort'>;
-  instructions: string;
-  tools: readonly string[];
-  context?(input: { binding: PiProfileBinding; caller: Caller }): Promise<string>;
-  /** Additional request-scope check, run for every allowed call before the tool is invoked. */
-  authorizeTool?(input: {
-    binding: PiProfileBinding;
-    caller: Caller;
-    name: string;
-    input: Record<string, unknown>;
-  }): Promise<void>;
-}
-
-export interface PiProfileBinding {
-  id: string;
-  version: number;
-  requestId: string;
-}
-
-export interface PiStoredProfile extends PiProfileBinding {
-  definitionHash: string;
-}
-
+import type { PiProfile, PiProfileBinding, PiStoredProfile } from './profile-types.js';
+export type * from './profile-types.js';
 export const profiledCreateInput = createInput
   .extend({
     profile: z.object({ id, version: z.number().int().positive(), requestId: id }).strict(),
   })
   .strict();
-export type PiProfiledCreate = z.input<typeof profiledCreateInput>;
 
 const profileDefinition = z
   .object({

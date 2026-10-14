@@ -37,6 +37,7 @@ const MAX_UPLOAD = 512 * 1024 * 1024;
 /** What the end of a name says of a file the browser could not type. */
 const ENDING_TYPES: [RegExp, string][] = [
   [/\.(md|markdown|mdx)$/i, 'text/markdown'],
+  [/\.html?$/i, 'text/html'],
   [/\.json$/i, 'application/json'],
   [/\.csv$/i, 'text/csv'],
   [/\.tsv$/i, 'text/tab-separated-values'],
@@ -471,7 +472,10 @@ function FileFinder({ open, setOpen }: { open: boolean; setOpen(open: boolean): 
                 onClick={() => go(file)}
               >
                 <TypeGlyph type={fileType(file)} size={14} />
-                <span className="finder-name">{file.title}</span>
+                <span className="finder-name">
+                  {file.title}
+                  <Extension file={file} />
+                </span>
                 <Ago at={file.createdAt} className="finder-when" />
               </button>
             ))}
@@ -609,12 +613,14 @@ const READS: Record<string, FileType['reads']> = {
   Notebook: 'notebook',
   Mermaid: 'mermaid',
   PDF: 'pdf',
+  HTML: 'html',
 };
 /** The language each of these is written in, for its source. */
 const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
   markdown: 'markdown',
   json: 'json',
   notebook: 'json',
+  html: 'html',
 };
 
 export interface FileType {
@@ -634,6 +640,7 @@ export interface FileType {
     | 'tsv'
     | 'notebook'
     | 'mermaid'
+    | 'html'
     | 'image'
     | 'pdf'
     | 'code'
@@ -683,6 +690,38 @@ export function fileType(file: { mediaType?: string | null; title?: string | nul
   };
 }
 
+/** Extensions for the media types whose own name is not the one people write. */
+const EXTENSIONS: Record<string, string> = {
+  markdown: 'md',
+  ndjson: 'jsonl',
+  jsonl: 'jsonl',
+  gzip: 'gz',
+  plain: 'txt',
+  jpeg: 'jpg',
+  'tab-separated-values': 'tsv',
+  javascript: 'js',
+  python: 'py',
+  'ipynb+json': 'ipynb',
+  'svg+xml': 'svg',
+  yaml: 'yaml',
+};
+/**
+ * The extension a file would have, said quietly after its name where the name does not end in
+ * one: the glyph alone does not tell a JSON file from a JSONL one. Null where the name says it,
+ * or the type has no short name.
+ */
+export function extensionOf(file: { mediaType?: string | null; title?: string | null }) {
+  if (/\.[a-z0-9]{1,6}$/i.test(file.title ?? '')) return null;
+  const subtype = (file.mediaType ?? '').toLowerCase().split(';')[0]!.split('/')[1]?.trim() ?? '';
+  const bare = subtype.replace(/^(x-|vnd\.)/, '');
+  const ext = EXTENSIONS[bare] ?? bare.replace(/\+\w+$/, '');
+  return ext && ext.length <= 5 && ext !== 'octet-stream' ? ext : null;
+}
+const Extension = ({ file }: { file: { mediaType?: string | null; title?: string | null } }) => {
+  const ext = extensionOf(file);
+  return ext ? <span className="file-ext">{ext}</span> : null;
+};
+
 /** The glyph says the type; the word for it is its name and its hover title. */
 const TypeGlyph = ({ type, size }: { type: FileType; size?: number }) => (
   <span className="file-glyph" role="img" aria-label={type.label} title={type.label}>
@@ -731,11 +770,23 @@ function FilePdf({ url, title }: { url: string; title: string }) {
 }
 
 /**
+ * An HTML file drawn as the page it is, inside a sandbox with an origin of its own: its scripts
+ * run, but it cannot reach Merv's page, cookies or API, open windows or navigate away.
+ */
+function FileHtml({ html, title }: { html: string; title: string }) {
+  return (
+    <div className="file-html">
+      <iframe srcDoc={html} title={title} sandbox="allow-scripts" referrerPolicy="no-referrer" />
+    </div>
+  );
+}
+
+/**
  * One file's body as it reads best, wherever a file is shown (Files, Code): its text read as
- * what it is (a document, a tree, a table, a notebook, a diagram, code), or its bytes drawn as a
- * picture or a PDF. A picture is drawn from the file's own bytes, never from an address: an SVG
- * as an image, where its scripts do not run, and never into the page; only a PDF is framed, as a
- * PDF, so no file is ever a page of its own.
+ * what it is (a document, a tree, a table, a notebook, a diagram, a sandboxed page, code), or its
+ * bytes drawn as a picture or a PDF. A picture is drawn from the file's own bytes, never from an
+ * address: an SVG as an image, where its scripts do not run, and never into the page; an HTML file
+ * is framed in a sandbox of its own origin, so no file ever runs as Merv's page.
  */
 export function FileView({
   type,
@@ -814,6 +865,7 @@ export function FileView({
       </div>
     );
   if (reads === 'mermaid') return <Mermaid source={text} />;
+  if (reads === 'html') return <FileHtml html={text} title={title} />;
   if (reads === 'jsonl') return <JsonLines content={text} names={names} />;
   if (parsed?.json) return <JsonView value={parsed.json.value} names={names} folds />;
   if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
@@ -1045,6 +1097,7 @@ const FileName = ({ file }: { file: Artifact }) => (
   <strong className="file-name">
     <TypeGlyph type={fileType(file)} size={15} />
     <span className="file-title">{file.title}</span>
+    <Extension file={file} />
   </strong>
 );
 

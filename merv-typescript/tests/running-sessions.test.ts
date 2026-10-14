@@ -24,7 +24,8 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions, type StuckReport } from '@merv/sessions';
 import { UiRegistry } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
-import type { SandboxRuntimes } from '@merv/sandboxes';
+import type { SbxMerv } from '@sandboxes/merv-host';
+import { profiles, link } from './fixtures/runtime-records.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { sessionsUiPlugin } from '../packages/sessions/src/ui.js';
@@ -861,11 +862,11 @@ test('a lease names the others on its machine by their work and role word', asyn
  *  ip-10-0-0-7. */
 async function rent(f: Awaited<ReturnType<typeof fixture>>) {
   const runtimes = {
-    profiles: [{ key: 'standard', id: 'standard-profile', leaseSeconds: 3600 }],
-    connected: () => true,
-    describe: async () => null,
-  } as unknown as SandboxRuntimes;
-  const fleet = await createService(new FleetService(f.state, f.scope, runtimes, {}, f.now));
+    linked: async (projectId: string) => link(projectId),
+  } as SbxMerv;
+  const fleet = await createService(
+    new FleetService(f.state, f.scope, runtimes, { profiles }, f.now),
+  );
   fleet.registerOwner('workflow', {
     valid: async () => true,
     bootstrap: async () => 'bootstrap',

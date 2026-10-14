@@ -1,6 +1,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
-import type {} from '@merv/sandboxes/types';
+import type { SbxMerv } from '@sandboxes/merv-host';
+import { SecretString } from '@sandboxes/runtimes/secret';
 import { z } from 'zod';
 import {
   check,
@@ -9,22 +10,32 @@ import {
   inTransaction,
   MervError,
   newId,
+  sha256Hex,
   type Caller,
   type Scope,
   type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
-import { migration, migrationV2, migrationV3 } from './schema.js';
+import {
+  runtimeProfiles,
+  runtimeProfileId,
+  runtimeHandle,
+  runtimeLaunch,
+  runtimeOffer,
+} from './runtime.js';
+import { migration, migrationV2, migrationV3, migrationV4 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
   FleetAllocation,
   FleetError,
   FleetIntent,
+  FleetMachine,
   FleetOwner,
+  FleetProjectLimit,
   FleetRequest,
+  FleetRuntimeHandle,
   ModelRelayConfig,
   ModelRelayGrant,
   ModelRelayHandle,
@@ -51,6 +62,7 @@ export const fleetConfig = z
   .object({
     /** Ignored: loading Fleet is the switch. Configurations rendered before still carry it. */
     enabled: z.boolean().optional(),
+    profiles: runtimeProfiles,
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
     /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects. */
@@ -112,7 +124,8 @@ const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** Math.min(fail
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
   private readonly config: z.infer<typeof fleetConfig>;
-  private readonly runtimes: SandboxRuntimes;
+  private readonly profiles;
+  private readonly ready = new Map<string, Map<string, FleetMachine | null> | null | undefined>();
   private readonly owners = new Map<string, FleetOwner>();
   private pending?: Promise<boolean>;
   private timer?: ReturnType<typeof setTimeout>;
@@ -131,24 +144,22 @@ export class FleetService implements Fleet {
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
-    runtimes: SandboxRuntimes | undefined,
-    config: FleetConfig = {},
+    private readonly sbxMerv: Pick<SbxMerv, 'linked' | 'runtimes'>,
+    config: FleetConfig,
     private readonly clock: () => number = Date.now,
   ) {
     const parsed = fleetConfig.safeParse(config);
     check(parsed.success, 'invalid_fleet_config', 'Fleet configuration is invalid');
     this.config = parsed.data;
+    this.profiles = this.config.profiles.map((profile) => ({
+      ...profile,
+      id: runtimeProfileId(profile),
+    }));
+    if (this.config.hostProjectId) this.seen(this.config.hostProjectId);
     this.startedAt = clock();
-    check(
-      runtimes,
-      'fleet_runtime_unavailable',
-      'Fleet requires a protected Sandboxes runtime',
-      503,
-    );
-    this.runtimes = runtimes;
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration, migrationV2, migrationV3]);
+    await this.state.migrate('fleet', [migration, migrationV2, migrationV3, migrationV4]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -169,25 +180,111 @@ export class FleetService implements Fleet {
   }
   /** A minute to connect, and up to as long again to be created and replaced, per machine. */
   readonly readyWindowMs = readyAttempts * 2 * readyMs;
-  connected(projectId: string): boolean {
-    return this.runtimes.connected(projectId);
+  async connected(projectId: string): Promise<boolean> {
+    return !!this.seen(projectId);
   }
   /** Each room less what already waits for it: queued work is reserved before a new request. */
   async free(projectId: string, tx?: Transaction): Promise<number> {
     if (tx) this.state.assertTransaction(tx);
-    if (!this.connected(projectId)) return 0;
+    if (!(await this.connected(projectId))) return 0;
     const open = await (tx ? this.all(tx) : this.state.read((sql) => this.all(sql)));
     const mine = open.filter((a) => a.projectId === projectId).length;
+    const limits = await (tx
+      ? this.limits(tx, projectId)
+      : this.state.read((sql) => this.limits(sql, projectId)));
     return Math.max(
       0,
-      Math.min(this.config.globalLimit - open.length, this.limit(projectId) - mine),
+      Math.min(this.config.globalLimit - open.length, this.limit(projectId, limits) - mine),
     );
   }
   async describe(projectId: string, key: string) {
-    return this.connected(projectId) ? this.runtimes.describe(projectId, key) : null;
+    return this.seen(projectId)?.get(key) ?? null;
   }
-  private limit(projectId: string): number {
-    return this.config.projectLimits[projectId] ?? this.config.projectLimit;
+  private seen(projectId: string) {
+    if (!this.ready.has(projectId)) this.ready.set(projectId, undefined);
+    return this.ready.get(projectId);
+  }
+  private async linked(projectId: string) {
+    return !!(await this.sbxMerv.linked(projectId));
+  }
+  private async read(projectId: string) {
+    if (!(await this.linked(projectId))) return null;
+    const runtime = this.sbxMerv.runtimes(await this.scope.serviceActor('fleet', projectId));
+    return new Map(
+      await Promise.all(
+        this.profiles.map(
+          async ({ key, provider, offerId }) =>
+            [
+              key,
+              await runtime.describe(provider, offerId).then(
+                (o) => runtimeOffer(key, o),
+                () => null,
+              ),
+            ] as const,
+        ),
+      ),
+    );
+  }
+  /** The caps projects' administrators set, or only `projectId`'s; one without keeps the operator's. */
+  private async limits(sql: Sql, projectId?: string): Promise<Map<string, number>> {
+    const rows = projectId
+      ? [
+          await sql.get<{ project_id: string; machines: number }>(
+            'SELECT project_id,machines FROM fleet_project_limits WHERE project_id=?',
+            projectId,
+          ),
+        ].filter((row) => !!row)
+      : await sql.all<{ project_id: string; machines: number }>(
+          'SELECT project_id,machines FROM fleet_project_limits',
+        );
+    return new Map(rows.map((row) => [row.project_id, Number(row.machines)]));
+  }
+  private limit(projectId: string, limits: Map<string, number>): number {
+    return (
+      limits.get(projectId) ?? this.config.projectLimits[projectId] ?? this.config.projectLimit
+    );
+  }
+  /** How many machines this project may hold at once, and what it holds without its own setting. */
+  async projectLimit(caller: Caller): Promise<FleetProjectLimit> {
+    return this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const set = await tx.get<{ machines: number }>(
+        'SELECT machines FROM fleet_project_limits WHERE project_id=?',
+        caller.projectId,
+      );
+      const fallback = this.config.projectLimits[caller.projectId] ?? this.config.projectLimit;
+      return {
+        machines: set ? Number(set.machines) : fallback,
+        default: fallback,
+        max: Math.min(64, this.config.globalLimit),
+      };
+    });
+  }
+  /** A project administrator, signed in, sets it; machines already running finish their work. */
+  async setProjectLimit(caller: Caller, machines: number): Promise<FleetProjectLimit> {
+    check(
+      !caller.session && !caller.key,
+      'fleet_forbidden',
+      'Only a project administrator, signed in, can change how many machines run at once',
+      403,
+    );
+    check(
+      Number.isSafeInteger(machines) &&
+        machines >= 1 &&
+        machines <= Math.min(64, this.config.globalLimit),
+      'invalid_fleet_limit',
+      `Machines at once must be between 1 and ${Math.min(64, this.config.globalLimit)}`,
+    );
+    await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'admin', tx);
+      await tx.run(
+        'INSERT INTO fleet_project_limits(project_id,machines) VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET machines=excluded.machines',
+        caller.projectId,
+        machines,
+      );
+    });
+    this.kick();
+    return this.projectLimit(caller);
   }
   /**
    * What a person's machines have cost today (UTC) at the prices stamped when Fleet reserved
@@ -214,7 +311,7 @@ export class FleetService implements Fleet {
   }
   /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
   private stale(a: FleetAllocation): boolean {
-    return !this.runtimes.profiles.some((profile) => profile.id === a.profileId);
+    return !this.profiles.some((profile) => profile.id === a.profileId);
   }
   /** Judged only once owners have had time to register after a restart. */
   private orphan(a: FleetAllocation): boolean {
@@ -364,15 +461,17 @@ export class FleetService implements Fleet {
     const owner = this.owners.get(input.owner.kind);
     check(owner, 'fleet_owner_unavailable', 'Fleet owner is unavailable', 503);
     const place = (owner.rentsInHost && this.config.hostProjectId) || caller.projectId;
+    this.seen(place);
     // Without a connection no create can ever succeed, and an admitted request would hold a slot.
     check(
-      this.connected(place),
+      await this.linked(place),
       'sandbox_not_connected',
       'Hosted agents are not set up for this project yet',
       403,
     );
     return inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, owner.sourcePermission ?? 'write', tx);
+      await this.scope.serviceActor('fleet', place, tx);
       const source = await this.scope.delegationSource(caller, tx);
       const sourceHash = digest(source);
       const fingerprint = digest(input);
@@ -391,7 +490,7 @@ export class FleetService implements Fleet {
         );
         return decode(previous);
       }
-      const profile = this.runtimes.profiles.find((p) => !input.profile || p.key === input.profile);
+      const profile = this.profiles.find((p) => !input.profile || p.key === input.profile);
       check(profile, 'fleet_profile_unavailable', 'That machine is not offered', 409);
       const person = (await owner.payer?.(source, input.owner.id, tx)) ?? undefined;
       if (person && this.config.dailyUsdPerPerson !== undefined)
@@ -564,32 +663,25 @@ export class FleetService implements Fleet {
   }
   private async reserve(): Promise<void> {
     if (this.closed) return;
-    const waiting = await this.state.read((sql) => this.all(sql));
+    const [waiting, limits] = await this.state.read(
+      async (sql) => [await this.all(sql), await this.limits(sql)] as const,
+    );
     const queued = waiting.filter((a) => a.phase === 'queued');
     if (!queued.length) return;
-    // A capped request is admitted at its offer's price, read once per place and profile before
-    // the writer lock: Sandboxes answers from its cache, or within its client's timeout.
     const cap = this.config.dailyUsdPerPerson;
     const capped = (a: FleetAllocation) => !!a.person && cap !== undefined;
     const place = (a: FleetAllocation) => a.rentedIn ?? a.projectId;
-    const offer = (a: FleetAllocation) =>
-      `${place(a)} ${this.runtimes.profiles.find((p) => p.id === a.profileId)?.key}`;
-    const prices = new Map<string, number>();
-    await Promise.all(
-      [...new Set(queued.filter(capped).map(offer))].map(async (key) => {
-        const [where, profile] = key.split(' ');
-        const usd = (await this.describe(where!, profile!).catch(() => null))?.maxHourlyUsd;
-        if (usd !== undefined) prices.set(key, usd);
-      }),
-    );
-    const priced = (a: FleetAllocation) => !capped(a) || prices.has(offer(a));
+    const price = (a: FleetAllocation) =>
+      this.seen(place(a))?.get(this.profiles.find((p) => p.id === a.profileId)?.key ?? '')
+        ?.maxHourlyUsd;
+    const priced = (a: FleetAllocation) => !capped(a) || price(a) !== undefined;
     /**
      * An offer that lists no price is withdrawn, or no options read has succeeded since boot.
      * A place without a connection has nothing to wait for: its capped request is refused at once.
      */
     const unpriced = (a: FleetAllocation) =>
       !priced(a) &&
-      (!this.connected(place(a)) ||
+      (this.seen(place(a)) === null ||
         this.clock() - Math.max(Date.parse(a.createdAt), this.startedAt) >= unpricedMs);
     const active = waiting.filter(occupied);
     const projectCount = new Map<string, number>();
@@ -601,11 +693,13 @@ export class FleetService implements Fleet {
     const hasRoom =
       active.length < this.config.globalLimit &&
       queued.some(
-        (a) => admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId),
+        (a) =>
+          admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId, limits),
       );
     if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
+      const caps = await this.limits(tx);
       let count = allocations.filter(occupied).length;
       const byProject = new Map<string, number>();
       for (const active of allocations.filter(occupied))
@@ -615,7 +709,7 @@ export class FleetService implements Fleet {
         if (dropped(a) || unpriced(a)) {
           if (!dropped(a)) {
             a.error = 'runtime_refused';
-            if (this.connected(place(a)))
+            if (this.seen(place(a)))
               report('fleet.unpriced', a, new MervError('fleet_unpriced', 'No price is listed'));
           }
           a.intent = 'stop';
@@ -623,7 +717,7 @@ export class FleetService implements Fleet {
         } else if (
           admissible(a) &&
           count < this.config.globalLimit &&
-          (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
+          (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId, caps)
         ) {
           // Its person may have spent today's compute while it waited.
           if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {
@@ -634,7 +728,7 @@ export class FleetService implements Fleet {
             a.phase = 'provisioning';
             // The machine's time starts here; waiting in the queue does not spend it.
             a.deadlineAt = this.deadline(a.seconds);
-            if (capped(a)) a.usdPerHour = prices.get(offer(a));
+            if (capped(a)) a.usdPerHour = price(a);
             count++;
             byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
           }
@@ -654,12 +748,12 @@ export class FleetService implements Fleet {
   }
   private async observed(
     a: FleetAllocation,
-    runtime: SandboxRuntimeHandle,
+    runtime: FleetRuntimeHandle,
     phase: FleetAllocation['phase'],
   ): Promise<FleetAllocation> {
     // Sandboxes increments its revision for tunnel heartbeats too. Keep the fresh
     // revision in memory without turning those observations into State writes.
-    const facts = (handle: SandboxRuntimeHandle | null) => {
+    const facts = (handle: FleetRuntimeHandle | null) => {
       if (!handle) return null;
       const { revision: _revision, ...meaningful } = handle;
       return meaningful;
@@ -685,14 +779,13 @@ export class FleetService implements Fleet {
         return;
       if (!current.runtime) current.adoptedAt = this.time();
       current.runtime = runtime;
-      current.phase = runtime.deleted
-        ? 'released'
-        : current.intent === 'stop'
-          ? 'releasing'
-          : phase;
+      current.phase =
+        runtime.state === 'stopped' ? 'released' : current.intent === 'stop' ? 'releasing' : phase;
     });
   }
   private async reconcile(full = true): Promise<boolean> {
+    for (const p of this.ready.keys())
+      this.ready.set(p, await this.read(p).catch(() => this.ready.get(p)));
     this.awake ||= full;
     await this.reserve();
     const allocations = await this.state.read((sql) => this.all(sql));
@@ -763,14 +856,23 @@ export class FleetService implements Fleet {
       });
       return;
     }
-    const runtime = this.runtimes;
     const place = a.rentedIn ?? a.projectId;
+    const runtime = this.sbxMerv.runtimes(await this.scope.serviceActor('fleet', place));
+    const profile = this.profiles.find((p) => p.id === a.profileId);
     // One stop per machine, which sets releaseBy; a machine the provider reports deleting is
     // then only watched, until it is gone or releaseBy. A provider that still reports it up is
     // asked again, at most once a pass.
-    const stop = async (a: FleetAllocation, handle: SandboxRuntimeHandle) => {
+    const stop = async (a: FleetAllocation, handle: FleetRuntimeHandle) => {
       if (handle.state !== 'deleting')
-        a = await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
+        a = await this.observed(
+          a,
+          runtimeHandle(
+            await runtime.stop(handle.sandboxId, handle.launch?.launchId),
+            handle.launch,
+            this.clock(),
+          ),
+          'releasing',
+        );
       if (!a.releaseBy)
         await this.update(a.id, (current) => {
           if (current.phase !== 'released') this.waitOutLease(current);
@@ -797,9 +899,9 @@ export class FleetService implements Fleet {
       let first = false;
       let create = false;
       let refusal: FleetError = 'runtime_refused';
+      const connected = await this.linked(place);
       a = await this.update(a.id, (current) => {
         if (current.runtime || current.phase === 'released') return;
-        const connected = runtime.connected(place);
         const configured = !this.stale(current);
         if (current.intent === 'run' && connected && configured && owner) {
           first = current.createAttempted === false;
@@ -814,13 +916,20 @@ export class FleetService implements Fleet {
         this.waitOutLease(current);
       });
       if (!create) return;
-      const handle = await runtime.provision(place, createKey(a), a.profileId).catch((error) => {
-        // Refusing the first attempt proves no machine exists: free the slot, do not retry.
-        if (!first || !refused(error)) throw error;
-        if (walletRefused(error)) refusal = 'wallet_refused';
-        report('fleet.refused', a, error);
-      });
-      if (handle) await this.observed(a, handle, 'provisioning');
+      const handle = await runtime
+        .provision({
+          releaseId: profile!.releaseId,
+          offerId: profile!.offerId,
+          leaseSeconds: profile!.leaseSeconds,
+          operationKey: `runtime:${sha256Hex(JSON.stringify([place, createKey(a)]))}`,
+        })
+        .catch((error) => {
+          // Refusing the first attempt proves no machine exists: free the slot, do not retry.
+          if (!first || !refused(error)) throw error;
+          if (walletRefused(error)) refusal = 'wallet_refused';
+          report('fleet.refused', a, error);
+        });
+      if (handle) await this.observed(a, runtimeHandle(handle, null, this.clock()), 'provisioning');
       else
         await this.update(a.id, (current) => {
           if (current.runtime) return;
@@ -830,7 +939,12 @@ export class FleetService implements Fleet {
         });
       return;
     }
-    const handle = await runtime.inspect(place, a.runtime);
+    const inspected = await runtime.inspect(a.runtime.sandboxId, a.runtime.launch?.launchId);
+    const handle = runtimeHandle(
+      inspected.sandbox,
+      inspected.launch && runtimeLaunch(inspected.launch),
+      this.clock(),
+    );
     // A machine nothing was launched on that failed, or whose agent has not connected a minute
     // after Fleet adopted it, is stuck. It is stopped and another rented under a new key, before
     // its failure is recorded for owners to read as a lost machine; the last one fails the work.
@@ -838,7 +952,7 @@ export class FleetService implements Fleet {
       a.intent === 'run' &&
       !handle.ready &&
       !handle.launch &&
-      !handle.deleted &&
+      handle.state !== 'stopped' &&
       (handle.state === 'failed' ||
         Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock())
     ) {
@@ -849,7 +963,7 @@ export class FleetService implements Fleet {
           current.error = 'runtime_not_ready';
         });
       else {
-        await runtime.stop(place, handle);
+        await runtime.stop(handle.sandboxId);
         await this.update(a.id, (current) => {
           if (current.intent !== 'run' || current.runtime?.sandboxId !== handle.sandboxId) return;
           current.runtime = null;
@@ -891,24 +1005,33 @@ export class FleetService implements Fleet {
       if (!(await this.fence(null, a.id, launchable, owner))) return;
       const bootstrap = await owner.bootstrap(structuredClone(a));
       if (!(await this.fence(null, a.id, launchable, owner))) return;
-      const launched = await runtime.launch(
-        place,
-        handle,
-        `${a.id}:launch`,
-        bootstrap,
-        a.profileId,
-      );
+      const launch = await runtime.launch(handle.sandboxId, {
+        operation_key: `${a.id}:launch`,
+        release_id: profile!.releaseId,
+        bootstrap: new SecretString(bootstrap),
+        ttl_seconds: profile!.ttlSeconds,
+      });
       await this.observed(
         a,
-        launched,
-        launched.launch?.deliveryState === 'launched' ? 'starting' : 'uncertain',
+        { ...handle, launch: runtimeLaunch(launch) },
+        launch.delivery_state === 'launched' ? 'starting' : 'uncertain',
       );
       return;
     }
     const status = await owner.observe(structuredClone(a));
     let exchanged = handle;
     if (status === 'running') {
-      if (handle.launch?.state === 'pending') exchanged = await runtime.acknowledge(place, handle);
+      if (handle.launch?.state === 'pending')
+        exchanged = {
+          ...handle,
+          launch: runtimeLaunch(
+            await runtime.acknowledge(
+              handle.sandboxId,
+              handle.launch.launchId,
+              handle.launch.jobId,
+            ),
+          ),
+        };
       a = await this.observed(a, exchanged, status);
     }
     if (status === 'finished') {
@@ -932,14 +1055,22 @@ export class FleetService implements Fleet {
           owner,
         ))
       )
-        await this.observed(a, await runtime.renew(place, exchanged, a.profileId), status);
+        await this.observed(
+          a,
+          runtimeHandle(
+            await runtime.renew(handle.sandboxId, profile!.leaseSeconds),
+            exchanged.launch,
+            this.clock(),
+          ),
+          status,
+        );
     }
   }
   /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any
    * machine this allocation could hold (a minute covers a reply still in flight; the longest
    * configured lease covers every profile). Without a create attempt there is none to wait for. */
   private waitOutLease(a: FleetAllocation): void {
-    const lease = Math.max(...this.runtimes.profiles.map((profile) => profile.leaseSeconds));
+    const lease = Math.max(...this.profiles.map((profile) => profile.leaseSeconds));
     a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
     a.phase =
       (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
@@ -979,9 +1110,9 @@ export class FleetService implements Fleet {
 export const fleetPlugin = {
   name: 'merv-fleet',
   Config: fleetConfig,
-  inject: ['state', 'scope', 'sandboxes'],
+  inject: ['state', 'scope', 'sbxMerv'],
   async apply(ctx: Context, config: FleetConfig) {
-    const fleet = new FleetService(ctx.state, ctx.scope, ctx.sandboxes.runtimes, config);
+    const fleet = new FleetService(ctx.state, ctx.scope, ctx.sbxMerv, config);
     await fleet.initialize();
     ctx.effect(() => () => fleet.close());
     ctx.provide('fleet', fleet);

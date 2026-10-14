@@ -17,7 +17,8 @@ import { TeX } from './math';
 import { Mermaid } from './mermaid';
 import { pathOf, rowOf, useRows } from './navigation';
 import { offThread } from './off-thread';
-import { safeHref, splitIds } from './markdown-links';
+import { codeFile, safeHref, splitIds } from './markdown-links';
+import { filesPath } from './code-paths';
 
 export { safeHref, splitIds };
 
@@ -378,6 +379,26 @@ function Within({ href, title, children }: { href: string; title?: string; child
   );
 }
 
+/** A file in the project's code, opened on the Git page at the ref the report named; text where there is no Git page. */
+function CodeFileLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  const root = pathOf(useRows(), 'code');
+  const file = codeFile(href);
+  if (!root || !file) return <>{children}</>;
+  return (
+    <Within href={filesPath(root, file.ref, file.path, true)} title={title ?? file.path}>
+      {children}
+    </Within>
+  );
+}
+
 function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false): ReactNode[] {
   return nodes.map((node, key) => {
     switch (node.type) {
@@ -398,6 +419,12 @@ function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false
       case 'id':
         return <RecordLink key={key} id={node.id} names={names} plain={linked} />;
       case 'link': {
+        if (node.href.startsWith('code-file:'))
+          return (
+            <CodeFileLink key={key} href={node.href} title={node.title}>
+              {inlines(node.children, names, true)}
+            </CodeFileLink>
+          );
         const experimentId = /^\/experiments\/([^/?#]+)(?:[?#].*)?$/.exec(node.href)?.[1];
         const label = experimentId ? names?.get(experimentId)?.name : undefined;
         return node.external || !node.href.startsWith('/') ? (

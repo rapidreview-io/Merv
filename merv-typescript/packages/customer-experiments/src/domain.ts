@@ -20,7 +20,7 @@ import {
 } from '@merv/contracts';
 import type { Code } from '@merv/code-work/types';
 import type { Sessions } from '@merv/sessions/types';
-import type { CaptureEvidence, Sandboxes } from '@merv/sandboxes/types';
+import type { CaptureEvidence, SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { heldLease } from '@merv/workflows/lease-rows';
 import { SERVICE_EXPERIMENT } from './program.js';
@@ -65,7 +65,15 @@ export class CustomerExperiments {
     readonly code: Code,
     readonly sessions: Sessions,
     readonly price = { amountCents: 500, currency: 'usd' as const },
-    readonly compute?: Pick<Sandboxes, 'captures' | 'evidence' | 'guidance' | 'settled'>,
+    readonly compute?: SandboxCaptureEvidence & {
+      settled(
+        projectId: string,
+        instanceId: string,
+        epoch: string,
+        notBefore: string,
+        tx: Transaction,
+      ): Promise<boolean>;
+    },
   ) {}
   async initialize(): Promise<void> {
     await this.state.migrate('customer-experiments', migrations);

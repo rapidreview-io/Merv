@@ -3,7 +3,7 @@ import type {} from '@merv/api/types';
 import type {} from '@merv/pi/types';
 import type {} from '@merv/sessions/types';
 import type {} from '@merv/code-work/types';
-import type {} from '@merv/sandboxes/types';
+import type {} from '@merv/sandboxes/sandbox-evidence';
 import { z } from 'zod';
 import { check } from '@merv/contracts';
 import { CustomerExperiments } from './domain.js';
@@ -13,7 +13,7 @@ import { ResendResultMailer, StripePayments } from './payment.js';
 import { CustomerService } from './service.js';
 import { customerHttp } from './http.js';
 import { registerWorkerTools } from './worker-tools.js';
-import { ManagedCustomerCompute } from './compute.js';
+import { hostedCustomerCompute } from './hosted-compute.js';
 
 const env = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const origin = z
@@ -26,6 +26,8 @@ const origin = z
 export const customerConfig = z
   .object({
     publicOrigin: origin,
+    computeProjectId: z.string().min(1),
+    computeProviders: z.array(z.string().min(1)).min(1).max(8),
     sponsor: z.object({ issuer: z.string().min(1), subject: z.string().min(1) }).strict(),
     intakeKeyEnv: env.default('MERV_CUSTOMER_INTAKE_KEY'),
     accessKeyEnv: env.default('MERV_CUSTOMER_ACCESS_KEY'),
@@ -78,19 +80,21 @@ export const customerExperimentsPlugin = {
     'reviews',
     'codeWork',
     'sessions',
-    'sandboxes',
+    'sandboxEvidence',
+    'sbxMerv',
+    'sbxAccounts',
+    'sbxDb',
+    'sbxBilling',
+    'sbxProviders',
+    'sbxVault',
+    'sbxSettings',
+    'sbxResourceLimits',
     'pi',
     'tools',
     'api',
   ],
   async apply(ctx: Context, config: z.infer<typeof customerConfig>) {
     await ctx.effect(async function* () {
-      check(
-        ctx.sandboxes.managedCompute,
-        'customer_configuration',
-        'Customer experiments require managed native Sandboxes compute',
-        503,
-      );
       const store = new RequestStore(ctx.state, secret(config.accessKeyEnv));
       await store.initialize();
       const domain = new CustomerExperiments(
@@ -102,7 +106,7 @@ export const customerExperimentsPlugin = {
         ctx.codeWork,
         ctx.sessions,
         undefined,
-        ctx.sandboxes,
+        ctx.sandboxEvidence,
       );
       await domain.initialize();
       yield () => domain.close();
@@ -142,7 +146,7 @@ export const customerExperimentsPlugin = {
         payments,
         mailer,
         { ...config, intakeKey: secret(config.intakeKeyEnv) },
-        new ManagedCustomerCompute(ctx.sandboxes),
+        hostedCustomerCompute(ctx, config),
       );
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain);

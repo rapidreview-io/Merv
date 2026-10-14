@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers two current contracts, `experiment@41` for new experiments and `experiment@40` for those pinned to it, on which Sandboxes attaches native compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
+independent review gates. It registers two current contracts, `experiment@41` for new experiments and `experiment@40` for those pinned to it, on which Sessions attaches Sandboxes compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 ## Where it sits
 
@@ -22,7 +22,7 @@ flowchart LR
     contextBuilder["Context Builder<br/><small>assignment context</small>"]
     artifacts["Artifacts<br/><small>immutable evidence</small>"]
     codeWork["Code Work<br/><small>managed Git</small>"]
-    sandboxes["Sandboxes<br/><small>native compute</small>"]
+    sandboxes["Sandboxes<br/><small>compute</small>"]
     scope["Scope"]
     state["State"]
   end
@@ -38,7 +38,7 @@ flowchart LR
   experiments -- "applies paper changes" --> paper
   experiments -- "pins evidence" --> artifacts
   experiments -- "injects managed Git" --> codeWork
-  experiments -. "binds compute" .-> sandboxes
+  experiments -. "reads capture receipts" .-> sandboxes
   experiments -- "injects" --> scope
   experiments -- "injects" --> state
   state -- "reads/writes" --> postgres
@@ -64,9 +64,10 @@ Independent reviewers claim and submit through the existing `review.start` and
 `review.submit` tools.
 
 Experiments owns no compute. It records `computeEpoch` (`attempt:state`) in the workflow data,
-and Sandboxes attaches native compute to the leased assignment: `execute` while running, `check`
-in planning and both reviews. See
-[compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
+and Sessions issues Sandboxes connections for eligible leased assignments. Compute profiles remain Merv policy:
+`execute` while running, `check` for brief verification; sealed reviews receive no connection. The runner adds
+guidance only after issuance. Captures and refusals come from Artifacts' Merv-side receipt index, filtered by
+this attempt's compute epochs. Shared Sandboxes services are read outside Merv transactions.
 
 ```text
 planned → design_review → running → experiment_review → complete

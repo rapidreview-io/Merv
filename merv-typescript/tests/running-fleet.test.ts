@@ -3,7 +3,8 @@ import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import { createService, MervError, type Caller, type RunningNode } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
+import type { FleetRuntimeHandle } from '@merv/fleet/types';
+import { profiles, link, launcher } from './fixtures/runtime-records.js';
 import { UiRegistry, type RunningRead } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import { FleetService, type FleetOwner } from '../packages/fleet/src/index.js';
@@ -19,18 +20,20 @@ import { openState } from './fixtures/state.js';
  */
 
 /** Machines come up ready or stay provisioning; `error` fails every provider call. */
-class Runtimes implements SandboxRuntimes {
-  readonly profiles = [{ key: 'standard', id: 'standard-profile', leaseSeconds: 600 }];
+class Runtimes {
+  linked = async (projectId: string) => (this.connected(projectId) ? link(projectId) : null);
+  runtimes = ({ projectId }: { projectId: string }) => launcher(this, projectId);
+
   ready = false;
   error?: Error;
   /** When the provider ends a new machine, unless Fleet renews it. */
   leaseExpiresAt = '2099-01-01T00:00:00Z';
-  private readonly machines = new Map<string, SandboxRuntimeHandle>();
+  private readonly machines = new Map<string, FleetRuntimeHandle>();
   /** One machine per create key, as the service keeps it. */
   private readonly created = new Map<string, string>();
-  connected = () => true;
+  connected = (_projectId: string) => true;
   describe = async () => null;
-  private answer(sandboxId: string, change?: (machine: SandboxRuntimeHandle) => void) {
+  private answer(sandboxId: string, change?: (machine: FleetRuntimeHandle) => void) {
     if (this.error) throw this.error;
     const machine = this.machines.get(sandboxId)!;
     change?.(machine);
@@ -46,38 +49,32 @@ class Runtimes implements SandboxRuntimes {
       sandboxId,
       state: this.ready ? 'ready' : 'provisioning',
       ready: this.ready,
-      deleted: false,
       leaseExpiresAt: this.leaseExpiresAt,
       revision: 1,
       launch: null,
     });
     return this.answer(sandboxId);
   }
-  inspect = async (_projectId: string, handle: SandboxRuntimeHandle) =>
-    this.answer(handle.sandboxId);
-  launch = async (_projectId: string, handle: SandboxRuntimeHandle, operationKey: string) =>
+  inspect = async (_projectId: string, handle: FleetRuntimeHandle) => this.answer(handle.sandboxId);
+  launch = async (_projectId: string, handle: FleetRuntimeHandle, operationKey: string) =>
     this.answer(handle.sandboxId, (machine) => {
       machine.launch ??= {
-        sandboxId: machine.sandboxId,
         launchId: `rln_${machine.sandboxId}`,
-        operationKey,
-        releaseId: 'release',
         jobId: `rtj_${machine.sandboxId}`,
         state: 'pending',
         deliveryState: 'launched',
-        expiresAt: '2099-01-01T00:00:00Z',
       };
     });
-  acknowledge = async (_projectId: string, handle: SandboxRuntimeHandle) =>
+  acknowledge = async (_projectId: string, handle: FleetRuntimeHandle) =>
     this.answer(handle.sandboxId, (machine) => {
       machine.launch!.state = 'consumed';
     });
-  stop = async (_projectId: string, handle: SandboxRuntimeHandle) =>
+  stop = async (_projectId: string, handle: FleetRuntimeHandle) =>
     this.answer(handle.sandboxId, (machine) => {
       machine.state = 'deleting';
       machine.ready = false;
     });
-  renew = async (_projectId: string, handle: SandboxRuntimeHandle) => this.answer(handle.sandboxId);
+  renew = async (_projectId: string, handle: FleetRuntimeHandle) => this.answer(handle.sandboxId);
 }
 
 async function fixture(t: TestContext) {
@@ -99,7 +96,7 @@ async function fixture(t: TestContext) {
       state,
       scope,
       runtimes,
-      { globalLimit: 3, projectLimit: 3, allocationTimeoutSeconds: 3600 },
+      { profiles, globalLimit: 3, projectLimit: 3, allocationTimeoutSeconds: 3600 },
       () => now,
     ),
   );

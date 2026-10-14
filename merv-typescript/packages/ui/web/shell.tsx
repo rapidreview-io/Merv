@@ -1,5 +1,13 @@
 import type { UiRowDescription } from '@merv/ui/rows';
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  Fragment,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool, type Account } from './api';
@@ -9,15 +17,7 @@ import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
 import { initials, personName } from './views/people';
-import {
-  accountLines,
-  buildNavigation,
-  documentTitle,
-  headed,
-  holds as held,
-  leadRows,
-  topRows,
-} from './navigation';
+import { accountLines, documentTitle, holds as held, railSections } from './navigation';
 import { stepped } from './record-picker';
 import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
@@ -203,10 +203,43 @@ function AccountFoot() {
   );
 }
 
+export function SandboxesNav({ row }: { row: UiRowDescription }) {
+  const { pathname } = useLocation();
+  const children = [
+    ['machines', 'Machines'],
+    ['jobs', 'Jobs'],
+    ['spend', 'Spend'],
+  ] as const;
+  const active = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
+  const childActive = children.some(([id]) => active(`${row.path}/${id}`));
+  return (
+    <div className={cx('sandboxes-nav', active(row.path) && 'open')}>
+      <RailRow
+        to={row.path}
+        label={row.label}
+        icon={iconOf(row)}
+        active={active(row.path) && !childActive}
+      />
+      <div className="sandboxes-nav-children">
+        <div className="sandboxes-nav-children-inner">
+          {children.map(([id, label]) => (
+            <RailRow
+              key={id}
+              to={`${row.path}/${id}`}
+              label={label}
+              icon={id}
+              active={active(`${row.path}/${id}`)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * The one navigation. Home, the lead rows (Work) and the top rows (Paper) first, then every other
- * collection as its own row under the heading of the section it belongs to, then
- * Settings and the account at the foot. Nothing is hidden behind a row or a title.
+ * The one navigation: Home with Work, Pi and Board, then the Fleet and Ops sections
+ * (`railSections`), then the account at the foot.
  */
 export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHide(): void }) {
   const { project, account, chooseProject } = useSession();
@@ -216,17 +249,20 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   // it; away from Home, as often as the rows beside it.
   const needsYou = useNow(rows, pathname === '/' ? undefined : 30000).count;
   const holds = (row: UiRowDescription) => held(row, pathname, rows);
-  const place = (row: UiRowDescription) => (
-    <RailRow
-      key={row.id}
-      to={row.path}
-      label={row.label}
-      icon={iconOf(row)}
-      active={holds(row)}
-      badge={row.status.badge}
-      sick={unwell(row)}
-    />
-  );
+  const place = (row: UiRowDescription) =>
+    row.view.kind === 'sandboxes' ? (
+      <SandboxesNav key={row.id} row={row} />
+    ) : (
+      <RailRow
+        key={row.id}
+        to={row.path}
+        label={row.label}
+        icon={iconOf(row)}
+        active={holds(row)}
+        badge={row.status.badge}
+        sick={unwell(row)}
+      />
+    );
   return (
     <aside className="sidebar" aria-label="Primary">
       <div className="rail-util">
@@ -258,18 +294,21 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         </div>
       )}
       <nav className="rail-nav">
-        <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
-        {leadRows(rows).map(place)}
-        {topRows(rows).map(place)}
-        {buildNavigation(rows).map((section) => (
-          <div className="rail-group" key={section.id} role="group" aria-label={section.label}>
-            {headed(section) && <h3 className="rail-group-head">{section.label}</h3>}
-            {section.rows.map(place)}
-          </div>
-        ))}
+        {railSections(rows).map((section) =>
+          section.label ? (
+            <div className="rail-group" key={section.label} role="group" aria-label={section.label}>
+              <h3 className="rail-group-head">{section.label}</h3>
+              {section.rows.map(place)}
+            </div>
+          ) : (
+            <Fragment key="top">
+              <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
+              {section.rows.map(place)}
+            </Fragment>
+          ),
+        )}
       </nav>
       <div className="sidebar-foot">
-        {rows.filter((row) => row.group === 'settings').map(place)}
         <AccountFoot />
       </div>
     </aside>
@@ -307,14 +346,19 @@ function TitleLine({ rows, facts }: { rows: UiRowDescription[]; facts: PageFacts
     pathname === '/'
       ? undefined
       : rows.find(
-          // A row with rooms (Settings, Code's selections) is still the page under its rooms.
+          // A row with rooms (Settings, Git's selections) is still the page under its rooms.
           (row) => row.path === pathname || (row.rooms && pathname.startsWith(`${row.path}/`)),
         );
   if (!current) return null;
   return (
     // Agent and Work title themselves (the conversation's bar, the cycle's head), so the
     // place is heard here and seen only once.
-    <header className={cx('page-lede', ['pi', 'work'].includes(current.view.kind) && 'sr-only')}>
+    <header
+      className={cx(
+        'page-lede',
+        ['pi', 'work', 'sandboxes'].includes(current.view.kind) && 'sr-only',
+      )}
+    >
       <h1 className="lede-line">
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that

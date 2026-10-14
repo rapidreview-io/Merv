@@ -681,7 +681,7 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
   await tools.call('nisa.search', caller, { query: 'q' });
   await tools.call('nisa.related', caller, { arxiv_id: '2303.08774' });
   assert.equal(snapshots, 0);
-  const definitions = nisaTools(service);
+  const definitions = nisaTools(service).filter(({ name }) => name !== 'nisa.research');
   assert.deepEqual(
     definitions.map(({ name }) => piModelToolName(name)),
     ['nisa_search', 'nisa_semantic_search', 'nisa_paper', 'nisa_excerpts', 'nisa_related'],
@@ -758,7 +758,10 @@ test('a Pi turn is offered Nisa and runs it as its person, a reader included', a
   }
   assert.equal(fake.seen.length, 2);
 });
-const definitionsOf = (service: NisaService) => nisaTools(service).map(({ name }) => name);
+const definitionsOf = (service: NisaService) =>
+  nisaTools(service)
+    .filter((tool) => tool.readOnly)
+    .map(({ name }) => name);
 
 test('the render composes Nisa into Main, where MCP clients list and call it', async (t) => {
   const fake = await nisa(t);
@@ -781,6 +784,9 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
         MERV_TS_AUTH_MODE: 'hs256',
         MERV_BLOB_PREFIX: 'merv-ts',
         MERV_DB_URL: 'postgresql://unused',
+        SANDBOXES_DATABASE_URL: 'postgresql://sandboxes:fixture@sbx-db/sandboxes',
+        SANDBOXES_VAULT_KEY: 'fixture-vault-key',
+        MERV_SANDBOXES_PROXY_URL: 'http://sbx-control:8000',
         MERV_BLOB_BUCKET: 'unused',
         MERV_BLOB_ENDPOINT_URL: 'https://storage.example',
         MERV_BLOB_ACCESS_KEY_ID: 'fixture',

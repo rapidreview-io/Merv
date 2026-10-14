@@ -570,7 +570,8 @@ test('the hosted drain releases each machine once it idles, and counts it until 
           '-c',
           `import importlib.util,json,os,subprocess
 s=importlib.util.spec_from_file_location('vm',${JSON.stringify(vm)});vm=importlib.util.module_from_spec(s);s.loader.exec_module(vm)
-def main_read(q,*p,write=False):
+def main_read(q,*p,write=False,url=None):
+    if url: return {'machines':'[]','bootstraps':'[]'}
     env=dict(os.environ,MERV_Q=q,MERV_P=json.dumps(p),**({'MERV_W':'1'} if write else {}))
     return json.loads(subprocess.run(['node','--input-type=module','-e',vm.MAIN_READ],env=env,capture_output=True,check=True).stdout)
 vm.main_read=main_read;vm.sbx=lambda **e:'[]'
@@ -674,6 +675,7 @@ test('a machine in use near its deadline hands over to a fresh one of its kind w
     input: { ...bound.input, commandId: sent.id, workerId: 'worker_next' },
   });
   f.runtimes.connected = (projectId) => projectId !== f.operator.projectId;
+  await f.fleet.tick();
   assert.equal((await nearDeadline()).host.next?.machine, 'large');
 });
 
@@ -743,6 +745,7 @@ test('a writer may choose Large without a project Sandboxes connection', async (
   assert.equal((await large(f.operator, chat.id))?.available, true);
   const unconnected = (projectId: string) => projectId !== f.operator.projectId;
   f.runtimes.connected = unconnected;
+  await f.fleet.tick();
   assert.equal((await large(f.operator, chat.id))?.available, true);
   await f.pi.setMachine(f.operator, { machine: 'large' });
   assert.deepEqual(await f.fleet.list(f.hostCaller), []);
@@ -751,6 +754,7 @@ test('a writer may choose Large without a project Sandboxes connection', async (
   assert.equal((await f.send(chat)).machine, 'large');
   // An offer Sandboxes no longer describes is hidden.
   f.runtimes.describe = async (_projectId, key) => (key === 'large' ? null : offers[key]);
+  await f.fleet.tick();
   assert.deepEqual(
     (await f.pi.snapshot(f.operator, chat.id)).host.catalog.map(({ key }) => key),
     ['standard'],

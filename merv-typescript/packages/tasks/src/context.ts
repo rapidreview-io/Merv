@@ -399,15 +399,7 @@ export async function workflowAssignment(
     role: purpose === 'review' ? 'reviewer' : 'producer',
     label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
     name: task.title,
-    brief:
-      `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
-      (serviceOwned(task.workflow.version)
-        ? ''
-        : await ctx.computeGuidance(
-            task.projectId,
-            purpose === 'review' ? 'check' : 'execute',
-            tx,
-          )),
+    brief: `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}`,
     references: [
       { kind: 'task', id: task.id, label: task.title },
       ...task.guidance.references,
@@ -451,7 +443,7 @@ export async function workflowExecutionReferences(
     ? await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx)
     : null;
   return {
-    // The native Sandboxes work kind a task binds compute under.
+    // This assignment permits project compute.
     computeKind: 'task',
     // Conflict resolution is service work: it gets no compute.
     ...(serviceOwned(snapshot.version) ? { computeProfile: 'none' } : {}),

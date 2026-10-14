@@ -13,7 +13,7 @@ import test from 'node:test';
 import { z } from 'zod';
 import { researchUiPlugin } from '@merv/research/ui';
 import { codeUiPlugin } from '@merv/code-work/ui';
-import { buildNavigation } from '../packages/ui/web/navigation.js';
+import { railSections } from '../packages/ui/web/navigation.js';
 import { createApp } from './fixtures/app.js';
 import { RemoteFixture } from './fixtures/remote-server.js';
 
@@ -455,16 +455,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // Every row above keeps its registration, its record routes and its ui.read; the
   // rail is a separate table of kinds, and these are the places it lists.
   assert.deepEqual(
-    buildNavigation(shell.rows as UiRowDescription[]).map((section) => [
+    railSections(shell.rows as UiRowDescription[]).map((section) => [
       section.label,
       section.rows.map((entry) => entry.label),
     ]),
     [
-      ['Research', ['Files', 'Board']],
-      // What is running is reached from the Work page; the project's agents are a gallery of
-      // their own, with the machines folded under it.
-      ['Agents', ['Agents', 'Code']],
-      ['Feed', ['Feed']],
+      ['', ['Work', 'Board']],
+      ['Fleet', ['Agents']],
+      ['Ops', ['Git', 'Files', 'Settings']],
     ],
   );
   // Every count in the chrome means open work.

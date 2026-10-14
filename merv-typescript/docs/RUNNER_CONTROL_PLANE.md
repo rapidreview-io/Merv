@@ -190,7 +190,7 @@ a separate Session result. Read-only workers cannot request commits.
 Command retrieval and completion use the original source credential, not the
 worker credential. Already-dispatched commands remain recoverable after lease
 closure, so lost replies cannot strand an unknown outcome. Closed queued work
-is cancelled; recovery never reactivates the worker. The Code page displays
+is cancelled; recovery never reactivates the worker. The Git page displays
 operation status through its optional UI adapter. See [CODE_OPERATIONS.md](CODE_OPERATIONS.md).
 
 ## Remaining runner work

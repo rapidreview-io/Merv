@@ -3,15 +3,15 @@
 Nisa gives every agent RapidReview's literature search: keyword and semantic
 search over Nisa's arXiv index, one paper's record, the passages inside its
 full text, and similar papers. It calls Nisa's public `/api/sdk` routes, the
-ones the `nisa` CLI uses, with one deployment-wide `rr_sk_` key, and needs
-nothing deployed on Nisa's side. It is optional and dormant: the deployment
+ones the `nisa` CLI uses, with one deployment-wide `rr_sk_` key. Its direct
+research tool also calls the deployed `/api/research` service. It is optional and dormant: the deployment
 composes it only where the key is configured (see
 [Turning it on](#turning-it-on)).
 
 | Entrypoint         | Requires    | Provides                                 |
 | ------------------ | ----------- | ---------------------------------------- |
-| `@merv/nisa`       | nothing     | `nisa` service                           |
-| `@merv/nisa/tools` | Nisa, Tools | the five `nisa.*` tools below, all reads |
+| `@merv/nisa`       | Scope       | `nisa` service                           |
+| `@merv/nisa/tools` | Nisa, Tools | five retrieval reads and `nisa.research` |
 
 ## Where it sits
 
@@ -39,8 +39,7 @@ flowchart LR
   class nisa self
 ```
 
-Nisa is a leaf: it depends on no other Merv service, and the tool registry is
-its only way in. Pi, leased workers and MCP clients all reach the same five
+Nisa uses Scope to authorize research and the tool registry as its entry point. Pi, leased workers and MCP clients all reach the same five
 reads there, run as the caller, and the service sends each one to Nisa's
 `/api/sdk` with the deployment's one key.
 
@@ -268,24 +267,32 @@ To turn it off, remove the variable and recreate Main the same way. Codex
 workers see the tools once the runner that launches them carries the change that
 names them (hosted: `deploy/hosted-release.mjs`, run by `release.mjs`).
 
-## Deferred: Q&A
+## Direct research
 
-Nisa's question answering (`qa.ask`, `qa.get`, `qa.cancel` on the
-`codex/nisa-mcp-plugin` branch) is not here. Nisa's main has no route for it:
-`/api/chat/message` runs a whole agent turn with no idempotency, and
-`/api/sdk/search` with `enrich: true` keeps papers in one worker's memory for
-five minutes. Q&A needs the branch's `/api/plugin` backend deployed on Nisa's
-side, and `qa.ask` is a paid, asynchronous write, so it would also have to be
-named in execution policies. Until then, an agent answers from these reads with
-its own model. Nisa's `/api/sdk/paper/{id}/pdf` is also left out: it links a
-PDF, and no Merv tool yet turns a PDF into text an agent can read. Merv's
-`paper.*` tools read and edit the project's own living paper, not an arXiv
-paper, so an agent sees a paper's body only through `nisa.excerpts`: at most 20
-passages of at most 2,000 characters that match its terms.
+`nisa.research` is one stateful, open-world tool with `start`, `follow_up`, `status`
+and `cancel` actions. It calls Nisa's `/api/research` endpoint, which runs research
+mode, its investigators and the reporter directly, without a general-chat turn.
+Use a full brief and stable request ID for starts and follow-ups. Retain the returned
+conversation and operation IDs. Status pages long reports in 12,000-character
+chunks using `answer_offset` and `next_answer_offset`; citations are in the report.
 
-## Not verified
+The server derives a scope from project, actor and Pi conversation or worker thread.
+Nisa enforces that scope on every operation. All conversations and model usage belong
+to `gural@rapidreview.io`; no Nisa key is sent to agents. Research requires a producer,
+reviewer or operator role. Leased workers also need an explicit `nisa.research` grant.
+New task@44/service-task@12, experiment@42, reflection@5 and reflection.lens@4
+contracts grant it. Older pinned contracts retain their original authority.
 
-No call was made to Nisa: every test runs against a loopback fake built from
+Nisa provides durable idempotency, per-scope admission limits and cooperative
+cancellation. Interrupted work is not automatically replayed. Its 30-minute deadline
+and orchestration budget do not form a total dollar cap across all investigators.
+Usage is reported separately from Merv's own model allowance. The unfinished customer
+experiment workflow is not part of this release; its scoped Pi profile and executor/
+reviewer grants must be wired when that feature ships.
+
+## Verification history
+
+The original retrieval release was tested against a loopback fake built from
 Nisa main 3489d7d (`project/backend/sdk_routes.py` and the tools it wraps).
 Whether production runs that code, and enforces its keys
 (`AUTH_REQUIRED=true`), is unverified. Before relying on it, run from Main one

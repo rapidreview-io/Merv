@@ -222,18 +222,21 @@ export class RequestBuckets implements DatasetStorage {
     } catch (error) {
       if ((error as { name?: string }).name !== 'BucketAlreadyOwnedByYou') throw error;
     }
-    await this.client.send(
-      new PutPublicAccessBlockCommand({
-        Bucket,
-        PublicAccessBlockConfiguration: {
-          BlockPublicAcls: true,
-          IgnorePublicAcls: true,
-          BlockPublicPolicy: true,
-          RestrictPublicBuckets: true,
-        },
-      }),
-      { abortSignal: AbortSignal.timeout(30000) },
-    );
+    // R2 buckets are private by default and have no S3 public ACL/policy surface.
+    // PutPublicAccessBlock is AWS-only; never enable an R2 public domain for these buckets.
+    if (!/^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(new URL(this.options.endpoint).hostname))
+      await this.client.send(
+        new PutPublicAccessBlockCommand({
+          Bucket,
+          PublicAccessBlockConfiguration: {
+            BlockPublicAcls: true,
+            IgnorePublicAcls: true,
+            BlockPublicPolicy: true,
+            RestrictPublicBuckets: true,
+          },
+        }),
+        { abortSignal: AbortSignal.timeout(30000) },
+      );
     await this.client.send(
       new PutBucketCorsCommand({
         Bucket,

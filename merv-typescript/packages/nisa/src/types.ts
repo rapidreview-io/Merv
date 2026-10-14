@@ -131,6 +131,10 @@ export interface NisaExcerpts {
  * search.
  */
 export interface Nisa {
+  research(
+    caller: Caller,
+    input: import('./research.js').ResearchInput,
+  ): Promise<ReturnType<typeof import('./research.js').researchResult>>;
   search(caller: Caller, input: NisaSearchInput): Promise<NisaPaperList>;
   semanticSearch(caller: Caller, input: NisaSemanticSearchInput): Promise<NisaPaperList>;
   paper(caller: Caller, input: NisaPaperInput): Promise<NisaPaper>;

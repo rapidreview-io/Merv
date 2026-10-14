@@ -116,12 +116,21 @@ export class ReflectionService implements Reflections {
       // nothing and are not registered; their rows stay in context_recipes.
       for (const recipe of ITEM_RECIPES)
         this.contexts.set(recipe.name, await this.contextBuilder.register(recipe));
-      for (const definition of [LENS_WORKFLOW, REFLECTION_WORKFLOW])
+      for (const definition of [
+        { ...LENS_WORKFLOW, version: 3 },
+        { ...REFLECTION_WORKFLOW, version: 4 },
+        LENS_WORKFLOW,
+        REFLECTION_WORKFLOW,
+      ])
         this.handles.set(
           `${definition.name}@${definition.version}`,
           await this.workflows.register(
             definition,
-            program.policy(this, definition === LENS_WORKFLOW),
+            program.policy(
+              this,
+              definition.name === LENS_WORKFLOW.name,
+              definition.version >= (definition.name === LENS_WORKFLOW.name ? 4 : 5),
+            ),
           ),
         );
       this.releaseProvenance = this.reviews

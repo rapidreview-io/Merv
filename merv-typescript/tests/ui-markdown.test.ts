@@ -226,6 +226,22 @@ test('only http, https, mailto and relative addresses ever become an href', () =
     '',
   ])
     assert.equal(safeHref(bad), null, bad);
+  // A file in the project's code: an exact ref and a path inside the repository, nothing else.
+  const commit = 'a'.repeat(40);
+  for (const good of [
+    `code-file:${commit}:experiments/x/metrics.json`,
+    'code-file:main:README.md',
+    `code-file:wf_${'b'.repeat(32)}:src/a.py`,
+  ])
+    assert.deepEqual(safeHref(good), { href: good, external: false }, good);
+  for (const bad of [
+    `code-file:${commit}:/etc/passwd`,
+    `code-file:${commit}:a/../../b`,
+    'code-file:HEAD~1:a.py',
+    `code-file:${commit}:`,
+    'code-file:main:a//b',
+  ])
+    assert.equal(safeHref(bad), null, bad);
   assert.deepEqual(safeHref('https://example.org/a'), {
     href: 'https://example.org/a',
     external: true,
@@ -943,6 +959,48 @@ test('a file is named by a short human type, never by its media type', () => {
   assert.equal(fileType({ mediaType: 'text/plain', title: 'notes.md' }).reads, 'markdown');
   assert.equal(fileType({ mediaType: 'application/json', title: 'm' }).reads, 'json');
   assert.equal(fileType({ mediaType: 'text/csv', title: 'm' }).reads, 'csv');
+  assert.deepEqual(fileType({ mediaType: 'text/html', title: 'm' }), {
+    label: 'HTML',
+    icon: fileType({ mediaType: 'text/html', title: 'm' }).icon,
+    reads: 'html',
+    lang: 'html',
+  });
+  assert.equal(fileType({ mediaType: '', title: 'report.htm' }).reads, 'html');
+});
+
+test('an HTML file is drawn as its page in a sandbox, and its source is behind raw view', async (t) => {
+  t.after(async () => await unmount());
+  const artifact = {
+    id: ART,
+    projectId: 'project_1',
+    createdBy: 'actor_1',
+    title: 'report.html',
+    mediaType: 'text/html',
+    hash: '52d0a404b837827d',
+    size: 64,
+    createdAt: new Date().toISOString(),
+  };
+  const html = '<h1>Report</h1><script>document.title = "ran"</script>';
+  serve('/tools/artifact.read', {
+    body: { result: { artifact, encoding: 'utf8', content: html } },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(ArtifactBody, { artifactId: ART, metadata: artifact }),
+    ),
+  );
+  await settle(10);
+  const frame = document.querySelector('.file-html iframe');
+  assert.equal(frame?.getAttribute('sandbox'), 'allow-scripts');
+  assert.equal(frame?.getAttribute('srcdoc'), html);
+  // Never Merv's own document: the page is only ever inside the frame.
+  assert.equal(document.querySelector('h1')?.textContent ?? null, null);
+  assert.equal(await rawView(true), 'off');
+  assert.equal(await rawView(), 'on');
+  assert.equal(document.querySelector('.file-html'), null);
+  assert.match(document.querySelector('.code-block pre')?.textContent ?? '', /^<h1>Report<\/h1>/);
 });
 
 test('a Markdown file is read as a document, and one control shows its source', async (t) => {

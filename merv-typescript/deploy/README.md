@@ -4,6 +4,82 @@
 
 These files prepare the TypeScript backend and its `/ui/` application for the existing Azure VM. They do not deploy anything by themselves. Stage independently, finish the authenticated checks below, then change routing. The user selected preservation through import, which ran once at cutover; the offline importer has since been removed (see [legacy import](../docs/LEGACY_IMPORT.md)), and unfinished legacy work is retained as history.
 
+## Releasing
+
+| Changed since the running server                       | Command                      | Takes        |
+| ------------------------------------------------------ | ---------------------------- | ------------ |
+| Only `packages/ui/web` (tests and docs may ride along) | `node deploy/ui-release.mjs` | seconds      |
+| Anything else                                          | `node deploy/release.mjs`    | a full build |
+
+Both deploy committed `origin/main` and write the same log (`RELEASES.md`; a UI row says `ui only`).
+The served UI is one directory on the VM, `/var/lib/merv-ts-ui`, mounted read-only at `/ui`:
+a full release puts its own bundle there once healthy, and a UI release replaces only the bundle.
+`ui-release.mjs` refuses when anything outside the UI changed since the running server's commit,
+and names those files, so a UI never reaches a server without the tools it calls. New hashed
+assets are added beside the old ones, so open tabs keep loading theirs; `index.html` changes last.
+To undo a UI release, revert the commit on main and run `ui-release.mjs` again.
+
+## Sandboxes in-process cutover
+
+This section is the Merv-side handoff for the Sandboxes cutover runbook. The TS standalone
+owns migrations, workers, gateway, `/v1`, `/mcp` and the console. Merv loads the pinned
+submodule packages with no Sandboxes listener or workers, and refuses a mismatched migration
+history. The cutover retains the current hosted runtime release; do not run a hosted release
+in this window.
+
+1. Complete the coordinated backups, drain and standalone migration in the Sandboxes runbook.
+   Resolve any open hosted run and disable old hosted/recovery timers before migration; archived
+   scripts cannot enforce the new rollback guard. Keep admission closed. There is no history
+   conversion: retained native tables authorize historical downloads and manifests stay intact.
+2. Prepare root:root 0600 `/etc/sandboxes/shared.env` with unquoted, single-line raw values.
+   Both controls read it; keep only Merv-owned settings in `/etc/merv/typescript.env`.
+   Set `MERV_SANDBOXES_PROXY_URL=http://sbx-control:8000`. Require Compose 2.30.0 or newer
+   for raw env files. Preserve `deploy_default`, `/var/lib/merv-ts`, `sandboxes_default` and
+   `sandboxes_sandboxes-data`; back up numeric ownership before making Merv's data writable by
+   UID/GID 10001:10001 while stopped. Verify that UID can read the existing private `/data` keys
+   and write outputs without changing their bytes or restrictive modes.
+3. Put `SANDBOXES_TS_IMAGE=registry/image@sha256:…` or `SANDBOXES_TS_IMAGE=sha256:…` in the
+   nonsecret `/etc/sandboxes/release.env`, with exactly 64 lowercase hex digits after `sha256:`.
+   The latter is a local image ID from `docker image inspect -f '{{.Id}}'` on the VM.
+   It must match the standalone deployment and the reviewed
+   `vendor/merv-sandboxes` gitlink. Initialize the submodule before packaging. `release.mjs`
+   builds from committed source and records its digest in `build-manifest.json`.
+   Merv records `SANDBOXES_TS_IMAGE` only in its rollback-guard label; it does not pull that
+   image or copy agent binaries, kopia or the OpenSSH client into its runtime.
+4. After the complete integration is committed and reviewed, build/deploy Merv:
+
+   ```sh
+   node deploy/release.mjs --skip-hosted --no-rollback
+   ```
+
+   `--skip-hosted` also skips hosted resume/check; the VM refuses any unresolved hosted run.
+   A failure stops the new Merv and leaves the previous image stopped. Future automatic
+   rollback is allowed only to an in-process image with the same Sandboxes image digest;
+   use `--no-rollback` for every schema-changing release.
+
+5. Verify host readiness, exact migration checksums, both DB pools, shared `/data` access and
+   relay/reconciliation with no duplicate workers. Smoke `/health`, `/ui/`, served assets,
+   anonymous tools (401) and wrong Origin (403). Sign in, open the embedded console and
+   Terminal/WebSocket, verify historical downloads and wrong-project denial, then complete
+   the runbook's provider and actual Fleet hosted-turn acceptance before reopening admission.
+
+Before the first hosted run after cutover, fetch `5157f1ed` into the releasing checkout's submodule:
+`git -C vendor/merv-sandboxes fetch ../../merv-sandboxes codex/managed-ml-account-limits`
+(or fetch a pushed tag containing it). Until then, use `--skip-hosted`.
+
+Prepare staging Main to keep deploying without Sandboxes:
+
+1. Put the same `SANDBOXES_TS_IMAGE` registry digest reference or local image ID in
+   `/etc/sandboxes/release.env`.
+2. Create an empty root:root 0600 `/etc/sandboxes/shared.env`.
+3. Run `docker network create sandboxes_default` and `docker volume create sandboxes_sandboxes-data`.
+4. Stop Merv, back up `/var/lib/merv-ts`, then run `chown -R 10001:10001 /var/lib/merv-ts`.
+5. Leave `SANDBOXES_DATABASE_URL` unset in `/etc/merv/typescript.env`.
+
+Docker builds, Compose validation and live acceptance must run on the release host. A return
+to native Merv requires the runbook's coordinated database/data restore; restarting an old
+image is not a rollback after the Sandboxes migration.
+
 ## Observed production layout — September 16, 2026
 
 | Component                       | Current location                                                                                             |
@@ -39,13 +115,14 @@ Run from `merv-typescript`. Record the source revision plus a hash/archive of an
 ```sh
 docker build --platform linux/amd64 \
   --build-arg NODE_IMAGE=node:22-bookworm-slim@sha256:REVIEWED_DIGEST \
+  --build-arg SANDBOXES_TS_IMAGE=registry/image@sha256:REVIEWED_SANDBOXES_DIGEST \
   -f deploy/Dockerfile -t merv-typescript:RELEASE_ID .
 ```
 
-The build runs `npm ci`, builds the UI **before** compiling the backend, copies its assets, prepares JavaScript-only workspace exports, and removes development dependencies. The runtime invokes `node dist/src/cli.js`; it does not require TSX or TypeScript stripping. `prepare-runtime.mjs` changes generated package manifests only. Verify the final Linux image, not just the source execution path:
+The build runs `npm ci`, builds the UI **before** compiling the backend, copies its assets, prepares JavaScript-only workspace exports, and removes development dependencies. The runtime invokes `node --import tsx dist/src/cli.js`; the pinned Sandboxes packages load as TypeScript. `prepare-runtime.mjs` changes generated package manifests only. Verify the final Linux image, not just the source execution path:
 
 ```sh
-docker run --rm --entrypoint node merv-typescript:RELEASE_ID dist/src/cli.js help
+docker run --rm --entrypoint node merv-typescript:RELEASE_ID --import tsx dist/src/cli.js help
 docker image inspect --format '{{.Id}}' merv-typescript:RELEASE_ID
 ```
 
@@ -57,7 +134,7 @@ Transfer the image using the existing release mechanism, or `docker save`/`docke
 2. Take a PostgreSQL custom-format backup and a roles/configuration backup into a root-owned mode-0700 directory. Backup files must be mode 0600; roles/configuration can contain secrets. Check `pg_restore --list` and record the backup checksum. Preserve the current Docker volumes and remote objects. A route rollback must not restore an older database over new writes.
 3. With the database administrator, create only the dedicated login/schema described above. Set its password through a private credential channel, never command-line arguments, logs, or chat. Verify it cannot create schemas or read legacy application tables. Do not alter the `merv_app` role or the `public` schema.
 4. Prepare `/etc/merv/typescript.env` as root:root 0600 using `typescript.env.example`. Copy only the named required values internally from the existing private configuration; never print the file. Use a new database-role password and the new artifact prefix. If the database is moved off the local Docker network, configure verified TLS in State rather than adding an unchecked URI TLS option.
-5. Create `/var/lib/merv-ts`, owned by container UID/GID 1000, mode 0700. It stores local runtime state; it is not the metadata database or artifact storage. Do not reuse the legacy data directory. Code keeps one Git repository per project beneath it (`/var/lib/merv-ts/code`), which is authoritative and must be backed up with the database; see [Code operations](../docs/CODE_OPERATIONS.md#the-code-repository). The runtime image carries Git for it, and the server refuses to start with `code_git_unsupported` without one of at least 2.38. One server writes to this volume at a time.
+5. Create `/var/lib/merv-ts`, owned by container UID/GID 10001:10001, mode 0700. It stores local runtime state; it is not the metadata database or artifact storage. Do not reuse the legacy data directory. Code keeps one Git repository per project beneath it (`/var/lib/merv-ts/code`), which is authoritative and must be backed up with the database; see [Code operations](../docs/CODE_OPERATIONS.md#the-code-repository). The runtime image carries Git for it, and the server refuses to start with `code_git_unsupported` without one of at least 2.38. One server writes to this volume at a time.
 6. Start the separate Compose project with its immutable image. Use `sudo` if needed to read the private environment file. Avoid `docker compose config` without `--quiet`, because rendering can print secrets.
 
 ```sh

@@ -209,7 +209,7 @@ test('a design cannot be submitted without a feasibility statement that admits i
     intent: 'Compare two methods.',
     requestId: f.id(),
   });
-  assert.equal(e.workflow.version, 41);
+  assert.equal(e.workflow.version, 42);
   await f.attach(e, 'plan', plan);
   const blockers = async () =>
     (await f.app.ctx.workflows.evaluate(f.owner, e.id)).actions
@@ -291,6 +291,8 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
   assert.equal(planning.context!.typeVersion, 12);
   assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
+  // And told that its Sandboxes tools, which the declared tools never list, are its to measure with.
+  assert.match(planning.context!.prompt, /"computeAccess":"Your Sandboxes MCP connection/);
   await f.attach(e, 'plan', plan);
   const marked = statement();
   marked.resources[0].basis = 'Row count of inventory FEASIBILITY_BASIS_7731.';

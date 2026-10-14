@@ -135,7 +135,11 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
     [...node.requires, ...node.optional].map((dependency) => {
       if (!providers.has(dependency))
         throw new Error(`${node.id} requires missing provider ${dependency}`);
-      return { from: node.id, to: dependency, optional: node.optional.includes(dependency) };
+      return {
+        from: node.id,
+        to: providers.get(dependency)!.provides[0],
+        optional: node.optional.includes(dependency),
+      };
     }),
   );
   if (edges.length !== inventory.directDependencyCount)
@@ -182,18 +186,11 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
     edges,
     counts: {
       plugins: nodes.length,
-      providers: providers.size,
-      adapters: nodes.length - providers.size,
+      providers: inventory.serviceProviders,
+      adapters: nodes.length - inventory.serviceProviders,
       dependencies: edges.length,
     },
     network: [
-      {
-        from: 'sandboxes',
-        to: 'remote-sandboxes',
-        protocol: 'HTTP',
-        description:
-          'Optional direct compute-service connection for published views, scoped reads and lease controls.',
-      },
       {
         from: 'runner',
         to: 'api',

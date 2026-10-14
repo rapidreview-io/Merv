@@ -2,7 +2,7 @@ import type { TaskDelivery } from '@merv/tasks/types';
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { git } from './fixtures/code-store.js';
-import { nativeWorkFixture } from './fixtures/native-work.js';
+import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -389,8 +389,6 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
-  // A connected project: its visits get the Sandboxes MCP, so its briefs say how to use it.
-  f.experiments.bindSandboxes(nativeWorkFixture().service);
   const prerequisite = await currentTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',
@@ -437,8 +435,6 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, true);
-  assert.match(planned.brief, /native Sandboxes MCP/);
-  assert.match(planned.brief, /brief verification only/);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.match(planned.brief, /reviewers must independently verify pivotal claims/);
   assert.ok(
@@ -460,10 +456,12 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const running = await f.verdict(pending, 'pass');
   assert.equal(running.workflow.state, 'running');
   assert.equal(running.attempt.startedAt, null);
-  assert.equal(
-    (await f.workflows.assignment(f.source, running.id)).context!.type,
-    'experiment.execute',
-  );
+  const executing = await f.workflows.assignment(f.source, running.id);
+  assert.equal(executing.context!.type, 'experiment.execute');
+  // The executor is told how to present results and link what it names; the planner is not.
+  assert.match(executing.brief, /choose the form by the shape of the content/);
+  assert.match(executing.brief, /code-file:<full commit>:<path from the repository root>/);
+  assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
   assert.equal(packet.context!.type, 'experiment.attempt_review');
@@ -481,7 +479,7 @@ test('a design and its review read the accepted code they depend on in a read-on
     requestId: f.request(),
   });
   const experiment = await f.create([prerequisite.id]);
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   const preparation = await f.work.lease(prerequisite);
   const proof = await f.artifacts.create(preparation.worker, {
     title: 'Preparation receipt',
@@ -565,8 +563,11 @@ test('a design and its review read the accepted code they depend on in a read-on
   await f.work.release(planner);
   assert.equal(pending.workflow.state, 'design_review');
 
+  // The planner measured with compute; the design reviewer only checks.
+  assert.equal(planner.session.execution.references.computeProfile, 'plan');
   // The design reviewer reads the same base.
   const reviewer = await f.work.lease(pending, await f.issue('operator'));
+  assert.equal(reviewer.session.execution.references.computeProfile, undefined);
   assert.equal(reviewer.session.execution.references.base, accepted);
   assert.equal(reviewer.workspace.snapshot!.headOid, accepted);
   assert.ok(readFileSync(join(reviewer.workspace.path, 'prepare.py'), 'utf8'));
@@ -1590,21 +1591,21 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 41);
+  assert.equal(created.workflow.version, 42);
   assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 
 test('every experiment lease admits verified captures and leaves compute to Sandboxes', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  f.experiments.bindSandboxes(native.service);
+  const native = captureEvidenceFixture();
+  f.experiments.bindCaptureEvidence(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
-  // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
+  // Sandboxes derives compute from the lease itself: the unit names no scope, and a planning
+  // lease only the profile that lets it measure feasibility.
   assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
-  assert.equal(first.session.execution.references.computeProfile, undefined);
+  assert.equal(first.session.execution.references.computeProfile, 'plan');
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
-  assert.match(first.session.assignment.brief, /brief verification only/);
   assert.ok(!first.session.execution.policy.tools.some((tool) => tool.name.startsWith('compute.')));
   const worker = await f.sessions.authenticate(first.secret);
   const service = await f.scope.serviceActor('sandboxes', f.source.projectId);
@@ -1645,8 +1646,8 @@ test('every experiment lease admits verified captures and leaves compute to Sand
 
 test('a lease admits the captures of its own attempt only', async (t) => {
   const f = await fixture(t);
-  const native = nativeWorkFixture();
-  f.experiments.bindSandboxes(native.service);
+  const native = captureEvidenceFixture();
+  f.experiments.bindCaptureEvidence(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
   const worker = await f.sessions.authenticate(first.secret);
@@ -2028,7 +2029,7 @@ test('a resumed visit submits results its cut visit retained before attaching th
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
   const f = await fixture(t);
   let experiment = await f.running();
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   // Attempt 1 runs, commits its implementation, and submits.
   const r1 = await f.work.lease(experiment);
   await f.work.commit(r1, { 'attempt1_impl.py': 'print("attempt 1")\n' });

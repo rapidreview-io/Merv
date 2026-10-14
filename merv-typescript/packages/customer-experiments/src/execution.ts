@@ -1,3 +1,4 @@
+import { computeGuidance } from '@merv/sessions/compute';
 import {
   check,
   type Data,
@@ -256,9 +257,7 @@ export function executionPolicy(ctx: CustomerExperiments): WorkflowPolicy {
       build: async (c) => {
         const exp = await facts(c);
         const review = state === 'results_review';
-        const compute =
-          (await ctx.compute?.guidance(c.caller.projectId, review ? 'check' : 'execute', c.tx)) ??
-          '';
+        const compute = ctx.compute ? computeGuidance(review ? 'check' : 'execute') : '';
         const instruction = review
           ? 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
           : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';

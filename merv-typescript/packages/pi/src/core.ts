@@ -232,9 +232,8 @@ export class PiCore {
   conversationModel(conversation: PiConversationRecord, command?: PiCommandRecord) {
     if (!conversation.profile) return this.model(command?.model ?? conversation.model);
     const profile = this.profiles.get(conversation.profile);
-    const model = this.config.models.find(
-      (model) => model.id === profile.model.id && model.effort === profile.model.effort,
-    );
+    const configured = this.config.models.find((model) => model.id === profile.model.id);
+    const model = configured && { ...configured, effort: profile.model.effort };
     check(
       model &&
         conversation.model === model.id &&

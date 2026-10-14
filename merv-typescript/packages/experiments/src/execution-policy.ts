@@ -28,6 +28,7 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
             ? codeWorkspace('read', 'experiment-designs')
             : { mode: 'none' },
     tools: [
+      ...(version >= 42 ? [grant('nisa.research', {})] : []),
       grant(
         'workflow.status_and_next',
         { instanceId: target('instanceId') },

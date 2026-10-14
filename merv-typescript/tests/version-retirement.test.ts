@@ -683,14 +683,14 @@ test('retiring the versions that can no longer start deletes their records and n
   const { tasks, experiments, research, reflections, workflows } = app.ctx;
   const input = { goal: 'Still works.', checks: ['It runs.'] };
   const managed = await tasks.create(live, { ...input, title: 'Managed', requestId: 'managed' });
-  assert.equal(managed.workflow.version, 43);
+  assert.equal(managed.workflow.version, 44);
   const git = await tasks.create(live, {
     ...input,
     title: 'Git',
     workspace: 'git',
     requestId: 'git',
   });
-  assert.equal(git.workflow.version, 43);
+  assert.equal(git.workflow.version, 44);
   const work = await tasks.create(live, {
     ...input,
     title: 'Work 4',
@@ -704,7 +704,7 @@ test('retiring the versions that can no longer start deletes their records and n
     intent: 'Still testing.',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 41);
+  assert.equal(experiment.workflow.version, 42);
   await research.create(live, { name: 'After the release', requestId: 'research' });
   // The retired open wave held the project's only open-wave slot.
   await reflections.create(live, { requestId: 'wave' });

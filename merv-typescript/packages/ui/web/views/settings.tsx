@@ -1,3 +1,4 @@
+import { permits } from '@merv/scope/rules';
 import type { UiRowDescription } from '@merv/ui/rows';
 import { useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -8,7 +9,6 @@ import { ThreeStates } from '../states';
 import type { PluginState } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
-import { SandboxesConnection } from './sandboxes';
 import { KeysPanel } from './keys';
 import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView, personName } from './people';
@@ -38,6 +38,7 @@ const SECTIONS = [
   ['integrations', 'Integrations'],
   ['keys', 'Keys'],
   ['connections', 'Connections'],
+  ['machines', 'Machines'],
   ['plugins', 'Plugins'],
   ['session', 'Session'],
 ] as const;
@@ -230,6 +231,77 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
   );
 }
 
+interface MachineLimit {
+  machines: number;
+  default: number;
+  max: number;
+}
+
+/** How many Fleet machines the project runs at once; its administrators change it. */
+function Machines() {
+  const { account, actor } = useSession();
+  const limit = useTool<MachineLimit>('fleet.project_limit');
+  const [draft, setDraft] = useState<string>();
+  const save = useCommand<{ machines: number }>({
+    tool: 'fleet.project_limit',
+    idempotent: true,
+    validate: (value) => Number.isSafeInteger(value?.machines),
+    onSuccess: () => {
+      setDraft(undefined);
+      limit.reload();
+    },
+  });
+  if (limit.error && !limit.data) return <Nothing icon="settings" said="No machines" />;
+  if (!limit.data) return <LoadState {...limit} />;
+  const editable = account.kind === 'user' && permits(actor.role, 'admin');
+  const value = draft ?? String(limit.data.machines);
+  const machines = Number(value);
+  const valid = Number.isSafeInteger(machines) && machines >= 1 && machines <= limit.data.max;
+  return (
+    <div className="page-stage stack">
+      <KV
+        rows={[
+          [
+            'At once',
+            editable ? (
+              <form
+                className="cluster"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void save.submit({ machines });
+                }}
+              >
+                <input
+                  className="input"
+                  type="number"
+                  aria-label="Machines at once"
+                  min={1}
+                  max={limit.data.max}
+                  step={1}
+                  value={value}
+                  disabled={save.locked}
+                  onChange={(event) => setDraft(event.target.value)}
+                />
+                <button
+                  className="btn"
+                  disabled={
+                    save.busy || (!save.retry && (!valid || value === String(limit.data.machines)))
+                  }
+                >
+                  {save.retry ? 'Retry' : 'Save'}
+                </button>
+                {save.error && <span role="alert">{save.error}</span>}
+              </form>
+            ) : (
+              <span className="tabular">{limit.data.machines}</span>
+            ),
+          ],
+        ]}
+      />
+    </div>
+  );
+}
+
 /** The signed-in session, and the one control that ends it. */
 function SessionSection() {
   const { account, actor, project, signOut } = useSession();
@@ -283,15 +355,11 @@ function Keys() {
  * that connection produced; everything that configures it is here.
  */
 export function Integrations({ shell }: ViewProps) {
-  const [nativeAvailable, setNativeAvailable] = useState<boolean | null>(null);
   const code = shell.rows.some((row) => row.view.kind === 'code');
   return (
     <div className="page-stage stack stack--lg">
-      <SandboxesConnection onAvailable={setNativeAvailable} />
       {code && <GitHubConnection />}
-      {!code && nativeAvailable === false && (
-        <EmptyState kind="settings" icon="link" title="No integrations" />
-      )}
+      {!code && <EmptyState kind="settings" icon="link" title="No integrations" />}
     </div>
   );
 }
@@ -374,6 +442,7 @@ export function SettingsView(props: ViewProps) {
           <Route path="integrations" element={<Integrations {...props} />} />
           <Route path="keys" element={<Keys />} />
           <Route path="connections" element={<Connections {...props} />} />
+          <Route path="machines" element={<Machines />} />
           <Route path="plugins" element={<Plugins {...props} />} />
           <Route path="session" element={<SessionSection />} />
           <Route path="*" element={<Navigate to="." replace />} />

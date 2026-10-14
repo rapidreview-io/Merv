@@ -11,6 +11,7 @@ export type TaskWorkspace = 'code' | 'resolution';
 export function taskExecutionPolicy(
   purpose: 'work' | 'review',
   workspace: TaskWorkspace,
+  research = false,
 ): WorkflowExecutionPolicy {
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
@@ -25,6 +26,7 @@ export function taskExecutionPolicy(
     readOnly: purpose === 'review',
     workspace: codeWorkspace(purpose, purpose === 'work' ? 'tasks' : 'task-reviews'),
     tools: [
+      ...(research ? [grant('nisa.research', {})] : []),
       grant('workflow.status_and_next', instance, {
         instanceId: { kind: 'oneOf', name: 'dependencies' },
       }),

@@ -1,7 +1,7 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
 import type { ModelRelayHandle } from '@merv/fleet/types';
-import type { PiModelConfig } from './schema.js';
-import type { PiProfile, PiProfiledCreate, PiStoredProfile } from './profiles.js';
+import type { PiModelConfig } from './models.js';
+import type { PiProfile, PiProfiledCreate, PiStoredProfile } from './profile-types.js';
 import type {
   PiCommand,
   PiConversation,
@@ -17,7 +17,7 @@ import type {
 } from './models.js';
 
 export type * from './models.js';
-export type * from './profiles.js';
+export type * from './profile-types.js';
 
 export interface PiConversationRecord extends PiConversation {
   /** The person's own authority, refreshed on every send: every data read of a turn runs as it. */

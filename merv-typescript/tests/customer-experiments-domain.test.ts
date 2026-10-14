@@ -551,7 +551,6 @@ test('native compute captures are scoped to the accepted attempt and frozen into
         works.map((work) => [work.instanceId, { artifactIds: [...captures], refused: [] }]),
       );
     },
-    guidance: async (_projectId, profile) => ` Native compute profile: ${profile}.`,
     settled: async () => settled,
   });
   let exp = await f.pay();

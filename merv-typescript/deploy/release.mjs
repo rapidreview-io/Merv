@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--public https://origin] [--host HOST]
-//                           [--sandboxes <committed Python checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
+//                           [--sandboxes <committed Sandboxes checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -18,6 +18,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { PRODUCTION, releaseTarget, UI_DIR } from './release-target.mjs';
 import { NODE_IMAGE, packageSource, publishLedgers, root } from './source-archive.mjs';
 
 const { values: args, tokens } = parseArgs({
@@ -57,40 +58,7 @@ const sandboxes = (() => {
 const dryRun = args['dry-run'];
 const noRollback = args['no-rollback'];
 const resume = args.resume;
-const PRODUCTION = 'https://experiments.rapidreview.io';
-// Each known origin is served by exactly one VM, so a release can never reach one VM while
-// checking and logging against the other's origin.
-const HOSTS = {
-  [PRODUCTION]: 'ResearchSuite_Control',
-  'https://rp-control-dev.eastus2.cloudapp.azure.com': 'azureuser@dev-experiments.rapidreview.io',
-};
-// The origin is interpolated into the remote job's approved-origin check, so it is an origin
-// and nothing else: no path, no credentials, no shell metacharacters. `https://x:443/` is `https://x`.
-const PUBLIC = (() => {
-  const value = args.public ?? PRODUCTION;
-  const url = URL.canParse(value) ? new URL(value) : null;
-  const origin = url?.origin ?? '';
-  if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(origin) || `${origin}/` !== url.href)
-    throw new Error(`--public must be an https origin without a path, got ${value}`);
-  return origin;
-})();
-const host = (() => {
-  const known = HOSTS[PUBLIC];
-  if (known && (args.host ?? known) !== known)
-    throw new Error(`--public ${PUBLIC} is served by --host ${known}, not ${args.host}`);
-  if (!known && (!args.host || Object.values(HOSTS).includes(args.host)))
-    throw new Error(`--public ${PUBLIC} needs its own --host, not one serving another origin`);
-  return known ?? args.host;
-})();
-// A staging deploy never appends to the production release log.
-const RELEASES = PUBLIC === PRODUCTION ? 'deploy/RELEASES.md' : 'deploy/STAGING_RELEASES.md';
-const ssh = (script, opts = {}) =>
-  spawnSync('ssh', ['-o', 'BatchMode=yes', host, 'sudo', 'bash', '-s'], {
-    input: script,
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'inherit'],
-    ...opts,
-  });
+const { PUBLIC, host, RELEASES, ssh } = releaseTarget(args);
 
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
 const remoteJob = ({ release, archiveSha256 }) => `
@@ -109,11 +77,23 @@ BK=/var/backups/merv/typescript-staging-refresh/${release}
 cd "$REL"
 echo "${archiveSha256}  source.tar.gz" | sha256sum -c - >/dev/null
 echo "${archiveSha256}  source.tar.gz" > archive.sha256
-mkdir -p source && tar -xzf source.tar.gz -C source
+mkdir -p source && tar -xizf source.tar.gz -C source
 docker image inspect ${NODE_IMAGE} > build.log 2>&1 || docker pull ${NODE_IMAGE} >> build.log 2>&1
-docker build --platform linux/amd64 --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
-docker run --rm --entrypoint node "$IMG" dist/src/cli.js help >> build.log 2>&1
+SANDBOXES_TS_IMAGE=$(sed -n 's/^SANDBOXES_TS_IMAGE=//p' /etc/sandboxes/release.env)
+[[ $SANDBOXES_TS_IMAGE =~ ^([a-zA-Z0-9][a-zA-Z0-9._:/-]*@)?sha256:[a-f0-9]{64}$ ]] || { echo 'release.env requires one SANDBOXES_TS_IMAGE registry digest reference or local image ID' >&2; exit 1; }
+docker build --platform linux/amd64 --build-arg SANDBOXES_TS_IMAGE="$SANDBOXES_TS_IMAGE" --build-arg NODE_IMAGE=${NODE_IMAGE} -f source/deploy/Dockerfile -t "$IMG" source >> build.log 2>&1
+docker run --rm --entrypoint node "$IMG" --import tsx dist/src/cli.js help >> build.log 2>&1
 IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$IMG")
+# The served UI is ${UI_DIR}, which deploy/ui-release.mjs also writes: this image's bundle goes
+# there beside the hashed assets already served, and its index.html only once it is healthy.
+umask 022
+rm -rf ui && mkdir ui
+docker run --rm --entrypoint tar "$IMG" -C /app/dist/packages/ui/dist -cf - . | tar -C ui -xf -
+[ -s ui/index.html ] || { echo 'the image has no UI bundle' >&2; exit 1; }
+mkdir -p ${UI_DIR}/assets
+cp -rn ui/assets/. ${UI_DIR}/assets/
+find ui -mindepth 1 -maxdepth 1 ! -name assets ! -name index.html -exec cp -r {} ${UI_DIR}/ \\;
+[ -e ${UI_DIR}/index.html ] || cp ui/index.html ${UI_DIR}/index.html
 # A first deploy on a VM has no previous container, and so nothing to roll back to.
 PREV=$(docker inspect --format '{{.Config.Image}}' merv-typescript-control-1 2>/dev/null || true)
 PREV_ID=; PREV_DIR=
@@ -121,23 +101,27 @@ if [ -n "$PREV" ]; then
   PREV_ID=$(docker image inspect --format '{{.Id}}' "$PREV")
   PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
 fi
+ALLOW_ROLLBACK=false
+if [ "${noRollback ? '1' : '0'}" = 0 ] && [ -n "$PREV" ]; then
+  PREV_SBX=$(docker image inspect --format '{{index .Config.Labels "org.merv.sandboxes-image"}}' "$PREV")
+  [ "$PREV_SBX" != "$SANDBOXES_TS_IMAGE" ] || ALLOW_ROLLBACK=true
+fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
-printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":${!noRollback}}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
-printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
+printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":%s}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" "$ALLOW_ROLLBACK" > "$BK/rollback.json"
+printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","sandboxesImage":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" "$SANDBOXES_TS_IMAGE" > build-manifest.json
 # Until the new container is healthy, any failure (a failed compose up included) ends here.
 # A schema cutover may make the previous image unsafe: --no-rollback leaves it stopped.
 rollback() {
   trap - EXIT
   set +e
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
-  if [ "${noRollback ? '1' : '0'}" = 1 ]; then
+  if [ "$ALLOW_ROLLBACK" != true ]; then
     (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1
     printf '{"release":"%s","image":"%s","imageId":"%s","noRollback":true,"rolledBack":false,"containerHealth":"%s","restarts":"%s","previousImage":"%s","log":"%s"}\\n' \\
       "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$LOG" > deploy-status.json
     exit 1
   fi
-  if [ -z "$PREV" ]; then (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1; fi
-  [ -n "$PREV" ] && (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
+  (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
   for i in $(seq 1 24); do
     P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || P=starting
@@ -159,6 +143,8 @@ for i in $(seq 1 60); do
 done
 [ "$H" = healthy ] || rollback
 trap - EXIT
+cp ui/index.html ${UI_DIR}/.index.html && mv -f ${UI_DIR}/.index.html ${UI_DIR}/index.html
+printf '{"release":"%s","kind":"full","server":"%s"}\\n' "${release}" "${release}" > ${UI_DIR}/.release.json && mv -f ${UI_DIR}/.release.json ${UI_DIR}/release.json
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 HEALTH=$(code http://127.0.0.1:3081/health)
 UI=$(code http://127.0.0.1:3081/ui/)
@@ -255,7 +241,12 @@ const hosted = (...extra) =>
     },
   ).status;
 // A hosted run left open would make the VM job refuse; finish it (forward or back) first.
-if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
+if (
+  local &&
+  PUBLIC === PRODUCTION &&
+  !args['skip-hosted'] &&
+  ![0, 1, 4].includes(hosted('--resume'))
+) {
   console.error(
     'A hosted image run is still open; Main was not released. Once production agrees on one of its releases, `node deploy/hosted-release.mjs --abandon` closes it.',
   );

@@ -153,6 +153,41 @@ const safeEnv = {
   LANG: 'en_US.UTF-8',
   CODEX_HOME: '/home/worker/.codex',
 };
+
+test('compute guidance follows the connection actually attached to the launch', () => {
+  const persistent: WorkflowWorkspacePolicy = {
+    mode: 'persistent',
+    namespace: 'work',
+    base: 'reference:code',
+    perBase: false,
+    retain: true,
+    advancesCentral: false,
+    driver: 'code.v2',
+  };
+  const input = request(false, persistent);
+  assert.doesNotMatch(buildLaunch(codex, input, safeEnv).stdin, /Sandboxes MCP/);
+  input.connections = [
+    {
+      name: 'sandboxes',
+      url: 'https://sandboxes.example.com/mcp',
+      bearer: 'sbxt_' + 'fixture'.repeat(8),
+    },
+  ];
+  const execute = buildLaunch(codex, input, safeEnv).stdin;
+  assert.match(execute, /Sandboxes MCP/);
+  assert.match(execute, /Execute only the authorized work/);
+  assert.doesNotMatch(execute, /native|delegat|temporary Snapshot/);
+  assert.equal(input.session.kind, 'work');
+  if (input.session.kind !== 'work') throw Error('Expected work session');
+  input.session.execution.references.computeProfile = 'none';
+  assert.doesNotMatch(buildLaunch(codex, input, safeEnv).stdin, /Sandboxes MCP/);
+  const checking = request(true);
+  checking.connections = input.connections;
+  assert.match(buildLaunch(codex, checking, safeEnv).stdin, /brief verification only/);
+  const sealed = request(true, persistent);
+  sealed.connections = input.connections;
+  assert.doesNotMatch(buildLaunch(codex, sealed, safeEnv).stdin, /Sandboxes MCP/);
+});
 function config(args: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   for (let i = 0; i < args.length; i++)

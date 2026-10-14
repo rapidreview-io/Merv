@@ -46,11 +46,13 @@ current Sandboxes CPU/GPU catalog and hourly prices; it cannot rent or enable fu
 The executor selects and rents suitable GPUs through the existing native compute connection.
 No GPU type, provider or count is frozen into the customer contract. Catalog availability
 is an observation, not a reservation; execution must recheck current capacity and pricing.
-Before checkout and payment release, the server prepares the isolated project's managed
-connection and checks existing allowance headroom. Remote rentals use that shared managed
-account allowance and provider policy, not a separate hard per-experiment dollar cap.
-Worker time/token limits do not impose a separate GPU-hours ceiling. Native rental leases,
-job timeouts and compute lifecycle cleanup still apply.
+Before checkout and payment release, the server links a private Sandboxes namespace to the
+request project under the configured sponsor's existing account. Only the explicitly configured
+sponsor providers are provisioned there; credentials stay in the Sandboxes vault. Prepaid
+provider connections are refused rather than bypassing their entitlement and wallet checks.
+This initial product has a $5 lifetime compute ceiling per request, one concurrent machine,
+and a 30-minute maximum machine lifetime. Existing account/provider rules also apply.
+These internal limits do not fix a GPU type. Native capture retention and cleanup remain in Merv.
 
 Data is UTF-8 CSV or JSONL: ten requirements, at most 20 MiB per file, 100 MiB total,
 100 columns and 100,000 rows. Validation checks parsing, consistent rows, required columns,
@@ -73,25 +75,26 @@ The same model-provider credentials used by Pi and Fleet must have access to
 
 The deployment renderer recognizes:
 
-| Setting                                                                                        | Purpose                                                                                                      |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `MERV_CUSTOMER_EXPERIMENTS_ENABLED=true`                                                       | Add the plugin; requires Pi and Fleet workflow enabled                                                       |
-| `MERV_SANDBOXES_NATIVE_ENABLED=true`, `MERV_SANDBOXES_MANAGED_ML_ENABLED=true`                 | Reuse existing native compute and funded managed ML configuration for GPU selection and rentals              |
-| `MERV_PI_MODELS`                                                                               | Existing catalog must include `{ "id": "gpt-6-astra", "label": "GPT-6 Astra", "effort": "medium" }`          |
-| `MERV_CUSTOMER_SPONSOR_ISSUER`, `MERV_CUSTOMER_SPONSOR_SUBJECT`                                | Existing verified operator identity that sponsors isolated projects; must be in `MERV_FLEET_WORKFLOW_PEOPLE` |
-| `MERV_CUSTOMER_INTAKE_KEY`                                                                     | Random invitation bearer, at least 32 bytes; controls alpha intake access                                    |
-| `MERV_CUSTOMER_ACCESS_KEY`                                                                     | Separate random server key, at least 32 bytes; signs request capabilities                                    |
-| `MERV_CUSTOMER_REQUESTS_PER_DAY`                                                               | Optional deployment-wide new-request cap, default 25                                                         |
-| `MERV_CUSTOMER_DATA_ENDPOINT`, `MERV_CUSTOMER_DATA_REGION`, `MERV_CUSTOMER_DATA_BUCKET_PREFIX` | Dedicated S3 endpoint, region and bucket naming prefix                                                       |
-| `MERV_CUSTOMER_DATA_ACCESS_KEY_ID`, `MERV_CUSTOMER_DATA_SECRET_ACCESS_KEY`                     | Server storage credentials                                                                                   |
-| `MERV_CUSTOMER_STRIPE_SECRET_KEY`, `MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET`                       | Stripe test keys initially                                                                                   |
-| `MERV_CUSTOMER_STRIPE_LIVE=true`                                                               | Explicit live-mode opt-in; requires email configuration                                                      |
-| `MERV_CUSTOMER_RESEND_KEY`, `MERV_CUSTOMER_EMAIL_FROM`                                         | Transactional results sender and verified sending address                                                    |
+| Setting                                                                                        | Purpose                                                                                                                 |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `MERV_CUSTOMER_EXPERIMENTS_ENABLED=true`                                                       | Add the plugin; requires Pi and Fleet workflow enabled                                                                  |
+| `SANDBOXES_DATABASE_URL`                                                                       | Existing in-process Sandboxes host and integration must be enabled                                                      |
+| `MERV_CUSTOMER_COMPUTE_PROJECT_ID`, `MERV_CUSTOMER_COMPUTE_PROVIDERS`                          | Sponsor-owned connected project and JSON array of explicitly allowed provider names                                     |
+| `MERV_PI_MODELS`                                                                               | Catalog must include `gpt-6-astra`; the trusted intake role pins medium without changing ordinary conversation defaults |
+| `MERV_CUSTOMER_SPONSOR_ISSUER`, `MERV_CUSTOMER_SPONSOR_SUBJECT`                                | Existing verified operator identity that sponsors isolated projects; must be in `MERV_FLEET_WORKFLOW_PEOPLE`            |
+| `MERV_CUSTOMER_INTAKE_KEY`                                                                     | Random invitation bearer, at least 32 bytes; controls alpha intake access                                               |
+| `MERV_CUSTOMER_ACCESS_KEY`                                                                     | Separate random server key, at least 32 bytes; signs request capabilities                                               |
+| `MERV_CUSTOMER_REQUESTS_PER_DAY`                                                               | Optional deployment-wide new-request cap, default 25                                                                    |
+| `MERV_CUSTOMER_DATA_ENDPOINT`, `MERV_CUSTOMER_DATA_REGION`, `MERV_CUSTOMER_DATA_BUCKET_PREFIX` | Dedicated S3 endpoint, region and bucket naming prefix                                                                  |
+| `MERV_CUSTOMER_DATA_ACCESS_KEY_ID`, `MERV_CUSTOMER_DATA_SECRET_ACCESS_KEY`                     | Server storage credentials                                                                                              |
+| `MERV_CUSTOMER_STRIPE_SECRET_KEY`, `MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET`                       | Stripe test keys initially                                                                                              |
+| `MERV_CUSTOMER_STRIPE_LIVE=true`                                                               | Explicit live-mode opt-in; requires email configuration                                                                 |
+| `MERV_CUSTOMER_RESEND_KEY`, `MERV_CUSTOMER_EMAIL_FROM`                                         | Transactional results sender and verified sending address                                                               |
 
 Storage credentials need permission to create buckets, block public access, set CORS,
 and put/head/get objects under this feature's bucket prefix. The backend must implement
-S3 `CreateBucket`, `PutPublicAccessBlock`, `PutBucketCors`, conditional PUT and SHA-256
-checksums. A provider lacking these APIs fails closed. Buckets are retained; no automatic
+S3 `CreateBucket`, `PutBucketCors`, conditional PUT and SHA-256 checksums. AWS S3 also
+uses `PutPublicAccessBlock`; Cloudflare R2 uses its private-by-default buckets and no public domain. Buckets are retained; no automatic
 deletion policy is installed by this module.
 
 The feature can run intake without Stripe. Checkout then stays unavailable and no
@@ -112,9 +115,9 @@ contracts and mismatched payments are refused for operator investigation. Automa
 refunds are not implemented.
 
 For direct plugin composition use `@merv/customer-experiments` with `publicOrigin`,
-`sponsor: {issuer, subject}`, optional `storage`, `stripe` and `email` (see `index.ts`).
-The Sandboxes plugin must expose managed native compute; its existing connection
-application, encryption key, service URL, ML namespace and grant configuration are reused.
+`sponsor: {issuer, subject}`, `computeProjectId`, `computeProviders`, and optional
+`storage`, `stripe` and `email` (see `index.ts`). The existing Sandboxes host owns credentials,
+account policy, machines, jobs and evidence; this adapter provisions request scope only.
 Enable `astraMediumEnabled: true` on `@merv/fleet/workflow` and automatic Sessions dispatch.
 Do not put secret values in config; the plugin accepts environment variable names.
 

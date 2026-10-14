@@ -1,5 +1,5 @@
 /**
- * The Code page, rendered. With no repository and nothing made it says one thing
+ * The Git page, rendered. With no repository and nothing made it says one thing
  * and offers one control; with a repository and nothing made, each section is its
  * name and a zero, and never a sentence about what is not there. With work in it,
  * the model is the one truth the drawing and the phone's list are both built from.
@@ -53,7 +53,7 @@ const { publicationState } = await import('../packages/code-work/src/publication
 
 const row = {
   id: 'code',
-  label: 'Code',
+  label: 'Git',
   group: 'operations',
   order: 30,
   path: '/code',
@@ -1056,7 +1056,7 @@ test('the page builds its model from what it reads, and titles nothing twice', a
   // The shell titles the row and the page's own counts stand on that one line beside
   // its name, so the page draws no heading and no band of its own under it.
   const lede = document.querySelector('.page-lede');
-  assert.ok(lede?.textContent?.includes('Code'), text().slice(0, 200));
+  assert.ok(lede?.textContent?.includes('Git'), text().slice(0, 200));
   assert.ok(lede?.textContent?.includes('Work histories 3'), lede?.textContent);
   assert.ok(lede?.textContent?.includes('Merges 1'), lede?.textContent);
   assert.equal(document.querySelectorAll('h1').length, 1, text().slice(0, 200));

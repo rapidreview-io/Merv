@@ -596,3 +596,34 @@ test('HTTP summary preserves declared workspace mode before attachment and after
     }
   }
 });
+
+test('a merge session captures its final head although its merge checkpoint moved with it', async (t) => {
+  const f = await fixture(t);
+  const merge = {
+    plan: 'c'.repeat(64),
+    firstParent: oid('a'),
+    secondParent: oid('d'),
+    checkpoint: oid('a'),
+    firstMerge: null,
+  };
+  await f.app.ctx.sessions.attach(f.source, {
+    ...f.control,
+    workspace: workspace({ pendingMerge: merge }),
+  });
+  await f.app.ctx.sessions.release(f.source, f.release);
+  await assert.rejects(
+    async () =>
+      await f.app.ctx.sessions.workspaceResult(f.source, {
+        ...f.control,
+        workspace: workspace({ pendingMerge: { ...merge, plan: 'e'.repeat(64) } }),
+      }),
+    { code: 'workspace_identity_conflict' },
+  );
+  const merged = { ...merge, checkpoint: oid('f'), firstMerge: oid('f') };
+  const result = workspace({ headOid: oid('f'), pendingMerge: merged });
+  const session = await f.app.ctx.sessions.workspaceResult(f.source, {
+    ...f.control,
+    workspace: result,
+  });
+  assert.deepEqual(session.workspace?.result, result);
+});
