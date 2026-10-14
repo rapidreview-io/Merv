@@ -17,7 +17,6 @@ import type {
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
-  ExperimentOccupancy,
   ExperimentTransition,
 } from './models.js';
 import type { CodeUnit } from '@merv/code-work/models';
@@ -37,8 +36,8 @@ export interface Experiments {
   summaries(
     caller: Caller,
   ): Promise<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'workflow'>[]>;
-  /** Every experiment's name, lowercased, and how many are not yet complete, abandoned or failed. */
-  occupancy(caller: Caller, tx?: Transaction): Promise<ExperimentOccupancy>;
+  /** How many experiments are not yet complete, abandoned or failed. */
+  active(caller: Caller, tx?: Transaction): Promise<number>;
   /**
    * Refuses creating experiments of these names as creating each would: a name an experiment
    * already uses (experiment_name_conflict), or more active experiments than a project may have

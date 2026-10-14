@@ -1,5 +1,4 @@
 import { reviewHistory } from '@merv/reviews/rules';
-import { mapAsync } from '@merv/contracts';
 import {
   check,
   clip,
@@ -148,16 +147,9 @@ export async function inputsOf(
   const historicalArtifacts = [
     ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
   ].filter((id) => !evidenceArtifacts.includes(id) && !approvedArtifacts.includes(id));
-  const historicalReferences = await mapAsync(historicalArtifacts, async (id) => {
-    const artifact = await ctx.artifacts.get(caller, id, tx);
-    return {
-      id: artifact.id,
-      title: artifact.title,
-      hash: artifact.hash,
-      mediaType: artifact.mediaType,
-      size: artifact.size,
-    };
-  });
+  const historicalReferences = (await ctx.artifacts.getAll(caller, historicalArtifacts, tx)).map(
+    ({ id, title, hash, mediaType, size }) => ({ id, title, hash, mediaType, size }),
+  );
   // Paper serves the Introduction from the Problem, whose sections `paper` carries.
   const project = await ctx.scope.project(caller, tx);
   return {
@@ -269,26 +261,6 @@ export function inputIds(inputs: FrozenInputs): string[] {
 }
 
 /**
- * A derived base is only ever read here. Until a lease has pinned one there is none to name:
- * an interactive producer has no checkout, and a leased one always finds its pin.
- */
-export async function pinnedBase(
-  ctx: ExperimentsContext,
-  { caller, snapshot, tx }: WorkflowCheckContext,
-): Promise<{ base?: string }> {
-  const pin = await ctx.code.basePin(caller, snapshot.id, tx);
-  return pin ? { base: pin.reference } : {};
-}
-
-async function resumesFrom(
-  ctx: ExperimentsContext,
-  { caller, snapshot, tx }: WorkflowCheckContext,
-): Promise<{ base?: string }> {
-  const head = await ctx.code.resumesFrom(caller, snapshot.id, tx);
-  return head ? { base: head } : {};
-}
-
-/**
  * What a design may do with compute, said in the assignment a planner reads first: its Sandboxes
  * tools come on their own connection, so the declared tools above never list them.
  */
@@ -300,47 +272,44 @@ export async function references(
   context: WorkflowCheckContext,
 ): Promise<WorkflowExecutionReferences> {
   const { experiment } = await admit(ctx, context);
+  const { caller, snapshot, tx } = context;
   const review = experiment.reviewId
-    ? await ctx.reviews.get(context.caller, experiment.reviewId, context.tx)
+    ? await ctx.reviews.get(caller, experiment.reviewId, tx)
     : null;
+  // Execution works on its pinned base, once a lease pinned one (an interactive producer has no
+  // checkout). From experiment@41 the design and its review read the code execution will start
+  // from: that base, with an earlier attempt's commits on it.
+  const base =
+    snapshot.state === 'running'
+      ? (await ctx.code.basePin(caller, snapshot.id, tx))?.reference
+      : ['planned', 'design_review'].includes(snapshot.state) && designCheckout(snapshot.version)
+        ? await ctx.code.resumesFrom(caller, snapshot.id, tx)
+        : null;
   return {
     // The native Sandboxes work kind an experiment binds compute under.
     computeKind: 'experiment',
     // A design measures its compute rather than guessing it: bounded probes, not the run.
-    ...(context.snapshot.state === 'planned' ? { computeProfile: 'plan' } : {}),
-    // Execution works on its pinned base. From experiment@41 the design and its review read the
-    // code execution will start from: that base, with an earlier attempt's commits on it.
-    ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),
-    ...(['planned', 'design_review'].includes(context.snapshot.state) &&
-    designCheckout(context.snapshot.version)
-      ? await resumesFrom(ctx, context)
-      : {}),
-    ...(context.snapshot.state === 'experiment_review'
+    ...(snapshot.state === 'planned' ? { computeProfile: 'plan' } : {}),
+    ...(base ? { base } : {}),
+    ...(snapshot.state === 'experiment_review'
       ? {
-          code: (await reviewCapture(ctx, context.caller, experiment, context.tx))!.workspace!
-            .headOid,
+          code: (await reviewCapture(ctx, caller, experiment, tx))!.workspace!.headOid,
         }
       : {}),
-    artifacts: await allowedArtifacts(ctx, context.caller, experiment, context.tx),
+    artifacts: await allowedArtifacts(ctx, caller, experiment, tx),
     dependencies: (context.dependencies ?? []).map((dependency) => dependency.id).sort(),
     reviews: [
       ...new Set(
         [
           experiment.reviewId,
           experiment.attempt.approvedReviewId,
-          ...(await feedbackOf(ctx, context.caller, experiment, context.tx)).map(
-            (prior) => prior.id,
-          ),
-          ...(await rejectedRounds(ctx, context.caller, experiment, context.tx)).map(
-            (round) => round.review.id,
-          ),
+          ...(await feedbackOf(ctx, caller, experiment, tx)).map((prior) => prior.id),
+          ...(await rejectedRounds(ctx, caller, experiment, tx)).map((round) => round.review.id),
         ].filter((id): id is string => !!id),
       ),
     ],
     ...(review ? { reviewId: review.id } : {}),
-    ...(review?.claimId && review.reviewerId === context.caller.actorId
-      ? { claimId: review.claimId }
-      : {}),
+    ...(review?.claimId && review.reviewerId === caller.actorId ? { claimId: review.claimId } : {}),
   };
 }
 
@@ -507,10 +476,9 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         id: artifact.id,
         label: artifact.title,
       })),
-      ...(await mapAsync(inputs.historicalArtifacts, async (id) => {
-        const artifact = await ctx.artifacts.get(context.caller, id, context.tx);
-        return { kind: 'artifact' as const, id: artifact.id, label: artifact.title };
-      })),
+      ...(await ctx.artifacts.getAll(context.caller, inputs.historicalArtifacts, context.tx)).map(
+        (artifact) => ({ kind: 'artifact', id: artifact.id, label: artifact.title }),
+      ),
     ],
     handoff: {
       instruction,

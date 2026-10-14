@@ -11,8 +11,12 @@ import {
   type ReviewSubmit,
 } from '@merv/contracts';
 
-/** Keep structured observations finite and portable before command hashing or persistence. */
-function validateEvidence(value: unknown): Data {
+/**
+ * Read the optional evidence field without invoking a getter on the submission itself, and keep
+ * its structured observations finite and portable before command hashing or persistence.
+ */
+export function evidenceFrom(input: { evidence?: unknown }): Data {
+  const value = ownField(input, 'evidence', 'invalid_evidence', 'Review evidence');
   if (value === undefined) return {};
   check(
     value && typeof value === 'object' && !nodeTypes.isProxy(value) && !Array.isArray(value),
@@ -65,11 +69,6 @@ export function ownField(input: unknown, name: string, code: string, what: strin
     `${name} must be an ordinary data field`,
   );
   return field?.value;
-}
-
-/** Read the optional evidence field without invoking a getter on the submission itself. */
-export function evidenceFrom(input: { evidence?: unknown }): Data {
-  return validateEvidence(ownField(input, 'evidence', 'invalid_evidence', 'Review evidence'));
 }
 
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */

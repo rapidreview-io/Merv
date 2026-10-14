@@ -640,40 +640,6 @@ async function prepareSubmission(
   return { evidence, figureIds, exhibit };
 }
 
-/** A Git result is submitted from the attached running worker whose final capture is pending. */
-async function finalCaptureRef(
-  ctx: ExperimentsContext,
-  caller: Caller,
-  experiment: Experiment,
-  tx: Transaction,
-): Promise<CodeCaptureRef> {
-  check(
-    caller.session,
-    'session_required',
-    'Git result submission requires its actual worker session',
-    403,
-  );
-  const ref: CodeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
-  const checked = await ctx.code.checkCapture(
-    caller,
-    ref,
-    {
-      unitId: experiment.id,
-      revision: experiment.workflow.revision,
-      workflow: runningNode,
-      actorId: caller.actorId,
-    },
-    tx,
-  );
-  check(
-    checked.status === 'pending' && checked.capture.provenance.hostRef,
-    'experiment_capture_provenance',
-    'Submit from the exact attached running Git worker before final capture',
-    409,
-  );
-  return ref;
-}
-
 /** The submission is what checkAction verified moments earlier in this transaction. */
 async function submit(
   ctx: ExperimentsContext,
@@ -997,8 +963,32 @@ export async function checkAction(
         'At least one result is required',
         409,
       );
-      // Only the worker that ran the attempt submits it, so guidance never offers it a person.
-      codeCaptureRef = await finalCaptureRef(ctx, caller, experiment, tx);
+      // Only the worker that ran the attempt submits it, so guidance never offers it a person:
+      // the attached running worker, whose final Git capture is still pending.
+      check(
+        caller.session,
+        'session_required',
+        'Git result submission requires its actual worker session',
+        403,
+      );
+      codeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
+      const checked = await ctx.code.checkCapture(
+        caller,
+        codeCaptureRef,
+        {
+          unitId: experiment.id,
+          revision: experiment.workflow.revision,
+          workflow: runningNode,
+          actorId: caller.actorId,
+        },
+        tx,
+      );
+      check(
+        checked.status === 'pending' && checked.capture.provenance.hostRef,
+        'experiment_capture_provenance',
+        'Submit from the exact attached running Git worker before final capture',
+        409,
+      );
     }
     return {
       ...(await prepareSubmission(ctx, caller, experiment, selection, authored, tx)),

@@ -31,16 +31,16 @@ export const programVersions: readonly number[] = [40, 41, 42];
  */
 export const designCheckout = (version: number) => version >= 41;
 
+export const currentExperiment = (version: number) => programVersions.includes(version);
+
 export function programContract(version: number) {
   check(
-    programVersions.includes(version),
+    currentExperiment(version),
     'workflow_version_retired',
     `Experiment workflow ${version} is retired`,
     409,
   );
 }
-
-export const currentExperiment = (version: number) => programVersions.includes(version);
 
 /** The workflow node an experiment's Git work is captured from. */
 export const runningNode = {
@@ -140,14 +140,12 @@ export function epochAfter(
   if (!to) return {};
   // A retry keeps the epoch its compute runs under; work started before Experiments recorded
   // one ran under attempt:state.
-  if (to === state)
-    return {
-      computeEpoch:
-        typeof data.computeEpoch === 'string'
-          ? data.computeEpoch
-          : experimentEpoch(attemptIndex, to),
-    };
-  return { computeEpoch: experimentEpoch(attemptIndex, to) };
+  return {
+    computeEpoch:
+      to === state && typeof data.computeEpoch === 'string'
+        ? data.computeEpoch
+        : experimentEpoch(attemptIndex, to),
+  };
 }
 
 /** An experiment in one of these states is over: complete, abandoned or failed. */

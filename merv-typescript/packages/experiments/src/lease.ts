@@ -21,7 +21,7 @@ import type { Experiment, ExperimentEvidence } from './types.js';
 import type { ExperimentsContext } from './index.js';
 import { reviewing, producing, captureEpochs } from './program.js';
 import { type FrozenInputs, eligibleRecovery, inputsOf, inputIds } from './context.js';
-import { facts, assertProducer, reviewOf, reviewCapture, requireBase } from './policy.js';
+import { facts, reviewOf, reviewCapture, stepFacts } from './policy.js';
 
 // Experiment leases: who holds the current step, and what its lease froze.
 
@@ -99,15 +99,8 @@ export async function leaseRole(
   context: WorkflowCheckContext,
 ): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> {
   check(!context.caller.session, 'forbidden', 'A leased worker cannot delegate work', 403);
-  const experiment = await facts(ctx, context);
-  if (producing(context.snapshot.state)) {
-    await assertProducer(ctx, context.caller, experiment, context.tx);
-    await requireBase(ctx, context);
-    return 'producer';
-  }
-  await ctx.scope.require(context.caller, 'review', context.tx);
-  const review = await reviewOf(ctx, context.caller, experiment, context.tx);
-  await reviewCapture(ctx, context.caller, experiment, context.tx);
+  const { experiment, review } = await stepFacts(ctx, context);
+  if (!review) return 'producer';
   check(
     review.status === 'requested' && !(await activeLease(ctx, experiment, context.tx)),
     'review_unavailable',

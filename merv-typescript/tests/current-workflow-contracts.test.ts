@@ -178,7 +178,7 @@ test('retired work survives restart as readable history, with no new claims or m
   assert.equal(experiment.attempt.index, 1);
   assert.equal((await app.ctx.tasks.list(owner)).length, 1);
   assert.equal((await app.ctx.experiments.list(owner)).length, 1);
-  assert.equal((await app.ctx.experiments.occupancy(owner)).active, 0);
+  assert.equal(await app.ctx.experiments.active(owner), 0);
   assert.equal((await app.ctx.tasks.running(owner)).length, 0);
   assert.equal((await app.ctx.experiments.running(owner)).length, 0);
   assert.ok(await app.ctx.tasks.runningPanel(owner, taskId));

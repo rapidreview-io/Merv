@@ -1,5 +1,3 @@
-import { postgresMigrations } from './storage.postgres.js';
-import type { State } from '@merv/contracts';
 import type { ExperimentAttempt, ExperimentSubmission } from './types.js';
 export interface ExperimentRow {
   id: string;
@@ -43,6 +41,3 @@ export interface SubmissionRow {
   record: string;
 }
 export const submissionMetadata = (r: SubmissionRow): ExperimentSubmission => JSON.parse(r.record);
-export async function migrateExperiments(state: State): Promise<void> {
-  await state.migrate('experiments', postgresMigrations);
-}

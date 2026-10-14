@@ -356,56 +356,53 @@ export async function checkReview(
   );
 }
 
+/**
+ * What any hold on this step stands on: producing work's own checks and the base Code derives
+ * for it (refused with Code's blocker code, so the experiment is never a candidate, and Code
+ * publishes why), or the pinned review and its capture gate. This only reads.
+ */
+export async function stepFacts(
+  ctx: ExperimentsContext,
+  context: WorkflowCheckContext,
+): Promise<{ experiment: Experiment; review: ReviewRequest | null }> {
+  const { caller, snapshot, tx } = context;
+  const experiment = await facts(ctx, context);
+  if (producing(snapshot.state)) {
+    await assertProducer(ctx, caller, experiment, tx);
+    await ctx.code.requireLeasable(
+      caller,
+      { unitId: snapshot.id, writer: snapshot.state === 'running' },
+      tx,
+    );
+    return { experiment, review: null };
+  }
+  await ctx.scope.require(caller, 'review', tx);
+  const review = await reviewOf(ctx, caller, experiment, tx);
+  await reviewCapture(ctx, caller, experiment, tx);
+  return { experiment, review };
+}
+
 export async function admit(
   ctx: ExperimentsContext,
   context: WorkflowCheckContext,
 ): Promise<{ experiment: Experiment; review: ReviewRequest | null }> {
-  const experiment = await facts(ctx, context);
-  if (producing(context.snapshot.state)) {
-    await assertProducer(ctx, context.caller, experiment, context.tx);
-    await requireBase(ctx, context);
-    return { experiment, review: null };
-  }
-  await ctx.scope.require(context.caller, 'review', context.tx);
-  const review = await reviewOf(ctx, context.caller, experiment, context.tx);
-  await reviewCapture(ctx, context.caller, experiment, context.tx);
-  if (context.caller.session) {
-    const lease = await leaseOf(ctx, context.caller, experiment, context.tx);
+  const { experiment, review } = await stepFacts(ctx, context);
+  const { caller, tx } = context;
+  if (review && caller.session) {
+    const lease = await leaseOf(ctx, caller, experiment, tx);
     check(
       lease.review_id === review.id && lease.claim_id === review.claimId,
       'stale_claim',
       'The session no longer owns its pinned claim',
       409,
     );
-    await ctx.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
-  } else if (review.status === 'requested')
-    await ctx.reviews.checkStart(context.caller, review.id, context.tx);
-  else await ctx.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
+    await ctx.reviews.checkSubmit(caller, review.id, undefined, tx);
+  } else if (review?.status === 'requested') await ctx.reviews.checkStart(caller, review.id, tx);
+  else if (review) await ctx.reviews.checkSubmit(caller, review.id, undefined, tx);
   return { experiment, review };
 }
 
-/**
- * Refuses producing work whose base Code cannot derive, with Code's own blocker code. This
- * only reads: it runs under lease admission, the dispatch candidate scan and every
- * assignment check. The refusal makes the experiment no candidate at all, so it is never
- * launched and never held; Code publishes the reason where status and the stuck report look.
- */
-export async function requireBase(
-  ctx: ExperimentsContext,
-  { caller, snapshot, tx }: WorkflowCheckContext,
-): Promise<void> {
-  await ctx.code.requireLeasable(
-    caller,
-    { unitId: snapshot.id, writer: snapshot.state === 'running' },
-    tx,
-  );
-}
-
 export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy {
-  const argumentsFor = (context: WorkflowCheckContext): Data => ({
-    experimentId: context.snapshot.id,
-    expectedRevision: context.snapshot.revision,
-  });
   const action = (
     name: string,
     states: string[],
@@ -423,8 +420,9 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
       ? { requiredInput: ['evidence'] }
       : {}),
     suggested: !['retry_running', 'abandon', 'mark_failed'].includes(name),
-    arguments: (context: WorkflowCheckContext): Data => ({
-      ...argumentsFor(context),
+    arguments: ({ snapshot }: WorkflowCheckContext): Data => ({
+      experimentId: snapshot.id,
+      expectedRevision: snapshot.revision,
       transition: name,
     }),
     check: async (context: WorkflowCheckContext) => {

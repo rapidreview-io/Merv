@@ -114,44 +114,26 @@ function need(task: TaskStanding): RunningAttention | undefined {
 
 /** The card's one line. */
 function face(at: Holding): RunningPhrase {
-  switch (at.at) {
-    case 'ended':
-      return [];
-    case 'suspended':
-      return ['Suspended'];
-    case 'producer':
-      return ['Producer on it'];
-    case 'review':
-      return at.card.line;
-    case 'waits':
-      return ['Waits on ', ...prerequisiteNames(at.names)];
-    case 'waiting':
-      return ['Waiting'];
-    case 'ready':
-      return ['Ready'];
-  }
+  if (at.at === 'ended') return [];
+  if (at.at === 'review') return at.card.line;
+  if (at.at === 'waits') return ['Waits on ', ...prerequisiteNames(at.names)];
+  return [
+    { suspended: 'Suspended', producer: 'Producer on it', waiting: 'Waiting', ready: 'Ready' }[
+      at.at
+    ],
+  ];
 }
 
 /**
- * The sidebar head's clause after the state word. Who reviews it, and since when, is the
- * Review section's to say, so the head does not say it a second time.
+ * The sidebar head's clause after the state word: the card's line, run on in lower case. Who
+ * reviews it, and since when, is the Review section's to say, so the head says only that nobody
+ * has taken the review; an ended or suspended task's state word says all.
  */
 function clause(at: Holding): RunningPhrase {
-  switch (at.at) {
-    case 'producer':
-      return [' · producer on it'];
-    case 'review':
-      // Only a review nobody has taken is dashed.
-      return at.card.look === 'dashed' ? [' · unclaimed'] : [];
-    case 'waits':
-      return [' · waits on ', ...prerequisiteNames(at.names)];
-    case 'waiting':
-      return [' · waiting'];
-    case 'ready':
-      return [' · ready'];
-    default:
-      return [];
-  }
+  if (at.at === 'review') return at.card.look === 'dashed' ? [' · unclaimed'] : [];
+  if (at.at === 'ended' || at.at === 'suspended') return [];
+  const [word, ...rest] = face(at);
+  return [` · ${(word as string).toLowerCase()}`, ...rest];
 }
 
 /** A name as long as the page holds one. */
@@ -365,23 +347,10 @@ export function taskPanel(
   graph: ProcessGraph,
   brief: { id: string; title: string } | null,
   route: WorkRoute,
-  unit?: RunningUnit,
+  unit: RunningUnit,
 ): RunningPanelPart {
   const at = holding(task);
   const attention = need(task);
-  // A delivery's claims belong to it: once a review sends the work back they are withdrawn.
-  const claimed = task.state === 'in_review' || task.state === 'done';
-  const claims = new Map(
-    record.deliveryConfirmations.map((confirmation) => [
-      confirmation.checkNumber,
-      confirmation.status,
-    ]),
-  );
-  const delivered = graph.edges
-    .filter((edge) => edge.action === 'submit_delivery')
-    .flatMap((edge) => edge.traversals.map((traversal) => traversal.at))
-    .sort()
-    .at(-1);
   const sections: RunningSection[] = [
     { title: 'Progress', place: 'progress', kind: 'ladder', graph },
     // A failed prerequisite is why the task needs a person, but only while it is worked on: the
@@ -392,20 +361,8 @@ export function taskPanel(
       route,
       !!failedPrerequisite(task),
     ),
-    // A unit says its goal and its checks itself, so they are sections only without one.
-    ...(unit
-      ? []
-      : [
-          {
-            title: 'Goal',
-            place: 'content' as const,
-            kind: 'text' as const,
-            text: record.goal,
-            clamp: 4,
-          },
-        ]),
-    // A brief somebody wrote can say more than the goal and the checks; the one the server
-    // composes only repeats them, so it is not offered.
+    // A brief somebody wrote can say more than the goal and the checks, which the unit says; the
+    // one the server composes only repeats them, so it is not offered.
     ...(brief && !composedBrief(brief)
       ? [
           {
@@ -421,24 +378,6 @@ export function taskPanel(
           },
         ]
       : []),
-    ...(unit
-      ? []
-      : [
-          {
-            title: 'Checks',
-            place: 'content' as const,
-            kind: 'table' as const,
-            columns: claimed ? ['Check', 'Claim'] : ['Check'],
-            rows: record.acceptanceChecks.map(({ number, text }) => {
-              const claim = claims.get(number);
-              const check: RunningPhrase = [short(`${number} · ${text}`, 1000)];
-              return { cells: claimed ? [check, claim ? [{ state: claim }] : []] : [check] };
-            }),
-            ...(claimed && delivered
-              ? { aside: ['Delivered ', { ago: delivered }] as RunningPhrase }
-              : {}),
-          },
-        ]),
     {
       title: 'Details',
       place: 'details',
@@ -461,7 +400,7 @@ export function taskPanel(
     actions: [],
     ...(page ? { route: page } : {}),
     live: task.lease !== null,
-    ...(unit ? { unit } : {}),
+    unit,
   };
 }
 

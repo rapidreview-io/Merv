@@ -467,46 +467,35 @@ export class ReviewService implements Reviews {
   }
 
   async list(caller: Caller, { subjectId }: { subjectId?: string } = {}): Promise<ReviewRequest[]> {
-    caller = structuredClone(caller);
-    await this.scope.require(caller, 'read');
-    return await this.state.read(
-      async (sql) =>
-        await this.claimableBy(
-          caller,
-          standings(
-            (
-              await sql.all<ReviewRow>(
-                `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
-                caller.projectId,
-                ...(subjectId === undefined ? [] : [subjectId]),
-              )
-            ).map(hydrate),
-          ),
-        ),
+    return await this.listed(
+      caller,
+      `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
+      ...(subjectId === undefined ? [] : [subjectId]),
     );
   }
 
   async home(caller: Caller): Promise<ReviewRequest[]> {
+    return await this.listed(
+      caller,
+      // Every open review and the 200 newest settled ones (a verdict, or superseded): a subject
+      // among them comes with its newest settled review, so with its current one.
+      `(SELECT * FROM reviews WHERE project_id = ? AND status IN ('requested', 'started'))
+      UNION ALL (SELECT * FROM reviews WHERE project_id = ? AND status IN ('submitted', 'superseded')
+        ORDER BY created_at DESC, id DESC LIMIT 200)
+      ORDER BY created_at, id`,
+      caller.projectId,
+    );
+  }
+
+  /** The reviews `query` selects, the caller's project its first parameter, as the caller lists them. */
+  private async listed(caller: Caller, query: string, ...params: string[]) {
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
     return await this.state.read(
       async (sql) =>
         await this.claimableBy(
           caller,
-          standings(
-            (
-              await sql.all<ReviewRow>(
-                // Every open review and the 200 newest settled ones (a verdict, or superseded): a
-                // subject among them comes with its newest settled review, so with its current one.
-                `(SELECT * FROM reviews WHERE project_id = ? AND status IN ('requested', 'started'))
-                UNION ALL (SELECT * FROM reviews WHERE project_id = ? AND status IN ('submitted', 'superseded')
-                  ORDER BY created_at DESC, id DESC LIMIT 200)
-                ORDER BY created_at, id`,
-                caller.projectId,
-                caller.projectId,
-              )
-            ).map(hydrate),
-          ),
+          standings((await sql.all<ReviewRow>(query, caller.projectId, ...params)).map(hydrate)),
         ),
     );
   }

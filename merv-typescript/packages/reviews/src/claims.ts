@@ -159,9 +159,9 @@ export async function checkSubmit(
         'invalid_notes',
         'A verdict must include assessment notes',
       );
-      validateAssessment(hydrate(row), input);
+      validateAssessment(current, input);
     }
-    return hydrate(row);
+    return current;
   });
 }
 

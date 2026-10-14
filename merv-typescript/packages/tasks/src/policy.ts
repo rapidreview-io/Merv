@@ -1,6 +1,5 @@
 import { reviewActions } from '@merv/reviews/rules';
 import { reviewReturn } from '@merv/reviews/returns';
-import { types as nodeTypes } from 'node:util';
 import {
   check,
   requireHuman,
@@ -34,24 +33,6 @@ import { currentLease, leaseHooks, leasedClaim, prepareTasks, unleased } from '.
 
 // The task workflow's policy and the checks its review actions run. Each runs on TaskService
 // (index.ts) as its TasksContext.
-
-/**
- * Tasks have fixed routes, so by Reviews' one rule (`reviewReturn`) no verdict names one; inspect
- * only an ordinary optional data property.
- */
-export function rejectReviewReturn(input: object): void {
-  const message = 'Task reviews have fixed return routes and do not accept returnTo';
-  check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input),
-    'invalid_review_return',
-    message,
-  );
-  const prototype = Object.getPrototypeOf(input);
-  check(prototype === Object.prototype || prototype === null, 'invalid_review_return', message);
-  const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(!descriptor || 'value' in descriptor, 'invalid_review_return', message);
-  reviewReturn((input as { verdict: Verdict }).verdict, descriptor?.value, []);
-}
 
 export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPolicy {
   const taskArguments = ({ snapshot }: WorkflowCheckContext): Data => ({
@@ -89,31 +70,20 @@ export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPoli
           },
         }
       : {}),
-    assignments: [
-      {
-        state: 'in_progress',
-        requiresDependencies: true,
-        check: async (context) => {
-          await workflowAssignmentFacts(ctx, context);
-          const { caller, snapshot, tx } = context;
-          await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
-        },
-        build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy('work', taskWorkspace(version), version >= 44),
-        references: async (context) => await workflowExecutionReferences(ctx, context),
-        lease: leaseHooks(ctx),
+    assignments: (['work', 'review'] as const).map((purpose) => ({
+      state: purpose === 'work' ? 'in_progress' : 'in_review',
+      ...(purpose === 'work' ? { requiresDependencies: true } : {}),
+      check: async (context: WorkflowCheckContext) => {
+        await workflowAssignmentFacts(ctx, context);
+        const { caller, snapshot, tx } = context;
+        if (purpose === 'work') await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
       },
-      {
-        state: 'in_review',
-        check: async (context) => {
-          await workflowAssignmentFacts(ctx, context);
-        },
-        build: async (context) => await workflowAssignment(ctx, context),
-        execution: taskExecutionPolicy('review', taskWorkspace(version), version >= 44),
-        references: async (context) => await workflowExecutionReferences(ctx, context),
-        lease: leaseHooks(ctx),
-      },
-    ],
+      build: async (context: WorkflowCheckContext) => await workflowAssignment(ctx, context),
+      execution: taskExecutionPolicy(purpose, taskWorkspace(version), version >= 44),
+      references: async (context: WorkflowCheckContext) =>
+        await workflowExecutionReferences(ctx, context),
+      lease: leaseHooks(ctx),
+    })),
     prepare: async (context) => await prepareTasks(ctx, context),
     describe: async ({ caller, snapshot, tx, dependencies }) => {
       const row = await ctx.row(tx, caller, snapshot.id);
@@ -311,7 +281,8 @@ export async function checkTaskReview(
   let review = checked;
   if (!review) {
     await ctx.scope.require(context.caller, 'review', context.tx);
-    if (context.input) rejectReviewReturn(context.input);
+    // Tasks return by fixed edges, so by Reviews' one rule no verdict names a route.
+    if (context.input) reviewReturn(context.input.verdict as Verdict, context.input.returnTo, []);
     review = await currentReview(ctx, context);
     await ctx.reviews.checkSubmit(
       context.caller,

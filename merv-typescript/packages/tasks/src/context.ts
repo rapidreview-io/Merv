@@ -11,7 +11,6 @@ import {
   type ContextInput,
   type ContextItem,
   type ContextPackage,
-  type ContextRecipeDefinition,
   type ReviewRequest,
   type Transaction,
   type WorkflowAssignmentContent,
@@ -281,29 +280,12 @@ export async function contextInputs(
     const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
     if (artifactIds.length) inputs.checkpointEvidence = { artifactIds };
   }
-  inputs = Object.fromEntries(
-    Object.entries(inputs).filter(([key]) =>
-      type.definition.recipe.sections.some((section) => section.key === key),
-    ),
-  );
-  return await contextItems(ctx, caller, task, inputs, type, tx);
-}
-
-/**
- * The inputs as the recipe takes them: each text becomes one item and each artifact one
- * item named by its title, embedded as ITEM_RULES says.
- */
-export async function contextItems(
-  ctx: TasksContext,
-  caller: Caller,
-  task: Task,
-  inputs: Record<string, Source>,
-  type: { definition: ContextRecipeDefinition },
-  tx: Transaction,
-): Promise<Record<string, ContextInput>> {
+  // The inputs the recipe takes, as it takes them: each text becomes one item and each artifact
+  // one item named by its title, embedded as ITEM_RULES says.
   const titles = new Map(type.definition.recipe.sections.map((s) => [s.key, s.title]));
   const result: Record<string, ContextInput> = {};
   for (const [key, input] of Object.entries(inputs)) {
+    if (!titles.has(key)) continue;
     const rule = ITEM_RULES[key] ?? { priority: 500 };
     if ('items' in input) {
       result[key] = input;
@@ -322,11 +304,8 @@ export async function contextItems(
                 ],
               }),
             ]
-          : await mapAsync(input.artifactIds, async (id) =>
-              artifactItem(await ctx.artifacts.get(caller, id, tx), {
-                id: `${key}:${id}`,
-                ...rule,
-              }),
+          : (await ctx.artifacts.getAll(caller, input.artifactIds, tx)).map((artifact) =>
+              artifactItem(artifact, { id: `${key}:${artifact.id}`, ...rule }),
             ),
     };
   }
@@ -451,7 +430,7 @@ export async function workflowExecutionReferences(
       : [
           ...new Set([
             row.brief_id,
-            ...((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []),
+            ...(await ctx.captureArtifactIds(caller.projectId, row.id, tx)),
             ...(JSON.parse(row.delivery_ids) as string[]),
             ...Object.values(contextInputs).flat(),
             ...(review?.artifactIds ?? []),
@@ -459,30 +438,19 @@ export async function workflowExecutionReferences(
         ].sort(),
     dependencies: (dependencies ?? []).map((dependency) => dependency.id).sort(),
     // What the runner bases the checkout on: the reviewer's on exactly the delivered commit, a
-    // based producer's on the commit its accepted prerequisite delivered.
+    // based producer's on the commit its accepted prerequisite delivered, once a lease pinned it
+    // (an interactive producer has no checkout).
     ...(snapshot.state === 'in_review' && review
       ? { code: await reviewCommit(ctx, caller, snapshot, review, tx) }
-      : await pinnedBase(ctx, caller, snapshot, tx)),
+      : await ctx.code
+          .basePin(caller, snapshot.id, tx)
+          .then((pin): { base?: string } => (pin ? { base: pin.reference } : {}))),
     ...((await isProducer(ctx, caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
     ...(review ? { reviewId: review.id } : {}),
     ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
       ? { claimId: review.claimId }
       : {}),
   };
-}
-
-/**
- * A derived base is only ever read here. Until a lease has pinned one there is none to name:
- * an interactive producer has no checkout, and a leased one always finds its pin.
- */
-export async function pinnedBase(
-  ctx: TasksContext,
-  caller: Caller,
-  snapshot: WorkflowSnapshot,
-  tx: Transaction,
-): Promise<{ base?: string }> {
-  const pin = await ctx.code.basePin(caller, snapshot.id, tx);
-  return pin ? { base: pin.reference } : {};
 }
 
 export async function assignmentFacts(

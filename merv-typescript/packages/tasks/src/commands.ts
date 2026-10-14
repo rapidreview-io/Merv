@@ -41,7 +41,7 @@ import type {
 } from './types.js';
 import type { TasksContext } from './index.js';
 import { producing, serviceOwned, taskVersion } from './workflow.js';
-import { rejectReviewReturn } from './policy.js';
+import { reviewReturn } from '@merv/reviews/returns';
 import { contextInputs, contextType, newestType } from './context.js';
 import { isProducer, producerOrAdmin, unleased } from './lease.js';
 import { reviewAction } from './policy.js';
@@ -201,9 +201,7 @@ export async function createTask(
       );
       // Once Code keeps the project's history, new Git work lives there and nowhere else.
       const version = taskVersion(!!service);
-      const workflow = await (
-        await ctx.registration(version)
-      ).start(
+      const workflow = await ctx.registration(version).start(
         caller,
         {
           workflow: 'task',
@@ -336,7 +334,7 @@ export async function checkDelivery(
     );
   }
   const artifacts = await ctx.artifacts.getAll(caller, input.artifactIds, tx);
-  const captures = new Set((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []);
+  const captures = new Set(await ctx.captureArtifactIds(caller.projectId, row.id, tx));
   check(
     artifacts.every(
       (item) => (item.createdBy === caller.actorId || captures.has(item.id)) && item.size > 0,
@@ -476,7 +474,7 @@ export async function advance(
   tx: Transaction,
   checked?: unknown,
 ): Promise<WorkflowSnapshot> {
-  const moved = await ctx.checked.take(
+  return await ctx.checked.take(
     tx,
     { instanceId: current.id, revision: current.revision, action: transition.action },
     () =>
@@ -489,7 +487,6 @@ export async function advance(
         ),
     checked,
   );
-  return moved;
 }
 
 export async function markFailed(
@@ -678,7 +675,7 @@ export async function submitDelivery(
           // Pin them through Reviews' ordinary input contract rather than changing authorship.
           pinnedInputIds: [
             ...(caller.session ? [row.brief_id] : []),
-            ...((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []).filter((id) =>
+            ...(await ctx.captureArtifactIds(caller.projectId, row.id, tx)).filter((id) =>
               input.artifactIds.includes(id),
             ),
           ],
@@ -724,7 +721,8 @@ export async function submitReview(
   transaction?: Transaction,
 ): Promise<Task> {
   // Reviews.apply, the only caller, copied caller and input and refused fields Tasks does not take.
-  rejectReviewReturn(input);
+  // Tasks return by fixed edges, so by Reviews' one rule no verdict names a route.
+  reviewReturn(input.verdict, input.returnTo, []);
   return await taskCommand(
     ctx,
     caller,

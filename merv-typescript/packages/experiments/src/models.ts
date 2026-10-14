@@ -2,13 +2,6 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { CodeCaptureRef } from '@merv/code-work/models';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
-export type ExperimentTransitionName =
-  'submit_design' | 'submit_results' | 'retry_running' | 'abandon' | 'mark_failed';
-/** What creating another experiment is checked against. */
-export interface ExperimentOccupancy {
-  names: string[];
-  active: number;
-}
 export interface ExperimentCreate {
   name: string;
   intent: string;
@@ -30,7 +23,7 @@ export interface ExperimentAttach {
 }
 export interface ExperimentTransition {
   experimentId: string;
-  transition: ExperimentTransitionName;
+  transition: 'submit_design' | 'submit_results' | 'retry_running' | 'abandon' | 'mark_failed';
   /** The workflow revision the transition is made from; any other revision is refused. */
   expectedRevision: number;
   evidence?: { reason?: string; detail?: string };

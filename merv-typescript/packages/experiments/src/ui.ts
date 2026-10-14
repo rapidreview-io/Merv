@@ -34,7 +34,7 @@ export const experimentsUiPlugin = {
         page: (caller, id) => experiments.page(caller, id),
         // Open work: an experiment still on its way to a result. A complete,
         // abandoned or failed record is read, not worked, so it is not counted.
-        status: async (caller) => ({ count: (await experiments.occupancy(caller)).active }),
+        status: async (caller) => ({ count: await experiments.active(caller) }),
       }),
     );
     // On the Running page: open experiments in the work lane, and the sidebar of each.

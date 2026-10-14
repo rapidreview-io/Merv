@@ -3,7 +3,6 @@ import { idSchema, visible, parsed } from '@merv/contracts';
 import type { ExperimentTransition } from './types.js';
 import { experimentName } from './rules.js';
 
-export const experimentIdSchema = idSchema;
 const requestId = z.string().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const attempt = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -15,12 +14,10 @@ const prose = (min = 0) =>
     .min(min)
     .refine((value) => value === '' || visible(value), 'Text must contain visible characters');
 const ids = z
-  .array(experimentIdSchema)
+  .array(idSchema)
   .max(100)
   .transform((value) => [...new Set(value)]);
-export const experimentRoleSchema = z.enum(['plan', 'result', 'report', 'feasibility']);
-export const resultFormatSchema = z.enum(['json', 'qualitative']);
-export const experimentPathSchema = z
+const experimentPathSchema = z
   .string()
   .min(1)
   .max(1000)
@@ -43,18 +40,18 @@ export const experimentCreateSchema = z
   })
   .strict();
 export const experimentListSchema = z.object({}).strict();
-export const experimentGetSchema = z.object({ experimentId: experimentIdSchema }).strict();
+export const experimentGetSchema = z.object({ experimentId: idSchema }).strict();
 export const experimentExhibitSchema = experimentGetSchema;
 export const experimentAttachSchema = z
   .object({
-    experimentId: experimentIdSchema,
-    artifactId: experimentIdSchema,
-    role: experimentRoleSchema,
+    experimentId: idSchema,
+    artifactId: idSchema,
+    role: z.enum(['plan', 'result', 'report', 'feasibility']),
     path: experimentPathSchema,
     attemptIndex: attempt,
     expectedRevision: revision,
     requestId,
-    resultFormat: resultFormatSchema.optional(),
+    resultFormat: z.enum(['json', 'qualitative']).optional(),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -73,7 +70,7 @@ export const experimentAttachSchema = z
 
 export const experimentTransitionSchema = z
   .object({
-    experimentId: experimentIdSchema,
+    experimentId: idSchema,
     transition: z.enum([
       'submit_design',
       'submit_results',

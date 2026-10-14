@@ -205,9 +205,6 @@ const named = (item: { artifactId: string; path: string }) => ({
   title: clip(item.path.split('/').pop()!, 200),
 });
 
-/** The files an experiment's panel read: those it names by id, and those its sessions made. */
-export type ExperimentFiles = UnitFiles;
-
 /** Every file an experiment's record names: its evidence, its figures, and what its reviews cite. */
 export function experimentFileIds(
   experiment: Experiment,
@@ -260,7 +257,7 @@ export function experimentUnit(
   experiment: Experiment,
   graph: ProcessGraph,
   reviews: readonly ReviewRequest[],
-  files: ExperimentFiles = { found: new Map() },
+  files: UnitFiles = { found: new Map() },
 ): RunningUnit {
   const history = experimentHistory(experiment, graph, reviews);
   const verdicts = new Map(reviews.map((review) => [review.id, review]));
@@ -334,7 +331,7 @@ export function experimentPanel(input: {
   graph: ProcessGraph;
   route: WorkRoute;
   reviews?: readonly ReviewRequest[];
-  files?: ExperimentFiles;
+  files?: UnitFiles;
 }): RunningPanelPart {
   const { standing, experiment, graph, route, reviews } = input;
   const unit = reviews && experimentUnit(experiment, graph, reviews, input.files);
@@ -350,8 +347,6 @@ export function experimentPanel(input: {
     .filter((item) => item.current && item.attemptIndex === experiment.attempt.index)
     .sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.sequence - b.sequence);
   const files = evidence.slice(0, EVIDENCE_ROWS);
-  const count = (drawn: number, total: number): RunningPhrase =>
-    drawn < total ? [{ count: drawn, of: total }] : [{ count: total }];
   const sections: RunningSection[] = [
     { title: 'Stage', place: 'progress', kind: 'ladder', graph },
     // A failed prerequisite is why the card is red, so its section leads.
@@ -369,12 +364,12 @@ export function experimentPanel(input: {
             place: 'content' as const,
             kind: 'links' as const,
             ...(files.length < evidence.length
-              ? { aside: count(files.length, evidence.length) }
+              ? { aside: [{ count: files.length, of: evidence.length }] }
               : {}),
             rows: files.map((item) => ({
               to: { route: `/artifacts/${encodeURIComponent(item.artifactId)}` },
               kind: item.role[0]!.toUpperCase() + item.role.slice(1),
-              name: clip(item.path.split('/').pop()!, 200),
+              name: named(item).title,
               says: [{ ago: item.createdAt }],
             })),
           },

@@ -36,13 +36,7 @@ import {
   experimentPanel,
   type ExperimentStanding,
 } from './running.js';
-import type {
-  Experiment,
-  ExperimentEvidence,
-  ExperimentOccupancy,
-  ExperimentReview,
-  Experiments,
-} from './types.js';
+import type { Experiment, ExperimentEvidence, ExperimentReview, Experiments } from './types.js';
 import { experimentGetSchema, parseExperimentInput } from './input.js';
 import {
   type ActiveState,
@@ -56,9 +50,9 @@ import {
 import { handleFor, register, unregister } from './policy.js';
 import { attach, closeUnstarted, create, exhibit, submitReview, transition } from './commands.js';
 import { REVIEW_RETURNS } from './definitions.js';
+import { postgresMigrations } from './storage.postgres.js';
 import {
   attemptMetadata,
-  migrateExperiments,
   submissionMetadata,
   type AttemptRow,
   type ExperimentRow,
@@ -156,7 +150,7 @@ export class ExperimentService implements Experiments {
   private releaseReviewOwner?: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await migrateExperiments(this.state);
+    await this.state.migrate('experiments', postgresMigrations);
     await register(this);
     try {
       this.releaseReviewOwner = this.reviews.registerSubmitOwner({
@@ -234,7 +228,7 @@ export class ExperimentService implements Experiments {
         ...ids,
       );
       const context: StandingContext = {
-        ...(await this.counted(caller, rows, tx)),
+        again: await this.counted(caller, rows, tx),
         released: await this.releases(caller, rows, tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
@@ -247,12 +241,10 @@ export class ExperimentService implements Experiments {
           tx,
         ),
       };
-      const nodes: RunningNode[] = [];
-      for (const row of rows.filter(
-        (row) => currentExperiment(row.version) || held.includes(row.id),
-      ))
-        nodes.push(experimentNode(await this.standing(caller, row, context, tx)));
-      return nodes;
+      return await mapAsync(
+        rows.filter((row) => currentExperiment(row.version) || held.includes(row.id)),
+        async (row) => experimentNode(await this.standing(caller, row, context, tx)),
+      );
     });
   }
   /**
@@ -266,16 +258,15 @@ export class ExperimentService implements Experiments {
   ): Promise<RunningPanelPart | null> {
     this.open();
     caller = structuredClone(caller);
-    const kind = keyKind(key),
-      id = keyId(key);
-    if (kind !== 'work') return null;
+    if (keyKind(key) !== 'work') return null;
+    const id = keyId(key);
     const read = await inTransaction(this.state, undefined, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const [row] = await this.standingRows(caller, tx, 'e.id=?', id);
       if (!row) return null;
       const experiment = await this.get(caller, id, tx);
       const context: StandingContext = {
-        ...(await this.counted(caller, [row], tx)),
+        again: await this.counted(caller, [row], tx),
         released: await this.releases(caller, [row], tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
@@ -363,16 +354,16 @@ export class ExperimentService implements Experiments {
     tx: Transaction,
   ): Promise<Map<string, string>> {
     const unheld = rows.filter((row) => !row.lease_id && producing(row.state));
-    if (!unheld.length) return new Map();
     const at = new Map(unheld.map((row) => [row.id, row.revision]));
-    const ended = new Map<string, string>();
-    for (const release of await latestReleases(tx, {
+    const releases = await latestReleases(tx, {
       projectId: caller.projectId,
       instanceIds: unheld.map((row) => row.id),
-    }))
-      if (at.get(release.instance_id) === release.revision)
-        ended.set(release.instance_id, release.released_at);
-    return ended;
+    });
+    return new Map(
+      releases
+        .filter((release) => at.get(release.instance_id) === release.revision)
+        .map((release) => [release.instance_id, release.released_at]),
+    );
   }
   /**
    * How many Captures Sandboxes refused under each open experiment's current attempt: two reads
@@ -407,24 +398,20 @@ export class ExperimentService implements Experiments {
     );
     return new Map([...found].map(([id, evidence]) => [id, evidence.refused.length]));
   }
-  /** Which cards are back where they were, counted from their moves without the moves' data. */
-  private async counted(
-    caller: Caller,
-    rows: StandingRow[],
-    tx: Transaction,
-  ): Promise<Pick<StandingContext, 'again'>> {
+  /**
+   * Which cards are back where they were, counted from their moves without the moves' data. A
+   * new attempt is not a return by itself, so the record's own arrivals say it.
+   */
+  private async counted(caller: Caller, rows: StandingRow[], tx: Transaction) {
     const producers = rows.filter((row) => producing(row.state));
     const moves = await this.workflows.transitionCounts(
       caller.projectId,
       producers.map((row) => row.id),
       tx,
     );
-    return {
-      // A new attempt is not a return by itself, so the record's own arrivals say it.
-      again: new Set(
-        producers.filter((row) => enteredAgain(moves.get(row.id)!, row.state)).map((row) => row.id),
-      ),
-    };
+    return new Set(
+      producers.filter((row) => enteredAgain(moves.get(row.id)!, row.state)).map((row) => row.id),
+    );
   }
   /** One card's facts, read without evaluating a gate; a review state's only in one. */
   private async standing(
@@ -623,31 +610,28 @@ export class ExperimentService implements Experiments {
       return rows.map((row, index) => ({ ...row, workflow: flows.get(row.id)!, ...ends[index] }));
     });
   }
-  async occupancy(caller: Caller, transaction?: Transaction): Promise<ExperimentOccupancy> {
+  async active(caller: Caller, transaction?: Transaction): Promise<number> {
     this.open();
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const rows = await tx.all<{ name: string }>(
-        'SELECT name FROM experiments WHERE project_id=?',
-        caller.projectId,
-      );
-      return {
-        names: rows.map((row) => row.name.toLowerCase()),
-        active: (await this.workflows.open('experiment', caller.projectId, tx)).filter((w) =>
-          currentExperiment(w.version),
-        ).length,
-      };
+      return (await this.workflows.open('experiment', caller.projectId, tx)).filter((w) =>
+        currentExperiment(w.version),
+      ).length;
     });
   }
   async admits(caller: Caller, names: readonly string[], transaction?: Transaction) {
     this.open();
     caller = structuredClone(caller);
     await inTransaction(this.state, transaction, async (tx) => {
-      const { names: taken, active } = await this.occupancy(caller, tx);
+      const active = await this.active(caller, tx);
+      const taken = await tx.all<{ name: string }>(
+        'SELECT name FROM experiments WHERE project_id=?',
+        caller.projectId,
+      );
       for (const name of names)
         check(
-          !taken.includes(name.toLowerCase()),
+          !taken.some((row) => row.name.toLowerCase() === name.toLowerCase()),
           'experiment_name_conflict',
           `An experiment already uses the name ${name}`,
           409,

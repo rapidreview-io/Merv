@@ -11,8 +11,8 @@ import {
   type Data,
   type Role,
   type Transaction,
+  type WorkflowAssignmentRule,
   type WorkflowCheckContext,
-  type WorkflowPolicy,
 } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { TaskCheckpoint, TaskCheckpointInput } from './types.js';
@@ -25,17 +25,14 @@ import { reviewCommit } from './policy.js';
 // it freezes, and the checkpoints its worker saves. Each runs on TaskService
 // (index.ts) as its TasksContext.
 
-export function leaseHooks(
-  ctx: TasksContext,
-): NonNullable<NonNullable<WorkflowPolicy['assignments']>[number]['lease']> {
+export function leaseHooks(ctx: TasksContext): NonNullable<WorkflowAssignmentRule['lease']> {
   return reviewedLeaseHooks({
     reviews: ctx.reviews,
     artifacts: ctx.artifacts,
     excluded: excludedFromReview,
     label: async ({ caller, snapshot, tx }) => (await ctx.row(tx, caller, snapshot.id)).title,
-    role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> =>
-      await leaseRole(ctx, context),
-    acquire: async (context) => await acquireLease(ctx, context),
+    role: (context) => leaseRole(ctx, context),
+    acquire: (context) => acquireLease(ctx, context),
     review: async ({ caller, snapshot, tx }) =>
       snapshot.state === 'in_review' ? (await ctx.row(tx, caller, snapshot.id)).review_id : null,
     lease: async ({ caller, snapshot, tx }) =>
@@ -190,7 +187,7 @@ export async function leaseArtifactIds(
   return [
     ...new Set([
       ...lease.details.pinnedArtifacts.map((artifact) => artifact.id),
-      ...((await ctx.captureArtifactIds(caller.projectId, lease.instance_id, tx)) ?? []),
+      ...(await ctx.captureArtifactIds(caller.projectId, lease.instance_id, tx)),
       ...(await ctx.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
     ]),
   ].sort();

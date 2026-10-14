@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   visible,
   check,
+  MervError,
   markdownSection,
   plain,
   visibleMarkdown,
@@ -37,12 +38,16 @@ function safeJson(input: unknown, aggregate = false): Json {
       ...(aggregate ? { bytes: 2_000_000, nodes: 262144 } : { bytes: 262144, nodes: 8192 }),
     });
   } catch {
-    error(false, 'Evidence must contain bounded, finite plain JSON');
+    throw new MervError(
+      'invalid_experiment_evidence',
+      'Evidence must contain bounded, finite plain JSON',
+    );
   }
-  throw new Error('unreachable');
 }
 
-function parseJson(text: string): Json {
+export function parseResult(text: string, format: 'json' | 'qualitative'): Json | null {
+  error(format === 'json' || format === 'qualitative', 'Result format must be json or qualitative');
+  if (format === 'qualitative') return null;
   let value: unknown;
   try {
     // An integer JSON can write but a double cannot hold would be read back changed.
@@ -66,11 +71,6 @@ function parseJson(text: string): Json {
     );
   }
   return safeJson(value);
-}
-
-export function parseResult(text: string, format: 'json' | 'qualitative'): Json | null {
-  error(format === 'json' || format === 'qualitative', 'Result format must be json or qualitative');
-  return format === 'json' ? parseJson(text) : null;
 }
 
 /**
@@ -157,8 +157,6 @@ export function feasibilityShortfalls(statement: FeasibilityStatement): string[]
   ];
 }
 
-const section = (text: string, title: string) => markdownSection(text, title);
-
 /** Only retained artifact images are supported; the caller verifies bytes, media type and scope. */
 export function markdownImageTargets(text: string): string[] {
   const visible = visibleMarkdown(text)
@@ -190,7 +188,7 @@ function validateDocument(
   figures: readonly string[] = [],
 ): void {
   for (const heading of headings)
-    error(section(text, heading), `Evidence requires a nonempty ${heading} section`);
+    error(markdownSection(text, heading), `Evidence requires a nonempty ${heading} section`);
   const verified = new Set(figures);
   for (const target of markdownImageTargets(text))
     error(verified.has(target), 'Every figure must be a verified retained image artifact');
@@ -219,7 +217,7 @@ export function validateReport(
 }
 
 export function reportConclusion(text: string): string | null {
-  return section(text, 'Conclusion');
+  return markdownSection(text, 'Conclusion');
 }
 
 export interface MetricsResultSource {
@@ -265,12 +263,11 @@ export function buildMetricsExhibit(input: {
   sources: MetricsResultSource[];
 }): MetricsExhibit {
   // Built from sealed result slots, whose key already makes each path unique.
-  const value = input;
   error(
-    value.sources.length <= RESULT_FILES,
+    input.sources.length <= RESULT_FILES,
     `An exhibit pins at most ${RESULT_FILES} result files`,
   );
-  const resultFiles = [...value.sources]
+  const resultFiles = [...input.sources]
     .sort((a, b) => compare(a.path, b.path))
     .map((source) => {
       error(
@@ -292,10 +289,10 @@ export function buildMetricsExhibit(input: {
     });
   return {
     kind: 'metrics_exhibit',
-    projectId: value.projectId,
-    experimentId: value.experimentId,
-    attemptIndex: value.attemptIndex,
-    window: { startedAt: value.startedAt ?? '' },
+    projectId: input.projectId,
+    experimentId: input.experimentId,
+    attemptIndex: input.attemptIndex,
+    window: { startedAt: input.startedAt ?? '' },
     resultFiles,
     verdict: { resultFiles: resultFiles.length },
   };
