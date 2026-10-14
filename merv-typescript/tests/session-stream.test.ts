@@ -212,7 +212,7 @@ async function fixture(t: TestContext) {
 const thinking = (id: string, delta: string): AgentEvent => ({ kind: 'thinking', id, delta });
 const call: AgentEvent = { kind: 'tool_call', id: 't1', name: 'sandbox.run', input: '{}' };
 
-test('binary and clipped Unicode tool output do not end the runner’s live HTTP stream', async (t) => {
+test('binary, clipped and half-pair Unicode tool output do not end the runner’s live HTTP stream', async (t) => {
   const f = await fixture(t);
   const { session, control } = await f.leased();
   const client = new RunnerClient(f.app.ctx.api.url!, f.owner.projectId, f.token);
@@ -227,7 +227,8 @@ test('binary and clipped Unicode tool output do not end the runner’s live HTTP
       id: 'command',
       status: 'completed',
       command: 'read binary fixture',
-      aggregated_output: 'hello\0world',
+      // A lone surrogate, as Claude Code prints a string it cut between a pair's halves.
+      aggregated_output: 'hello\0world\ud83d',
       exit_code: 0,
     }) +
       line({
@@ -252,7 +253,7 @@ test('binary and clipped Unicode tool output do not end the runner’s live HTTP
   await runner.flush();
   const events = (await f.app.ctx.sessions.streams.snapshot(session.id)).map(({ event }) => event);
   assert.ok(
-    events.some((event) => event.kind === 'tool_result' && event.output === 'hello\\0world'),
+    events.some((event) => event.kind === 'tool_result' && event.output === 'hello\\0world\ufffd'),
   );
   assert.ok(
     events.some(

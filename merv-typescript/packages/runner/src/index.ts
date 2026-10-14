@@ -978,11 +978,9 @@ export class MachineRunner implements Runner {
     return record;
   }
   private send(kind: Kind, record: LaunchRecord, facts: object, deliver?: true) {
-    const input = { hostRef: record.id, ...facts, ...(deliver && { deliver }) };
     // Each kind's facts were read for it; their route checks them again.
-    return kind === 'transcript'
-      ? this.client.transcript(record.sessionId, this.ledger.runnerId, input as never)
-      : this.client.conversation(record.sessionId, this.ledger.runnerId, input as never);
+    const input = { hostRef: record.id, ...facts, ...(deliver && { deliver }) } as never;
+    return this.client.declare(kind, record.sessionId, this.ledger.runnerId, input);
   }
   /**
    * Last, after everything workflow-visible: one background PUT at a time, recorded once
@@ -1198,12 +1196,14 @@ export class MachineRunner implements Runner {
   }
   /**
    * Starts each launched agent's stream and moves every stream on by one batch, off the tick.
-   * A stream outlives its launch's settling until it has sent the log's end.
+   * A stream outlives its launch's settling until it has sent the log's end, and a finished one
+   * is kept while its launch is open: a new one would read and send its log again.
    */
   private follow(settled: string[]): void {
     if (this.stopping) return;
     const ended = settled.flatMap((id) => this.ledger.get(id) ?? []);
-    for (const record of [...this.ledger.open(), ...ended]) {
+    const following = [...this.ledger.open(), ...ended];
+    for (const record of following) {
       const profile = record.metadata.profile as RunnerProfile | undefined;
       const harness = profile && harnessOf(profile);
       if (
@@ -1225,8 +1225,8 @@ export class MachineRunner implements Runner {
       if (terminalLaunch(record)) this.streams.get(record.id)?.end();
     }
     for (const [id, stream] of this.streams)
-      if (stream.finished) this.streams.delete(id);
-      else stream.tick();
+      if (!stream.finished) stream.tick();
+      else if (!following.some((record) => record.id === id)) this.streams.delete(id);
   }
   /** A final refusal is that call's answer: recorded once, never replayed. */
   private async answer<T>(call: () => Promise<T>): Promise<T | undefined> {

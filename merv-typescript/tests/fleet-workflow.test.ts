@@ -1796,6 +1796,47 @@ test(
   },
 );
 
+test(
+  'fleet.workflow_retry_status reads through the registry in a State snapshot, as composed',
+  { timeout: 20_000 },
+  async (t) => {
+    const h = await hosted(t, 1);
+    const caller = await h.project('Retry status tool');
+    await h.sessions.dispatch.setDispatch(caller, { enabled: true });
+    const work = await h.start(caller);
+    h.advance(Date.parse(work.updatedAt) - h.now() + 1);
+    const modelEnv = `MERV_RETRY_STATUS_KEY_${randomUUID().replaceAll('-', '')}`;
+    process.env[modelEnv] = 'test-model-key';
+    // As production composes it: a read-only tool runs in a State snapshot, writes refused.
+    let snapshots = 0;
+    const tools = new ToolRegistry(h.scope, undefined, (fn) => (snapshots++, h.state.snapshot(fn)));
+    const ctx = new Context();
+    const { fleet, sessions, scope, state } = h;
+    const api = { mount: () => () => undefined };
+    for (const [name, value] of Object.entries({ fleet, sessions, scope, state, tools, api }))
+      ctx.provide(name, value);
+    const fiber = ctx.plugin(fleetWorkflowPlugin, {
+      people: [`${issuer} founder`],
+      modelApiKeyEnv: modelEnv,
+      baseUrl: 'https://merv.example.test',
+      pollIntervalMs: 60_000,
+    });
+    await fiber;
+    try {
+      // The plugin's first reconcile rented a host for the work: its Fleet rows and session are read.
+      const status = await tools.call('fleet.workflow_retry_status', caller, {
+        instanceId: work.id,
+        expectedRevision: work.revision,
+      });
+      assert.deepEqual([(status as { state: string }).state, snapshots], ['active', 1]);
+    } finally {
+      await fiber.dispose();
+      tools.close();
+      delete process.env[modelEnv];
+    }
+  },
+);
+
 /** A managed runner names its work host's capability too; an external one does not. */
 const heartbeat = (runnerId: string, workHost = true) => ({
   runnerId,

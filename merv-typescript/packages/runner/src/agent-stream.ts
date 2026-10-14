@@ -79,8 +79,12 @@ export class Scrubber {
     this.maxSecret = Math.max(CARRY, ...secrets.map((secret) => JSON.stringify(secret).length));
   }
   private redact(text: string) {
-    // Binary tool output may contain NUL, which the stream's JSON transport refuses.
-    return text.replace(this.blank, '[REDACTED]').replaceAll('\0', '\\0');
+    // Binary tool output may contain NUL, and a string Claude Code cut mid-pair a lone surrogate,
+    // either of which the stream's JSON transport refuses.
+    return text
+      .replace(this.blank, '[REDACTED]')
+      .replaceAll('\0', '\\0')
+      .replace(/\p{Surrogate}/gu, '\ufffd');
   }
   scrub(events: AgentEvent[]): AgentEvent[] {
     return events.flatMap((event): AgentEvent[] => {

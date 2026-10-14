@@ -120,8 +120,6 @@ const keptSchema = z
       .optional(),
   })
   .passthrough();
-const transcriptSchema = z.object({ transcript: keptSchema });
-const conversationSchema = z.object({ conversation: keptSchema });
 const downloadSchema = z.object({
   download: z.object({ url: z.string().url(), expiresAt: z.string() }).passthrough(),
 });
@@ -522,36 +520,18 @@ export class RunnerClient {
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }
-  /** Declare the launch's transcript, or with `deliver` confirm it stored or get its PUT. */
-  async transcript(
+  /** Declare the launch's transcript or the conversation it kept, or with `deliver` confirm it
+   *  stored or get its PUT. */
+  async declare(
+    kind: 'transcript' | 'conversation',
     id: string,
     runnerId: string,
-    input: SessionTranscriptDeclaration,
+    input: SessionTranscriptDeclaration | SessionConversationDeclaration,
   ): Promise<SessionTranscript> {
-    const t = transcriptSchema.safeParse(
-      await this.request(`/sessions/${encodeURIComponent(id)}/transcript`, { runnerId, ...input }),
-    ).data?.transcript;
-    return this.kept(id, input, t);
-  }
-  /** The conversation a session kept: declared and delivered as its transcript is. */
-  async conversation(
-    id: string,
-    runnerId: string,
-    input: SessionConversationDeclaration,
-  ): Promise<SessionTranscript> {
-    const t = conversationSchema.safeParse(
-      await this.request(`/sessions/${encodeURIComponent(id)}/conversation`, {
-        runnerId,
-        ...input,
-      }),
-    ).data?.conversation;
-    return this.kept(id, input, t);
-  }
-  private kept(
-    id: string,
-    input: { sha256: string; deliver?: true },
-    t: z.infer<typeof keptSchema> | undefined,
-  ): SessionTranscript {
+    const route = `/sessions/${encodeURIComponent(id)}/${kind}`;
+    const t = keptSchema.safeParse(
+      (await this.request(route, { runnerId, ...input }))?.[kind],
+    ).data;
     // It names this session and file; a delivery not yet stored carries a PUT to https or loopback.
     if (
       !t ||

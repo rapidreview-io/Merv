@@ -46,11 +46,15 @@ const scopeOf = (run: Run): MervRunScope => ({
 export class SandboxRuns {
   private readonly issuing = new Map<string, Promise<NativeMcpConnection[]>>();
   private reconciling?: Promise<void>;
+  /** When a run whose retire failed or was put off (its work's pipelines still finishing) is
+   *  tried again: each try takes the Sandboxes account's lock. */
+  private readonly waits = new Map<string, number>();
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly workflows: Pick<Workflows, 'relations'>,
     private readonly host: SbxMerv,
+    private readonly clock: () => number = Date.now,
   ) {}
 
   private row(tx: Transaction, runRef: string) {
@@ -152,6 +156,8 @@ export class SandboxRuns {
       sql.all<Run>('SELECT * FROM sandbox_run_intents WHERE target > retired'),
     );
     for (const run of runs) {
+      if ((this.waits.get(run.run_ref) ?? 0) > this.clock()) continue;
+      this.waits.set(run.run_ref, this.clock() + 15_000);
       try {
         const caller = await this.scope.serviceActor('sessions', run.project_id);
         const retire = [
@@ -168,6 +174,7 @@ export class SandboxRuns {
             run.target,
           );
         });
+        this.waits.delete(run.run_ref);
       } catch {
         // The recorded scope remains pending across crashes and temporary host failures.
       }

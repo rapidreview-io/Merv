@@ -1,9 +1,10 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   WorkspaceDeferred,
   type CodeCommitCommand,
@@ -290,6 +291,36 @@ test('a release is retried until answered, and a final refusal is recorded once'
   assert.deepEqual(open(f), []);
   await runner.tick();
   assert.equal(fake.releases(work.id).length, 5, 'never replayed');
+});
+
+test('a launch still owing its release sends its log once, never again from the start', async (t) => {
+  const fake = server(once(), undefined, (path) =>
+    path.endsWith('/release') ? new Refusal(503, 'state_busy') : undefined,
+  );
+  const posts: Body[] = [];
+  const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (!String(input).endsWith('/stream')) return fake.fetch(input, init);
+    posts.push(JSON.parse(String(init!.body)));
+    return Response.json({ stream: { until: posts.at(-1)!.to } });
+  }) as typeof fetch;
+  const f = machine(t, [codex], fetcher);
+  const work = seed(f, fake, 'streamed', { status: 'exited', reason: 'exit' }, { profile: codex });
+  const ledger = f.ledger();
+  const item = { type: 'item.completed', item: { type: 'agent_message', id: 'm', text: 'Done.' } };
+  const log = join(ledger.get(launchId(work.id))!.runDirectory, 'stdout.log');
+  writeFileSync(log, `${JSON.stringify(item)}\n`);
+  ledger.close();
+  const runner = f.make();
+  await runner.start();
+  for (let tick = 0; tick < 12; tick++) {
+    await runner.tick();
+    await delay(20); // a stream's batch is sent off the tick
+  }
+  assert.ok(fake.releases(work.id).length > 1, 'the launch stays open, owing its release');
+  assert.deepEqual(
+    posts.map(({ from, to }) => [from, to]),
+    [[0, Buffer.byteLength(`${JSON.stringify(item)}\n`)]],
+  );
 });
 
 test('a failed writer is released first, then its result is reported and its checkout closed', async (t) => {

@@ -120,7 +120,8 @@ async function fixture(t: TestContext) {
       actorId: 'service',
     }),
   } as Scope;
-  const create = () => new SandboxRuns(state, scope, workflows, host);
+  let now = Date.now();
+  const create = () => new SandboxRuns(state, scope, workflows, host, () => now);
   const runs = create();
   async function session(id = 'run-1', revision = 1) {
     const session = {
@@ -179,6 +180,9 @@ async function fixture(t: TestContext) {
       finalized = value;
     },
     linkReads: () => linkReads,
+    advance(ms: number) {
+      now += ms;
+    },
   };
 }
 
@@ -276,9 +280,14 @@ test('crash recovery cleans the recorded scope after relinking and retries work 
   const recovered = f.create();
   await recovered.reconcile();
   assert.equal(f.tokens.size, 0);
+  // A finalization put off (its pipelines still finishing) is asked again 15 s later, not sooner.
+  await recovered.reconcile();
+  assert.equal(f.retired.length, 1);
+  f.advance(15_000);
   await recovered.reconcile();
   assert.equal(f.retired.length, 2);
   f.finalized(true);
+  f.advance(15_000);
   await recovered.reconcile();
   await recovered.reconcile();
   assert.equal(f.retired.length, 3);
