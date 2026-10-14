@@ -62,7 +62,6 @@ import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage
 import type {
   Session,
   WorkSession,
-  SessionContinuity,
   SessionConversationDeclaration,
   LaunchConnectionsProvider,
   NativeMcpConnection,
@@ -153,10 +152,9 @@ const offerRefusals = {
 } as const;
 /** Every control names its session and the runner that holds it; the runner is checked. */
 const controlSchema = z.object({ sessionId: z.string(), runnerId: trimmed(200) }).strict();
-const hostSchema = controlSchema.extend({
-  hostRef: trimmed(512),
-  workspace: sessionWorkspaceSchema.optional(),
-});
+/** A control that also names the host the session is attached to. */
+const hostedSchema = controlSchema.extend({ hostRef: trimmed(512) });
+const hostSchema = hostedSchema.extend({ workspace: sessionWorkspaceSchema.optional() });
 const resultSchema = hostSchema.extend({ workspace: sessionWorkspaceSchema });
 const controlRefusals = {
   fallback: [
@@ -168,8 +166,7 @@ const controlRefusals = {
     workspace: ['invalid_workspace', 'Workspace metadata must match the closed schema'],
   },
 } as const;
-const transcriptSchema = controlSchema.extend({
-  hostRef: trimmed(512),
+const transcriptSchema = hostedSchema.extend({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   size: z.number().int().min(1).max(MAX_TRANSCRIPT_BYTES),
   logBytes: z.number().int().nonnegative().safe(),
@@ -183,8 +180,7 @@ const transcriptRefusals = {
     'A transcript names its host, SHA-256, size, log size and truncation',
   ],
 } as const;
-const conversationSchema = controlSchema.extend({
-  hostRef: trimmed(512),
+const conversationSchema = hostedSchema.extend({
   harness: z.enum(['claude', 'codex']),
   conversationId: z
     .string()
@@ -623,19 +619,13 @@ export class LeasedSessions implements Sessions {
   ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
     if (!live(session)) throw await this.endedHere(session, tx);
-    check(
-      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
-      'session_expired',
-      'Session has expired',
-      401,
-    );
+    check(this.unexpired(session), 'session_expired', 'Session has expired', 401);
     await this.source(session, tx);
     // An inquiry visit holds no lease on the work and binds no registration: its own deadline
     // and its source's delegation are all that keep it, wherever the work has gone since.
     if (session.kind === 'inquiry') return {};
-    let execution: { registrationId: string; references?: WorkflowExecutionReferences };
-    try {
-      execution = await this.framed(
+    const execution = await this.ownMove(session, tx, () =>
+      this.framed(
         {
           tx,
           actorId: session.actorId,
@@ -644,7 +634,20 @@ export class LeasedSessions implements Sessions {
           role: session.role,
         },
         () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
-      );
+      ),
+    );
+    this.ensureOpen();
+    check(this.unexpired(session), 'session_expired', 'Session expired during validation', 401);
+    return execution;
+  }
+  private unexpired(session: Session): boolean {
+    const now = isoNow(this.clock);
+    return session.expiresAt > now && session.hardDeadline > now;
+  }
+  /** A lease check whose refusal of a record moved by this worker's own hand says it handed off. */
+  private async ownMove<T>(session: WorkSession, tx: Transaction, lease: () => Promise<T>) {
+    try {
+      return await lease();
     } catch (error) {
       if (
         error instanceof MervError &&
@@ -658,14 +661,6 @@ export class LeasedSessions implements Sessions {
         );
       throw error;
     }
-    this.ensureOpen();
-    check(
-      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
-      'session_expired',
-      'Session expired during validation',
-      401,
-    );
-    return execution;
   }
   /**
    * The worker's own session, as the guard checks it: its row names this worker, it is live and
@@ -686,12 +681,7 @@ export class LeasedSessions implements Sessions {
       403,
     );
     if (!live(session)) throw await this.endedHere(session, tx);
-    check(
-      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
-      'session_closed',
-      'Session is closed or expired',
-      401,
-    );
+    check(this.unexpired(session), 'session_closed', 'Session is closed or expired', 401);
     await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
     check(
       session.kind === 'work' || requiredPermission === 'read',
@@ -738,32 +728,17 @@ export class LeasedSessions implements Sessions {
     invocation: { registrationId?: string; public: { tool: string } },
     tx: Transaction,
   ): Promise<void> {
-    const session = await this.ownSession(caller, tx, 'write');
-    // ownSession refused an inquiry visit's write: only a work visit holds a lease.
-    if (session.kind !== 'work')
-      throw new MervError('inquiry_read_only', 'An inquiry visit only reads', 403);
+    // ownSession refuses an inquiry visit's write: only a work visit holds a lease.
+    const session = working(await this.ownSession(caller, tx, 'write'));
     if (
       invocation.public.tool !== 'session.messages' &&
       invocation.public.tool !== 'session.message.ack'
     )
       await this.messaging.requireMessagesAcknowledged(session.id, tx);
     await this.source(session, tx);
-    let held: { registrationId: string };
-    try {
-      held = await this.workflows.holdsLease(this.worker(session), session.lease, tx);
-    } catch (error) {
-      if (
-        error instanceof MervError &&
-        error.code === 'revision_conflict' &&
-        (await this.handedOff(session, tx))
-      )
-        throw new MervError(
-          'session_completed',
-          'Your handoff already moved this record; this session has ended',
-          409,
-        );
-      throw error;
-    }
+    const held = await this.ownMove(session, tx, () =>
+      this.workflows.holdsLease(this.worker(session), session.lease, tx),
+    );
     check(
       held.registrationId === invocation.registrationId,
       'execution_replaced',
@@ -915,10 +890,6 @@ export class LeasedSessions implements Sessions {
     session.closeReason = reason;
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
-    const credential = await tx.get<{ token_hash: string }>(
-      'SELECT token_hash FROM worker_sessions WHERE id=?',
-      session.id,
-    );
     // Hosted Codex may finish its already-started model call for one minute after handoff.
     // The model relay alone grants that grace; MCP still sees the closed execution.
     const managedHandoff =
@@ -928,8 +899,8 @@ export class LeasedSessions implements Sessions {
         session.id,
         session.id,
       ));
-    if (credential && !managedHandoff)
-      await this.credentials.revoke(credential.token_hash, 'sessions', tx);
+    if (!managedHandoff)
+      await this.credentials.revoke(await this.tokenHash(tx, session.id), 'sessions', tx);
     await recordUsage(tx, session);
     // An inquiry visit counts against no work and leaves its thread exactly as it was: its
     // conversation, status and latest visit. Its question is answered, or not.
@@ -987,8 +958,16 @@ export class LeasedSessions implements Sessions {
     return session;
   }
   private async renewSessionCredential(session: Session, tx: Transaction): Promise<void> {
-    const row = await this.row(tx, session.id);
-    await this.credentials.renew(row.token_hash, 'sessions', session.expiresAt, tx);
+    const hash = await this.tokenHash(tx, session.id);
+    await this.credentials.renew(hash, 'sessions', session.expiresAt, tx);
+  }
+  /** A session's credential digest, read without its frozen packets. */
+  private async tokenHash(tx: Transaction, id: string): Promise<string> {
+    const row = await tx.get<{ token_hash: string }>(
+      'SELECT token_hash FROM worker_sessions WHERE id=?',
+      id,
+    );
+    return row!.token_hash;
   }
   /** Why an ended session refuses: a session closed after its own handoff moved the record
    *  says it completed, however it was closed, so a retry can tell its delivery landed. */
@@ -1035,11 +1014,8 @@ export class LeasedSessions implements Sessions {
           : failure;
       }
       await close('handoff', tx, 'released', 'completed');
-      return new MervError(
-        'session_completed',
-        'This session’s handoff completed and the session has ended; its record moved on',
-        401,
-      );
+      // The close set its reason first, so this is the landed handoff's refusal.
+      return ended(session);
     }
   }
   async contributors(
@@ -1050,8 +1026,8 @@ export class LeasedSessions implements Sessions {
   ) {
     this.state.assertTransaction(tx);
     const writable = "(session_json::jsonb #>> '{execution,policy,readOnly}')='false'";
-    const rows = await tx.all<{ id: string; actor_id: string; session_json: string }>(
-      `SELECT id,actor_id,session_json FROM worker_sessions WHERE project_id=? AND instance_id=? AND ${writable}${beforeRevision === null ? '' : ' AND revision<?'} ORDER BY id`,
+    const rows = await tx.all<{ id: string; actor_id: string; authority_id: string }>(
+      `SELECT id,actor_id,session_json::jsonb #>> '{source,actorId}' AS authority_id FROM worker_sessions WHERE project_id=? AND instance_id=? AND ${writable}${beforeRevision === null ? '' : ' AND revision<?'} ORDER BY id`,
       projectId,
       instanceId,
       ...(beforeRevision === null ? [] : [beforeRevision]),
@@ -1059,7 +1035,8 @@ export class LeasedSessions implements Sessions {
     return rows.map((row) => ({
       ref: row.id,
       actorId: row.actor_id,
-      authorityId: (JSON.parse(row.session_json) as Session).source.actorId,
+      // A source without an actor reads as none, as the parsed JSON did.
+      authorityId: row.authority_id ?? undefined,
     }));
   }
 
@@ -1538,7 +1515,7 @@ export class LeasedSessions implements Sessions {
     input: SessionControl & { hostRef: string },
   ): Promise<{ connections: NativeMcpConnection[] }> {
     caller = structuredClone(caller);
-    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
+    input = closed(hostedSchema, input, controlRefusals);
     check(
       !this.state.ambient,
       'nested_launch_connections',
@@ -1564,8 +1541,8 @@ export class LeasedSessions implements Sessions {
             403,
           );
         }
-        const row = await this.row(tx, session.id);
-        await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
+        const hash = await this.tokenHash(tx, session.id);
+        await this.credentials.authenticateHash(hash, 'session-execution', tx);
         const authority = await this.valid(
           session,
           tx,
@@ -1672,7 +1649,7 @@ export class LeasedSessions implements Sessions {
   }
   async huggingfaceAccess(caller: Caller, input: SessionControl & { hostRef: string }) {
     caller = structuredClone(caller);
-    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
+    input = closed(hostedSchema, input, controlRefusals);
     check(caller.managed, 'managed_runner_forbidden', 'Managed runner authority required', 403);
     const grant = await this.reading(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
@@ -1807,10 +1784,7 @@ export class LeasedSessions implements Sessions {
   async resume(caller: Caller, input: SessionControl & { hostRef: string }) {
     caller = structuredClone(caller);
     this.ensureOpen();
-    return await this.threads.download(
-      caller,
-      closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals),
-    );
+    return await this.threads.download(caller, closed(hostedSchema, input, controlRefusals));
   }
   async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
     caller = structuredClone(caller);
@@ -1863,40 +1837,31 @@ export class LeasedSessions implements Sessions {
   ): Promise<Session> {
     caller = structuredClone(caller);
     const { usage, ...control } = closed(releaseSchema, input, releaseRefusals);
+    const { reason, outcome, deferral } = control;
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
-      // A closure its checks find (a revocation, a lease its domain refused) is recorded as that.
-      // A landed handoff comes first, as closeReleased records it: expiry never hides it.
-      if (live(session) && !(await this.handedOff(session, tx))) await this.reconcile(session, tx);
-      const released = await this.closeReleased(session, control, tx);
-      if (usage) await this.reportUsage(released, usage, tx);
+      // A session whose handoff already landed is recorded as that, whoever releases it, and
+      // expiry never hides it. Any other closure its checks find (a revocation, a lease its
+      // domain refused) is recorded as that. A completed outcome is what a handoff proves,
+      // never what a release claims.
+      if (live(session) && (await this.handedOff(session, tx)))
+        await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      else {
+        if (live(session)) await this.reconcile(session, tx);
+        check(
+          outcome !== 'completed',
+          'invalid_outcome',
+          'A completed outcome is recorded by the worker’s own handoff, not by a release',
+        );
+        if (live(session)) {
+          if (deferral) session.deferral = structuredClone(deferral);
+          await this.closeSession(session, reason ?? 'released', tx, 'released', outcome);
+        }
+      }
+      if (usage) await this.reportUsage(session, usage, tx);
       if (caller.managed) await this.managed.acknowledgeRelease(caller, session.id, tx);
-      return released;
+      return session;
     });
-  }
-  private async closeReleased(
-    session: Session,
-    input: { reason?: string; outcome?: SessionOutcome; deferral?: SessionDeferral },
-    tx: Transaction,
-  ): Promise<Session> {
-    // A session whose handoff already landed is recorded as that, whoever releases it; a
-    // completed outcome is what the handoff proves, never what a release claims.
-    if (live(session) && (await this.handedOff(session, tx)))
-      return await this.closeSession(session, 'handoff', tx, 'released', 'completed');
-    check(
-      input.outcome !== 'completed',
-      'invalid_outcome',
-      'A completed outcome is recorded by the worker’s own handoff, not by a release',
-    );
-    if (!live(session)) return session;
-    if (input.deferral) session.deferral = structuredClone(input.deferral);
-    return await this.closeSession(
-      session,
-      input.reason ?? 'released',
-      tx,
-      'released',
-      input.outcome,
-    );
   }
   /**
    * Most real usage arrives here for a session its own handoff already closed, which is why
@@ -1946,12 +1911,7 @@ export class LeasedSessions implements Sessions {
             () => this.workflows.activateLease(this.worker(session), session.lease, tx),
           );
         this.ensureOpen();
-        check(
-          session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
-          'session_expired',
-          'Session expired during activation',
-          401,
-        );
+        check(this.unexpired(session), 'session_expired', 'Session expired during activation', 401);
         session.status = 'active';
         session.activatedAt = isoNow(this.clock);
         session.expiresAt = this.slide(session);

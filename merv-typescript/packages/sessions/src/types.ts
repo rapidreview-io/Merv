@@ -23,7 +23,6 @@ import type {} from 'cordis';
 import type {
   ManagedBoundSession,
   ManagedEnrollmentInput,
-  ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from './managed-types.js';

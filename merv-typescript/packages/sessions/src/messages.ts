@@ -175,13 +175,15 @@ export class SessionMessages {
     this.responders = new QuestionResponders(
       host,
       clock,
-      async (tx, row) =>
-        (await this.standing(tx, row.project_id, { instance: row.instance_id })).questions.some(
-          (q) => q.id === row.id,
-        ),
+      (tx, row) => this.stands(tx, row),
       (project, instance, tx) => this.report(project, instance, tx),
       question,
     );
+  }
+  /** Whether this question still stands (`standing`, the one rule). */
+  private async stands(tx: Transaction, row: QuestionRow): Promise<boolean> {
+    const { questions } = await this.standing(tx, row.project_id, { instance: row.instance_id });
+    return questions.some((q) => q.id === row.id);
   }
   registerResponder(responder: QuestionResponder): () => Promise<void> {
     return this.responders.register(responder);
@@ -232,17 +234,11 @@ export class SessionMessages {
         );
         return question(
           { ...row, response_json: response.data_json },
-          !row.answered_at &&
-            (
-              await this.standing(tx, caller.projectId, { instance: row.instance_id })
-            ).questions.some((q) => q.id === row.id),
+          !row.answered_at && (await this.stands(tx, row)),
         );
       }
       check(
-        Number(row.revision) === input.expectedRevision &&
-          (await this.standing(tx, caller.projectId, { instance: row.instance_id })).questions.some(
-            (q) => q.id === row.id,
-          ),
+        Number(row.revision) === input.expectedRevision && (await this.stands(tx, row)),
         'question_obsolete',
         'This question has already been answered or its work has moved on',
         409,

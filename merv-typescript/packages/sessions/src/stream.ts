@@ -4,7 +4,7 @@ import { AGENT_EVENT_TEXT, type AgentEvent, type AgentStreamEvent } from './agen
 import { isoNow, live, readFirst } from './common.js';
 import { readsAgents } from './rules.js';
 import { postgresMigrations } from './stream.postgres.js';
-import type { LiveFeedFrame, Session, SessionStreamBatch, SessionStreamReads } from './types.js';
+import type { LiveFeedFrame, Session, SessionStreamReads } from './types.js';
 
 /** How long after its session closed a stream still takes the agent's last words. */
 const STREAM_GRACE_MS = 10 * 60_000;

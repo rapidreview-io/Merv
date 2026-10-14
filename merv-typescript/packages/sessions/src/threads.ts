@@ -58,7 +58,6 @@ type Row = {
   /** The last delivered conversation (`SessionResume`), kept while a newer one is undelivered. */
   delivered_json: string | null;
 };
-type Facts = Omit<SessionConversationDeclaration, 'hostRef' | 'deliver'>;
 /** One prefix per project, as transcripts have. */
 const namespace = (projectId: string) => `conversations-${projectId}`;
 /** How long a thread waits, dormant, for its work to come back to it. */
@@ -477,7 +476,6 @@ export class SessionThreads {
       this.askingAfter,
       this.askingPage,
     );
-    this.askingAfter = page.length < this.askingPage ? 0 : Number(page.at(-1)!.seq);
     for (const projectId of new Set(page.map((row) => row.project_id))) {
       const ids = page.filter((row) => row.project_id === projectId).map((row) => row.id);
       const { questions } = await this.host.standing(tx, projectId, { threads: ids });
@@ -485,6 +483,9 @@ export class SessionThreads {
         if (!questions.some((question) => question.thread_id === id))
           await this.retire(await this.row(id, tx), 'dormant', tx);
     }
+    // Only once the page is done: a snapshot refused at its first retire is run again in a
+    // writer (readFirst), which must read this same page.
+    this.askingAfter = page.length < this.askingPage ? 0 : Number(page.at(-1)!.seq);
   }
   /** The sweep: a thread whose live visit's source lost its delegation is retired. */
   async lapsed(id: string, tx: Transaction): Promise<void> {

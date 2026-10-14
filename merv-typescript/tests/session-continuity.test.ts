@@ -21,6 +21,7 @@ import {
 import { excludedFromReview } from '@merv/reviews/rules';
 import { MachineRunner } from '@merv/runner';
 import { dormantMs, SessionThreads, transcriptEvents } from '../packages/sessions/src/threads.js';
+import { readFirst } from '../packages/sessions/src/common.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
 import type {
@@ -1726,11 +1727,13 @@ test('the sweep reads a bounded page of waiting questions a pass, and every one 
     return await original(projectId, ids, tx);
   };
   (leased.threads as unknown as { askingPage: number }).askingPage = 1;
-  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  // As the sweep runs it: on a snapshot, then again in a writer from the same page to retire.
+  const expire = () => readFirst(f.app.ctx.state, (tx) => leased.threads.expire(tx));
+  await expire();
   assert.deepEqual(read, [[open.unit.id]]);
   assert.equal(await status(ended.threadId), 'dormant');
-  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
-  assert.deepEqual(read.at(-1), [ended.unit.id]);
+  await expire();
+  assert.deepEqual(read.slice(1), [[ended.unit.id], [ended.unit.id]]);
   assert.deepEqual(
     [await status(open.threadId), await status(ended.threadId)],
     ['dormant', 'retired'],
