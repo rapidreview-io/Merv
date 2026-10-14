@@ -176,9 +176,16 @@ Use the bundled templates only when creating their corresponding documents:
 - [plan-template.md](plan-template.md) for `plan.md`. Pre-register the
   hypothesis, method, comparison, decision rule, success threshold, and
   invalidation conditions before execution.
-- [report-template.md](report-template.md) for `report.md`. Interpret the
-  submitted results against the plan's decision rule, disclose deviations and
-  failures, and keep conclusions within the tested scope.
+- The report: on experiment@43 and later, write it with the report tools,
+  not a file. `report.open` returns a draft prefilled from the approved plan
+  and the format guide; edit it with `report.write` (or `report.clear` to start
+  over), review each chart with `report.review_visual` and approve it, then
+  `report.render` with `final: true` and attach the returned `sourceArtifactId`
+  as role `report`. The draft persists, so after a review returns the work,
+  edit it instead of rewriting it. Older experiments use
+  [report-template.md](report-template.md) for `report.md`. Either way,
+  interpret the results against the plan's decision rule, disclose deviations
+  and failures, and keep conclusions within the tested scope.
 
 Do not generate the report from logs or result files: selecting what mattered
 is the authorship, and a report that hides known rework is not honest. Write
