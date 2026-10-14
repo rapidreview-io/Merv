@@ -62,7 +62,6 @@ async function status(t: TestContext) {
           createdAt: 'before',
           source: { secret: 'omit' },
         },
-        { id: 'gone', owner: { kind: 'chat' }, phase: 'released', intent: null, error: null },
         {
           id: 'failed',
           owner: { kind: 'chat', id: 'secret' },

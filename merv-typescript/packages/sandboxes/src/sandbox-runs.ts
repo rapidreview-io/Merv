@@ -56,11 +56,6 @@ export class SandboxRuns {
     return tx.get<Run>('SELECT * FROM sandbox_run_intents WHERE run_ref=?', runRef);
   }
 
-  private async level(run: Run, tx: Transaction): Promise<number> {
-    const i = (await this.workflows.relations(run.project_id, run.work_ref, tx))?.instance;
-    return !i || i.terminal ? 3 : computeEpoch(i.data, i.revision) !== run.attempt_ref ? 2 : 0;
-  }
-
   async event(event: StoredEvent, tx: Transaction): Promise<void> {
     if (event.type === 'session.closed') {
       await tx.run(
@@ -70,18 +65,19 @@ export class SandboxRuns {
       );
       return;
     }
-    const runs = await tx.all<Run>(
-      'SELECT * FROM sandbox_run_intents WHERE project_id=? AND work_ref=?',
-      event.projectId,
-      event.subjectId,
+    const work = [event.projectId, event.subjectId];
+    const where = 'WHERE project_id=? AND work_ref=?';
+    if (!(await tx.get(`SELECT 1 FROM sandbox_run_intents ${where}`, ...work))) return;
+    // Its work ended (3) or moved to another attempt (2); else only a closed session's 1 stays.
+    const i = (await this.workflows.relations(event.projectId, event.subjectId, tx))?.instance;
+    const epoch = i && !i.terminal ? computeEpoch(i.data, i.revision) : null;
+    await tx.run(
+      `UPDATE sandbox_run_intents SET target=CASE WHEN ?::text IS NULL THEN 3
+        WHEN attempt_ref<>? THEN 2 ELSE LEAST(target,1) END ${where}`,
+      epoch,
+      epoch,
+      ...work,
     );
-    for (const run of runs) {
-      await tx.run(
-        'UPDATE sandbox_run_intents SET target=? WHERE run_ref=?',
-        (await this.level(run, tx)) || Math.min(run.target, 1),
-        run.run_ref,
-      );
-    }
   }
 
   async launchConnections(session: Readonly<WorkSession>): Promise<NativeMcpConnection[]> {

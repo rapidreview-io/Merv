@@ -654,7 +654,7 @@ export class FleetService implements Fleet {
   ): ModelRelayHandle {
     return new ModelRelay(config);
   }
-  /** Only a full pass looks at steady machines; true while anything is not steady. */
+  /** Only a full pass reads offers and steady machines; true while anything is not steady. */
   private run(full: boolean): Promise<boolean> {
     if (this.closed) return Promise.resolve(false);
     return (this.pending ??= this.reconcile(full).finally(() => {
@@ -784,8 +784,9 @@ export class FleetService implements Fleet {
     });
   }
   private async reconcile(full = true): Promise<boolean> {
-    for (const p of this.ready.keys())
-      this.ready.set(p, await this.read(p).catch(() => this.ready.get(p)));
+    if (full)
+      for (const p of this.ready.keys())
+        this.ready.set(p, await this.read(p).catch(() => this.ready.get(p)));
     this.awake ||= full;
     await this.reserve();
     const allocations = await this.state.read((sql) => this.all(sql));
@@ -1092,7 +1093,7 @@ export class FleetService implements Fleet {
       await this.state.transaction(async (tx) => {
         for (const a of await this.all(tx)) {
           const keeps = this.kinds.get(a.owner.kind);
-          if (keeps === undefined || (keeps && a.intent === 'run')) continue;
+          if (keeps === undefined || (keeps && a.intent !== 'stop')) continue;
           const before = structuredClone(a);
           a.intent = 'stop';
           if (a.phase === 'queued') a.phase = 'released';

@@ -328,11 +328,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
             ...(status.retryAvailable ? { tool: 'fleet.workflow_retry' } : {}),
           })),
       },
-      allocations: allocations
-        .filter(({ phase }) => phase !== 'released')
-        .map(({ id, owner, phase, intent, error, createdAt }) => {
-          return { id, owner: owner.kind, phase, intent, error, createdAt };
-        }),
+      // Open allocations only: `list` with no recent ended ones.
+      allocations: allocations.map(({ id, owner, phase, intent, error, createdAt }) => {
+        return { id, owner: owner.kind, phase, intent, error, createdAt };
+      }),
     };
   }
   /** Retry status follows the current director, even when the last failed rent names an old one. */

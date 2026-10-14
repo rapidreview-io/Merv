@@ -151,18 +151,17 @@ const diagnostic = (error: unknown) =>
       ? (error as { code: string }).code
       : 'runner_operation_failed';
 /** Only supervisor-owned fields enter the durable session reason; process output is untrusted. */
+const supervisorReasons = new Set(
+  (
+    'deadline launch_failed launch_timeout controller_stop external_stop guardian_lost ' +
+    'guardian_lost_before_launch cancelled_before_spawn host_rebooted socket_failed'
+  ).split(' '),
+);
 function terminalReason(record: LaunchRecord): string {
-  const reason = record.reason;
-  if (reason === 'deadline') return 'local_process_deadline';
-  if (reason === 'launch_failed') return 'local_process_launch_failed';
-  if (reason === 'controller_stop') return 'local_process_controller_stopped';
-  if (reason === 'external_stop') return 'local_process_external_stop';
-  if (reason === 'guardian_lost') return 'local_process_guardian_lost';
-  if (reason === 'cancelled_before_spawn') return 'local_process_not_started';
-  if (reason === 'host_rebooted') return 'local_process_host_rebooted';
-  if (reason === 'guardian_lost_before_launch') return 'local_process_guardian_lost_before_launch';
-  if (reason === 'socket_failed') return 'local_process_socket_failed';
-  if (reason === 'launch_timeout') return 'local_process_launch_timeout';
+  const reason = record.reason ?? '';
+  const renamed = { controller_stop: 'controller_stopped', cancelled_before_spawn: 'not_started' };
+  if (supervisorReasons.has(reason))
+    return `local_process_${renamed[reason as keyof typeof renamed] ?? reason}`;
   if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
@@ -602,11 +601,6 @@ export class MachineRunner implements Runner {
         !this.config.workInstanceId || session.instanceId === this.config.workInstanceId,
         'invalid_control_response',
         'Retained machine received another work item',
-      );
-      check(
-        session.runnerId === this.ledger.runnerId,
-        'invalid_control_response',
-        'Lease names another runner',
       );
       const id = `launch_${createHash('sha256').update(session.id).digest('hex').slice(0, 32)}`;
       let record = this.ledger.get(id);

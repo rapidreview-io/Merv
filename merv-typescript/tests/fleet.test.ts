@@ -1389,6 +1389,7 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   f.fleet.registerOwner('workflow', kept);
   f.fleet.registerOwner('pi-host', f.owner);
   const work = await f.fleet.request(f.caller, input('kept'));
+  const draining = await f.fleet.request(f.caller, input('draining'));
   const chat = await f.fleet.request(f.caller, {
     requestId: 'chat',
     owner: { kind: 'pi-host', id: 'host_1' },
@@ -1396,9 +1397,12 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   for (let i = 0; i < 3; i++) await f.fleet.tick();
   const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
   const [kept1, chat1] = [await machine(work.id), await machine(chat.id)];
+  // A kept machine asked to finish its step keeps finishing it across a restart.
+  await f.fleet.drain(f.caller, draining.id);
   await f.fleet.close();
   assert.deepEqual(f.runtimes.stopped, [chat1], 'only the chat machine ends with the process');
   assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
+  assert.equal((await f.fleet.inspect(f.caller, draining.id)).intent, 'drain');
   const restart = async () =>
     await createService(
       new FleetService(f.state, f.scope, f.runtimes, { profiles }, () =>
@@ -1582,6 +1586,19 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   await sleep(800);
   assert.ok(passes <= 2, 'Fleet slows down once nothing is starting or stopping');
   assert.equal(f.runtimes.createKeys.length, 2);
+});
+
+test('only a full pass reads the offers again', async (t) => {
+  const f = await fixture(t);
+  let described = 0;
+  f.runtimes.describe = async () => (described++, null);
+  const run = (full: boolean) =>
+    (f.fleet as unknown as { run(full: boolean): Promise<boolean> }).run(full);
+  await f.fleet.connected(f.caller.projectId);
+  await run(false);
+  assert.equal(described, 0, 'a fast pass reads no offers');
+  await run(true);
+  assert.equal(described, profiles.length);
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {

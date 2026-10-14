@@ -265,10 +265,8 @@ export const fleetRunning = (
   owner: 'fleet',
   kinds: ['fleet'],
   lanes: ['sessions'],
-  // Open allocations only: none of the ended history.
-  nodes: async (read) => ({
-    nodes: (await fleet.list(read.caller, 0)).filter(open).map(fleetNode),
-  }),
+  // Open allocations only (none of the ended history): `list` with no recent ones.
+  nodes: async (read) => ({ nodes: (await fleet.list(read.caller, 0)).map(fleetNode) }),
   panel: async (read, key, absorbedBy) =>
     fleetPanel(
       await fleet.inspect(read.caller, keyId(key)),

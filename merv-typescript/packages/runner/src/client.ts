@@ -307,22 +307,11 @@ export class RunnerClient {
       runnerId,
     });
   }
-  /** What a tick reads of a session: its status, deadlines and end. A server too old to answer
-   *  that route is read the whole session, of which the same fields are kept: it refuses the
-   *  route (a 404, or a work host's 403 for a route it does not list), and the whole read's own
-   *  answer stands, so no refusal of the route alone ever halts a launch. */
+  /** What a tick reads of a session: its status, deadlines and end. */
   async control(id: string, runnerId: string): Promise<SessionControlView> {
-    const path = `/sessions/${encodeURIComponent(id)}`;
-    const value = await this.request(`${path}/control`).then(
-      (reply) => reply?.control,
-      async (error: unknown) => {
-        if (!(error instanceof RunnerControlError && error.final)) throw error;
-        // TODO(2026-10-07): drop this whole-session fallback once prod Main serves /control
-        // (cycle 10's release); hosted runners then never meet a Main without the route.
-        return (await this.request(path))?.session;
-      },
+    const result = controlSchema.safeParse(
+      (await this.request(`/sessions/${encodeURIComponent(id)}/control`))?.control,
     );
-    const result = controlSchema.safeParse(value);
     if (
       !result.success ||
       result.data.id !== id ||

@@ -425,7 +425,8 @@ function guardian(path, id) {
         }
         if (message.action === 'stop') {
           if (!owner) finish('stopped', 'controller_stop');
-          else {
+          // An owner already disconnected is ending; its exit records how. A send would fail it.
+          else if (owner.connected) {
             update('stopping', 'controller_stop');
             owner.send({ type: 'stop' });
           }
@@ -447,7 +448,7 @@ function guardian(path, id) {
             Date.now(),
             id,
           );
-          if (owner) owner.send({ type: 'deadline', deadline: message.deadline });
+          if (owner?.connected) owner.send({ type: 'deadline', deadline: message.deadline });
           reply({ ok: true });
           return;
         }

@@ -222,25 +222,21 @@ export class LocalLedger {
     this.db
       .prepare('INSERT OR IGNORE INTO launch_requests VALUES(?,?,?)')
       .run(platform.name, randomUUID(), encoded);
-    const row = this.db
-      .prepare('SELECT * FROM launch_requests WHERE platform=?')
-      .get(platform.name)!;
+    return this.pending(
+      this.db.prepare('SELECT * FROM launch_requests WHERE platform=?').get(platform.name)!,
+    );
+  }
+  pendingRequests(): PendingLaunchRequest[] {
+    const rows = this.db.prepare('SELECT * FROM launch_requests ORDER BY platform').all();
+    return rows.map((row) => this.pending(row));
+  }
+  private pending(row: Record<string, unknown>): PendingLaunchRequest {
     const requestId = String(row.request_id);
     return {
       ...JSON.parse(String(row.request_json)),
       requestId,
       secret: this.sessionSecret(requestId),
     };
-  }
-  pendingRequests(): PendingLaunchRequest[] {
-    return this.db
-      .prepare('SELECT * FROM launch_requests ORDER BY platform')
-      .all()
-      .map((row) => ({
-        ...JSON.parse(String(row.request_json)),
-        requestId: String(row.request_id),
-        secret: this.sessionSecret(String(row.request_id)),
-      }));
   }
   completeRequest(platform: string, requestId: string): void {
     this.db
