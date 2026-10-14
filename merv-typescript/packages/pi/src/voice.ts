@@ -5,7 +5,7 @@
  * becomes a Pi turn on the conversation's own model and tools, sent by the page; GPT-Live only
  * listens, says it heard, and speaks what Pi answered. The key never leaves Main.
  */
-import { MervError, check } from '@merv/contracts';
+import { MervError, check, clip } from '@merv/contracts';
 import type { PiCommand } from './types.js';
 
 /** How the voice behaves: it delegates every real request and never answers one itself. */
@@ -38,7 +38,7 @@ export function voiceHistory(commands: PiCommand[]) {
       {
         type: message.role === 'user' ? 'input_text' : 'output_text',
         // The seed holds at most 8,192 tokens across its messages.
-        text: message.text.length > 1_800 ? `${message.text.slice(0, 1_800)}…` : message.text,
+        text: message.text.length > 1_800 ? `${clip(message.text, 1_800)}…` : message.text,
       },
     ],
   }));
@@ -92,12 +92,12 @@ export async function openVoice(
   const body = (await response.json().catch(() => null)) as {
     session?: { id?: unknown };
     transport?: { sdp?: unknown };
-    error?: { message?: unknown };
   } | null;
+  // The provider's own words stay here: a refused key is named in them.
   check(
     response.ok && typeof body?.transport?.sdp === 'string' && typeof body.session?.id === 'string',
     'pi_voice_unavailable',
-    typeof body?.error?.message === 'string' ? body.error.message : 'Voice is unavailable',
+    'Voice is unavailable',
     502,
   );
   return { sessionId: body!.session!.id as string, sdp: body!.transport!.sdp as string };

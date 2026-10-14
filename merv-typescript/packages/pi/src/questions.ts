@@ -1,4 +1,4 @@
-import type { DelegationSource, Scope } from '@merv/contracts';
+import { clip, type DelegationSource, type Scope } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import type { QuestionResponder } from '@merv/sessions/types';
 import type { PiService } from './service.js';
@@ -18,7 +18,7 @@ export function questionResponder(pi: PiService, scope: Scope): QuestionResponde
       const owner = await caller(source);
       const conversation = await pi.create(owner, {
         requestId: `question_${question.id}`,
-        title: `Worker question: ${question.question.slice(0, 100)}`,
+        title: `Worker question: ${clip(question.question, 100)}`,
       });
       if (
         !(await attach({

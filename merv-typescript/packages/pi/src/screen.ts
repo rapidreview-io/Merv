@@ -107,9 +107,9 @@ export const screenRequest = (model: string, question: string, picture: Buffer, 
 });
 
 /**
- * That request, sent: the model's answer in words, '' when it gave none (`error` says why where
- * the provider did). `usage` settles its charge as the relay settles a call's: none where the
- * provider refused it, and null, keeping the charge, where it may have run it.
+ * That request, sent: the model's answer in words, '' when it gave none (never the provider's own
+ * words, which name a refused key). `usage` settles its charge as the relay settles a call's: none
+ * where the provider refused it, and null, keeping the charge, where it may have run it.
  */
 export async function describeScreen(
   key: string,
@@ -117,7 +117,6 @@ export async function describeScreen(
 ): Promise<{
   text: string;
   usage: { inputTokens: number; outputTokens: number } | null;
-  error?: string;
 }> {
   let response: Response;
   try {
@@ -133,7 +132,6 @@ export async function describeScreen(
   const answer = (await response.json().catch(() => null)) as {
     output?: { type?: string; content?: { type?: string; text?: string }[] }[];
     usage?: { input_tokens?: unknown; output_tokens?: unknown };
-    error?: { message?: string };
   } | null;
   const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
   const text = (answer?.output ?? [])
@@ -153,6 +151,5 @@ export async function describeScreen(
             outputTokens: count(answer.usage.output_tokens),
           }
         : null,
-    ...(answer?.error?.message && { error: answer.error.message }),
   };
 }

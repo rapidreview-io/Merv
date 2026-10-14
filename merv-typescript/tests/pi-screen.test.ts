@@ -91,6 +91,16 @@ test('the conversation model reads the picture and answers the question in words
   assert.match(prompt!.text!, /\/ui\/artifacts/);
   assert.match(prompt!.text!, /Which page\?/);
   assert.equal(image!.image_url, `data:image/jpeg;base64,${Buffer.from('jpg').toString('base64')}`);
+  // A refusal is told without the provider's own words, which name the refused key.
+  globalThis.fetch = (async () =>
+    Response.json(
+      { error: { message: 'Incorrect API key provided: sk-****abcd' } },
+      { status: 401 },
+    )) as typeof fetch;
+  assert.deepEqual(await describeScreen('sk', screenRequest('m', '', Buffer.from(''), '/')), {
+    text: '',
+    usage: { inputTokens: 0, outputTokens: 0 },
+  });
 });
 
 test("the agent puts a record on the person's screen: their page goes there and says where", async (t) => {

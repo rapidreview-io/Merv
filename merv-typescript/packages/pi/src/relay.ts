@@ -1,4 +1,4 @@
-import { check, type State } from '@merv/contracts';
+import { check, clip, type State } from '@merv/contracts';
 import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
@@ -99,7 +99,7 @@ export const titleRequest = (model: string, user: string, reply: string) => ({
   max_output_tokens: 24,
   reasoning: { effort: 'none' },
   instructions: 'Title this conversation in 2 to 6 words. Reply with the title only.',
-  input: `User: ${user.slice(0, 2000)}\n\nAgent: ${reply.slice(0, 2000)}`,
+  input: `User: ${clip(user, 2000)}\n\nAgent: ${clip(reply, 2000)}`,
 });
 
 /**
@@ -131,16 +131,16 @@ export async function piTitle(
         inputTokens: count(answer.usage.input_tokens),
         outputTokens: count(answer.usage.output_tokens),
       };
-    const title = answer.output
+    const said = answer.output
       .flatMap((item) => item.content ?? [])
       .filter((part) => part.type === 'output_text')
       .map((part) => part.text)
       .join('')
       .replace(/[*_`"“”«»]/g, '')
-      .replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ')
-      .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '')
-      .slice(0, 80)
-      .trim();
+      .replace(/[\s\p{Cc}\p{Cf}\p{Cs}]+/gu, ' ')
+      .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '');
+    // Never half a character, which jsonb refuses where it lists the person's conversations.
+    const title = clip(said, 80).trim();
     return { title, usage };
   } catch {
     return { title: '', usage };

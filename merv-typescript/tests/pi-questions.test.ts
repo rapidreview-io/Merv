@@ -77,3 +77,15 @@ test('an obsolete question does not launch a turn; revoked authority cannot star
     }),
   );
 });
+
+test('a question with a character across its 100th unit still reaches Pi', async (t) => {
+  const f = await fixture(t);
+  let reference: { id: string } | undefined;
+  await questionResponder(f.pi, f.scope).start({
+    question: { ...question, question: `${'Is the bound '.padEnd(99, '.')}𝒪(n log n) tight?` },
+    source: await f.scope.delegationSource(f.operator),
+    attach: async (ref) => !!(reference = ref),
+  });
+  const { conversation } = await f.pi.snapshot(f.operator, reference!.id);
+  assert.equal(conversation.title, `Worker question: ${'Is the bound '.padEnd(99, '.')}`);
+});

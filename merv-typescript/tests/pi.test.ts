@@ -20,6 +20,7 @@ import { ApiServer } from '../packages/api/src/http.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
+import { piRelayGrantSchema } from '../packages/pi/src/relay-schema.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { CredentialStore, tokenDigest } from '../packages/identity/src/credentials.js';
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
@@ -388,6 +389,23 @@ test('a naming call that fails keeps the default title, and the turn is saved re
   assert.equal(snapshot.commands[0].status, 'completed');
   // Refused by the provider, it cost nothing.
   assert.deepEqual(await spent(f, conversation.userId), [0]);
+});
+
+test('a title cut inside a character keeps the whole character out, and the list reads', async (t) => {
+  const f = await fixture(t);
+  provider(t, async () =>
+    Response.json({
+      output: [
+        { type: 'message', content: [{ type: 'output_text', text: `${'x'.repeat(79)}🚀 on` }] },
+      ],
+    }),
+  );
+  const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
+  await f.finish(await f.claimed(await f.send(conversation)));
+  const title = async () => (await f.pi.snapshot(f.operator, conversation.id)).conversation.title;
+  for (let wait = 0; wait < 100 && (await title()) === 'New conversation'; wait++) await pause(10);
+  assert.equal(await title(), 'x'.repeat(79));
+  assert.equal((await f.pi.list(f.operator)).length, 1);
 });
 
 test('a person whose Agent tokens are used up today gets no naming call', async (t) => {
@@ -2884,4 +2902,17 @@ test('a person’s Agent tokens are charged before each call and settled after, 
       { day: charged.day, tokens: 50 + charged.tokens },
     ],
   );
+});
+
+test('a turn sent with a 200-character command id begins and its relay grant holds', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const command = await f.pi.send(f.operator, conversation.id, {
+    commandId: 'c'.repeat(200),
+    text: 'hi',
+  });
+  const bound = await f.claimed(command);
+  assert.deepEqual(await f.pi.begin(bound.token, bound.input), { apply: true });
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  assert.equal(piRelayGrantSchema.safeParse(grant).success, true);
 });

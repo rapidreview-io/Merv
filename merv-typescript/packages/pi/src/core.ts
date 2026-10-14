@@ -343,8 +343,9 @@ export class PiCore {
   workerSubject(host: PiHostRecord, slot: PiSlot): string {
     return `${host.id}:${slot.allocationId}:${slot.epoch}`;
   }
+  /** A digest: a command id of up to 200 characters would not fit a credential subject. */
   modelSubject(command: PiCommandRecord): string {
-    return `${command.conversationId}:${command.id}:${command.epoch}:${command.runtimeId}`;
+    return hash(`${command.conversationId}:${command.id}:${command.epoch}:${command.runtimeId}`);
   }
   async revokeCredential(tx: Transaction, token: string): Promise<void> {
     // An unknown hash is a no-op; revoking an already expired row is harmless.

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolDescription } from '@merv/api/types';
 import type { Data } from '@merv/contracts';
 import { fetchesContent, reasoningSummary, toolChoice } from '@merv/fleet/model-requests';
+import { id } from './schema.js';
 import { piModelToolName } from './tool-names.js';
 import type { PiWork } from './types.js';
 
@@ -15,11 +16,12 @@ const toolName = z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/);
 
 export const piRelayGrantSchema = z
   .object({
-    id: identifier,
+    // `conversation:command:epoch`, whose command id pi.send takes up to 200 characters.
+    id: z.string().min(1).max(256),
     userId: identifier,
     projectId: identifier,
     conversationId: identifier,
-    commandId: identifier,
+    commandId: id,
     runtimeId: identifier,
     epoch: z.number().int().nonnegative(),
     expiresAt: z.string().datetime({ offset: true }),

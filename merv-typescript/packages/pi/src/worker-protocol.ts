@@ -4,6 +4,7 @@ import {
   digest,
   newId,
   MervError,
+  plain,
   type Caller,
   type Data,
   type Role as MemberRole,
@@ -49,6 +50,7 @@ import {
 } from './core.js';
 import type { PiHosts } from './hosts.js';
 
+const anyJson = { keys: 'any', strings: 'json', depth: 512 } as const;
 /** What /next hands a worker: retirement, a probe to echo, or a claimed turn. */
 type Taken = {
   retire?: true;
@@ -706,7 +708,12 @@ export class PiWorkerProtocol {
   }
 
   async complete(token: string, input: unknown): Promise<{ saved: boolean }> {
-    const value = parse(completionInput, input) as PiCompletion & PiTurnInput;
+    // Outcomes hold what the turn's tools returned: any JSON a worker body carries (api.ts). The
+    // answer's own words are refused NUL and half a character, as a person's are.
+    const parsed = completionInput.safeParse(plain(input, undefined, anyJson));
+    check(parsed.success, 'invalid_pi_input', 'Invalid conversation request');
+    const value = parsed.data as PiCompletion & PiTurnInput;
+    plain(value.messages);
     const bytes = Buffer.from(value.checkpoint);
     check(
       bytes.length <= 2_000_000 && hash(bytes) === value.checkpointHash,

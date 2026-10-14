@@ -70,15 +70,15 @@ test('a refused or unreachable voice session is one clear error', async (t) => {
   });
   globalThis.fetch = (async () =>
     new Response(
-      JSON.stringify({ error: { message: 'Offer did not have an audio media section.' } }),
+      JSON.stringify({ error: { message: 'Incorrect API key provided: sk-proj-****abcd.' } }),
       {
-        status: 400,
+        status: 401,
       },
     )) as typeof fetch;
   await assert.rejects(openVoice(config, 'k', 'bad', [], 'p'), (error: unknown) => {
     assert.ok(error instanceof MervError);
     assert.equal(error.code, 'pi_voice_unavailable');
-    assert.match(error.message, /audio media section/);
+    assert.equal(error.message, 'Voice is unavailable', "the provider's words stay in Main");
     return true;
   });
   globalThis.fetch = (async () => {

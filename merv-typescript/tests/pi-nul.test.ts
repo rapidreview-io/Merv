@@ -120,3 +120,21 @@ test('Pi keeps no NUL or lone surrogate, whoever words the text', async (t) => {
   assert.equal(told, 'probe.nul was refused: nope \ufffd');
   await f.state.read((sql) => sql.all('SELECT data_json::jsonb FROM pi_commands'));
 });
+
+test('a turn keeps whatever its tools returned: NUL, half a character, any key and depth', async (t) => {
+  const f = await fixture(t);
+  const bound = await f.begun(f.operator);
+  const name = bound.work.tools[0]!.name;
+  const outputs = [
+    { log: 'col1\u0000col2' },
+    { body: 'a commit body clipped in an emoji \ud83d' },
+    { metrics: { constructor: 0.91, prototype: 1 } },
+    JSON.parse(`${'{"a":'.repeat(70)}1${'}'.repeat(70)}`),
+  ];
+  const completion = {
+    ...f.completion(bound.input),
+    outcomes: outputs.map((output, n) => ({ callId: `call_${n}`, name, input: {}, output })),
+  };
+  assert.deepEqual(await f.pi.complete(bound.token, completion), { saved: true });
+  await f.state.read((sql) => sql.all('SELECT data_json::jsonb FROM pi_commands'));
+});

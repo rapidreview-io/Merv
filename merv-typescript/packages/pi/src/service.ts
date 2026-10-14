@@ -531,9 +531,9 @@ export class PiService implements Pi {
     // Charged to the person's Agent tokens as the relay charges a turn's calls.
     const body = screenRequest(this.core.model(model).id, question, picture, shot.path);
     const reserved = await this.core.tokens.reserve({ userId }, body);
-    const { text, usage, error } = await describeScreen(key, body);
+    const { text, usage } = await describeScreen(key, body);
     if (usage) await this.core.tokens.settle(usage, { userId }, reserved);
-    check(text, 'pi_screen_unavailable', error ?? 'The screen could not be read', 502);
+    check(text, 'pi_screen_unavailable', 'The screen could not be read', 502);
     return { page: shot.path, seen: text };
   }
 

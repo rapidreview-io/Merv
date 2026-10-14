@@ -13,31 +13,11 @@ import type { WorkflowDependency } from './models.js';
 const short = (name: string) => ellipsis(name, 200);
 
 /**
- * A record's open relations as rows: what it still waits on (unsettled, or failed and
- * marked red) and the open work that waits on it. A settled prerequisite and an ended
- * dependent are history and are left out.
- */
-export function dependencyRows(
-  dependsOn: readonly WorkflowDependency[],
-  requiredBy: readonly WorkflowDependency[],
-  route: WorkRoute,
-): { waitsOn: RunningLinkRow[]; unblocks: RunningLinkRow[] } {
-  const row = (dependency: WorkflowDependency): RunningLinkRow => ({
-    ...workLink(route, dependency.workflow, dependency.id),
-    name: short(dependency.name),
-    says: [{ state: dependency.state }],
-    ...(dependency.failed ? { attention: true } : {}),
-  });
-  return {
-    waitsOn: dependsOn.filter((d) => !d.settled || d.failed).map(row),
-    unblocks: requiredBy.filter((d) => !d.settled && !d.failed).map(row),
-  };
-}
-
-/**
- * A record's sidebar sections for its open relations, "Waits on" then "Unblocks". A failed
- * prerequisite's row is red, and its section leads, only where it is why the record needs a
- * person (`red`); otherwise the row still says failed, without the red.
+ * A record's sidebar sections for its open relations: "Waits on", what it still waits on
+ * (unsettled, or failed), then "Unblocks", the open work that waits on it. A settled prerequisite
+ * and an ended dependent are history and are left out. A failed prerequisite's row is red, and its
+ * section leads, only where it is why the record needs a person (`red`); otherwise the row still
+ * says failed, without the red.
  */
 export function dependencySections(
   dependsOn: readonly WorkflowDependency[],
@@ -45,10 +25,14 @@ export function dependencySections(
   route: WorkRoute,
   red: boolean,
 ): RunningSection[] {
-  const { waitsOn, unblocks } = dependencyRows(dependsOn, requiredBy, route);
-  const waits = waitsOn.map(({ attention, ...row }): RunningLinkRow =>
-    red && attention ? { ...row, attention } : row,
-  );
+  const row = (dependency: WorkflowDependency): RunningLinkRow => ({
+    ...workLink(route, dependency.workflow, dependency.id),
+    name: short(dependency.name),
+    says: [{ state: dependency.state }],
+    ...(red && dependency.failed ? { attention: true } : {}),
+  });
+  const waits = dependsOn.filter((d) => !d.settled || d.failed).map(row);
+  const unblocks = requiredBy.filter((d) => !d.settled && !d.failed).map(row);
   return [
     ...(waits.length
       ? [
@@ -57,7 +41,7 @@ export function dependencySections(
             place: 'relations' as const,
             kind: 'links' as const,
             rows: waits,
-            ...(red && waitsOn.some((row) => row.attention) ? { attention: true } : {}),
+            ...(waits.some((row) => row.attention) ? { attention: true } : {}),
           },
         ]
       : []),
