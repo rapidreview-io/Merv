@@ -197,8 +197,8 @@ export async function leaseArtifactIds(
 }
 
 /**
- * Guidance of many tasks at once reads each one's row, and whether a worker holds its revision,
- * in two reads for all of them, where `row` and `unleased` look for them.
+ * Guidance of many tasks at once reads each one's row, its review, and whether a worker holds its
+ * revision, in three reads for all of them, where `row`, Reviews and `unleased` look for them.
  */
 export async function prepareTasks(
   ctx: TasksContext,
@@ -209,12 +209,15 @@ export async function prepareTasks(
   }: { caller: Caller; tx: Transaction; snapshots: readonly WorkflowSnapshot[] },
 ): Promise<void> {
   const ids = snapshots.map((snapshot) => snapshot.id);
-  for (const row of await tx.all<TaskRow>(
+  const rows = await tx.all<TaskRow>(
     `SELECT * FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
     caller.projectId,
     ...ids,
-  ))
+  );
+  for (const row of rows)
     await ctx.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
+  const reviewIds = rows.flatMap((row) => row.review_id ?? []);
+  await ctx.reviews.find(caller, reviewIds, tx);
   if (caller.session) return;
   const held = new Set(
     (await leaseRows(tx, { projectId: caller.projectId, instanceIds: ids, active: true }))

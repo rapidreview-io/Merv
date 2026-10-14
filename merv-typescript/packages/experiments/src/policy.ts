@@ -135,12 +135,13 @@ export function route(stage: 'design' | 'results', input: ExperimentReview): str
       : 'revise_execution';
 }
 
+const factsKey = (projectId: string, id: string) => `experiments:get:${projectId}:${id}`;
 /** The checked experiment. Guidance's callbacks each ask; one snapshot reads it once. */
 export async function current(
   ctx: ExperimentsContext,
   { caller, snapshot, tx }: WorkflowCheckContext,
 ): Promise<Experiment> {
-  const key = `experiments:get:${caller.projectId}:${snapshot.id}`;
+  const key = factsKey(caller.projectId, snapshot.id);
   return structuredClone(await ctx.state.remember(key, () => ctx.get(caller, snapshot.id, tx)));
 }
 
@@ -432,6 +433,15 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
   });
   const lease = leaseHooks(ctx);
   return {
+    // Guidance of many reads them, and their reviews, in one pass where `current` looks.
+    prepare: async ({ caller, snapshots, tx }) => {
+      const ids = snapshots.map(({ id }) => id);
+      const found = await ctx.many(caller, ids, tx);
+      for (const experiment of found)
+        await ctx.state.remember(factsKey(caller.projectId, experiment.id), async () => experiment);
+      const reviewIds = found.flatMap(({ reviewId }) => reviewId ?? []);
+      await ctx.reviews.find(caller, reviewIds, tx);
+    },
     successStates: ['complete'],
     dependencyFailureAction: 'mark_failed',
     limits: [

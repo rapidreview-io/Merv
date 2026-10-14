@@ -1,10 +1,10 @@
-import { ellipsis } from '@merv/contracts';
+import { cleanText, clip, ellipsis } from '@merv/contracts';
 import type { ResolutionWork, ResolutionWorkCreator } from '@merv/code-work/types';
 import type { ServiceTaskCreator } from './types.js';
 
 /** Each section gets its own room, so long provenance cannot push another out of the brief. */
 const bounded = (value: string, limit: number) =>
-  value.length <= limit ? value : `${value.slice(0, limit)}\n[Truncated in the task brief.]`;
+  value.length <= limit ? value : `${clip(value, limit)}\n[Truncated in the task brief.]`;
 
 /** The task a worker reads for the reviewed work Code asks for, worded from Code's facts. */
 export function resolutionBrief(work: ResolutionWork): {
@@ -47,7 +47,8 @@ export function resolutionBrief(work: ResolutionWork): {
   const sections = checked
     ? [
         `Project check:\n\`${checked.command}\` ${checked.timedOut ? `timed out after ${checked.timeoutSeconds} seconds` : `exited ${checked.exitCode}`} on ${checked.machine}. The merge itself was clean; this command has to pass on the merged tree.`,
-        `Check output:\n${checked.output}`,
+        // A machine's stdout, as it printed it: a control character would refuse the whole brief.
+        `Check output:\n${cleanText(checked.output, 8000)}`,
       ]
     : [
         `Conflicting paths:\n${bounded(conflict.paths.join('\n'), 4000)}`,
@@ -70,9 +71,10 @@ export function resolutionBrief(work: ResolutionWork): {
         ? 'Leave no conflict markers.'
         : 'Resolve every conflicting path and leave no conflict markers.',
       // A merge whose check failed owes the failing command passing, not paths resolved: this
-      // is where "resolution rounds supply reviewed verification evidence" reaches a worker.
+      // is where "resolution rounds supply reviewed verification evidence" reaches a worker. The
+      // command may span lines and a check is one, so only the goal quotes it.
       check
-        ? `The project check \`${check.command}\` ${check.timedOut ? 'timed out' : `failed with exit ${check.exitCode}`}. Make it pass on the merged tree, and retain the command and its result as review evidence.`
+        ? `The project check ${check.timedOut ? 'timed out' : `failed with exit ${check.exitCode}`}. Make it pass on the merged tree, and retain the command and its result as review evidence.`
         : 'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
     ],
   };

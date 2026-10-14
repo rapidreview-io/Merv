@@ -109,6 +109,7 @@ export type ExperimentsContext = Pick<
   | 'get'
   | 'handles'
   | 'limits'
+  | 'many'
   | 'open'
   | 'paper'
   | 'reviews'
@@ -455,15 +456,6 @@ export class ExperimentService implements Experiments {
       ...(context.refused?.get(row.id) ? { refusedCaptures: context.refused.get(row.id) } : {}),
     };
   }
-  private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
-    const row = await tx.get<ExperimentRow>(
-      'SELECT * FROM experiments WHERE project_id=? AND id=?',
-      caller.projectId,
-      id,
-    );
-    check(row, 'experiment_not_found', 'Experiment not found in this project', 404);
-    return row;
-  }
   /** Domain records only. Never evaluate guidance or render context in this read. */
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Experiment> {
     this.open();
@@ -471,8 +463,20 @@ export class ExperimentService implements Experiments {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       parseExperimentInput(experimentGetSchema, { experimentId: id });
-      return (await this.experiments(caller, [await this.row(caller, id, tx)], tx))[0];
+      const [experiment] = await this.many(caller, [id], tx);
+      check(experiment, 'experiment_not_found', 'Experiment not found in this project', 404);
+      return experiment;
     });
+  }
+  /** Experiments as get reads them, for a caller authorized to read them: one read per table. */
+  async many(caller: Caller, ids: readonly string[], tx: Transaction): Promise<Experiment[]> {
+    // An id list, not a jsonb set: each row is then read by its key, never the project's rows.
+    const rows = await tx.all<ExperimentRow>(
+      `SELECT * FROM experiments WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+      caller.projectId,
+      ...ids,
+    );
+    return await this.experiments(caller, rows, tx);
   }
   /**
    * The experiments rows describe, in their order, for a caller already authorized to read

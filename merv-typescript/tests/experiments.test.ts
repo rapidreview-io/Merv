@@ -1335,3 +1335,28 @@ test('experiments.list reads each table once however many experiments there are'
   for (const experiment of listed)
     assert.deepEqual(experiment, await f.experiments.get(f.reader, experiment.id));
 });
+
+test('guidance over many experiments reads each one, and its review, in one pass', async (t) => {
+  const f = await fixture(t);
+  let made = 0;
+  const reads = async (count: number) => {
+    for (; made < count; made++) {
+      const experiment = await f.create(`Guided-${made}`);
+      await f.attach(experiment, 'plan', plan);
+      await f.transition(experiment, 'submit_design');
+    }
+    const issued: string[] = [];
+    await f.state.transaction(async (tx) => {
+      const { get, all } = tx;
+      Object.assign(tx, {
+        get: (sql: string, ...rest: []) => (issued.push(sql), get(sql, ...rest)),
+        all: (sql: string, ...rest: []) => (issued.push(sql), all(sql, ...rest)),
+      });
+      await f.workflows.overview(f.producer, tx);
+    });
+    return issued.filter((sql) => /\b(experiments|experiment_\w+|reviews)\b/.test(sql)).length;
+  };
+  const few = await reads(2);
+  const many = await reads(5);
+  assert.ok(many <= few, `${few} reads for 2 experiments in review, ${many} for 5`);
+});

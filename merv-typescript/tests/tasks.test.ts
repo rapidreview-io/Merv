@@ -17,6 +17,7 @@ import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import { PaperService } from '@merv/paper';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
+import { resolutionBrief } from '@merv/tasks/resolution-brief';
 import type { Caller, Workflows } from '@merv/contracts';
 import type { ReviewHistory } from '@merv/reviews/rules';
 import { openState } from './fixtures/state.js';
@@ -686,4 +687,17 @@ test('task checkpoints retain validated notes and artifact IDs during evidence l
   assert.equal(checkpoint.notes, original.notes);
   assert.deepEqual(checkpoint.artifactIds, original.artifactIds);
   assert.deepEqual(await f.tasks.checkpoint(f.producer, original), checkpoint);
+});
+
+test('a resolution brief cut short still holds only whole characters', () => {
+  const { goal } = resolutionBrief({
+    kind: 'base',
+    left: { commit: 'a'.repeat(40), inputs: [] },
+    right: { commit: 'b'.repeat(40), inputs: [] },
+    // Git paths may hold any Unicode; the section is cut at 4000 UTF-16 units, inside a pair.
+    conflict: { paths: ['a' + '😀'.repeat(2000)], messages: 'CONFLICT' },
+    check: null,
+  });
+  assert.match(goal, /Truncated in the task brief/);
+  assert.doesNotMatch(goal, /\p{Surrogate}/u);
 });

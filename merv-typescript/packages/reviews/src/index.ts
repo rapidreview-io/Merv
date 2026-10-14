@@ -70,6 +70,8 @@ const submitFields: ReadonlySet<string> = new Set([
 const HOME_VERDICTS = 20;
 const projectOwner = (caller: Caller, actor: Actor) =>
   actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
+/** Where a snapshot keeps a review row `row` or `find` read, until the scope ends or writes. */
+const rowKey = (projectId: string, id: string) => `reviews:row:${projectId}:${id}`;
 
 /** What the producer's side (requests.ts) and the reviewer's (claims.ts) read of the service. */
 export type ReviewsContext = Pick<
@@ -354,14 +356,17 @@ export class ReviewService implements Reviews {
     this.ownerEpoch++;
   }
 
+  /** Guidance's checks each read the review; one snapshot reads it once, each caller a copy. */
   async row(sql: Sql, caller: Caller, reviewId: string): Promise<ReviewRow> {
-    const row = await sql.get<ReviewRow>(
-      'SELECT * FROM reviews WHERE id = ? AND project_id = ?',
-      reviewId,
-      caller.projectId,
+    const row = await this.state.remember(rowKey(caller.projectId, reviewId), () =>
+      sql.get<ReviewRow>(
+        'SELECT * FROM reviews WHERE id = ? AND project_id = ?',
+        reviewId,
+        caller.projectId,
+      ),
     );
     check(row, 'not_found', 'Review not found in this project', 404);
-    return row;
+    return { ...row };
   }
 
   async command(
@@ -457,6 +462,8 @@ export class ReviewService implements Reviews {
         caller.projectId,
         JSON.stringify([...new Set(ids)]),
       );
+      for (const row of rows)
+        await this.state.remember(rowKey(row.project_id, row.id), async () => row);
       return new Map(rows.map((row) => [row.id, hydrate(row)]));
     });
   }

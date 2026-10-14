@@ -1632,7 +1632,7 @@ test('a base that merged cleanly and failed its check is briefed as that, not as
       'INSERT INTO code_research_check_configuration(project_id,check_json) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
       f.admin.projectId,
       JSON.stringify({
-        command: 'make test',
+        command: 'npm ci\nnpm test',
         timeoutSeconds: 600,
         image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
       }),
@@ -1662,7 +1662,7 @@ test('a base that merged cleanly and failed its check is briefed as that, not as
           },
     follow: async () => ({
       state: 'failed' as const,
-      result: { exit: 7, bytes: 13, head: 'FAIL test_one', tail: '' },
+      result: { exit: 7, bytes: 13, head: 'FAIL\u0000 test_one', tail: '' },
       setup: null,
       startedAt: null,
       finishedAt: null,
