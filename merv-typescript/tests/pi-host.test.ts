@@ -515,6 +515,38 @@ test('a claim still loading when its turn moves to a fresh machine, or is kept a
   }
 });
 
+test('a claim still loading when Pi closes is kept for the next Pi, even when its work fails first', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const conversation = await f.create();
+  await f.finish(await f.claimed(await f.send(conversation)));
+  const sent = await f.send(conversation);
+  const hold = () => {
+    let entered!: () => void, go!: () => void;
+    const reached = new Promise<void>((resolve) => (entered = resolve));
+    const held = new Promise<void>((resolve) => (go = resolve));
+    return { reached, go, wait: async () => (entered(), await held) };
+  };
+  // The claim's work waits on its checkpoint, and a reconcile under way holds close's own write.
+  const [blob, pass] = [hold(), hold()];
+  const [get, inspect] = [f.blobs.get.bind(f.blobs), f.fleet.inspectOwned.bind(f.fleet)];
+  f.blobs.get = async (...args) => (await blob.wait(), get(...args));
+  const next = f.pi.next(await f.token(sent.runtimeId), { workerId: 'worker_1' });
+  await blob.reached;
+  f.fleet.inspectOwned = async (...args) => (await pass.wait(), inspect(...args));
+  const tick = f.pi.tick();
+  await pass.reached;
+  f.fleet.inspectOwned = inspect;
+  const closing = f.pi.close();
+  blob.go();
+  await next.catch(() => undefined);
+  pass.go();
+  await Promise.all([tick, closing]);
+  const kept = await command(f, sent);
+  assert.deepEqual([kept.status, kept.error], ['waiting', null]);
+  await f.restart();
+  await f.finish(await f.claimed(await command(f, sent)));
+});
+
 test('a lost machine’s turn that began starts again elsewhere; one that wrote or called a tool ends', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const sent = [];

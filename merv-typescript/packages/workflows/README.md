@@ -129,8 +129,7 @@ program must authorize its specific action (for example `write` or `review`).
 - A version's stored definition, success states and execution policies are immutable: the
   database refuses an UPDATE or DELETE of any of them. The service therefore loads them all
   at startup and keeps them. It reads a version it does not hold, such as one another service
-  registered later, only once, unless that version still lacks its success row or an
-  execution row for a nonterminal state, which a later registration would add.
+  registered later, only once.
 - A definition's `blocksStarts` names workflows that may not start while any instance of that
   version, loaded or not, is in one of its nonterminal states (`workflow_creation_paused`). The
   check reads only instances in those states, through an index, so ended ones cost nothing, and

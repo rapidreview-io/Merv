@@ -104,7 +104,8 @@ export async function fixture(
   const runtimes = new FakeRuntimes();
   let now = options.startTime ?? Date.parse('2026-09-23T00:00:00Z');
   const clock = () => now;
-  const tools = new ToolRegistry(scope);
+  // As composed: a read-only tool runs in a State snapshot unless it calls out (openWorld).
+  const tools = new ToolRegistry(scope, undefined, (fn) => state.snapshot(fn));
   let reads = 0;
   let mutations = 0;
   tools.register({

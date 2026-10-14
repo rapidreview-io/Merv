@@ -41,7 +41,6 @@ import type {
 import {
   actOf,
   conversationCaller,
-  decode,
   equal,
   hash,
   parse,
@@ -264,8 +263,9 @@ export class PiWorkerProtocol {
       };
     } catch {
       // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept
-      // at a restart (again) is no longer this claim's to end; a machine that no longer admits
-      // work is what the next take reports.
+      // at a restart (again) is no longer this claim's to end, nor is one a closing Pi will keep;
+      // a machine that no longer admits work is what the next take reports.
+      if (this.core.closed) return null;
       await this.core.state.transaction(async (tx) => {
         const current = await this.core.command(tx, conversation.id, command.id);
         if (current.workerId === workerId && current.runtimeId === command.runtimeId)
@@ -284,12 +284,12 @@ export class PiWorkerProtocol {
   ): Promise<{ notes: string[]; interrupted: boolean }> {
     // What an answer that stopped early had already changed, as its events recorded them.
     const interrupted = await this.core.read(async (tx) => {
-      const row = await tx.get<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1',
+      const before = await this.core.row<PiCommandRecord>(
+        tx,
+        'pi_commands WHERE conversation_id=? AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1',
         conversation.id,
         command.id,
       );
-      const before = row && decode<PiCommandRecord>(row);
       if (before?.status !== 'interrupted') return null;
       const events = await this.core.state.findEvents(
         {

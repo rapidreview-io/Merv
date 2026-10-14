@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import {
   describeScreen,
@@ -7,6 +8,7 @@ import {
   scaleFor,
   screenRequest,
 } from '../packages/pi/src/screen.js';
+import { piToolsPlugin } from '../packages/pi/src/tools.js';
 import type { PiSnapshot } from '../packages/pi/src/types.js';
 import { code, fixture } from './fixtures/pi.js';
 
@@ -120,13 +122,20 @@ test("the agent puts a record on the person's screen: their page goes there and 
   assert.deepEqual(await shown, { opened: '/artifacts/art_1', title: 'Results.md' });
   assert.equal((await f.pi.snapshot(f.operator, id)).screen, undefined, 'the ask is over');
   await assert.rejects(f.pi.screen(f.operator, answer), /no longer waiting/);
+  // A Pi that closes ends its agent's wait at once, not when the wait runs out.
+  const waiting = f.pi.show(agent, { page: 'Work' });
+  await f.pi.close();
+  const hung = new Promise<{ said: string }>((resolve) => setTimeout(resolve, 1000, { said: '' }));
+  assert.match((await Promise.race([waiting, hung])).said!, /Nothing was shown/);
 });
 
 test('a record that draws itself is looked at as drawn, asking no page of the person', async (t) => {
   const f = await fixture(t);
   const { work, input } = await f.begun(f.operator);
+  // A turn's caller, through the registry as composed: a look runs outside a read snapshot.
   const agent: Caller = {
-    ...f.operator,
+    projectId: f.operator.projectId,
+    actorId: f.operator.actorId,
     conversation: {
       id: input.conversationId,
       commandId: input.commandId,
@@ -174,8 +183,18 @@ test('a record that draws itself is looked at as drawn, asking no page of the pe
   // Only the agent looks: anyone else is refused before anything is drawn.
   await assert.rejects(f.pi.look(f.operator, { at: { record: 'board_1' } }), /own agent/);
   assert.deepEqual(drawn, []);
-  const look = () =>
-    f.pi.look(agent, { question: 'Read it', at: { record: 'board_1', focus: 'frame_9' } });
+  const ctx = new Context();
+  ctx.provide('pi', f.pi);
+  ctx.provide('tools', f.tools);
+  await ctx.plugin(piToolsPlugin);
+  t.after(() => ctx.fiber.dispose());
+  const look = async () =>
+    (
+      await f.tools.invoke('screen.look', agent, {
+        question: 'Read it',
+        at: { record: 'board_1', focus: 'frame_9' },
+      })
+    ).value;
   const seen = await look();
   assert.deepEqual(seen, { page: '/ui/boards/board_1', seen: 'Handwritten: data → objective.' });
   assert.deepEqual(drawn, [['board_1', 'frame_9']]);

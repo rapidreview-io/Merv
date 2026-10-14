@@ -1970,6 +1970,10 @@ test('a page opened mid-answer reads the whole answer so far, however far past t
   assert.equal(text[0].text, words.join(''));
   assert.equal(text[0].commandId, bound.input.commandId);
   assert.ok(text[0].sequence > 0 && text[0].sequence <= sequence);
+  // Once the turn ends, its answer is the stored message: memory keeps nothing of the turn.
+  await f.pi.complete(bound.token, f.completion(bound.input));
+  const live = f.pi['core'].live.get(conversation.id);
+  assert.deepEqual([live?.turn, live?.progress, live?.streamed], [undefined, undefined, undefined]);
 });
 
 test('a turn ended early keeps the words it streamed, bounded like any message, as its answer', async (t) => {

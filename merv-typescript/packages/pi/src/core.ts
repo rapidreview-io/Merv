@@ -11,6 +11,7 @@ import {
   type DelegationSource,
   type Scope,
   type Sql,
+  type SqlValue,
   type State,
   type Transaction,
 } from '@merv/contracts';
@@ -64,6 +65,8 @@ export const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
         ? 'runtime_stopped'
         : 'runtime_lost';
 export const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
+/** One turn of a conversation, by conversation and id, as `PiCore.row` reads it. */
+export const turnAt = 'pi_commands WHERE conversation_id=? AND id=?';
 /** A turn as JSON text PostgreSQL's jsonb reads, as Pi's migrations read turns with jsonb.
  * Pi refuses NUL and half characters from the person and the model, but not in words others write,
  * such as a tool's refusal Run tells: there NUL is dropped and half a character reads U+FFFD. */
@@ -225,22 +228,20 @@ export class PiCore {
   slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
   }
+  /** The one record `from` (a table and its condition) names, decoded; undefined for none. */
+  async row<T>(sql: Sql, from: string, ...params: SqlValue[]): Promise<T | undefined> {
+    const row = await sql.get<{ data_json: string }>(`SELECT data_json FROM ${from}`, ...params);
+    return row ? decode<T>(row) : undefined;
+  }
   async conversation(sql: Sql, id: string): Promise<PiConversationRecord> {
-    const row = await sql.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_conversations WHERE id=?',
-      id,
-    );
-    check(row, 'pi_not_found', 'Conversation not found', 404);
-    return decode(row);
+    const found = await this.row<PiConversationRecord>(sql, 'pi_conversations WHERE id=?', id);
+    check(found, 'pi_not_found', 'Conversation not found', 404);
+    return found;
   }
   async command(sql: Sql, conversationId: string, id: string): Promise<PiCommandRecord> {
-    const row = await sql.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
-      conversationId,
-      id,
-    );
-    check(row, 'pi_command_not_found', 'Conversation command not found', 404);
-    return decode(row);
+    const command = await this.row<PiCommandRecord>(sql, turnAt, conversationId, id);
+    check(command, 'pi_command_not_found', 'Conversation command not found', 404);
+    return command;
   }
   /** Every turn of a conversation, oldest first. */
   async commands(sql: Sql, conversationId: string): Promise<PiCommandRecord[]> {
@@ -263,12 +264,7 @@ export class PiCore {
   }
   /** The relay hash follows the turn's slot, which a cut-over may change before it is claimed. */
   async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
-    const previous = await tx.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
-      command.conversationId,
-      command.id,
-    );
-    const old = previous ? decode<PiCommandRecord>(previous) : null;
+    const old = await this.row<PiCommandRecord>(tx, turnAt, command.conversationId, command.id);
     if (old) {
       if (
         old.status === 'working' &&
@@ -294,18 +290,12 @@ export class PiCore {
     );
   }
   async host(sql: Sql, id: string): Promise<PiHostRecord | null> {
-    const row = await sql.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_hosts WHERE id=?',
-      id,
-    );
-    return row ? decode(row) : null;
+    return (await this.row<PiHostRecord>(sql, 'pi_hosts WHERE id=?', id)) ?? null;
   }
   async liveHost(sql: Sql, key: string): Promise<PiHostRecord | null> {
-    const row = await sql.get<{ data_json: string }>(
-      "SELECT data_json FROM pi_hosts WHERE key=? AND status='live'",
-      key,
+    return (
+      (await this.row<PiHostRecord>(sql, "pi_hosts WHERE key=? AND status='live'", key)) ?? null
     );
-    return row ? decode(row) : null;
   }
   /** The host's turns that have not ended, oldest first. */
   async turns(sql: Sql, hostId: string): Promise<PiCommandRecord[]> {
@@ -317,13 +307,9 @@ export class PiCore {
     ).map(decode<PiCommandRecord>);
   }
   async person(sql: Sql, key: string): Promise<PiPersonRecord> {
-    const row = await sql.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_people WHERE key=?',
-      key,
-    );
-    return row
-      ? decode(row)
-      : { key, preferred: this.config.machines[0].key, sticky: null, choseAt: null, moves: [] };
+    const { machines } = this.config;
+    const person = await this.row<PiPersonRecord>(sql, 'pi_people WHERE key=?', key);
+    return person ?? { key, preferred: machines[0].key, sticky: null, choseAt: null, moves: [] };
   }
   async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
     const since = new Date(this.clock() - 86_400_000).toISOString();
@@ -502,12 +488,16 @@ export class PiCore {
     this.sharers.clear();
     this.fleet.kick();
   }
-  /** A turn that ended: no progress is trusted or awaited any more. */
+  /** A turn that ended or starts again: no progress is trusted or awaited any more, and what it
+   * reported and streamed is not kept. */
   forget({ conversationId, id }: PiCommandRecord): void {
     const turn = `${conversationId}:${id}`;
     this.progressAt.delete(turn);
     this.refusals.delete(turn);
     for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
+    const live = this.live.get(conversationId);
+    for (const field of ['turn', 'progress', 'streamed'] as const)
+      if (live?.[field]?.commandId === id) delete live[field];
   }
   idleOver(host: PiHostRecord): boolean {
     return (

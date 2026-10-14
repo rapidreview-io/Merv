@@ -335,10 +335,10 @@ export class PiHosts implements FleetOwner {
     reason: PiInterruption,
   ): Promise<void> {
     if (!active.has(command.status)) return;
-    this.core.forget(command);
     const conversation = await this.core.conversation(tx, command.conversationId);
     // Words the person saw stream stay as the answer, unless the turn's own result is in.
     const streamed = this.core.live.get(conversation.id)?.streamed;
+    this.core.forget(command);
     if (streamed?.commandId === command.id && streamed.text && !command.resultHash)
       command.messages.push({ role: 'assistant', text: streamed.text });
     command.status = 'interrupted';
@@ -595,9 +595,6 @@ export class PiHosts implements FleetOwner {
     const shown = turn.firstTextAt || turn.calledAt || turn.resultHash;
     if (shown || turn.expiresAt <= this.core.time() || (once && turn.retried)) return false;
     this.core.forget(turn);
-    const live = this.core.live.get(turn.conversationId);
-    if (live?.turn?.commandId === turn.id) delete live.turn;
-    if (live?.progress?.commandId === turn.id) delete live.progress;
     if (once) turn.retried = true;
     Object.assign(turn, { status: 'waiting', workerId: null });
     for (const claimed of ['startedAt', 'tools', 'canMove'] as const) delete turn[claimed];

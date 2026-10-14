@@ -159,6 +159,11 @@ export async function runPiWorker(
   const url = new URL(bootstrap.baseUrl);
   const seen = new Set<string>();
   const send = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
+    // A tool call runs as long as its tool does: only the turn's own signal bounds it. Node 22 can
+    // collect a timeout held only by AbortSignal.any(), which then never fires: this one is held
+    // until the reply is read.
+    const deadline =
+      path === 'tool' ? undefined : AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000);
     const response = await fetchImpl(new URL(`/pi-worker/${path}`, url), {
       method: 'POST',
       redirect: 'error',
@@ -167,13 +172,7 @@ export async function runPiWorker(
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      // A tool call runs as long as its tool does: only the turn's own signal bounds it.
-      signal: AbortSignal.any([
-        ...(path === 'tool'
-          ? []
-          : [AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000)]),
-        ...(signal ? [signal] : []),
-      ]),
+      signal: AbortSignal.any([deadline, signal].filter((one) => one !== undefined)),
     });
     if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) {
       void response.body?.cancel().catch(() => {});
@@ -196,6 +195,7 @@ export async function runPiWorker(
     } finally {
       reader?.releaseLock();
     }
+    deadline?.throwIfAborted();
     let value: unknown;
     try {
       value = JSON.parse(Buffer.concat(parts, length).toString('utf8'));
@@ -218,6 +218,8 @@ export async function runPiWorker(
   const until = (time: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, time)));
   const startupDeadline = Math.min(Date.now() + STARTUP_WAIT_MS, Date.parse(bootstrap.expiresAt));
+  // One for the whole wait, held here: AbortSignal.any() alone would let it be collected.
+  const startup = AbortSignal.timeout(Math.max(1, startupDeadline - Date.now()));
   const turn = async (work: PiWork, ids: PiTurnInput, begun: () => void) => {
     const deadline = Math.min(Date.parse(bootstrap.expiresAt), Date.parse(work.command.expiresAt));
     const controller = new AbortController();
@@ -292,15 +294,12 @@ export async function runPiWorker(
       let reply: PiNextReply;
       const asked = Date.now();
       try {
-        const startupSignal = !enrolled
-          ? AbortSignal.timeout(Math.max(1, startupDeadline - Date.now()))
-          : undefined;
         reply = await request<PiNextReply>(
           'next',
           probe ? { workerId, probe } : { workerId },
-          startupSignal
-            ? AbortSignal.any([startupSignal, ...(options.signal ? [options.signal] : [])])
-            : options.signal,
+          enrolled
+            ? options.signal
+            : AbortSignal.any([startup, ...(options.signal ? [options.signal] : [])]),
         );
         if (!enrolled) mark('enrolled');
         enrolled = true;

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoint.js';
 import { readBootstrap } from '../packages/pi/src/worker-main.js';
 import { cause, runPiWorker } from '../packages/pi/src/worker.js';
@@ -512,6 +514,39 @@ test('startup enrollment wait stops at bootstrap expiry', async () => {
   assert.ok(Date.now() - started < 2_000);
   assert.equal(app.begins, 0);
   assert.equal(app.modelRequests.length, 0);
+});
+
+test('a request Main never answers ends at its deadline, even across a collection', async (t) => {
+  v8.setFlagsFromString('--expose-gc');
+  const gc = vm.runInNewContext('gc') as () => void;
+  // Deadlines a hundredth as long, still the runtime's own timeout signals.
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => timeout.call(AbortSignal, Math.ceil(ms / 100));
+  t.after(() => void (AbortSignal.timeout = timeout));
+  // Main enrolls the worker, then takes each /next and never answers it.
+  const ended: string[] = [];
+  let polls = 0;
+  const fetchImpl = (async (_url: URL, init: RequestInit) =>
+    polls++
+      ? await new Promise((_resolve, reject) =>
+          init.signal!.addEventListener('abort', () => {
+            ended.push((init.signal!.reason as Error).name);
+            reject(init.signal!.reason);
+          }),
+        )
+      : json({ work: null })) as typeof fetch;
+  const stop = new AbortController();
+  const run = runPiWorker(slotBootstrap(1, 'http://127.0.0.1:9'), {
+    fetchImpl,
+    signal: stop.signal,
+  });
+  for (let collections = 0; collections < 20 && !ended.length; collections++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    gc();
+  }
+  stop.abort();
+  await run;
+  assert.equal(ended[0], 'TimeoutError');
 });
 
 test('authority failure after an accepted grant exits; an outage is waited out', async () => {

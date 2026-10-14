@@ -57,6 +57,7 @@ import {
   PiCore,
   publicCommand,
   roleOf,
+  turnAt,
 } from './core.js';
 import { PiHosts } from './hosts.js';
 import { PiWorkerProtocol } from './worker-protocol.js';
@@ -161,11 +162,8 @@ export class PiService implements Pi {
     return `model:${userId}:${projectId}`;
   }
   private async picked(sql: Sql, userId: string, projectId: string): Promise<string | undefined> {
-    const row = await sql.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_people WHERE key=?',
-      this.pickKey(userId, projectId),
-    );
-    return row ? decode<{ model: string }>(row).model : undefined;
+    const key = this.pickKey(userId, projectId);
+    return (await this.core.row<{ model: string }>(sql, 'pi_people WHERE key=?', key))?.model;
   }
   private async user(caller: Caller, tx: Transaction): Promise<string> {
     check(
@@ -379,20 +377,15 @@ export class PiService implements Pi {
     const renter = await this.hosts.hostCaller();
     const { command, hostId } = await this.core.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
-      const existing = await tx.get<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
-        id,
-        value.commandId,
-      );
+      const existing = await this.core.row<PiCommandRecord>(tx, turnAt, id, value.commandId);
       if (existing) {
-        const command = decode<PiCommandRecord>(existing);
         check(
-          command.inputHash === digest(value),
+          existing.inputHash === digest(value),
           'pi_command_conflict',
           'Command ID was reused with different input',
           409,
         );
-        return { command: publicCommand(command), hostId: command.hostId };
+        return { command: publicCommand(existing), hostId: existing.hostId };
       }
       check(
         !conversation.activeCommandId,
@@ -880,12 +873,12 @@ export class PiService implements Pi {
             throw new MervError('pi_unauthorized', 'Invalid model credential', 401);
           throw error;
         });
-      const row = await tx.get<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE relay_hash=?',
+      const command = await this.core.row<PiCommandRecord>(
+        tx,
+        'pi_commands WHERE relay_hash=?',
         hash(token),
       );
-      check(row, 'pi_unauthorized', 'Invalid model credential', 401);
-      const command = decode<PiCommandRecord>(row);
+      check(command, 'pi_unauthorized', 'Invalid model credential', 401);
       const conversation = await this.core.conversation(tx, command.conversationId);
       check(
         credential.subject === this.core.modelSubject(command) &&
@@ -967,6 +960,7 @@ export class PiService implements Pi {
       });
     } finally {
       for (const dispose of this.disposers.reverse()) dispose();
+      for (const { settle } of [...this.asks.values()]) settle(null);
       this.core.streams.close();
     }
   }
