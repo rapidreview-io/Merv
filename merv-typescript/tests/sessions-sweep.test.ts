@@ -66,10 +66,11 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
       {
         state: 'working',
         check: producer,
-        build: () => ({
+        // The brief quotes the record's own text, as every program's does.
+        build: ({ snapshot }) => ({
           role: 'producer',
           label: 'Work',
-          brief: 'Work.',
+          brief: `Work.${(snapshot.data as { note?: string }).note ?? ''}`,
           references: [],
           handoff: { instruction: 'Finish', tools: [] },
           execution: { readOnly: false, tools: [] },
@@ -137,8 +138,12 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
     source,
     failing,
     logged,
-    async offer() {
-      const target = await handle.start(source, { workflow: 'sweep', requestId: request() });
+    async offer(note?: string) {
+      const target = await handle.start(source, {
+        workflow: 'sweep',
+        requestId: request(),
+        ...(note !== undefined && { data: { note } }),
+      });
       const token = secret();
       const session = await sessions.offer(source, {
         instanceId: target.id,
@@ -196,6 +201,20 @@ test('a close that fails holds back only its own session, retried by each full p
   f.failing.clear();
   await f.pass(true);
   assert.equal(await f.status(failed.session.id), 'expired');
+});
+
+test('an offer PostgreSQL could not read back is refused, and stops nothing else', async (t) => {
+  const f = await fixture(t);
+  // An escaped NUL or lone surrogate anywhere in the row fails every json read of every live
+  // visit: the light pass and every offer, in every project.
+  for (const note of ['\0', '\ud83d', '\udc00'])
+    await assert.rejects(f.offer(note), { code: 'session_packet_invalid', status: 400 });
+  // A pair, and the escapes quoted as text, are ordinary text.
+  const kept = [await f.offer('😀'), await f.offer(String.raw`\u0000 \ud83d \\u0000`)];
+  f.advance(300_001);
+  await f.pass(false);
+  for (const { session } of kept) assert.equal(await f.status(session.id), 'expired');
+  await f.offer();
 });
 
 test('a record moved by another hand is recorded by the next light pass alone', async (t) => {

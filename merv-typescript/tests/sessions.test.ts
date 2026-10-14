@@ -611,6 +611,19 @@ test('controller polls preserve offered leases across provider outages and commi
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
 });
 
+test('a halt closes a work visit stored before visits named their kind', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.offer();
+  // As a Main before 2026-10-07 stored it; the immutability guard does not cover `kind`.
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE worker_sessions SET session_json=(session_json::jsonb - 'kind')::text WHERE id=?",
+      session.id,
+    ),
+  );
+  assert.deepEqual(await f.sessions.dispatch.halt(f.owner, {}), { halted: 1 });
+});
+
 test('a halt during a workflow outage still closes the session it answers for', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();

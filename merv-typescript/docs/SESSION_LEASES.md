@@ -186,10 +186,9 @@ with `{body, requestId}`. Project writers may send messages; project readers may
 history. Workers may read and acknowledge only their own visit's messages. A message to a
 reviewer does not grant its sender authority to decide the review verdict. Use
 `session.find({instanceId})` to find a work item's current and latest session and its
-`threadId`. For one release a `sessionId` is still taken and addresses that session's thread.
-A thread that is retired, or whose work has ended, refuses a new message instead of claiming
-delivery, unless it answers a question. Repeating an identical request ID returns the retained
-message, while changing its contents is a conflict.
+`threadId`. A thread that is retired, or whose work has ended, refuses a new message instead
+of claiming delivery, unless it answers a question. Repeating an identical request ID returns
+the retained message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
 them with `session.messages` and acknowledges them with `session.message.ack`,
@@ -255,7 +254,7 @@ use `X-Merv-Project-Id` when project selection is required.
 | Route                             | Input / result                                                                                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /sessions/offer`            | `instanceId`, `expectedRevision`, `runnerId`, `requestId`, `secret`, optional `hardDeadlineSeconds`; returns `{session}`.                                                       |
-| `GET /sessions`                   | Returns `{sessions}` belonging to this exact source authority.                                                                                                                  |
+| `GET /sessions`                   | Returns `{sessions}`: this exact source authority's live (offered or active) sessions.                                                                                          |
 | `GET /sessions/:id`               | Returns `{session}` after checking source ownership.                                                                                                                            |
 | `POST /sessions/:id/attach`       | `runnerId`, immutable `hostRef`; returns `{session, prompt}`: the worker prompt the runner sends before its own lines.                                                          |
 | `POST /sessions/:id/heartbeat`    | `runnerId`; returns `{session}`.                                                                                                                                                |
@@ -267,8 +266,8 @@ use `X-Merv-Project-Id` when project selection is required.
 Generate `secret` as `ms_` followed by 32 random bytes encoded as unpadded base64url
 (43 characters). Keep it out of prompts, files, URLs and logs. Supply it as the
 MCP bearer. The server never returns or stores its plaintext. Each frozen
-assignment, policy and reference packet is bounded at 64 KiB. This is an admission
-limit, not a transport upload limit.
+assignment, policy, reference set and lease receipt is bounded at 512 KiB. This is an
+admission limit, not a transport upload limit.
 
 Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
 `serviceConcurrency` (1–256; default 1), `dispatchByDefault` and `managedSecretEnv`. Any other
@@ -283,7 +282,7 @@ The sweep runs every `sweepIntervalMs`. Each tick records the sessions whose dea
 passed or whose workflow record moved, as every offer does first. Every 30 seconds a full
 pass re-checks every live session (a revoked or demoted source, a retired agent, a lease
 its domain refused, a machine Fleet no longer runs), every active agent and service-work
-reservations. A session's own next authentication, attach, heartbeat or release records
+reservations. A session's own next tool call, attach, heartbeat or release records
 such a closure sooner, and every worker call is refused at once. `GET /sessions/:id` reports
 a closure it finds without recording it. Each subject is decided
 on a read snapshot and recorded in a transaction of its own, so a healthy pass takes no

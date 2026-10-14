@@ -356,7 +356,12 @@ export interface LiveFeedFrame {
   live: { sessionId: string; threadId: string }[];
   visits: { sessionId: string; threadId: string; reset?: true; events: AgentStreamEvent[] }[];
 }
-/** A thread's conversation, an operator's read: each visit's events, oldest visit first. */
+/**
+ * One read of a thread's conversation, an operator's: every visit, oldest first, each with the
+ * events this read sent of it. A read sends the newest events it has not sent, newest visit first,
+ * a bounded amount, and says where it stopped (`next`); a reader goes on until `next` is null and
+ * then holds every event, each once, as one read of it all would have sent them.
+ */
 export interface ThreadConversation {
   threadId: string;
   visits: {
@@ -364,14 +369,16 @@ export interface ThreadConversation {
     /**
      * `stream` while its kept stream holds it; `transcript` once only its stored copy does; `none`
      * when nothing was kept. A `live` visit is read from its own stream (`/events`), and an
-     * `unavailable` one could not be read just now. Events are sent newest visit first while the
-     * read has room, so an older visit's may be empty.
+     * `unavailable` one could not be read just now. A visit older than where the read stopped,
+     * or newer than where it began, has no events in it.
      */
     from: 'stream' | 'transcript' | 'none' | 'live' | 'unavailable';
     events: AgentStreamEvent[];
-    /** Set when a transcript's end was read only to its bound, so older events were never read. */
+    /** Set on the visit where the read stopped: its older events come with the read `next` names. */
     truncated?: true;
   }[];
+  /** Passed back as `before`, the read goes on where this one stopped; null once it read all. */
+  next: string | null;
 }
 
 /**

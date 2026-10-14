@@ -318,8 +318,9 @@ function peopleOf(
 /**
  * What the thread said, visit by visit, with the people's lines among it. An operator reads
  * what the agent said: the visit that holds its lease from its live stream, the rest from what
- * Sessions kept, read again whenever another visit goes live. Anyone else reads the visits'
- * dividers and the people's lines alone, and the conversation is never asked for.
+ * Sessions kept, read again whenever another visit goes live. Sessions sends what it kept a part
+ * at a time, newest first, so its older parts are read on until none is left. Anyone else reads
+ * the visits' dividers and the people's lines alone, and the conversation is never asked for.
  */
 function Conversation({
   thread,
@@ -336,10 +337,33 @@ function Conversation({
   label: string;
   reads: boolean;
 }) {
-  const kept = useTool<ThreadConversation>(
-    reads ? `/sessions/threads/${encodeURIComponent(thread.id)}/conversation` : null,
-  );
+  const path = `/sessions/threads/${encodeURIComponent(thread.id)}/conversation`;
+  const kept = useTool<ThreadConversation>(reads ? path : null);
   const { reload } = kept;
+  // The parts after the first, each read on from where the one before it stopped.
+  const [older, setOlder] = useState<{ first: ThreadConversation; parts: ThreadConversation[] }>();
+  useEffect(() => {
+    const first = kept.data;
+    if (!first?.next) return;
+    let stopped = false;
+    void (async () => {
+      const parts: ThreadConversation[] = [];
+      for (let next = first.next; next; next = parts.at(-1)!.next) {
+        const part = await accountRequest<ThreadConversation>(
+          `${path}?before=${encodeURIComponent(next)}`,
+          { scoped: true },
+        );
+        if (stopped) return;
+        parts.push(part);
+        setOlder({ first, parts: [...parts] });
+      }
+    })().catch(() => {});
+    return () => void (stopped = true);
+  }, [kept.data, path]);
+  const parts = useMemo(
+    () => (kept.data ? [kept.data, ...(older?.first === kept.data ? older.parts : [])] : []),
+    [kept.data, older],
+  );
   const liveId = reads ? thread.visits.find(active)?.sessionId : undefined;
   const read = useRef(liveId);
   useEffect(() => {
@@ -351,8 +375,10 @@ function Conversation({
     () =>
       all.map((visit): ConversationVisit => {
         // Sessions sends each visit's live stream while it keeps it, else its stored
-        // transcript, else nothing (`from: 'none'`).
-        const said = kept.data?.visits.find((item) => item.sessionId === visit.sessionId);
+        // transcript, else nothing (`from: 'none'`); each part a share of its events.
+        const said = parts.flatMap(
+          (part) => part.visits.find((item) => item.sessionId === visit.sessionId)?.events ?? [],
+        );
         const name = names.get(visit.sessionId)!;
         return {
           sessionId: visit.sessionId,
@@ -361,10 +387,10 @@ function Conversation({
           ...(failed(visit) && { tone: 'error' as const }),
           ...(visit.sessionId === liveId
             ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
-            : { events: said?.events }),
+            : { events: said }),
         };
       }),
-    [all, names, kept.data, liveId],
+    [all, names, parts, liveId],
   );
   if (reads && !kept.data && !liveId && !kept.error) return <LoadState {...kept} />;
   return (

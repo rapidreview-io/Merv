@@ -114,9 +114,6 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   const callsRoute = /^\/sessions\/threads\/([^/]+)\/calls$/.exec(path);
   if (callsRoute && req.method === 'GET')
     return await sessions.observations.calls(caller, pathSegment(callsRoute[1]!));
-  const conversationRoute = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
-  if (conversationRoute && req.method === 'GET')
-    return await sessions.threads.conversation(caller, pathSegment(conversationRoute[1]!));
   // A thread's messages and questions; a person's message to it, which answers its questions.
   // A person's question to the thread's agent, answered by a read-only inquiry visit.
   const askRoute = /^\/sessions\/threads\/([^/]+)\/ask$/.exec(path);
@@ -153,7 +150,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
     return { runner: await sessions.dispatch.setRunnerSettings(caller, body) };
   }
   if (path === '/sessions' && req.method === 'GET')
-    return { sessions: await sessions.list(caller) };
+    return { sessions: await sessions.list(caller, true) };
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
@@ -324,6 +321,19 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
       return instanceIds.length
         ? { threads: await read(() => sessions.threads.list(caller, instanceIds)) }
         : await read(() => sessions.threads.project(caller, before));
+    }
+    // A thread's conversation, a part at a time: on from where `before` says a read stopped.
+    const conversation = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
+    if (conversation && req.method === 'GET') {
+      const before = r.url.searchParams.get('before') ?? undefined;
+      check(
+        [...r.url.searchParams.keys()].join() === (before === undefined ? '' : 'before'),
+        'invalid_input',
+        'The conversation route takes before=<cursor> or nothing',
+      );
+      const caller = await r.caller();
+      const threadId = pathSegment(conversation[1]!);
+      return await read(() => sessions.threads.conversation(caller, threadId, before));
     }
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');

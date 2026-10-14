@@ -94,6 +94,8 @@ export interface InvocationHost {
   open(): void;
   closed(): boolean;
   reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
+  /** `fn` on a snapshot, again in a writer when it has a closure to record. */
+  readFirst<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>;
   session(caller: Caller, tx: Transaction): Promise<Session>;
   /** The calling worker's session, by Sessions' own checks, its lease left for `valid`. */
   callSession(caller: Caller, tx: Transaction): Promise<Session>;
@@ -105,11 +107,16 @@ export interface InvocationHost {
     invocation: { registrationId?: string; public: { tool: string } },
     tx: Transaction,
   ): Promise<void>;
+  /** The call's one lease check; a refusal is the session's closure, recorded and returned. */
   valid(
     session: Session,
     tx: Transaction,
     frozen?: WorkSession['execution'],
-  ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }>;
+  ): Promise<{
+    registrationId?: string;
+    references?: WorkflowExecutionReferences;
+    error?: MervError;
+  }>;
   /** Refuses while a queued operator message waits for the worker's acknowledgement. */
   acknowledged(sessionId: string, tx: Transaction): Promise<void>;
 }
@@ -168,7 +175,8 @@ export class SessionInvocations implements SessionInvocationPolicy {
   }
   /**
    * The one validation of a call: Sessions' session check, then Workflows' lease check under the
-   * frozen execution, in one snapshot. What it validated travels with the call.
+   * frozen execution, in one snapshot. What it validated travels with the call; a refused lease
+   * is the session's closure, recorded in a writer, and the call is refused once that commits.
    */
   private async admit(caller: Caller, tool: string, input: Data, tx: Transaction, read?: boolean) {
     const session = await this.host.callSession(caller, tx);
@@ -179,6 +187,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
       tx,
       session.kind === 'inquiry' || workerTools.has(tool) ? undefined : session.execution,
     );
+    if (current.error) return { error: current.error };
     return {
       session,
       registrationId: current.registrationId,
@@ -218,9 +227,10 @@ export class SessionInvocations implements SessionInvocationPolicy {
     ordinary(caller);
     caller = structuredClone(caller);
     input = snapshotInput(input);
-    const prepared = await this.host.reading(
+    const prepared = await this.host.readFirst(
       async (tx) => await this.admit(caller, tool, input, tx, read),
     );
+    if ('error' in prepared) throw prepared.error;
     this.host.open();
     const invocationId = newId('invocation');
     const invocation: SessionInvocation = Object.freeze({

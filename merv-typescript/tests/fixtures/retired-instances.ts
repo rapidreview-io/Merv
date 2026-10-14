@@ -396,15 +396,18 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 
 /**
  * sessions@18 (inquiry visits), @19 (their usage rows), @20 (a thread's delivered conversation)
- * @21 (every inquiry row names its kind, data only) and @22 (optional question responders)
- * undone, back to the release before them:
+ * @21 (every inquiry row names its kind, data only), @22 (optional question responders) and @23
+ * (the columns polls read beside a session's JSON) undone, back to the release before them:
  * no inquiries, no session or usage kinds (the live indexes and the usage guard as they were),
  * and messages guarded as sessions@14 left them.
  */
 export function rewindInquiries(): string {
   const threads = sessionMigrations[14]!;
   const usage = sessionMigrations[4]!;
-  return `DROP TABLE session_question_responses;
+  const added = [...sessionMigrations[23]!.matchAll(/ADD COLUMN (\w+)/g)];
+  return `ALTER TABLE worker_sessions ${added.map(([, column]) => `DROP COLUMN ${column}`).join(',')};
+DELETE FROM component_migrations WHERE component='sessions' AND version=23;
+DROP TABLE session_question_responses;
 DELETE FROM component_migrations WHERE component='sessions' AND version=22;
 DELETE FROM component_migrations WHERE component='sessions' AND version=21;
 ALTER TABLE session_threads DROP COLUMN delivered_json;
@@ -532,7 +535,10 @@ DELETE FROM component_migrations WHERE component='reflections' AND version=4;`);
     await client.query(
       "DELETE FROM component_migrations WHERE component='reflections' AND version=3",
     );
-    // reviews@14 (an open claim keeps its event on its row) came later still.
+    // reviews@15 (an index on open reviews) and reviews@14 (an open claim keeps its event on its
+    // row) came later still.
+    await client.query(`DROP INDEX reviews_open;
+DELETE FROM component_migrations WHERE component='reviews' AND version=15;`);
     await client.query(`ALTER TABLE reviews DROP COLUMN claim_event_id, DROP COLUMN claimed_at,
   DROP COLUMN claimed_by_agent;
 DELETE FROM component_migrations WHERE component='reviews' AND version=14;`);

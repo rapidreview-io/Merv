@@ -183,10 +183,12 @@ export async function exerciseRuntime(start) {
     assert.equal(live.instanceId, second.id);
     assert.equal(live.status, 'active');
     await work.release(secondLease);
-    const { sessions } = await http('/sessions', boot.token);
-    const visits = sessions.filter((entry) => entry.threadId === threadId);
+    const { session: released } = await http(`/sessions/${secondExecution.id}`, boot.token);
+    assert.equal(released.status, 'released');
+    const { threads } = await http(`/sessions/threads?instanceId=${second.id}`, boot.token);
+    const visits = threads.find((entry) => entry.id === threadId).visits;
     assert.deepEqual(
-      visits.map((entry) => entry.id),
+      visits.map((entry) => entry.sessionId),
       [secondExecution.id],
     );
     assert.equal(visits[0].status, 'released');
@@ -208,7 +210,7 @@ export async function exerciseRuntime(start) {
       assert.ok(Number.isSafeInteger(entry.durationMs) && entry.durationMs >= 0);
     }
     assert.ok(
-      !JSON.stringify({ live, visits, observation }).includes(secondLease.token),
+      !JSON.stringify({ live, released, visits, observation }).includes(secondLease.token),
       'Observation must not expose session credentials',
     );
 
@@ -342,11 +344,7 @@ export async function exerciseRuntime(start) {
     );
     const retained = await http(`/sessions/threads/${threadId}/calls`, boot.token);
     assert.deepEqual(retained, observation);
-    const { sessions: retainedSessions } = await http('/sessions', boot.token);
-    assert.deepEqual(
-      retainedSessions.filter((entry) => entry.threadId === threadId),
-      visits,
-    );
+    assert.deepEqual((await http(`/sessions/${secondExecution.id}`, boot.token)).session, released);
     assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
     assert.equal((await app.ctx.reflections.get(owner, reflection.id)).lenses.length, 5);
     const dispatch = (await app.ctx.sessions.dispatch.projectStatus(owner)).dispatch;

@@ -3,12 +3,14 @@
  * state, the agent that held it takes it up again with the conversation its runner delivered.
  */
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import pg from 'pg';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   MervError,
@@ -23,7 +25,12 @@ import { MachineRunner } from '@merv/runner';
 import { dormantMs, SessionThreads, transcriptEvents } from '../packages/sessions/src/threads.js';
 import { readFirst } from '../packages/sessions/src/common.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
-import type { AgentStreamEvent } from '@merv/sessions/agent-stream';
+import {
+  AGENT_EVENT_TEXT,
+  claudeEvents,
+  codexEvents,
+  type AgentStreamEvent,
+} from '@merv/sessions/agent-stream';
 import type {
   Session,
   SessionMessage,
@@ -806,6 +813,39 @@ test('real runners: a hosted machine that cannot resume puts it off once; a fres
   assert.equal(record.sessionId, third.id);
 });
 
+test('the pages that poll threads, leases and sessions read none of a session’s JSON', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  await f.release((await f.offer(unit.id, 'runner-a')).session);
+  await f.offer(unit.id, 'runner-b');
+  // Each statement the polls send, from their own context alone: the app's loops run beside them.
+  const mine = new AsyncLocalStorage<string[]>();
+  const query = pg.Client.prototype.query;
+  pg.Client.prototype.query = function (this: pg.Client, ...args: unknown[]) {
+    mine.getStore()?.push(String((args[0] as { text?: string }).text ?? args[0]));
+    return (query as (...args: unknown[]) => unknown).apply(this, args);
+  } as typeof query;
+  const sent: string[] = [];
+  try {
+    await mine.run(sent, async () => {
+      assert.equal((await f.sessions.threads.project(f.owner)).threads.length, 2);
+      await f.sessions.threads.list(f.owner, unit.id);
+      await f.sessions.running.nodes(f.owner);
+      await f.sessions.running.marks(f.owner);
+      assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).sessions.length, 2);
+    });
+  } finally {
+    pg.Client.prototype.query = query;
+  }
+  assert.ok(sent.length > 10, `${sent.length} statements`);
+  // Only a deferred close's reason is read from its JSON, and only for such a close.
+  const deferral = "WHEN u.outcome='preparation_deferred' THEN s.session_json";
+  assert.deepEqual(
+    sent.filter((sql) => sql.includes('session_json') && !sql.includes(deferral)),
+    [],
+  );
+});
+
 test('a work item’s threads: each stage’s worker with its visits, and its conversation from stream or stored transcript', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();
@@ -836,10 +876,10 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
       message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: 'ok' }] },
     },
     { type: 'result', subtype: 'success', num_turns: 2 },
-  ]
-    .map((line) => JSON.stringify(line))
-    .join('\n');
-  const bytes = Buffer.from(`${transcript}\n`);
+  ].map((line) => `${JSON.stringify(line)}\n`);
+  const bytes = Buffer.from(transcript.join(''));
+  /** Where its line `n` starts, which names the line. */
+  const at = (n: number) => Buffer.byteLength(transcript.slice(0, n).join(''));
   const facts = {
     ...first.control,
     sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -932,12 +972,16 @@ test('a work item’s threads: each stage’s worker with its visits, and its co
     read.visits[0]!.events.map(({ event }) => event),
     [
       { kind: 'status', id: 'status-0', text: 'Started · claude-x' },
-      { kind: 'text', id: 'm1.whole1-0', delta: 'Reading the plan', done: true },
+      { kind: 'text', id: `m1.whole${at(1)}-0`, delta: 'Reading the plan', done: true },
       { kind: 'tool_call', id: 'u1', name: 'workflow.assignment', input: '{}' },
       { kind: 'tool_result', id: 'u1', output: 'ok' },
-      { kind: 'status', id: 'status-3', text: 'Finished · success · 2 turns' },
+      { kind: 'status', id: `status-${at(3)}`, text: 'Finished · success · 2 turns' },
     ],
   );
+  assert.equal(read.next, null);
+  // A read goes on from where one of this thread's stopped, and from nowhere else.
+  for (const query of ['before=session_elsewhere', 'before=x:y', 'x=1', 'before=a&before=b'])
+    assert.equal((await f.http('GET', `${conversation}?${query}`, f.token)).status, 400, query);
   // Only an operator: a reader may list the threads but not read the conversation.
   const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
     name: 'Reader',
@@ -1183,49 +1227,56 @@ test('a conversation read takes only a large transcript’s end, and a visit it 
   f.s3.server.objects.delete(lost.key);
   f.s3.server.requests.length = 0;
 
-  const read: ThreadConversation = await f.ok(
-    'GET',
-    `/sessions/threads/${first.session.threadId}/conversation`,
-    f.token,
-  );
-  assert.deepEqual(
-    read.visits.map(({ sessionId, from, events }) => [
+  const path = `/sessions/threads/${first.session.threadId}/conversation`;
+  const said = (read: ThreadConversation) =>
+    read.visits.map(({ sessionId, from, events, truncated }) => [
       sessionId,
       from,
       events.length,
       events[0]?.event.id,
       events.at(-1)?.event.id,
-    ]),
-    [
-      [first.session.id, 'transcript', 500, 'a13500', 'a13999'],
-      [second.session.id, 'unavailable', 0, undefined, undefined],
-    ],
-  );
-  // Only the big transcript's end crossed the wire.
+      truncated,
+    ]);
+  const read: ThreadConversation = await f.ok('GET', path, f.token);
+  assert.deepEqual(said(read), [
+    [first.session.id, 'transcript', 500, 'a13500', 'a13999', true],
+    [second.session.id, 'unavailable', 0, undefined, undefined, undefined],
+  ]);
+  // Only the big transcript's end was asked for; the next read goes on before it.
   const sent = f.s3.server.requests.filter(
     (request) => request.method === 'GET' && request.key === big.key,
   );
-  assert.equal(sent.length, 1);
-  assert.match(String(sent[0]!.headers.range), /^bytes=\d+-$/);
+  assert.deepEqual(
+    sent.map((request) => request.headers.range),
+    [`bytes=${big.bytes.length - 1_000_000}-${big.bytes.length - 1}`],
+  );
+  const on: ThreadConversation = await f.ok('GET', `${path}?before=${read.next}`, f.token);
+  assert.deepEqual(said(on), [
+    [first.session.id, 'transcript', 500, 'a13000', 'a13499', true],
+    [second.session.id, 'transcript', 0, undefined, undefined, undefined],
+  ]);
 });
 
 /**
- * A conversation read over `visits` (oldest first), with stores standing in for Sessions': each
- * visit's kept stream, and transcripts served by a signed download that answers ranged GETs.
- * Says which streams and transcripts it read, and how many lines it parsed.
+ * A conversation read over `visits` (oldest first), on from `before`, with stores standing in
+ * for Sessions': each visit's kept stream, and transcripts served by a signed download that
+ * answers ranged GETs. Says which streams and transcripts it read, the byte ranges it downloaded
+ * and how many lines it parsed.
  */
 async function converse(
-  t: TestContext,
   visits: { id: string; status?: string; streamed?: boolean; sha256?: string }[],
   {
     streams = {},
     stored = {},
+    before,
   }: {
     streams?: Record<string, AgentStreamEvent[]>;
     stored?: Record<string, Buffer>;
+    before?: string;
   },
 ) {
   const gets: string[] = [];
+  const ranges: { hash: string; start: number; stop: number }[] = [];
   const streamed: string[] = [];
   const threads = new SessionThreads(
     {
@@ -1249,7 +1300,11 @@ async function converse(
     {
       controlled: async () => assert.fail(),
       readable: async () => assert.fail(),
-      stream: async (id) => (streamed.push(id), streams[id] ?? []),
+      // As Sessions' snapshot: the newest 500 before `before`.
+      stream: async (id, before = Infinity) => (
+        streamed.push(id),
+        (streams[id] ?? []).filter((item) => item.seq < before).slice(-500)
+      ),
       standing: async () => ({ questions: [], ended: new Set<string>() }),
       unaskable: async () => new Map(),
       available: () => {},
@@ -1266,17 +1321,24 @@ async function converse(
   // Restored as the read returns, not after the test: a test may converse more than once.
   const fetching = globalThis.fetch;
   globalThis.fetch = (async (url: string, init: RequestInit) => {
-    const bytes = stored[String(url).split('/').at(-1)!];
+    const hash = String(url).split('/').at(-1)!;
+    const bytes = stored[hash];
     if (!bytes) return new Response('missing', { status: 404 });
-    const from = Number(/^bytes=(\d+)-$/.exec(new Headers(init.headers).get('range')!)![1]);
-    return new Response(new Uint8Array(bytes.subarray(from)), { status: 206 });
+    const range = /^bytes=(\d+)-(\d+)$/.exec(new Headers(init.headers).get('range')!)!;
+    const [start, stop] = [Number(range[1]), Number(range[2]) + 1];
+    ranges.push({ hash, start, stop });
+    return new Response(new Uint8Array(bytes.subarray(start, stop)), { status: 206 });
   }) as typeof fetch;
   const parse = JSON.parse;
   let parsed = 0;
   JSON.parse = ((...args: Parameters<typeof parse>) => (parsed++, parse(...args))) as typeof parse;
   try {
-    const out = await threads.conversation({ actorId: 'act_op', projectId: 'prj_1' }, 'thr_1');
-    return { out, gets, streamed, parsed };
+    const out = await threads.conversation(
+      { actorId: 'act_op', projectId: 'prj_1' },
+      'thr_1',
+      before,
+    );
+    return { out, gets, ranges, streamed, parsed };
   } finally {
     JSON.parse = parse;
     globalThis.fetch = fetching;
@@ -1302,11 +1364,10 @@ const said = (name: string, count: number): AgentStreamEvent[] =>
     event: { kind: 'text', id: `${name}${index}`, delta: `${name} ${index}`, done: true },
   }));
 
-test('a conversation read leaves live visits to their stream and reads nothing once its room is spent', async (t) => {
+test('a conversation read leaves live visits to their stream and reads nothing once its room is spent', async () => {
   const visit = (id: string, more: object = {}) => ({ id, ...more });
   // A busy live visit takes no room: the ended visits before it are read.
   const busy = await converse(
-    t,
     [
       visit('ses_old', { sha256: 'a' }),
       visit('ses_streamed', { streamed: true }),
@@ -1325,35 +1386,39 @@ test('a conversation read leaves live visits to their stream and reads nothing o
       ['ses_live', 'live', 0],
     ],
   );
-  assert.deepEqual(busy.streamed, ['ses_streamed']);
-  // Once a newer visit spends the room, an older one's stream or transcript is not read.
-  const spent = await converse(
-    t,
-    [
-      visit('ses_oldest', { sha256: 'a' }),
-      visit('ses_older', { streamed: true }),
-      visit('ses_new', { streamed: true }),
-    ],
-    {
-      streams: { ses_older: said('o', 10), ses_new: said('n', 600) },
-      stored: { a: codexTranscript('a', 50) },
-    },
-  );
-  assert.deepEqual(
-    spent.out.visits.map(({ sessionId, from, events }) => [sessionId, from, events.length]),
-    [
-      ['ses_oldest', 'transcript', 0],
-      ['ses_older', 'stream', 0],
-      ['ses_new', 'stream', 500],
-    ],
-  );
-  assert.deepEqual([spent.streamed, spent.gets], [['ses_new'], []]);
+  assert.deepEqual([busy.streamed, busy.out.next], [['ses_streamed'], null]);
+  // Once a newer visit spends the room, an older one's stream or transcript is not read: the
+  // read stops in the newer one, and the next goes on from there.
+  const visits = [
+    visit('ses_oldest', { sha256: 'a' }),
+    visit('ses_older', { streamed: true }),
+    visit('ses_new', { streamed: true }),
+  ];
+  const kept = {
+    streams: { ses_older: said('o', 10), ses_new: said('n', 600) },
+    stored: { a: codexTranscript('a', 50) },
+  };
+  const spent = await converse(visits, kept);
+  const shown = (out: ThreadConversation) =>
+    out.visits.map(({ sessionId, events, truncated }) => [sessionId, events.length, truncated]);
+  assert.deepEqual(shown(spent.out), [
+    ['ses_oldest', 0, undefined],
+    ['ses_older', 0, undefined],
+    ['ses_new', 500, true],
+  ]);
+  assert.deepEqual([spent.streamed, spent.gets, spent.out.next], [['ses_new'], [], 'ses_new:101']);
+  const on = await converse(visits, { ...kept, before: spent.out.next! });
+  assert.deepEqual(shown(on.out), [
+    ['ses_oldest', 50, undefined],
+    ['ses_older', 10, undefined],
+    ['ses_new', 100, undefined],
+  ]);
+  assert.equal(on.out.next, null);
 });
 
-test('a conversation read parses only the newest transcripts, from their end, to 500 events in all', async (t) => {
+test('a conversation read parses only the newest transcripts, from their end, to 500 events in all', async () => {
   const read = async (stored: Record<string, Buffer>) =>
     await converse(
-      t,
       Object.keys(stored).map((hash) => ({ id: `ses_${hash}`, sha256: hash })),
       { stored },
     );
@@ -1367,13 +1432,14 @@ test('a conversation read parses only the newest transcripts, from their end, to
       events.at(-1)?.event.id,
     ]);
 
-  // The newest visit's 20 MB transcript alone fills the read: its end is parsed, nothing older.
+  // The newest visit's 20 MB transcript alone fills the read: one chunk of its end is parsed.
   const large = await read({
     a: transcript('a', 300),
     b: transcript('b', 300),
     c: transcript('c', 60_000, 250),
   });
-  assert.ok(large.gets.length === 1 && large.gets[0] === 'c');
+  assert.deepEqual(large.gets, ['c']);
+  assert.equal(large.ranges.length, 1);
   assert.ok(large.parsed < 15_000, String(large.parsed));
   assert.deepEqual(ids(large.out), [
     ['ses_a', 'transcript', 0, undefined, undefined],
@@ -1402,30 +1468,121 @@ test('a conversation read parses only the newest transcripts, from their end, to
   ]);
 });
 
-test('a transcript whose end holds few events is read to 16 MB at most, and its visit says it was cut', async (t) => {
-  // Lines no reader takes, 40 MB of them, then three answers.
-  const noise = `${JSON.stringify({ type: 'noise', pad: 'x'.repeat(1000) })}\n`;
+test('read on from where each read stopped, a conversation is read whole, each byte downloaded once a read', async () => {
+  // A Codex transcript of 1,500 padded answers (3 MB), a kept stream of 700 events, and a Claude
+  // transcript whose last message was cut off mid-stream, its pieces filling more than a chunk.
+  const a = codexTranscript('a', 1_500, 2_000);
+  const c = Buffer.from(
+    [
+      ...Array.from({ length: 100 }, (_, index) => ({
+        type: 'assistant',
+        message: {
+          id: `w${index}`,
+          content: [{ type: 'text', text: `${index} ${'z'.repeat(3_000)}` }],
+        },
+      })),
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'cut' } } },
+      {
+        type: 'stream_event',
+        event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+      },
+      ...Array.from({ length: 600 }, (_, index) => ({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: `${index} ${'y'.repeat(2_000)}` },
+        },
+      })),
+    ]
+      .map((line) => `${JSON.stringify(line)}\n`)
+      .join(''),
+  );
+  const visits = [
+    { id: 'ses_a', sha256: 'a' },
+    { id: 'ses_b', streamed: true },
+    { id: 'ses_c', sha256: 'c' },
+    { id: 'ses_live', status: 'active', streamed: true },
+  ];
+  const kept = { streams: { ses_b: said('b', 700) }, stored: { a, c } };
+  const held: Record<string, AgentStreamEvent[]> = {};
+  let before: string | undefined;
+  let reads = 0;
+  do {
+    assert.ok(++reads <= 20, 'the reads come to an end');
+    const { out, ranges } = await converse(visits, { ...kept, before });
+    // Each read downloads a room's worth at most, in at most 8 GETs, and no byte of it twice.
+    const bytes = ranges.reduce((sum, { start, stop }) => sum + stop - start, 0);
+    assert.ok(ranges.length <= 8 && bytes <= 2_000_000, `${ranges.length} GETs, ${bytes} bytes`);
+    for (const [index, { hash, start, stop }] of ranges.entries())
+      assert.ok(
+        ranges.slice(0, index).every((o) => o.hash !== hash || o.stop <= start || stop <= o.start),
+        `${hash} [${start}, ${stop}) downloaded twice`,
+      );
+    for (const visit of out.visits) (held[visit.sessionId] ??= []).push(...visit.events);
+    before = out.next ?? undefined;
+  } while (before);
+  assert.ok(reads > 3, `${reads} reads`);
+  /** What one pass over a whole transcript says: each line named by where it starts. */
+  const whole = (bytes: Buffer) => {
+    const readers = [claudeEvents(), codexEvents()];
+    let offset = 0;
+    return bytes
+      .toString('utf8')
+      .split('\n')
+      .flatMap((text) => {
+        const line = offset;
+        offset += Buffer.byteLength(text) + 1;
+        return readers
+          .flatMap((read) => read(text, line))
+          .map((event, index) => ({
+            seq: line + index + 1,
+            at: '2026-10-06T00:00:00.000Z',
+            event,
+          }));
+      });
+  };
+  const sorted = (events: AgentStreamEvent[] = []) => [...events].sort((x, y) => x.seq - y.seq);
+  assert.deepEqual(sorted(held.ses_a), whole(a));
+  assert.deepEqual(sorted(held.ses_b), kept.streams.ses_b);
+  assert.deepEqual(sorted(held.ses_c), whole(c));
+  assert.deepEqual(held.ses_live, []);
+});
+
+test('a line longer than any read downloads is passed over, and the reads still reach the start', async () => {
   const bytes = Buffer.concat([
-    Buffer.from(noise.repeat(Math.ceil(40_000_000 / noise.length))),
-    codexTranscript('a', 3),
+    codexTranscript('a', 1),
+    Buffer.from(`${JSON.stringify({ type: 'noise', pad: 'x'.repeat(2_500_000) })}\n`),
+    codexTranscript('b', 1),
   ]);
-  const starts: number[] = [];
-  const read = await transcriptEvents(
-    async (start) => (starts.push(start), bytes.subarray(start)),
-    bytes.length,
-    '2026-10-06T00:00:00.000Z',
-  );
-  assert.deepEqual(
-    read.events.map((item) => item.event),
-    said('a', 3).map((item) => item.event),
-  );
-  assert.equal(read.truncated, true);
-  assert.ok(Math.min(...starts) >= bytes.length - 16_000_001, String(starts));
-  const { out } = await converse(t, [{ id: 'ses_big', sha256: 'big' }], { stored: { big: bytes } });
-  assert.deepEqual(
-    out.visits.map(({ from, events, truncated }) => [from, events.length, truncated]),
-    [['transcript', 3, true]],
-  );
+  const read = async (end: number) => {
+    const out = await transcriptEvents(
+      async (start, stop) => bytes.subarray(start, stop),
+      end,
+      'at',
+    );
+    return [out.events.map(({ event }) => event.id), out.rest] as const;
+  };
+  const [first, stopped] = await read(bytes.length);
+  assert.deepEqual(first, ['b0']);
+  // The next read finds no line start in all it may download, and goes on before it.
+  const passed = stopped! - 2_000_000;
+  assert.deepEqual(await read(stopped!), [[], passed]);
+  assert.deepEqual(await read(passed), [['a0'], undefined]);
+});
+
+test('a stored transcript’s long text is cut a whole character at a time', async () => {
+  const text = `${'x'.repeat(AGENT_EVENT_TEXT - 1)}😀more`;
+  const item = { type: 'item.completed', item: { id: 'a', type: 'agent_message', text } };
+  const bytes = Buffer.from(`${JSON.stringify(item)}\n`);
+  const read = await transcriptEvents(async (start) => bytes.subarray(start), bytes.length, 'at');
+  assert.deepEqual(read.events[0]!.event, {
+    kind: 'text',
+    id: 'a',
+    delta: 'x'.repeat(AGENT_EVENT_TEXT - 1),
+    done: true,
+    cut: 6,
+  });
 });
 
 test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {

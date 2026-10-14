@@ -224,18 +224,25 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   ]);
   const sent = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Start T at the global mean before k additions.',
       requestId: 'correction-1',
     })
   ).value as any;
   assert.equal(sent.acknowledgedAt, null);
   assert.equal(sent.instanceId, f.instance.id);
-  // A session addresses its thread: the one message address.
-  assert.equal(sent.threadId, issued.session.threadId);
+  // The thread is the one message address: a session no longer addresses one.
+  await assert.rejects(
+    f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'By session',
+      requestId: 'by-session',
+    }),
+    { code: 'invalid_input' },
+  );
   const retry = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Start T at the global mean before k additions.',
       requestId: 'correction-1',
     })
@@ -243,7 +250,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.equal(retry.id, sent.id);
   await assert.rejects(
     f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Different instruction',
       requestId: 'correction-1',
     }),
@@ -298,7 +305,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.deepEqual(await takes(), [false]);
   await assert.rejects(
     f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Too late',
       requestId: 'correction-late',
     }),
@@ -337,7 +344,7 @@ test('a message queued after tool admission fences the transaction that submits 
   await inHandler;
   const sent = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Correction arrived after admission.',
       requestId: 'race-1',
     })
@@ -372,7 +379,7 @@ test('only a writer in the project can send, and only the addressed worker can a
   const readerCaller = { actorId: reader.actor.id, projectId: f.source.projectId };
   const outsiderCaller = { actorId: outsider.actor.id, projectId: outsider.project.id };
   const message = {
-    sessionId: issued.session.id,
+    threadId: issued.session.threadId,
     body: 'Bounded instruction',
     requestId: 'auth-1',
   };
@@ -380,7 +387,7 @@ test('only a writer in the project can send, and only the addressed worker can a
     code: 'forbidden',
   });
   await assert.rejects(f.app.ctx.sessions.messaging.message(outsiderCaller, message), {
-    code: 'session_not_found',
+    code: 'thread_not_found',
   });
   await assert.rejects(
     f.app.ctx.sessions.messaging.message(
@@ -464,7 +471,7 @@ test('a read-only reviewer can acknowledge a message before its verdict write', 
   const client = await f.connect(issued.secret);
   const sent = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
-      sessionId: issued.session.id,
+      threadId: issued.session.threadId,
       body: 'Check the paper-specific initialization.',
       requestId: 'review-note',
     })
@@ -642,6 +649,20 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
   await assert.rejects(selected.listTools({ _meta: { 'merv/projectId': 'foreign' } }));
 });
 
+test('GET /sessions lists the source’s live sessions, not those that ended', async (t) => {
+  const f = await fixture(t);
+  const ended = await f.offer();
+  await f.app.ctx.sessions.release(f.source, { sessionId: ended.session.id, runnerId: 'runner' });
+  const live = await f.offer();
+  const { body } = await f.http('/sessions');
+  assert.deepEqual(
+    body.sessions.map((session: Session) => [session.id, session.status]),
+    [[live.session.id, 'offered']],
+  );
+  // An ended session is still read by its id.
+  assert.equal((await f.http(`/sessions/${ended.session.id}`)).body.session.status, 'released');
+});
+
 test('a session tool call admits its lease a fixed number of times', async (t) => {
   const f = await fixture(t);
   f.app.ctx.tools.register({
@@ -670,9 +691,10 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
     leaseChecks.mock.resetCalls();
     const result = await client.callTool({ name, arguments: {} });
     assert.equal(result.isError, undefined, JSON.stringify(result));
+    // The owner's decision (2026-10-14): the request's authentication checks the session, and
+    // leaves its lease to this one check.
+    assert.equal(leaseChecks.mock.callCount(), admissions(), name);
     assert.equal(admissions(), 1, name);
-    // With the request's authentication, which checks the session's lease as it names it.
-    assert.equal(leaseChecks.mock.callCount(), 2, name);
   }
   await client.listTools();
   assert.equal(described.mock.calls.filter((call) => !call.arguments[1]).length, 0);

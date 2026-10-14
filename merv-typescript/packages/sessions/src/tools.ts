@@ -124,11 +124,10 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A sessionId is still taken for now and addresses that session's thread. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
-            sessionId: z.string().min(1).max(200).optional(),
-            threadId: z.string().min(1).max(200).optional(),
+            threadId: z.string().min(1).max(200),
             body: z.string().min(1).max(8000),
             requestId: z.string().min(1).max(200),
           })

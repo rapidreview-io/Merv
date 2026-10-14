@@ -151,8 +151,19 @@ const said = (id: string, text: string) => ({
 
 /** The sidebars the page was asked to open, by key. */
 const opened: string[] = [];
+/** Sessions' ThreadConversation of thr_run: each visit says where its events came from. */
+const kept = {
+  threadId: 'thr_run',
+  visits: [
+    said('ses_r1', 'First pass.'),
+    { sessionId: 'ses_r2', from: 'none', events: [] },
+    { sessionId: 'ses_r3', from: 'none', events: [] },
+    said('ses_r4', 'Picked it up again.'),
+  ],
+  next: null,
+};
 /** The card as the Work page's sidebar draws it, for a reader of this role. */
-async function open(role: string, list: unknown[] = threads) {
+async function open(role: string, list: unknown[] = threads, conversation: unknown = kept) {
   opened.length = 0;
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
@@ -162,18 +173,7 @@ async function open(role: string, list: unknown[] = threads) {
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
   serve('/sessions/threads?instanceId=wf_1', { body: { threads: list } });
-  // Sessions' ThreadConversation: each visit says where its events came from.
-  serve('/sessions/threads/thr_run/conversation', {
-    body: {
-      threadId: 'thr_run',
-      visits: [
-        said('ses_r1', 'First pass.'),
-        { sessionId: 'ses_r2', from: 'none', events: [] },
-        { sessionId: 'ses_r3', from: 'none', events: [] },
-        said('ses_r4', 'Picked it up again.'),
-      ],
-    },
-  });
+  serve('/sessions/threads/thr_run/conversation', { body: conversation });
   await mount(
     createElement(
       MemoryRouter,
@@ -357,6 +357,38 @@ test('an operator reads one timeline, each visit a divider where it began', asyn
   assert.match(rows[3]!, /^Launch failed/);
   assert.match(rows[4]!, /^Visit 3 · resumed.*submitted/);
   assert.ok(!dialogText().includes('mac-studio'));
+});
+
+test('an operator’s timeline reads what Sessions kept a part at a time, until it holds it all', async (t) => {
+  t.after(unmount);
+  const text = (seq: number, delta: string) => ({
+    seq,
+    at: at(2),
+    event: { kind: 'text', id: `t${seq}`, delta, done: true },
+  });
+  const part = (first: unknown[], last: unknown[], next: string | null) => ({
+    ...kept,
+    visits: kept.visits.map((visit, index) =>
+      index === 0 ? { ...visit, events: first } : index === 3 ? { ...visit, events: last } : visit,
+    ),
+    next,
+  });
+  const path = '/sessions/threads/thr_run/conversation';
+  serve(`${path}?before=ses_r4%3A40`, {
+    body: part([text(9, 'Read the plan.')], [text(20, 'Picked it up again.')], 'ses_r1:9'),
+  });
+  serve(`${path}?before=ses_r1%3A9`, { body: part([text(1, 'First pass.')], [], null) });
+  await open('operator', threads, part([], [text(40, 'Done.')], 'ses_r4:40'));
+  await press(chip('running'));
+  await settle(20);
+  assert.deepEqual(
+    requests.filter((request) => request.includes('/conversation')),
+    [path, `${path}?before=ses_r4%3A40`, `${path}?before=ses_r1%3A9`].map((url) => `GET ${url}`),
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('.agent-text')].map((item) => item.textContent),
+    ['First pass.', 'Read the plan.', 'Picked it up again.', 'Done.'],
+  );
 });
 
 test('anyone else reads the visits’ dividers alone, and never asks for the conversation', async (t) => {

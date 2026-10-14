@@ -507,8 +507,17 @@ test('retiring the versions that can no longer start deletes their records and n
             // sessions@13 gives each session its actor's thread, these sessions having no agent.
             const added = {
               // sessions@13 threads every session; sessions@18 makes each a work visit, and
-              // sessions@19 each usage row a work visit's.
-              worker_sessions: { thread_id: `thr_${String(row.actor_id)}`, kind: 'work' },
+              // sessions@19 each usage row a work visit's. sessions@23 generates columns from
+              // each packet, here empty.
+              worker_sessions: {
+                thread_id: `thr_${String(row.actor_id)}`,
+                kind: 'work',
+                ...Object.fromEntries(
+                  'role label outcome host_ref workflow closed_at work_name created_at expires_at activated_at close_reason hard_deadline deferral_cause resume_harness workspace_mode'
+                    .split(' ')
+                    .map((column) => [column, null]),
+                ),
+              },
               session_usage: { kind: 'work' },
               reflections: { abandoned: null },
               wf_blockers: { cause: null, whose: null, revision: null },

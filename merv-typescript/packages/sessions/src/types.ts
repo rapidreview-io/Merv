@@ -264,13 +264,9 @@ export interface SessionTranscript {
   /** On a delivery with nothing stored: the store's signed PUT (1 h, exact size, x-amz-checksum-sha256, If-None-Match:*). */
   upload?: { url: string; headers: Record<string, string>; expiresAt: string };
 }
-/**
- * A message to a thread (`threadId`). For one release a `sessionId` addresses that session's
- * thread instead; exactly one of them.
- */
+/** A message to a thread. */
 export interface SessionMessageInput {
-  sessionId?: string;
-  threadId?: string;
+  threadId: string;
   body: string;
   requestId: string;
 }
@@ -392,8 +388,9 @@ export interface Sessions {
     project(caller: Caller, before?: string): Promise<ProjectThreads>;
     /** How many of the project's threads are live and how many ask their owner. */
     counts(caller: Caller): Promise<ThreadCounts>;
-    /** An operator's read of what the thread's agent did, visit by visit. */
-    conversation(caller: Caller, threadId: string): Promise<ThreadConversation>;
+    /** An operator's read of what the thread's agent did, visit by visit, a bounded part at a
+     *  time: from the end, or on from where the read that returned `before` stopped. */
+    conversation(caller: Caller, threadId: string, before?: string): Promise<ThreadConversation>;
   };
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
@@ -431,7 +428,8 @@ export interface Sessions {
     instanceId: string,
   ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }>;
   offer(caller: Caller, input: SessionOffer): Promise<WorkSession>;
-  list(caller: Caller): Promise<Session[]>;
+  /** The caller's sessions, or with `liveOnly` those still holding their lease (`GET /sessions`). */
+  list(caller: Caller, liveOnly?: boolean): Promise<Session[]>;
   get(caller: Caller, sessionId: string): Promise<Session>;
   /** The session's control fields alone, read without its lease check: the sweep records a
    *  closure, and this read reports it. */

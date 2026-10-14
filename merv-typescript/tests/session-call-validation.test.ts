@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, State, Transaction } from '@merv/contracts';
 import type { TaskCheckpointInput } from '@merv/tasks/types';
 import { createApp } from './fixtures/app.js';
@@ -12,7 +14,8 @@ import { currentTask, currentWork } from './fixtures/current-work.js';
 // The owner's decision (2026-10-07): a leased worker's lease is validated once per worker call,
 // at its start, by Workflows' lease authority and Sessions' session check. The call carries
 // what was validated; only a write re-checks, cheaply and in its own transaction, that the
-// lease was neither released nor moved before it commits.
+// lease was neither released nor moved before it commits. And (2026-10-14) an MCP request's
+// authentication checks the session but leaves its lease to that one check.
 
 /** The SQL text of every statement `run` issues itself, in order. */
 function recorder(state: State) {
@@ -92,8 +95,62 @@ async function fixture(t: TestContext) {
       ).length,
     };
   };
-  return { app, operator, task, lease, work, calls };
+  return { app, operator, task, lease, work, calls, checks };
 }
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+/** The worker's MCP client, over HTTP with its session's bearer. */
+async function mcp(t: TestContext, f: Fixture, token: string) {
+  const client = new Client({ name: 'call-validation', version: '1' });
+  t.after(() => client.close());
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${f.app.ctx.api.url}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    }),
+  );
+  return client;
+}
+
+/** How a lease ends under its worker, and the refusal that brings its next call: prepared in
+ *  process (no authentication), and over MCP, where `transport` is its authentication's. */
+const ends: [string, (f: Fixture, lease: Fixture['lease']) => Promise<unknown>, string, string][] =
+  [
+    [
+      'its session was released',
+      (f, lease) =>
+        f.app.ctx.sessions.release(lease.source, {
+          sessionId: lease.session.id,
+          runnerId: lease.control.runnerId,
+        }),
+      'session_closed',
+      'transport',
+    ],
+    [
+      'its lease row was released',
+      (f, lease) =>
+        f.app.ctx.state.transaction((tx) =>
+          tx.run(
+            'UPDATE wf_leases SET released_at=? WHERE id=?',
+            new Date().toISOString(),
+            lease.session.id,
+          ),
+        ),
+      'stale_lease',
+      'stale_lease',
+    ],
+    [
+      'it expired',
+      (f, lease) =>
+        f.app.ctx.state.transaction((tx) =>
+          tx.run(
+            `UPDATE worker_sessions SET session_json=(session_json::jsonb || '{"expiresAt":"2000-01-01T00:00:00.000Z"}'::jsonb)::text WHERE id=?`,
+            lease.session.id,
+          ),
+        ),
+      'session_closed',
+      'transport',
+    ],
+  ];
 
 test('a leased worker’s read validates its lease once, at the start of the call', async (t) => {
   const { task, calls } = await fixture(t);
@@ -118,28 +175,51 @@ test('a leased worker’s write validates its lease once, and re-checks it once 
   assert.ok(write.statements <= 55, JSON.stringify(write));
 });
 
-for (const [name, end] of [
-  [
-    'its session was released',
-    async (f: Awaited<ReturnType<typeof fixture>>) =>
-      await f.app.ctx.sessions.release(f.lease.source, {
-        sessionId: f.lease.session.id,
-        runnerId: f.lease.control.runnerId,
+test('a leased worker’s MCP call checks its lease once: its preparation’s, not its authentication’s', async (t) => {
+  const f = await fixture(t);
+  const client = await mcp(t, f, f.lease.token);
+  for (const [name, args] of [
+    ['artifact.read', { artifactId: f.task.briefId }],
+    ['task.checkpoint', { notes: 'Over MCP.', requestId: 'mcp' }],
+  ] as const) {
+    f.checks.mock.resetCalls();
+    const result = await client.callTool({ name, arguments: args });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(f.checks.mock.callCount(), 1, name);
+  }
+});
+
+for (const [name, end, inProcess, overMcp] of ends)
+  test(`a leased worker’s next call is refused when ${name}, in process and over MCP`, async (t) => {
+    const f = await fixture(t);
+    const other = await f.work.lease(
+      await currentTask(f.app.ctx, f.operator, {
+        title: 'Refuse the call',
+        goal: 'Refuse a call whose lease ended.',
+        checks: ['The call is refused.'],
+        requestId: 'other',
       }),
-  ],
-  [
-    'its lease row was released',
-    async (f: Awaited<ReturnType<typeof fixture>>) =>
-      await f.app.ctx.state.transaction(
-        async (tx) =>
-          await tx.run(
-            'UPDATE wf_leases SET released_at=? WHERE id=?',
-            new Date().toISOString(),
-            f.lease.session.id,
-          ),
-      ),
-  ],
-] as const)
+    );
+    const client = await mcp(t, f, other.token);
+    for (const lease of [f.lease, other]) await end(f, lease);
+    const input = { artifactId: f.task.briefId };
+    await assert.rejects(f.app.ctx.tools.invoke('artifact.read', f.lease.worker, input), {
+      code: inProcess,
+    });
+    const refusal = () =>
+      client.callTool({ name: 'artifact.read', arguments: input }).then(
+        (result) =>
+          result.isError
+            ? JSON.parse((result.content as { text: string }[])[0]!.text).error.code
+            : 'admitted',
+        () => 'transport',
+      );
+    assert.equal(await refusal(), overMcp);
+    // Whichever check refused it recorded the closure: the next request's authentication refuses.
+    assert.equal(await refusal(), 'transport');
+  });
+
+for (const [name, end] of ends)
   test(`a write validated at the call’s start is refused when ${name} before it commits`, async (t) => {
     const f = await fixture(t);
     const { sessions, tasks } = f.app.ctx;
@@ -149,7 +229,7 @@ for (const [name, end] of [
     });
     await assert.rejects(
       sessions.invocations.run(invocation, async (caller, input) => {
-        await end(f);
+        await end(f, f.lease);
         const head = await f.app.ctx.state.eventHead();
         await assert.rejects(
           tasks.checkpoint(caller, input as unknown as TaskCheckpointInput),
@@ -173,14 +253,7 @@ test('a write gated by a read decision is refused when its lease row was release
   });
   await assert.rejects(
     sessions.invocations.run(invocation, async (caller) => {
-      await f.app.ctx.state.transaction(
-        async (tx) =>
-          await tx.run(
-            'UPDATE wf_leases SET released_at=? WHERE id=?',
-            new Date().toISOString(),
-            f.lease.session.id,
-          ),
-      );
+      await ends[1]![1](f, f.lease); // Its lease row released.
       const head = await f.app.ctx.state.eventHead();
       await assert.rejects(
         sessions.messaging.ask(caller, { question: 'Asked after the lease ended?' }),

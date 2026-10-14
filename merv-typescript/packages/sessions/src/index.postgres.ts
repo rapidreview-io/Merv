@@ -790,4 +790,25 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   );
   CREATE INDEX session_question_responses_due ON session_question_responses(check_at)
     WHERE state='investigating';`,
+  // (unpublished) The scalars of a session's JSON that polls read, kept beside it as it is
+  // written, so a poll never detoasts a packet. Times stay ISO text, compared as text as before.
+  // Rewrites the table. Read-only prod check first, which must count 0 (jsonb refuses the row):
+  //   SELECT count(*) FROM worker_sessions WHERE NOT pg_input_is_valid(session_json, 'jsonb');
+  23: String.raw`ALTER TABLE worker_sessions
+  ADD COLUMN role TEXT GENERATED ALWAYS AS (session_json::jsonb->>'role') STORED,
+  ADD COLUMN host_ref TEXT GENERATED ALWAYS AS (session_json::jsonb->>'hostRef') STORED,
+  ADD COLUMN created_at TEXT GENERATED ALWAYS AS (session_json::jsonb->>'createdAt') STORED,
+  ADD COLUMN activated_at TEXT GENERATED ALWAYS AS (session_json::jsonb->>'activatedAt') STORED,
+  ADD COLUMN expires_at TEXT GENERATED ALWAYS AS (session_json::jsonb->>'expiresAt') STORED,
+  ADD COLUMN hard_deadline TEXT GENERATED ALWAYS AS (session_json::jsonb->>'hardDeadline') STORED,
+  ADD COLUMN closed_at TEXT GENERATED ALWAYS AS (session_json::jsonb->>'closedAt') STORED,
+  ADD COLUMN close_reason TEXT GENERATED ALWAYS AS (session_json::jsonb->>'closeReason') STORED,
+  ADD COLUMN outcome TEXT GENERATED ALWAYS AS (session_json::jsonb->>'outcome') STORED,
+  ADD COLUMN deferral_cause TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{deferral,cause}') STORED,
+  ADD COLUMN label TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{assignment,label}') STORED,
+  ADD COLUMN work_name TEXT GENERATED ALWAYS AS (COALESCE(session_json::jsonb#>>'{assignment,name}',
+    regexp_replace(session_json::jsonb#>>'{assignment,label}','^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+',''))) STORED,
+  ADD COLUMN workflow TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,workflow}') STORED,
+  ADD COLUMN workspace_mode TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,policy,workspace,mode}') STORED,
+  ADD COLUMN resume_harness TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{continuity,resume,harness}') STORED;`,
 };

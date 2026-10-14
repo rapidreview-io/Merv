@@ -30,7 +30,7 @@ import { QUESTION_PROVIDER } from './messages.js';
 import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
-import { ordinary as unmanaged, text, workNameOf } from './common.js';
+import { ordinary as unmanaged, text } from './common.js';
 import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
 import { live, platformPhrase } from './rules.js';
 import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
@@ -65,13 +65,11 @@ const VERBS: Record<SessionRole, RunningVerb> = {
 };
 const machineWho = 'An operator checks the machine or halts the lease';
 
-/** The lease fields a face reads, each row's JSON parsed once rather than once per field. */
-const LEASE = `s.id,s.instance_id,s.status,s.owner_hash,s.runner_id,x.j #>> '{role}' AS role,
-  ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,
-  x.j #>> '{createdAt}' AS created_at,x.j #>> '{activatedAt}' AS activated_at,
-  x.j #>> '{expiresAt}' AS expires_at,x.j #>> '{hardDeadline}' AS hard_deadline,
+/** The lease fields a face reads, from the columns kept beside its JSON (sessions@23). */
+const LEASE = `s.id,s.instance_id,s.status,s.owner_hash,s.runner_id,s.role,s.work_name AS name,s.workflow,
+  s.created_at,s.activated_at,s.expires_at,s.hard_deadline,
   d.platform_json,r.id AS runner_ref,r.presence_json,r.source_json,r.last_seen_at,m.allocation_id`;
-const FROM = `FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
+const FROM = `FROM worker_sessions s
   LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
   LEFT JOIN session_runners r ON r.owner_hash=s.owner_hash AND r.runner_id=s.runner_id
   LEFT JOIN LATERAL (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=s.id
@@ -597,11 +595,8 @@ export class SessionRunning {
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
     return await this.read(caller, async (tx, operator) => {
       const row = await tx.get<PanelRow>(
-        `SELECT ${LEASE},x.j #>> '{closedAt}' AS closed_at,
-          x.j #>> '{closeReason}' AS close_reason,x.j #>> '{outcome}' AS outcome,
-          x.j #>> '{deferral,cause}' AS deferral,
-          x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,
-          CASE WHEN CAST(? AS INTEGER)=1 THEN LEFT(x.j #>> '{assignment,brief}',${briefCap + 1}) END AS brief,
+        `SELECT ${LEASE},s.closed_at,s.close_reason,s.outcome,s.deferral_cause AS deferral,s.workspace_mode,
+          CASE WHEN CAST(? AS INTEGER)=1 THEN LEFT(s.session_json::jsonb #>> '{assignment,brief}',${briefCap + 1}) END AS brief,
           w.attachment_json,w.result_json
           ${FROM} LEFT JOIN session_workspaces w ON w.session_id=s.id WHERE s.id=? AND s.project_id=?`,
         operator ? 1 : 0,
@@ -758,8 +753,7 @@ export class SessionRunning {
             rows.push({ label: 'Platform', value: [platformPhrase(lease.platform)] });
           if (leased) {
             const on = await tx.all<{ id: string; name: string; role: SessionRole }>(
-              `SELECT s.id,${workNameOf('x.j')} AS name,x.j #>> '{role}' AS role
-                FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
+              `SELECT s.id,s.work_name AS name,s.role FROM worker_sessions s
                 WHERE s.project_id=? AND s.owner_hash=? AND s.runner_id=? AND s.status IN ('offered','active') ORDER BY s._merv_rowid`,
               caller.projectId,
               row.owner_hash,

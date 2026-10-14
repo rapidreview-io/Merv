@@ -12,9 +12,9 @@ import type {
 } from './types.js';
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
-import { HOLD_PROVIDER, isoNow, targetKey, workNameOf } from './common.js';
+import { HOLD_PROVIDER, isoNow, targetKey } from './common.js';
 import { leaseLiveness } from './liveness.js';
-import type { DispatchContext, HoldRow, SessionDispatch, SessionRow } from './dispatch.js';
+import type { DispatchContext, HoldRow, SessionDispatch } from './dispatch.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
 
 // Why admitted work does not move: one reading of dispatch, worded as session.stuck, the
@@ -313,8 +313,8 @@ async function attention(
   for (const session of await tx.all<
     Pick<Session, 'id' | 'instanceId' | 'expectedRevision' | 'activatedAt'> & { label: string }
   >(
-    `SELECT s.id,s.instance_id AS "instanceId",s.revision AS "expectedRevision",x.j #>> '{activatedAt}' AS "activatedAt",x.j #>> '{assignment,label}' AS label
-      FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x WHERE s.project_id=? AND s.status='active'`,
+    `SELECT s.id,s.instance_id AS "instanceId",s.revision AS "expectedRevision",s.activated_at AS "activatedAt",s.label
+      FROM worker_sessions s WHERE s.project_id=? AND s.status='active'`,
     caller.projectId,
   )) {
     const since = lastActivity(session, activity.get(session.id));
@@ -492,69 +492,49 @@ export async function projectStatus(
     const now = ctx.clock();
     const sessions: SessionSummary[] = (
       await tx.all<
-        SessionRow & {
-          label: string;
-          name: string;
+        Omit<
+          SessionSummary,
+          'workflow' | 'platform' | 'liveness' | 'lastActivityAt' | 'quietSince'
+        > & {
           workflow: string | null;
-          workspace_mode: SessionSummary['workspaceMode'] | null;
-          runner_ref: string | null;
-          runner_id: string;
+          hardDeadline: string;
           platform_json: string | null;
           attachment_json: string | null;
           result_json: string | null;
         }
       >(
-        // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
-        // parsed once, in SQL, and sent without its assignment, execution, lease and source.
-        `SELECT s.id,s.thread_id,s.runner_id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
-          ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
+        // The newest 200, live first, chosen before anything is joined to them, from the columns
+        // kept beside each one's JSON (sessions@23): a frozen assignment can be half a megabyte.
+        `SELECT s.id,s.thread_id AS "threadId",s.actor_id AS "actorId",s.instance_id AS "instanceId",s.workflow,
+          s.revision AS "expectedRevision",s.role,s.status,s.label,s.work_name AS name,d.runner_ref AS "runnerRef",
+          s.runner_id AS "runnerId",s.host_ref AS "hostRef",s.created_at AS "createdAt",s.activated_at AS "activatedAt",
+          s.expires_at AS "expiresAt",s.hard_deadline AS "hardDeadline",s.closed_at AS "closedAt",s.close_reason AS "closeReason",
+          s.outcome,COALESCE(s.workspace_mode,'none') AS "workspaceMode",d.platform_json,w.attachment_json,w.result_json
           FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
-          CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
-          LEFT JOIN session_workspaces w ON w.session_id=s.id ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC`,
+          LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id LEFT JOIN session_workspaces w ON w.session_id=s.id
+          ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC`,
         caller.projectId,
       )
-    ).map((row) => {
-      const session: Omit<Session, 'assignment' | 'execution'> = JSON.parse(row.session_json);
+    ).map(({ workflow, hardDeadline, platform_json, attachment_json, result_json, ...row }) => {
       const lastActivityAt =
-        session.status === 'active' ? lastActivity(session, activity.get(session.id)) : null;
+        row.status === 'active' ? lastActivity(row, activity.get(row.id)) : null;
       // Quiet from the moment the idle clock passed its notice; nothing is stored for it.
       const quietAt = lastActivityAt
         ? Date.parse(lastActivityAt) + ctx.thresholds.idleNoticeSeconds * 1000
         : Infinity;
-      const quietSince = quietAt <= now ? new Date(quietAt).toISOString() : null;
       return {
-        id: session.id,
-        threadId: row.thread_id,
-        actorId: session.actorId,
-        instanceId: session.instanceId,
-        ...(row.workflow ? { workflow: row.workflow } : {}),
-        expectedRevision: session.expectedRevision,
-        role: session.role,
-        status: session.status,
-        label: row.label,
-        name: row.name,
-        runnerRef: row.runner_ref,
-        runnerId: row.runner_id,
-        hostRef: session.hostRef,
-        platform: row.platform_json ? JSON.parse(row.platform_json) : null,
-        createdAt: session.createdAt,
-        activatedAt: session.activatedAt,
-        expiresAt: session.expiresAt,
-        closedAt: session.closedAt,
-        closeReason: session.closeReason,
-        outcome: session.outcome ?? null,
-        liveness: leaseLiveness(session, now),
+        ...row,
+        ...(workflow ? { workflow } : {}),
+        platform: platform_json ? JSON.parse(platform_json) : null,
+        liveness: leaseLiveness({ ...row, hardDeadline }, now),
         lastActivityAt,
-        quietSince,
-        workspaceMode: row.workspace_mode ?? 'none',
-        ...(row.attachment_json === null
-          ? {}
-          : {
-              workspace: {
-                attachment: JSON.parse(row.attachment_json),
-                result: row.result_json === null ? null : JSON.parse(row.result_json),
-              },
-            }),
+        quietSince: quietAt <= now ? new Date(quietAt).toISOString() : null,
+        ...(attachment_json !== null && {
+          workspace: {
+            attachment: JSON.parse(attachment_json),
+            result: result_json === null ? null : JSON.parse(result_json),
+          },
+        }),
       };
     });
     const counts = (await tx.get<{ live: number; total: number }>(

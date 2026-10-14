@@ -612,7 +612,8 @@ test('one project feed carries every live visit’s newest events, then what eac
     ...b.control,
     from: 0,
     to: 10,
-    events: [text('n1', 'Reading.')],
+    // Joined, the block's end is cut between the halves of its pair.
+    events: [text('n1', '😀'), text('n1', 'z'.repeat(1199))],
   });
 
   const page = f.events('/sessions/live', f.token);
@@ -649,6 +650,10 @@ test('one project feed carries every live visit’s newest events, then what eac
   );
   assert.ok(sentA.events[1].event.input.length <= 400);
   assert.ok(sentA.events[2].event.output.length <= 200);
+  const sentB = snapshot!.data.visits.find(
+    (visit: { sessionId: string }) => visit.sessionId === b.session.id,
+  );
+  assert.equal(sentB.events[0].event.delta, 'z'.repeat(1199), 'cut a whole character at a time');
 
   // What one visit says next reaches the same connection, for that visit alone.
   await f.ok('POST', `/sessions/${b.session.id}/stream`, f.token, {
@@ -667,7 +672,7 @@ test('one project feed carries every live visit’s newest events, then what eac
         visit.events.map((item) => item.seq),
       ],
     ),
-    [[b.session.id, false, [2]]],
+    [[b.session.id, false, [3]]],
   );
   page.close();
 

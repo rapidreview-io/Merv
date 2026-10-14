@@ -9,6 +9,7 @@ import {
   type Transaction,
   visible,
 } from '@merv/contracts';
+import type { Session } from './types.js';
 
 /** The provider Sessions reports dispatch holds as, beside any other opinion of its own. */
 export const HOLD_PROVIDER = 'session-dispatch';
@@ -19,6 +20,14 @@ export { live } from './rules.js';
 export const text = (value: unknown, max = 200) =>
   typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+/** A stored visit's row, as far as it is read back whole. */
+export type Stored = { thread_id: string; session_json: string };
+/** A stored visit; a work visit stored before 2026-10-07 names no kind in its JSON. */
+export const decoded = (row: Stored): Session => ({
+  kind: 'work',
+  ...JSON.parse(row.session_json),
+  threadId: row.thread_id,
+});
 /** Managed runners use only their bound controls, never an ordinary Sessions entry point. */
 export function ordinary(caller: Caller): void {
   check(
@@ -105,11 +114,9 @@ export const safeCount =
 
 /** What a lease label begins with for the agent: `Work: `, `Review: ` or a recipe's dotted name. */
 const PURPOSE = String.raw`^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+`;
-/** In SQL, the name a person reads for the work of session JSON `j`: its record's own, or the
- * label of a lease offered before owners gave one. */
-export const workNameOf = (j: string) =>
-  `COALESCE(${j} #>> '{assignment,name}',regexp_replace(${j} #>> '{assignment,label}','${PURPOSE}',''))`;
-/** The same name, read from a session's assignment (an inquiry visit names the step it asks of). */
+/** The name a person reads for a session's work (an inquiry visit names the step it asks of):
+ *  its record's own, or the label of a lease offered before owners gave one. In SQL it is the
+ *  `work_name` column (sessions@23). */
 export const workName = ({ name, label }: { name?: string; label: string }) =>
   name ?? label.replace(new RegExp(PURPOSE), '');
 export const targetKey = (item: { instanceId: string; expectedRevision: number }) =>

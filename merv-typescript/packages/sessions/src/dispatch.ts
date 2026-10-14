@@ -36,6 +36,8 @@ import type { AgentObservations } from './observations.js';
 import {
   HOLD_PROVIDER,
   MODEL_BUDGET_PROVIDER,
+  decoded,
+  type Stored,
   isoNow,
   liveTargets,
   ordinary as unmanaged,
@@ -136,11 +138,6 @@ interface ReceiptRow {
   session_id: string;
   platform_json: string;
   runner_ref: string;
-}
-export interface SessionRow {
-  id: string;
-  thread_id: string;
-  session_json: string;
 }
 interface Hooks {
   managed: ManagedRunnerBindings;
@@ -877,14 +874,11 @@ export class SessionDispatch {
           'Automatic dispatch request already used with different input',
           409,
         );
-        const replay = (await tx.get<SessionRow>(
+        const replay = (await tx.get<Stored>(
           'SELECT thread_id,session_json FROM worker_sessions WHERE id=?',
           old.session_id,
         ))!;
-        return {
-          session: { ...JSON.parse(replay.session_json), threadId: replay.thread_id },
-          reason: await decided('replayed'),
-        };
+        return { session: decoded(replay), reason: await decided('replayed') };
       }
       check(
         !(await tx.get(

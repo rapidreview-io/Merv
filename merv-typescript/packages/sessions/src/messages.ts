@@ -339,10 +339,7 @@ export class SessionMessages {
         { messageId: row.id },
       );
   }
-  /**
-   * A person's message to a thread. For one release a `sessionId` still addresses one: that
-   * visit's thread, which its live visit or its next one reads.
-   */
+  /** A person's message to a thread, which its live visit or its next one reads. */
   async message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage> {
     ordinary(caller);
     check(
@@ -351,12 +348,8 @@ export class SessionMessages {
       'Workers cannot send operator messages',
       403,
     );
-    const address = input?.threadId === undefined ? input?.sessionId : input.threadId;
     check(
-      (input?.sessionId === undefined) !== (input?.threadId === undefined) &&
-        text(address, 200) &&
-        text(input.body, 8_000) &&
-        text(input.requestId, 200),
+      text(input?.threadId, 200) && text(input.body, 8_000) && text(input.requestId, 200),
       'invalid_session_message',
       'A thread ID, a message of 1–8000 characters and a stable requestId are required',
     );
@@ -364,11 +357,7 @@ export class SessionMessages {
     input = structuredClone(input);
     return await this.host.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const fingerprint = digest(
-        input.threadId === undefined
-          ? { sessionId: input.sessionId, body: input.body }
-          : { threadId: input.threadId, body: input.body },
-      );
+      const fingerprint = digest({ threadId: input.threadId, body: input.body });
       const old = await tx.get<MessageRow>(
         'SELECT * FROM session_messages WHERE project_id=? AND sender_actor_id=? AND request_id=?',
         caller.projectId,
@@ -385,18 +374,7 @@ export class SessionMessages {
         const { instance_id } = await threadIn(tx, caller.projectId, old.thread_id);
         return this.publicMessage(old, instance_id);
       }
-      let threadId = input.threadId;
-      if (threadId === undefined) {
-        const row = await this.host.row(tx, input.sessionId!);
-        check(
-          row.project_id === caller.projectId,
-          'session_not_found',
-          'Session not found in this project',
-          404,
-        );
-        threadId = row.thread_id;
-      }
-      return await this.toThread(caller, threadId, input, fingerprint, tx);
+      return await this.toThread(caller, input.threadId, input, fingerprint, tx);
     });
   }
   /** The one writer of `session_messages`: a person's message, or an inquiry's question or the

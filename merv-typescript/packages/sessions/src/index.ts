@@ -39,6 +39,7 @@ import { tokenDigest } from '@merv/identity/credentials';
 import { AgentObservations } from './observations.js';
 import {
   attached,
+  decoded,
   isoNow,
   live,
   ordinary,
@@ -395,7 +396,6 @@ export class LeasedSessions implements Sessions {
       transaction: (fn) => this.transaction(fn),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
       dispatching: (projectId, tx) => this.dispatch.dispatch(projectId, tx),
-      decode: (row) => this.decode({ ...row, attachment_json: null, result_json: null } as Row),
       visits: this.visits,
       close: (session, reason, tx) =>
         this.closeSession(session, reason, tx, 'released', 'completed'),
@@ -447,7 +447,7 @@ export class LeasedSessions implements Sessions {
     this.threads = new SessionThreads(state, scope, this.clock, {
       controlled: (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
-      stream: (sessionId) => this.streams.snapshot(sessionId),
+      stream: (sessionId, before) => this.streams.snapshot(sessionId, before),
       standing: (tx, projectId, read) => this.messaging.standing(tx, projectId, read),
       unaskable: (projectId, threadIds, tx) => this.inquiries.refusals(tx, projectId, threadIds),
       available,
@@ -472,12 +472,19 @@ export class LeasedSessions implements Sessions {
       open: () => this.ensureOpen(),
       closed: () => this.closed,
       reading: (fn) => this.reading(fn),
+      readFirst: (fn) => this.readFirst(fn),
       session: (caller, tx) => this.session(caller, tx),
       callSession: (caller, tx) => this.callSession(caller, tx),
       held: (caller, invocation, tx) => this.stillHeld(caller, invocation, tx),
       registration: (session) =>
         session.kind === 'work' ? this.workflows.leaseRegistration(session.lease) : undefined,
-      valid: (session, tx, frozen) => this.valid(session, tx, frozen),
+      valid: async (session, tx, frozen) => {
+        try {
+          return await this.valid(session, tx, frozen);
+        } catch (error) {
+          return { error: await this.closure(session, error, tx) };
+        }
+      },
       acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
     });
     this.running = new SessionRunning(
@@ -568,10 +575,7 @@ export class LeasedSessions implements Sessions {
     };
   }
   private decode(row: Row): Session {
-    // The thread is the column's: the JSON never holds it.
-    const stored = { ...JSON.parse(row.session_json), threadId: row.thread_id };
-    // Every inquiry visit's JSON names its kind (sessions@19); a work visit's older JSON did not.
-    const session: Session = { kind: 'work', ...stored };
+    const session = decoded(row);
     if (row.attachment_json !== null)
       session.workspace = {
         attachment: JSON.parse(row.attachment_json),
@@ -611,14 +615,15 @@ export class LeasedSessions implements Sessions {
     await this.scope.requireDelegation(session.source, permission(session.role), tx);
   }
   /**
-   * The session's lease still holds; with `frozen`, also the references its execution grants now.
+   * The session's lease still holds; with `frozen`, also the references its execution grants now;
+   * with `false`, only the session itself, its lease left to the call that acts on it.
    * A record moved by this worker's own hand is its handoff landing, not a conflict: a second
    * copy of the same call has nothing left to do.
    */
   private async valid(
     session: Session,
     tx: Transaction,
-    frozen?: WorkSession['execution'],
+    frozen?: WorkSession['execution'] | false,
   ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
     if (!live(session)) throw await this.endedHere(session, tx);
@@ -626,7 +631,7 @@ export class LeasedSessions implements Sessions {
     await this.source(session, tx);
     // An inquiry visit holds no lease on the work and binds no registration: its own deadline
     // and its source's delegation are all that keep it, wherever the work has gone since.
-    if (session.kind === 'inquiry') return {};
+    if (session.kind === 'inquiry' || frozen === false) return {};
     const execution = await this.ownMove(session, tx, () =>
       this.framed(session, tx, () =>
         this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
@@ -970,31 +975,35 @@ export class LeasedSessions implements Sessions {
     );
   }
   /** The closure a live session's check finds, recorded; on a snapshot the refusal to record it
-   *  propagates, so a writer records it, unless the caller only `report`s it. */
-  private async reconcile(session: Session, tx: Transaction, report = false) {
+   *  propagates, so a writer records it, unless the caller only `report`s it. Without `lease` the
+   *  check is the session's own, its lease left to the call that acts on it. */
+  private async reconcile(session: Session, tx: Transaction, report = false, lease = true) {
     if (!live(session)) return ended(session);
     try {
-      await this.valid(session, tx);
-      return;
+      await this.valid(session, tx, lease ? undefined : false);
     } catch (error) {
-      const failure = safeError(error);
-      if (failure.status >= 500) return failure;
-      // The record moved by this worker's own hand: that is its handoff, not a conflict.
-      const handoff = failure.code === 'session_completed';
-      try {
-        if (handoff) await this.closeSession(session, 'handoff', tx, 'released', 'completed');
-        else await this.closeSession(session, failure.code, tx);
-      } catch (error) {
-        if (!report || !refused(error)) throw error;
-      }
-      // The close set its reason first, so this is the landed handoff's refusal.
-      if (handoff) return ended(session);
-      // Time says expired; a record moved by another hand says the session ended, so a
-      // worker is not sent to refresh and retry into a closed session.
-      return failure.code === 'revision_conflict'
-        ? new MervError('session_closed', `This session has ended: ${failure.message}`, 401)
-        : failure;
+      return await this.closure(session, error, tx, report);
     }
+  }
+  /** The closure a live session's refused check records (`reconcile`), and what refuses it. */
+  private async closure(session: Session, error: unknown, tx: Transaction, report = false) {
+    const failure = safeError(error);
+    if (failure.status >= 500) return failure;
+    // The record moved by this worker's own hand: that is its handoff, not a conflict.
+    const handoff = failure.code === 'session_completed';
+    try {
+      if (handoff) await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+      else await this.closeSession(session, failure.code, tx);
+    } catch (error) {
+      if (!report || !refused(error)) throw error;
+    }
+    // The close set its reason first, so this is the landed handoff's refusal.
+    if (handoff) return ended(session);
+    // Time says expired; a record moved by another hand says the session ended, so a
+    // worker is not sent to refresh and retry into a closed session.
+    return failure.code === 'revision_conflict'
+      ? new MervError('session_closed', `This session has ended: ${failure.message}`, 401)
+      : failure;
   }
   async contributors(
     projectId: string,
@@ -1343,13 +1352,14 @@ export class LeasedSessions implements Sessions {
       eventId: event?.id ?? null,
     };
   }
-  async list(caller: Caller): Promise<Session[]> {
+  async list(caller: Caller, liveOnly = false): Promise<Session[]> {
     ordinary(caller);
     caller = structuredClone(caller);
-    return await this.transaction(async (tx) => {
+    return await this.reading(async (tx) => {
       const owner = await ownerOf(this.scope, caller, tx);
+      const which = liveOnly ? " AND status IN ('offered','active')" : '';
       return (
-        await tx.all<Row>(`${SESSION} WHERE owner_hash=? ORDER BY _merv_rowid`, owner.hash)
+        await tx.all<Row>(`${SESSION} WHERE owner_hash=?${which} ORDER BY _merv_rowid`, owner.hash)
       ).map((row) => this.decode(row));
     });
   }
@@ -1841,8 +1851,10 @@ export class LeasedSessions implements Sessions {
       const credential = await this.credentials.authenticate(token, 'session-execution', tx);
       const row = await tx.get<Row>(`${SESSION} WHERE id=?`, credential.subject);
       check(row, 'unauthorized', 'Invalid session bearer credential', 401);
-      const session = this.decode(row),
-        error = await this.reconcile(session, tx);
+      const session = this.decode(row);
+      // An active session's lease is checked once, by what the request does with it: its tool
+      // call's preparation, or Sessions' guard. Only an activation checks it here.
+      const error = await this.reconcile(session, tx, false, session.status === 'offered');
       if (error) return { error };
       if (session.status === 'offered') {
         // An inquiry visit starts no work: nothing of the workflow is marked started.
@@ -1945,7 +1957,7 @@ export class LeasedSessions implements Sessions {
       kind: 'work' | 'inquiry';
       expired: boolean | null;
     }>(
-      "SELECT id,project_id,instance_id,revision,kind,(session_json::json->>'expiresAt')<=? AS expired FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry') ORDER BY _merv_rowid",
+      "SELECT id,project_id,instance_id,revision,kind,expires_at<=? AS expired FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry') ORDER BY _merv_rowid",
       isoNow(this.clock),
     );
     if (!lapsing) return live;

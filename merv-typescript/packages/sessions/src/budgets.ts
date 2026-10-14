@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { recorded, check, type Caller, type Transaction } from '@merv/contracts';
-import type { DispatchState, Session, SessionBudgetInput, BudgetStatus } from './types.js';
+import type { DispatchState, SessionBudgetInput, BudgetStatus } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
-import { isoNow } from './common.js';
+import { decoded, isoNow, type Stored } from './common.js';
 import { label, live } from './rules.js';
-import type { DispatchContext, SessionRow } from './dispatch.js';
+import type { DispatchContext } from './dispatch.js';
 
 // The project's dispatch switch, its budgets and halt. SessionDispatch (dispatch.ts) runs these
 // with itself as their context.
@@ -207,7 +207,7 @@ export async function halt(
   return await ctx.state.transaction(async (tx) => {
     await ctx.ordinary(caller, 'admin', tx);
     if (!input.sessionId) await set(ctx, caller, { enabled: false }, tx);
-    const rows = await tx.all<SessionRow>(
+    const rows = await tx.all<Stored>(
       `SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND ${input.sessionId ? 'id=?' : "status IN ('offered','active')"}`,
       caller.projectId,
       ...(input.sessionId ? [input.sessionId] : []),
@@ -215,8 +215,7 @@ export async function halt(
     if (input.sessionId)
       check(rows.length, 'session_not_found', 'Session not found in this project', 404);
     let halted = 0;
-    for (const row of rows) {
-      const session: Session = { ...JSON.parse(row.session_json), threadId: row.thread_id };
+    for (const session of rows.map(decoded)) {
       if (!live(session)) continue;
       if (!(await ctx.hooks.close(session, input.reason ?? 'operator_halt', tx))) continue;
       halted++;

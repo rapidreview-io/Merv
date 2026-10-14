@@ -136,14 +136,18 @@ export async function s3Server() {
         const stored = objects.get(key);
         const whole = req.method === 'HEAD' ? stored : (readOverride?.body ?? stored);
         if (!whole) return error(404, 'NoSuchKey');
-        // An open-ended range (`bytes=N-`), the only one Merv sends.
-        const range = req.method === 'GET' && /^bytes=(\d+)-$/.exec(req.headers.range ?? '');
-        const content = range ? whole.subarray(Number(range[1])) : whole;
+        // A byte range, `bytes=N-` or `bytes=N-M`.
+        const range = req.method === 'GET' && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '');
+        const last =
+          range && range[2]
+            ? Math.min(Number(range[2]), whole.byteLength - 1)
+            : whole.byteLength - 1;
+        const content = range ? whole.subarray(Number(range[1]), last + 1) : whole;
         if (req.headers['if-match'] && req.headers['if-match'] !== etag(whole))
           return error(412, 'PreconditionFailed');
         res.writeHead(range ? 206 : 200, {
           ...(range && {
-            'content-range': `bytes ${range[1]}-${whole.byteLength - 1}/${whole.byteLength}`,
+            'content-range': `bytes ${range[1]}-${last}/${whole.byteLength}`,
           }),
           'content-type':
             url.searchParams.get('response-content-type') ?? 'application/octet-stream',

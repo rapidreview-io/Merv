@@ -303,15 +303,16 @@ export class SessionStreams implements SessionStreamReads {
     ).map(view);
   }
 
-  /** The newest events, oldest first, within SNAPSHOT_EVENTS and SNAPSHOT_BYTES. */
-  async snapshot(sessionId: string): Promise<AgentStreamEvent[]> {
+  /** The newest events before `before`, oldest first, within SNAPSHOT_EVENTS and SNAPSHOT_BYTES. */
+  async snapshot(sessionId: string, before = Number.MAX_SAFE_INTEGER): Promise<AgentStreamEvent[]> {
     return (
       await this.state.read((sql) =>
         sql.all<Row>(
           `SELECT seq,at,event FROM (SELECT seq,at,event,SUM(length(event)+64) OVER (ORDER BY seq DESC) AS bytes
-            FROM (SELECT seq,at,event::text AS event FROM session_events WHERE session_id=? ORDER BY seq DESC LIMIT ${SNAPSHOT_EVENTS}) t) b
+            FROM (SELECT seq,at,event::text AS event FROM session_events WHERE session_id=? AND seq<? ORDER BY seq DESC LIMIT ${SNAPSHOT_EVENTS}) t) b
             WHERE bytes<=${SNAPSHOT_BYTES} ORDER BY seq`,
           sessionId,
+          before,
         ),
       )
     ).map(view);
@@ -345,7 +346,7 @@ export class SessionStreams implements SessionStreamReads {
       if (!held.length) return '';
       const ended = await tx.all<{ id: string }>(
         `SELECT id FROM worker_sessions WHERE id IN (${held.map(() => '?').join(',')})
-          AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')<?`,
+          AND status IN ('released','expired') AND closed_at<?`,
         ...held.map((row) => row.id),
         cutoff,
       );
@@ -374,7 +375,10 @@ function tail(events: AgentStreamEvent[]): AgentStreamEvent[] {
       last.event.kind === event.kind &&
       last.event.id === event.id
     ) {
-      const delta = (last.event.delta + event.delta).slice(-FEED_TEXT);
+      // Its end, without the low half of a pair the cut would leave alone.
+      const delta = (last.event.delta + event.delta)
+        .slice(-FEED_TEXT)
+        .replace(/^[\udc00-\udfff]/, '');
       joined[joined.length - 1] = {
         seq: item.seq,
         at: item.at,

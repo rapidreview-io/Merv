@@ -257,10 +257,17 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
     async () => (worker = await f.sessions.authenticate(token)),
     'activation',
   );
+  // An active session's lease is checked once by what its request does (owner, 2026-10-14): a
+  // tool call's preparation (below), or Sessions' guard for a decision made without one.
   await f.costs(
-    { writers: 0, checks: 1 },
+    { writers: 0, checks: 0 },
     () => f.sessions.authenticate(token),
     'an active session',
+  );
+  await f.costs(
+    { writers: 0, checks: 1 },
+    () => f.scope.require(worker, 'read'),
+    'a read decision without a call',
   );
   f.advance(60_000);
   const control = { sessionId: session.id, runnerId: 'machine' };

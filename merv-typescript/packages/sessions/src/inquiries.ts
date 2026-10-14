@@ -12,7 +12,7 @@ import {
 } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
 import { tokenDigest } from '@merv/identity/credentials';
-import { isoNow, ordinary, ownerOf, text, threadIn, workName } from './common.js';
+import { decoded, isoNow, ordinary, ownerOf, text, threadIn, workName } from './common.js';
 import type { MessageHost, MessageInsert } from './messages.js';
 import type { VisitRequest, Visits } from './visits.js';
 import type {
@@ -221,7 +221,6 @@ export interface InquiryHost {
   readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
   /** The project's automatic dispatch, which launches inquiry visits too. */
   dispatching(projectId: string, tx: Transaction): Promise<DispatchState>;
-  decode(row: { thread_id: string; session_json: string }): Session;
   /** How every visit is admitted and written. */
   visits: Visits;
   /** Closes a visit as Sessions closes every one (which calls `closed` below). */
@@ -464,7 +463,7 @@ export class Inquiries implements SessionInquiries {
         size: Number(row.size),
       },
       body: row.body,
-      latest: this.host.decode({ thread_id: row.visit_thread, session_json: row.visit_json }),
+      latest: decoded({ thread_id: row.visit_thread, session_json: row.visit_json }),
     };
   }
   /** The work items with a question a machine of `ownerHash` running `harness` could take now,

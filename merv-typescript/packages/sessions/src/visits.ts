@@ -66,6 +66,13 @@ export class Visits {
       409,
     );
     const { threadId: _thread, ...stored } = session;
+    const json = JSON.stringify(stored);
+    // PostgreSQL JSON refuses an escaped NUL or lone surrogate: one such row fails every live scan.
+    check(
+      !/(?<!\\)(?:\\\\)*\\u(?:0000|d[89a-f])/.test(json),
+      'session_packet_invalid',
+      'A session packet must be well-formed text without NUL',
+    );
     await tx.run(
       'INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       session.id,
@@ -80,7 +87,7 @@ export class Visits {
       tokenHash,
       fingerprint,
       session.status,
-      JSON.stringify(stored),
+      json,
       session.kind,
     );
     try {
