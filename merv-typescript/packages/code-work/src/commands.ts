@@ -48,8 +48,6 @@ type Row = {
   receipt_json: string | null;
   error: string | null;
 };
-const terminal = (status: Row['status']) =>
-  status === 'succeeded' || status === 'failed' || status === 'cancelled';
 /**
  * A runner's next-command control, which may ask for a periodic checkpoint: when the session has
  * nothing outstanding, one commit of its checkout at `expectedHead`, made as the agent's own
@@ -450,7 +448,7 @@ export class CodeCommandService implements CodeCommands {
         );
       }
       const status = receipt ? 'succeeded' : 'failed';
-      if (terminal(row.status)) {
+      if (['succeeded', 'failed', 'cancelled'].includes(row.status)) {
         check(
           record.status === status &&
             canonical(record.receipt) === canonical(receipt) &&

@@ -691,11 +691,13 @@ export class CodeUnitService {
     if (commits.size > 1) {
       const base = await this.bases.find(tx, projectId, commits.keys());
       const path = base ? await this.bases.path(tx, projectId, base.key) : [];
+      // A resolved base's only blocker is a check machine it could not give back, which says
+      // nothing against its commit.
       const held = path.find(
         (record) =>
           record.quarantined ||
           ['suspended', 'cancelled', 'blocked_infra'].includes(record.state) ||
-          record.blocker,
+          (record.blocker && record.state !== 'resolved'),
       );
       // An admission refusal names which cap or budget holds the merge as its cause.
       const admission =

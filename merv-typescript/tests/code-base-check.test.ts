@@ -354,6 +354,54 @@ test('a check stopped before it rented a machine gives its reservation back', as
   assert.equal(adapter.machines(), 0);
 });
 
+for (const phase of ['merge', 'check'] as const)
+  test(`a ${phase} an inherited quarantine stopped runs again once that quarantine is released`, async (t) => {
+    const f = await baseFixture(t);
+    f.bases.checks = scripted([ran(0)]).checks;
+    if (phase === 'check') await configure(f, SPEC);
+    const { a, b, c, d } = f.commits;
+    const named = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, c]));
+    const control = (action: 'quarantine' | 'release') =>
+      f.bases.control(f.scope, f.admin, {
+        key: named.key,
+        action,
+        reason: 'Input?',
+        requestId: action,
+      });
+    await control('quarantine');
+    const stopped = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [b, d]));
+    const inherit = () =>
+      f.state.transaction((tx) =>
+        tx.run(
+          "UPDATE code_bases SET health='quarantined',operator_reason=? WHERE project_id=? AND base_key=?",
+          `${INHERITED_QUARANTINE}${named.key}`,
+          f.projectId,
+          stopped.key,
+        ),
+      );
+    // The quarantine reaches the base while it merges, or once it has handed off to its check.
+    if (phase === 'merge') {
+      const git = f.repositories.git;
+      const run = git.run.bind(git);
+      t.mock.method(git, 'run', async (...args: Parameters<typeof run>) => {
+        t.mock.restoreAll();
+        await inherit();
+        return await run(...args);
+      });
+    }
+    await f.bases.work(f.projectId);
+    if (phase === 'check') await inherit();
+    await f.bases.work(f.projectId);
+    assert.equal((await row(f, stopped.key)).state, 'running');
+    // Released, it is queued again rather than left running with no execution, which past its
+    // deadline stopped every merge of the project.
+    await control('release');
+    assert.equal((await row(f, stopped.key)).state, 'queued');
+    f.advance(3 * 3600_000);
+    await settle(f);
+    assert.equal((await row(f, stopped.key)).state, 'resolved');
+  });
+
 test('a failing check drops the auto-merge ref, so the one resolution task can seal it', async (t) => {
   const f = await baseFixture(t);
   const adapter = scripted([ran(7, 'two tests failed')]);
@@ -763,7 +811,7 @@ test('the wrapper carries the command once and reports its verdict in the result
   for (const code of [121, 122, 123, 124, 125]) assert.match(script, new RegExp(`exit ${code}`));
   // The command has a clock of its own, so its overrun is a written result and the job's own
   // timeout can only mean the download and unpack outran their separate allowance.
-  assert.match(script, /timeout 600 sh -c /);
+  assert.match(script, /timeout -k 10 600 sh -c /);
   assert.ok(!script.includes('/workspace'), 'and it works where the service guarantees it can');
   assert.match(script, /\$HOME\/merv-check/);
   assert.ok(

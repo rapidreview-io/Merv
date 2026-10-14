@@ -353,18 +353,18 @@ export class CodePublicationService implements CodePublicationApi {
       );
     return this.decode(await this.state.transaction((tx) => this.row(caller, row.proposal_id, tx)));
   }
-  /** `admit`, but a base quarantine that reached the unit settles it stale as a changed head does,
-   *  closing its pull request, whose head still carries Merv's approval on GitHub. */
-  private async unquarantined(
+  /** `attempt`, but a base quarantine that reached the unit settles it stale as a changed head
+   *  does, closing its pull request, whose head still carries Merv's approval on GitHub. */
+  private async unquarantined<T>(
     caller: Caller,
     row: Row,
     lock: string,
     pull: GitHubPullRequest | undefined,
     close: (number: number) => Promise<GitHubPullRequest>,
-    admit: (tx: Transaction) => Promise<unknown>,
+    attempt: () => Promise<T>,
   ) {
     try {
-      return void (await this.state.transaction(admit));
+      return await attempt();
     } catch (error) {
       if (
         !pull ||
@@ -580,7 +580,8 @@ export class CodePublicationService implements CodePublicationApi {
                 client.updatePull(token, current.repository, number, { state: 'closed' });
               if (!current.stale) {
                 await this.host.rules(caller, client, token, current, false);
-                const admit = (tx: Transaction) => this.host.check(caller, current, tx);
+                const admit = () =>
+                  this.state.transaction((tx) => this.host.check(caller, current, tx));
                 if (await this.unquarantined(caller, row, lock, pull, close, admit)) return;
                 // A pull request already off the reviewed head settles stale below, wherever
                 // its branch now stands.
@@ -798,19 +799,14 @@ export class CodePublicationService implements CodePublicationApi {
               !!ours &&
               ours !== main.sha &&
               (await this.host.ancestor(caller.projectId, ours, main.sha));
-            return this.settleStale(
-              caller,
-              row,
-              lock,
-              'code_main_changed',
-              pull,
-              close,
-              async (tx) => {
+            // Quarantined work settles stale for that, closing its pull request, and moves nothing.
+            return this.unquarantined(caller, row, lock, pull, close, () =>
+              this.settleStale(caller, row, lock, 'code_main_changed', pull, close, async (tx) => {
                 await this.scope.require(caller, 'admin', tx);
                 await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
                 await this.host.check(caller, record, tx);
                 if (forward) await this.host.main(caller, main.sha, tx, ours!);
-              },
+              }),
             );
           }
           const requiredChecks = await this.host.rules(caller, client, token, record);
@@ -891,7 +887,9 @@ export class CodePublicationService implements CodePublicationApi {
               409,
             );
           };
-          const settled = await this.unquarantined(caller, row, lock, pull, close, admit);
+          const settled = await this.unquarantined(caller, row, lock, pull, close, () =>
+            this.state.transaction(admit),
+          );
           if (settled) return settled;
           // GitHub atomically checks the head SHA and enforces protections. Its API has no expected-base CAS.
           const result = await client.mergePull(

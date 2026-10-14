@@ -30,16 +30,17 @@ const SETUP: Record<number, string> = {
 // The outer job clock includes setup; the wrapper gives the command its own full timeout.
 const CHECK_SETUP_SECONDS = 600;
 
-const COMMAND_TIMEOUT_EXIT = 124;
-
 const decode = (value: unknown) =>
   typeof value === 'string' ? Buffer.from(value, 'base64').toString('utf8') : '';
 
-// Setup failures write no result, so command exits cannot impersonate them.
+// Setup failures write no result, so command exits cannot impersonate them. A command that ignores
+// TERM at its timeout is killed 10 s later; it timed out only if `timeout` stopped it then (124, or
+// 137 after KILL), never by its own exit 124.
 const wrapped = (command: string, timeoutSeconds: number): string[] => [
-  'output="$HOME/merv-check.log"',
-  `timeout ${timeoutSeconds} sh -c ${shellQuote(command)} >"$output" 2>&1; code=$?`,
-  `printf '{"exit":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$(wc -c <"$output" | tr -d ' ')" "$(head -c 8000 "$output" | base64 | tr -d '\\n')" "$(tail -c 8000 "$output" | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
+  'output="$HOME/merv-check.log"; started=$(date +%s); timedout=false',
+  `timeout -k 10 ${timeoutSeconds} sh -c ${shellQuote(command)} >"$output" 2>&1; code=$?`,
+  `case $code in 124|137) [ $(($(date +%s) - started)) -lt ${timeoutSeconds} ] || timedout=true;; esac`,
+  `printf '{"exit":%s,"timedOut":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$timedout" "$(wc -c <"$output" | tr -d ' ')" "$(head -c 8000 "$output" | base64 | tr -d '\\n')" "$(tail -c 8000 "$output" | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
   'exit 0',
 ];
 
@@ -214,7 +215,7 @@ export class SandboxCheckRunner implements SandboxChecks {
       const written = typeof exit === 'number' && Number.isSafeInteger(exit);
       return {
         state:
-          written && exit === COMMAND_TIMEOUT_EXIT
+          written && result?.timedOut === true
             ? 'timed_out'
             : terminal
               ? (status.state as SandboxCheckVerdict['state'])

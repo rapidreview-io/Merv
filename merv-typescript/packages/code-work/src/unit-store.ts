@@ -172,7 +172,7 @@ export function publicationBlockers(
     stale: {
       code: PUBLICATION_CODE.stale,
       message: `main moved; a successor task integrates it${named}`,
-      next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
+      next: 'Nothing on this unit, which stays as it is: the research cycle it consolidates answers at its next advance (by itself in an automatic run, research.advance otherwise) with a successor task, or completes if main already holds this work.',
     },
     setup_required: {
       code: PUBLICATION_CODE.setup_required,

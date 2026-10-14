@@ -176,7 +176,7 @@ test('the host replays rentals, restores and jobs, and retries cleanup safely', 
     "UPDATE jobs SET state = 'succeeded', result_json = $2::jsonb, started_at = $3, finished_at = $3 WHERE id = $1",
     [
       running.jobId!,
-      JSON.stringify({ exit: 124, bytes: 3, head64: 'b3V0', tail64: '' }),
+      JSON.stringify({ exit: 137, timedOut: true, bytes: 3, head64: 'b3V0', tail64: '' }),
       clock.now(),
     ],
   );
@@ -216,7 +216,15 @@ test('reserved setup exits need a written result to become command verdicts', as
       verdict: 'failed',
     })),
     { state: 'succeeded', exit: 0, result: { exit: 123 }, setup: false, verdict: 'succeeded' },
-    { state: 'succeeded', exit: 0, result: { exit: 124 }, setup: false, verdict: 'timed_out' },
+    // A command's own exit 124 is its own; the wrapper says when `timeout` stopped it.
+    { state: 'succeeded', exit: 0, result: { exit: 124 }, setup: false, verdict: 'succeeded' },
+    {
+      state: 'succeeded',
+      exit: 0,
+      result: { exit: 124, timedOut: true },
+      setup: false,
+      verdict: 'timed_out',
+    },
     { state: 'timed_out', exit: null, result: null, setup: false, verdict: 'timed_out' },
     { state: 'succeeded', exit: 0, result: { exit: null }, setup: false, verdict: 'succeeded' },
   ];
@@ -263,7 +271,7 @@ test('the shell preserves source filenames and distinguishes setup failures from
           // Substitute download and GNU utilities while checking the actual archive bytes.
           'curl() { while [ "$1" != "-o" ]; do shift; done; cp "$SOURCE_ARCHIVE" "$2"; }',
           'sha256sum() { read expected file; test "$expected" = "$SOURCE_SHA256" && cmp "$file" "$SOURCE_ARCHIVE"; }',
-          'timeout() { shift; "$@"; }',
+          'timeout() { shift 3; "$@"; }',
           setup,
           checkScript(command, 'https://fixture.invalid/source', sha256, 30),
         ].join('\n'),
@@ -293,8 +301,16 @@ test('the shell preserves source filenames and distinguishes setup failures from
     const command = run(`printf output; exit ${exit}`);
     assert.equal(command.status, 0, command.stderr);
     const result = JSON.parse(readFileSync(resultPath, 'utf8'));
-    assert.equal(result.exit, exit);
+    assert.deepEqual([result.exit, result.timedOut], [exit, false]);
     assert.equal(Buffer.from(result.head64, 'base64').toString(), 'output');
+  }
+  // `timeout` stopped the command once its 30 s were up, with TERM (124) or with KILL (137).
+  const clock = 'date() { [ -f "$HOME/clock" ] && echo 30 || { : > "$HOME/clock"; echo 0; }; }';
+  for (const exit of [124, 137]) {
+    rmSync(join(home, 'clock'), { force: true });
+    run('exit 0', `${clock}\ntimeout() { shift 3; "$@"; return ${exit}; }`);
+    const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+    assert.deepEqual([result.exit, result.timedOut], [exit, true]);
   }
   for (const [setup, exit] of [
     ['curl() { return 1; }', 122],

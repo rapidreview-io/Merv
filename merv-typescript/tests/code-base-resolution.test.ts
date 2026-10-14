@@ -1797,3 +1797,22 @@ test('budget admission reaches the stuck report and consumes neither launch hold
   await f.bases.work(f.admin.projectId);
   assert.deepEqual(await f.workflows.blockers(f.admin, waiter.id), []);
 });
+
+test('a machine a resolved base could not give back holds up none of the work built on it', async (t) => {
+  const f = await fixture(t);
+  const waiter = await f.waiter([f.left, f.extra]);
+  await f.bases.work(f.admin.projectId);
+  const base = (await f.record([f.a, f.d]))!;
+  assert.equal(base.state, 'resolved');
+  // A release the service refused five times, or a warning kept from before cleanup was owned.
+  await f.state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO code_base_cleanup(project_id,base_key,cleanup_id,attempts,reason) VALUES (?,?,'legacy',5,'refused')",
+      f.admin.projectId,
+      base.key,
+    ),
+  );
+  assert.match((await f.record([f.a, f.d]))!.blocker!, /code_check_unreclaimed/);
+  const status = await f.state.transaction((tx) => f.code.baseStatus(f.admin, waiter.id, tx));
+  assert.equal(status.status, 'ready', JSON.stringify(status));
+});

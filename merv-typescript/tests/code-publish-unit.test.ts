@@ -247,10 +247,11 @@ test('a publication a quarantine reached after acceptance settles stale and free
 });
 
 test('a quarantine that reaches an approved pull request closes it, on sync and on merge', async (t) => {
-  for (const through of ['sync', 'merge']) {
+  for (const through of ['sync', 'merge', 'merge after main moved']) {
     const f = await fixture(t, true);
     const { work, publication } = await opened(f);
     await quarantine(f, work.id);
+    if (through === 'merge after main moved') f.branches.set('main', f.moved);
     // Its head still carries Merv's approval on GitHub, so it must not stay open and mergeable.
     const after =
       through === 'sync'
@@ -503,6 +504,8 @@ test('main moving under an approved head is a stale wait, not a failure', async 
   const [blocker] = await f.blockers(work.id);
   assert.equal(blocker.code, 'code_publication_stale');
   assert.match(blocker.message, /a successor task integrates it/);
+  // Its research cycle injects that successor at its next advance; no agent makes one by hand.
+  assert.match(blocker.next!, /^Nothing on this unit.*research\.advance/);
   // Nothing is retried on the accepted unit: a successor takes the newer main. The pull
   // request must not stay open and mergeable against main, because nothing would ever
   // verify a merge of it again.

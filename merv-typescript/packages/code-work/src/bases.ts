@@ -701,6 +701,13 @@ export class CodeBaseService {
         .catch(() => undefined);
   }
 
+  /** What a base an operator stops gives back: its check's machine, else its reservation. */
+  private async stop(tx: Transaction, projectId: string, row: BaseRow) {
+    if (row.check_job_json)
+      await this.queueCleanup(tx, projectId, this.record(row), JSON.parse(row.check_job_json));
+    else await this.letGo(tx, projectId, this.record(row));
+  }
+
   private async failed(
     tx: Transaction,
     projectId: string,
@@ -1436,9 +1443,7 @@ export class CodeBaseService {
                 : action === 'suspend'
                   ? 'suspended'
                   : 'cancelled';
-      if (row.check_job_json)
-        await this.queueCleanup(tx, caller.projectId, base, JSON.parse(row.check_job_json));
-      else await this.letGo(tx, caller.projectId, base);
+      await this.stop(tx, caller.projectId, row);
       await tx.run(
         // A recorded verdict is never replaced by an operator's disposition.
         `UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,check_state=CASE WHEN check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE project_id=? AND base_key=?`,
@@ -1452,14 +1457,21 @@ export class CodeBaseService {
         input.key,
       );
       // Quarantine spreads down the plan on its own, so releasing the base an operator named
-      // retracts the spread with it; a base an operator quarantined in its own right stays.
-      if (action === 'release')
+      // retracts the spread with it; a base an operator quarantined in its own right stays. One
+      // that was running lost its execution to it, so it is stopped and queued again as the named
+      // base is; left running, its deadline would find nothing to expire and stop later merges.
+      if (action === 'release') {
+        const inherited = [caller.projectId, `${INHERITED_QUARANTINE}%`];
+        const where = "project_id=? AND health='quarantined' AND operator_reason LIKE ?";
+        const running = `SELECT ${columns} FROM code_bases WHERE ${where} AND state='running'`;
+        for (const stopped of await tx.all<BaseRow>(running, ...inherited))
+          await this.stop(tx, caller.projectId, stopped);
         await tx.run(
-          "UPDATE code_bases SET health='healthy',updated_at=? WHERE project_id=? AND health='quarantined' AND operator_reason LIKE ?",
+          `UPDATE code_bases SET health='healthy',state=CASE WHEN state='running' THEN 'queued' ELSE state END,execution_epoch=execution_epoch+CASE WHEN state='running' THEN 1 ELSE 0 END,check_state=CASE WHEN state='running' AND check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE ${where}`,
           now(),
-          caller.projectId,
-          `${INHERITED_QUARANTINE}%`,
+          ...inherited,
         );
+      }
       await this.promote(tx, caller.projectId);
       await this.hooks.changed(tx, caller.projectId);
       const result = this.record((await this.row(tx, caller.projectId, input.key))!);
