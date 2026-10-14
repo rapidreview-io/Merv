@@ -2,6 +2,7 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useReducer,
@@ -159,7 +160,6 @@ const told = new Map<string, { reference: Reference; at: number }>();
 const queued = new Set<string>();
 const asking = new Set<string>();
 const hearing = new Set<() => void>();
-let heard = 0;
 let round = 0;
 let epoch = scopeVersion();
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -188,7 +188,6 @@ function askNames(ids: readonly string[], again = false): void {
           (answer) => {
             if (at !== round) return;
             for (const reference of answer) told.set(reference.ref, { reference, at: Date.now() });
-            heard++;
             for (const listener of hearing) listener();
           },
           () => undefined,
@@ -217,11 +216,9 @@ export function useReferences(
   ids: readonly string[],
   every?: number,
 ): ReadonlyMap<string, Named & { state?: string }> {
-  const version = useSyncExternalStore(
-    hear,
-    () => heard,
-    () => heard,
-  );
+  // When each of these ids was last told: an answer about other ids draws nothing here.
+  const heard = useCallback(() => ids.map((id) => told.get(id)?.at).join(), [ids]);
+  const version = useSyncExternalStore(hear, heard, heard);
   useEffect(() => {
     askNames(ids);
     if (!every) return;
@@ -244,7 +241,7 @@ export function useReferences(
             ...(reference.state !== undefined && { state: reference.state }),
           });
     return names;
-    // `version` counts the answers heard, which `told` holds.
+    // `version` changes as `told` does for these ids.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids, version, rows]);
 }
@@ -344,20 +341,22 @@ const trees = offThread<string, Block[]>((source) => loadParser().then(() => par
  */
 function useTree(source: string): Block[] | null {
   const [, wake] = useReducer((count: number) => count + 1, 0);
+  const last = useRef<{ source?: string; tree: Block[] | null }>({ tree: null });
   const long = source.length > MAX_READ;
-  if (!long && trees.inPage() && parse && trees.known(source) === undefined)
+  // A text this place has read is not read again once the cache lets it go.
+  const held = (last.current.source === source && last.current.tree) || undefined;
+  if (!long && !held && trees.inPage() && parse && trees.known(source) === undefined)
     trees.keep(source, parse(source));
-  const tree = long ? null : trees.known(source);
+  const tree = long ? null : (held ?? trees.known(source));
   useEffect(
     () => (tree === undefined ? trees.want(source, source, wake) : undefined),
     [source, tree],
   );
-  const last = useRef({ source, tree: null as Block[] | null });
   if (tree !== undefined) {
     last.current = { source, tree };
     return tree;
   }
-  return source.startsWith(last.current.source) ? last.current.tree : null;
+  return source.startsWith(last.current.source ?? '') ? last.current.tree : null;
 }
 
 /* Rendering --------------------------------------------------------------- */

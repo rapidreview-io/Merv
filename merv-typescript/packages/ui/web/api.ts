@@ -383,12 +383,11 @@ function readOf(key: string, name: string, input: Record<string, unknown>, epoch
   READS.set(key, read);
   return read;
 }
-/** An answer the boot already holds, kept so the page that needs it does not ask again. */
-export const remember = (name: string, data: unknown) => {
-  readOf(keyOf(scopeEpoch, name, {}), name, {}, scopeEpoch).shown = {
-    data,
-    loadedAt: new Date().toISOString(),
-  };
+/** An answer the boot already holds, kept so the page that needs it asks only once it is due. */
+const remember = (name: string, data: unknown) => {
+  const read = readOf(keyOf(scopeEpoch, name, {}), name, {}, scopeEpoch);
+  read.shown = { data, loadedAt: new Date().toISOString() };
+  read.last = Date.now();
 };
 const hidden = () => document.visibilityState === 'hidden';
 let watchingVisibility = false;
@@ -505,8 +504,9 @@ export function useTool<T>(
   useEffect(() => {
     if (!read) return;
     // A place that opens asks at once, joining a read already in flight, unless another
-    // place already keeps this answer fresh on its own cadence.
-    const kept = read.shown.data !== undefined && [...read.readers.values()].some(Boolean);
+    // place already keeps this answer fresh on its own cadence or the boot just remembered it.
+    const kept =
+      read.shown.data !== undefined && (!read.asked || [...read.readers.values()].some(Boolean));
     read.readers.set(place, every);
     if (kept) schedule(read);
     else void ask(read);

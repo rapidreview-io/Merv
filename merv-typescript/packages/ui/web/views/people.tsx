@@ -138,7 +138,8 @@ export function PeopleView() {
       setLoading(false);
     };
     if (human) void load();
-    const timer = human ? setInterval(() => void load(), 10000) : undefined;
+    const poll = () => document.visibilityState === 'hidden' || void load();
+    const timer = human ? setInterval(poll, 10000) : undefined;
     return () => {
       clearInterval(timer);
       generation.current++;

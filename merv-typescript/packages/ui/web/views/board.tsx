@@ -5,7 +5,7 @@
  */
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { BoardSummary } from '@merv/board/models';
+import type { BoardScene, BoardSummary } from '@merv/board/models';
 import { call, refreshTools, useTool } from '../api';
 import { Ago, LoadState, useDismiss } from '../components';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
@@ -15,6 +15,7 @@ import { useActorNames } from './people';
 import type { ViewProps } from './index';
 
 const Canvas = lazy(() => import('./board-canvas'));
+const MAX = Number.MAX_SAFE_INTEGER;
 
 function BoardList({ row }: ViewProps) {
   const navigate = useNavigate();
@@ -132,7 +133,7 @@ function BoardTitle({
     const title = draft.trim();
     if (title && title !== board.title) {
       await call('board.set', { id: board.id, title }).then(
-        () => refreshTools('board.read'),
+        () => refreshTools('board.read', 'board.scene'),
         () => undefined,
       );
     }
@@ -162,7 +163,8 @@ function BoardTitle({
 
 function BoardPage({ row }: ViewProps) {
   const { id = '' } = useParams();
-  const read = useTool<{ board: BoardSummary }>('board.read', { board: id }, { every: 10000 });
+  // The board alone: no shape changed after a revision this high, so none is read or sent.
+  const read = useTool<BoardScene>('board.scene', { id, since: MAX }, { every: 10000 });
   const [editing, setEditing] = useState(false);
   const board = read.data?.board;
   useEffect(() => {

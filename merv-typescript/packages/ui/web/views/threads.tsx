@@ -476,6 +476,15 @@ export const delivery = (message: {
   inquiry?: { label: string };
 }) => (message.inquiry ? message.inquiry.label : message.acknowledgedAt ? 'Read' : 'Sent');
 
+/** The dot of a thread while a visit holds its lease: red once that lease lapsed. */
+const LeaseDot = ({ bad }: { bad: boolean }) => (
+  <span
+    className={cx('live-dot', bad ? 'live-dot--attn' : 'live-dot--live')}
+    role="img"
+    aria-label={bad ? 'Lapsed' : 'Live'}
+  />
+);
+
 /**
  * Who a thread is and what it does, on one line: its role and stage, and while a visit holds
  * its lease a dot and how long that visit has run (red once its lease lapsed); otherwise its
@@ -488,13 +497,7 @@ export function ThreadTitle({ thread, now }: { thread: ThreadView; now: Clock })
   const since = visit?.startedAt ?? visit?.offeredAt;
   return (
     <>
-      {live && (
-        <span
-          className={cx('live-dot', bad ? 'live-dot--attn' : 'live-dot--live')}
-          role="img"
-          aria-label={bad ? 'Lapsed' : 'Live'}
-        />
-      )}
+      {live && <LeaseDot bad={bad} />}
       <span>
         {capital(words(thread.role))} · {capital(words(thread.state))}
       </span>{' '}
@@ -560,13 +563,7 @@ export function ThreadCard({
         onClick={onOpen}
       >
         <span className="agent-card-title">
-          {live && (
-            <span
-              className={cx('live-dot', bad ? 'live-dot--attn' : 'live-dot--live')}
-              role="img"
-              aria-label={bad ? 'Lapsed' : 'Live'}
-            />
-          )}
+          {live && <LeaseDot bad={bad} />}
           <span className="agent-card-word">{title}</span>
         </span>
         {subtitle && <span className="agent-card-sub">{subtitle}</span>}

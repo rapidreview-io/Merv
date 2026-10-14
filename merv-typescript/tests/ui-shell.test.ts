@@ -643,6 +643,10 @@ test('a new tab opens the project this account chose last, and choosing one keep
   await open('/settings/session');
   assert.equal(document.querySelector('h1')!.textContent, 'Settings');
   assert.ok(!text().includes('Search projects'));
+  // One check opens it: selecting the project starts no second one, and the shell the check
+  // read is the one the page draws, not asked again.
+  const asked = (what: string) => requests.filter((request) => request === what).length;
+  assert.deepEqual([asked('GET /account'), asked('POST /tools/ui.shell')], [1, 1]);
   // The rail's project name is the switch, and choosing again lists the project this
   // browser opened first, under Recent.
   await click('Grokking replication');

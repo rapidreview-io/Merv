@@ -9,7 +9,7 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mount, rawView, serve, settle, text, unmount } from './ui-render.js';
 
-const { createElement, useState } = await import('react');
+const { Profiler, createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router-dom');
@@ -23,6 +23,7 @@ const {
   recordNames,
   safeHref,
   shortId,
+  useReferences,
 } = await import('../packages/ui/web/markdown.js');
 const { parseInline, parseMarkdown } = await import('../packages/ui/web/markdown-parse.js');
 const { ArtifactBody, fileType } = await import('../packages/ui/web/views/artifacts.js');
@@ -873,6 +874,47 @@ test('ids outside Markdown are named the same way, and a document reads its own 
   );
   // Every text on the page asks in the same request.
   assert.deepEqual(asked, [[review, nobody, ART, TASK]]);
+});
+
+test('a name told for one text draws no other text again', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/project.references', (_, sent) => ({
+    body: {
+      result: (sent.refs as string[]).map((id) => ({
+        ref: id,
+        id,
+        status: 'resolved',
+        kind: 'task',
+        label: `Task ${id.at(-1)}`,
+      })),
+    },
+  }));
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  // A place on the page, a status poll say, that asks about a record no text here mentions.
+  const [none, later] = [[], [`wf_${'9'.repeat(32)}`]];
+  let ask!: (on: boolean) => void;
+  function Elsewhere() {
+    const [on, setOn] = useState(false);
+    ask = setOn;
+    useReferences(on ? later : none);
+    return null;
+  }
+  let drawn = 0;
+  const texts = [1, 2, 3].map((n) =>
+    createElement(
+      Profiler,
+      { id: `text${n}`, key: n, onRender: () => void drawn++ },
+      createElement(Markdown, { source: `Waits on wf_${String(n).repeat(32)}.` }),
+    ),
+  );
+  await mount(createElement(MemoryRouter, null, ...texts, createElement(Elsewhere)));
+  await settle(10);
+  assert.equal(text(), 'Waits on Task 1.Waits on Task 2.Waits on Task 3.');
+  drawn = 0;
+  await act(async () => ask(true));
+  await settle(10);
+  assert.equal(drawn, 0);
 });
 
 test('names a growing text asks for come once, and stay while the next are asked', async (t) => {

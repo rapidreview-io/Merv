@@ -101,18 +101,27 @@ const MAX_HIGHLIGHT_LINE = 1_000;
 export const colourable = (code: string) =>
   highlightable(code) && code.split('\n').every((line) => line.length <= MAX_HIGHLIGHT_LINE);
 
+/** Loads under way or done, shared; one that failed (a dropped connection) is tried again. */
 let core: Promise<HighlighterCore> | undefined;
 const grammars = new Map<string, Promise<void>>();
+const forgetting = <T>(load: Promise<T>, forget: () => void) =>
+  load.catch((error: unknown) => {
+    forget();
+    throw error;
+  });
 
 const highlighter = () =>
-  (core ??= Promise.all([import('shiki/core'), import('shiki/engine/javascript')]).then(
-    ([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
-      createHighlighterCore({
-        // A grammar whose patterns the engine cannot translate exactly still colours what it can.
-        engine: createJavaScriptRegexEngine({ forgiving: true }),
-        themes: [import('shiki/themes/github-light.mjs'), import('shiki/themes/github-dark.mjs')],
-        langs: [],
-      }),
+  (core ??= forgetting(
+    Promise.all([import('shiki/core'), import('shiki/engine/javascript')]).then(
+      ([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
+        createHighlighterCore({
+          // A grammar whose patterns the engine cannot translate exactly still colours what it can.
+          engine: createJavaScriptRegexEngine({ forgiving: true }),
+          themes: [import('shiki/themes/github-light.mjs'), import('shiki/themes/github-dark.mjs')],
+          langs: [],
+        }),
+    ),
+    () => (core = undefined),
   ));
 
 /**
@@ -134,7 +143,10 @@ export async function colour(
     if (!grammar)
       grammars.set(
         language.id,
-        (grammar = language.load().then((module) => shiki.loadLanguage(module.default))),
+        (grammar = forgetting(
+          language.load().then((module) => shiki.loadLanguage(module.default)),
+          () => grammars.delete(language.id),
+        )),
       );
     await grammar;
     begin();

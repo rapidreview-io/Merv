@@ -27,7 +27,6 @@ export function placeIn(pathname: string, root: string) {
     file: kind === 'blob',
   };
 }
-export { filesPath };
 
 /** Whose code a reader may choose: main, then every task and experiment that has code. */
 function useRefs(row: ViewProps['row'], shell: ViewProps['shell']) {
@@ -222,22 +221,23 @@ const MOST_READ_AS = 2_000_000;
  * text too long to send in one answer (read as text).
  */
 function useWhole(ref: string, path: string, wanted: 'bytes' | 'text' | null) {
-  const [got, setGot] = useState<{ blob?: Blob; text?: string; error?: ApiError }>({});
+  // What came back is shown for the file it came for, never for the next one while that loads.
+  const of = `${wanted}\n${ref}\n${path}`;
+  const [got, setGot] = useState<{ of?: string; blob?: Blob; text?: string; error?: ApiError }>({});
   useEffect(() => {
-    setGot({});
     if (!wanted) return;
     let live = true;
     void codeFile(ref, path)
       .then(async (blob) => (wanted === 'text' ? { text: await blob.text() } : { blob }))
       .then(
-        (whole) => live && setGot(whole),
-        (error: ApiError) => live && setGot({ error }),
+        (whole) => live && setGot({ of, ...whole }),
+        (error: ApiError) => live && setGot({ of, error }),
       );
     return () => {
       live = false;
     };
-  }, [ref, path, wanted]);
-  return got;
+  }, [ref, path, wanted, of]);
+  return got.of === of ? got : {};
 }
 
 async function download(ref: string, path: string, name: string) {

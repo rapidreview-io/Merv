@@ -20,10 +20,11 @@ import { click, mount, requests, serve, settle, text, unmount } from './ui-rende
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
 sessionStorage.setItem('merv:token', 'fixture-token');
 
-const { createElement, useEffect, useState } = await import('react');
+const { Profiler, createElement, useEffect, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { refreshTools, setProject } = await import('../packages/ui/web/api.js');
-const { MemoryRouter, useLocation } = await import('react-router-dom');
+const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
+const { CodeFiles } = await import('../packages/ui/web/views/code-files.js');
 const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
 const { GitHubPublications } = await import('../packages/ui/web/views/github-publications.js');
 const { PageLede } = await import('../packages/ui/web/shell.js');
@@ -164,6 +165,61 @@ const nothingMade = () => {
   serve('/tools/ui.read', { body: { result: { commands: [] } } });
   serve('/tools/ui.home', { body: { result: {} } });
 };
+
+test('a file opened again never stands, even for a moment, over the text of the one before', async (t) => {
+  const real = globalThis.fetch;
+  t.after(async () => {
+    globalThis.fetch = real;
+    await unmount();
+  });
+  nothingMade();
+  // Files too long to send in an answer: each is read whole from the raw route.
+  serve('/tools/code.files', (_, sent) => ({
+    body: {
+      result: {
+        kind: 'file',
+        commit: 'c',
+        ref: 'main',
+        path: sent.path,
+        size: 3e6,
+        withheld: 'too_large',
+      },
+    },
+  }));
+  globalThis.fetch = (async (input: string, init?: RequestInit) =>
+    input !== '/code/raw'
+      ? real(input, init)
+      : { ok: true, status: 200, blob: async () => new Blob([`text of ${init!.body}`]) }) as never;
+  let go!: (to: string) => void;
+  function Steer() {
+    go = useNavigate();
+    return null;
+  }
+  const drawn: string[] = [];
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/code/blob/main/a.txt'] },
+      createElement(Steer),
+      createElement(
+        Profiler,
+        { id: 'files', onRender: () => void drawn.push(text()) },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        createElement(CodeFiles as any, {
+          row,
+          shell: { rows: [row], plugins: [] },
+          root: '/code',
+        }),
+      ),
+    ),
+  );
+  for (const to of ['b.txt', 'a.txt']) {
+    await act(async () => go(`/code/blob/main/${to}`));
+    await settle(10);
+  }
+  assert.match(text(), /main\/a\.txt.*text of .*"a\.txt"/);
+  assert.ok(!drawn.some((said) => said.includes('main/a.txt') && said.includes('"b.txt"')));
+});
 
 test('with GitHub not connected the page is one empty state and its one control', async (t) => {
   t.after(unmount);
@@ -1806,6 +1862,49 @@ test('an uncertain reviewed merge retries its original request and pins', async 
   await click('Retry same request');
   assert.deepEqual(sent[1], sent[0]);
   assert.equal(document.querySelector('[aria-label="Confirm reviewed merge"]'), null);
+});
+
+test('a pull request read twice shows the newer read, whichever answer arrives last', async (t) => {
+  const real = globalThis.fetch;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let first = true;
+  globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+    const answer = await real(...args);
+    if (first && String(args[0]) === '/tools/code.publication.read') {
+      first = false;
+      await held;
+    }
+    return answer;
+  }) as typeof fetch;
+  t.after(async () => {
+    release();
+    globalThis.fetch = real;
+    await unmount();
+  });
+  const [older, newer] = ['00', '01'].map((s) => openPull('c0', `2026-09-05T00:00:${s}Z`));
+  serve('/tools/code.publication.read', (call) => ({
+    body: {
+      result: {
+        details: {
+          ...publicationDetails(call === 1 ? older! : newer!),
+          files: call === 1 ? [] : [{ additions: 5, deletions: 1 }],
+        },
+      },
+    },
+  }));
+  let setRows!: (rows: CodePublication[]) => void;
+  const Host = () => {
+    const [rows, set] = useState([published({ pull: older! })]);
+    setRows = set;
+    return publicationWidget(rows);
+  };
+  await mount(createElement(Host));
+  await act(async () => setRows([published({ pull: newer! })]));
+  await settle(10);
+  release();
+  await settle(10);
+  assert.match(text(), /\+5 −1\s*across 1 file/);
 });
 
 test('a changed merge base or reviewed head starts a new request intent', async (t) => {

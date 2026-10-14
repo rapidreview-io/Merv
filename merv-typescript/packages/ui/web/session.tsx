@@ -18,6 +18,7 @@ import {
   ApiError,
   accountRequest,
   hasToken,
+  identityVersion,
   onAccessLost,
   recentProjects,
   resolveAccountSession,
@@ -480,6 +481,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const phase = useRef(state.phase);
   phase.current = state.phase;
   const epoch = useScopeVersion();
+  // A new project is checked by whoever chose it (`reload`), never by the check that selects it.
+  const identity = identityVersion();
   // A credential this tab was still holding from an earlier visit is not something the
   // person just offered: when it is refused the sign-in page opens and accuses nobody.
   const attempted = useRef(false);
@@ -582,7 +585,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearTimeout(retry);
     };
-  }, [attempt, epoch, authReady]);
+  }, [attempt, identity, authReady]);
   const signOut = () => {
     const csrf = document.cookie.match(/(?:^|;\s*)__Host-sbx_csrf=([^;]*)/)?.[1];
     if (csrf)

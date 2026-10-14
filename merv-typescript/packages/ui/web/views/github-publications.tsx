@@ -182,20 +182,21 @@ export function GitHubPublications({
     setDetails({});
     setFailed('');
   }, [epoch]);
-  // A pull request is read once, and again only when GitHub says it changed.
+  // A pull request is read once, again only when GitHub says it changed, and shown as last read.
   useEffect(() => {
     for (const p of rows) {
       const key = p.pull?.updatedAt;
       if (!key || seen.current.get(p.proposalId) === key) continue;
       seen.current.set(p.proposalId, key);
+      const newest = () => current() && seen.current.get(p.proposalId) === key;
       void call<{ details: GitHubPullDetails | null }>('code.publication.read', {
         proposalId: p.proposalId,
       })
         .then((value) => {
-          if (current()) setDetails((all) => ({ ...all, [p.proposalId]: value.details }));
+          if (newest()) setDetails((all) => ({ ...all, [p.proposalId]: value.details }));
         })
         .catch((e: unknown) => {
-          if (current())
+          if (newest())
             setFailed(e instanceof Error ? e.message : 'A pull request could not be read');
         });
     }

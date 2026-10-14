@@ -137,12 +137,15 @@ export default function BoardCanvas({ id }: { id: string }) {
   // What others drew since the revision in hand, merged in without disturbing what is held.
   useEffect(() => {
     if (!api) return;
-    let live = true;
+    // One ask at a time: a slow answer is never overtaken, so the revision never goes back.
+    let [live, asking] = [true, false];
     const ask = async () => {
-      if (document.visibilityState === 'hidden') return;
+      if (asking || document.visibilityState === 'hidden') return;
+      asking = true;
       const scene = await call<BoardScene>('board.scene', { id, since: revision.current }).catch(
         () => null,
       );
+      asking = false;
       if (!live || !scene || !scene.elements.length) return;
       revision.current = scene.board.revision;
       // Never repair bindings here: these are only the shapes that changed, and a box whose text

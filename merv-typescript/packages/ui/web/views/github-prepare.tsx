@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
-import { useCommand } from '../mutations';
+import { useCommand, useCurrent } from '../mutations';
 import { Short } from '../components';
 import { useReferences } from '../markdown';
 import type {
@@ -18,18 +18,12 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
   const [result, setResult] = useState<CodeRepositoryPreparation>();
   const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState<string>();
-  const live = useRef(true);
+  const live = useCurrent();
   // The integration task opens where its owner's row lists it, as project.references says.
   const taskId = result?.state === 'review_required' ? result.taskId : undefined;
   const integration = useReferences(useMemo(() => (taskId ? [taskId] : []), [taskId])).get(
     taskId ?? '',
   )?.to;
-  useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-    };
-  }, []);
   const command = useCommand<CodeRepositoryPreparation>({
     tool: 'code.repository.prepare',
     idempotent: true,
@@ -64,7 +58,7 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
         }),
         call<CodeProjectStatus>('code.status'),
       ]);
-      if (!live.current) return;
+      if (!live()) return;
       const branch = branches.find((branch) => branch.name === status.baseBranch);
       if (!branch) throw new Error('Reload repository settings to select the current branch.');
       const selected: CodeRepositoryPrepareInput = {
@@ -78,10 +72,10 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
       setResult(undefined);
       await command.submit({ ...selected });
     } catch (failure) {
-      if (live.current)
+      if (live())
         setError(failure instanceof Error ? failure.message : 'Could not read the selected branch');
     } finally {
-      if (live.current) setSelecting(false);
+      if (live()) setSelecting(false);
     }
   };
   return (
