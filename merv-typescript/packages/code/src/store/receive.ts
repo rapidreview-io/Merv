@@ -257,10 +257,7 @@ export class CodeReceiver {
     const kept = input.bundle
       ? null
       : await this.core.owned(() =>
-          this.core.repositories.git.run(
-            ['rev-parse', '--verify', '--quiet', `${input.proposedHead}^{tree}`],
-            { env: this.core.repositories.environment(caller.projectId) },
-          ),
+          this.core.repositories.resolve(caller.projectId, `${input.proposedHead}^{tree}`),
         );
     const superseded: OperationRow[] = [];
     const id = await this.core.state.transaction(async (tx) => {
@@ -324,7 +321,7 @@ export class CodeReceiver {
           'completed',
           canonical({
             head: input.proposedHead,
-            tree: kept?.code === 0 ? kept.stdout.toString('utf8').trim() : null,
+            tree: kept,
             receiptRef: null,
             objects: 0,
             bytes: 0,
@@ -663,13 +660,9 @@ export class CodeReceiver {
         ...(target.github ? { github: target.github } : {}),
         waiting: null,
       };
-      const branch = upload
-        ? await this.core.repositories.git.run(
-            ['rev-parse', '--verify', '--quiet', workRef(upload.unitId)],
-            { env },
-          )
+      const branchHead = upload
+        ? await this.core.repositories.resolve(row.project_id, workRef(upload.unitId))
         : null;
-      const branchHead = branch?.code === 0 ? branch.stdout.toString('utf8').trim() : null;
       try {
         progress = await this.core.state.transaction(async (tx) => {
           const current = await this.core.row(tx, id);
@@ -732,13 +725,8 @@ export class CodeReceiver {
           409,
         );
 
-      const receipt = async () => {
-        const found = await this.core.repositories.git.run(
-          ['rev-parse', '--verify', '--quiet', `${progress.receiptRef}^{commit}`],
-          { env },
-        );
-        return found.code === 0 ? found.stdout.toString('utf8').trim() : null;
-      };
+      const receipt = () =>
+        this.core.repositories.resolve(row!.project_id, `${progress.receiptRef}^{commit}`);
       let applied = await receipt();
       if (applied === null) {
         const zero = '0'.repeat(progress.target!.length);

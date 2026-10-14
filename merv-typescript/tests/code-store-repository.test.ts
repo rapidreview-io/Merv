@@ -394,7 +394,24 @@ test('a sweep folds the packs of the project that holds the most, in its turn an
   intact(repositories, 'q', q, config);
 });
 
-test('a fold that fails or lacks room loses nothing and leaves only what was there; an hour later one completes', async (t) => {
+test('a project the volume has no room to fold rests, and the next fullest is folded meanwhile', async (t) => {
+  const repositories = await opened(t, root(t));
+  await packed(repositories, 'p', 18);
+  await packed(repositories, 'q', 16);
+  const pass = async (nowMs = Date.now()) => {
+    await repositories.sweep(async () => undefined, nowMs);
+    for (const id of ['p', 'q']) await repositories.run(id, async () => {});
+  };
+  repositories.config.reservedFreeBytes = Number.MAX_SAFE_INTEGER;
+  await pass();
+  repositories.config.reservedFreeBytes = 1;
+  await pass();
+  assert.deepEqual([indexes(repositories, 'p'), indexes(repositories, 'q') < 4], [18, true]);
+  await pass(Date.now() + 2 * 3600_000);
+  assert.ok(indexes(repositories, 'p') < 4, 'p folded once it rested');
+});
+
+test('a fold that fails loses nothing and leaves only what was there; an hour later one completes', async (t) => {
   // This Git's first repack makes temporary files and fails; every other call is Git's own.
   const path = root(t);
   const failed = join(path, '..', 'failed');
@@ -419,10 +436,6 @@ test('a fold that fails or lacks room loses nothing and leaves only what was the
     await repositories.sweep(async () => undefined, nowMs);
     await repositories.run('p', async () => {});
   };
-  repositories.config.reservedFreeBytes = Number.MAX_SAFE_INTEGER;
-  await pass();
-  assert.equal(existsSync(failed), false, 'without room no fold starts');
-  repositories.config.reservedFreeBytes = 1;
   await pass();
   assert.equal(existsSync(failed), true);
   assert.deepEqual(readdirSync(pack).sort(), before, 'only the fold’s own temporary files go');

@@ -265,6 +265,14 @@ export class CodeRepositories {
     return found.code === 0;
   }
 
+  /** The object `name` names in the project's own repository, or null when it names none. */
+  async resolve(projectId: string, name: string): Promise<string | null> {
+    const found = await this.git.run(['rev-parse', '--verify', '--quiet', name], {
+      env: this.environment(projectId),
+    });
+    return found.code === 0 ? found.stdout.toString('utf8').trim() : null;
+  }
+
   async objectFormat(projectId: string): Promise<ObjectFormat> {
     const format = (
       await this.git.ok(['rev-parse', '--show-object-format'], {
@@ -589,13 +597,14 @@ export class CodeRepositories {
    * and no configuration written. Every object stays, reachable or not: `-d` removes only packs
    * and loose objects the new pack holds. A fold that fails removes the temporary files it made
    * (Git reads a `.tmp-` pack as a real one, so no other is touched), and its project rests for
-   * an hour, as does one whose directory a sweep cannot vouch for.
+   * an hour, as does one without room to fold or whose directory a sweep cannot vouch for.
    */
   private async fold(projectId: string): Promise<void> {
     const objects = join(this.paths(projectId).repository, 'objects');
     const pack = join(objects, 'pack');
     const { bavail, bsize } = await statfs(this.config.root);
-    if (bavail * bsize < this.config.reservedFreeBytes + (await diskBytes(objects))) return;
+    if (bavail * bsize < this.config.reservedFreeBytes + (await diskBytes(objects)))
+      throw stopped();
     const before = new Set(await readdir(pack));
     const args = '-c pack.threads=1 -c pack.windowMemory=64m repack --geometric=2 -d -n -q';
     const folded = await this.git

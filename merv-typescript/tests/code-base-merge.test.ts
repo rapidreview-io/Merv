@@ -119,7 +119,10 @@ test('what Git said of a conflict is cut between characters, never inside one', 
     };
     const base = commit('base\n');
     const result = await mergeBases(git, r.env, commit('A\n', base), commit('C\n', base), 'x');
-    assert.ok(result.outcome === 'conflict' && result.messages.length > 15_000);
+    assert.ok(
+      result.outcome === 'conflict' && result.messages.length > 15_000,
+      `a long conflict, not ${result.outcome}`,
+    );
     assert.doesNotMatch(result.messages, /\p{Surrogate}/u);
   }
 });

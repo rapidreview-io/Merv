@@ -634,13 +634,16 @@ test('unloading ends the Git child of a mirror pass instead of waiting it out', 
   let f!: Awaited<ReturnType<typeof writerFixture>>;
   let entered!: () => void;
   const inside = new Promise<void>((resolve) => (entered = resolve));
+  let ended = '';
   // As `git ls-remote` against a GitHub that never answers: a child waiting for its input.
   const silent = async () => {
     entered();
-    await f.core.repositories.git.run(['hash-object', '--stdin'], {
-      input: new PassThrough(),
-      timeoutMs: 5000,
-    });
+    await f.core.repositories.git
+      .run(['hash-object', '--stdin'], { input: new PassThrough(), timeoutMs: 5000 })
+      .catch((error: { code: string }) => {
+        ended = error.code;
+        throw error;
+      });
     return null;
   };
   f = await writerFixture(t, 900, {
@@ -652,8 +655,8 @@ test('unloading ends the Git child of a mirror pass instead of waiting it out', 
   await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
   const pass = mirrorStep(f.code);
   await inside;
-  const started = Date.now();
   await f.code.close();
-  assert.ok(Date.now() - started < 2000, 'the unload did not wait for the child');
   await pass;
+  // Waited out, the child would have ended at its own deadline (code_git_timeout).
+  assert.match(ended, /^code_(git_aborted|unavailable)$/, `the child ended by ${ended}`);
 });

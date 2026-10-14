@@ -1216,7 +1216,8 @@ test('an upload a crash left part-appended or short of its tail goes on where Co
   );
   assert.equal(turns.filter(({ what }) => what === 'put 2048').length, 1);
   // Each refusal is followed by the driver's poll pause (20 ms), never a hot retry.
-  for (const at of [0, turns.length - 3]) assert.ok(turns[at + 1]!.at - turns[at]!.at >= 15);
+  for (const at of [0, turns.length - 3])
+    assert.ok(turns[at + 1]!.at - turns[at]!.at >= 15, `no pause after ${turns[at]!.what}`);
 });
 
 test('a periodic checkpoint is asked for only while the checkout holds changes on Code’s head', async (t) => {
