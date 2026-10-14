@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { DurableEvents } from '@merv/domain-events';
-import type { EventConsumer } from '@merv/contracts';
+import type { EventConsumer, Transaction } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import { ownReviews } from './fixtures/review-verdict.js';
 import type { PostgresState } from '@merv/state';
@@ -960,12 +960,13 @@ test('idle consumers and consumers in backoff take no writer transactions', asyn
   }
 });
 
-test('consumers pass the events none of them subscribes to in one writer transaction', async () => {
+test('consumers pass the events none of them subscribes to in one writer statement', async () => {
   const state = await openState(':memory:');
   const events = await createService(new DurableEvents(state));
   const transaction = state.transaction.bind(state);
   const handled: number[] = [];
   let transactions = 0;
+  let statements = 0;
   try {
     for (let i = 0; i < 6; i++)
       await events.subscribe({
@@ -988,11 +989,23 @@ test('consumers pass the events none of them subscribes to in one writer transac
             data: {},
           });
       });
-    // A pass the commit wakes may already have run; either way, at most one for all six.
-    state.transaction = (fn) => (transactions++, transaction(fn));
+    // A pass the commit wakes may already have run; either way, at most one for all six, and one
+    // statement in it (each consumer's re-check took three).
+    state.transaction = ((fn: (tx: Transaction) => unknown) =>
+      transaction((tx) => {
+        transactions++;
+        const { run, get, all } = tx;
+        Object.assign(tx, {
+          run: (sql: string, ...p: never[]) => (statements++, run(sql, ...p)),
+          get: (sql: string, ...p: never[]) => (statements++, get(sql, ...p)),
+          all: (sql: string, ...p: never[]) => (statements++, all(sql, ...p)),
+        });
+        return fn(tx);
+      })) as typeof state.transaction;
     await noise();
     await events.drain();
     assert.ok(transactions <= 2, `${transactions} transactions`);
+    assert.ok(statements <= transactions, `${statements} statements`);
     transactions = 0;
     await noise();
     await events.drain();

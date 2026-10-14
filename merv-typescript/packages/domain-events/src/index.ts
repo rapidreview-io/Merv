@@ -181,12 +181,6 @@ export class DurableEvents implements DomainEvents {
     ]);
   }
 
-  /** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
-  private async due(consumer: EventConsumer, after: number, through: number, tx?: Transaction) {
-    const next = await this.state.nextEventId(after, consumer.types, tx);
-    return next !== undefined && next <= through;
-  }
-
   private async advance(tx: Transaction, consumer: EventConsumer, cursor: number) {
     await tx.run(
       'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
@@ -199,10 +193,10 @@ export class DurableEvents implements DomainEvents {
     const consumers = [...this.consumers.values()];
     this.retryAt = Infinity;
     if (!consumers.length) return false;
-    // Advisory and lock-free: skip a consumer only when a snapshot taken after this pass began
-    // shows it waiting on a retry or already past every committed event, and find those with
-    // nothing they subscribe to before the head. The locked transactions below still decide
-    // everything they deliver or pass.
+    // Lock-free: skip a consumer when a read taken after this pass began shows it waiting on a
+    // retry, already past every committed event, or (quiet) with nothing it subscribes to up to
+    // the head. Every event up to the head had committed when it was read (see the README's
+    // ordering invariant), so that answer holds; the locked transactions below decide the rest.
     const { head, progress, quiet } = await this.state.read(async (sql) => {
       // Inside this read scope, eventHead reuses the same connection.
       const head = await this.state.eventHead();
@@ -213,35 +207,37 @@ export class DurableEvents implements DomainEvents {
           )
         ).map((row) => [row.id, row]),
       );
-      const quiet: EventConsumer[] = [];
+      // Quiet consumers' ids and cursors, in pairs.
+      const quiet: (string | number)[] = [];
       for (const consumer of consumers) {
         const seen = progress.get(consumer.id);
-        if (seen && seen.retry_at <= Date.now() && seen.cursor < head)
-          if (!(await this.due(consumer, seen.cursor, head))) quiet.push(consumer);
+        if (!seen || seen.retry_at > Date.now() || seen.cursor >= head) continue;
+        const next = await this.state.nextEventId(seen.cursor, consumer.types);
+        if (next === undefined || next > head) quiet.push(consumer.id, seen.cursor);
       }
       return { head, progress, quiet };
     });
-    // They pass the events they do not subscribe to together, in one transaction, rather than
-    // in one each.
+    // They pass to the head together, in one statement, each only while its row still reads as
+    // it did; one that changed meanwhile is left to its delivery transaction.
     const passed = new Set<string>();
     if (quiet.length)
-      await this.state.transaction(async (tx) => {
-        for (const consumer of quiet) {
-          const row = await progressOf(tx, consumer.id);
-          if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
-            continue;
-          // Under the writer lock every event up to the head is committed, and no smaller ID
-          // can commit later.
-          if (head > row.cursor) await this.advance(tx, consumer, head);
-          passed.add(consumer.id);
-        }
-      });
+      for (const { id } of await this.state.transaction((tx) =>
+        tx.all<{ id: string }>(
+          `UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE retry_at<=?
+           AND (id,cursor) IN (${'(?,?),'.repeat(quiet.length / 2).slice(0, -1)}) RETURNING id`,
+          head,
+          Date.now(),
+          ...quiet,
+        ),
+      ))
+        passed.add(id);
     let backlog = false;
     for (const consumer of consumers) {
       const seen = progress.get(consumer.id);
       if (seen && seen.retry_at > Date.now()) this.retryAt = Math.min(this.retryAt, seen.retry_at);
-      if (seen && (seen.retry_at > Date.now() || seen.cursor >= head)) continue;
-      if (passed.has(consumer.id)) continue;
+      // A consumer without a progress row (removed outside the application) has nothing to do.
+      if (!seen || seen.retry_at > Date.now() || seen.cursor >= head || passed.has(consumer.id))
+        continue;
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
         let attemptedCursor: number | undefined;
