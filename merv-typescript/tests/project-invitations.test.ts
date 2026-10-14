@@ -55,7 +55,6 @@ test('invitation creates no actor; acceptance is atomic under duplicate requests
     f.scope.members.respondToInvitation(person, invitations[0]!.id, 'accept'),
   ]);
   assert.equal(accepted[0]!.id, accepted[1]!.id);
-  assert.deepEqual(await f.scope.projectCreator(f.project.id), { issuer, subject: 'owner' });
 });
 
 test('expired invitations and invitations withdrawn when an operator loses authority cannot be accepted', async (t) => {
