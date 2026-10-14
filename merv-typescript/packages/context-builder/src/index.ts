@@ -15,6 +15,7 @@ import {
   MervError,
   newId,
   now,
+  stateFault,
   type State,
   type Scope,
   type Artifacts,
@@ -107,10 +108,8 @@ const saveSchema = z
   })
   .strict();
 
-/** Permanent: these stored bytes will never read back. Artifacts reports bytes over its inline
- *  limit as `artifact_size` and bytes that do not match their row as `blob_corrupt`, and nothing
- *  else. Missing bytes (`artifact_bytes_missing`: a restored blob or a fixed bucket brings them
- *  back) are not here, and neither is an outage (`blob_unavailable`) or any other code. */
+/** Permanent: bytes that never read back as text (over Artifacts' inline limit, or corrupt).
+ *  Missing bytes (`artifact_bytes_missing`), an outage or any other code propagate. */
 const PERMANENT = new Set(['artifact_size', 'blob_corrupt']);
 /**
  * Fetches the artifacts the input names in one `getMany` (per MAX_ARTIFACT_IDS), in `tx`, for a
@@ -118,9 +117,9 @@ const PERMANENT = new Set(['artifact_size', 'blob_corrupt']);
  * thrown where the render asks for that ID, so it fails with the same error, in the same order, as
  * if it fetched each artifact itself: when the batch is refused, each ID is fetched on its own to
  * learn which ones are, because the render asks in its own order, and a check it makes first (such
- * as `context_missing`) must still win. A transient failure (5xx or not a MervError) is thrown at
- * once, before any of the render's checks: an outage fails the render whatever else is wrong with
- * its input.
+ * as `context_missing`) must still win. A transient failure (5xx or not a MervError) or a State
+ * fault (which aborts `tx`) is thrown at once, before any of the render's checks: an outage fails
+ * the render whatever else is wrong with its input.
  */
 async function resolve(
   artifacts: Artifacts,
@@ -136,7 +135,7 @@ async function resolve(
       batch.forEach((id, index) => found.set(id, fetched[index]!));
       return true;
     } catch (error) {
-      if (!(error instanceof MervError) || error.status >= 500) throw error;
+      if (!(error instanceof MervError) || error.status >= 500 || stateFault(error)) throw error;
       if (batch.length === 1) found.set(batch[0]!, error);
       return false;
     }

@@ -55,4 +55,4 @@ node scripts/render-dependencies.mjs
 
 Regenerate or update the DOT panels before presenting new SVG/PNG exports as current. The renderer checks their providers, Cordis edges and HTTP connections against the generated inventory.
 
-Scope now owns tool grants and session-policy registration through `scope.toolPolicy`. Access is an internal Scope module, not a separate plugin. Tools requires only Scope; External Mounts requires Tools and Scope and owns upstream credential resolution internally. See the [configuration migration](../../packages/scope/README.md).
+Scope now owns tool grants through `scope.toolPolicy`; Sessions registers its session tool policy with the tool registry (`ctx.tools.registerSessionPolicy()`). Access is an internal Scope module, not a separate plugin. Tools requires only Scope; External Mounts requires Tools and Scope and owns upstream credential resolution internally. See the [configuration migration](../../packages/scope/README.md).

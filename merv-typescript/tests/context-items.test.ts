@@ -515,7 +515,7 @@ test('an always binary fails context_encoding; a fit png is never read and a fit
   );
 });
 
-test('a permanent read error keeps a fit line, while missing blobs, outages and foreign IDs fail', async (t) => {
+test('a permanent read error keeps a fit line, while missing blobs, outages, foreign and malformed IDs fail', async (t) => {
   const { artifacts, operator, outsider, failures, preview } = await setup(t);
   for (const code of ['blob_corrupt', 'artifact_size']) {
     const corrupt = await artifacts.create(operator, { title: code, content: `Bytes ${code}.` });
@@ -547,6 +547,11 @@ test('a permanent read error keeps a fit line, while missing blobs, outages and 
     await assert.rejects(preview({ s0: [artifact('item', foreign.id, { embed })] }), {
       code: 'not_found',
     });
+  // A NUL aborts the batch's transaction: the caller's 400, never a retry that answers 503.
+  await assert.rejects(preview({ s0: [artifact('item', 'artifact_\u0000x')] }), {
+    code: 'state_invalid_value',
+    status: 400,
+  });
 });
 
 test('a CJK body that fits is embedded, and one artifact named twice is read once', async (t) => {

@@ -79,7 +79,8 @@ interface GitHubReview {
   id: number;
   user: string;
   state: string;
-  commitSha: string;
+  /** Null when GitHub no longer has the reviewed commit (a force-push removed it). */
+  commitSha: string | null;
   body: string;
   submittedAt: string | null;
 }

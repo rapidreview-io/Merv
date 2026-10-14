@@ -139,9 +139,9 @@ The fallback calls OpenAI's `POST /v1/responses` with
 so one budgeted call is at most that many billed hosted searches), 2,048 output
 tokens (4,096 for an advanced search) and `store: false`, from inside the
 handler; the Pi relay would refuse a hosted tool. Every call has a deadline over
-all its attempts (Tavily 30 s, the fallback 90 s), follows no redirect, reads at
-most 8 MiB of JSON, and retries twice what may pass: no answer, 408, 425, 429
-or 5xx.
+all its attempts (Tavily 30 s, the fallback 90 s), follows no redirect and reads at
+most 8 MiB of JSON. Tavily is retried twice on what may pass: no answer, 408, 425,
+429 or 5xx. The fallback, which may be billed even when it fails, never is.
 
 Search falls back exactly when Nisa does: Tavily has no key, or answers 401,
 403, 432 or 433 (a missing, invalid or forbidden key, or a used-up plan). A 429

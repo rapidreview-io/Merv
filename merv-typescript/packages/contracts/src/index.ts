@@ -924,8 +924,8 @@ export interface Artifacts {
   /** `getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input order,
    * duplicates kept; `not_found` for the first id that is not in this project. */
   getAll(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
-  /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
-   * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
+  /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`, read from the row, never
+   * from storage: `artifact_size` above the inline limit, `artifact_bytes_missing` without them. */
   bytes(
     caller: Caller,
     artifactId: string,
