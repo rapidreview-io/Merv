@@ -708,6 +708,21 @@ export class CodeBaseService {
     };
   }
 
+  /** A check that has rented nothing yet holds only a reservation; a stopped base ends both. */
+  private async letGo(tx: Transaction, projectId: string, base: CodeBaseRecord, held = true) {
+    const ended = await tx.run(
+      `UPDATE code_bases SET check_state='none',updated_at=? WHERE project_id=? AND base_key=? AND execution_epoch=? AND check_job_json IS NULL AND ${IN_FLIGHT}${held ? '' : " AND NOT (state='running' AND health='healthy')"}`,
+      now(),
+      projectId,
+      base.key,
+      base.executionEpoch,
+    );
+    if (ended.changes)
+      await this.hooks.serviceWork
+        ?.settle(tx, this.execution(projectId, base, 'code.check'), 'cancelled')
+        .catch(() => undefined);
+  }
+
   private async failed(
     tx: Transaction,
     projectId: string,
@@ -989,8 +1004,11 @@ export class CodeBaseService {
         // stopped running, is nobody's: it goes back before anything else, because nothing
         // will ever read its answer and it is still being paid for.
         if (!mine) {
-          if (handle)
-            await this.state.transaction((tx) => this.queueCleanup(tx, projectId, base, handle));
+          await this.state.transaction((tx) =>
+            handle
+              ? this.queueCleanup(tx, projectId, base, handle)
+              : this.letGo(tx, projectId, base, false),
+          );
           continue;
         }
         await this.checkStep(projectId, base, handle);
@@ -1472,6 +1490,7 @@ export class CodeBaseService {
                   : 'cancelled';
       if (row.check_job_json)
         await this.queueCleanup(tx, caller.projectId, base, JSON.parse(row.check_job_json));
+      else await this.letGo(tx, caller.projectId, base);
       await tx.run(
         // A recorded verdict is never replaced by an operator's disposition.
         `UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,check_state=CASE WHEN check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE project_id=? AND base_key=?`,

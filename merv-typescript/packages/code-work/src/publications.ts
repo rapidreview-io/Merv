@@ -231,16 +231,17 @@ export class CodePublicationService implements CodePublicationApi {
           : 'github_unavailable';
       await this.state.transaction(async (tx) => {
         const held = await tx.run(
-          'UPDATE code_publications SET error=? WHERE proposal_id=? AND lock_id=?',
+          'UPDATE code_publications SET error=? WHERE proposal_id=? AND lock_id=? AND settled=0',
           code,
           id,
           lock,
         );
+        // A finished publication keeps its ending: a refused request never rewrites it.
+        if (!held.changes) return;
         const record = this.decode(row);
         // A base quarantine that reached the accepted unit ends its publication, which would be
         // refused on every pass and hold the repository for good; a successor takes it.
         if (
-          held.changes &&
           code === 'code_quarantined' &&
           (await tx.get(
             'SELECT 1 FROM code_units WHERE project_id=? AND unit_id=? AND quarantine_base_key IS NOT NULL',

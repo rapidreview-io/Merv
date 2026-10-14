@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   canonical,
   check,
+  cleanText,
   codeCommandCompletionSchema,
   codeCommandControlSchema,
   codeCommitInputSchema,
@@ -60,9 +61,9 @@ const nextInputSchema = codeCommandControlSchema
     checkpoint: codeCommitInputSchema.pick({ expectedHead: true, requestId: true }).optional(),
   })
   .strict();
-/** A checkpoint says whose work it saves: the work's name never changes, so a retry is the same. */
+/** Whose work a checkpoint saves, as a valid message; the name never changes, so a retry is the same. */
 const checkpointMessage = (name: string | undefined) =>
-  name ? `Checkpoint: ${name}`.slice(0, 200) : 'Checkpoint: work in progress';
+  name ? cleanText(`Checkpoint: ${name}`, 200) : 'Checkpoint: work in progress';
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
 

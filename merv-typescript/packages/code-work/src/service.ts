@@ -372,10 +372,11 @@ export class CodeService implements Code {
     );
     if (blocked) refuse(new MervError(blocked.code, blocked.message, 409));
   }
-  /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
+  /** An administrator's: every admitted upload of the unit is first given the chance to finish. */
   async fenceUnit(caller: Caller, input: unknown) {
     const store = this.store;
     caller = structuredClone(caller);
+    await this.scope.require(caller, 'admin');
     await store.maintain(false);
     const status = await this.state.transaction(async (tx) => {
       check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);

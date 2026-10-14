@@ -1,7 +1,6 @@
 import {
   absent,
   ellipsis,
-  filterAsync,
   keyId,
   keyKind,
   mapAsync,
@@ -463,13 +462,13 @@ export class CodeRunningReader {
             new Set(definition.terminal),
           ]),
       );
-      const open = await filterAsync(
-        moves.filter(({ blocker }) => !PUBLICATION_CODES.has(blocker.code)),
-        async ({ blocker }) => {
-          const work = await this.workflows.get(caller, blocker.instanceId, tx).catch(absent);
-          return !!work && !terminal.get(`${work.workflow}@${work.version}`)?.has(work.state);
-        },
-      );
+      const asked = moves.filter(({ blocker }) => !PUBLICATION_CODES.has(blocker.code));
+      const ids = asked.map(({ blocker }) => blocker.instanceId);
+      const works = await this.workflows.find(caller, ids, tx);
+      const open = asked.filter(({ blocker }) => {
+        const work = works.get(blocker.instanceId);
+        return !!work && !terminal.get(`${work.workflow}@${work.version}`)?.has(work.state);
+      });
       return holdsOf(
         open,
         moves.filter(({ blocker }) => PUBLICATION_CODES.has(blocker.code)),

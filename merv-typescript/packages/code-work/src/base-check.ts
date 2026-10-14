@@ -1,4 +1,4 @@
-import { check, sha256Hex } from '@merv/contracts';
+import { check, clip, sha256Hex } from '@merv/contracts';
 import type { SandboxCheckHandle, SandboxCheckPlan, SandboxCheckVerdict } from './check-types.js';
 import type { ServerGit } from '@merv/code/git';
 import { CODE_CHECK_SLACK_SECONDS, CODE_CHECK_SOURCE_MAX_BYTES } from './check-configuration.js';
@@ -100,7 +100,7 @@ export function checkPlan(spec: CodeCheckSpec, key: string, epoch: number): Sand
 }
 
 const bounded = (value: string, limit: number) =>
-  value.length <= limit ? value : `${value.slice(0, limit)}\n[Truncated.]`;
+  value.length <= limit ? value : `${clip(value, limit)}\n[Truncated.]`;
 
 /** The write-once receipt: what ran, where, what it cost, and what it could not isolate. */
 export function checkReceipt(

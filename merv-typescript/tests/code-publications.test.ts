@@ -302,4 +302,7 @@ test('an exact completed merge retry returns its saved receipt without GitHub ac
   await assert.rejects(f.publications.mergePublication(f.reviewer, input), {
     code: 'publication_conflict',
   });
+  // A refused request is the caller's; the finished publication keeps how it ended.
+  const [after] = await f.publications.publications(f.caller);
+  assert.deepEqual([after!.state, after!.lastError], ['merged', null]);
 });

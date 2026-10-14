@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  codeCommitCommandSchema,
   type Caller,
   type CodeCommitCommand,
   type CodeCommitInput,
@@ -57,6 +58,7 @@ async function fixture(
     grant?: boolean;
     fixedMessage?: string;
     merge?: boolean;
+    name?: string;
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-commands-'));
@@ -166,7 +168,7 @@ async function fixture(
       new CodeCommandService(state, scope, sessions, {
         // The name a checkpoint says it saves; Workflows answers it in the composition.
         relations: async () =>
-          ({ instance: { name: 'Fold both sweeps', workflow: 'task' } }) as never,
+          ({ instance: { name: options.name ?? 'Fold both sweeps', workflow: 'task' } }) as never,
       }),
     );
   };
@@ -389,6 +391,18 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
     }),
     { ...own.command },
   );
+});
+
+test('a checkpoint message is one the runner accepts, whatever the title it names holds', async (t) => {
+  // A title may hold control characters, and the cut at 200 may fall inside a surrogate pair.
+  const f = await fixture(t, { name: `Parse \u001b[0m ${'x'.repeat(177)}\u{1F680}` }),
+    worker = await f.ready();
+  const command = (await f.code.nextCommand(f.source, {
+    ...worker.control,
+    checkpoint: { expectedHead: oid('a'), requestId: 'checkpoint-1' },
+  }))!;
+  assert.equal(command.message, `Checkpoint: Parse [0m ${'x'.repeat(177)}`);
+  assert.ok(codeCommitCommandSchema.safeParse(command).success);
 });
 
 test('commit enforces active attached writable fixed authority, including direct service bindings', async (t) => {

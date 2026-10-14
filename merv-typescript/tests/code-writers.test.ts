@@ -271,6 +271,14 @@ test('a quarantined final capture blocks the unit until a signed-in administrato
   );
   await assert.rejects(f.lease('ses_2'), refused('code_capture_quarantined'));
 
+  // Only an administrator starts the maintenance pass a fence begins with.
+  const store = (f.code as unknown as { store: { maintain(): Promise<void> } }).store;
+  const maintained = t.mock.method(store, 'maintain');
+  const { actor } = await f.scope.credentials.issueActor(f.admin, { name: 'P', role: 'producer' });
+  const producer = { projectId: f.admin.projectId, actorId: actor.id };
+  await assert.rejects(f.code.fenceUnit(producer, { unitId: f.unitId, requestId: 'fence' }));
+  assert.equal(maintained.mock.callCount(), 0);
+  maintained.mock.restore();
   await assert.rejects(
     f.code.fenceUnit(f.admin, { unitId: f.unitId, requestId: 'fence' }),
     refused('code_human_required'),

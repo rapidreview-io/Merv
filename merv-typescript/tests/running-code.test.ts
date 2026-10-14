@@ -538,7 +538,9 @@ test('a move that is nobody’s holds nothing, open work is marked whatever its 
     await write(work, 'code_publication_disabled', at(40 - index), 'publication');
     done.push(work);
   }
+  const reads = t.mock.method(f.workflows, 'find');
   const { marks, summary } = await f.holds();
+  assert.equal(reads.mock.callCount(), 1, 'open work is read in one batch, not once per move');
   const disabled = {
     says: ['Publication is disabled for this project until an operator clears it'],
     who: 'An operator',

@@ -18,6 +18,7 @@ import { resolutionBrief } from '@merv/tasks/resolution-brief';
 import { baseFixture } from './fixtures/code-bases.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { migrateBases } from '@merv/code-work/base-schema';
+import { INHERITED_QUARANTINE } from '@merv/code-work/bases';
 import { openState } from './fixtures/state.js';
 import type { CodeBaseCheck, CodeCheckSpec } from '@merv/code-work/models';
 
@@ -306,6 +307,51 @@ test('a legacy running check without its specification requires retry instead of
   assert.equal(stopped.check_job_json, null, 'the old job is released through normal cleanup');
   assert.equal(adapter.log.includes('follow'), false, 'an unknown command produces no verdict');
   assert.match(stopped.blocker!, /execution specification/);
+});
+
+test('a check stopped before it rented a machine gives its reservation back', async (t) => {
+  const f = await baseFixture(t);
+  const adapter = scripted();
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const { a, b, d } = f.commits;
+  const reserved = async () =>
+    Number(
+      (await f.state.read((sql) =>
+        sql.get<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM session_service_work WHERE project_id=? AND provider='code.check' AND settled_at IS NULL",
+          f.projectId,
+        ),
+      ))!.n,
+    );
+  // One drain merges and hands off; the machine would be asked for on the next. An operator's
+  // cancel comes first.
+  const cancelled = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+  await f.bases.work(f.projectId);
+  assert.equal(await reserved(), 1);
+  await f.bases.control(f.scope, f.admin, {
+    key: cancelled.key,
+    action: 'cancel',
+    reason: 'Replanning',
+    requestId: 'cancel',
+  });
+  assert.equal(await reserved(), 0, 'not held until its deadline, against the project');
+  // So does a quarantine its base inherits, which the base does not run past.
+  const inherited = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [b, d]));
+  await f.bases.work(f.projectId);
+  assert.equal(await reserved(), 1);
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE code_bases SET health='quarantined',operator_reason=? WHERE project_id=? AND base_key=?",
+      `${INHERITED_QUARANTINE}${cancelled.key}`,
+      f.projectId,
+      inherited.key,
+    ),
+  );
+  await f.bases.work(f.projectId);
+  assert.equal(await reserved(), 0);
+  assert.equal((await row(f, inherited.key)).check_state, 'none');
+  assert.equal(adapter.machines(), 0);
 });
 
 test('a failing check drops the auto-merge ref, so the one resolution task can seal it', async (t) => {
@@ -774,6 +820,10 @@ test('a failing check replaces both Git headings in the brief with what has to p
   assert.match(failed.checks[2]!, /failed with exit 7/);
   assert.equal(checkFailure({ ...base, checkState: 'passed' } as typeof base), null);
   assert.match(brief(null).goal, /Conflicting paths:/, 'a Git conflict keeps Git’s own headings');
+  // Output cut inside a surrogate pair would be text the resolution task's brief refuses.
+  const long = structuredClone(base);
+  long.check!.receipt!.output.head = `${'x'.repeat(3999)}\u{1F525} test_one failed`;
+  assert.doesNotMatch(checkFailure(long)!.output, /\p{Surrogate}/u);
 });
 
 test('the populated cleanup migration retains legacy ownership without inventing identifiers', async (t) => {
