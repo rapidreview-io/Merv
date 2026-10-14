@@ -108,9 +108,6 @@ const saveSchema = z
   })
   .strict();
 
-/** Permanent: bytes that never read back as text (over Artifacts' inline limit, or corrupt).
- *  Missing bytes (`artifact_bytes_missing`), an outage or any other code propagate. */
-const PERMANENT = new Set(['artifact_size', 'blob_corrupt']);
 /**
  * Fetches the artifacts the input names in one `getMany` (per MAX_ARTIFACT_IDS), in `tx`, for a
  * render that reads their bytes later. A refusal (a 4xx error such as `not_found`) is kept and
@@ -148,18 +145,12 @@ async function resolve(
       if (artifact instanceof MervError) throw artifact;
       return artifact;
     },
-    // Null when the bytes are not UTF-8, or when `lenient` and they are permanently unreadable.
-    // Everything else propagates, so a pinned prompt never records an outage. Bytes are read by
-    // ID, which authorises again and verifies them against their row: never on the strength of
-    // metadata a caller could have built.
-    read: async (document, lenient) => {
-      try {
-        const read = await artifacts.read(caller, document.id);
-        return read.encoding === 'utf8' ? read.content : null;
-      } catch (error) {
-        if (lenient && error instanceof MervError && PERMANENT.has(error.code)) return null;
-        throw error;
-      }
+    // Null when the bytes are not UTF-8. Any error propagates, so a pinned prompt never records
+    // an outage. Bytes are read by ID, which authorises again: never on the strength of metadata
+    // a caller could have built. The renderer reads none over Artifacts' inline limit.
+    read: async (document) => {
+      const read = await artifacts.read(caller, document.id);
+      return read.encoding === 'utf8' ? read.content : null;
     },
   };
 }

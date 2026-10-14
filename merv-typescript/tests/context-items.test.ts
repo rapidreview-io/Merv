@@ -515,32 +515,18 @@ test('an always binary fails context_encoding; a fit png is never read and a fit
   );
 });
 
-test('a permanent read error keeps a fit line, while missing blobs, outages, foreign and malformed IDs fail', async (t) => {
+test('a read error fails a fit item as it fails an always one, and so do foreign and malformed IDs', async (t) => {
   const { artifacts, operator, outsider, failures, preview } = await setup(t);
-  for (const code of ['blob_corrupt', 'artifact_size']) {
-    const corrupt = await artifacts.create(operator, { title: code, content: `Bytes ${code}.` });
-    failures.set(corrupt.id, code);
-    const rendered = await preview({ s0: [artifact('item', corrupt.id)] });
-    assert.ok(rendered.prompt.includes('\n- item — '));
-    assert.doesNotMatch(rendered.prompt, /Bytes /);
-    assert.deepEqual(rendered.omitted, []);
-    await assert.rejects(preview({ s0: [artifact('item', corrupt.id, { embed: 'always' })] }), {
-      code,
-    });
-  }
-  for (const code of [
-    'artifact_bytes_missing',
-    'artifact_hash_mismatch',
-    'blob_not_found',
-    'blob_unavailable',
-    'storage_unavailable',
-  ]) {
+  for (const code of ['artifact_bytes_missing', 'state_unavailable']) {
     const unreachable = await artifacts.create(operator, {
       title: code,
       content: `Bytes ${code}.`,
     });
     failures.set(unreachable.id, code);
-    await assert.rejects(preview({ s0: [artifact('item', unreachable.id)] }), { code });
+    for (const embed of ['fit', 'always'] as const)
+      await assert.rejects(preview({ s0: [artifact('item', unreachable.id, { embed })] }), {
+        code,
+      });
   }
   const foreign = await artifacts.create(outsider, { title: 'Foreign', content: 'Not yours.' });
   for (const embed of ['fit', 'never'] as const)

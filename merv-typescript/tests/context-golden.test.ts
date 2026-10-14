@@ -95,10 +95,14 @@ const doc = {
     'text/plain',
     Buffer.from('Ordinary notes.'),
   ),
+  unreadable: put(
+    'artifact_golden_blob_not_found',
+    'Unreadable blob_not_found',
+    'text/plain',
+    Buffer.from('blob_not_found'),
+    'blob_not_found',
+  ),
 };
-const failing = (code: string) =>
-  stored.get(`artifact_golden_${code}`)?.artifact ??
-  put(`artifact_golden_${code}`, `Unreadable ${code}`, 'text/plain', Buffer.from(code), code);
 
 const artifacts = {
   async get(_caller: Caller, id: string) {
@@ -231,25 +235,15 @@ function cases(definition: ContextRecipeDefinition): [string, Omit<ContextBuild,
       ),
     ],
   ];
-  for (const code of ['blob_corrupt', 'blob_not_found'])
-    all.push(
-      [
-        `items/read-error/${code}/fit`,
-        items((key, index) => [
-          ...assignment(key, index),
-          ...(key === first ? [stored(`${key}:unreadable`, failing(code))] : []),
-        ]),
-      ],
-      [
-        `items/read-error/${code}/always`,
-        items((key, index) => [
-          ...assignment(key, index),
-          ...(key === first
-            ? [stored(`${key}:unreadable`, failing(code), { embed: 'always' })]
-            : []),
-        ]),
-      ],
-    );
+  // Any read error fails the render, whatever the item's embed rule.
+  for (const embed of ['fit', 'always'] as const)
+    all.push([
+      `items/read-error/blob_not_found/${embed}`,
+      items((key, index) => [
+        ...assignment(key, index),
+        ...(key === first ? [stored(`${key}:unreadable`, doc.unreadable, { embed })] : []),
+      ]),
+    ]);
   return all;
 }
 

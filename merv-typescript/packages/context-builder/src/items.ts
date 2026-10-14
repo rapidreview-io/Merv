@@ -20,8 +20,8 @@ import {
 export interface ResolvedArtifacts {
   /** An artifact the input names; throws what fetching it threw. */
   get(id: string): Artifact;
-  /** The document's text, or null when it has none (see resolve). */
-  read(document: Artifact, lenient: boolean): Promise<string | null>;
+  /** The document's text, or null when its bytes are not UTF-8 (see resolve). */
+  read(document: Artifact): Promise<string | null>;
 }
 
 /** Media types whose bytes are worth reading as text. */
@@ -174,7 +174,7 @@ export async function renderItems(
       unit.body = unit.text;
       continue;
     }
-    const text = await artifacts.read(unit.artifact, false);
+    const text = await artifacts.read(unit.artifact);
     check(text !== null, 'context_encoding', 'Always-embedded documents must be UTF-8 text');
     unit.body = text;
     size += block(unit, text).length - minChars(unit.artifact.size) - frame(unit);
@@ -220,7 +220,7 @@ export async function renderItems(
         unit.omitted = true;
         continue;
       }
-      text = await artifacts.read(unit.artifact, true);
+      text = await artifacts.read(unit.artifact);
       if (text === null) continue;
     }
     const full = block(unit, text!);

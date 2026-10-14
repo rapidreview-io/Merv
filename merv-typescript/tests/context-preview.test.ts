@@ -275,7 +275,7 @@ test('context requests retain their caller and assignment across authorization',
   }
 });
 
-test('invalid, missing, oversized and corrupt preview inputs perform no SQL writes, including rolled-back writes', async (t) => {
+test('invalid, missing, oversized and unreadable preview inputs perform no SQL writes, including rolled-back writes', async (t) => {
   const { directory, artifacts, builder, operator, changes, packageCount, state } = await setup(t);
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Verified.' });
   const registration = await builder.register(definition);
@@ -336,9 +336,9 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
     );
     assert.equal(await changes(), before, code);
   }
-  // Artifacts verifies its bytes (its own suite covers how); a refusal here must write nothing.
+  // A read that fails must write nothing.
   artifacts.read = async () => {
-    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+    throw new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
   };
   await assert.rejects(
     async () =>
@@ -346,7 +346,7 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
         subject,
         inputs: { evidence: docs([evidence.id], 'always') },
       }),
-    { code: 'blob_corrupt' },
+    { code: 'artifact_bytes_missing' },
   );
   assert.equal(await changes(), before);
   assert.equal(await packageCount(), 0);
@@ -439,12 +439,12 @@ test('a saved request ID replays without rendering and returns its package to a 
   };
   const saved = await buildContext(registration, operator, input);
   artifacts.read = async () => {
-    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+    throw new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
   };
   const { requestId, ...previewInput } = input;
   const before = await changes();
   await assert.rejects(async () => await registration.preview(operator, previewInput), {
-    code: 'blob_corrupt',
+    code: 'artifact_bytes_missing',
   });
   assert.deepEqual(
     await registration.replay(operator, { subject: input.subject, requestId }),
@@ -459,7 +459,7 @@ test('a saved request ID replays without rendering and returns its package to a 
   await assert.rejects(
     async () => await buildContext(registration, operator, { ...input, requestId: 'fresh' }),
     {
-      code: 'blob_corrupt',
+      code: 'artifact_bytes_missing',
     },
   );
   assert.equal(await changes(), before);

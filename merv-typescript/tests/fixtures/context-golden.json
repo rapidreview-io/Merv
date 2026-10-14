@@ -139,14 +139,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "e53638514c1e84a38f5f305c43ea87729a86f6414b6367c83e4a87f9c356399b",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -292,14 +284,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "b985c61f8cf196116ccf82f37271330f70090c4155c9b5324c88ae67335aac50",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -443,14 +427,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "346205745ec42b79a6a6ee7f37b7cb934d395e4416acacb37f5026d5859263b0",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -592,14 +568,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "c783e19362a46d1692ba912e27574f61765422fc9ba79dd710547ab0c46aebbf",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -678,14 +646,6 @@
         "prompt": "1af011e38d035c15bfe86b4275ce282fb74d8e8191d839b2b8611e197721698f",
         "omitted": [],
         "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "6c04209b24165c40c8541069bb0a3e77f8151c51f592b416faf8afbcec5593ea",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
       },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
@@ -778,14 +738,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "d1b55adc58573a01d1dfcf2736ed9dc8be1441558df810433e5a44ffefc82297",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -877,14 +829,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "536d4a23abb601ec093697102a176b92b4841a678b6775fe11166f85ca433dff",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -927,14 +871,6 @@
         "prompt": "49f8fc46332c23b60c6d5a592135812a6833f7c097bcb3c543df8a89ae8959ac",
         "omitted": [],
         "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "7c9114c4935d3e0f0a59cbdaaa65bfd7a290ce6229e5e1b0c79f2675c44626fb",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
       },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
@@ -979,14 +915,6 @@
         "omitted": [],
         "sources": []
       },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "d09db2ffc6bbb3300da78e6d18c1b344eeefeb8d721c5fa00cb565966d66801b",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
       },
@@ -1029,14 +957,6 @@
         "prompt": "e23a388282b53b13cabe25b30fce1fcdeb52ff459122591c38946f22f511fbcc",
         "omitted": [],
         "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "e3cb1ed9ebf50b60ccb6d31a5dbf50de34d6ba38b9d6b5633403d2410710a83e",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
       },
       "items/read-error/blob_not_found/fit": {
         "error": "blob_not_found"
