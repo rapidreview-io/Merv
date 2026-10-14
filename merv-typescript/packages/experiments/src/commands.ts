@@ -663,7 +663,12 @@ async function finalReport(
   sourceArtifactId: string,
   tx: Transaction,
 ) {
-  check(ctx.reports, 'reports_unavailable', 'Reports is not running; results cannot be submitted now', 503);
+  check(
+    ctx.reports,
+    'reports_unavailable',
+    'Reports is not running; results cannot be submitted now',
+    503,
+  );
   const final = await ctx.reports.finalFor(caller, sourceArtifactId, tx);
   check(
     final && final.subject.kind === 'experiment' && final.subject.id === experiment.id,

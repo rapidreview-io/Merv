@@ -24,11 +24,18 @@ export function draftFromPlan(
   plan: PlanFacts,
   date = new Date().toISOString().slice(0, 10),
 ): { source: string; locked: string[] } {
-  const question = plan.question.replace(/\s+/g, ' ').trim().replace(/^question:\s*/i, '');
+  const question = plan.question
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^question:\s*/i, '');
   const title = /[?]$/.test(question) ? question : `${question}?`;
   const constraints = plan.constraints.map((c) => c.trim()).filter(Boolean);
   const data = plan.data?.length
-    ? ['| Dataset | Use | Size |', '|---|---|---|', ...plan.data.map((d) => `| ${cell(d.dataset)} | ${cell(d.use)} | ${cell(d.size)} |`)].join('\n')
+    ? [
+        '| Dataset | Use | Size |',
+        '|---|---|---|',
+        ...plan.data.map((d) => `| ${cell(d.dataset)} | ${cell(d.use)} | ${cell(d.size)} |`),
+      ].join('\n')
     : '[[write: a table of every dataset used: Dataset | Use | Size]]';
   const source = `---
 id: ${yaml(plan.id)}

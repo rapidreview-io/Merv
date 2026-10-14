@@ -21,7 +21,14 @@ export const writeSchema = z
     requestId,
     /** Replace these sections' bodies (text under the `## Name` heading). */
     sections: z
-      .array(z.object({ name: z.string().trim().min(1).max(40), content: z.string().max(MAX_SOURCE_BYTES) }).strict())
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(40),
+            content: z.string().max(MAX_SOURCE_BYTES),
+          })
+          .strict(),
+      )
       .max(20)
       .optional(),
     /** Replace the YAML between the --- lines (id, date, criteria). */
@@ -51,10 +58,21 @@ export const writeSchema = z
 export const clearSchema = z.object({ ...subject, expectedRevision: revision, requestId }).strict();
 export const checkSchema = openSchema;
 export const reviewVisualSchema = z
-  .object({ ...subject, chartId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/).optional() })
+  .object({
+    ...subject,
+    chartId: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,40}$/)
+      .optional(),
+  })
   .strict();
 export const approveVisualSchema = z
-  .object({ ...subject, chartId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/), expectedRevision: revision, requestId })
+  .object({
+    ...subject,
+    chartId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,40}$/),
+    expectedRevision: revision,
+    requestId,
+  })
   .strict();
 export const renderSchema = z
   .object({ ...subject, final: z.boolean().default(false), requestId: requestId.optional() })

@@ -7,7 +7,14 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { MervError } from '@merv/contracts';
-import { compileSpec, chartHeights, loadRows, ROLES, type DataFiles, type Issue } from './format/spec.js';
+import {
+  compileSpec,
+  chartHeights,
+  loadRows,
+  ROLES,
+  type DataFiles,
+  type Issue,
+} from './format/spec.js';
 import { PAGE, spanWidth, sectionHtml, bandHtml, shellHtml } from './format/html.js';
 import { solveLayout, type Layout, type LayoutBlock } from './format/layout.js';
 import type { Report, Section } from './format/parse.js';
@@ -18,9 +25,12 @@ const pkg = (name: string) => dirname(require.resolve(name));
 function fontCss(): string {
   const face = (family: string, file: string, weight: number, style = 'normal') =>
     `@font-face{font-family:'${family}';font-style:${style};font-weight:${weight};font-display:block;src:url(data:font/woff2;base64,${readFileSync(file).toString('base64')}) format('woff2')}`;
-  const serif = (w: number, s: string) => join(pkg('@fontsource/source-serif-4'), 'files', `source-serif-4-latin-${w}-${s}.woff2`);
-  const sans = (w: number) => join(pkg('@fontsource/geist-sans'), 'files', `geist-sans-latin-${w}-normal.woff2`);
-  const mono = (w: number) => join(pkg('@fontsource/geist-mono'), 'files', `geist-mono-latin-${w}-normal.woff2`);
+  const serif = (w: number, s: string) =>
+    join(pkg('@fontsource/source-serif-4'), 'files', `source-serif-4-latin-${w}-${s}.woff2`);
+  const sans = (w: number) =>
+    join(pkg('@fontsource/geist-sans'), 'files', `geist-sans-latin-${w}-normal.woff2`);
+  const mono = (w: number) =>
+    join(pkg('@fontsource/geist-mono'), 'files', `geist-mono-latin-${w}-normal.woff2`);
   return [
     face('Source Serif 4', serif(400, 'normal'), 400),
     face('Source Serif 4', serif(600, 'normal'), 600),
@@ -134,12 +144,20 @@ export class ReportRenderer {
   }
 
   private async launch(): Promise<Browser> {
-    if (this.closed) throw new MervError('reports_unavailable', 'The report renderer is stopping', 503);
+    if (this.closed)
+      throw new MervError('reports_unavailable', 'The report renderer is stopping', 503);
     this.browser ??= chromium
-      .launch({ executablePath: this.executablePath, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
+      .launch({
+        executablePath: this.executablePath,
+        args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      })
       .catch((error: Error) => {
         this.browser = undefined;
-        throw new MervError('reports_renderer_unavailable', `The report renderer could not start a browser: ${error.message.split('\n')[0]}`, 503);
+        throw new MervError(
+          'reports_renderer_unavailable',
+          `The report renderer could not start a browser: ${error.message.split('\n')[0]}`,
+          503,
+        );
       });
     const browser = await this.browser;
     if (!browser.isConnected()) {
@@ -149,9 +167,17 @@ export class ReportRenderer {
     return browser;
   }
 
-  private async renderNow(report: Report, files: DataFiles, options: RenderOptions): Promise<Rendered> {
+  private async renderNow(
+    report: Report,
+    files: DataFiles,
+    options: RenderOptions,
+  ): Promise<Rendered> {
     const browser = await this.launch();
-    const context = await browser.newContext({ viewport: { width: 1400, height: 1900 }, deviceScaleFactor: 2, javaScriptEnabled: true });
+    const context = await browser.newContext({
+      viewport: { width: 1400, height: 1900 },
+      deviceScaleFactor: 2,
+      javaScriptEnabled: true,
+    });
     await context.route('**/*', (route) => route.abort());
     const page = await context.newPage();
     try {
@@ -162,18 +188,33 @@ export class ReportRenderer {
       await page.addScriptTag({ content: CLIENT });
       await page.evaluate(async () => {
         await Promise.all(
-          ['17px "Source Serif 4"', '600 17px "Source Serif 4"', 'italic 17px "Source Serif 4"', '13px Geist', '500 13px Geist', '600 13px Geist', '11px "Geist Mono"'].map((f) => document.fonts.load(f)),
+          [
+            '17px "Source Serif 4"',
+            '600 17px "Source Serif 4"',
+            'italic 17px "Source Serif 4"',
+            '13px Geist',
+            '500 13px Geist',
+            '600 13px Geist',
+            '11px "Geist Mono"',
+          ].map((f) => document.fonts.load(f)),
         );
         await document.fonts.ready;
       });
       const drawn = await this.layout(page, report, files);
       const out: Rendered = { layout: drawn.layout, pages: [], issues: drawn.issues };
       if (options.pages)
-        for (let i = 0; i < drawn.pageCount; i++) out.pages.push(await page.locator(`#p${i}`).screenshot({ scale: 'css', type: 'png' }));
-      if (options.visual) out.visual = await this.visual(page, report, options.visual, drawn.charts);
+        for (let i = 0; i < drawn.pageCount; i++)
+          out.pages.push(await page.locator(`#p${i}`).screenshot({ scale: 'css', type: 'png' }));
+      if (options.visual)
+        out.visual = await this.visual(page, report, options.visual, drawn.charts);
       if (options.pdf) {
         await page.emulateMedia({ media: 'print' });
-        out.pdf = await page.pdf({ width: `${PAGE.width}px`, height: `${PAGE.height}px`, printBackground: true, preferCSSPageSize: true });
+        out.pdf = await page.pdf({
+          width: `${PAGE.width}px`,
+          height: `${PAGE.height}px`,
+          printBackground: true,
+          preferCSSPageSize: true,
+        });
       }
       return out;
     } finally {
@@ -181,19 +222,39 @@ export class ReportRenderer {
     }
   }
 
-  private async drawCharts(page: Page, report: Report, files: DataFiles, rootSel: string, heightFor: (hs: { base: number; max: number }) => number) {
-    const ids = await page.$$eval(`${rootSel} .chart`, (els) => els.map((e) => [(e as HTMLElement).dataset.chart!, e.getBoundingClientRect().width] as const));
+  private async drawCharts(
+    page: Page,
+    report: Report,
+    files: DataFiles,
+    rootSel: string,
+    heightFor: (hs: { base: number; max: number }) => number,
+  ) {
+    const ids = await page.$$eval(`${rootSel} .chart`, (els) =>
+      els.map((e) => [(e as HTMLElement).dataset.chart!, e.getBoundingClientRect().width] as const),
+    );
     const drawn: Record<string, { width: number; height: number; base: number; max: number }> = {};
     for (const [id, width] of ids) {
       const chart = report.charts.find((c) => c.spec.id === id)!;
       const rows = loadRows(chart.spec.data, files, report.criteria);
       const hs = chartHeights(chart.spec, rows);
       const height = heightFor(hs);
-      const vl = compileSpec(chart.spec, { width: Math.floor(width), height, files, criteria: report.criteria });
+      const vl = compileSpec(chart.spec, {
+        width: Math.floor(width),
+        height,
+        files,
+        criteria: report.criteria,
+      });
       try {
-        await page.evaluate(([sel, spec]) => (window as any).renderChart(sel, spec), [`${rootSel} .chart[data-chart="${id}"]`, vl] as const);
+        await page.evaluate(([sel, spec]) => (window as any).renderChart(sel, spec), [
+          `${rootSel} .chart[data-chart="${id}"]`,
+          vl,
+        ] as const);
       } catch (error) {
-        throw new MervError('report_chart_failed', `Chart ${id} could not be drawn: ${(error as Error).message.split('\n')[0]}`, 422);
+        throw new MervError(
+          'report_chart_failed',
+          `Chart ${id} could not be drawn: ${(error as Error).message.split('\n')[0]}`,
+          422,
+        );
       }
       drawn[id] = { width: Math.floor(width), height, base: hs.base, max: hs.max };
     }
@@ -205,14 +266,20 @@ export class ReportRenderer {
       document.getElementById('pages')!.innerHTML = '<div class="page" id="p0">' + html + '</div>';
     }, bandHtml(report));
     const bandCharts = await this.drawCharts(page, report, files, '#p0 .band', (hs) => hs.base);
-    const bandBottom = await page.$eval('#p0 .band', (el) => el.getBoundingClientRect().bottom - el.closest('.page')!.getBoundingClientRect().top);
+    const bandBottom = await page.$eval(
+      '#p0 .band',
+      (el) => el.getBoundingClientRect().bottom - el.closest('.page')!.getBoundingClientRect().top,
+    );
     const bodyTop0 = Math.ceil(bandBottom + PAGE.bandGap);
-    await page.evaluate((top) => {
-      const d = document.createElement('div');
-      d.className = 'divider';
-      d.style.top = top + 'px';
-      document.getElementById('p0')!.appendChild(d);
-    }, Math.round(bandBottom + PAGE.bandGap / 2));
+    await page.evaluate(
+      (top) => {
+        const d = document.createElement('div');
+        d.className = 'divider';
+        d.style.top = top + 'px';
+        document.getElementById('p0')!.appendChild(d);
+      },
+      Math.round(bandBottom + PAGE.bandGap / 2),
+    );
 
     const body = report.sections.filter((s) => s.zone === 'body');
     const blocks: (LayoutBlock & { html: string })[] = [];
@@ -222,15 +289,25 @@ export class ReportRenderer {
       const options: { span: number; h: number }[] = [];
       let elastic = 0;
       for (const span of allowedSpans(s)) {
-        await page.evaluate(([h, w]) => (window as any).measureBlock(h, w), [html, spanWidth(span)] as const);
+        await page.evaluate(([h, w]) => (window as any).measureBlock(h, w), [
+          html,
+          spanWidth(span),
+        ] as const);
         const drawn = await this.drawCharts(page, report, files, '#mblock', (hs) => hs.base);
         const { h, overflow } = await page.evaluate(() => (window as any).blockHeight('#mblock'));
         elastic = Object.values(drawn).reduce((sum, d) => sum + (d.max - d.base), 0);
         if (!overflow) options.push({ span, h: Math.ceil(h) });
       }
       if (!options.length) {
-        issues.push({ level: 'error', where: s.name, message: 'content is wider than the page; shorten table cells or labels' });
-        options.push({ span: Math.max(...allowedSpans(s)), h: Math.ceil((await page.evaluate(() => (window as any).blockHeight('#mblock'))).h) });
+        issues.push({
+          level: 'error',
+          where: s.name,
+          message: 'content is wider than the page; shorten table cells or labels',
+        });
+        options.push({
+          span: Math.max(...allowedSpans(s)),
+          h: Math.ceil((await page.evaluate(() => (window as any).blockHeight('#mblock'))).h),
+        });
       }
       blocks.push({ id: s.name, options, elastic, html });
     }
@@ -277,27 +354,63 @@ export class ReportRenderer {
         { page: p.page, id: p.id, html: b.html, left, top: p.top, width: spanWidth(p.span) },
       );
       const share = b.elastic > 0 ? p.extra / b.elastic : 0;
-      Object.assign(charts, await this.drawCharts(page, report, files, `.block[data-section="${p.id}"]`, (hs) => Math.round(hs.base + (hs.max - hs.base) * share)));
+      Object.assign(
+        charts,
+        await this.drawCharts(page, report, files, `.block[data-section="${p.id}"]`, (hs) =>
+          Math.round(hs.base + (hs.max - hs.base) * share),
+        ),
+      );
     }
-    if (pageCount > 1) issues.push({ level: 'warning', where: 'page', message: `the report runs to ${pageCount} pages; it should fit on one` });
+    if (pageCount > 1)
+      issues.push({
+        level: 'warning',
+        where: 'page',
+        message: `the report runs to ${pageCount} pages; it should fit on one`,
+      });
     return { layout, pageCount, charts, issues };
   }
 
-  private async visual(page: Page, report: Report, id: string, sizes: Record<string, { width: number; height: number }>): Promise<VisualShot> {
+  private async visual(
+    page: Page,
+    report: Report,
+    id: string,
+    sizes: Record<string, { width: number; height: number }>,
+  ): Promise<VisualShot> {
     const chart = report.charts.find((c) => c.spec.id === id);
     if (!chart) throw new MervError('not_found', `No chart with id "${id}"`, 404);
     const sel = `.chart[data-chart="${id}"]`;
     const image = await page.locator(sel).screenshot({ type: 'png' });
-    const context = await page.locator(`.block:has(${sel}), .band:has(${sel})`).first().screenshot({ type: 'png', scale: 'css' });
-    const lint = (await page.evaluate((s) => (window as any).lintChart(s), sel)) as { issues: Issue[] };
+    const context = await page
+      .locator(`.block:has(${sel}), .band:has(${sel})`)
+      .first()
+      .screenshot({ type: 'png', scale: 'css' });
+    const lint = (await page.evaluate((s) => (window as any).lintChart(s), sel)) as {
+      issues: Issue[];
+    };
     const roles = new Set<string>();
     for (const l of chart.spec.layer) {
       if (typeof l.color === 'string') roles.add(l.color);
       else if (l.color?.map) Object.values(l.color.map).forEach((r) => roles.add(String(r)));
     }
     const neutral = [...roles].filter((r) => r in ROLES && r !== 'result' && r !== 'warn');
-    if (neutral.length > 2) lint.issues.push({ level: 'warning', message: `${neutral.length} neutral colour roles; keep the chart mostly ink and grey` });
-    if (chart.spec.layer.length > 5) lint.issues.push({ level: 'warning', message: `${chart.spec.layer.length} layers; check every layer earns its place` });
-    return { id, section: chart.section, message: chart.spec.message, ...sizes[id], image, context, issues: lint.issues };
+    if (neutral.length > 2)
+      lint.issues.push({
+        level: 'warning',
+        message: `${neutral.length} neutral colour roles; keep the chart mostly ink and grey`,
+      });
+    if (chart.spec.layer.length > 5)
+      lint.issues.push({
+        level: 'warning',
+        message: `${chart.spec.layer.length} layers; check every layer earns its place`,
+      });
+    return {
+      id,
+      section: chart.section,
+      message: chart.spec.message,
+      ...sizes[id],
+      image,
+      context,
+      issues: lint.issues,
+    };
   }
 }

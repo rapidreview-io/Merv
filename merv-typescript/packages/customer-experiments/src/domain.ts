@@ -60,7 +60,12 @@ export class CustomerExperiments {
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   handleFor(version: number) {
     const handle = this.handles.get(version);
-    check(handle, 'customer_experiments_unavailable', `service_experiment@${version} is not registered`, 503);
+    check(
+      handle,
+      'customer_experiments_unavailable',
+      `service_experiment@${version} is not registered`,
+      503,
+    );
     return handle;
   }
   private releaseOwner?: () => void;
@@ -99,7 +104,10 @@ export class CustomerExperiments {
     for (const version of SERVICE_VERSIONS)
       this.handles.set(
         version,
-        await this.workflows.register({ ...SERVICE_EXPERIMENT, version }, executionPolicy(this, version)),
+        await this.workflows.register(
+          { ...SERVICE_EXPERIMENT, version },
+          executionPolicy(this, version),
+        ),
       );
     this.handle = this.handles.get(SERVICE_VERSION);
     this.releaseOwner = this.reviews.registerSubmitOwner({
@@ -544,8 +552,18 @@ export class CustomerExperiments {
         // Version 1 requests keep their free summary; version 2 submits the rendered report.
         let report: Awaited<ReturnType<NonNullable<typeof this.reports>['finalFor']>> = null;
         if (writesReport(exp.workflow.version)) {
-          check(this.reports, 'reports_unavailable', 'Reports is not running; results cannot be submitted now', 503);
-          check(input.reportArtifactId, 'experiment_report_required', 'reportArtifactId is required: the sourceArtifactId report.render with final: true returned', 409);
+          check(
+            this.reports,
+            'reports_unavailable',
+            'Reports is not running; results cannot be submitted now',
+            503,
+          );
+          check(
+            input.reportArtifactId,
+            'experiment_report_required',
+            'reportArtifactId is required: the sourceArtifactId report.render with final: true returned',
+            409,
+          );
           report = await this.reports.finalFor(caller, input.reportArtifactId, tx);
           check(
             report && report.subject.kind === 'customer_experiment' && report.subject.id === exp.id,
@@ -555,7 +573,9 @@ export class CustomerExperiments {
           );
         }
         check(report || input.summary, 'invalid_input', 'summary is required', 400);
-        const rendered = report ? [report.sourceArtifactId, report.pdfArtifactId, ...report.pageArtifactIds] : [];
+        const rendered = report
+          ? [report.sourceArtifactId, report.pdfArtifactId, ...report.pageArtifactIds]
+          : [];
         const captures = new Set((await this.computeEvidence(exp, tx)).artifactIds);
         const ids = [...new Set([...rendered, ...input.artifactIds, ...captures])];
         const artifacts = await this.artifacts.getAll(caller, ids, tx);

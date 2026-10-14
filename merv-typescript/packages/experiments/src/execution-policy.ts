@@ -85,7 +85,10 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
             ...(state === 'running' ? [grant('code.commit', {}), grant('code.operation', {})] : []),
             ...(state === 'running' && writesReport(version)
               ? REPORT_TOOLS.map((name) =>
-                  grant(name, { subjectKind: literal('experiment'), subjectId: target('instanceId') }),
+                  grant(name, {
+                    subjectKind: literal('experiment'),
+                    subjectId: target('instanceId'),
+                  }),
                 )
               : []),
           ]),

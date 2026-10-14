@@ -52,7 +52,13 @@ export function solveLayout(blocks: LayoutBlock[], geo: Geometry, beamWidth = 40
   return fill(scored[0]?.s.placed ?? [], geo);
 }
 
-function place(s: State, b: LayoutBlock, opt: { span: number; h: number }, c: number, geo: Geometry): State {
+function place(
+  s: State,
+  b: LayoutBlock,
+  opt: { span: number; h: number },
+  c: number,
+  geo: Geometry,
+): State {
   let { page, H } = s;
   let cost = s.cost;
   const cov = range(c, c + opt.span);
@@ -71,7 +77,16 @@ function place(s: State, b: LayoutBlock, opt: { span: number; h: number }, c: nu
   if (prev && prev.page === page && c < prev.col && top < prev.top - 1) cost += W.order;
   const H2 = H.slice();
   for (const i of cov) H2[i] = top + opt.h;
-  const rec: Placed = { id: b.id, page, col: c, span: opt.span, top, h: opt.h, elastic: b.elastic, extra: 0 };
+  const rec: Placed = {
+    id: b.id,
+    page,
+    col: c,
+    span: opt.span,
+    top,
+    h: opt.h,
+    elastic: b.elastic,
+    extra: 0,
+  };
   return { page, H: H2, placed: [...s.placed, rec], cost, prev: { page, col: c, top } };
 }
 
@@ -83,7 +98,8 @@ function pageCost(s: State, geo: Geometry, final: boolean): number {
   const maxH = Math.max(...s.H);
   for (let i = 0; i < geo.cols; i++) {
     const inCol = onPage.filter((p) => p.col <= i && i < p.col + p.span);
-    const cap = inCol.reduce((sum, p) => sum + p.elastic, 0) + Math.max(0, inCol.length - 1) * geo.gap * 2;
+    const cap =
+      inCol.reduce((sum, p) => sum + p.elastic, 0) + Math.max(0, inCol.length - 1) * geo.gap * 2;
     cost += W.residual * Math.max(0, pageH - s.H[i] - cap);
     if (final) cost += W.ragged * (maxH - s.H[i]);
   }
@@ -103,7 +119,12 @@ function dedupe(states: State[]): State[] {
 const range = (a: number, b: number) => Array.from({ length: b - a }, (_, i) => a + i);
 
 /** Recompute tops for fixed spans and columns given block heights and per-page gaps. */
-function positions(placed: Placed[], heights: Record<string, number>, geo: Geometry, gaps: Record<number, number>) {
+function positions(
+  placed: Placed[],
+  heights: Record<string, number>,
+  geo: Geometry,
+  gaps: Record<number, number>,
+) {
   const out: Placed[] = [];
   const ends: Record<number, number[]> = {};
   for (const p of placed) {
@@ -118,7 +139,13 @@ function positions(placed: Placed[], heights: Record<string, number>, geo: Geome
   return { placed: out, ends };
 }
 
-function fits(placed: Placed[], heights: Record<string, number>, geo: Geometry, gaps: Record<number, number>, page: number) {
+function fits(
+  placed: Placed[],
+  heights: Record<string, number>,
+  geo: Geometry,
+  gaps: Record<number, number>,
+  page: number,
+) {
   const { ends } = positions(placed, heights, geo, gaps);
   return (ends[page] ?? []).every((e) => e <= geo.pageHeight(page) + 0.5);
 }
@@ -130,7 +157,7 @@ function fill(placed: Placed[], geo: Geometry): Layout {
   const pages = [...new Set(placed.map((p) => p.page))];
   for (const page of pages) {
     const mine = placed.filter((p) => p.page === page && p.elastic > 0);
-    for (let grew = true; grew; ) {
+    for (let grew = true; grew;) {
       grew = false;
       for (const p of mine) {
         if (extra[p.id] + 4 > p.elastic) continue;

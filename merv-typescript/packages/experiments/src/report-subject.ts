@@ -27,7 +27,12 @@ export function experimentReportSubject(ctx: ExperimentsContext): ReportSubject 
   };
 }
 
-async function planFacts(ctx: ExperimentsContext, caller: Caller, experiment: Experiment, tx: Transaction) {
+async function planFacts(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+) {
   let plan = '';
   try {
     const approved = approvedSubmission(experiment);
@@ -42,7 +47,9 @@ async function planFacts(ctx: ExperimentsContext, caller: Caller, experiment: Ex
   // The plan's risks follow its evaluation bullets; they are not constraints.
   const risks = evaluation.search(/^\s*risks\b/im);
   const lines = (risks < 0 ? evaluation : evaluation.slice(0, risks)).split('\n');
-  const bullets = lines.filter((l) => /^\s*[-*]\s+/.test(l)).map((l) => l.replace(/^\s*[-*]\s+/, ''));
+  const bullets = lines
+    .filter((l) => /^\s*[-*]\s+/.test(l))
+    .map((l) => l.replace(/^\s*[-*]\s+/, ''));
   const table = lines.filter((l) => /^\s*\|/.test(l)).join('\n');
   return {
     id: experiment.name,

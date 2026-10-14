@@ -114,7 +114,8 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
   const locked = new Set(options.locked ?? []);
   const issues: Issue[] = [];
   const err = (where: string, message: string) => issues.push({ level: 'error', where, message });
-  const warn = (where: string, message: string) => issues.push({ level: 'warning', where, message });
+  const warn = (where: string, message: string) =>
+    issues.push({ level: 'warning', where, message });
 
   let meta: Record<string, unknown> = {};
   let body = source.replace(/\r\n/g, '\n');
@@ -131,14 +132,18 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
   } else err('front matter', 'missing --- front matter with id and date');
   for (const key of ['id', 'date']) if (!meta[key]) err('front matter', `${key} is required`);
   for (const key of Object.keys(meta))
-    if (!['id', 'date', 'criteria'].includes(key)) err('front matter', `"${key}" is not allowed (allowed: id, date, criteria)`);
+    if (!['id', 'date', 'criteria'].includes(key))
+      err('front matter', `"${key}" is not allowed (allowed: id, date, criteria)`);
   const criteria = parseCriteria(meta.criteria, err);
 
   if (PLACEHOLDER.test(source)) {
     const names = splitReport(source)
       .sections.filter((s) => PLACEHOLDER.test(s.body))
       .map((s) => s.name);
-    err(names.join(', ') || 'report', 'still has [[write: …]] placeholders; replace them with content');
+    err(
+      names.join(', ') || 'report',
+      'still has [[write: …]] placeholders; replace them with content',
+    );
   }
 
   const tokens = marked.lexer(body);
@@ -157,7 +162,10 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
       continue;
     }
     if (t.type === 'heading') {
-      err(current?.name ?? 'top', `### and deeper headings are not allowed ("${(t as Tokens.Heading).text}")`);
+      err(
+        current?.name ?? 'top',
+        `### and deeper headings are not allowed ("${(t as Tokens.Heading).text}")`,
+      );
       continue;
     }
     if (t.type === 'space') continue;
@@ -171,7 +179,8 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
   if (!title) err('title', 'missing # question title');
   else if (!locked.has('title')) {
     if (words(title) > 16) err('title', 'title is longer than 16 words');
-    if (!title.endsWith('?')) warn('title', 'the title should be the question the experiment answers');
+    if (!title.endsWith('?'))
+      warn('title', 'the title should be the question the experiment answers');
   }
 
   const charts: Chart[] = [];
@@ -200,9 +209,17 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
           err(s.name, `chart is not valid JSON: ${(e as Error).message}`);
           continue;
         }
-        for (const i of validateSpec(spec)) issues.push({ ...i, where: `${s.name} chart ${spec?.id ?? '?'}` });
-        if (spec?.id && charts.some((c) => c.spec.id === spec.id)) err(s.name, `duplicate chart id ${spec.id}`);
-        if (options.files) for (const key of chartRefs(spec)) if (!options.files.has(key)) err(`${s.name} chart ${spec.id}`, `data ${key.replace(/^artifact:/, 'artifact ')} does not exist`);
+        for (const i of validateSpec(spec))
+          issues.push({ ...i, where: `${s.name} chart ${spec?.id ?? '?'}` });
+        if (spec?.id && charts.some((c) => c.spec.id === spec.id))
+          err(s.name, `duplicate chart id ${spec.id}`);
+        if (options.files)
+          for (const key of chartRefs(spec))
+            if (!options.files.has(key))
+              err(
+                `${s.name} chart ${spec.id}`,
+                `data ${key.replace(/^artifact:/, 'artifact ')} does not exist`,
+              );
         const chart: Chart = { spec, section: s.name };
         charts.push(chart);
         s.blocks.push({ type: 'chart', chart });
@@ -212,14 +229,27 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
         err(s.name, 'code blocks other than ```chart are not allowed');
         continue;
       }
-      if (t.type === 'paragraph' && /^(figure|fig\.|table|caption)\s*\d*[.:]/i.test((t as Tokens.Paragraph).text.trim()))
-        err(s.name, 'captions are not allowed; put needed context on the chart (axis title, labels)');
-      if (t.type === 'paragraph' || t.type === 'list') prose += words(t.raw.replace(/\[\d+\]/g, ''));
-      if (t.type === 'list' && rule.bullets && free && (t as Tokens.List).items.length > rule.bullets)
+      if (
+        t.type === 'paragraph' &&
+        /^(figure|fig\.|table|caption)\s*\d*[.:]/i.test((t as Tokens.Paragraph).text.trim())
+      )
+        err(
+          s.name,
+          'captions are not allowed; put needed context on the chart (axis title, labels)',
+        );
+      if (t.type === 'paragraph' || t.type === 'list')
+        prose += words(t.raw.replace(/\[\d+\]/g, ''));
+      if (
+        t.type === 'list' &&
+        rule.bullets &&
+        free &&
+        (t as Tokens.List).items.length > rule.bullets
+      )
         err(s.name, `at most ${rule.bullets} bullets`);
       if (t.type === 'list' && free)
         for (const item of (t as Tokens.List).items)
-          if (words(item.text) > 25) err(s.name, `a bullet is ${words(item.text)} words; keep bullets to 25`);
+          if (words(item.text) > 25)
+            err(s.name, `a bullet is ${words(item.text)} words; keep bullets to 25`);
       if (t.type === 'blockquote' || t.type === 'hr' || t.type === 'html' || t.type === 'image') {
         err(s.name, `${t.type} is not allowed`);
         continue;
@@ -233,21 +263,28 @@ export function parseReport(source: string, options: ParseOptions = {}): Report 
     if (s.name === 'Result') checkResult(s, err);
     if (s.name === 'References') {
       const list = s.tokens[0] as Tokens.List | undefined;
-      if (!(s.tokens.length === 1 && list?.type === 'list' && list.ordered)) err(s.name, 'must be one numbered list');
+      if (!(s.tokens.length === 1 && list?.type === 'list' && list.ordered))
+        err(s.name, 'must be one numbered list');
       else
         for (const item of list.items)
-          if (!/,\s*\d{4}\s*$/.test(item.text)) err(s.name, `"${item.text}" must end with ", YEAR"`);
+          if (!/,\s*\d{4}\s*$/.test(item.text))
+            err(s.name, `"${item.text}" must end with ", YEAR"`);
     }
   }
-  for (const name of SECTION_ORDER) if (SECTIONS[name].required && !seen.has(name)) err(name, 'required section is missing');
+  for (const name of SECTION_ORDER)
+    if (SECTIONS[name].required && !seen.has(name)) err(name, 'required section is missing');
 
   const refs = sections.find((s) => s.name === 'References');
   const refCount = (refs?.tokens[0] as Tokens.List | undefined)?.items?.length ?? 0;
   const cited = new Set<number>();
   for (const s of sections)
-    if (s.name !== 'References') for (const t of s.tokens) for (const m of (t.raw ?? '').matchAll(/\[(\d+)\]/g)) cited.add(Number(m[1]));
-  for (const n of cited) if (n < 1 || n > refCount) err('References', `[${n}] is cited but there is no reference ${n}`);
-  for (let n = 1; n <= refCount; n++) if (!cited.has(n)) err('References', `reference ${n} is never cited`);
+    if (s.name !== 'References')
+      for (const t of s.tokens)
+        for (const m of (t.raw ?? '').matchAll(/\[(\d+)\]/g)) cited.add(Number(m[1]));
+  for (const n of cited)
+    if (n < 1 || n > refCount) err('References', `[${n}] is cited but there is no reference ${n}`);
+  for (let n = 1; n <= refCount; n++)
+    if (!cited.has(n)) err('References', `reference ${n} is never cited`);
 
   return { meta, criteria, title, sections, charts, issues };
 }
@@ -256,17 +293,26 @@ function checkResult(s: Section, err: (where: string, message: string) => void):
   const first = s.tokens[0];
   if (!first || first.type !== 'paragraph') err(s.name, 'must start with the one-line answer');
   else if (words((first as Tokens.Paragraph).text) > SECTIONS.Result.words!)
-    err(s.name, `the answer is ${words((first as Tokens.Paragraph).text)} words; the limit is ${SECTIONS.Result.words}`);
+    err(
+      s.name,
+      `the answer is ${words((first as Tokens.Paragraph).text)} words; the limit is ${SECTIONS.Result.words}`,
+    );
   const chartAt = s.tokens.findIndex((t) => t.type === 'code');
   if (chartAt < 0) err(s.name, 'needs one chart showing every criterion against its bar');
   const paras = s.tokens.filter((t) => t.type === 'paragraph');
-  const after = chartAt < 0 ? [] : s.tokens.slice(chartAt + 1).filter((t) => t.type === 'paragraph');
-  if (s.tokens.filter((t) => t.type === 'code').length > 1) err(s.name, 'only one chart belongs here');
+  const after =
+    chartAt < 0 ? [] : s.tokens.slice(chartAt + 1).filter((t) => t.type === 'paragraph');
+  if (s.tokens.filter((t) => t.type === 'code').length > 1)
+    err(s.name, 'only one chart belongs here');
   if (paras.length > 2 || (paras.length === 2 && after.length !== 1))
     err(s.name, 'the answer, its chart, then at most one short description below the chart');
   if (after[0] && words((after[0] as Tokens.Paragraph).text) > RESULT_NOTE_WORDS)
-    err(s.name, `the description is ${words((after[0] as Tokens.Paragraph).text)} words; the limit is ${RESULT_NOTE_WORDS}`);
-  if (s.tokens.some((t) => t.type === 'list' || t.type === 'table')) err(s.name, 'no lists or tables here');
+    err(
+      s.name,
+      `the description is ${words((after[0] as Tokens.Paragraph).text)} words; the limit is ${RESULT_NOTE_WORDS}`,
+    );
+  if (s.tokens.some((t) => t.type === 'list' || t.type === 'table'))
+    err(s.name, 'no lists or tables here');
 }
 
 function parseCriteria(value: unknown, err: (where: string, message: string) => void): Criterion[] {
@@ -278,18 +324,34 @@ function parseCriteria(value: unknown, err: (where: string, message: string) => 
   const out: Criterion[] = [];
   value.forEach((c, i) => {
     const at = `criteria[${i}]`;
-    if (!c || typeof c !== 'object' || Array.isArray(c)) return err('front matter', `${at} must be a mapping; quote a metric name that contains commas or colons`);
+    if (!c || typeof c !== 'object' || Array.isArray(c))
+      return err(
+        'front matter',
+        `${at} must be a mapping; quote a metric name that contains commas or colons`,
+      );
     const keys = Object.keys(c);
-    for (const k of keys) if (!['metric', 'bar', 'floor'].includes(k)) err('front matter', `${at}: "${k}" is not allowed (metric, bar, floor); quote a metric name that contains commas or colons`);
-    if (typeof c.metric !== 'string' || !c.metric.trim()) return err('front matter', `${at}.metric must be text`);
+    for (const k of keys)
+      if (!['metric', 'bar', 'floor'].includes(k))
+        err(
+          'front matter',
+          `${at}: "${k}" is not allowed (metric, bar, floor); quote a metric name that contains commas or colons`,
+        );
+    if (typeof c.metric !== 'string' || !c.metric.trim())
+      return err('front matter', `${at}.metric must be text`);
     const bounds = ['bar', 'floor'].filter((k) => c[k] !== undefined);
-    if (bounds.length !== 1 || typeof c[bounds[0]] !== 'number') return err('front matter', `${at} needs exactly one numeric bar or floor`);
+    if (bounds.length !== 1 || typeof c[bounds[0]] !== 'number')
+      return err('front matter', `${at} needs exactly one numeric bar or floor`);
     out.push(c as Criterion);
   });
   return out;
 }
 
 function chartRefs(spec: ChartSpec): string[] {
-  const refs = [spec?.data, ...(Array.isArray(spec?.layer) ? spec.layer.map((l: any) => l?.data) : [])];
-  return refs.flatMap((d: any) => (d?.file ? [d.file] : d?.artifact ? [`artifact:${d.artifact}`] : []));
+  const refs = [
+    spec?.data,
+    ...(Array.isArray(spec?.layer) ? spec.layer.map((l: any) => l?.data) : []),
+  ];
+  return refs.flatMap((d: any) =>
+    d?.file ? [d.file] : d?.artifact ? [`artifact:${d.artifact}`] : [],
+  );
 }

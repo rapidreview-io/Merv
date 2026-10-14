@@ -12,8 +12,35 @@ export const ROLES = {
 export type Role = keyof typeof ROLES;
 const MARKS = ['point', 'bar', 'line', 'area', 'rule', 'text', 'tick'];
 const TOP_KEYS = ['id', 'message', 'data', 'x', 'y', 'layer', 'height', 'wide'];
-const LAYER_KEYS = ['mark', 'data', 'x', 'x2', 'y', 'y2', 'color', 'size', 'style', 'text', 'where', 'emphasis', 'align', 'offset'];
-const CHANNEL_KEYS = ['field', 'type', 'title', 'domain', 'zero', 'sort', 'ticks', 'axis', 'value', 'datum', 'format'];
+const LAYER_KEYS = [
+  'mark',
+  'data',
+  'x',
+  'x2',
+  'y',
+  'y2',
+  'color',
+  'size',
+  'style',
+  'text',
+  'where',
+  'emphasis',
+  'align',
+  'offset',
+];
+const CHANNEL_KEYS = [
+  'field',
+  'type',
+  'title',
+  'domain',
+  'zero',
+  'sort',
+  'ticks',
+  'axis',
+  'value',
+  'datum',
+  'format',
+];
 const WHERE_OPS = ['equal', 'oneOf', 'gt', 'gte', 'lt', 'lte', 'notEqual'];
 const STEPS = ['s', 'm', 'l'];
 export const MAX_LAYERS = 6;
@@ -82,9 +109,16 @@ function checkLayer(layer: any, at: string, err: (m: string) => void): void {
     const c = layer.color;
     if (typeof c === 'string') {
       if (!(c in ROLES)) err(`${at}.color: unknown role "${c}"`);
-    } else if (c && typeof c === 'object' && typeof c.field === 'string' && c.map && typeof c.map === 'object') {
+    } else if (
+      c &&
+      typeof c === 'object' &&
+      typeof c.field === 'string' &&
+      c.map &&
+      typeof c.map === 'object'
+    ) {
       for (const role of Object.values(c.map))
-        if (typeof role !== 'string' || !(role in ROLES)) err(`${at}.color.map: unknown role "${String(role)}"`);
+        if (typeof role !== 'string' || !(role in ROLES))
+          err(`${at}.color.map: unknown role "${String(role)}"`);
       unknown(c, ['field', 'map'], `${at}.color`, err);
     } else err(`${at}.color must be a role name or {field, map: {value: role}}`);
   }
@@ -125,35 +159,50 @@ function checkChannel(ch: any, at: string, err: (m: string) => void): void {
   if (typeof ch === 'string') return;
   if (!ch || typeof ch !== 'object') return err(`${at} must be a field name or an object`);
   unknown(ch, CHANNEL_KEYS, at, err);
-  if (ch.type !== undefined && !['quantitative', 'nominal', 'ordinal', 'temporal'].includes(ch.type))
+  if (
+    ch.type !== undefined &&
+    !['quantitative', 'nominal', 'ordinal', 'temporal'].includes(ch.type)
+  )
     err(`${at}.type is invalid`);
-  if (ch.value !== undefined && !(typeof ch.value === 'number' || ['start', 'end'].includes(ch.value)))
+  if (
+    ch.value !== undefined &&
+    !(typeof ch.value === 'number' || ['start', 'end'].includes(ch.value))
+  )
     err(`${at}.value must be a number, "start" or "end"`);
   if (ch.ticks !== undefined && !Array.isArray(ch.ticks)) err(`${at}.ticks must be a list`);
   if (ch.domain !== undefined && !(Array.isArray(ch.domain) && ch.domain.length >= 2))
     err(`${at}.domain must be a list`);
-  if (ch.axis !== undefined && typeof ch.axis !== 'boolean') err(`${at}.axis must be true or false`);
+  if (ch.axis !== undefined && typeof ch.axis !== 'boolean')
+    err(`${at}.axis must be true or false`);
 }
 
 function checkData(data: any, at: string, err: (m: string) => void, required: boolean): void {
   if (data === undefined) {
-    if (required) err(`${at} is required: {values: [...]}, {file: "name.csv"} or {artifact: "<artifact id>"}`);
+    if (required)
+      err(`${at} is required: {values: [...]}, {file: "name.csv"} or {artifact: "<artifact id>"}`);
     return;
   }
   if (!data || typeof data !== 'object') return err(`${at} must be {values}, {file} or {artifact}`);
   unknown(data, ['values', 'file', 'artifact'], at, err);
   const sources = ['values', 'file', 'artifact'].filter((k) => data[k] !== undefined);
   if (sources.length !== 1) err(`${at} needs exactly one of values, file or artifact`);
-  if (data.values !== undefined && !Array.isArray(data.values)) err(`${at}.values must be a list of rows`);
+  if (data.values !== undefined && !Array.isArray(data.values))
+    err(`${at}.values must be a list of rows`);
   if (data.file !== undefined && !/^[\w.-]+\.(csv|json)$/.test(data.file))
     err(`${at}.file must name a report file ending .csv or .json`);
   if (data.artifact !== undefined && (typeof data.artifact !== 'string' || !data.artifact.trim()))
     err(`${at}.artifact must be an artifact id`);
 }
 
-function unknown(obj: Record<string, unknown>, allowed: string[], at: string, err: (m: string) => void): void {
+function unknown(
+  obj: Record<string, unknown>,
+  allowed: string[],
+  at: string,
+  err: (m: string) => void,
+): void {
   for (const key of Object.keys(obj))
-    if (!allowed.includes(key)) err(`${at}: "${key}" is not allowed (allowed: ${allowed.join(', ')})`);
+    if (!allowed.includes(key))
+      err(`${at}: "${key}" is not allowed (allowed: ${allowed.join(', ')})`);
 }
 
 export function words(text: string): number {
@@ -168,7 +217,10 @@ export interface Criterion {
 
 /** Every data reference a chart makes, as keys of the files map. */
 export function dataKeys(spec: ChartSpec): string[] {
-  const refs = [spec.data, ...(Array.isArray(spec.layer) ? spec.layer.map((l: any) => l?.data) : [])];
+  const refs = [
+    spec.data,
+    ...(Array.isArray(spec.layer) ? spec.layer.map((l: any) => l?.data) : []),
+  ];
   return refs.flatMap((d: DataRef | undefined) =>
     d?.file ? [d.file] : d?.artifact ? [`artifact:${d.artifact}`] : [],
   );
@@ -185,7 +237,8 @@ export function loadRows(data: DataRef, files: DataFiles, criteria: Criterion[] 
     const json = data.file ? data.file.endsWith('.json') : /^\s*[[{]/.test(text);
     if (json) {
       const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) throw new Error(`data ${data.file ?? data.artifact} must be a JSON list of rows`);
+      if (!Array.isArray(parsed))
+        throw new Error(`data ${data.file ?? data.artifact} must be a JSON list of rows`);
       rows = parsed as Row[];
     } else rows = parseCsv(text);
   }
@@ -195,17 +248,15 @@ export function loadRows(data: DataRef, files: DataFiles, criteria: Criterion[] 
 export function parseCsv(text: string): Row[] {
   const [head, ...lines] = text.trim().split(/\r?\n/);
   const cols = head.split(',').map((s) => s.trim());
-  return lines
-    .filter(Boolean)
-    .map((line) => {
-      const cells = line.split(',');
-      const row: Row = {};
-      cols.forEach((c, i) => {
-        const v = (cells[i] ?? '').trim();
-        row[c] = v !== '' && !Number.isNaN(Number(v)) ? Number(v) : v;
-      });
-      return row;
+  return lines.filter(Boolean).map((line) => {
+    const cells = line.split(',');
+    const row: Row = {};
+    cols.forEach((c, i) => {
+      const v = (cells[i] ?? '').trim();
+      row[c] = v !== '' && !Number.isNaN(Number(v)) ? Number(v) : v;
     });
+    return row;
+  });
 }
 
 // The renderer, not the agent, decides whether a result met its bar.
@@ -214,7 +265,8 @@ function applyCriteria(rows: Row[], criteria: Criterion[]): Row[] {
   return rows.map((row) => {
     const c = criteria.find((k) => k.metric === row.metric);
     if (!c || typeof row.delta !== 'number') return row;
-    if (c.bar !== undefined) return { ...row, bar: c.bar, status: row.delta >= c.bar ? 'met' : 'not met' };
+    if (c.bar !== undefined)
+      return { ...row, bar: c.bar, status: row.delta >= c.bar ? 'met' : 'not met' };
     if (c.floor !== undefined)
       return { ...row, bar: c.floor, status: row.delta >= c.floor ? 'held' : 'breached' };
     return row;
@@ -261,7 +313,14 @@ const THEME = {
   },
   axisX: { titleAnchor: 'end' },
   axisY: { titleAnchor: 'end', titleAngle: 0, titleAlign: 'left', titleY: -8, titleX: 0 },
-  axisBand: { labelFont: 'Geist', labelFontSize: 13, labelColor: '#111113', labelFontWeight: 500, labelPadding: 12, labelLimit: 220 },
+  axisBand: {
+    labelFont: 'Geist',
+    labelFontSize: 13,
+    labelColor: '#111113',
+    labelFontWeight: 500,
+    labelPadding: 12,
+    labelLimit: 220,
+  },
   legend: { disable: true },
   mark: { color: ROLES.ink },
   point: { filled: true },
@@ -275,7 +334,12 @@ type Channel = { field?: string; type?: string; [k: string]: any };
 /** Compile to a Vega-Lite spec at a fixed pixel size. */
 export function compileSpec(
   spec: ChartSpec,
-  { width, height, files, criteria }: { width: number; height: number; files: DataFiles; criteria: Criterion[] },
+  {
+    width,
+    height,
+    files,
+    criteria,
+  }: { width: number; height: number; files: DataFiles; criteria: Criterion[] },
 ): Record<string, unknown> {
   const rows = loadRows(spec.data, files, criteria);
   const top = { x: norm(spec.x, rows), y: norm(spec.y, rows) };
@@ -327,7 +391,10 @@ export function compileSpec(
     else if (c)
       enc.color = {
         field: c.field,
-        scale: { domain: Object.keys(c.map), range: Object.values(c.map).map((r) => ROLES[r as Role]) },
+        scale: {
+          domain: Object.keys(c.map),
+          range: Object.values(c.map).map((r) => ROLES[r as Role]),
+        },
         legend: null,
       };
     const out: Record<string, unknown> = { mark, encoding: enc };
@@ -367,7 +434,12 @@ function valueOf(d: Channel, ch: string): Record<string, unknown> {
   return { value: d.value };
 }
 
-function encodeChannel(def: Channel, ch: string, topDef: Channel | null, primary: boolean): Record<string, unknown> {
+function encodeChannel(
+  def: Channel,
+  ch: string,
+  topDef: Channel | null,
+  primary: boolean,
+): Record<string, unknown> {
   if (!def.field) return valueOf(def, ch);
   const shared: Channel = topDef ?? {};
   const e: Record<string, unknown> = { field: def.field, type: def.type };

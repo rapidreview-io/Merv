@@ -10,7 +10,12 @@ export function customerReportSubject(domain: CustomerExperiments): ReportSubjec
     async authorize(caller: Caller, id: string, mode: 'read' | 'write', tx: Transaction) {
       const exp = await domain.get(caller, id, tx);
       if (mode === 'read' || !caller.session) return;
-      check(exp.workflow.state === 'running', 'forbidden', 'Only the executing worker edits the report while the experiment runs', 403);
+      check(
+        exp.workflow.state === 'running',
+        'forbidden',
+        'Only the executing worker edits the report while the experiment runs',
+        403,
+      );
       await domain.worker(caller, exp, tx);
     },
     async prefill(caller: Caller, id: string, tx: Transaction) {
@@ -29,7 +34,9 @@ function facts(exp: CustomerExperiment) {
   return {
     id: exp.title,
     question: plan.question,
-    inquiry: [plan.rationale, plan.decision ? `The answer decides: ${plan.decision}` : ''].filter(Boolean).join(' '),
+    inquiry: [plan.rationale, plan.decision ? `The answer decides: ${plan.decision}` : '']
+      .filter(Boolean)
+      .join(' '),
     constraints: [
       ...plan.successCriteria,
       `Up to ${hours(limits.wallMinutes)}, ${tokens(limits.maxTokens)} and ${limits.maxAttempts} execution attempt${limits.maxAttempts === 1 ? '' : 's'}`,
@@ -40,7 +47,11 @@ function facts(exp: CustomerExperiment) {
     ].join('\n'),
     data: (exp.contract?.datasets ?? []).map((d) => {
       const requirement = plan.dataRequirements.find((r) => r.id === d.requirementId);
-      return { dataset: d.filename, use: requirement?.role ?? d.requirementId, size: `${d.rows.toLocaleString('en-US')} rows` };
+      return {
+        dataset: d.filename,
+        use: requirement?.role ?? d.requirementId,
+        size: `${d.rows.toLocaleString('en-US')} rows`,
+      };
     }),
   };
 }

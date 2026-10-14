@@ -21,7 +21,8 @@ export function legacyReports(state: State): LegacyReports {
     subject,
     revision: 1,
     sourceArtifactId: id,
-    pdfArtifactId: id,
+    // An experiment's test report has no separate PDF: its Markdown stays the reviewed text.
+    pdfArtifactId: subject.kind === 'experiment' ? '' : id,
     pageArtifactIds: pages,
     createdAt: new Date(0).toISOString(),
     source: '',

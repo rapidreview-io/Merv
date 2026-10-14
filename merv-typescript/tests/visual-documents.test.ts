@@ -84,7 +84,10 @@ test('experiment@43 writes the one-page report with the report tools, editing on
   const { outputInstructions: _, ...rest } = REPORTED_EXECUTE_RECIPE.recipe;
   const { outputInstructions: __, ...before } = recipe('experiment.execute').recipe;
   assert.deepEqual(rest, before);
-  assert.match(reportedResultsCriteria.at(-1)!, /^Format: the report is the rendered one-page report: .*against its bar/);
+  assert.match(
+    reportedResultsCriteria.at(-1)!,
+    /^Format: the report is the rendered one-page report: .*against its bar/,
+  );
   assert.deepEqual(reportedResultsCriteria.slice(0, -1), resultsCriteria.slice(0, -1));
   assert.ok(reportedResultsCriteria.at(-1)!.length < 400);
 });

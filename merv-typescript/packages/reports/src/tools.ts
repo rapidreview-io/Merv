@@ -23,12 +23,16 @@ export const reportsToolsPlugin = {
   inject: ['reports', 'tools'],
   apply(ctx: Context) {
     const reports = ctx.reports;
-    const register = (definition: Parameters<Context['tools']['register']>[0]) => ctx.effect(() => ctx.tools.register(definition));
+    const register = (definition: Parameters<Context['tools']['register']>[0]) =>
+      ctx.effect(() => ctx.tools.register(definition));
     register({
       name: 'report.open',
       description: `Open the report draft for an experiment, creating it from the approved plan the first time. Returns the draft (Markdown source, revision, data files, locked sections, chart approvals, last final render) and the report format guide. The draft persists across submissions: edit it after a review asks for changes. ${SUBJECT}`,
       inputSchema: openSchema,
-      handler: async (caller, input) => ({ ...(await reports.open(caller, input)), guide: REPORT_GUIDE }),
+      handler: async (caller, input) => ({
+        ...(await reports.open(caller, input)),
+        guide: REPORT_GUIDE,
+      }),
     });
     register({
       name: 'report.write',

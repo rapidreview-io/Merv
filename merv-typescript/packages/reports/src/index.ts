@@ -52,7 +52,10 @@ export { parseReport, splitReport, joinReport } from './format/parse.js';
 export { PLACEHOLDER } from './format/parse.js';
 
 type SubjectInput = { subjectKind: string; subjectId: string };
-const ref = (input: SubjectInput): ReportSubjectRef => ({ kind: input.subjectKind, id: input.subjectId });
+const ref = (input: SubjectInput): ReportSubjectRef => ({
+  kind: input.subjectKind,
+  id: input.subjectId,
+});
 const errors = (issues: Issue[]) => issues.filter((i) => i.level === 'error');
 
 /** The one-line answer and the optional description under the result chart. */
@@ -84,7 +87,12 @@ export class ReportService implements Reports {
   }
 
   registerSubject(kind: string, subject: ReportSubject): () => void {
-    check(!this.subjects.has(kind), 'conflict', `Report subject ${kind} is already registered`, 409);
+    check(
+      !this.subjects.has(kind),
+      'conflict',
+      `Report subject ${kind} is already registered`,
+      409,
+    );
     this.subjects.set(kind, subject);
     return () => {
       if (this.subjects.get(kind) === subject) this.subjects.delete(kind);
@@ -92,11 +100,16 @@ export class ReportService implements Reports {
   }
   private subject(kind: string): ReportSubject {
     const subject = this.subjects.get(kind);
-    if (!subject) throw new MervError('reports_unavailable', `Reports for ${kind} are not available`, 503);
+    if (!subject)
+      throw new MervError('reports_unavailable', `Reports for ${kind} are not available`, 503);
     return subject;
   }
 
-  private async latest(caller: Caller, subject: ReportSubjectRef, tx: Transaction): Promise<ReportRevision | null> {
+  private async latest(
+    caller: Caller,
+    subject: ReportSubjectRef,
+    tx: Transaction,
+  ): Promise<ReportRevision | null> {
     const row = await tx.get<{ record: string }>(
       `SELECT r.record FROM report_drafts d JOIN report_revisions r ON r.report_id=d.id
        WHERE d.project_id=? AND d.subject_kind=? AND d.subject_id=? ORDER BY r.revision DESC LIMIT 1`,
@@ -106,12 +119,26 @@ export class ReportService implements Reports {
     );
     return row ? (JSON.parse(row.record) as ReportRevision) : null;
   }
-  private async required(caller: Caller, subject: ReportSubjectRef, tx: Transaction): Promise<ReportRevision> {
+  private async required(
+    caller: Caller,
+    subject: ReportSubjectRef,
+    tx: Transaction,
+  ): Promise<ReportRevision> {
     const found = await this.latest(caller, subject, tx);
-    if (!found) throw new MervError('not_found', 'This report has not been opened yet; call report.open first', 404);
+    if (!found)
+      throw new MervError(
+        'not_found',
+        'This report has not been opened yet; call report.open first',
+        404,
+      );
     return found;
   }
-  private async append(caller: Caller, before: ReportRevision | null, after: ReportRevision, tx: Transaction): Promise<void> {
+  private async append(
+    caller: Caller,
+    before: ReportRevision | null,
+    after: ReportRevision,
+    tx: Transaction,
+  ): Promise<void> {
     check(
       !before || (after.revision === before.revision + 1 && Number.isSafeInteger(after.revision)),
       'report_revision_conflict',
@@ -147,11 +174,18 @@ export class ReportService implements Reports {
       subject: rev.subject,
       revision: rev.revision,
       source: rev.source,
-      files: Object.entries(rev.files).map(([name, text]) => ({ name, bytes: Buffer.byteLength(text) })),
+      files: Object.entries(rev.files).map(([name, text]) => ({
+        name,
+        bytes: Buffer.byteLength(text),
+      })),
       locked: rev.locked,
       charts: report.charts
         .filter((c) => typeof c.spec?.id === 'string')
-        .map((c) => ({ id: c.spec.id, section: c.section, approved: rev.approvals[c.spec.id] !== undefined })),
+        .map((c) => ({
+          id: c.spec.id,
+          section: c.section,
+          approved: rev.approvals[c.spec.id] !== undefined,
+        })),
       final: rev.final,
       finalCurrent: rev.final?.revision === rev.revision,
     };
@@ -169,7 +203,12 @@ export class ReportService implements Reports {
       const found = await this.latest(caller, subject, tx);
       if (found) return this.view(found);
       const prefill = await provider.prefill(caller, subject.id, tx);
-      check(Buffer.byteLength(prefill.source) <= MAX_SOURCE_BYTES, 'report_too_large', 'The prefilled report is too large', 422);
+      check(
+        Buffer.byteLength(prefill.source) <= MAX_SOURCE_BYTES,
+        'report_too_large',
+        'The prefilled report is too large',
+        422,
+      );
       const reportId = newId('rep');
       const inserted = await tx.run(
         'INSERT INTO report_drafts(id,project_id,subject_kind,subject_id,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',
@@ -198,16 +237,24 @@ export class ReportService implements Reports {
     });
   }
 
-  private async command<T>(caller: Caller, operation: string, input: SubjectInput & { requestId: string }, run: (tx: Transaction) => Promise<T>): Promise<T> {
+  private async command<T>(
+    caller: Caller,
+    operation: string,
+    input: SubjectInput & { requestId: string },
+    run: (tx: Transaction) => Promise<T>,
+  ): Promise<T> {
     this.open_();
-    return await inTransaction(this.state, undefined, async (tx) =>
-      await replayed(tx, 'report_commands', caller, operation, input, () => run(tx), {
-        result: 'result_json',
-        after: async () => {
-          await this.scope.require(caller, 'write', tx);
-          await this.subject(input.subjectKind).authorize(caller, input.subjectId, 'write', tx);
-        },
-      }),
+    return await inTransaction(
+      this.state,
+      undefined,
+      async (tx) =>
+        await replayed(tx, 'report_commands', caller, operation, input, () => run(tx), {
+          result: 'result_json',
+          after: async () => {
+            await this.scope.require(caller, 'write', tx);
+            await this.subject(input.subjectKind).authorize(caller, input.subjectId, 'write', tx);
+          },
+        }),
     );
   }
 
@@ -234,20 +281,37 @@ export class ReportService implements Reports {
         source = joinReport(parts);
       }
       this.keepLocked(before, source);
-      check(Buffer.byteLength(source) <= MAX_SOURCE_BYTES, 'report_too_large', `The report source is over ${MAX_SOURCE_BYTES} bytes`, 422);
+      check(
+        Buffer.byteLength(source) <= MAX_SOURCE_BYTES,
+        'report_too_large',
+        `The report source is over ${MAX_SOURCE_BYTES} bytes`,
+        422,
+      );
       const files = { ...before.files };
       for (const f of input.files ?? []) {
         if (f.content === null) delete files[f.name];
         else files[f.name] = f.content;
       }
-      check(Object.keys(files).length <= MAX_FILES, 'report_too_large', `At most ${MAX_FILES} data files`, 422);
+      check(
+        Object.keys(files).length <= MAX_FILES,
+        'report_too_large',
+        `At most ${MAX_FILES} data files`,
+        422,
+      );
       check(
         Object.values(files).reduce((n, t) => n + Buffer.byteLength(t), 0) <= MAX_FILES_BYTES,
         'report_too_large',
         `Data files total over ${MAX_FILES_BYTES} bytes`,
         422,
       );
-      const after: ReportRevision = { ...before, revision: before.revision + 1, source, files, updatedBy: caller.actorId, updatedAt: now() };
+      const after: ReportRevision = {
+        ...before,
+        revision: before.revision + 1,
+        source,
+        files,
+        updatedBy: caller.actorId,
+        updatedAt: now(),
+      };
       await this.append(caller, before, after, tx);
       return this.view(after);
     });
@@ -262,7 +326,8 @@ export class ReportService implements Reports {
       const same =
         name === 'title'
           ? (base.title ?? '').trim() === (next.title ?? '').trim()
-          : base.sections.find((s) => s.name === name)?.body.trim() === next.sections.find((s) => s.name === name)?.body.trim();
+          : base.sections.find((s) => s.name === name)?.body.trim() ===
+            next.sections.find((s) => s.name === name)?.body.trim();
       check(
         same,
         'report_locked_section',
@@ -293,13 +358,30 @@ export class ReportService implements Reports {
   }
 
   /** Data for rendering: the draft's files and any artifacts the charts name. */
-  private async files(caller: Caller, rev: ReportRevision, report: Report, tx?: Transaction): Promise<Map<string, string>> {
+  private async files(
+    caller: Caller,
+    rev: ReportRevision,
+    report: Report,
+    tx?: Transaction,
+  ): Promise<Map<string, string>> {
     const files = new Map(Object.entries(rev.files));
-    const wanted = new Set(report.charts.flatMap((c) => (c.spec && typeof c.spec === 'object' ? dataKeys(c.spec) : [])).filter((k) => k.startsWith('artifact:')));
+    const wanted = new Set(
+      report.charts
+        .flatMap((c) => (c.spec && typeof c.spec === 'object' ? dataKeys(c.spec) : []))
+        .filter((k) => k.startsWith('artifact:')),
+    );
     for (const key of wanted) {
       try {
-        const { artifact, bytes } = await this.artifacts.bytes(caller, key.slice('artifact:'.length), tx);
-        if (!/^(text\/|application\/(json|x-ndjson)$)/.test(artifact.mediaType) && bytes.includes(0)) continue;
+        const { artifact, bytes } = await this.artifacts.bytes(
+          caller,
+          key.slice('artifact:'.length),
+          tx,
+        );
+        if (
+          !/^(text\/|application\/(json|x-ndjson)$)/.test(artifact.mediaType) &&
+          bytes.includes(0)
+        )
+          continue;
         files.set(key, bytes.toString('utf8'));
       } catch {
         // Reported by check as missing data.
@@ -309,35 +391,74 @@ export class ReportService implements Reports {
   }
 
   private approvalHash(spec: Record<string, any>, files: DataFiles): string {
-    return digest({ spec, data: dataKeys(spec).map((k) => [k, files.has(k) ? sha256Hex(files.get(k)!) : null]) });
+    return digest({
+      spec,
+      data: dataKeys(spec).map((k) => [k, files.has(k) ? sha256Hex(files.get(k)!) : null]),
+    });
   }
 
-  private analyse(rev: ReportRevision, files: Map<string, string>): { report: Report; issues: Issue[]; charts: ReportCheck['charts'] } {
+  private analyse(
+    rev: ReportRevision,
+    files: Map<string, string>,
+  ): { report: Report; issues: Issue[]; charts: ReportCheck['charts'] } {
     const report = parseReport(rev.source, { locked: rev.locked, files: new Set(files.keys()) });
     const issues = [...report.issues];
     for (const chart of report.charts) {
-      if (!chart.spec || typeof chart.spec !== 'object' || issues.some((i) => i.level === 'error' && i.where === `${chart.section} chart ${chart.spec.id}`)) continue;
+      if (
+        !chart.spec ||
+        typeof chart.spec !== 'object' ||
+        issues.some(
+          (i) => i.level === 'error' && i.where === `${chart.section} chart ${chart.spec.id}`,
+        )
+      )
+        continue;
       try {
         const rows = loadRows(chart.spec.data, files, report.criteria);
-        for (const l of chart.spec.layer ?? []) if (l?.data) loadRows(l.data, files, report.criteria);
+        for (const l of chart.spec.layer ?? [])
+          if (l?.data) loadRows(l.data, files, report.criteria);
         if (chart.section === 'Result' && report.criteria.length) {
           const metrics = new Set(report.criteria.map((c) => c.metric));
           for (const row of rows)
-            if (typeof row.delta === 'number' && typeof row.metric === 'string' && !metrics.has(row.metric))
-              issues.push({ level: 'error', where: `Result chart ${chart.spec.id}`, message: `row metric "${row.metric}" matches no criterion in the front matter` });
+            if (
+              typeof row.delta === 'number' &&
+              typeof row.metric === 'string' &&
+              !metrics.has(row.metric)
+            )
+              issues.push({
+                level: 'error',
+                where: `Result chart ${chart.spec.id}`,
+                message: `row metric "${row.metric}" matches no criterion in the front matter`,
+              });
           for (const m of metrics)
             if (!rows.some((r) => r.metric === m))
-              issues.push({ level: 'error', where: `Result chart ${chart.spec.id}`, message: `criterion "${m}" has no row in the result chart` });
+              issues.push({
+                level: 'error',
+                where: `Result chart ${chart.spec.id}`,
+                message: `criterion "${m}" has no row in the result chart`,
+              });
         }
       } catch (error) {
-        issues.push({ level: 'error', where: `${chart.section} chart ${chart.spec.id}`, message: (error as Error).message });
+        issues.push({
+          level: 'error',
+          where: `${chart.section} chart ${chart.spec.id}`,
+          message: (error as Error).message,
+        });
       }
     }
     if (report.charts.some((c) => c.section === 'Result') && !report.criteria.length)
-      issues.push({ level: 'error', where: 'front matter', message: 'criteria are required: one {metric, bar} or {metric, floor} per pre-registered criterion' });
+      issues.push({
+        level: 'error',
+        where: 'front matter',
+        message:
+          'criteria are required: one {metric, bar} or {metric, floor} per pre-registered criterion',
+      });
     const charts = report.charts
       .filter((c) => typeof c.spec?.id === 'string')
-      .map((c) => ({ id: c.spec.id, section: c.section, approved: rev.approvals[c.spec.id] === this.approvalHash(c.spec, files) }));
+      .map((c) => ({
+        id: c.spec.id,
+        section: c.section,
+        approved: rev.approvals[c.spec.id] === this.approvalHash(c.spec, files),
+      }));
     return { report, issues, charts };
   }
 
@@ -348,10 +469,17 @@ export class ReportService implements Reports {
       await this.scope.require(caller, 'read', tx);
       await this.subject(input.subjectKind).authorize(caller, input.subjectId, 'read', tx);
       const rev = await this.required(caller, ref(input), tx);
-      const { issues, charts } = this.analyse(rev, await this.files(caller, rev, parseReport(rev.source), tx));
+      const { issues, charts } = this.analyse(
+        rev,
+        await this.files(caller, rev, parseReport(rev.source), tx),
+      );
       const pending = charts.filter((c) => !c.approved).map((c) => c.id);
       if (!errors(issues).length && pending.length)
-        issues.push({ level: 'warning', where: 'charts', message: `not yet approved: ${pending.join(', ')}; review each with report.review_visual` });
+        issues.push({
+          level: 'warning',
+          where: 'charts',
+          message: `not yet approved: ${pending.join(', ')}; review each with report.review_visual`,
+        });
       return { revision: rev.revision, issues, charts };
     });
   }
@@ -367,7 +495,13 @@ export class ReportService implements Reports {
   }
 
   private drawable(issues: Issue[]): void {
-    const blocking = errors(issues).filter((i) => i.where?.includes(' chart ') || i.where === 'front matter' || i.where === 'title' || i.where === 'top');
+    const blocking = errors(issues).filter(
+      (i) =>
+        i.where?.includes(' chart ') ||
+        i.where === 'front matter' ||
+        i.where === 'title' ||
+        i.where === 'top',
+    );
     if (blocking.length)
       throw new MervError(
         'report_invalid',
@@ -385,7 +519,12 @@ export class ReportService implements Reports {
     check(charts.length, 'not_found', 'The report has no charts yet', 404);
     const target = input.chartId ?? charts.find((c) => !c.approved)?.id;
     check(target, 'not_found', 'Every chart is approved; render the report', 404);
-    check(charts.some((c) => c.id === target), 'not_found', `No chart with id "${target}"`, 404);
+    check(
+      charts.some((c) => c.id === target),
+      'not_found',
+      `No chart with id "${target}"`,
+      404,
+    );
     this.drawable(issues);
     const out = await this.renderer.render(report, files, { visual: target });
     const shot = out.visual!;
@@ -410,14 +549,24 @@ export class ReportService implements Reports {
     this.open_();
     const { rev, files, report, issues, charts } = await this.readable(caller, input, 'write');
     this.expect(rev, input.expectedRevision);
-    check(charts.some((c) => c.id === input.chartId), 'not_found', `No chart with id "${input.chartId}"`, 404);
+    check(
+      charts.some((c) => c.id === input.chartId),
+      'not_found',
+      `No chart with id "${input.chartId}"`,
+      404,
+    );
     this.drawable(issues);
     const shot = (await this.renderer.render(report, files, { visual: input.chartId })).visual!;
     const blocking = errors(shot.issues);
     if (blocking.length)
-      throw new MervError('report_visual_rejected', `Cannot approve ${input.chartId}: ${blocking.map((i) => i.message).join('; ')}`, 422, {
-        issues: blocking.map((i) => ({ ...i })),
-      });
+      throw new MervError(
+        'report_visual_rejected',
+        `Cannot approve ${input.chartId}: ${blocking.map((i) => i.message).join('; ')}`,
+        422,
+        {
+          issues: blocking.map((i) => ({ ...i })),
+        },
+      );
     const spec = report.charts.find((c) => c.spec.id === input.chartId)!.spec;
     const hash = this.approvalHash(spec, files);
     return await this.command(caller, 'approve_visual', input, async (tx) => {
@@ -439,51 +588,125 @@ export class ReportService implements Reports {
     caller = structuredClone(caller);
     const input = parse(renderSchema, value);
     this.open_();
-    const { rev, files, report, issues, charts } = await this.readable(caller, input, input.final ? 'write' : 'read');
+    const { rev, files, report, issues, charts } = await this.readable(
+      caller,
+      input,
+      input.final ? 'write' : 'read',
+    );
     this.drawable(issues);
     if (input.final) {
       const blocking = errors(issues);
-      check(!blocking.length, 'report_invalid', `Fix these first: ${blocking.map((i) => `${i.where}: ${i.message}`).join('; ')}`, 422);
+      check(
+        !blocking.length,
+        'report_invalid',
+        `Fix these first: ${blocking.map((i) => `${i.where}: ${i.message}`).join('; ')}`,
+        422,
+      );
       const pending = charts.filter((c) => !c.approved).map((c) => c.id);
-      check(!pending.length, 'report_visuals_unapproved', `Review and approve these charts first: ${pending.join(', ')}`, 422);
+      check(
+        !pending.length,
+        'report_visuals_unapproved',
+        `Review and approve these charts first: ${pending.join(', ')}`,
+        422,
+      );
     }
     const out = await this.renderer.render(report, files, { pages: true, pdf: input.final });
     const drawn = [...issues.filter((i) => !input.final || i.level === 'warning'), ...out.issues];
     const summary = { pages: out.pages.length, unfilled: out.layout.pages.map((p) => p.unfilled) };
-    if (!input.final) return { revision: rev.revision, ...summary, issues: drawn, final: null, images: out.pages.map((b) => b.toString('base64')) };
-    check(!errors(out.issues).length, 'report_invalid', errors(out.issues).map((i) => `${i.where}: ${i.message}`).join('; '), 422);
-    const final = await this.command(caller, 'render_final', { ...input, requestId: input.requestId! }, async (tx) => {
-      const before = await this.required(caller, ref(input), tx);
-      check(before.revision === rev.revision, 'report_revision_conflict', 'The report changed while it rendered; render again', 409);
-      const name = String(report.meta.id ?? input.subjectId);
-      const source = await this.artifacts.create(caller, { title: `Report ${name} (Markdown)`, content: rev.source, mediaType: 'text/markdown' }, tx);
-      const pdf = await this.artifacts.create(
-        caller,
-        { title: `Report ${name} (PDF)`, content: out.pdf!.toString('base64'), encoding: 'base64', mediaType: 'application/pdf' },
-        tx,
-      );
-      const pageIds: string[] = [];
-      for (const [i, png] of out.pages.entries())
-        pageIds.push(
-          (await this.artifacts.create(caller, { title: `Report ${name}, page ${i + 1}`, content: png.toString('base64'), encoding: 'base64', mediaType: 'image/png' }, tx)).id,
+    if (!input.final)
+      return {
+        revision: rev.revision,
+        ...summary,
+        issues: drawn,
+        final: null,
+        images: out.pages.map((b) => b.toString('base64')),
+      };
+    check(
+      !errors(out.issues).length,
+      'report_invalid',
+      errors(out.issues)
+        .map((i) => `${i.where}: ${i.message}`)
+        .join('; '),
+      422,
+    );
+    const final = await this.command(
+      caller,
+      'render_final',
+      { ...input, requestId: input.requestId! },
+      async (tx) => {
+        const before = await this.required(caller, ref(input), tx);
+        check(
+          before.revision === rev.revision,
+          'report_revision_conflict',
+          'The report changed while it rendered; render again',
+          409,
         );
-      const record: ReportFinal = { revision: rev.revision + 1, sourceArtifactId: source.id, pdfArtifactId: pdf.id, pageArtifactIds: pageIds, createdAt: now() };
-      await tx.run(
-        'INSERT INTO report_finals(source_artifact_id,project_id,report_id,revision,record) VALUES(?,?,?,?,?)',
-        source.id,
-        caller.projectId,
-        rev.reportId,
-        record.revision,
-        JSON.stringify({ ...record, subject: rev.subject, source: rev.source }),
-      );
-      const after: ReportRevision = { ...before, revision: before.revision + 1, final: record, updatedBy: caller.actorId, updatedAt: now() };
-      await this.append(caller, before, after, tx);
-      return record;
-    });
+        const name = String(report.meta.id ?? input.subjectId);
+        const source = await this.artifacts.create(
+          caller,
+          { title: `Report ${name} (Markdown)`, content: rev.source, mediaType: 'text/markdown' },
+          tx,
+        );
+        const pdf = await this.artifacts.create(
+          caller,
+          {
+            title: `Report ${name} (PDF)`,
+            content: out.pdf!.toString('base64'),
+            encoding: 'base64',
+            mediaType: 'application/pdf',
+          },
+          tx,
+        );
+        const pageIds: string[] = [];
+        for (const [i, png] of out.pages.entries())
+          pageIds.push(
+            (
+              await this.artifacts.create(
+                caller,
+                {
+                  title: `Report ${name}, page ${i + 1}`,
+                  content: png.toString('base64'),
+                  encoding: 'base64',
+                  mediaType: 'image/png',
+                },
+                tx,
+              )
+            ).id,
+          );
+        const record: ReportFinal = {
+          revision: rev.revision + 1,
+          sourceArtifactId: source.id,
+          pdfArtifactId: pdf.id,
+          pageArtifactIds: pageIds,
+          createdAt: now(),
+        };
+        await tx.run(
+          'INSERT INTO report_finals(source_artifact_id,project_id,report_id,revision,record) VALUES(?,?,?,?,?)',
+          source.id,
+          caller.projectId,
+          rev.reportId,
+          record.revision,
+          JSON.stringify({ ...record, subject: rev.subject, source: rev.source }),
+        );
+        const after: ReportRevision = {
+          ...before,
+          revision: before.revision + 1,
+          final: record,
+          updatedBy: caller.actorId,
+          updatedAt: now(),
+        };
+        await this.append(caller, before, after, tx);
+        return record;
+      },
+    );
     return { revision: final.revision, ...summary, issues: drawn, final, images: [] };
   }
 
-  async finalFor(caller: Caller, sourceArtifactId: string, tx?: Transaction): Promise<FinalReport | null> {
+  async finalFor(
+    caller: Caller,
+    sourceArtifactId: string,
+    tx?: Transaction,
+  ): Promise<FinalReport | null> {
     return await forRead(
       this.state,
       async (t) => {
@@ -494,7 +717,10 @@ export class ReportService implements Reports {
           caller.projectId,
         );
         if (!row) return null;
-        const record = JSON.parse(row.record) as ReportFinal & { subject: ReportSubjectRef; source: string };
+        const record = JSON.parse(row.record) as ReportFinal & {
+          subject: ReportSubjectRef;
+          source: string;
+        };
         const { answer, note } = resultAnswer(parseReport(record.source));
         return { ...record, reportId: row.report_id, answer, note };
       },
@@ -513,7 +739,9 @@ export const reportsPlugin = {
   async apply(ctx: Context, config: ReportsConfig = {}) {
     await ctx.effect(async function* () {
       const executable = config.chromium ?? process.env.MERV_REPORTS_CHROMIUM ?? undefined;
-      const service = await createService(new ReportService(ctx.state, ctx.scope, ctx.artifacts, new ReportRenderer(executable)));
+      const service = await createService(
+        new ReportService(ctx.state, ctx.scope, ctx.artifacts, new ReportRenderer(executable)),
+      );
       yield async () => await service.close();
       yield ctx.provide('reports', service);
     });

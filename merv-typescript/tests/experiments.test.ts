@@ -912,7 +912,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
         await createService(new PaperService(state, scope, artifacts)),
       ),
     );
-    experiments.bindReports(legacyReports(state));
+  experiments.bindReports(legacyReports(state));
   try {
     assert.deepEqual(await experiments.get(f.producer, e.id), e);
     assert.deepEqual(e.attempt.feedbackReviewIds, [application.reviewId]);
@@ -1041,7 +1041,7 @@ test('native experiments fence compute by attempt and state and retain service c
   const native = captureEvidenceFixture();
   t.after(f.experiments.bindCaptureEvidence(native.service));
   let experiment = await f.create('Native');
-  assert.equal(experiment.workflow.version, 42);
+  assert.equal(experiment.workflow.version, 43);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
   assert.ok(!planning.execution.tools.some((tool) => tool.name.startsWith('compute.')));
@@ -1392,69 +1392,101 @@ A domain tokenizer should split legal terms less and lift NER macro-F1.
 Risks:
 - One vocabulary size`;
 
-test('experiment@43 submits its rendered report: drafted from the plan, final PDF, pages as figures', { skip: !reportBrowser() && 'no Chromium for rendering' }, async (t) => {
-  const f = await fixture(t);
-  const reports = await createService(
-    new ReportService(f.state, f.scope, f.artifacts, new ReportRenderer(reportBrowser())),
-  );
-  t.after(async () => await reports.close());
-  f.experiments.bindReports(reports);
-  let e = await f.create();
-  assert.equal(e.workflow.version, 43);
-  await f.attach(e, 'plan', REPORTED_PLAN);
-  e = await f.transition(e, 'submit_design');
-  e = await f.execute(await f.submitReview(e));
+test(
+  'experiment@43 submits its rendered report: drafted from the plan, final PDF, pages as figures',
+  { skip: !reportBrowser() && 'no Chromium for rendering' },
+  async (t) => {
+    const f = await fixture(t);
+    const reports = await createService(
+      new ReportService(f.state, f.scope, f.artifacts, new ReportRenderer(reportBrowser())),
+    );
+    t.after(async () => await reports.close());
+    f.experiments.bindReports(reports);
+    let e = await f.create();
+    assert.equal(e.workflow.version, 43);
+    await f.attach(e, 'plan', REPORTED_PLAN);
+    e = await f.transition(e, 'submit_design');
+    e = await f.execute(await f.submitReview(e));
 
-  // A Markdown report that Reports never rendered final is refused.
-  await f.attach(e, 'result', '{"accuracy":0.5}');
-  await f.attach(e, 'report', '# A report\nWritten by hand.');
-  await assert.rejects(f.transition(e, 'submit_results'), code('experiment_report_required'));
+    // A Markdown report that Reports never rendered final is refused.
+    await f.attach(e, 'result', '{"accuracy":0.5}');
+    await f.attach(e, 'report', '# A report\nWritten by hand.');
+    await assert.rejects(f.transition(e, 'submit_results'), code('experiment_report_required'));
 
-  e = await f.execute(await f.experiments.get(f.producer, e.id));
-  const worker = f.worker(e);
-  const subject = { subjectKind: 'experiment' as const, subjectId: e.id };
-  const draft = await reports.open(worker, subject);
-  assert.match(draft.source, /^# Does the domain tokenizer improve NER\?$/m);
-  assert.match(draft.source, /- Success: at least \+1\.0 over arm A/);
-  assert.doesNotMatch(draft.source, /One vocabulary size/);
-  // Another session, or the operator's reader, cannot edit the runner's report.
-  await assert.rejects(reports.write(f.reader, { ...subject, expectedRevision: 1, requestId: f.id(), sections: [{ name: 'Method', content: 'x' }] }), code('forbidden'));
-  let rev = (
-    await reports.write(worker, {
-      ...subject,
-      expectedRevision: draft.revision,
+    e = await f.execute(await f.experiments.get(f.producer, e.id));
+    const worker = f.worker(e);
+    const subject = { subjectKind: 'experiment' as const, subjectId: e.id };
+    const draft = await reports.open(worker, subject);
+    assert.match(draft.source, /^# Does the domain tokenizer improve NER\?$/m);
+    assert.match(draft.source, /- Success: at least \+1\.0 over arm A/);
+    assert.doesNotMatch(draft.source, /One vocabulary size/);
+    // Another session, or the operator's reader, cannot edit the runner's report.
+    await assert.rejects(
+      reports.write(f.reader, {
+        ...subject,
+        expectedRevision: 1,
+        requestId: f.id(),
+        sections: [{ name: 'Method', content: 'x' }],
+      }),
+      code('forbidden'),
+    );
+    let rev = (
+      await reports.write(worker, {
+        ...subject,
+        expectedRevision: draft.revision,
+        requestId: f.id(),
+        frontMatter:
+          'id: "EXP-43"\ndate: "2026-10-14"\ncriteria:\n  - {metric: "NER macro-F1", bar: 1.0}',
+        sections: [
+          {
+            name: 'Result',
+            content:
+              'Yes: NER improves by 1.8 F1.\n\n```chart\n{"id": "results", "message": "NER clears its bar.", "data": {"values": [{"metric": "NER macro-F1", "delta": 1.8, "lo": 1.1, "hi": 2.5}]}, "y": {"field": "metric"}, "x": {"title": "Δ vs baseline", "domain": [-1, 3]}, "layer": [{"mark": "rule", "x": "lo", "x2": "hi", "size": "l", "emphasis": "low", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "point", "x": "delta", "size": "l", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "tick", "x": "bar", "style": "dashed", "size": "s"}]}\n```',
+          },
+          {
+            name: 'Method',
+            content:
+              'Both arms fine-tune identically over seeds 0–4; intervals are t-based over paired differences.',
+          },
+          { name: 'Execution', content: 'Ten jobs ran in 2 h: 6.1 of 10 GPU-hours.' },
+          {
+            name: 'Data',
+            content:
+              '| Dataset | Use | Train / test |\n|---|---|---|\n| LeNER-Br | NER | 7.8k / 1.4k |',
+          },
+          { name: 'Verification', content: 'Metrics were recomputed from the evaluation logs.' },
+          { name: 'Limitations', content: '- One vocabulary size was tried.' },
+        ],
+      })
+    ).revision;
+    rev = (
+      await reports.approveVisual(worker, {
+        ...subject,
+        chartId: 'results',
+        expectedRevision: rev,
+        requestId: f.id(),
+      })
+    ).revision;
+    const rendered = await reports.render(worker, { ...subject, final: true, requestId: f.id() });
+    const final = rendered.final!;
+    await f.experiments.attach(worker, {
+      experimentId: e.id,
+      attemptIndex: e.attempt.index,
+      expectedRevision: (await f.experiments.get(f.producer, e.id)).workflow.revision,
+      artifactId: final.sourceArtifactId,
+      role: 'report',
+      path: 'report.md',
       requestId: f.id(),
-      frontMatter: 'id: "EXP-43"\ndate: "2026-10-14"\ncriteria:\n  - {metric: "NER macro-F1", bar: 1.0}',
-      sections: [
-        { name: 'Result', content: 'Yes: NER improves by 1.8 F1.\n\n```chart\n{"id": "results", "message": "NER clears its bar.", "data": {"values": [{"metric": "NER macro-F1", "delta": 1.8, "lo": 1.1, "hi": 2.5}]}, "y": {"field": "metric"}, "x": {"title": "Δ vs baseline", "domain": [-1, 3]}, "layer": [{"mark": "rule", "x": "lo", "x2": "hi", "size": "l", "emphasis": "low", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "point", "x": "delta", "size": "l", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "tick", "x": "bar", "style": "dashed", "size": "s"}]}\n```' },
-        { name: 'Method', content: 'Both arms fine-tune identically over seeds 0–4; intervals are t-based over paired differences.' },
-        { name: 'Execution', content: 'Ten jobs ran in 2 h: 6.1 of 10 GPU-hours.' },
-        { name: 'Data', content: '| Dataset | Use | Train / test |\n|---|---|---|\n| LeNER-Br | NER | 7.8k / 1.4k |' },
-        { name: 'Verification', content: 'Metrics were recomputed from the evaluation logs.' },
-        { name: 'Limitations', content: '- One vocabulary size was tried.' },
-      ],
-    })
-  ).revision;
-  rev = (await reports.approveVisual(worker, { ...subject, chartId: 'results', expectedRevision: rev, requestId: f.id() })).revision;
-  const rendered = await reports.render(worker, { ...subject, final: true, requestId: f.id() });
-  const final = rendered.final!;
-  await f.experiments.attach(worker, {
-    experimentId: e.id,
-    attemptIndex: e.attempt.index,
-    expectedRevision: (await f.experiments.get(f.producer, e.id)).workflow.revision,
-    artifactId: final.sourceArtifactId,
-    role: 'report',
-    path: 'report.md',
-    requestId: f.id(),
-  });
-  await f.attach(e, 'result', '{"accuracy":0.5}');
-  e = await f.transition(await f.experiments.get(f.producer, e.id), 'submit_results');
-  assert.equal(e.workflow.state, 'experiment_review');
-  const submission = e.submissions.at(-1)!;
-  assert.deepEqual(submission.figureIds, final.pageArtifactIds);
-  const review = await f.reviews.get(f.reviewer, e.reviewId!);
-  assert.ok(review.artifactIds.includes(final.pdfArtifactId));
-  assert.match(review.criteria.at(-1)!, /^Format: the report is the rendered one-page report/);
-  e = await f.submitReview(e);
-  assert.equal(e.conclusion, 'Yes: NER improves by 1.8 F1.');
-});
+    });
+    await f.attach(e, 'result', '{"accuracy":0.5}');
+    e = await f.transition(await f.experiments.get(f.producer, e.id), 'submit_results');
+    assert.equal(e.workflow.state, 'experiment_review');
+    const submission = e.submissions.at(-1)!;
+    assert.deepEqual(submission.figureIds, final.pageArtifactIds);
+    const review = await f.reviews.get(f.reviewer, e.reviewId!);
+    assert.ok(review.artifactIds.includes(final.pdfArtifactId));
+    assert.match(review.criteria.at(-1)!, /^Format: the report is the rendered one-page report/);
+    e = await f.submitReview(e);
+    assert.equal(e.conclusion, 'Yes: NER improves by 1.8 F1.');
+  },
+);

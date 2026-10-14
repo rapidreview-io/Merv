@@ -24,7 +24,10 @@ PAGE.contentH = PAGE.height - PAGE.padTop - PAGE.padBottom;
 export const spanWidth = (span: number) => span * PAGE.colW + (span - 1) * PAGE.gutter;
 
 const escape = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
 
 // Agent text never becomes markup: raw HTML in Markdown is escaped before rendering.
 marked.use({ renderer: { html: (token: Tokens.HTML | Tokens.Tag) => escape(token.text) } });
@@ -65,14 +68,23 @@ td.num, th.num { text-align: right; font: 11.5px 'Geist Mono', monospace }
 .chart svg { display: block; overflow: visible }
 `;
 
-const cite = (html: string) => html.replace(/\[(\d+(?:[,–-]\s?\d+)*)\]/g, '<span class="cite">[$1]</span>');
-const NUMERIC = /^[\s$€~≈+−\-–]*[\d.,]+\s*(k|M|B|%|tok|h|m|GPU-h)?(\s*\/\s*[\d.,]+\s*(k|M|B)?)?\s*$/;
+const cite = (html: string) =>
+  html.replace(/\[(\d+(?:[,–-]\s?\d+)*)\]/g, '<span class="cite">[$1]</span>');
+const NUMERIC =
+  /^[\s$€~≈+−\-–]*[\d.,]+\s*(k|M|B|%|tok|h|m|GPU-h)?(\s*\/\s*[\d.,]+\s*(k|M|B)?)?\s*$/;
 
 function tableHtml(token: Tokens.Table): string {
-  const numeric = token.header.map((_, i) => token.rows.every((r) => NUMERIC.test(r[i]?.text ?? '')));
-  const th = token.header.map((h, i) => `<th class="${numeric[i] ? 'num' : ''}">${inline(h.text)}</th>`).join('');
+  const numeric = token.header.map((_, i) =>
+    token.rows.every((r) => NUMERIC.test(r[i]?.text ?? '')),
+  );
+  const th = token.header
+    .map((h, i) => `<th class="${numeric[i] ? 'num' : ''}">${inline(h.text)}</th>`)
+    .join('');
   const rows = token.rows
-    .map((r) => `<tr>${r.map((c, i) => `<td class="${numeric[i] ? 'num' : ''}">${cite(inline(c.text))}</td>`).join('')}</tr>`)
+    .map(
+      (r) =>
+        `<tr>${r.map((c, i) => `<td class="${numeric[i] ? 'num' : ''}">${cite(inline(c.text))}</td>`).join('')}</tr>`,
+    )
     .join('');
   return `<table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -87,12 +99,17 @@ function referencesHtml(token: Tokens.List): string {
 }
 
 /** Inner HTML for one section; charts become placeholders the browser fills. */
-export function sectionHtml(section: Pick<Section, 'name' | 'blocks'>, { heading = true } = {}): string {
+export function sectionHtml(
+  section: Pick<Section, 'name' | 'blocks'>,
+  { heading = true } = {},
+): string {
   const parts = heading ? [`<h2>${escape(section.name)}</h2>`] : [];
   for (const b of section.blocks) {
-    if (b.type === 'chart') parts.push(`<div class="chart" data-chart="${escape(b.chart!.spec.id)}"></div>`);
+    if (b.type === 'chart')
+      parts.push(`<div class="chart" data-chart="${escape(b.chart!.spec.id)}"></div>`);
     else if (b.type === 'table') parts.push(tableHtml(b.token as Tokens.Table));
-    else if (section.name === 'References' && b.type === 'list') parts.push(referencesHtml(b.token as Tokens.List));
+    else if (section.name === 'References' && b.type === 'list')
+      parts.push(referencesHtml(b.token as Tokens.List));
     else parts.push(cite(marked.parser([b.token!], { async: false }) as string));
   }
   return parts.join('\n');
