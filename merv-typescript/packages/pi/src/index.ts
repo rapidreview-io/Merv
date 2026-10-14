@@ -25,8 +25,9 @@ export const piPlugin = {
       'Pi model or host credentials are unavailable',
       503,
     );
-    await pi.initialize();
+    // Before initialize: a start that fails after registering closes what it registered.
     ctx.effect(() => () => pi.close());
+    await pi.initialize();
     ctx.provide('pi', pi);
     ctx.inject(['sessions'], (ctx) => {
       ctx.effect(() => ctx.sessions.messaging.registerResponder(questionResponder(pi, ctx.scope)));

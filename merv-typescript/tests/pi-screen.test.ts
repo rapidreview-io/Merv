@@ -1,9 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Caller } from '@merv/contracts';
-import { describeScreen, renderScreen, scaleFor } from '../packages/pi/src/screen.js';
+import {
+  describeScreen,
+  renderScreen,
+  scaleFor,
+  screenRequest,
+} from '../packages/pi/src/screen.js';
 import type { PiSnapshot } from '../packages/pi/src/types.js';
-import { fixture } from './fixtures/pi.js';
+import { code, fixture } from './fixtures/pi.js';
 
 const config = {
   url: 'https://render.example/accounts/{account}/browser-run/screenshot',
@@ -73,12 +78,12 @@ test('the conversation model reads the picture and answers the question in words
   }) as typeof fetch;
   const read = await describeScreen(
     'sk',
-    'gpt-6.1-sol',
-    'Which page?',
-    Buffer.from('jpg'),
-    '/ui/artifacts',
+    screenRequest('gpt-6.1-sol', 'Which page?', Buffer.from('jpg'), '/ui/artifacts'),
   );
-  assert.deepEqual(read, { text: 'The Files page.', tokens: 1220 });
+  assert.deepEqual(read, {
+    text: 'The Files page.',
+    usage: { inputTokens: 1200, outputTokens: 20 },
+  });
   assert.equal(body!.model, 'gpt-6.1-sol');
   const [prompt, image] = body!.input[0]!.content;
   assert.match(prompt!.text!, /\/ui\/artifacts/);
@@ -158,6 +163,7 @@ test('a record that draws itself is looked at as drawn, asking no page of the pe
             content: [{ type: 'output_text', text: 'Handwritten: data → objective.' }],
           },
         ],
+        usage: { input_tokens: 1200, output_tokens: 20 },
       }),
     );
   }) as typeof fetch;
@@ -165,10 +171,12 @@ test('a record that draws itself is looked at as drawn, asking no page of the pe
     globalThis.fetch = real;
     for (const key of Object.keys(env)) delete process.env[key];
   });
-  const seen = await f.pi.look(agent, {
-    question: 'Read it',
-    at: { record: 'board_1', focus: 'frame_9' },
-  });
+  // Only the agent looks: anyone else is refused before anything is drawn.
+  await assert.rejects(f.pi.look(f.operator, { at: { record: 'board_1' } }), /own agent/);
+  assert.deepEqual(drawn, []);
+  const look = () =>
+    f.pi.look(agent, { question: 'Read it', at: { record: 'board_1', focus: 'frame_9' } });
+  const seen = await look();
   assert.deepEqual(seen, { page: '/ui/boards/board_1', seen: 'Handwritten: data → objective.' });
   assert.deepEqual(drawn, [['board_1', 'frame_9']]);
   assert.equal(
@@ -177,4 +185,17 @@ test('a record that draws itself is looked at as drawn, asking no page of the pe
     'no page was asked',
   );
   assert.equal(sent.length, 2, 'drawn once, read once');
+  // The reading is charged to the person's Agent tokens, settled to what it used, and refused as
+  // the relay refuses once the day's are used up.
+  const { userId } = (await f.pi.snapshot(f.operator, input.conversationId)).conversation;
+  const spent = () =>
+    f.state.read((sql) =>
+      sql.get<{ tokens: string }>('SELECT tokens FROM pi_model_usage WHERE person=?', userId),
+    );
+  assert.equal(Number((await spent())!.tokens), 1220);
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE pi_model_usage SET tokens=100000000 WHERE person=?', userId),
+  );
+  await assert.rejects(look(), code('pi_model_ceiling'));
+  assert.equal(sent.filter((url) => !url.includes('browser-run')).length, 1, 'never read again');
 });

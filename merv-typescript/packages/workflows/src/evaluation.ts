@@ -260,9 +260,10 @@ export async function prepare(
   tx: Transaction,
 ): Promise<void> {
   const grouped = new Map<WorkflowPolicy, WorkflowSnapshot[]>();
-  for (const { registration, snapshot } of steps)
-    if (registration?.policy?.prepare)
-      grouped.set(registration.policy, [...(grouped.get(registration.policy) ?? []), snapshot]);
+  for (const { registration, snapshot } of steps) {
+    const policy = registration?.policy;
+    if (policy?.prepare) grouped.get(policy)?.push(snapshot) ?? grouped.set(policy, [snapshot]);
+  }
   for (const [policy, snapshots] of grouped)
     for (const part of snapshots.length > 1 ? batches(snapshots) : [])
       try {

@@ -71,6 +71,27 @@ async function leaseRoleOf(rule: WorkflowAssignmentRule, context: EngineContext)
   return role;
 }
 
+/** The lease names this worker: its actor, its project and its session. */
+const ownLease = (worker: Caller, lease: WorkflowLease) =>
+  check(
+    worker.actorId === lease.actorId &&
+      worker.projectId === lease.projectId &&
+      worker.session?.id === lease.leaseId,
+    'invalid_lease',
+    'Lease belongs to a different worker',
+    403,
+  );
+/** The step still stands where the lease holds it. */
+const sameStep = (snapshot: WorkflowSnapshot, lease: WorkflowLease) =>
+  check(
+    snapshot.workflow === lease.workflow &&
+      snapshot.version === lease.version &&
+      snapshot.state === lease.state,
+    'lease_changed',
+    'Lease no longer names this workflow state',
+    409,
+  );
+
 /** Assignments, leases and dispatch: admitting a step and granting its execution. */
 export class WorkflowLeases extends WorkflowGuidance {
   async assignment(
@@ -380,14 +401,7 @@ export class WorkflowLeases extends WorkflowGuidance {
     lease = workflowJson(lease, 'invalid_lease', 400);
     this.state.assertTransaction(tx);
     this.assertOpen();
-    check(
-      worker.actorId === lease.actorId &&
-        worker.projectId === lease.projectId &&
-        worker.session?.id === lease.leaseId,
-      'invalid_lease',
-      'Lease belongs to a different worker',
-      403,
-    );
+    ownLease(worker, lease);
     // Both reads are the ones the owner's own lease reads share in this transaction.
     const snapshot = this.snapshot(await this.readRow(tx, lease.projectId, lease.instanceId));
     check(
@@ -396,14 +410,7 @@ export class WorkflowLeases extends WorkflowGuidance {
       'Workflow changed; refresh execution metadata before dispatch',
       409,
     );
-    check(
-      snapshot.workflow === lease.workflow &&
-        snapshot.version === lease.version &&
-        snapshot.state === lease.state,
-      'lease_changed',
-      'Lease no longer names this workflow state',
-      409,
-    );
+    sameStep(snapshot, lease);
     const registration = this.definition(snapshot.workflow, snapshot.version);
     // The step's live lease row, which the owner's own lease read shares. A program that keeps
     // no lease rows has neither a live row nor one of this lease's: the step's revision and the
@@ -446,14 +453,7 @@ export class WorkflowLeases extends WorkflowGuidance {
    * here too, by the step's check and the lease check, or fixed once the offer has passed.
    */
   private async leaseStep(worker: Caller, lease: WorkflowLease, tx: Transaction): Promise<Loaded> {
-    check(
-      worker.actorId === lease.actorId &&
-        worker.projectId === lease.projectId &&
-        worker.session?.id === lease.leaseId,
-      'invalid_lease',
-      'Lease belongs to a different worker',
-      403,
-    );
+    ownLease(worker, lease);
     await this.scope.require(worker, 'read', tx);
     const step = await this.load(worker, lease, 'execution', tx);
     const { snapshot, rule, registration, context } = step;
@@ -464,14 +464,7 @@ export class WorkflowLeases extends WorkflowGuidance {
       409,
     );
     await checkAssignment(rule, context);
-    check(
-      snapshot.workflow === lease.workflow &&
-        snapshot.version === lease.version &&
-        snapshot.state === lease.state,
-      'lease_changed',
-      'Lease no longer names this workflow state',
-      409,
-    );
+    sameStep(snapshot, lease);
     check(rule.lease, 'lease_unavailable', 'This assignment no longer supports leases', 409);
     await rule.lease.check(context, executionMetadata(lease.receipt));
     this.requireActive(registration);

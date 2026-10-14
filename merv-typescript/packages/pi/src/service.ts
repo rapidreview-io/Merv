@@ -30,7 +30,7 @@ import { conversationRules } from './conversation-rules.js';
 import { piInstructions } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
-import { describeScreen, renderScreen, type ScreenAnswer } from './screen.js';
+import { describeScreen, renderScreen, screenRequest, type ScreenAnswer } from './screen.js';
 import type {
   Pi,
   PiCommand,
@@ -256,23 +256,15 @@ export class PiService implements Pi {
     });
   }
 
-  /** Narrow upkeep read for a delegated question; no transcript, catalog, or host refresh. */
+  /** Narrow upkeep read for a delegated question; no transcript, catalog, or host refresh. A turn
+   * that ends, however it ends, clears the conversation's active turn in the same write. */
   async questionStatus(caller: Caller, id: string): Promise<string | null> {
     this.core.ready();
-    return await this.core.read(async (tx) => {
-      const conversation = await this.owned(caller, id, tx);
-      if (!conversation.activeCommandId)
-        return 'Pi finished without resolving the question. Continue its conversation or answer the worker directly.';
-      const row = await tx.get<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
-        id,
-        conversation.activeCommandId,
-      );
-      const command = row && decode<PiCommandRecord>(row);
-      return !command || command.status === 'interrupted' || command.status === 'completed'
-        ? 'Pi could not finish the investigation. Continue its conversation or answer directly.'
-        : null;
-    });
+    return await this.core.read(async (tx) =>
+      (await this.owned(caller, id, tx)).activeCommandId
+        ? null
+        : 'Pi finished without resolving the question. Continue its conversation or answer the worker directly.',
+    );
   }
 
   async snapshot(caller: Caller, id: string): Promise<PiSnapshot> {
@@ -283,14 +275,11 @@ export class PiService implements Pi {
     const streamed = this.core.live.get(id)?.streamed;
     const { conversation, commands, host, allocation, view } = await this.core.read(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
-      const rows = await tx.all<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
-        id,
-      );
+      const commands = await this.core.commands(tx, id);
       const { host, allocation } = await this.hosts.machineOf(tx, conversation);
       const source = await this.core.scope.delegationSource(caller, tx);
       const view = await this.hostView(tx, host, conversation, source);
-      return { conversation, commands: rows.map(decode<PiCommandRecord>), host, allocation, view };
+      return { conversation, commands, host, allocation, view };
     });
     // A call proposed before its tool declared an act reads with the act its tool declares now.
     const untitled = commands.flatMap((command) => command.proposals?.filter((p) => !p.act) ?? []);
@@ -360,12 +349,7 @@ export class PiService implements Pi {
     this.core.ready();
     const { conversation, commands } = await this.core.read(async (tx) => ({
       conversation: await this.owned(caller, id, tx),
-      commands: (
-        await tx.all<{ data_json: string }>(
-          'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
-          id,
-        )
-      ).map(decode<PiCommandRecord>),
+      commands: await this.core.commands(tx, id),
     }));
     // The turn under way, else the newest one that was served.
     const active = commands.find(({ id }) => id === conversation.activeCommandId);
@@ -522,6 +506,12 @@ export class PiService implements Pi {
     this.core.ready();
     const { question, at } = parse(lookInput, input);
     check(
+      caller.conversation,
+      'pi_forbidden',
+      "Only the person's own agent can use their screen",
+      403,
+    );
+    check(
       !at || !at.record !== !at.page,
       'invalid_input',
       'Name one record or one page to look at',
@@ -539,14 +529,18 @@ export class PiService implements Pi {
     if (answer?.missing) return { seen: answer.missing };
     const shot = drawn ?? answer?.shot;
     if (!shot) return { seen: `The person's screen could not be seen: ${UNANSWERED}` };
-    const conversation = await this.core.read((tx) =>
+    const { model, userId } = await this.core.read((tx) =>
       this.core.conversation(tx, caller.conversation!.id),
     );
     const key = process.env[this.config.modelApiKeyEnv];
     check(key, 'pi_screen_unavailable', 'The screen could not be read', 503);
     const picture = await renderScreen(this.config.screen, shot);
-    const model = this.core.model(conversation.model).id;
-    const { text } = await describeScreen(key, model, question, picture, shot.path);
+    // Charged to the person's Agent tokens as the relay charges a turn's calls.
+    const body = screenRequest(this.core.model(model).id, question, picture, shot.path);
+    const reserved = await this.core.tokens.reserve({ userId }, body);
+    const { text, usage, error } = await describeScreen(key, body);
+    if (usage) await this.core.tokens.settle(usage, { userId }, reserved);
+    check(text, 'pi_screen_unavailable', error ?? 'The screen could not be read', 502);
     return { page: shot.path, seen: text };
   }
 
@@ -582,14 +576,10 @@ export class PiService implements Pi {
   async voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }> {
     this.core.ready();
     const { id, sdp } = parse(voiceInput, input);
-    const { commands, userId } = await this.core.read(async (tx) => {
-      const conversation = await this.owned(caller, id, tx);
-      const rows = await tx.all<{ data_json: string }>(
-        'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
-        id,
-      );
-      return { commands: rows.map(decode<PiCommandRecord>), userId: conversation.userId };
-    });
+    const { commands, userId } = await this.core.read(async (tx) => ({
+      userId: (await this.owned(caller, id, tx)).userId,
+      commands: await this.core.commands(tx, id),
+    }));
     const key = process.env[this.config.modelApiKeyEnv];
     check(key, 'pi_voice_unavailable', 'Voice is unavailable', 503);
     return openVoice(this.config.voice, key, sdp, voiceHistory(commands), hash(userId));
@@ -957,23 +947,27 @@ export class PiService implements Pi {
     if (this.core.closed) return;
     this.core.closed = true;
     clearInterval(this.timer);
-    await this.hosts.pending?.catch(() => undefined);
     // A restart releases every machine; the next send starts one where the person left off. A
-    // turn that has shown nothing waits: the next process starts it on a fresh machine.
-    await this.core.state.transaction(async (tx) => {
-      const hosts = await tx.all<{ data_json: string }>(
-        "SELECT data_json FROM pi_hosts WHERE status='live'",
-      );
-      for (const row of hosts)
-        await this.hosts.end(
-          tx,
-          decode<PiHostRecord>(row),
-          'restart',
-          'service_unavailable',
-          (turn) => this.hosts.again(turn, false),
+    // turn that has shown nothing waits: the next process starts it on a fresh machine. Pi's
+    // registrations go even when that fails, so the next Pi can register itself.
+    try {
+      await this.hosts.pending?.catch(() => undefined);
+      await this.core.state.transaction(async (tx) => {
+        const hosts = await tx.all<{ data_json: string }>(
+          "SELECT data_json FROM pi_hosts WHERE status='live'",
         );
-    });
-    for (const dispose of this.disposers.reverse()) dispose();
-    this.core.streams.close();
+        for (const row of hosts)
+          await this.hosts.end(
+            tx,
+            decode<PiHostRecord>(row),
+            'restart',
+            'service_unavailable',
+            (turn) => this.hosts.again(turn, false),
+          );
+      });
+    } finally {
+      for (const dispose of this.disposers.reverse()) dispose();
+      this.core.streams.close();
+    }
   }
 }

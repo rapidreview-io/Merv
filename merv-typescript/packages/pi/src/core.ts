@@ -45,7 +45,6 @@ export const equal = (left: string, right: string) =>
 const queuedMs = 3000;
 /** The host's slots: C serves new turns, N starts to replace it, D finishes C's claimed turns. */
 export const roles = ['current', 'next', 'draining'] as const;
-type Role = (typeof roles)[number];
 export const roleOf = (host: PiHostRecord, allocationId: string) =>
   roles.find((role) => host[role]?.allocationId === allocationId);
 /** Fleet no longer runs this allocation for the host. */
@@ -242,6 +241,15 @@ export class PiCore {
     );
     check(row, 'pi_command_not_found', 'Conversation command not found', 404);
     return decode(row);
+  }
+  /** Every turn of a conversation, oldest first. */
+  async commands(sql: Sql, conversationId: string): Promise<PiCommandRecord[]> {
+    return (
+      await sql.all<{ data_json: string }>(
+        'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
+        conversationId,
+      )
+    ).map(decode<PiCommandRecord>);
   }
   /** Only a question, an answer or a name moves a conversation up the list (`touch`). */
   async saveConversation(tx: Transaction, conversation: PiConversationRecord, touch = true) {

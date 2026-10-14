@@ -82,66 +82,77 @@ const restoreScroll = `for (const box of document.querySelectorAll('[data-merv-s
 const page = document.documentElement.getAttribute('data-merv-page-scroll');
 if (page) { const [y, x] = page.split(',').map(Number); window.scrollTo(x, y); }`;
 
-/** Pi's own model looks at the picture and answers what the agent asked, in words. */
+/** The request that has Pi's own model look at the picture and answer what the agent asked. */
+export const screenRequest = (model: string, question: string, picture: Buffer, path: string) => ({
+  model,
+  reasoning: { effort: 'low' },
+  max_output_tokens: 1_500,
+  store: false,
+  input: [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: `This is a screenshot of the Merv app as the person sees it now, at ${path}. Answer for their agent, which cannot see it: ${question || 'Describe what is on the screen.'}\nSay what is shown and where, quote the names, numbers and states visible, and say if something the question asks about is not on screen. No preamble.`,
+        },
+        {
+          type: 'input_image',
+          image_url: `data:image/jpeg;base64,${picture.toString('base64')}`,
+          detail: 'high',
+        },
+      ],
+    },
+  ],
+});
+
+/**
+ * That request, sent: the model's answer in words, '' when it gave none (`error` says why where
+ * the provider did). `usage` settles its charge as the relay settles a call's: none where the
+ * provider refused it, and null, keeping the charge, where it may have run it.
+ */
 export async function describeScreen(
   key: string,
-  model: string,
-  question: string,
-  picture: Buffer,
-  path: string,
-): Promise<{ text: string; tokens: number }> {
+  body: ReturnType<typeof screenRequest>,
+): Promise<{
+  text: string;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  error?: string;
+}> {
   let response: Response;
   try {
     response = await fetch(RESPONSES_URL, {
       method: 'POST',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        reasoning: { effort: 'low' },
-        max_output_tokens: 1_500,
-        store: false,
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: `This is a screenshot of the Merv app as the person sees it now, at ${path}. Answer for their agent, which cannot see it: ${question || 'Describe what is on the screen.'}\nSay what is shown and where, quote the names, numbers and states visible, and say if something the question asks about is not on screen. No preamble.`,
-              },
-              {
-                type: 'input_image',
-                image_url: `data:image/jpeg;base64,${picture.toString('base64')}`,
-                detail: 'high',
-              },
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(60_000),
     });
   } catch {
-    throw new MervError('pi_screen_unavailable', 'The screen could not be read', 502);
+    return { text: '', usage: null };
   }
-  const body = (await response.json().catch(() => null)) as {
+  const answer = (await response.json().catch(() => null)) as {
     output?: { type?: string; content?: { type?: string; text?: string }[] }[];
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: { input_tokens?: unknown; output_tokens?: unknown };
     error?: { message?: string };
   } | null;
-  const text = (body?.output ?? [])
+  const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
+  const text = (answer?.output ?? [])
     .filter((item) => item.type === 'message')
     .flatMap((item) => item.content ?? [])
     .filter((part) => part.type === 'output_text')
     .map((part) => part.text ?? '')
     .join('\n')
     .trim();
-  check(
-    response.ok && text,
-    'pi_screen_unavailable',
-    body?.error?.message ?? 'The screen could not be read',
-    502,
-  );
   return {
-    text,
-    tokens: (body?.usage?.input_tokens ?? 0) + (body?.usage?.output_tokens ?? 0),
+    text: response.ok ? text : '',
+    usage: !response.ok
+      ? { inputTokens: 0, outputTokens: 0 }
+      : answer?.usage
+        ? {
+            inputTokens: count(answer.usage.input_tokens),
+            outputTokens: count(answer.usage.output_tokens),
+          }
+        : null,
+    ...(answer?.error?.message && { error: answer.error.message }),
   };
 }

@@ -179,19 +179,6 @@ export async function dependents(
   return found;
 }
 
-/** Both directions of one instance's edges, in four reads however many there are. */
-export async function relations(
-  sql: Sql,
-  contracts: PinnedContracts,
-  projectId: string,
-  instanceId: string,
-): Promise<{ dependencies: WorkflowDependency[]; dependents: WorkflowDependency[] }> {
-  return {
-    dependencies: await prerequisitesOf(sql, projectId, instanceId),
-    dependents: (await dependents(sql, contracts, projectId, [instanceId])).get(instanceId)!,
-  };
-}
-
 /**
  * One instance, classified against its own pinned contract, with both directions of its edges,
  * each with its version's workspace fact; null when the project holds no such instance.
@@ -213,15 +200,17 @@ export async function instanceRelations(
       (await contracts.get(sql, item.workflow, item.version))?.execution ?? {},
     ).some((manifest) => (manifest?.workspace?.mode ?? 'none') !== 'none'),
   });
-  const { dependencies, dependents } = await relations(sql, contracts, projectId, instanceId);
   return {
     instance: await relation({
       ...instance,
       failed: instance.terminal && !instance.settled,
       data: JSON.parse(node.data_json) as Data,
     }),
-    dependencies: await mapAsync(dependencies, relation),
-    dependents: await mapAsync(dependents, relation),
+    dependencies: await mapAsync(await prerequisitesOf(sql, projectId, instanceId), relation),
+    dependents: await mapAsync(
+      (await dependents(sql, contracts, projectId, [instanceId])).get(instanceId)!,
+      relation,
+    ),
   };
 }
 

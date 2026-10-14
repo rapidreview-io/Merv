@@ -428,6 +428,16 @@ test('a turn whose machine a rollout takes before it shows anything waits for a 
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
 });
 
+test('a Pi whose closing write fails still leaves Fleet, Scope and Tools to the next Pi', async (t) => {
+  const f = await fixture(t);
+  await f.send(await f.create());
+  const cancel = f.fleet.cancelOwned.bind(f.fleet);
+  f.fleet.cancelOwned = () => Promise.reject(new MervError('state_timeout', 'Lock wait', 503));
+  await assert.rejects(f.pi.close(), code('state_timeout'));
+  f.fleet.cancelOwned = cancel;
+  await f.restart();
+});
+
 for (const events of [[], [{ type: 'progress', text: 'Thinking' }]])
   test(`a retried turn restarts progress sequences after ${events.length ? 'thinking' : 'a heartbeat'}`, async (t) => {
     const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });

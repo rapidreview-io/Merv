@@ -1,4 +1,4 @@
-import { check, filterAsync, mapAsync } from '@merv/contracts';
+import { check, mapAsync } from '@merv/contracts';
 import type {
   Caller,
   Transaction,
@@ -19,7 +19,7 @@ import { readBlockers } from './blockers.js';
 import { decision, prepare, readContext } from './evaluation.js';
 import { workStartsAt } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
-import { prerequisites, relations } from './dependencies.js';
+import { dependents, prerequisites } from './dependencies.js';
 import { WorkflowEngine, batches, type InstanceRow, type Registration } from './engine.js';
 
 /** What one decision reads besides the instance, read for many instances at once. */
@@ -58,20 +58,17 @@ export class WorkflowGuidance extends WorkflowEngine {
         tx,
         checks,
       );
-      const { dependencies, dependents } = await relations(
-        tx,
-        this.contracts,
-        caller.projectId,
-        instanceId,
-      );
       const history = await this.historyIn(tx, caller.projectId, instanceId, false);
       return processGraph({
         definition: facts.definition,
         rules: facts.registration?.policy?.actions ?? [],
         history,
         decision,
-        dependencies,
-        dependents,
+        // What it depends on is a fact its decision already read.
+        dependencies: facts.dependencies,
+        dependents: (await dependents(tx, this.contracts, caller.projectId, [instanceId])).get(
+          instanceId,
+        )!,
       });
     });
   }
@@ -118,22 +115,18 @@ export class WorkflowGuidance extends WorkflowEngine {
     { open = false }: { open?: boolean } = {},
   ): Promise<WorkflowOverview> {
     return await this.reading(caller, tx, async (tx, caller) => {
-      let rows = await tx.all<InstanceRow>(
-        'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
+      // Open: each version's terminal states read once from its pinned definition, and a
+      // blocker as readBlockers reads it (about this revision, or none). Ended work is most of a
+      // project, and Home polls this.
+      const rows = await tx.all<InstanceRow>(
+        open
+          ? `WITH d AS MATERIALIZED (SELECT name,version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions)
+            SELECT i.* FROM wf_instances i JOIN d ON d.name=i.workflow AND d.version=i.version WHERE i.project_id=?
+            AND (NOT d.terminal @> to_jsonb(i.state) OR EXISTS (SELECT 1 FROM wf_blockers b WHERE b.instance_id=i.id
+            AND b.project_id=i.project_id AND (b.revision IS NULL OR b.revision=i.revision))) ORDER BY i.created_at,i.id`
+          : 'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
         caller.projectId,
       );
-      if (open) {
-        const held = new Set((await readBlockers(tx, caller.projectId)).map((b) => b.instanceId));
-        rows = await filterAsync(
-          rows,
-          async (row) =>
-            held.has(row.id) ||
-            !(
-              this.registrations.get(`${row.workflow}@${row.version}`)?.definition ??
-              (await this.contracts.get(tx, row.workflow, row.version))?.definition
-            )?.terminal.includes(row.state),
-        );
-      }
       const workflows = (await this.guidance(caller, rows, {}, tx, true)).map(
         (item) => item.decision,
       );
