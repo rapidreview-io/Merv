@@ -391,6 +391,38 @@ test('an operator’s timeline reads what Sessions kept a part at a time, until 
   );
 });
 
+test('a part the server did not answer is asked again from there, later each time; a refusal ends the reading', async (t) => {
+  t.after(unmount);
+  const path = '/sessions/threads/thr_run/conversation';
+  const asked = (cursor: string) =>
+    requests.filter((request) => request === `GET ${path}?before=${cursor}`).length;
+  // Away, failing, busy, then the part, which points at one the server refuses.
+  const replies = [{ network: true }, { status: 503 }, { status: 429 }];
+  serve(`${path}?before=ses_r4%3A41`, (n) => replies[n - 1] ?? { body: { ...kept, next: 'x:8' } });
+  serve(`${path}?before=x%3A8`, { status: 404, body: { error: { code: 'not_found' } } });
+  await open('operator', threads, { ...kept, next: 'ses_r4:41' });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = () =>
+    act(async () => {
+      for (let turn = 0; turn < 20; turn++) await new Promise((done) => setImmediate(done));
+    });
+  await act(async () => void (chip('running') as HTMLElement).click());
+  await flush();
+  for (const [wait, count] of [
+    [999, 1],
+    [1, 2],
+    [2_000, 3],
+    [4_000, 4],
+  ] as const) {
+    await act(async () => t.mock.timers.tick(wait));
+    await flush();
+    assert.equal(asked('ses_r4%3A41'), count, `asked ${count} times after ${wait} ms more`);
+  }
+  await act(async () => t.mock.timers.tick(60_000));
+  await flush();
+  assert.equal(asked('x%3A8'), 1, 'a refusal is not asked again');
+});
+
 test('anyone else reads the visits’ dividers alone, and never asks for the conversation', async (t) => {
   t.after(unmount);
   await open('reviewer');

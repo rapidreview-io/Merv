@@ -88,7 +88,16 @@ function Console({ path }: { path: string }) {
         Reload
       </button>
       {error && <p role="alert">{error}</p>}
-      {src && <iframe ref={frame} title="Sandboxes console" src={src} style={{ height }} />}
+      {/* Its address carries a one-time sign-in code, which a look at the page never takes. */}
+      {src && (
+        <iframe
+          ref={frame}
+          title="Sandboxes console"
+          src={src}
+          style={{ height }}
+          data-merv-secret
+        />
+      )}
     </div>
   );
 }

@@ -114,10 +114,16 @@ test('UiRegistry awaits asynchronous status and reads, containing a failed row s
       },
     }),
   );
+  // A crash's own message can quote what it read; the page is told only that it failed.
+  ui.register(row('crashed', 3, { status: () => JSON.parse('{"token":"mk_secret"') }));
   const rows = await ui.describe(caller);
   assert.deepEqual(
     rows.map(({ status }) => status),
-    [{ count: 7 }, { state: 'unavailable', detail: 'Status is temporarily unavailable' }],
+    [
+      { count: 7 },
+      { state: 'unavailable', detail: 'Status is temporarily unavailable' },
+      { state: 'unavailable', detail: 'Status is unavailable' },
+    ],
   );
   assert.deepEqual(await ui.read(caller, 'async'), {
     agents: [{ id: 'continuing-agent', currentExecutionId: 'execution' }],

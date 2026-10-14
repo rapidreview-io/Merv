@@ -2,9 +2,9 @@ import { clip, visible, mapAsync, runningKeyPattern, sameOriginPath } from '@mer
 import type { Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { check, type Caller, type Json } from '@merv/contracts';
+import { check, MervError, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { RunningContribution, Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
+import type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
 import { homeRead, identityOf } from './home.js';
 import {
   RunningRegistry,
@@ -27,10 +27,9 @@ export type {
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 
-/** Sidebar rows registered by feature adapters; a disposed registration disappears immediately. */
-export class UiRegistry implements Ui {
-  private readonly entries = new Map<string, UiRow>();
-  readonly running = new RunningRegistry();
+/** Feature adapters' sidebar rows and Running parts; a disposed registration leaves at once. */
+export class UiRegistry extends RunningRegistry implements Ui {
+  private readonly byId = new Map<string, UiRow>();
 
   register(row: UiRow): () => void {
     check(row && typeof row === 'object', 'invalid_row', 'Row must be an object');
@@ -63,16 +62,16 @@ export class UiRegistry implements Ui {
       'invalid_row',
       'Row home must name a tool or a list, and the fields it keeps',
     );
-    check(!this.entries.has(row.id), 'row_conflict', `Row is already registered: ${row.id}`, 409);
+    check(!this.byId.has(row.id), 'row_conflict', `Row is already registered: ${row.id}`, 409);
     const entry: UiRow = { ...row, view: structuredClone(row.view) };
-    this.entries.set(row.id, entry);
+    this.byId.set(row.id, entry);
     return () => {
-      if (this.entries.get(row.id) === entry) this.entries.delete(row.id);
+      if (this.byId.get(row.id) === entry) this.byId.delete(row.id);
     };
   }
 
   rows(): UiRow[] {
-    return [...this.entries.values()].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    return [...this.byId.values()].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   }
 
   /** `isolated` runs each status behind its own savepoint, so one that fails costs its row alone. */
@@ -85,17 +84,16 @@ export class UiRegistry implements Ui {
       try {
         live = (await isolated(async () => await status?.(caller))) ?? {};
       } catch (error) {
-        live = {
-          state: 'unavailable',
-          detail: error instanceof Error ? error.message : 'Status is unavailable',
-        };
+        // Only a refusal's own words reach the page, as over HTTP: a crash's message is internal.
+        const detail = error instanceof MervError ? error.message : 'Status is unavailable';
+        live = { state: 'unavailable', detail };
       }
       return { ...row, status: live, readable: !!read || !!page };
     });
   }
 
   async read(caller: Caller, rowId: string, params?: Record<string, unknown>): Promise<Json> {
-    const row = this.entries.get(rowId);
+    const row = this.byId.get(rowId);
     // A row this composition does not have and a row that carries no read read differently,
     // under the one code a client already knows.
     check(row, 'row_unreadable', `No row named ${clip(String(rowId), 80)} in this project`, 404);
@@ -106,15 +104,6 @@ export class UiRegistry implements Ui {
     }
     check(row.read, 'row_unreadable', `Row has no readable data: ${row.id}`, 404);
     return await row.read(caller, params);
-  }
-
-  /** Adds one owner's part of the Running page; a disposed contribution leaves it at once. */
-  contribute(contribution: RunningContribution): () => void {
-    return this.running.contribute(contribution);
-  }
-
-  contributions(): RunningContribution[] {
-    return this.running.contributions();
   }
 }
 
@@ -198,7 +187,7 @@ export const uiPlugin = {
           .flatMap(({ id, name }) => {
             const owner =
               /^@merv\/([a-z][a-z0-9-]*)\/ui$/.exec(name)?.[1] ?? /^(.+)-ui$/.exec(id)?.[1];
-            const lanes = owner && ui.running.stood.get(owner);
+            const lanes = owner && ui.stood.get(owner);
             return lanes ? [{ owner, lanes }] : [];
           }),
       // A work key's sidebar is asked of the owner of its record's workflow.

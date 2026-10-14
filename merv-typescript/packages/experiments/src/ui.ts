@@ -20,7 +20,6 @@ export const experimentsUiPlugin = {
         states: EXPERIMENT_STATES,
         view: { kind: 'experiments' },
         home: {
-          tool: 'experiment.list',
           keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow', 'settled', 'failed'],
           list: async (caller) => await experiments.summaries(caller),
         },

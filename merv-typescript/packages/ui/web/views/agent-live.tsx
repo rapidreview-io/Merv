@@ -285,8 +285,18 @@ export function AgentConversation({
 }) {
   const streamed = visits.find((visit) => visit.stream);
   const { timeline: live, state, retry } = useAgentStream(streamed?.stream ?? null);
+  // A kept visit is merged anew only when its events change, so its entries are not drawn again.
+  const merged = useRef(new Map<string, { events: AgentStreamEvent[]; blocks: AgentBlock[] }>());
   const kept = useMemo(
-    () => visits.map((visit) => mergeEvents(NO_TIMELINE, visit.events ?? []).blocks),
+    () =>
+      visits.map(({ sessionId, events = [] }) => {
+        const was = merged.current.get(sessionId);
+        if (was?.events.length === events.length && events.every((it, at) => it === was.events[at]))
+          return was.blocks;
+        const { blocks } = mergeEvents(NO_TIMELINE, events);
+        merged.current.set(sessionId, { events, blocks });
+        return blocks;
+      }),
     [visits],
   );
   const entries = useMemo(

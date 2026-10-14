@@ -11,7 +11,7 @@ import type {
   ThreadView,
   VisitView,
 } from '@merv/sessions/models';
-import { accountRequest, refreshTools, useTool } from '../api';
+import { accountRequest, refreshTools, useTool, type ApiError } from '../api';
 import {
   Ago,
   Failure,
@@ -82,11 +82,6 @@ function visitNames(visits: readonly VisitView[]): Map<string, string> {
     ]),
   );
 }
-/** The visit holding its lease, as Sessions words it. */
-const liveLine = (thread: ThreadView, now: Clock) => {
-  const visit = thread.visits.find(leased);
-  return visit?.liveness ? leaseLiveness({ liveness: visit.liveness }, now).phrase : undefined;
-};
 /**
  * A live visit whose lease ran out: its machine went quiet or offline, and Sessions' liveness
  * says `lapsed`, the one verdict it calls bad.
@@ -171,6 +166,8 @@ function ThreadChip({
 }) {
   const { visits, launches } = visitCount(group.flatMap((item) => item.visits));
   const current = currentOf(group);
+  // The visit holding its lease, as Sessions words it.
+  const lease = current.visits.find(leased)?.liveness;
   const retired = group.every((item) => item.status === 'retired');
   return (
     <button
@@ -181,7 +178,7 @@ function ThreadChip({
         group.some(lapsed) && 'agent-chip--bad',
       )}
       aria-haspopup="dialog"
-      title={retired ? 'Retired thread' : liveLine(current, now)}
+      title={retired ? 'Retired thread' : lease && leaseLiveness({ liveness: lease }, now).phrase}
       onClick={onOpen}
     >
       {group.some(isLive) && <LeaseDot bad={false} />}
@@ -333,25 +330,39 @@ function Conversation({
   const path = `/sessions/threads/${encodeURIComponent(thread.id)}/conversation`;
   const kept = useTool<ThreadConversation>(reads ? path : null);
   const { reload } = kept;
-  // The parts after the first, each read on from where the one before it stopped.
+  // The parts after the first, each read on from where the one before it stopped. A part the
+  // server did not answer (away, failing or busy) is asked again from there while the page is
+  // open, 1 s later doubling to 30 s; any other refusal ends the reading.
   const [older, setOlder] = useState<{ first: ThreadConversation; parts: ThreadConversation[] }>();
   useEffect(() => {
     const first = kept.data;
     if (!first?.next) return;
+    const parts: ThreadConversation[] = [];
     let stopped = false;
-    void (async () => {
-      const parts: ThreadConversation[] = [];
-      for (let next = first.next; next; next = parts.at(-1)!.next) {
-        const part = await accountRequest<ThreadConversation>(
-          `${path}?before=${encodeURIComponent(next)}`,
-          { scoped: true },
-        );
-        if (stopped) return;
-        parts.push(part);
-        setOlder({ first, parts: [...parts] });
-      }
-    })().catch(() => {});
-    return () => void (stopped = true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = (next: string, failures: number): void =>
+      void accountRequest<ThreadConversation>(`${path}?before=${encodeURIComponent(next)}`, {
+        scoped: true,
+      }).then(
+        (part) => {
+          if (stopped) return;
+          parts.push(part);
+          setOlder({ first, parts: [...parts] });
+          if (part.next) read(part.next, 0);
+        },
+        ({ status }: ApiError) => {
+          if (!stopped && (status === 0 || status === 429 || status >= 500))
+            timer = setTimeout(
+              () => read(next, failures + 1),
+              Math.min(30_000, 1000 * 2 ** failures),
+            );
+        },
+      );
+    read(first.next, 0);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [kept.data, path]);
   const parts = useMemo(
     () => (kept.data ? [kept.data, ...(older?.first === kept.data ? older.parts : [])] : []),

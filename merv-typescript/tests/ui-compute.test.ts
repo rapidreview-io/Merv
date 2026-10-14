@@ -10,6 +10,7 @@ const { Integrations } = await import('../packages/ui/web/views/settings.js');
 const { SandboxesView } = await import('../packages/ui/web/views/sandboxes.js');
 const { SandboxesNav } = await import('../packages/ui/web/shell.js');
 const { setProject } = await import('../packages/ui/web/api.js');
+const { snapshotPage } = await import('../packages/ui/web/views/pi-screen.js');
 const row = {
   id: 'sandboxes',
   label: 'Sandboxes',
@@ -166,4 +167,5 @@ test('project changes remount the frame and Reload renews without another sign-i
   await click('Reload');
   assert.equal(frame().getAttribute('src'), '/sbx/ui/spend#code=code_3');
   assert.equal(requests.filter((r) => !r.endsWith('/sandboxes/console-session')).length, 0);
+  assert.ok(!snapshotPage(window).html.includes('code_3'), 'a look carries the one-time code');
 });

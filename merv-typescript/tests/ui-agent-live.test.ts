@@ -658,3 +658,39 @@ test('a word streamed in redraws only what it changed: an opened step is not dra
   const drawn = said.mock.calls.filter((call) => Number(call.this) === cut).length;
   assert.equal(drawn, 0, 'the opened step drew once, not once per word');
 });
+
+test('a part read on for one kept visit leaves the others drawn as they were', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  const cut = 5432;
+  const first = [
+    { seq: 1, at, event: { kind: 'tool_call', id: 'c1', name: 'Bash', input: '{}', cut } },
+    { seq: 2, at, event: { kind: 'tool_result', id: 'c1', output: 'total 0' } },
+  ];
+  const visit = (sessionId: string, events: unknown[]) => ({
+    sessionId,
+    at,
+    divider: sessionId,
+    events,
+  });
+  let show!: (visits: unknown[]) => void;
+  function Kept() {
+    const [visits, setVisits] = useState<unknown[]>([visit('ses_a', first), visit('ses_b', [])]);
+    show = setVisits;
+    return createElement(
+      MemoryRouter,
+      null,
+      createElement(AgentConversation, { label: 'Producer', visits: visits as never }),
+    );
+  }
+  await mount(createElement(Kept));
+  await expand(document.querySelector('.agent-step-line')!);
+  assert.ok(text().includes('5,432 characters not shown'), text().slice(0, 300));
+  const said = t.mock.method(Number.prototype, 'toLocaleString');
+  const older = { seq: 1, at, event: { kind: 'text', id: 'm', delta: 'Older part.', done: true } };
+  await act(async () => show([visit('ses_a', [...first]), visit('ses_b', [older])]));
+  await settle(10);
+  assert.ok(text().includes('Older part.'), text().slice(0, 300));
+  const drawn = said.mock.calls.filter((call) => Number(call.this) === cut).length;
+  assert.equal(drawn, 0, 'the opened step of the other visit is not drawn again');
+});

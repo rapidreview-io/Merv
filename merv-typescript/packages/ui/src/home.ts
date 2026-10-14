@@ -2,12 +2,6 @@ import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
-/** The shell's own parts of what Home and the rail read, and the fields of each record they read. */
-const PARTS: [key: string, tool: string, keep?: string[]][] = [
-  ['project', 'project.get'],
-  ['actors', 'actor.list', ['id', 'name', 'role', 'kind', 'active', 'sessionId']],
-];
-
 /** Where ui.home reads besides its tools. */
 export interface HomeSources {
   tools: Tools;
@@ -57,7 +51,10 @@ export async function homeRead(
   const read = async (key: string, fn: () => Promise<unknown>, keep?: readonly string[]) => {
     home[key] = trim(await answer(() => isolated(fn)), keep);
   };
-  for (const [key, tool, keep] of PARTS) await read(key, () => tools.call(tool, caller, {}), keep);
+  // The shell's own parts, and the fields of each person they read.
+  await read('project', () => tools.call('project.get', caller, {}));
+  const people = ['id', 'name', 'role', 'kind', 'active', 'sessionId'];
+  await read('actors', () => tools.call('actor.list', caller, {}), people);
   await read('workflows', async () => (gates ? gates(caller) : null));
   for (const { id, home: part } of rows)
     if (part)
