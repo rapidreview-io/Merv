@@ -669,9 +669,10 @@ export interface SessionStreamReads {
   growing(sessionId: string, projectId: string): Promise<boolean>;
   after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
   snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
-  subscribe(sessionId: string, wake: () => void): () => void;
+  /** A reader slot, within the process's, the session's and the reading actor's limits. */
+  subscribe(sessionId: string, actorId: string, wake: () => void): () => void;
   /** `wake` runs on each batch this process takes for any session of the project. */
-  subscribeFeed(projectId: string, wake: () => void): () => void;
+  subscribeFeed(projectId: string, actorId: string, wake: () => void): () => void;
   /**
    * The feed's next frame after what `held` says the page holds (each live visit's newest seq),
    * which it updates; null when nothing changed.

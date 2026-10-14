@@ -228,8 +228,8 @@ what it waits for, and the gate names the blocker as the reader's move, which is
 asks them to answer it. Work moved on by any other hand no longer waits on it. The answer
 releases the work once the asking visit has declared its conversation (or ten minutes after the
 question), and its next visit, which resumes the same conversation, reads the answer as a queued
-message before anything else. A visit that keeps no conversation (a reviewer) is not offered
-the tool, nor told of it.
+message before anything else. A visit that keeps no conversation (its workflow's continuity
+key is `null`) is not offered the tool, nor told of it; a reviewer keeps its round's.
 
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then

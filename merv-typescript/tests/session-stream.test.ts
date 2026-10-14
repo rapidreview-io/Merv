@@ -20,6 +20,7 @@ import type { ApplicationConfig } from '../src/config.js';
 import { AgentStream } from '../packages/runner/src/agent-stream.js';
 import { RunnerClient } from '../packages/runner/src/client.js';
 import { codex } from '../packages/runner/src/harness/codex.js';
+import { SessionStreams } from '../packages/sessions/src/stream.js';
 import { createApp } from './fixtures/app.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -518,6 +519,23 @@ test('a page gone while its authority was read gives its reader slot back at onc
   ]);
   assert.equal(ended, 'ended');
   assert.equal(given, taken);
+});
+
+test('one reader holds at most 32 agent streams of the process; another still joins', () => {
+  const unused = undefined as never;
+  const streams = new SessionStreams(unused, unused, Date.now, unused, () => {});
+  const left = Array.from({ length: 32 }, (_, n) =>
+    streams.subscribe(`session_${n % 4}`, 'actor_a', () => {}),
+  );
+  assert.throws(() => streams.subscribe('session_4', 'actor_a', () => {}), { code: 'stream_busy' });
+  assert.throws(() => streams.subscribeFeed('project', 'actor_a', () => {}), {
+    code: 'stream_busy',
+  });
+  const other = streams.subscribeFeed('project', 'actor_b', () => {});
+  // A slot given back is the reader's again.
+  left[0]!();
+  streams.subscribe('session_4', 'actor_a', () => {})();
+  other();
 });
 
 test('a runner restarted over 4 MiB behind what Sessions holds skips to the log’s end and is taken', async (t) => {

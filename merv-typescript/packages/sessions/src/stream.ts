@@ -14,6 +14,8 @@ const SNAPSHOT_EVENTS = 500;
 const SNAPSHOT_BYTES = 2_000_000;
 const READERS_PER_SESSION = 8;
 const READERS = 256;
+/** Streams one reader (an actor) holds at once, so nobody takes every slot of the process. */
+const READERS_PER_ACTOR = 32;
 /** Pages reading one project's live feed at once. */
 const FEED_READERS = 16;
 /** The live visits a feed follows, newest first. */
@@ -82,6 +84,8 @@ export class SessionStreams implements SessionStreamReads {
   private readonly readers = new Map<string, Set<() => void>>();
   private readonly feeds = new Map<string, Set<() => void>>();
   private open = 0;
+  /** Streams each actor holds now. */
+  private readonly actors = new Map<string, number>();
   /** The last session the sweep looked at: the next sweep goes on after it. */
   private pruned = '';
   constructor(
@@ -196,24 +200,35 @@ export class SessionStreams implements SessionStreamReads {
     return live(row) || Date.parse(row.closed_at ?? '') + STREAM_GRACE_MS > this.clock();
   }
 
-  subscribeFeed(projectId: string, wake: () => void): () => void {
-    return this.join(this.feeds, projectId, FEED_READERS, wake);
+  subscribeFeed(projectId: string, actorId: string, wake: () => void): () => void {
+    return this.join(this.feeds, projectId, FEED_READERS, actorId, wake);
   }
-  /** One reader of `key` among `readers`, within the process's and the key's limits. */
+  /** One reader of `key` among `readers`, within the process's, the key's and its actor's limits. */
   private join(
     readers: Map<string, Set<() => void>>,
     key: string,
     limit: number,
+    actorId: string,
     wake: () => void,
   ): () => void {
     const held = readers.get(key) ?? new Set();
-    check(this.open < READERS && held.size < limit, 'stream_busy', busy, 429);
+    const mine = this.actors.get(actorId) ?? 0;
+    check(
+      this.open < READERS && held.size < limit && mine < READERS_PER_ACTOR,
+      'stream_busy',
+      busy,
+      429,
+    );
     held.add(wake);
     readers.set(key, held);
     this.open++;
+    this.actors.set(actorId, mine + 1);
     return () => {
       if (!held.delete(wake)) return;
       this.open--;
+      const left = this.actors.get(actorId)! - 1;
+      if (left) this.actors.set(actorId, left);
+      else this.actors.delete(actorId);
       if (!held.size) readers.delete(key);
     };
   }
@@ -303,8 +318,8 @@ export class SessionStreams implements SessionStreamReads {
   }
 
   /** `wake` runs on each batch this process takes for the session; a reader slot is taken. */
-  subscribe(sessionId: string, wake: () => void): () => void {
-    return this.join(this.readers, sessionId, READERS_PER_SESSION, wake);
+  subscribe(sessionId: string, actorId: string, wake: () => void): () => void {
+    return this.join(this.readers, sessionId, READERS_PER_SESSION, actorId, wake);
   }
 
   /**

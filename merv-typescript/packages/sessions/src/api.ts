@@ -235,7 +235,7 @@ async function agentEvents(
   let read = Date.now();
   await serveEvents(req, res, {
     rotateMs: 20_000,
-    subscribe: (wake) => streams.subscribe(sessionId, wake),
+    subscribe: (wake) => streams.subscribe(sessionId, caller.actorId, wake),
     step: async (send) => {
       if (Date.now() - read >= 1000) {
         growing = await streams.growing(sessionId, caller.projectId);
@@ -278,7 +278,7 @@ async function liveFeed(
   let first = true;
   await serveEvents(req, res, {
     rotateMs: 20_000,
-    subscribe: (wake) => streams.subscribeFeed(caller.projectId, wake),
+    subscribe: (wake) => streams.subscribeFeed(caller.projectId, caller.actorId, wake),
     step: async (send) => {
       const frame = await streams.feed(caller.projectId, held);
       if (first) await send('snapshot', frame ?? { live: [], visits: [] });
@@ -293,12 +293,6 @@ async function liveFeed(
 function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
-    if (
-      path.endsWith('/huggingface-access') ||
-      path.endsWith('/resume') ||
-      path.endsWith('/launch-connections')
-    )
-      res.setHeader('Cache-Control', 'no-store');
     if (!r.principal) {
       if (path !== '/sessions/runners/enroll' || req.method !== 'POST' || r.url.search)
         throw unknownEndpoint();
