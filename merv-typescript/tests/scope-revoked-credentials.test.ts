@@ -1,5 +1,6 @@
 import { createService, type Principal } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
+import { CredentialStore } from '@merv/identity/credentials';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { openState } from './fixtures/state.js';
@@ -21,7 +22,7 @@ async function fixture(t: any) {
   const operator = await scope.caller(owner, project.id);
   const advance = (ms: number) => (time += ms);
   const later = (ms: number) => new Date(time + ms).toISOString();
-  return { scope, owner, project, operator, advance, later };
+  return { state, scope, owner, project, operator, advance, later };
 }
 const unauthorized = { code: 'unauthorized', status: 401 };
 const forbidden = { code: 'forbidden', status: 403 };
@@ -81,8 +82,12 @@ test('a revoked or expired user key is refused at sign-in and in every decision'
   }
 });
 
-test('a token Scope never issued is not recognized', async (t) => {
-  const { scope } = await fixture(t);
+test('a token Merv never issued is not recognized; one another owner keeps in the ledger is', async (t) => {
+  const { state, scope } = await fixture(t);
   assert.equal(await scope.recognizesCredential(`mk_${'a'.repeat(43)}`), false);
   assert.equal(await scope.recognizesCredential('x'.repeat(40)), false);
+  const token = `piw_allocation.${'A'.repeat(43)}`;
+  const identity = { owner: 'pi', subject: 'host:allocation:1', kind: 'pi-worker' };
+  await new CredentialStore(state).issue({ ...identity, token, expiresAt: null });
+  assert.equal(await scope.recognizesCredential(token), true);
 });

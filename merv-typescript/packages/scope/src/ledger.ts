@@ -62,9 +62,10 @@ export class Ledger {
     return await this.store.read(tokenHash, sql);
   }
 
-  /** A bearer token's ledger row; callers still match its subject against their row id. */
-  async authenticate(token: string, kind: LedgerKind): Promise<Credential> {
-    const credential = await this.store.authenticate(token, kind);
+  /** A bearer token's ledger row, read on `sql`; callers still match its subject against their
+   * row id there. */
+  async authenticate(token: string, kind: LedgerKind, sql: Sql): Promise<Credential> {
+    const credential = await this.store.authenticate(token, kind, sql);
     check(credential.owner === 'scope', 'unauthorized', denied, 401);
     return credential;
   }

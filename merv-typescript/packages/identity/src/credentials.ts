@@ -135,6 +135,23 @@ export class CredentialStore {
     return new Date(this.clock()).toISOString();
   }
 
+  /** The new row, or undefined when the ledger already holds this hash. */
+  private async insert(sql: Sql, input: Omit<CredentialInput, 'token' | 'prefix'>, hash: string) {
+    // As Sql.run does, a read scope is refused before PostgreSQL would abort its snapshot.
+    check(!this.state.readScope, 'read_only_scope', 'A read scope cannot write', 409);
+    return await sql.get<Row>(
+      'INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at,expires_at,hard_deadline,revoked_at) VALUES(?,?,?,?,?,?,?,?,NULL) ON CONFLICT(token_hash) DO NOTHING RETURNING *',
+      newId('identity_credential'),
+      hash,
+      input.owner,
+      input.subject,
+      input.kind,
+      this.now(),
+      input.expiresAt,
+      input.hardDeadline ?? null,
+    );
+  }
+
   private input(input: Omit<CredentialInput, 'token' | 'prefix'>): void {
     check(
       identifier(input.owner) && identifier(input.subject) && identifier(input.kind),
@@ -178,38 +195,10 @@ export class CredentialStore {
       'invalid_credential',
       'Credential has already expired',
     );
-    const tokenHash = tokenDigest(token);
     const credential = await inTransaction(this.state, tx, async (sql) => {
-      const id = newId('identity_credential');
-      const createdAt = this.now();
-      const inserted = await sql.run(
-        'INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at,expires_at,hard_deadline,revoked_at) VALUES(?,?,?,?,?,?,?,?,NULL) ON CONFLICT(token_hash) DO NOTHING',
-        id,
-        tokenHash,
-        input.owner,
-        input.subject,
-        input.kind,
-        createdAt,
-        input.expiresAt,
-        input.hardDeadline ?? null,
-      );
-      check(
-        inserted.changes === 1,
-        'credential_conflict',
-        'Credential token was already issued',
-        409,
-      );
-      return record({
-        id,
-        token_hash: tokenHash,
-        owner: input.owner,
-        subject: input.subject,
-        kind: input.kind,
-        created_at: createdAt,
-        expires_at: input.expiresAt,
-        hard_deadline: input.hardDeadline ?? null,
-        revoked_at: null,
-      });
+      const row = await this.insert(sql, input, tokenDigest(token));
+      check(row, 'credential_conflict', 'Credential token was already issued', 409);
+      return record(row);
     });
     return { token, credential };
   }
@@ -224,20 +213,8 @@ export class CredentialStore {
     this.input(input);
     check(validHash(input.tokenHash), 'invalid_credential', 'Invalid credential history');
     return await inTransaction(this.state, tx, async (sql) => {
-      const id = newId('identity_credential');
-      const createdAt = this.now();
-      await sql.run(
-        'INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at,expires_at,hard_deadline,revoked_at) VALUES(?,?,?,?,?,?,?,?,NULL) ON CONFLICT(token_hash) DO NOTHING',
-        id,
-        input.tokenHash,
-        input.owner,
-        input.subject,
-        input.kind,
-        createdAt,
-        input.expiresAt,
-        input.hardDeadline ?? null,
-      );
-      const row = await find(sql, input.tokenHash);
+      const row =
+        (await this.insert(sql, input, input.tokenHash)) ?? (await find(sql, input.tokenHash));
       check(
         row &&
           row.owner === input.owner &&
@@ -251,13 +228,9 @@ export class CredentialStore {
     });
   }
 
-  async authenticate(
-    token: string,
-    kind: string | string[],
-    tx?: Transaction,
-  ): Promise<Credential> {
+  async authenticate(token: string, kind: string | string[], sql?: Sql): Promise<Credential> {
     check(validToken(token), 'unauthorized', 'Invalid credential', 401);
-    return await this.authenticateHash(tokenDigest(token), kind, tx);
+    return await this.authenticateHash(tokenDigest(token), kind, sql);
   }
 
   /** Recheck a credential on a prepared caller in the authorization transaction. */

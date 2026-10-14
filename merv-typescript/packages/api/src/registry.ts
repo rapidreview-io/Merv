@@ -11,7 +11,6 @@ import type {
   PictureDrawer,
   RegisteredTool,
   RemoteToolDefinition,
-  ToolDefinition,
   ToolCatalog,
   ToolDescription,
   ToolInvocation,

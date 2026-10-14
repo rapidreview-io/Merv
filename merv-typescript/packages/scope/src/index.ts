@@ -1,6 +1,6 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
-import { needs, permits, workerRoles } from './rules.js';
+import { needs, permits, sourceCaller, workerRoles } from './rules.js';
 import { visible, createService, sha256Hex, within } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
@@ -25,13 +25,8 @@ import {
   type Transaction,
   type Sql,
   type StoredEvent,
-  type ActorCredential,
   type AuthenticatedActor,
-  type IssuedActorCredential,
-  type VerifiedIdentity,
-  type HumanPrincipal,
   type Principal,
-  type UserKey,
   type DelegationSource,
   type SessionAuthority,
   type ConversationAuthority,
@@ -183,20 +178,6 @@ export class ProjectScope implements Scope {
       },
     }));
   }
-  async projectCreator(projectId: string, tx?: Transaction) {
-    return await within(this.state, tx, async (sql) => {
-      const row =
-        (await sql.get<{ issuer: string; subject: string }>(
-          'SELECT issuer,subject FROM user_project_requests WHERE project_id=?',
-          projectId,
-        )) ??
-        (await sql.get<{ issuer: string; subject: string }>(
-          `SELECT m.issuer,m.subject FROM ${LIVE_OPERATOR} AND m.project_id=? ORDER BY m.created_at,m.id LIMIT 1`,
-          projectId,
-        ));
-      return row ? { issuer: row.issuer, subject: row.subject } : null;
-    });
-  }
   async serviceActor(
     provider: string,
     projectId: string,
@@ -311,8 +292,6 @@ export class ProjectScope implements Scope {
       'Invalid delegation source',
       403,
     );
-    const base = { actorId: source.actorId, projectId: source.projectId };
-    let caller: Caller;
     if (source.kind === 'human') {
       const lookup = async (sql: Sql): Promise<Actor> => {
         const row = await sql.get<ActorRow>(
@@ -332,20 +311,16 @@ export class ProjectScope implements Scope {
         return actor(row);
       };
       return await within(this.state, tx, lookup);
-    } else if (source.kind === 'key') {
-      caller = { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
-    } else if (source.kind === 'service') {
-      caller = { ...base, service: { vouchedBy: source.vouchedBy } };
-    } else {
-      check(
-        source.kind === 'actor' && typeof source.credentialId === 'string',
-        'invalid_delegation',
-        'Invalid delegation source',
-        403,
-      );
-      caller = { ...base, credentialId: source.credentialId };
     }
-    const { actor: value, lifetime } = await this.authorize(caller, permission, tx);
+    check(
+      source.kind === 'key' ||
+        source.kind === 'service' ||
+        (source.kind === 'actor' && typeof source.credentialId === 'string'),
+      'invalid_delegation',
+      'Invalid delegation source',
+      403,
+    );
+    const { actor: value, lifetime } = await this.authorize(sourceCaller(source), permission, tx);
     check(!value.sessionId, 'nested_session', 'A session cannot be a delegation source', 403);
     // A key or credential source holds only while its row keeps the deadline it was given. A
     // service lapses with its voucher, whose lifetime its authorization already checked.
@@ -482,18 +457,17 @@ export class ProjectScope implements Scope {
     return new Date(this.clock()).toISOString();
   }
   async authenticate(token: string): Promise<AuthenticatedActor> {
-    const verified = await this.ledger.authenticate(token, 'actor');
-    const row = await this.state.read(
-      async (sql) =>
-        await sql.get<CredentialRow & { name: string; role: Role; active: number }>(
-          `SELECT c.*,a.name,a.role,a.active FROM actor_credentials c
+    const row = await this.state.read(async (sql) => {
+      const verified = await this.ledger.authenticate(token, 'actor', sql);
+      return await sql.get<CredentialRow & { name: string; role: Role; active: number }>(
+        `SELECT c.*,a.name,a.role,a.active FROM actor_credentials c
          JOIN actors a ON a.id=c.actor_id AND a.project_id=c.project_id
          WHERE c.id=? AND c.token_hash=? AND a.active=1 AND a.session_id IS NULL
            AND NOT EXISTS(SELECT 1 FROM member_actors m WHERE m.actor_id=a.id)`,
-          verified.subject,
-          verified.tokenHash,
-        ),
-    );
+        verified.subject,
+        verified.tokenHash,
+      );
+    });
     check(row, 'unauthorized', 'Invalid, expired or revoked bearer credential', 401);
     return { ...actor({ ...row, id: row.actor_id }), credential: credential(row) };
   }
@@ -501,9 +475,9 @@ export class ProjectScope implements Scope {
     if (typeof token !== 'string' || token.length < 32 || token.length > 200) return false;
     // Sessions' bearers (session, managed runner, enrollment), which Scope does not store.
     if (/^m[ers]_/.test(token)) return true;
-    // Any credential or key Scope issued, live or not: the ledger holds every one.
-    const held = await this.state.read((sql) => this.ledger.held(sha256Hex(token), sql));
-    return held?.owner === 'scope';
+    // Any credential or key Merv issued, live or not, Scope's or another owner's (Pi's
+    // piw_/pir_): the ledger holds every one.
+    return !!(await this.state.read((sql) => this.ledger.held(sha256Hex(token), sql)));
   }
   /** Shared membership predicate for verified JWT callers and durable human delegations. */
   private async requireHumanMembership(
@@ -573,13 +547,6 @@ export class ProjectScope implements Scope {
         403,
       );
     const lookup = async (sql: Sql): Promise<Decision> => {
-      // Unreachable: `within` hands every provider-backed decision a transaction, below.
-      check(
-        !provided || 'transactionId' in sql,
-        'scope_internal',
-        'Provider-backed authority needs a transaction',
-        500,
-      );
       // A worker's one call asks about its actor many times: one snapshot reads the row once.
       const row = structuredClone(
         await this.state.remember(`scope:actor:${caller.projectId}:${caller.actorId}`, () =>

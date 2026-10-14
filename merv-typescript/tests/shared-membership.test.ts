@@ -571,28 +571,6 @@ test('a project owner is its longest-standing signed-in operator, never an invit
   assert.equal((await f.scope.requireDelegation(owners[0]!.source, 'write')).id, second.actorId);
 });
 
-test('a project created by signing in bills its creator; a bootstrapped one, its owner once adopted', async (t) => {
-  const f = await fixture();
-  t.after(async () => await f.state.close());
-  const boot = await f.scope.credentials.bootstrap({
-    projectName: 'Bootstrapped',
-    actorName: 'Host',
-  });
-  assert.equal(await f.scope.projectCreator(boot.project.id), null);
-  const alice = await f.login('alice'),
-    bob = await f.login('bob');
-  await f.scope.members.adoptProject(alice, boot.project.id);
-  assert.deepEqual(await f.scope.projectCreator(boot.project.id), { issuer, subject: 'alice' });
-  const created = await f.scope.members.createProject(bob, {
-    name: 'Signed in',
-    requestId: 'create',
-  });
-  await f.scope.members.addMember(bob, created.id, { subject: 'alice', role: 'operator' });
-  await f.scope.caller(alice, created.id);
-  await f.scope.members.removeMember(alice, created.id, 'bob');
-  assert.deepEqual(await f.scope.projectCreator(created.id), { issuer, subject: 'bob' });
-});
-
 test('simultaneous self-demotions leave one verified human operator after serialized checks', async (t) => {
   const f = await fixture('member-operator-race');
   t.after(async () => await f.state.close());

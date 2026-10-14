@@ -10,6 +10,7 @@ import {
   recorded,
   visible,
   digest,
+  forRead,
   inTransaction,
   MervError,
   newId,
@@ -204,17 +205,8 @@ export class RecipeContextBuilder implements ContextBuilder {
   }
   /** Read-only work: in the caller's transaction, else the ambient one, else a read-only snapshot
    *  transaction, which never takes the writer lock. */
-  private async reading<T>(
-    tx: Transaction | undefined,
-    fn: (tx: Transaction) => Promise<T>,
-  ): Promise<T> {
-    if (tx) {
-      this.state.assertTransaction(tx);
-      return await fn(tx);
-    }
-    const ambient = this.state.ambient;
-    return ambient ? await fn(ambient) : await this.state.snapshotTransaction(fn);
-  }
+  private reading = <T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) =>
+    forRead(this.state, fn, tx);
   async register(input: ContextRecipeDefinition): Promise<ContextRegistration> {
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
     const parsed = definitionSchema.safeParse(input);

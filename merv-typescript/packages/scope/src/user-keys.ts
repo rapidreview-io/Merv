@@ -17,7 +17,6 @@ import {
 } from '@merv/contracts';
 import type { Ledger } from './ledger.js';
 import type { Memberships } from './memberships.js';
-import { projectValue, type ProjectRow } from './project-context.js';
 
 interface KeyRow {
   id: string;
@@ -59,8 +58,8 @@ export class UserKeys {
   ) {}
 
   async authenticate(token: string): Promise<UserKey> {
-    const verified = await this.ledger.authenticate(token, 'user-key');
     return await this.state.read(async (sql) => {
+      const verified = await this.ledger.authenticate(token, 'user-key', sql);
       const row = await sql.get<KeyRow>(
         'SELECT * FROM user_keys WHERE id=? AND token_hash=?',
         verified.subject,
@@ -142,12 +141,7 @@ export class UserKeys {
         'User key does not grant this project',
         403,
       );
-      const member = await tx.get<{ id: string; actor_id: string }>(
-        'SELECT id,actor_id FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
-        selected,
-        key.issuer,
-        key.subject,
-      );
+      const member = await this.members.current(tx, selected, key.issuer, key.subject);
       check(member, 'membership_required', 'Key owner is not a member of this project', 403);
       const caller: Caller = {
         actorId: member.actor_id,
@@ -162,18 +156,8 @@ export class UserKeys {
   async projects(principal: Extract<Principal, { kind: 'key' }>): Promise<Project[]> {
     return await forRead(this.state, async (tx) => {
       const key = await this.current(tx, principal.key?.id);
-      return (
-        await tx.all<ProjectRow>(
-          `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
-         JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
-         WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1
-           AND (?='account' OR p.id=?) ORDER BY m.created_at,p.id`,
-          key.issuer,
-          key.subject,
-          key.grant_scope,
-          key.project_id,
-        )
-      ).map(projectValue);
+      const only = key.grant_scope === 'account' ? null : key.project_id;
+      return await this.members.memberProjects(tx, key.issuer, key.subject, only);
     });
   }
 

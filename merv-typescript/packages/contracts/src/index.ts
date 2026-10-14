@@ -1,6 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
 export { mapAsync, filterAsync, everyAsync } from './async.js';
-import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,
   ToolGrant,
@@ -77,28 +76,10 @@ export type {
 import type { Data, Json } from './data.js';
 import type { Artifact, ArtifactContent, ArtifactFile } from './artifact-models.js';
 export type { Artifact, ArtifactContent } from './artifact-models.js';
-import type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
-import { clip, visible } from './text.js';
+import { visible } from './text.js';
 import type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
 export type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
-import type {
-  WorkflowDispatchCandidate,
-  WorkflowExecutionTarget,
-  WorkflowHistoryEntry,
-  WorkflowSnapshot,
-  WorkflowTransitionCount,
-  WorkflowReference,
-  WorkflowProvidedBlocker,
-  WorkflowProvidedBlockerInput,
-  WorkflowRelations,
-  WorkflowDecision,
-  WorkflowLimitStatus,
-  WorkflowOverview,
-  WorkflowDependency,
-  WorkflowWorkStart,
-  ProcessGraph,
-} from '@merv/workflows/models';
 export class MervError extends Error {
   /** Set by the refusing component when the refusal only means "not yet": nothing is wrong
    *  with what was asked, so whoever retries it does not count it as a failure. */
@@ -713,10 +694,14 @@ export async function within<T>(
   if (!place) return await state.read(fn);
   return place === 'read' ? await state.snapshotTransaction(fn) : await state.transaction(fn);
 }
-/** A pure read that needs a transaction: it runs wherever a read decision would run. */
-export async function forRead<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+/** A pure read that needs a transaction: `tx`, else wherever a read decision would run. */
+export async function forRead<T>(
+  state: State,
+  fn: (tx: Transaction) => Promise<T>,
+  tx?: Transaction,
+): Promise<T> {
   // With a place, `within` always hands over a transaction.
-  return await within(state, undefined, (sql) => fn(sql as Transaction), 'read');
+  return await within(state, tx, (sql) => fn(sql as Transaction), 'read');
 }
 /** The most bytes Blobs moves by signed URL, and so the largest artifact. */
 export const MAX_OBJECT_BYTES = 512 * 1024 * 1024;

@@ -146,12 +146,6 @@ export interface Scope {
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
-  /** The person who created the project by signing in; for a bootstrapped or imported one, its
-   * owner (see projectOwners); null while it has neither. */
-  projectCreator(
-    projectId: string,
-    tx?: Transaction,
-  ): Promise<{ issuer: string; subject: string } | null>;
   /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
    * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
    * provider may not hold. */

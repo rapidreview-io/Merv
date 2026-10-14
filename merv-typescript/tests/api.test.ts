@@ -1194,6 +1194,20 @@ test('mounted GETs run outside the read snapshot', async (t) => {
   assert.equal(snapshots, 1);
 });
 
+test('only a request with a body arms the 30 s idle timer: a slow GET keeps its socket', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  api.mount('/timer', (req) => ({ timeout: req.socket.timeout ?? 0 }), { public: true });
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  assert.deepEqual(await (await fetch(`${url}/timer`)).json(), { timeout: 0 });
+  const post = { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'x' };
+  assert.deepEqual(await (await fetch(`${url}/timer`, post)).json(), { timeout: 30_000 });
+});
+
 test('a mount returns JSON or octets, and its caller is one decision in the selected project', async (t) => {
   const { scope, tools } = fixture();
   let decisions = 0;

@@ -286,11 +286,14 @@ export class ApiServer {
         if (!res.headersSent) res.writeHead(408, { connection: 'close' }).end();
         req.destroy(Object.assign(new Error('request body timed out'), { code: 'ECONNABORTED' }));
       };
-      req.setTimeout(30_000, idle);
-      req.once('end', () => {
-        req.setTimeout(0);
-        req.off('timeout', idle);
-      });
+      // A body-less request never ends unread: its idle socket would close without `idle`.
+      if ('transfer-encoding' in req.headers || Number(req.headers['content-length']) > 0) {
+        req.setTimeout(30_000, idle);
+        req.once('end', () => {
+          req.setTimeout(0);
+          req.off('timeout', idle);
+        });
+      }
       // A request is done when its response is flushed or its connection is gone: a handler
       // settles at res.end(), before the bytes leave, and shutdown must not cut them off.
       const request = Promise.all([

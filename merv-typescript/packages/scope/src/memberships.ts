@@ -184,12 +184,7 @@ export class Memberships {
       'project_required',
       'Select a project for this human user',
     );
-    const row = await tx.get<MembershipRow>(
-      'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
-      projectId,
-      human.user.issuer,
-      human.user.subject,
-    );
+    const row = await this.current(tx, projectId, human.user.issuer, human.user.subject);
     check(
       row,
       'membership_required',
@@ -226,17 +221,25 @@ export class Memberships {
         const caller = await this.resolve(principal, undefined, tx);
         return [await this.project(tx, caller.projectId)];
       }
-      const human = await this.human(principal, tx);
-      return (
-        await tx.all<ProjectRow>(
-          `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
-         JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
-         WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1 ORDER BY m.created_at,m.project_id`,
-          human.user.issuer,
-          human.user.subject,
-        )
-      ).map(projectValue);
+      const { user } = await this.human(principal, tx);
+      return await this.memberProjects(tx, user.issuer, user.subject, null);
     });
+  }
+
+  /** The projects where this person's membership and actor are active, `only` one if given. */
+  async memberProjects(sql: Sql, issuer: string, subject: string, only: string | null) {
+    return (
+      await sql.all<ProjectRow>(
+        `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
+         JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
+         WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1
+           AND (CAST(? AS TEXT) IS NULL OR p.id=?) ORDER BY m.created_at,m.project_id`,
+        issuer,
+        subject,
+        only,
+        only,
+      )
+    ).map(projectValue);
   }
 
   async createProject(
@@ -408,12 +411,7 @@ export class Memberships {
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const issuer = caller.human!.issuer;
-      const old = await tx.get<MembershipRow>(
-        'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
-        projectId,
-        issuer,
-        subject,
-      );
+      const old = await this.current(tx, projectId, issuer, subject);
       if (old) {
         check(
           old.role === role,
@@ -435,20 +433,14 @@ export class Memberships {
     });
   }
 
-  private async active(
-    tx: Sql,
-    projectId: string,
-    issuer: string,
-    subject: string,
-  ): Promise<MembershipRow> {
-    const row = await tx.get<MembershipRow>(
+  /** The person's active membership in this project, if any. */
+  async current(sql: Sql, projectId: string, issuer: string, subject: string) {
+    return await sql.get<MembershipRow>(
       'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
       projectId,
       issuer,
       subject,
     );
-    check(row, 'not_found', 'Active project member not found', 404);
-    return row;
   }
 
   private async keepOperator(tx: Sql, previous: MembershipRow, nextRole?: Role): Promise<void> {
@@ -475,7 +467,8 @@ export class Memberships {
     check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
-      const previous = await this.active(tx, projectId, caller.human!.issuer, subject);
+      const previous = await this.current(tx, projectId, caller.human!.issuer, subject);
+      check(previous, 'not_found', 'Active project member not found', 404);
       if (previous.role === role) return membership(previous);
       await this.keepOperator(tx, previous, role);
       await tx.run(
@@ -504,12 +497,7 @@ export class Memberships {
     this.input(subject);
     await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
-      const previous = await tx.get<MembershipRow>(
-        'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
-        projectId,
-        caller.human!.issuer,
-        subject,
-      );
+      const previous = await this.current(tx, projectId, caller.human!.issuer, subject);
       if (!previous) return;
       await this.keepOperator(tx, previous);
       await tx.run(
