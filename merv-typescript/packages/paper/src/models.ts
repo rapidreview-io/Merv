@@ -1,5 +1,24 @@
 import type { Verdict } from '@merv/contracts/types';
 export type PaperKind = 'problem' | 'literature' | 'methods' | 'results';
+export interface PaperPatch {
+  kind: PaperKind;
+  expectedRevision: number;
+  requestId: string;
+  changes: {
+    id: string;
+    title?: string;
+    content?: string;
+    afterId?: string | null;
+    remove?: boolean;
+  }[];
+}
+export type PaperChanges = {
+  documents: {
+    kind: 'methods' | 'results';
+    expectedRevision: number;
+    changes: PaperPatch['changes'];
+  }[];
+};
 export interface PaperSection {
   id: string;
   title: string;
@@ -39,6 +58,11 @@ export interface PaperSource {
   id: string;
   revision: number;
 }
+export interface PaperEdit {
+  kind: 'methods' | 'results';
+  expectedRevision: number;
+  changes: PaperPatch['changes'];
+}
 export interface PaperPublication {
   id: string;
   projectId: string;
@@ -59,4 +83,25 @@ export interface PaperDocument {
 export interface PaperWorkspace {
   documents: Record<PaperKind, PaperDocument>;
   citations: PaperCitation[];
+}
+export interface PaperCite {
+  id?: string;
+  expectedRevision: number;
+  requestId: string;
+  identifier: string;
+  title: string;
+  authors?: string[];
+  year?: number | null;
+  url?: string | null;
+  notes?: string;
+  sectionIds?: string[];
+  /** Project-scoped artifact:<id> evidence references. */
+  refs?: string[];
+}
+/** Trusted owner input: the owner verifies the live, independent review in the same transaction. */
+export interface PaperReview extends PaperChanges {
+  source: PaperSource;
+  reviewId: string;
+  verdict: Verdict;
+  evidenceIds: string[];
 }
