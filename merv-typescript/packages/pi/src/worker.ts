@@ -435,6 +435,12 @@ async function executeTurn(
   const outcomes: PiToolOutcome[] = [];
   let calls = 0;
   let failure: Error | null = null;
+  /** Ends the turn: nothing more is sent, and the session stops. */
+  const stop = (error: Error) => {
+    failure = error;
+    session.abort().catch(() => {});
+    return error;
+  };
   let sending: Promise<void> | null = null;
   let sequence = 0;
   // When the oldest word not yet sent was written, the timer that sends it, and whether anything
@@ -465,8 +471,7 @@ async function executeTurn(
         if (receipt.accepted !== true) throw new Error('Conversation revoked');
       })
       .catch((error: unknown) => {
-        failure = error instanceof Error ? error : new Error('Conversation revoked');
-        session.abort().catch(() => {});
+        stop(error instanceof Error ? error : new Error('Conversation revoked'));
       })
       .finally(() => {
         if (sending === pending) sending = null;
@@ -492,11 +497,8 @@ async function executeTurn(
         index = end;
       } else {
         // Unsent words beyond a whole answer mean Main has stopped taking them.
-        if (events.length * 8192 >= messageChars) {
-          failure = new Error('Progress buffer full');
-          session.abort().catch(() => {});
-          return;
-        }
+        if (events.length * 8192 >= messageChars)
+          return void stop(new Error('Progress buffer full'));
         const next = cut(text, index, 8192);
         events.push({ type, text: text.slice(index, next) });
         index = next;
@@ -532,21 +534,16 @@ async function executeTurn(
         if (!Object.hasOwn(output ?? {}, 'result')) throw new Error('Invalid tool response');
       } catch (error) {
         // Lost authority ends the turn; any other failure is a tool result the model can answer.
-        if (error instanceof WorkerHttpError && [401, 403, 409].includes(error.status)) {
-          failure = new Error('Tool authority unavailable');
-          session.abort().catch(() => {});
-        }
+        if (error instanceof WorkerHttpError && [401, 403, 409].includes(error.status))
+          stop(new Error('Tool authority unavailable'));
         if (signal.aborted || failure) throw new Error('Turn cancelled');
         const detail = error instanceof WorkerHttpError ? error.detail?.message : undefined;
         throw new Error(typeof detail === 'string' ? detail : cause(error));
       }
       if (signal.aborted || failure) throw new Error('Turn cancelled');
       const canonicalCallId = callId.split('|')[0];
-      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId)) {
-        failure = new Error('Invalid tool result');
-        session.abort().catch(() => {});
-        throw failure;
-      }
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId))
+        throw stop(new Error('Invalid tool result'));
       const text = JSON.stringify(output.result) ?? 'null';
       const size = Buffer.byteLength(text);
       const cut = tool.readOnly !== false && size > toolBytes;
@@ -668,11 +665,7 @@ async function executeTurn(
   });
   const pulse = setInterval(
     () => {
-      if (signal.aborted) {
-        failure = new Error('Turn cancelled');
-        session.abort().catch(() => {});
-        return;
-      }
+      if (signal.aborted) return void stop(new Error('Turn cancelled'));
       if (compacting && Date.now() - moving >= MOVING_MS && events.at(-1)?.type !== 'progress') {
         moving = Date.now();
         enqueue('progress', 'Compacting earlier conversation');

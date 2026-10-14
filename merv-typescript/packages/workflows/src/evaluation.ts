@@ -26,7 +26,7 @@ import { freezeData, workflowJson } from './json.js';
 import { extendsAt, requireDependencies } from './rules.js';
 import { validateExecution } from './execution-policy.js';
 import { limitMessage, validateLimits } from './limits.js';
-import { batches } from './engine.js';
+import { batches, type Registration } from './engine.js';
 
 const descriptionSchema = z.object({
   label: z.string(),
@@ -138,9 +138,7 @@ export function validatePolicy(
     definition.edges.every((edge) => guarded.has(`${edge.from}:${edge.action}`)),
     'A registered policy must guard every graph transition',
   );
-  if (policy.describe) callback(policy.describe);
-  if (policy.prepare) callback(policy.prepare);
-  if (policy.children) callback(policy.children);
+  for (const hook of [policy.describe, policy.prepare, policy.children]) if (hook) callback(hook);
   valid(
     policy.assignments === undefined || Array.isArray(policy.assignments),
     'Assignments must be an array',
@@ -168,12 +166,10 @@ export function validatePolicy(
         assignment.lease && typeof assignment.lease === 'object',
         'Lease hooks must be an object',
       );
-      callback(assignment.lease.role);
-      if (assignment.lease.label !== undefined) callback(assignment.lease.label);
-      callback(assignment.lease.acquire);
-      callback(assignment.lease.check);
-      if (assignment.lease.outputs) callback(assignment.lease.outputs);
-      callback(assignment.lease.release);
+      const { role, label, acquire, check: holds, outputs, release } = assignment.lease;
+      for (const hook of [role, acquire, holds, release]) callback(hook);
+      if (label !== undefined) callback(label);
+      if (outputs) callback(outputs);
       valid(assignment.execution !== undefined, 'Leasing requires fixed execution authority');
     }
     const execution =
@@ -223,6 +219,18 @@ export function validatePolicy(
       ? {}
       : { dependencyFailureAction: policy.dependencyFailureAction }),
   };
+}
+
+/** What one decision reads besides the instance, read for many instances at once. */
+export interface Facts {
+  /** Whose callbacks decide, resolved once so the limits read and the decision agree. */
+  registration?: Registration;
+  /** The installed graph, else the pinned one: guidance still draws an unloaded version. */
+  definition: WorkflowDefinition;
+  dependencies: WorkflowDependency[];
+  workStart: WorkflowWorkStart | null;
+  limits: WorkflowLimitStatus[];
+  blockers: WorkflowProvidedBlocker[];
 }
 
 /** The engine always supplies the dependencies it has read; programs see them as optional. */
@@ -359,29 +367,17 @@ export async function checkAssignment(
  * dispatched anyway keep their own explanation. Without `checks` no program callback runs.
  */
 export async function decision(
-  definition: WorkflowDefinition,
-  policy: WorkflowPolicy | undefined,
+  facts: Facts,
   context: EngineContext,
   query: WorkflowEvaluationInput,
-  workStart: WorkflowWorkStart | null = null,
-  limits: WorkflowLimitStatus[] = [],
-  provided: WorkflowProvidedBlocker[] = [],
-  checks = true,
+  checks: boolean,
   /** Whether the reader is a project admin, asked only where an admin's move may stand. */
-  admin: () => Promise<boolean> = async () => false,
+  admin: () => Promise<boolean>,
 ): Promise<WorkflowDecision> {
+  const policy = facts.registration?.policy;
   const described: { owner?: WorkflowOwner } = {};
-  const result = await ownDecision(
-    definition,
-    policy,
-    context,
-    query,
-    workStart,
-    limits,
-    checks,
-    described,
-  );
-  const decided = gated(result, query, provided);
+  const result = await ownDecision(facts, policy, context, query, checks, described);
+  const decided = gated(result, query, facts.blockers);
   // A person's read only: a leased worker's guidance, which its assignment context embeds, says
   // nothing of whose move the record is.
   if (query.action || context.caller.session) return decided;
@@ -547,12 +543,10 @@ function gated(
 }
 
 async function ownDecision(
-  definition: WorkflowDefinition,
+  { definition, workStart, limits }: Facts,
   policy: WorkflowPolicy | undefined,
   context: EngineContext,
   query: WorkflowEvaluationInput,
-  workStart: WorkflowWorkStart | null,
-  limits: WorkflowLimitStatus[],
   checks: boolean,
   /** Where the program's word on whose move the record is goes, for the caller's read. */
   described: { owner?: WorkflowOwner },

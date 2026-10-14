@@ -105,41 +105,27 @@ export async function replaceBlockers(
   for (const item of blockers) {
     const previous = existing.find((row) => row.blocker_key === item.key);
     const links = canonical(related(item.related));
-    if (!previous) {
-      await tx.run(
-        'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,cause,whose,revision,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        input.projectId,
-        input.instanceId,
-        input.provider,
-        item.key,
-        item.code,
-        item.message,
-        item.status,
-        item.next,
-        links,
-        item.cause ?? null,
-        item.whose ?? null,
-        item.revision ?? null,
-        at,
-        at,
-      );
-      continue;
-    }
-    // An unchanged opinion is not rewritten, so a reconcile that finds nothing new leaves
-    // `updatedAt` as the moment the opinion last moved.
+    // The same code about the same revision is the same opinion, which keeps its age; an
+    // unchanged one is not rewritten, so `updatedAt` stays the moment the opinion last moved.
+    const same =
+      previous?.code === item.code &&
+      (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null);
     if (
-      previous.code === item.code &&
+      same &&
       previous.message === item.message &&
       Number(previous.status) === item.status &&
       previous.next === item.next &&
       previous.related_json === links &&
       previous.cause === (item.cause ?? null) &&
-      previous.whose === (item.whose ?? null) &&
-      (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null)
+      previous.whose === (item.whose ?? null)
     )
       continue;
     await tx.run(
-      'UPDATE wf_blockers SET code=?,message=?,status=?,next=?,related_json=?,cause=?,whose=?,revision=?,since=?,updated_at=? WHERE instance_id=? AND provider=? AND blocker_key=?',
+      'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,cause,whose,revision,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (instance_id,provider,blocker_key) DO UPDATE SET code=excluded.code,message=excluded.message,status=excluded.status,next=excluded.next,related_json=excluded.related_json,cause=excluded.cause,whose=excluded.whose,revision=excluded.revision,since=excluded.since,updated_at=excluded.updated_at',
+      input.projectId,
+      input.instanceId,
+      input.provider,
+      item.key,
       item.code,
       item.message,
       item.status,
@@ -148,15 +134,8 @@ export async function replaceBlockers(
       item.cause ?? null,
       item.whose ?? null,
       item.revision ?? null,
-      // A new code, or the same one about another revision, is a new opinion.
-      previous.code === item.code &&
-        (previous.revision === null ? null : Number(previous.revision)) === (item.revision ?? null)
-        ? previous.since
-        : at,
+      same ? previous.since : at,
       at,
-      input.instanceId,
-      input.provider,
-      item.key,
     );
   }
 }

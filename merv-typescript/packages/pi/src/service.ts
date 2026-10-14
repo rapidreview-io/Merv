@@ -859,12 +859,6 @@ export class PiService implements Pi {
 
   async authorizeModel(token: string) {
     this.core.ready();
-    check(
-      /^pir_[A-Za-z0-9_-]{43}$/.test(token),
-      'pi_unauthorized',
-      'Invalid model credential',
-      401,
-    );
     return this.core.read(async (tx) => {
       const credential = await this.core.credentials
         .authenticate(token, 'pi-model', tx)

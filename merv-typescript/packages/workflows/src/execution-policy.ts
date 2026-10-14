@@ -85,16 +85,14 @@ const referencesSchema = z.record(
 );
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-function json<T>(value: T, code: string, status: number): T {
-  return workflowJson(value, code, status, DATA_LIMITS);
-}
-
 export function executionMetadata<T>(value: T): T {
-  return json(value, 'invalid_workflow_policy', 500);
+  return workflowJson(value, 'invalid_workflow_policy', 500, DATA_LIMITS);
 }
 
 export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecutionPolicy {
-  const parsed = policySchema.safeParse(json(value, 'invalid_workflow_policy', 400));
+  const parsed = policySchema.safeParse(
+    workflowJson(value, 'invalid_workflow_policy', 400, DATA_LIMITS),
+  );
   valid(parsed.success, 'Invalid fixed execution manifest');
   const names = parsed.data.tools.map((tool) => tool.name);
   valid(new Set(names).size === names.length, 'Execution tool names must be unique');
@@ -127,7 +125,7 @@ export async function executionReferences(
   context: WorkflowCheckContext,
 ): Promise<WorkflowExecutionReferences> {
   const value = rule.references ? await rule.references(context) : {};
-  const parsed = referencesSchema.safeParse(json(value, 'invalid_workflow_policy', 500));
+  const parsed = referencesSchema.safeParse(executionMetadata(value));
   check(parsed.success, 'invalid_workflow_policy', 'Invalid execution reference metadata', 500);
   return parsed.data;
 }

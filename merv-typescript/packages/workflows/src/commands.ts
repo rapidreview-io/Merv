@@ -179,6 +179,7 @@ export class WorkflowCommands extends WorkflowLeases {
     owner: Registration,
     tx?: Transaction,
   ): Promise<WorkflowSnapshot> {
+    this.requireActive(owner);
     this.assertOpen();
     caller = structuredClone(caller);
     const { name, version } = owner.definition;
@@ -270,6 +271,7 @@ export class WorkflowCommands extends WorkflowLeases {
     owner: Registration,
     tx?: Transaction,
   ): Promise<WorkflowSnapshot> {
+    this.requireActive(owner);
     this.assertOpen();
     caller = structuredClone(caller);
     this.requestId(input.requestId);
@@ -401,6 +403,7 @@ export class WorkflowCommands extends WorkflowLeases {
     owner: Registration,
     transaction?: Transaction,
   ): Promise<WorkflowSnapshot> {
+    this.requireActive(owner);
     this.assertOpen();
     caller = structuredClone(caller);
     this.requestId(input.requestId);

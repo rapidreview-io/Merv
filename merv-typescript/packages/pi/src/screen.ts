@@ -8,7 +8,7 @@
  * that picture and answers the agent's question in words.
  */
 import { MervError, check } from '@merv/contracts';
-import { RESPONSES_URL } from '@merv/fleet/model-ledger';
+import { responses } from './relay.js';
 
 export interface ScreenShot {
   /** Where the page was: its path and query in the app, as the address bar showed it. */
@@ -106,50 +106,8 @@ export const screenRequest = (model: string, question: string, picture: Buffer, 
   ],
 });
 
-/**
- * That request, sent: the model's answer in words, '' when it gave none (never the provider's own
- * words, which name a refused key). `usage` settles its charge as the relay settles a call's: none
- * where the provider refused it, and null, keeping the charge, where it may have run it.
- */
-export async function describeScreen(
-  key: string,
-  body: ReturnType<typeof screenRequest>,
-): Promise<{
-  text: string;
-  usage: { inputTokens: number; outputTokens: number } | null;
-}> {
-  let response: Response;
-  try {
-    response = await fetch(RESPONSES_URL, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    return { text: '', usage: null };
-  }
-  const answer = (await response.json().catch(() => null)) as {
-    output?: { type?: string; content?: { type?: string; text?: string }[] }[];
-    usage?: { input_tokens?: unknown; output_tokens?: unknown };
-  } | null;
-  const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
-  const text = (answer?.output ?? [])
-    .filter((item) => item.type === 'message')
-    .flatMap((item) => item.content ?? [])
-    .filter((part) => part.type === 'output_text')
-    .map((part) => part.text ?? '')
-    .join('\n')
-    .trim();
-  return {
-    text: response.ok ? text : '',
-    usage: !response.ok
-      ? { inputTokens: 0, outputTokens: 0 }
-      : answer?.usage
-        ? {
-            inputTokens: count(answer.usage.input_tokens),
-            outputTokens: count(answer.usage.output_tokens),
-          }
-        : null,
-  };
+/** That request, answered: the model's answer in words, '' when it gave none. */
+export async function describeScreen(key: string, body: ReturnType<typeof screenRequest>) {
+  const { texts, usage } = await responses(key, body, 60_000);
+  return { text: texts.join('\n').trim(), usage };
 }

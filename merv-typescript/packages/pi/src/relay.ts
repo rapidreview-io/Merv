@@ -92,6 +92,50 @@ export function piModelRelay({ models, authority, ...config }: PiRelayConfig): P
 }
 
 type Usage = { inputTokens: number; outputTokens: number };
+/**
+ * A request sent to the relay's own upstream: its answer's message texts, and `usage` to settle
+ * its charge as the relay settles a call's: none where the provider refused it, and null, keeping
+ * the charge, where it may have run it. The provider's own words, which name a refused key, are
+ * never read.
+ */
+export async function responses(
+  key: string,
+  body: object,
+  timeoutMs: number,
+): Promise<{ texts: string[]; usage: Usage | null }> {
+  let response: Response;
+  try {
+    response = await fetch(RESPONSES_URL, {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { texts: [], usage: null };
+  }
+  if (!response.ok) return { texts: [], usage: { inputTokens: 0, outputTokens: 0 } };
+  const answer = (await response.json().catch(() => null)) as {
+    output?: { type?: string; content?: { type?: string; text?: string }[] }[];
+    usage?: { input_tokens?: unknown; output_tokens?: unknown };
+  } | null;
+  const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
+  return {
+    texts: (answer?.output ?? [])
+      .filter((item) => item.type === 'message')
+      .flatMap((item) => item.content ?? [])
+      .filter((part) => part.type === 'output_text')
+      .map((part) => part.text ?? ''),
+    usage: answer?.usage
+      ? {
+          inputTokens: count(answer.usage.input_tokens),
+          outputTokens: count(answer.usage.output_tokens),
+        }
+      : null,
+  };
+}
+
 /** The request that names a conversation from its first exchange: small, without reasoning. */
 export const titleRequest = (model: string, user: string, reply: string) => ({
   model,
@@ -102,47 +146,18 @@ export const titleRequest = (model: string, user: string, reply: string) => ({
   input: `User: ${clip(user, 2000)}\n\nAgent: ${clip(reply, 2000)}`,
 });
 
-/**
- * That request, sent to the relay's own upstream. Anything short of a usable title is '', so the
- * conversation keeps the name it has. `usage` settles its charge as the relay settles a call's:
- * none where the provider refused it, and null, keeping the charge, where it may have run it.
- */
+/** That request, answered: anything short of a usable title is '', so the conversation keeps the
+ * name it has. */
 export async function piTitle(
   key: string,
   body: ReturnType<typeof titleRequest>,
 ): Promise<{ title: string; usage: Usage | null }> {
-  let usage: Usage | null = null;
-  try {
-    const response = await fetch(RESPONSES_URL, {
-      method: 'POST',
-      redirect: 'error',
-      signal: AbortSignal.timeout(10_000),
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) return { title: '', usage: { inputTokens: 0, outputTokens: 0 } };
-    const answer = (await response.json()) as {
-      output: { content?: { type: string; text: string }[] }[];
-      usage?: { input_tokens?: unknown; output_tokens?: unknown };
-    };
-    const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
-    if (answer.usage)
-      usage = {
-        inputTokens: count(answer.usage.input_tokens),
-        outputTokens: count(answer.usage.output_tokens),
-      };
-    const said = answer.output
-      .flatMap((item) => item.content ?? [])
-      .filter((part) => part.type === 'output_text')
-      .map((part) => part.text)
-      .join('')
-      .replace(/[*_`"“”«»]/g, '')
-      .replace(/[\s\p{Cc}\p{Cf}\p{Cs}]+/gu, ' ')
-      .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '');
-    // Never half a character, which jsonb refuses where it lists the person's conversations.
-    const title = clip(said, 80).trim();
-    return { title, usage };
-  } catch {
-    return { title: '', usage };
-  }
+  const { texts, usage } = await responses(key, body, 10_000);
+  const said = texts
+    .join('')
+    .replace(/[*_`"“”«»]/g, '')
+    .replace(/[\s\p{Cc}\p{Cf}\p{Cs}]+/gu, ' ')
+    .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '');
+  // Never half a character, which jsonb refuses where it lists the person's conversations.
+  return { title: clip(said, 80).trim(), usage };
 }

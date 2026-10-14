@@ -89,13 +89,10 @@ export class PiHttp {
       throw new MervError('invalid_pi_input', 'Invalid JSON');
     }
     check(!this.closed, 'pi_unavailable', 'Worker connection closed', 503);
-    const action = match[1];
+    const action = match[1] as 'next' | 'tool' | 'begin' | 'progress' | 'complete' | 'fail';
     if (action === 'next') return await this.pi.next(token, input, this.holdMs);
     if (action === 'tool') return { result: await this.pi.tool(token, input) };
-    if (action === 'begin') return await this.pi.begin(token, input);
-    if (action === 'progress') return await this.pi.progress(token, input);
-    if (action === 'complete') return await this.pi.complete(token, input);
-    return await this.pi.fail(token, input);
+    return await this.pi[action](token, input);
   };
 
   /** `GET /pi/<id>/events`: a page's live view of one conversation, as its authenticated person. */

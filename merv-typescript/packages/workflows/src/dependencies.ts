@@ -3,6 +3,7 @@ import type { Data, Sql, Transaction, WorkflowPinned } from '@merv/contracts';
 import type { WorkflowDependency, WorkflowRelations, WorkflowSnapshot } from './models.js';
 import type { PinnedContracts } from './pinned.js';
 import { instanceName } from './rules.js';
+import { instancesIn } from './engine.js';
 
 /**
  * The most distinct ids one call may name. Every id is bound in each statement that reads or
@@ -94,21 +95,8 @@ const edgesOf = async (
   );
 
 /** The instances named, by id; one the project does not hold is left out. */
-async function nodes(
-  sql: Sql,
-  projectId: string,
-  ids: string[],
-  columns = NODE,
-): Promise<Map<string, NodeRow>> {
-  const wanted = [...new Set(ids)];
-  if (!wanted.length) return new Map();
-  const rows = await sql.all<NodeRow>(
-    `SELECT ${columns} FROM wf_instances WHERE project_id=? AND id IN (${marks(wanted)})`,
-    projectId,
-    ...wanted,
-  );
-  return new Map(rows.map((row) => [row.id, row]));
-}
+const nodes = async (sql: Sql, projectId: string, ids: string[], columns = NODE) =>
+  new Map((await instancesIn<NodeRow>(sql, projectId, ids, columns)).map((row) => [row.id, row]));
 
 /**
  * What each of several instances depends on, in two reads however many there are, each target

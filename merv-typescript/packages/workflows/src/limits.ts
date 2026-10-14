@@ -127,7 +127,7 @@ export const limitStatus = async (sql: Sql, limit: WorkflowLoopLimit, instanceId
  */
 export async function limitStatusesOf(
   sql: Sql,
-  instances: readonly { id: string; state: string; policy?: WorkflowPolicy }[],
+  instances: readonly { id: string; state: string; policy?: Pick<WorkflowPolicy, 'limits'> }[],
   every = false,
 ): Promise<Map<string, WorkflowLimitStatus[]>> {
   const leaving = ({ state, policy }: (typeof instances)[number]) =>

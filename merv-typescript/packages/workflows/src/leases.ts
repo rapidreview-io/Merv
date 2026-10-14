@@ -154,21 +154,18 @@ export class WorkflowLeases extends WorkflowGuidance {
         // A reviewer leased at an exhausted limit could only have a needs_changes verdict
         // refused and rolled back, and the next poll would lease another. The work waits for
         // a human instead, who may still begin it by hand.
-        const open = found.filter(({ row }) => !limits.get(row.id)!.some((item) => item.exhausted));
+        const open = found
+          .filter(({ row }) => !limits.get(row.id)!.some((item) => item.exhausted))
+          .map((step) => ({ ...step, snapshot: this.snapshot(step.row) }));
         const dependencies = await prerequisites(
           tx,
           source.projectId,
           open.map(({ row }) => row.id),
         );
-        await prepare(
-          source,
-          open.map(({ row, registration }) => ({ registration, snapshot: this.snapshot(row) })),
-          tx,
-        );
-        for (const { row, registration, rule } of open) {
+        await prepare(source, open, tx);
+        for (const { row, registration, rule, snapshot } of open) {
           const lease = rule.lease!;
           const execution = rule.execution!;
-          const snapshot = this.snapshot(row);
           // One frozen read serves every callback of the row; the recheck below closes them all.
           const context = readContext({
             caller: source,
@@ -268,14 +265,8 @@ export class WorkflowLeases extends WorkflowGuidance {
     ({ source, worker } = structuredClone({ source, worker }));
     return await this.write(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
-      const {
-        role,
-        row,
-        snapshot,
-        registration,
-        rule,
-        context: sourced,
-      } = await this.role(source, target, tx);
+      const { role, ...sourced } = await this.role(source, target, tx);
+      const { row, snapshot, registration, rule } = sourced;
       check(
         (await this.scope.require(worker, 'read', tx)).role === role,
         'invalid_lease',
@@ -294,9 +285,9 @@ export class WorkflowLeases extends WorkflowGuidance {
         caller: worker,
         snapshot,
         tx,
-        dependencies: sourced.dependencies,
+        dependencies: sourced.context.dependencies,
       });
-      const step: Loaded = { row, snapshot, registration, rule, context };
+      const step: Loaded = { ...sourced, context };
       const receipt = executionMetadata(
         await rule.lease!.acquire(
           Object.freeze({ ...context, source: structuredClone(source), leaseId: target.leaseId }),

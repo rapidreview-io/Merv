@@ -125,15 +125,10 @@ export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
  * without reading it, so it stays visible while the provider is unloaded; the owner's own
  * hooks refuse the work, never this projection.
  */
-export interface WorkflowProvidedBlocker extends WorkflowBlocker {
+export interface WorkflowProvidedBlocker extends Omit<WorkflowProvidedBlockerInput, 'related'> {
   instanceId: string;
   provider: string;
-  key: string;
-  next: string;
   related: WorkflowReference[];
-  cause?: string;
-  whose?: WorkflowWhose;
-  revision?: number;
   /** When this key first took this code; a changed code starts a new age. */
   since: string;
   updatedAt: string;

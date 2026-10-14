@@ -7,7 +7,6 @@ import type {
   WorkflowDefinition,
   Workflows,
   WorkflowPolicy,
-  WorkflowLoopLimit,
   WorkflowPinned,
 } from '@merv/contracts';
 import type {
@@ -27,7 +26,7 @@ import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
 import { extendsAt } from './rules.js';
 import { readWorkStarts } from './assignments.js';
-import { limitStatusOf, limitStatusesOf } from './limits.js';
+import { limitStatusesOf } from './limits.js';
 import {
   attachDependencies,
   classify,
@@ -36,7 +35,7 @@ import {
   normalizeDependencies,
   prerequisites,
 } from './dependencies.js';
-import { batches, type InstanceRow, type Registration } from './engine.js';
+import { batches, instancesIn, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowCommands } from './commands.js';
 
 /** The most instances one dependency closure is walked over. */
@@ -58,24 +57,21 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     const definition = validateDefinition(input);
     const validatedPolicy = validatePolicy(definition, policy);
     const key = `${definition.name}@${definition.version}`;
-    check(
-      !this.registrations.has(key),
-      'workflow_already_registered',
-      `${key} is already registered`,
-      409,
-    );
+    const unregistered = () =>
+      check(
+        !this.registrations.has(key),
+        'workflow_already_registered',
+        `${key} is already registered`,
+        409,
+      );
+    unregistered();
     const pinned = await this.state.transaction(async (tx) => {
       await persistContract(tx, definition, validatedPolicy);
       return await readPinned(tx, definition.name, definition.version);
     });
     this.contracts.keep(pinned!);
     this.assertOpen();
-    check(
-      !this.registrations.has(key),
-      'workflow_already_registered',
-      `${key} is already registered`,
-      409,
-    );
+    unregistered();
     const registration = {
       definition,
       policy: validatedPolicy,
@@ -86,18 +82,10 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       dispose: () => {
         if (this.registrations.get(key) === registration) this.registrations.delete(key);
       },
-      start: async (caller, input, tx) => {
-        this.requireActive(registration);
-        return await this.startInternal(caller, input, registration, tx);
-      },
-      transition: async (caller, input, tx) => {
-        this.requireActive(registration);
-        return await this.transitionInternal(caller, input, registration, tx);
-      },
-      addDependencies: async (caller, input, tx) => {
-        this.requireActive(registration);
-        return await this.addDependenciesInternal(caller, input, registration, tx);
-      },
+      start: (caller, input, tx) => this.startInternal(caller, input, registration, tx),
+      transition: (caller, input, tx) => this.transitionInternal(caller, input, registration, tx),
+      addDependencies: (caller, input, tx) =>
+        this.addDependenciesInternal(caller, input, registration, tx),
     };
   }
 
@@ -156,15 +144,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   }
 
   private async snapshots(tx: Transaction, projectId: string, instanceIds: readonly string[]) {
-    const found = new Map<string, WorkflowSnapshot>();
-    for (const part of batches([...new Set(instanceIds)]))
-      for (const row of await tx.all<InstanceRow>(
-        `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
-        projectId,
-        ...part,
-      ))
-        found.set(row.id, this.snapshot(row));
-    return found;
+    const rows = await instancesIn(tx, projectId, instanceIds);
+    return new Map(rows.map((row) => [row.id, this.snapshot(row)]));
   }
 
   async list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]> {
@@ -220,18 +201,16 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
 
   async revisions(projectId: string, instanceIds: readonly string[], tx?: Transaction) {
     this.assertOpen();
+    const columns = 'id,project_id,workflow,version,state,revision,created_at,updated_at';
     return await this.read(tx, async (tx) => {
-      const found = new Map<string, Omit<WorkflowSnapshot, 'data'>>();
-      for (const part of batches([...new Set(instanceIds)]))
-        for (const row of await tx.all<Omit<InstanceRow, 'data_json'>>(
-          `SELECT id,project_id,workflow,version,state,revision,created_at,updated_at FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
-          projectId,
-          ...part,
-        )) {
+      // Read without data, which the snapshot is given as '{}' and then left out.
+      const rows = await instancesIn<InstanceRow>(tx, projectId, instanceIds, columns);
+      return new Map(
+        rows.map((row) => {
           const { data: _data, ...revision } = this.snapshot({ ...row, data_json: '{}' });
-          found.set(row.id, revision);
-        }
-      return found;
+          return [row.id, revision];
+        }),
+      );
     });
   }
 
@@ -332,31 +311,23 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     name: string,
     tx?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>> {
-    const ids = [...new Set(instanceIds)];
     return await this.reading(caller, tx, async (tx, caller) => {
-      if (!ids.length) return new Map();
       // One read of the instances, then two per definition among them, never two per instance.
-      const limits = new Map<string, { limit?: WorkflowLoopLimit; ids: string[] }>();
-      for (const row of await tx.all<Pick<InstanceRow, 'id' | 'workflow' | 'version'>>(
-        `SELECT id,workflow,version FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
-        caller.projectId,
-        ...ids,
-      )) {
-        const at = `${row.workflow}@${row.version}`;
-        if (!limits.has(at))
-          limits.set(at, {
-            limit: this.definition(row.workflow, row.version).policy?.limits?.find(
-              (item) => item.name === name,
+      const rows = await instancesIn(tx, caller.projectId, instanceIds, 'id,workflow,version');
+      const statuses = await limitStatusesOf(
+        tx,
+        rows.map(({ id, workflow, version }) => ({
+          id,
+          state: '',
+          policy: {
+            limits: this.definition(workflow, version).policy?.limits?.filter(
+              (limit) => limit.name === name,
             ),
-            ids: [],
-          });
-        limits.get(at)!.ids.push(row.id);
-      }
-      const statuses = new Map<string, WorkflowLimitStatus>();
-      for (const { limit, ids: some } of limits.values())
-        if (limit)
-          for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
-      return statuses;
+          },
+        })),
+        true,
+      );
+      return new Map([...statuses].flatMap(([id, [status]]) => (status ? [[id, status]] : [])));
     });
   }
 
@@ -366,12 +337,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus | undefined> {
     return await this.reading(caller, tx, async (tx, caller) => {
-      const row = await tx.get<Pick<InstanceRow, 'id' | 'workflow' | 'version' | 'state'>>(
-        'SELECT id,workflow,version,state FROM wf_instances WHERE project_id=? AND id=?',
-        caller.projectId,
-        instanceId,
-      );
-      check(row, 'not_found', 'Workflow instance not found', 404);
+      const row = await this.readRow(tx, caller.projectId, instanceId);
       const { policy } = this.definition(row.workflow, row.version);
       const [statuses] = (await limitStatusesOf(tx, [{ ...row, policy }])).values();
       return statuses.find((status) => status.exhausted);
@@ -540,10 +506,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     const declaring = new Map<Registration, string[]>();
     for (const row of rows) {
       const registration = this.registrations.get(`${row.workflow}@${row.version}`);
-      if (!registration?.policy?.children) continue;
-      const ids = declaring.get(registration);
-      if (ids) ids.push(row.id);
-      else declaring.set(registration, [row.id]);
+      if (registration?.policy?.children)
+        declaring.get(registration)?.push(row.id) ?? declaring.set(registration, [row.id]);
     }
     const found = new Map<string, string[]>();
     for (const [registration, all] of declaring)
@@ -582,10 +546,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     this.assertOpen();
     this.state.assertTransaction(tx);
     const parents = new Map<string, Set<string>>();
-    const link = (child: string, parent: string) => {
-      if (!parents.has(child)) parents.set(child, new Set());
-      parents.get(child)!.add(parent);
-    };
+    const link = (child: string, parent: string) =>
+      parents.get(child)?.add(parent) ?? parents.set(child, new Set([parent]));
     for (const row of await tx.all<{ source_id: string; target_id: string }>(
       "SELECT source_id,target_id FROM wf_dependencies WHERE project_id=? AND kind='declared'",
       projectId,

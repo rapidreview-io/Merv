@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   check,
+  clip,
   digest,
   newId,
   MervError,
@@ -39,15 +40,7 @@ import type {
   PiTurnInput,
   PiWork,
 } from './types.js';
-import {
-  actOf,
-  conversationCaller,
-  equal,
-  hash,
-  parse,
-  type PiCore,
-  publicCommand,
-} from './core.js';
+import { actOf, conversationCaller, equal, parse, type PiCore, publicCommand } from './core.js';
 import type { PiHosts } from './hosts.js';
 
 const anyJson = { keys: 'any', strings: 'json', depth: 512 } as const;
@@ -224,7 +217,7 @@ export class PiWorkerProtocol {
       const previous = await this.told(conversation, command, actor!.role);
       const told = [...previous.notes, ...notes];
       // What the installed plugins tell the turn about the project now, under the worker's cap.
-      const context = (await this.core.tools.context(caller)).slice(0, 32_000) || undefined;
+      const context = clip(await this.core.tools.context(caller), 32_000) || undefined;
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
       // grant names exactly it. switch_machine comes first, so no native tool's model name takes
       // its place. Its notes are kept the same way, so pi.prompt shows what the turn was given.
@@ -715,11 +708,6 @@ export class PiWorkerProtocol {
     const value = parsed.data as PiCompletion & PiTurnInput;
     plain(value.messages);
     const bytes = Buffer.from(value.checkpoint);
-    check(
-      bytes.length <= 2_000_000 && hash(bytes) === value.checkpointHash,
-      'pi_checkpoint_invalid',
-      'Conversation checkpoint failed verification',
-    );
     try {
       decodeCheckpoint({ content: value.checkpoint, hash: value.checkpointHash });
     } catch {

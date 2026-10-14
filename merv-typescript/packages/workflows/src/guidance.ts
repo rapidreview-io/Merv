@@ -1,38 +1,18 @@
 import { check, mapAsync } from '@merv/contracts';
-import type {
-  Caller,
-  Transaction,
-  WorkflowDefinition,
-  WorkflowEvaluationInput,
-} from '@merv/contracts';
+import type { Caller, Transaction, WorkflowEvaluationInput } from '@merv/contracts';
 import type {
   WorkflowDecision,
   WorkflowOverview,
-  WorkflowWorkStart,
-  WorkflowDependency,
-  WorkflowLimitStatus,
   WorkflowProvidedBlocker,
   ProcessGraph,
 } from './models.js';
 import { processGraph } from './process.js';
 import { readBlockers } from './blockers.js';
-import { decision, prepare, readContext } from './evaluation.js';
+import { decision, prepare, readContext, type Facts } from './evaluation.js';
 import { workStartsAt } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
 import { dependents, prerequisites } from './dependencies.js';
-import { WorkflowEngine, batches, type InstanceRow, type Registration } from './engine.js';
-
-/** What one decision reads besides the instance, read for many instances at once. */
-interface Facts {
-  /** Whose callbacks decide, resolved once so the limits read and the decision agree. */
-  registration?: Registration;
-  /** The installed graph, else the pinned one: guidance still draws an unloaded version. */
-  definition: WorkflowDefinition;
-  dependencies: WorkflowDependency[];
-  workStart: WorkflowWorkStart | null;
-  limits: WorkflowLimitStatus[];
-  blockers: WorkflowProvidedBlocker[];
-}
+import { WorkflowEngine, batches, type InstanceRow } from './engine.js';
 
 /** Guidance: each instance's decision, read for many at once. */
 export class WorkflowGuidance extends WorkflowEngine {
@@ -136,33 +116,20 @@ export class WorkflowGuidance extends WorkflowEngine {
       // makes a project with nothing left to do look busy. Work at an exhausted loop limit
       // still names an action, since a human may accept or end it, but nothing will be
       // dispatched for it and it is not ready for a worker.
-      const gated = (gate: string) =>
-        new Set(
-          workflows
-            .filter((item) => item.available && !item.terminal && item.currentGate === gate)
-            .map((item) => item.instanceId),
-        );
-      const stalled = gated('dependency_failed');
-      const escalated = gated('loop_limit_reached');
-      const waiting = (id: string) => stalled.has(id) || escalated.has(id);
+      const ids = (keep: (item: WorkflowDecision) => unknown) =>
+        workflows.filter(keep).map((item) => item.instanceId);
+      const live = (item: WorkflowDecision) => item.available && !item.terminal;
+      const waiting = (item: WorkflowDecision) =>
+        live(item) && ['dependency_failed', 'loop_limit_reached'].includes(item.currentGate);
       return {
         projectId: caller.projectId,
         workflows,
-        ready: workflows
-          .filter((item) => item.nextAction && !waiting(item.instanceId))
-          .map((item) => item.instanceId),
-        blocked: workflows
-          .filter(
-            (item) =>
-              item.available && !item.terminal && !item.nextAction && !waiting(item.instanceId),
-          )
-          .map((item) => item.instanceId),
-        stalled: [...stalled],
-        escalated: [...escalated],
-        terminal: workflows.filter((item) => item.terminal).map((item) => item.instanceId),
-        unavailable: workflows
-          .filter((item) => !item.available && !item.terminal)
-          .map((item) => item.instanceId),
+        ready: ids((item) => item.nextAction && !waiting(item)),
+        blocked: ids((item) => live(item) && !item.nextAction && !waiting(item)),
+        stalled: ids((item) => live(item) && item.currentGate === 'dependency_failed'),
+        escalated: ids((item) => live(item) && item.currentGate === 'loop_limit_reached'),
+        terminal: ids((item) => item.terminal),
+        unavailable: ids((item) => !item.available && !item.terminal),
       };
     });
   }
@@ -231,12 +198,14 @@ export class WorkflowGuidance extends WorkflowEngine {
     checks: boolean,
   ): Promise<{ decision: WorkflowDecision; facts: Facts }[]> {
     const facts = await this.facts(tx, caller.projectId, rows);
+    // Each row's data is parsed once; prepare and every callback get copies of their own.
+    const snapshots = rows.map((row) => this.snapshot(row));
     if (checks)
       await prepare(
         caller,
-        rows.map((row) => ({
+        rows.map((row, index) => ({
           registration: facts.get(row.id)!.registration,
-          snapshot: this.snapshot(row),
+          snapshot: snapshots[index]!,
         })),
         tx,
       );
@@ -247,27 +216,17 @@ export class WorkflowGuidance extends WorkflowEngine {
         caller.session || !caller.actorId
           ? Promise.resolve(false)
           : this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx));
-    const decided = await mapAsync(rows, async (row) => {
+    const decided = await mapAsync(rows, async (row, index) => {
       const known = facts.get(row.id)!;
       const context = readContext({
         caller,
-        snapshot: this.snapshot(row),
+        snapshot: snapshots[index]!,
         tx,
         dependencies: known.dependencies,
       });
       return {
         facts: known,
-        decision: await decision(
-          known.definition,
-          known.registration?.policy,
-          context,
-          query,
-          known.workStart,
-          known.limits,
-          known.blockers,
-          checks,
-          isAdmin,
-        ),
+        decision: await decision(known, context, query, checks, isAdmin),
       };
     });
     // Without a registration no program callback ran.

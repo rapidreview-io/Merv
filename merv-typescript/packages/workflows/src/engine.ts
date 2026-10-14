@@ -1,4 +1,4 @@
-import { check, within } from '@merv/contracts';
+import { check, forRead, mapAsync, within } from '@merv/contracts';
 import type {
   Caller,
   Data,
@@ -19,6 +19,22 @@ export const batches = <T>(items: readonly T[]): T[][] =>
   Array.from({ length: Math.ceil(items.length / batchSize) }, (_, index) =>
     items.slice(index * batchSize, (index + 1) * batchSize),
   );
+/** The project's instances among `ids`, read in bounded parts; one it does not hold is left out. */
+export const instancesIn = async <T = InstanceRow>(
+  sql: Sql,
+  projectId: string,
+  ids: readonly string[],
+  columns = '*',
+) =>
+  (
+    await mapAsync(batches([...new Set(ids)]), (part) =>
+      sql.all<T>(
+        `SELECT ${columns} FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
+        projectId,
+        ...part,
+      ),
+    )
+  ).flat();
 
 export interface InstanceRow {
   id: string;
@@ -64,12 +80,8 @@ export class WorkflowEngine {
    * Where a read runs: in the `tx` given, asserted, or else the ambient transaction; outside
    * any, in a read-only snapshot transaction of its own, which never waits for the writer lock.
    */
-  protected readonly read = async <T>(
-    tx: Transaction | undefined,
-    fn: (tx: Transaction) => Promise<T>,
-  ): Promise<T> =>
-    // With a place, `within` always hands over a transaction.
-    await within(this.state, tx, (sql) => fn(sql as Transaction), 'read');
+  protected readonly read = <T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) =>
+    forRead(this.state, fn, tx);
   /** Where a command runs: as a read does, but outside any transaction in a write one. */
   protected readonly write = async <T>(
     tx: Transaction | undefined,

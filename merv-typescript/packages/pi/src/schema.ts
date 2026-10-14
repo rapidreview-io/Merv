@@ -19,29 +19,21 @@ export const sendInput = z
   .strict();
 /** pi.voice: the conversation, and the browser's WebRTC offer. */
 export const voiceInput = z.object({ id, sdp: z.string().min(1).max(100_000) }).strict();
-/** A part of the page to bring into view, as the page names its parts (a board's shape or frame). */
-const focus = z.string().trim().min(1).max(200).optional();
+/** screen.show: what the agent puts on the person's screen: one record, or one page, and the
+ * part of the page to bring into view, as the page names its parts (a board's shape or frame). */
+export const showInput = z
+  .object({
+    record: z.string().trim().min(1).max(200).optional(),
+    page: z.string().trim().min(1).max(100).optional(),
+    focus: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
 /** screen.look: what the agent wants to know about the person's screen. */
 export const lookInput = z
   .object({
     question: z.string().max(1_000).default(''),
     /** A record or page the person is not on: their page draws it out of sight to look at it. */
-    at: z
-      .object({
-        record: z.string().trim().min(1).max(200).optional(),
-        page: z.string().trim().min(1).max(100).optional(),
-        focus,
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-/** screen.show: what the agent puts on the person's screen: one record, or one page. */
-export const showInput = z
-  .object({
-    record: z.string().trim().min(1).max(200).optional(),
-    page: z.string().trim().min(1).max(100).optional(),
-    focus,
+    at: showInput.optional(),
   })
   .strict();
 /** pi.screen: the person's page answers what was asked of it: a look with a snapshot of itself,
@@ -71,6 +63,8 @@ export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
 /** pi.run: the conversation, the turn and the proposal whose call the person runs. */
 export const runInput = z.object({ id, commandId: id, proposalId: id }).strict();
+/** The name of an environment variable. */
+const envVar = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 /** A PiMachine key, e.g. 'standard' or 'large'. */
 export const machineKey = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
 /** pi.machine.set */
@@ -135,14 +129,8 @@ export const piConfig = z
         { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'low' },
         { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
       ]),
-    secretEnv: z
-      .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-      .default('MERV_PI_SECRET'),
-    modelApiKeyEnv: z
-      .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-      .default('MERV_PI_MODEL_API_KEY'),
+    secretEnv: envVar.default('MERV_PI_SECRET'),
+    modelApiKeyEnv: envVar.default('MERV_PI_MODEL_API_KEY'),
     /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
     dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
     /** How long a turn may go without progress: to reach its machine, then between any two signs
@@ -155,10 +143,7 @@ export const piConfig = z
     host: z
       .object({
         projectId: id,
-        credentialEnv: z
-          .string()
-          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-          .default('MERV_PI_HOST_KEY'),
+        credentialEnv: envVar.default('MERV_PI_HOST_KEY'),
       })
       .strict(),
     /** From MERV_FLEET_RUNTIMES, keyed like the Sandboxes runtime profiles; the first is the
@@ -198,14 +183,8 @@ export const piConfig = z
           .default(
             'https://api.cloudflare.com/client/v4/accounts/{account}/browser-run/screenshot',
           ),
-        tokenEnv: z
-          .string()
-          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-          .default('MERV_BROWSER_RENDER_TOKEN'),
-        accountEnv: z
-          .string()
-          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-          .default('MERV_BROWSER_RENDER_ACCOUNT'),
+        tokenEnv: envVar.default('MERV_BROWSER_RENDER_TOKEN'),
+        accountEnv: envVar.default('MERV_BROWSER_RENDER_ACCOUNT'),
         /** How long the person's page has to answer a look. */
         waitMs: z.number().int().min(1_000).max(60_000).default(12_000),
       })
