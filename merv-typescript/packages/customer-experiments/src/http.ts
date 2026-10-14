@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { check, MervError } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 import { customerPage } from './customer-page.js';
+import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
 
 // The invitation can be shared. Idempotency must be an unguessable client secret, not a title
@@ -34,6 +35,36 @@ const uploadSchema = z
     mediaType: z.string().max(100).optional(),
   })
   .strict();
+
+/** Public, credential-free documentation; request creation retains its own admission gate. */
+export function startHttp(options: StartPageOptions): MountHandler {
+  return async (req, res, r) => {
+    const path = r.url.pathname;
+    if (
+      !['GET', 'HEAD'].includes(req.method ?? 'GET') ||
+      !['/start', '/start/', '/start/agent.md'].includes(path)
+    )
+      throw new MervError('not_found', 'Route not found', 404);
+    const markdown = path === '/start/agent.md' || req.headers.accept?.includes('text/markdown');
+    res.setHeader(
+      'Content-Type',
+      markdown ? 'text/markdown; charset=utf-8' : 'text/html; charset=utf-8',
+    );
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Vary', 'Accept');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.end(
+      req.method === 'HEAD'
+        ? undefined
+        : markdown
+          ? agentInstructions(options)
+          : startPage(options),
+    );
+  };
+}
 
 export function customerHttp(service: CustomerService): MountHandler {
   return async (req, res, r) => {

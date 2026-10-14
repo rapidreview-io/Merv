@@ -11,7 +11,7 @@ import { RequestStore } from './store.js';
 import { RequestBuckets } from './data.js';
 import { ResendResultMailer, StripePayments } from './payment.js';
 import { CustomerService } from './service.js';
-import { customerHttp } from './http.js';
+import { customerHttp, startHttp } from './http.js';
 import { registerWorkerTools } from './worker-tools.js';
 import { hostedCustomerCompute } from './hosted-compute.js';
 
@@ -152,6 +152,15 @@ export const customerExperimentsPlugin = {
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain);
       yield ctx.api.mount('/customer-experiments', customerHttp(service), { public: true });
+      yield ctx.api.mount(
+        '/start',
+        startHttp({
+          publicOrigin: config.publicOrigin,
+          publicIntake: false,
+          livePayments: config.stripe?.live ?? false,
+        }),
+        { public: true },
+      );
       let pending: Promise<void> | undefined;
       const tick = () => {
         if (!pending)

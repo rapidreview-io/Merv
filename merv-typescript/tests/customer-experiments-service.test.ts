@@ -17,7 +17,7 @@ import type { PiRuntime, PiProfile } from '@merv/pi/types';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 import { CustomerService } from '../packages/customer-experiments/src/service.js';
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
-import { customerHttp } from '../packages/customer-experiments/src/http.js';
+import { customerHttp, startHttp } from '../packages/customer-experiments/src/http.js';
 import type { ExperimentPlan } from '../packages/customer-experiments/src/types.js';
 import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
 import type { PaidCheckout, Payments } from '../packages/customer-experiments/src/payment.js';
@@ -203,6 +203,11 @@ async function fixture(t: TestContext) {
   const disposers = await service.registerIntake(tools);
   const api = new ApiServer(scope, tools, { port: 0 });
   api.mount('/customer-experiments', customerHttp(service), { public: true });
+  api.mount(
+    '/start',
+    startHttp({ publicOrigin: 'https://merv.example', publicIntake: false, livePayments: false }),
+    { public: true },
+  );
   const url = await api.start();
   t.after(async () => {
     await api.stop();
@@ -263,6 +268,7 @@ async function fixture(t: TestContext) {
     return domain.get(await service.caller(record), record.experimentId!);
   };
   return {
+    url,
     state,
     scope,
     domain,
@@ -771,4 +777,29 @@ test('the customer monitoring bookmark survives the agent intake expiry', async 
   await assert.rejects(f.store.authorize(created.id, created.customerToken, ['agent']), {
     code: 'unauthorized',
   });
+});
+
+test('public start page and agent guide are readable without exposing or bypassing invitation access', async (t) => {
+  const f = await fixture(t);
+  const page = await fetch(f.url + '/start');
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /A good question/);
+  assert.match(html, /Invitation-only preview/);
+  assert.match(html, /no real charge/);
+  assert.match(html, /href="\/start\/agent.md"/);
+  assert.ok(!html.includes(intakeKey));
+  const docs = await fetch(f.url + '/start/agent.md');
+  assert.match(docs.headers.get('content-type')!, /text\/markdown/);
+  const text = await docs.text();
+  assert.match(text, /Authorization: Bearer <MERV_EXPERIMENT_INVITE>/);
+  assert.match(text, /Never call \/accept or \/checkout/);
+  assert.ok(!text.includes(intakeKey));
+  const negotiated = await fetch(f.url + '/start', { headers: { Accept: 'text/markdown' } });
+  assert.equal(await negotiated.text(), text);
+  assert.equal((await fetch(f.url + '/start/requests', { method: 'POST' })).status, 404);
+  assert.equal(
+    (await f.send(base, undefined, { requestId: randomUUID(), title: 'No invitation' })).status,
+    401,
+  );
 });
