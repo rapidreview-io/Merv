@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { Invitations } from './invitations';
+import { invitationHint, Invitations } from './invitations';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { permits } from '@merv/scope/rules';
@@ -476,7 +476,7 @@ export function SessionProvider({
   accountOnly?: boolean;
 }) {
   const invitationId = new URLSearchParams(window.location.search).get('invitation');
-  if (invitationId) sessionStorage.setItem('merv:invitation', invitationId);
+  if (invitationId) invitationHint.set(invitationId);
   const navigate = useNavigate();
   const [auth, setAuth] = useState<Awaited<ReturnType<typeof browserAuth>>>();
   const [authReady, setAuthReady] = useState(false);
@@ -552,7 +552,7 @@ export function SessionProvider({
     setState((old) => (old.phase === 'ready' && old.epoch === epoch ? old : { phase: 'checking' }));
     checking.current = true;
     resolveAccountSession({
-      invitations: !!(invitationId ?? sessionStorage.getItem('merv:invitation')),
+      invitations: !!(invitationId ?? invitationHint.get()),
     })
       .then((result) => {
         failures.current = 0;
@@ -627,7 +627,7 @@ export function SessionProvider({
     const url = new URL(window.location.href);
     url.searchParams.delete('invitation');
     window.history.replaceState(null, '', url);
-    sessionStorage.removeItem('merv:invitation');
+    invitationHint.clear();
     setProject(id);
     reload();
   };

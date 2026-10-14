@@ -3,6 +3,31 @@ import type { ProjectInvitation } from '@merv/contracts/scope-models';
 import { accountRequest, scopeVersion } from './api';
 import { term } from './components';
 
+/** The invitation an emailed link named, kept for this tab; a browser that blocks storage keeps none. */
+export const invitationHint = {
+  get: () => {
+    try {
+      return sessionStorage.getItem('merv:invitation');
+    } catch {
+      return null;
+    }
+  },
+  set: (id: string) => {
+    try {
+      sessionStorage.setItem('merv:invitation', id);
+    } catch {
+      // Nothing is kept; the link's own address still names it.
+    }
+  },
+  clear: () => {
+    try {
+      sessionStorage.removeItem('merv:invitation');
+    } catch {
+      // Nothing was kept.
+    }
+  },
+};
+
 /** An invitation is an offer, not project access. Opening this view never accepts it. */
 export function Invitations({
   projectId,
@@ -22,8 +47,7 @@ export function Invitations({
     ? `/projects/${encodeURIComponent(projectId)}/invitations`
     : '/account/invitations';
   const highlighted =
-    new URLSearchParams(window.location.search).get('invitation') ??
-    sessionStorage.getItem('merv:invitation');
+    new URLSearchParams(window.location.search).get('invitation') ?? invitationHint.get();
   useEffect(() => {
     let active = true;
     setLoaded(false);
@@ -70,7 +94,7 @@ export function Invitations({
         const url = new URL(window.location.href);
         url.searchParams.delete('invitation');
         window.history.replaceState(null, '', url);
-        sessionStorage.removeItem('merv:invitation');
+        invitationHint.clear();
       }
       if (action === 'accept') accepted?.(item.projectId);
     } catch (failure) {
