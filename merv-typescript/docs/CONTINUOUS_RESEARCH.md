@@ -16,7 +16,7 @@ The equivalent tool input is:
 }
 ```
 
-The project definition still needs problem, scope, goals and constraints. Automatic mode requires at least one selected task or experiment. Worker execution still requires a configured Runner and enabled Sessions dispatch; creating a cycle does not launch processes itself.
+The project definition still needs problem, scope, goals and constraints. Automatic mode requires at least one selected task or experiment, and selects no other work; `research.replan` keeps both rules. Worker execution still requires a configured Runner and enabled Sessions dispatch; creating a cycle does not launch processes itself.
 
 ## Handoffs
 

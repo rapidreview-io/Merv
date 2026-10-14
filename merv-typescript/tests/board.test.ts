@@ -356,8 +356,18 @@ test('a sketch path reads as the points a pen passes: lines, curves, arcs and cl
   assert.equal(strokesOf('M0 0 L1 1 M5 5 L6 6').length, 2, 'each move begins a stroke');
   assert.throws(() => strokesOf('M 0 0 X 3'), /could not be read/);
   assert.throws(() => strokesOf('L 1 1'), /does not begin with M/);
-  for (const d of ['M0 0 L1e999 5', 'M1e308 0 L-1e308 0'])
-    assert.throws(() => strokesOf(d), /out of range/, 'no number overflows to no coordinate');
+  // Too fine a number underflowed too: an arc whose ends nearly met, or a sketch too small to scale.
+  for (const d of [
+    'M0 0 L1e999 5',
+    'M1e308 0 L-1e308 0',
+    'M0 0 a1 1 0 0 1 1e-200 1e-200',
+    'M0 0 L1e-310 1e-310',
+  ])
+    assert.throws(
+      () => strokesOf(d),
+      /out of range/,
+      `${d} overflows or underflows to no coordinate`,
+    );
   // Apart, with a deadline: a parser that read the number as another Z looped forever.
   const run = spawnSync(
     process.execPath,

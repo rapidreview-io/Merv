@@ -19,15 +19,17 @@ const refuse = (why: string) => {
   throw new MervError('board_bad_path', `A sketch path could not be read: ${why}`, 400);
 };
 
+/** No drawing needs a larger number or a finer one: summed, scaled or squared, either could
+ * overflow or underflow to no coordinate. */
+const drawable = (n: number) => !n || (Math.abs(n) <= 1e9 && Math.abs(n) >= 1e-9);
 function tokens(d: string): (string | number)[] {
   const out: (string | number)[] = [];
   const re = /([MmLlHhVvCcSsQqTtAaZz])|([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)|([\s,]+)|(.)/g;
   for (const [, command, number, , other] of d.matchAll(re)) {
     if (other) refuse(`"${other}" is not part of a path`);
     if (command) out.push(command);
-    // No drawing needs more; summed or scaled, a larger one could overflow to no coordinate.
     else if (number !== undefined)
-      out.push(Math.abs(+number) <= 1e9 ? +number : refuse(`${number} is out of range`));
+      out.push(drawable(+number) ? +number : refuse(`${number} is out of range`));
   }
   return out;
 }

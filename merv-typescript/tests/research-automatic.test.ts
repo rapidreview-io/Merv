@@ -827,6 +827,18 @@ test('worker sessions cannot authorize automatic research or advance the outer c
   );
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'defining');
   await assert.rejects(f.create([]), { code: 'research_work_required' });
+  // Nor can a replan leave an automatic cycle without a task or experiment, or add other work.
+  const replan = (dependsOn: string[]) =>
+    f.research.replan(f.owner, {
+      researchId: cycle.id,
+      expectedRevision: cycle.workflow.revision,
+      dependsOn,
+      requestId: f.id(),
+    });
+  await assert.rejects(replan([]), { code: 'research_work_required' });
+  const manual = await f.create([], { automatic: false });
+  await assert.rejects(replan([work.id, manual.id]), { code: 'invalid_research_input' });
+  assert.deepEqual((await replan([work.id])).researchDependencies, [work.id]);
 });
 
 test('publication-aware automation upgrades the durable subscription and wakes existing cycles', async (t) => {

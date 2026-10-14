@@ -45,6 +45,7 @@ import {
   inject,
   materialise,
   ready,
+  selectable,
   unpublished,
   type Choice,
 } from './integration.js';
@@ -432,6 +433,7 @@ export class ResearchService implements Research {
           'A cycle is replanned before it reflects',
           409,
         );
+        if (record.automation) await selectable(this, caller, { ...input, automatic: true }, tx);
         const current = record.researchDependencies;
         await this.handle!.addDependencies(
           caller,

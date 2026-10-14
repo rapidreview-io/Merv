@@ -73,6 +73,28 @@ export async function follow(
   await digested(ctx, caller, previous, tx, true);
 }
 
+/** Every selected work exists; an automatic cycle's are tasks and experiments, one at least. */
+export async function selectable(
+  ctx: ResearchContext,
+  caller: Caller,
+  { dependsOn, automatic }: { dependsOn: string[]; automatic?: boolean },
+  tx: Transaction,
+) {
+  for (const id of dependsOn) {
+    const work = await ctx.workflows.get(caller, id, tx);
+    check(
+      !automatic || ['task', 'experiment'].includes(work.workflow),
+      'invalid_research_input',
+      'Automatic research selects tasks and experiments',
+    );
+  }
+  check(
+    !automatic || dependsOn.length > 0,
+    'research_work_required',
+    'Select at least one task or experiment for automatic research',
+  );
+}
+
 /**
  * Opens a cycle inside a command its caller already recorded. research_commands has one row
  * per request, so the cycle an advance opens must not record a second one under the same ID.
@@ -91,23 +113,11 @@ export async function begin(
     'Assigned workers cannot create an outer research cycle',
     403,
   );
-  for (const id of input.dependsOn) {
-    const work = await ctx.workflows.get(caller, id, tx);
-    check(
-      !input.automatic || ['task', 'experiment'].includes(work.workflow),
-      'invalid_research_input',
-      'Automatic research selects tasks and experiments',
-    );
-  }
+  await selectable(ctx, caller, input, tx);
   check(
     input.automatic || input.maxCycles === undefined,
     'invalid_research_input',
     'maxCycles requires automatic mode',
-  );
-  check(
-    !input.automatic || input.dependsOn.length > 0,
-    'research_work_required',
-    'Select at least one task or experiment for automatic research',
   );
   const workflow = await ctx.handle!.start(
     caller,
