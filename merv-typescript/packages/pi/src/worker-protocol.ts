@@ -409,8 +409,8 @@ export class PiWorkerProtocol {
     return { conversation, command, offered, notes: context ? moveNotes(context) : [] };
   }
   /** What the agent-move rules read for this turn on `machine`; targets are only machines its
-   * person may pick here, so without write access or a Sandboxes connection switch_machine is
-   * never offered. */
+   * person may pick here, so without write access or an offer of another machine switch_machine
+   * is never offered. */
   private async moveContext(
     tx: Transaction,
     host: PiHostRecord,

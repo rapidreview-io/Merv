@@ -577,28 +577,26 @@ test('references are read once, at the offer: a lease check needs no program cal
   let references: unknown = { claim: 'first', taskArtifacts: ['a'], reviewArtifacts: [] };
   const rules = policy(f.scope);
   rules.assignments![0].references = () => references as any;
+  // Registration keeps its own copy of the callbacks, so these are armed only after the offer.
+  let armed = false;
+  const trap = (what: string) => {
+    if (armed) throw new Error(what);
+  };
+  const { check } = rules.actions[0];
+  const { build } = rules.assignments![0];
+  rules.actions[0].check = async (c) => (trap('Exit callbacks are not authority'), check(c));
+  rules.describe = () => (trap('Guidance is not authority'), { label: 'Work', references: [] });
+  rules.assignments![0].build = async (c) => (trap('Prompt rendering is not authority'), build(c));
   const handle = await f.workflows.register({ ...definition, name: 'pure-metadata' }, rules);
   const instance = await handle.start(f.caller, { workflow: 'pure-metadata', requestId: 'pure' });
   const offered = await f.offer(instance);
-  const { check } = rules.actions[0];
-  const { build } = rules.assignments![0];
-  rules.actions[0].check = async () => {
-    throw new Error('Exit callbacks are not authority');
-  };
-  rules.describe = () => {
-    throw new Error('Guidance is not authority');
-  };
-  rules.assignments![0].build = async () => {
-    throw new Error('Prompt rendering is not authority');
-  };
+  armed = true;
   references = { claim: 'second', taskArtifacts: ['new'], reviewArtifacts: [] };
   assert.equal((await f.admit(offered, 'claim')).input.claimId, 'first');
   await assert.rejects(async () => await f.admit(offered, 'claim', { claimId: 'second' }), {
     code: 'execution_arguments_forbidden',
   });
-  rules.actions[0].check = check;
-  delete rules.describe;
-  rules.assignments![0].build = build;
+  armed = false;
   for (const invalid of [
     null,
     { claim: 42 },

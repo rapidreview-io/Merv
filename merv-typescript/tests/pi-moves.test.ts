@@ -111,7 +111,7 @@ test('switch_machine is not offered while agent moves are switched off', () => {
 });
 
 test('switch_machine is not offered where the person may not choose another machine', () => {
-  // No Sandboxes connection in the project, or less than write: the service passes no targets.
+  // No offer of another machine, or less than write: the service passes no targets.
   assert.equal(moveTool(context({ targets: [] })), null);
   assert.deepEqual(refusal({ targets: [] }), { code: 'machine_unavailable' });
   assert.deepEqual(moveRefusal(context(), 'huge'), { code: 'machine_unavailable' });

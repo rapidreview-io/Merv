@@ -47,7 +47,7 @@ test('Pi binds before launching, reuses its durable conversation and runs with n
   const bound = await f.claimed(snapshot.commands[0]!);
   await f.pi.begin(bound.token, bound.input);
   const result = await f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} });
-  assert.ok(result);
+  assert.equal((result as { error?: unknown }).error, undefined, 'it reads as the person');
   await f.pi.complete(bound.token, f.completion(bound.input));
   assert.match((await responder.inspect(source, reference))!, /finished without resolving/);
 });
@@ -75,6 +75,7 @@ test('an obsolete question does not launch a turn; revoked authority cannot star
       source,
       attach: async () => true,
     }),
+    { code: 'forbidden' },
   );
 });
 

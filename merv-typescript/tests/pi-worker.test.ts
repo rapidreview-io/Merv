@@ -235,7 +235,8 @@ async function fixture(
           });
           return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
         }
-        if (options.cancel) {
+        // A turn revoked while it calls a tool makes the call first.
+        if (options.cancel && !(options.toolCall && modelRequests.length === 1)) {
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(
@@ -1205,6 +1206,7 @@ test('revocation aborts an outstanding read tool before another model request', 
   const app = await fixture({ toolCall: true, slowTool: true, cancel: true });
   await app.run();
   assert.equal(app.modelRequests.length, 1);
+  assert.equal(app.toolRequests, 1);
   assert.deepEqual(app.failures, ['cmd_1']);
   assert.equal(app.completions.length, 0);
 });
@@ -1329,6 +1331,8 @@ function slotServer(
     next(count: number, body: Record<string, unknown>): PiNextReply | Response;
     model(name: string, body: Record<string, unknown>): Response;
     tool?(body: Record<string, unknown>): unknown;
+    /** What any other route answers in place of `accepted`. */
+    replies?: Record<string, object>;
   },
 ) {
   const controller = new AbortController();
@@ -1354,7 +1358,7 @@ function slotServer(
       const result = await handlers.tool?.(body);
       return result instanceof Response ? result : json({ result: result ?? { title: 'Project' } });
     }
-    return json(accepted[route]);
+    return json(handlers.replies?.[route] ?? accepted[route]);
   };
   return {
     controller,
@@ -1375,6 +1379,20 @@ function slotServer(
     },
   };
 }
+
+test('a completion receipt the worker cannot read ends the turn instead of sending it again', async () => {
+  const server = slotServer(1, {
+    next: (count) => (count === 1 ? { work: assignment('a') } : { work: null, retire: true }),
+    model: (name) => new Response(sse([message(`Answer ${name}`)], `Answer ${name}`)),
+    replies: { complete: { saved: 'maybe' } },
+  });
+  await server.run();
+  assert.equal(server.bodies('complete').length, 1);
+  assert.deepEqual(
+    server.bodies('fail').map((body) => body.commandId),
+    ['cmd_a'],
+  );
+});
 
 test('one worker accepts the same command ID in different conversations', async () => {
   const queue = ['a', 'b'].map((name) => assignment(name, { id: 'cmd_same' }));

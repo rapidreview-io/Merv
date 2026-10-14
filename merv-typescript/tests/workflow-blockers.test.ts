@@ -240,7 +240,7 @@ test('a published blocker gates the read and the overview, and leaves a named ac
   await assert.rejects(f.publish(free.id, [merge, merge]), refused('invalid_blocker', 500));
   await assert.rejects(f.publish('missing', [merge]), refused('not_found', 404));
   const stranger: Caller = { actorId: 'nobody', projectId: f.owner.projectId };
-  await assert.rejects(f.workflows.blockers(stranger));
+  await assert.rejects(f.workflows.blockers(stranger), refused('forbidden', 403));
 });
 
 test('the blocker table arrives on a populated database and keeps its identity', async (t) => {

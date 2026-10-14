@@ -246,7 +246,9 @@ export async function runPiWorker(
         controller.signal,
         options.pollIntervalMs ?? 1_000,
       );
-      while (!controller.signal.aborted) {
+      // A save Main could not make yet, or an outage, is tried again, each time twice as late up to
+      // 8 s; any other answer ends the turn rather than sending it all again.
+      for (let attempt = 0; !controller.signal.aborted; attempt++) {
         try {
           const saved = await request<{ saved: boolean }>(
             'complete',
@@ -259,10 +261,9 @@ export async function runPiWorker(
           }
           if (saved.saved !== false) throw new Error('Invalid completion receipt');
         } catch (error) {
-          if (controller.signal.aborted || (error instanceof WorkerHttpError && error.status < 500))
-            throw error;
+          if (controller.signal.aborted || !transient(error)) throw error;
         }
-        await until(DELAY);
+        await until(Math.min(DELAY * 2 ** attempt, 8_000));
       }
       if (controller.signal.aborted && !savedResult) throw new Error('Turn expired');
     } catch (error) {

@@ -31,7 +31,7 @@ Warm, calm, brief. Let the person interrupt you: stop and listen. If you did not
 /** The conversation so far, as GPT-Live's seed history: its last turns, short, in order. */
 export function voiceHistory(commands: PiCommand[]) {
   const said = commands.flatMap((command) => command.messages).slice(-12);
-  const items = said.map((message) => ({
+  return said.map((message) => ({
     type: 'message',
     role: message.role,
     content: [
@@ -42,11 +42,6 @@ export function voiceHistory(commands: PiCommand[]) {
       },
     ],
   }));
-  let budget = 24_000;
-  return items
-    .reverse()
-    .filter((item) => (budget -= item.content[0]!.text.length) >= 0)
-    .reverse();
 }
 
 export interface VoiceConfig {

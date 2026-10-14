@@ -725,6 +725,11 @@ test('dependency policy validation and immutable contexts prevent changing regis
     action: 'finish',
     requestId: 'finish',
   });
+  // The move is judged by the success states as registered, not as the caller changed them.
+  const finished = (await state.events(caller.projectId)).find(
+    (event) => event.subjectId === upstream.id && event.data.action === 'finish',
+  );
+  assert.equal(finished?.data.settled, true);
   const downstream = await start(handle, caller, 'preparation', 'downstream', [upstream.id]);
   assert.equal(
     (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)![0].settled,

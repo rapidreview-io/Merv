@@ -92,6 +92,5 @@ test('the seed history is the last turns, each cut short, and never more than th
   const history = voiceHistory(Array.from({ length: 20 }, (_, n) => turn(`q${n}`, long)));
   assert.ok(history.length <= 12);
   assert.ok(history.every((item) => item.content[0]!.text.length <= 1_801));
-  assert.ok(history.reduce((sum, item) => sum + item.content[0]!.text.length, 0) <= 24_000);
   assert.equal(history.at(-1)!.role, 'assistant', 'it ends where the conversation ends');
 });

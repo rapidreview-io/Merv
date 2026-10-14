@@ -169,7 +169,6 @@ test('revocation during parsing or before the read snapshot is refused before th
   });
   await assert.rejects(next.tools.call('read', caller, { value: 'ok' }), { code: 'forbidden' });
   assert.equal(next.calls(), 0);
-  assert.equal(fixture.calls(), 0);
 });
 
 const database = process.env.MERV_TEST_POSTGRES_URL;

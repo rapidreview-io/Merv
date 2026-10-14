@@ -1,4 +1,4 @@
-import { ENGINE_ACTIONS, identifier, valid } from './definition.js';
+import { identifier, valid } from './definition.js';
 import type { Sql, WorkflowDefinition, WorkflowLoopLimit, WorkflowPolicy } from '@merv/contracts';
 import type { WorkflowLimitStatus } from './models.js';
 
@@ -40,10 +40,9 @@ export function validateLimits(
       const edge = definition.edges.find(
         (edge) => edge.from === limit.from && edge.action === action,
       );
-      // A limit is counted in wf_history by state and action, so one over an engine action
-      // would count the engine's own bookkeeping.
+      // No edge is an engine action (validateDefinition), whose bookkeeping a count would hold.
       valid(
-        edge && edge.to !== limit.from && !ENGINE_ACTIONS.includes(action),
+        edge && edge.to !== limit.from,
         `Limit ${limit.name} may only cap an edge that leaves ${limit.from} for another state`,
       );
       const key = `${limit.from}:${action}`;

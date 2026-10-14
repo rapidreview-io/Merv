@@ -691,7 +691,9 @@ export class PiService implements Pi {
           p.id === proposal.id ? run.outcome : undefined,
         );
         this.runs.delete(proposal.id);
-        return { result, told: find(kept)!.ran!.told!, whole: told.whole };
+        // An interruption kept first is what the agent is told: the result is then the page's.
+        const said = find(kept)!.ran!.told!;
+        return { result, told: said, whole: told.whole && said === told.told };
       } catch (error) {
         if (attempt === SAVE_ATTEMPTS) throw error;
         await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));

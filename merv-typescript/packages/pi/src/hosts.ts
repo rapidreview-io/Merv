@@ -456,7 +456,7 @@ export class PiHosts implements FleetOwner {
         tx,
         host,
         'failed',
-        fact(next)?.error === 'person_capped'
+        lost(fact(next)) === 'wallet_refused'
           ? 'spending limit'
           : fact(next)?.error === 'runtime_refused'
             ? 'no free machine'
@@ -590,7 +590,8 @@ export class PiHosts implements FleetOwner {
     this.core.forget(turn);
     if (once) turn.retried = true;
     Object.assign(turn, { status: 'waiting', workerId: null });
-    for (const claimed of ['startedAt', 'tools', 'canMove'] as const) delete turn[claimed];
+    for (const claimed of ['startedAt', 'tools', 'canMove', 'notes', 'context'] as const)
+      delete turn[claimed];
     return true;
   }
   /** N becomes C: at cut-over once proven ready (T4), or first when C is lost (T7, its claimed

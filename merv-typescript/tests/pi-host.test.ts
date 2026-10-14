@@ -357,13 +357,16 @@ test('a new machine that never proves ready fails the move, and the current one 
   await f.pi.tick();
   view = await lastMove();
   assert.deepEqual([view.moving, view.lastMove?.reason], [null, 'no free machine']);
-  // The person's daily cap, reached while the new machine queued, is a spending limit.
-  await f.pi.setMachine(f.operator, { machine: 'large' });
-  const capped = (await f.host(bound.work.command)).next!;
-  await released(f, capped.allocationId, { error: 'person_capped' });
-  await f.pi.tick();
-  view = await lastMove();
-  assert.deepEqual([view.moving, view.lastMove?.reason], [null, 'spending limit']);
+  // The person's daily cap, reached while the new machine queued, and the provider's spending
+  // limit are each a spending limit.
+  for (const error of ['person_capped', 'wallet_refused']) {
+    await f.pi.setMachine(f.operator, { machine: 'large' });
+    const capped = (await f.host(bound.work.command)).next!;
+    await released(f, capped.allocationId, { error });
+    await f.pi.tick();
+    view = await lastMove();
+    assert.deepEqual([view.moving, view.lastMove?.reason], [null, 'spending limit'], error);
+  }
   // A move holds two machines, so without room for a third it does not start.
   f.fleet.free = async () => 2;
   view = await f.pi.setMachine(f.operator, { machine: 'large' });
@@ -400,6 +403,15 @@ test('when the current machine is lost during a move, a turn that wrote ends and
   }
   const host = await f.host(b);
   assert.deepEqual([host.current?.allocationId, host.next], [next!.allocationId, null]);
+  // The turn that showed nothing is told the machine it now runs on, not the one it lost.
+  const again = await f.claimed(await command(f, quiet));
+  assert.equal(again.work.command.id, quiet.id);
+  assert.deepEqual(
+    again.work.notes
+      .filter((note) => note.startsWith('Machine:'))
+      .map((note) => note.split(' (')[0]),
+    ['Machine: Large'],
+  );
 });
 
 test('a turn whose machine a rollout takes before it shows anything waits for a fresh one, across the restart too, once', async (t) => {

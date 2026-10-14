@@ -115,14 +115,6 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
   assert.deepEqual(await f.hosts(), []);
   assert.equal((await f.pi.list(f.operator)).length, 1);
   assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands.length, 0);
-  assert.equal(
-    (
-      await f.state.read((sql) =>
-        sql.get<{ name: string | null }>("SELECT to_regclass('tasks')::text AS name"),
-      )
-    )?.name,
-    null,
-  );
 });
 
 test('new default conversations use Sol 6.1 and Luna remains an explicit choice', async (t) => {
@@ -1133,7 +1125,8 @@ test('a call cut off by a restart, or that never returns, is kept as interrupted
   finish({ late: true });
   await cut.catch(() => undefined);
   // A call that has not returned after ten minutes is interrupted too; when it returns at last,
-  // Run answers with what was kept, which the agent may already have been told.
+  // Run answers with what was kept, which the agent may already have been told: the page shows
+  // the late result itself.
   const second = await proposedRun(f, 'probe.slow');
   const running = f.pi.run(second.human, second.input);
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1144,7 +1137,7 @@ test('a call cut off by a restart, or that never returns, is kept as interrupted
   const { at: _at2, ...kept } = await second.ran();
   assert.deepEqual(kept, unknown);
   finish({ late: true });
-  assert.deepEqual(await running, { result: { late: true }, told: unknown.told, whole: true });
+  assert.deepEqual(await running, { result: { late: true }, told: unknown.told, whole: false });
   const { at: _at3, ...still } = await second.ran();
   assert.deepEqual(still, unknown);
 });

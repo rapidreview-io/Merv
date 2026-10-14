@@ -159,28 +159,6 @@ test('a policy may only cap declared returning edges, each once, within bounds',
       refused('invalid_workflow_policy', 400),
       label,
     );
-  // The engine writes its own bookkeeping into history under these names.
-  await assert.rejects(
-    f.workflows.register(
-      {
-        ...definition,
-        name: 'reserved',
-        edges: [
-          ...definition.edges,
-          { from: 'in_review', action: 'add_dependencies', to: 'drafting' },
-        ],
-      },
-      {
-        ...policy([{ ...returns(2), actions: ['add_dependencies'] }]),
-        actions: policy().actions.map((rule) =>
-          rule.name === 'verdict'
-            ? { ...rule, transitions: [...rule.transitions!, 'add_dependencies'] }
-            : rule,
-        ),
-      },
-    ),
-    refused('invalid_workflow_policy', 400),
-  );
   const limits = [returns(2)];
   await f.register(definition, policy(limits));
   // The installed cap is a copy: changing the caller's object changes nothing.
@@ -372,10 +350,11 @@ test('only a project admin who is not a leased worker may extend a limit', async
     reason: 'Agreed',
     requestId: 'grant',
   };
-  await assert.rejects(
-    f.workflows.extendLimit({ ...f.owner, session: { id: 'lease' } }, grant),
-    refused('forbidden', 403),
-  );
+  await assert.rejects(f.workflows.extendLimit({ ...f.owner, session: { id: 'lease' } }, grant), {
+    code: 'forbidden',
+    status: 403,
+    message: 'A leased worker cannot raise its own limit',
+  });
   for (const role of ['producer', 'reviewer'] as const) {
     const { actor } = await f.scope.credentials.issueActor(f.owner, { name: role, role });
     await assert.rejects(

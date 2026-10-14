@@ -373,6 +373,7 @@ test('lease generations survive provider reload but old invocations and released
   await f.release(offered.session);
   await assert.rejects(
     async () => await f.app.ctx.workflows.checkLease(worker, offered.session.lease),
+    { code: 'session_closed' },
   );
   const successor = await f.offer();
   assert.notEqual(successor.session.actorId, offered.session.actorId);
@@ -862,15 +863,10 @@ test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   assert.ok(await activating);
   // The frozen execution is read as it was called with, whatever changes while the check runs.
   const frozen = structuredClone(offered.execution);
-  f.controls.outputs = () => {
-    frozen.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
-    frozen.references.artifacts = ['live-artifact'];
-  };
-  assert.deepEqual(
-    (await f.workflows.checkLease(worker, offered.lease, undefined, frozen)).references,
-    { artifacts: ['own-artifact'] },
-  );
-  f.controls.outputs = () => {};
+  const granting = f.workflows.checkLease(worker, offered.lease, undefined, frozen);
+  frozen.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
+  frozen.references.artifacts = ['live-artifact'];
+  assert.deepEqual((await granting).references, { artifacts: ['own-artifact'] });
   const release = { reason: 'Completed' };
   const releasing = f.workflows.releaseLease(offered.lease, release);
   release.reason = '';
