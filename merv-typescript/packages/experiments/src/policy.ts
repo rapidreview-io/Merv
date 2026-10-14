@@ -33,6 +33,8 @@ import {
   handoffs,
   handoff,
   EXPERIMENT_RECIPES,
+  REPORTED_EXECUTE_RECIPE,
+  handoffAt,
   feasibilityCriterion,
   REVIEW_RETURNS,
 } from './definitions.js';
@@ -55,6 +57,7 @@ export async function register(ctx: ExperimentsContext): Promise<void> {
         activeStates.find((state) => recipeNames[state] === recipe.name)!,
         await ctx.contextBuilder.register(recipe),
       );
+    ctx.contexts.set('running:report', await ctx.contextBuilder.register(REPORTED_EXECUTE_RECIPE));
     for (const version of programVersions)
       ctx.handles.set(
         version,
@@ -319,7 +322,11 @@ export async function checkReview(
   );
   check(
     digest([
-      ...new Set([...submission.evidence.map((e) => e.artifactId), ...submission.figureIds]),
+      ...new Set([
+        ...submission.evidence.map((e) => e.artifactId),
+        ...submission.figureIds,
+        ...(submission.reportPdfId ? [submission.reportPdfId] : []),
+      ]),
     ]) === digest(review.artifactIds),
     'stale_review',
     'Review evidence differs from the sealed submission',
@@ -494,7 +501,7 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
                 ? 'review_required'
                 : 'independent_review',
         waiting: producing(state)
-          ? handoff(state)
+          ? handoffAt(state, version)
           : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
         references: [
           ...(context.dependencies ?? []).map((dependency) => ({
@@ -525,7 +532,7 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
     },
     actions: [
       action('submit_design', ['planned'], handoff('planned'), true),
-      action('submit_results', ['running'], handoffs.running, true),
+      action('submit_results', ['running'], handoffAt('running', version), true),
       action(
         'retry_running',
         ['running'],
@@ -550,7 +557,7 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
               ? ['approve_design', 'revise_design']
               : ['accept_results', 'revise_plan', 'revise_execution'],
           instructions: {
-            submit: handoff(state),
+            submit: handoffAt(state, version),
             start: 'Claim the exact current independent review, then refresh its assignment.',
           },
           reviews: ctx.reviews,

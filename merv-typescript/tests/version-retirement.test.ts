@@ -713,7 +713,7 @@ test('retiring the versions that can no longer start deletes their records and n
     intent: 'Still testing.',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 42);
+  assert.equal(experiment.workflow.version, 43);
   await research.create(live, { name: 'After the release', requestId: 'research' });
   // The retired open wave held the project's only open-wave slot.
   await reflections.create(live, { requestId: 'wave' });

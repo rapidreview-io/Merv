@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { EXPERIMENT_RECIPES } from '@merv/experiments/definitions';
+import { EXPERIMENT_RECIPES, REPORTED_EXECUTE_RECIPE } from '@merv/experiments/definitions';
 import { ITEM_RECIPES } from '@merv/reflections/definitions';
 import { TASK_TYPES } from '@merv/tasks/definitions';
 import {
@@ -134,7 +134,12 @@ const scope = { async require() {} } as unknown as Scope;
 /** Every recipe version the consumers register, once each; the app must register exactly these. */
 function definitions(): ContextRecipeDefinition[] {
   const all = new Map<string, ContextRecipeDefinition>();
-  for (const definition of [...TASK_TYPES, ...EXPERIMENT_RECIPES, ...ITEM_RECIPES]) {
+  for (const definition of [
+    ...TASK_TYPES,
+    ...EXPERIMENT_RECIPES,
+    REPORTED_EXECUTE_RECIPE,
+    ...ITEM_RECIPES,
+  ]) {
     const key = `${definition.name}@${definition.version}`;
     const seen = all.get(key);
     assert.ok(

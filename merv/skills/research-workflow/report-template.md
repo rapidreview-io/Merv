@@ -1,4 +1,9 @@
 <!--
+  Experiments on experiment@43 or later do not use this template: their report is
+  written with the report tools (report.open returns the draft and its format guide)
+  and rendered by Merv to a one-page PDF. This template is for older experiments.
+-->
+<!--
   Results report template.
 
   This file is the FACE of the EXECUTED experiment: it is what the user reads

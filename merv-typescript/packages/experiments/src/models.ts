@@ -59,8 +59,10 @@ export interface ExperimentSubmission {
   producerId: string;
   sessionId: string | null;
   evidence: ExperimentEvidence[];
-  /** Verified image inputs referenced by the selected plan/report. */
+  /** Verified image inputs referenced by the selected plan/report; a rendered report's pages. */
   figureIds: string[];
+  /** experiment@43: the PDF Reports rendered from the submitted report. */
+  reportPdfId?: string;
   manifestHash: string;
   reviewId: string;
   createdAt: string;

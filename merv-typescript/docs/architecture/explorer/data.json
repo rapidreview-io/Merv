@@ -54,6 +54,7 @@
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
         "members": [
           "paper",
+          "reports",
           "board",
           "reviews",
           "codeWork",
@@ -66,7 +67,8 @@
         "purpose": "Use the platform to deliver tasks and execute reviewed experiments.",
         "members": [
           "tasks",
-          "experiments"
+          "experiments",
+          "merv-customer-experiments"
         ]
       },
       {
@@ -143,6 +145,7 @@
           "merv-paper-tools",
           "merv-pi-tools",
           "merv-reflection-tools",
+          "merv-reports-tools",
           "merv-research-tools",
           "merv-review-tools",
           "merv-scope-tools",
@@ -234,6 +237,7 @@
         "experiments",
         "knowledge",
         "paper",
+        "reports",
         "board",
         "reflections",
         "research",
@@ -298,6 +302,7 @@
       "caption": "Discovered in source",
       "members": [
         "codeWork",
+        "merv-customer-experiments",
         "fleet",
         "merv-fleet-workflow",
         "pi",
@@ -920,6 +925,43 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-customer-experiments",
+      "source": "packages/customer-experiments/src/index.ts",
+      "provides": [],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "codeWork",
+        "sessions",
+        "sandboxEvidence",
+        "reports",
+        "sbxMerv",
+        "sbxAccounts",
+        "sbxDb",
+        "sbxBilling",
+        "sbxProviders",
+        "sbxVault",
+        "sbxSettings",
+        "sbxResourceLimits",
+        "pi",
+        "tools",
+        "api"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-customer-experiments",
+      "group": "other",
+      "owner": "merv-customer-experiments",
+      "label": "merv-customer-experiments",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-domain-events",
       "source": "packages/domain-events/src/index.ts",
       "provides": [
@@ -956,7 +998,8 @@
         "paper"
       ],
       "optional": [
-        "sandboxEvidence"
+        "sandboxEvidence",
+        "reports"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1988,6 +2031,119 @@
       ]
     },
     {
+      "plugin": "merv-reports",
+      "source": "packages/reports/src/index.ts",
+      "provides": [
+        "reports"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "reports",
+      "group": "research",
+      "owner": "reports",
+      "label": "Reports",
+      "purpose": "Keeps one editable one-page report draft per experiment or customer experiment, prefilled from its approved plan with the question and constraints locked. Agents write, check, visually review and render it; the final render stores the Markdown source, a PDF and page images as artifacts. A rejected submission keeps its draft for the next round.",
+      "exposedTools": [
+        {
+          "name": "report.approve_visual",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.check",
+          "description": "",
+          "readOnly": true
+        },
+        {
+          "name": "report.clear",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.open",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.render",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.review_visual",
+          "description": "",
+          "readOnly": true
+        },
+        {
+          "name": "report.write",
+          "description": "",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-reports-tools",
+      "source": "packages/reports/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "reports",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-reports-tools",
+      "group": "front",
+      "owner": "reports",
+      "label": "Reports · tools adapter",
+      "purpose": "Connects Reports to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "report.approve_visual",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.check",
+          "description": "",
+          "readOnly": true
+        },
+        {
+          "name": "report.clear",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.open",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.render",
+          "description": "",
+          "readOnly": false
+        },
+        {
+          "name": "report.review_visual",
+          "description": "",
+          "readOnly": true
+        },
+        {
+          "name": "report.write",
+          "description": "",
+          "readOnly": false
+        }
+      ]
+    },
+    {
       "plugin": "merv-research",
       "source": "packages/research/src/index.ts",
       "provides": [
@@ -2275,7 +2431,8 @@
         "sbxMerv",
         "sbxPipelines",
         "sbxObjects",
-        "sbxAccounts"
+        "sbxAccounts",
+        "sbxJobs"
       ],
       "optional": [],
       "kind": "service",
@@ -3171,6 +3328,10 @@
         "sbxPipelines",
         "sbxObjects",
         "sbxAccounts",
+        "sbxBilling",
+        "sbxProviders",
+        "sbxVault",
+        "sbxResourceLimits",
         "sbxRegistry",
         "sbxJobs",
         "sbxSnapshots",
@@ -3398,6 +3559,106 @@
       "optional": false
     },
     {
+      "from": "merv-customer-experiments",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "reviews",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "codeWork",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sandboxEvidence",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "reports",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "pi",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-customer-experiments",
+      "to": "api",
+      "optional": false
+    },
+    {
       "from": "domainEvents",
       "to": "state",
       "optional": false
@@ -3445,6 +3706,11 @@
     {
       "from": "experiments",
       "to": "sandboxEvidence",
+      "optional": true
+    },
+    {
+      "from": "experiments",
+      "to": "reports",
       "optional": true
     },
     {
@@ -3833,6 +4099,31 @@
       "optional": false
     },
     {
+      "from": "reports",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "reports",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "reports",
+      "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "merv-reports-tools",
+      "to": "reports",
+      "optional": false
+    },
+    {
+      "from": "merv-reports-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
       "from": "research",
       "to": "state",
       "optional": false
@@ -3975,6 +4266,11 @@
     {
       "from": "sandboxEvidence",
       "to": "artifacts",
+      "optional": false
+    },
+    {
+      "from": "sandboxEvidence",
+      "to": "sbxMerv",
       "optional": false
     },
     {
@@ -4269,10 +4565,10 @@
     }
   ],
   "counts": {
-    "plugins": 74,
-    "providers": 33,
-    "adapters": 41,
-    "dependencies": 215
+    "plugins": 77,
+    "providers": 34,
+    "adapters": 43,
+    "dependencies": 242
   },
   "network": [
     {

@@ -1,5 +1,6 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import test from 'node:test';
 import { join } from 'node:path';
 import { createService } from '@merv/contracts';
@@ -99,6 +100,7 @@ test('experiments always choose the hosted Git policy before planning', async (t
       paper,
     ),
   );
+  experiments.bindReports(legacyReports(f.state));
   f.beforeClose.unshift(async () => {
     experiments.close();
     paper.close();

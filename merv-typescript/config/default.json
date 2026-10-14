@@ -27,6 +27,14 @@
       "name": "@merv/paper"
     },
     {
+      "id": "reports-tools",
+      "name": "@merv/reports/tools"
+    },
+    {
+      "id": "reports",
+      "name": "@merv/reports"
+    },
+    {
       "id": "board-tools",
       "name": "@merv/board/tools"
     },

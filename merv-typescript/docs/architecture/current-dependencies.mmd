@@ -14,6 +14,7 @@ flowchart BT
     codeWork["codeWork"]
     merv_code_work_api["merv-code-work-api"]
     contextBuilder["contextBuilder"]
+    merv_customer_experiments["merv-customer-experiments"]
     domainEvents["domainEvents"]
     experiments["experiments"]
     merv_experiments_tools["merv-experiments-tools"]
@@ -44,6 +45,8 @@ flowchart BT
     merv_reflection_tools["merv-reflection-tools"]
     merv_reflection_ui["merv-reflection-ui"]
     reflections["reflections"]
+    reports["reports"]
+    merv_reports_tools["merv-reports-tools"]
     research["research"]
     merv_research_tools["merv-research-tools"]
     merv_research_ui["merv-research-ui"]
@@ -118,6 +121,26 @@ flowchart BT
   contextBuilder --> state
   contextBuilder --> scope
   contextBuilder --> artifacts
+  merv_customer_experiments --> state
+  merv_customer_experiments --> scope
+  merv_customer_experiments --> artifacts
+  merv_customer_experiments --> workflows
+  merv_customer_experiments --> reviews
+  merv_customer_experiments --> codeWork
+  merv_customer_experiments --> sessions
+  merv_customer_experiments --> sandboxEvidence
+  merv_customer_experiments --> reports
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> sbxMerv
+  merv_customer_experiments --> pi
+  merv_customer_experiments --> tools
+  merv_customer_experiments --> api
   domainEvents --> state
   experiments --> state
   experiments --> scope
@@ -128,6 +151,7 @@ flowchart BT
   experiments --> codeWork
   experiments --> paper
   experiments -. optional .-> sandboxEvidence
+  experiments -. optional .-> reports
   merv_experiments_tools --> experiments
   merv_experiments_tools --> tools
   merv_experiments_ui --> experiments
@@ -205,6 +229,11 @@ flowchart BT
   reflections --> reviews
   reflections --> contextBuilder
   reflections --> sessions
+  reports --> state
+  reports --> scope
+  reports --> artifacts
+  merv_reports_tools --> reports
+  merv_reports_tools --> tools
   research --> state
   research --> scope
   research --> workflows
@@ -234,6 +263,7 @@ flowchart BT
   sandboxEvidence --> domainEvents
   sandboxEvidence --> sessions
   sandboxEvidence --> artifacts
+  sandboxEvidence --> sbxMerv
   sandboxEvidence --> sbxMerv
   sandboxEvidence --> sbxMerv
   sandboxEvidence --> sbxMerv

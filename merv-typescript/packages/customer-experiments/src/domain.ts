@@ -23,7 +23,9 @@ import type { Sessions } from '@merv/sessions/types';
 import type { CaptureEvidence, SandboxCaptureEvidence } from '@merv/sandboxes/sandbox-evidence';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { heldLease } from '@merv/workflows/lease-rows';
-import { SERVICE_EXPERIMENT } from './program.js';
+import type { Reports } from '@merv/reports/types';
+import { customerReportSubject } from './report-subject.js';
+import { SERVICE_EXPERIMENT, SERVICE_VERSION, SERVICE_VERSIONS, writesReport } from './program.js';
 import { executionPolicy } from './execution.js';
 import { migrations, planSchema, submitResultsSchema, validateAgreement } from './schema.js';
 import {
@@ -53,9 +55,31 @@ interface Row {
 }
 export class CustomerExperiments {
   readonly checked = new CheckedTransitions();
+  /** The version new requests start on. */
   handle?: Awaited<ReturnType<Workflows['register']>>;
+  readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  handleFor(version: number) {
+    const handle = this.handles.get(version);
+    check(
+      handle,
+      'customer_experiments_unavailable',
+      `service_experiment@${version} is not registered`,
+      503,
+    );
+    return handle;
+  }
   private releaseOwner?: () => void;
   private closed = false;
+  /** Reports: results are submitted with the final report it rendered for the request. */
+  reports?: Pick<Reports, 'finalFor'>;
+  bindReports(service: Pick<Reports, 'finalFor' | 'registerSubject'>): () => void {
+    this.reports = service;
+    const unregister = service.registerSubject('customer_experiment', customerReportSubject(this));
+    return () => {
+      unregister();
+      if (this.reports === service) this.reports = undefined;
+    };
+  }
   constructor(
     readonly state: State,
     readonly scope: Scope,
@@ -77,7 +101,15 @@ export class CustomerExperiments {
   ) {}
   async initialize(): Promise<void> {
     await this.state.migrate('customer-experiments', migrations);
-    this.handle = await this.workflows.register(SERVICE_EXPERIMENT, executionPolicy(this));
+    for (const version of SERVICE_VERSIONS)
+      this.handles.set(
+        version,
+        await this.workflows.register(
+          { ...SERVICE_EXPERIMENT, version },
+          executionPolicy(this, version),
+        ),
+      );
+    this.handle = this.handles.get(SERVICE_VERSION);
     this.releaseOwner = this.reviews.registerSubmitOwner({
       id: 'customer-experiments',
       owns: async (review, tx) =>
@@ -115,7 +147,8 @@ export class CustomerExperiments {
   close(): void {
     this.closed = true;
     this.releaseOwner?.();
-    this.handle?.dispose();
+    for (const handle of this.handles.values()) handle.dispose();
+    this.handles.clear();
   }
   private open(): void {
     check(
@@ -219,7 +252,7 @@ export class CustomerExperiments {
           caller,
           {
             workflow: SERVICE_EXPERIMENT.name,
-            version: 1,
+            version: SERVICE_VERSION,
             requestId: childRequest(caller, 'customer-experiments', 'create', input.requestId),
             data: { name: input.title, workspace: 'git' },
           },
@@ -516,8 +549,35 @@ export class CustomerExperiments {
           'Only the executing worker submits results',
           409,
         );
+        // Version 1 requests keep their free summary; version 2 submits the rendered report.
+        let report: Awaited<ReturnType<NonNullable<typeof this.reports>['finalFor']>> = null;
+        if (writesReport(exp.workflow.version)) {
+          check(
+            this.reports,
+            'reports_unavailable',
+            'Reports is not running; results cannot be submitted now',
+            503,
+          );
+          check(
+            input.reportArtifactId,
+            'experiment_report_required',
+            'reportArtifactId is required: the sourceArtifactId report.render with final: true returned',
+            409,
+          );
+          report = await this.reports.finalFor(caller, input.reportArtifactId, tx);
+          check(
+            report && report.subject.kind === 'customer_experiment' && report.subject.id === exp.id,
+            'experiment_report_required',
+            'reportArtifactId must be the Markdown artifact report.render with final: true returned for this experiment (its sourceArtifactId). Write the report with the report tools and render it final first',
+            409,
+          );
+        }
+        check(report || input.summary, 'invalid_input', 'summary is required', 400);
+        const rendered = report
+          ? [report.sourceArtifactId, report.pdfArtifactId, ...report.pageArtifactIds]
+          : [];
         const captures = new Set((await this.computeEvidence(exp, tx)).artifactIds);
-        const ids = [...new Set([...input.artifactIds, ...captures])];
+        const ids = [...new Set([...rendered, ...input.artifactIds, ...captures])];
         const artifacts = await this.artifacts.getAll(caller, ids, tx);
         check(
           artifacts.every((a) => captures.has(a.id) || a.createdBy === caller.actorId),
@@ -544,7 +604,16 @@ export class CustomerExperiments {
           id: newId('submission'),
           contractId: exp.acceptedContractId!,
           artifactIds: ids,
-          summary: input.summary,
+          summary: input.summary ?? [report!.answer, report!.note].filter(Boolean).join('\n\n'),
+          ...(report
+            ? {
+                report: {
+                  sourceArtifactId: report.sourceArtifactId,
+                  pdfArtifactId: report.pdfArtifactId,
+                  pageArtifactIds: report.pageArtifactIds,
+                },
+              }
+            : {}),
           producerId: caller.actorId,
           sessionId: caller.session!.id,
           executionRevision: exp.workflow.revision,
@@ -856,7 +925,7 @@ export class CustomerExperiments {
       tx,
       { instanceId: exp.id, revision: exp.workflow.revision, action },
       () =>
-        this.handle!.transition(
+        this.handleFor(exp.workflow.version).transition(
           caller,
           {
             instanceId: exp.id,

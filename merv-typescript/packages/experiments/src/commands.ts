@@ -42,8 +42,8 @@ import {
   parseResult,
   shouldPinExhibit,
   reportConclusion,
-  validatePlan,
   validateReport,
+  validatePlan,
 } from './evidence.js';
 import type { ExperimentsContext } from './index.js';
 import {
@@ -57,8 +57,9 @@ import {
   epochAfter,
   TERMINAL,
   EXPERIMENT_WORKFLOW,
+  writesReport,
 } from './program.js';
-import { designCriteria, feasibilityCriterion, resultsCriteria } from './definitions.js';
+import { designCriteria, feasibilityCriterion, resultsCriteriaAt } from './definitions.js';
 import { allowedArtifacts } from './context.js';
 import { pinnedRecovery, holds, resumedOutputs } from './lease.js';
 import {
@@ -81,6 +82,8 @@ interface Submission {
   figureIds: string[];
   exhibit: ExperimentExhibit | null;
   codeCaptureRef?: CodeCaptureRef;
+  /** The rendered report's PDF: the review reads it, beside the evidence and page figures. */
+  reportPdfId?: string;
 }
 
 /**
@@ -560,6 +563,7 @@ async function prepareSubmission(
 ): Promise<Submission> {
   let evidence = selection;
   let figureIds: string[] = [];
+  let reportPdfId: string | undefined;
   let exhibit: ExperimentExhibit | null = null;
   // A result submission includes the exact approved design, never a newer plan association.
   const approved =
@@ -583,10 +587,19 @@ async function prepareSubmission(
   } else {
     evidence = [...approved.evidence, ...evidence];
     const report = one(evidence, 'report');
-    const text = await evidenceText(ctx, caller, report.artifactId, tx);
-    figureIds = [
-      ...new Set([...approved.figureIds, ...(await figures(ctx, caller, text, experiment, tx))]),
-    ];
+    const reported = writesReport(experiment.workflow.version);
+    let text = '';
+    if (reported) {
+      const final = await finalReport(ctx, caller, experiment, report.artifactId, tx);
+      reportPdfId = final.pdfArtifactId;
+      // The report's pages are its figures: what a reader of the record sees of it.
+      figureIds = [...new Set([...approved.figureIds, ...final.pageArtifactIds])];
+    } else {
+      text = await evidenceText(ctx, caller, report.artifactId, tx);
+      figureIds = [
+        ...new Set([...approved.figureIds, ...(await figures(ctx, caller, text, experiment, tx))]),
+      ];
+    }
     // They were checked when the design was submitted, and artifacts never change.
     await ctx.artifacts.getAll(caller, approved.figureIds, tx);
     exhibit = await buildExhibit(
@@ -596,10 +609,12 @@ async function prepareSubmission(
       selection.filter((e) => e.role === 'result'),
       tx,
     );
-    validateReport(text, {
-      figures: figureIds,
-      ...(exhibit.willPin ? { exhibitPath: exhibit.path } : {}),
-    });
+    // Versions before the rendered report keep their Markdown report's checks.
+    if (!reported)
+      validateReport(text, {
+        figures: figureIds,
+        ...(exhibit.willPin ? { exhibitPath: exhibit.path } : {}),
+      });
   }
   const inherited = [
     ...(await pinnedRecovery(ctx, caller, experiment, tx)),
@@ -637,7 +652,31 @@ async function prepareSubmission(
       403,
     );
   }
-  return { evidence, figureIds, exhibit };
+  return { evidence, figureIds, exhibit, ...(reportPdfId ? { reportPdfId } : {}) };
+}
+
+/** The final render Reports made of the submitted report, for this experiment. */
+async function finalReport(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  sourceArtifactId: string,
+  tx: Transaction,
+) {
+  check(
+    ctx.reports,
+    'reports_unavailable',
+    'Reports is not running; results cannot be submitted now',
+    503,
+  );
+  const final = await ctx.reports.finalFor(caller, sourceArtifactId, tx);
+  check(
+    final && final.subject.kind === 'experiment' && final.subject.id === experiment.id,
+    'experiment_report_required',
+    'The report must be the Markdown artifact report.render with final: true returned for this experiment (its sourceArtifactId). Write the report with the report tools, render it final, and attach that artifact as the report',
+    409,
+  );
+  return final;
 }
 
 /** The submission is what checkAction verified moments earlier in this transaction. */
@@ -646,7 +685,7 @@ async function submit(
   caller: Caller,
   experiment: Experiment,
   input: ExperimentTransition,
-  { evidence, figureIds, exhibit, codeCaptureRef }: Submission,
+  { evidence, figureIds, exhibit, codeCaptureRef, reportPdfId }: Submission,
   tx: Transaction,
 ): Promise<Experiment> {
   const stage = input.transition === 'submit_design' ? 'design' : 'results';
@@ -673,7 +712,13 @@ async function submit(
       ),
     );
   }
-  const artifactIds = [...new Set([...evidence.map((e) => e.artifactId), ...figureIds])];
+  const artifactIds = [
+    ...new Set([
+      ...evidence.map((e) => e.artifactId),
+      ...figureIds,
+      ...(reportPdfId ? [reportPdfId] : []),
+    ]),
+  ];
   const pinnedInputIds = (await ctx.artifacts.getAll(caller, artifactIds, tx))
     .filter((artifact) => artifact.createdBy !== caller.actorId)
     .map((artifact) => artifact.id);
@@ -706,7 +751,9 @@ async function submit(
         : {}),
       artifactIds,
       pinnedInputIds,
-      criteria: [...(stage === 'design' ? designCriteria : resultsCriteria)],
+      criteria: [
+        ...(stage === 'design' ? designCriteria : resultsCriteriaAt(experiment.workflow.version)),
+      ],
       ...(stage === 'design' ? { requiredCriteria: [feasibilityCriterion] } : {}),
       formatVersion: 2,
       requestId: childRequest(caller, 'experiment', 'submission', input.requestId),
@@ -734,11 +781,13 @@ async function submit(
     sessionId: caller.session?.id ?? null,
     evidence,
     figureIds,
+    ...(reportPdfId ? { reportPdfId } : {}),
     manifestHash: digest({
       formatVersion: 1,
       evidence,
       figures: await ctx.artifacts.getAll(caller, figureIds, tx),
       ...(codeCaptureRef ? { codeCaptureRef } : {}),
+      ...(reportPdfId ? { reportPdfId } : {}),
     }),
     reviewId: review.id,
     createdAt: now(),
@@ -802,7 +851,9 @@ export async function submitReview(
         const stated = [input.evidence?.outcome, input.evidence?.conclusion].find(
           (text): text is string => typeof text === 'string' && visible(text),
         );
-        conclusion = stated?.trim() ?? (reportConclusion(body) || input.notes);
+        const final = await ctx.reports?.finalFor(caller, report.artifactId, tx);
+        const answer = final ? [final.answer, final.note].filter(Boolean).join('\n\n') : '';
+        conclusion = stated?.trim() ?? (answer || reportConclusion(body) || input.notes);
       }
       const moved = await handleFor(ctx, experiment.workflow.version).transition(
         caller,

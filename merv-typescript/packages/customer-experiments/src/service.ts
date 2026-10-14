@@ -159,11 +159,14 @@ export class CustomerService {
           artifacts:
             exp.workflow.state === 'complete'
               ? await Promise.all(
-                  exp.submission.artifactIds.map(async (id) => {
+                  shownResults(exp.submission).map(async (id) => {
                     const artifact = await this.artifacts.get(caller, id);
                     return {
                       id,
-                      title: artifact.title,
+                      title:
+                        id === exp.submission!.report?.pdfArtifactId
+                          ? 'Report (PDF)'
+                          : artifact.title,
                       files: artifact.files,
                       url: `${this.options.publicOrigin}/customer-experiments/requests/${record.id}/artifacts/${id}`,
                     };
@@ -702,4 +705,20 @@ export class CustomerService {
       }
     }
   }
+}
+
+/** What the customer downloads: the report PDF first, then the results; not the report's own
+ *  Markdown source or page images, which the PDF already is. */
+function shownResults(submission: {
+  artifactIds: string[];
+  report?: { sourceArtifactId: string; pdfArtifactId: string; pageArtifactIds: string[] };
+}): string[] {
+  const report = submission.report;
+  if (!report) return submission.artifactIds;
+  const hidden = new Set([
+    report.sourceArtifactId,
+    report.pdfArtifactId,
+    ...report.pageArtifactIds,
+  ]);
+  return [report.pdfArtifactId, ...submission.artifactIds.filter((id) => !hidden.has(id))];
 }

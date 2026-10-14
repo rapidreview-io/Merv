@@ -10,6 +10,8 @@ import {
   EXPERIMENT_RECIPES,
   feasibilityCriterion,
   resultsCriteria,
+  reportedResultsCriteria,
+  REPORTED_EXECUTE_RECIPE,
 } from '@merv/experiments/definitions';
 import { DELIVERY_REPORT_CRITERION, reportsDelivery, TASK_TYPES } from '@merv/tasks/definitions';
 
@@ -62,6 +64,32 @@ test('the report template stands alone: answer, results table, diagram, meaning,
     'at most 3 bullets',
     'Limits:\n- <at most 3 bullets>',
   ]);
+});
+
+test('experiment@43 writes the one-page report with the report tools, editing one draft across rounds', () => {
+  assert.equal(REPORTED_EXECUTE_RECIPE.name, 'experiment.execute');
+  assert.equal(REPORTED_EXECUTE_RECIPE.version, 13);
+  includesAll(REPORTED_EXECUTE_RECIPE.recipe.outputInstructions, [
+    'report.open',
+    'prefilled from the approved plan',
+    'one-page PDF',
+    'report.write',
+    'report.clear to start over',
+    'report.review_visual',
+    'report.approve_visual',
+    'final: true',
+    'Attach the returned sourceArtifactId as role report',
+  ]);
+  // Everything but the handoff is the running recipe experiment@40-42 keep.
+  const { outputInstructions: _, ...rest } = REPORTED_EXECUTE_RECIPE.recipe;
+  const { outputInstructions: __, ...before } = recipe('experiment.execute').recipe;
+  assert.deepEqual(rest, before);
+  assert.match(
+    reportedResultsCriteria.at(-1)!,
+    /^Format: the report is the rendered one-page report: .*against its bar/,
+  );
+  assert.deepEqual(reportedResultsCriteria.slice(0, -1), resultsCriteria.slice(0, -1));
+  assert.ok(reportedResultsCriteria.at(-1)!.length < 400);
 });
 
 test('a new task asks for the delivery report; tasks pinned to task.work@4 keep their recipe', () => {

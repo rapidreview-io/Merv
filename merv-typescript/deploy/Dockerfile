@@ -24,6 +24,12 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && /usr/bin/git --version
+# Reports renders experiment reports to PDF in a headless Chromium: the build Playwright pins,
+# with its system libraries. Fonts are embedded by Reports; the page has no network.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /opt/ms-playwright
 # npm's workspace symlinks resolve to /app/packages; the deployed packages are compiled JS.
 RUN ln -s dist/packages packages
 RUN groupadd --gid 10001 merv && useradd --uid 10001 --gid 10001 --create-home merv

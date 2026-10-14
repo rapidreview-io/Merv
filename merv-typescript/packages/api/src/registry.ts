@@ -130,7 +130,10 @@ export class ToolRegistry implements Tools {
       tool: { name: definition.name, remote: false, conversation },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
-      complete: (value) => ({ format: 'json', value }),
+      complete: (value) =>
+        definition.present
+          ? { format: 'json', value, mcp: definition.present(value) }
+          : { format: 'json', value },
       running: new Set(),
     };
   }

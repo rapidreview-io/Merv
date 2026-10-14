@@ -1,5 +1,11 @@
 import type { WorkflowDefinition } from '@merv/contracts';
 
+/** service_experiment@2 (2026-10-14): results are submitted with the rendered one-page report.
+ *  Version 1 stays registered, unchanged, for requests started on it. */
+export const SERVICE_VERSIONS = [1, 2] as const;
+export const SERVICE_VERSION = 2;
+export const writesReport = (version: number) => version >= 2;
+
 /** Separate graph: customer acceptance is its sole design approval gate. */
 export const SERVICE_EXPERIMENT: WorkflowDefinition = {
   name: 'service_experiment',

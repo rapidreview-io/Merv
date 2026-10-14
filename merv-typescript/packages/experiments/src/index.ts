@@ -3,6 +3,8 @@ import { unitFiles } from '@merv/artifacts/unit-files';
 import { recordUnit } from '@merv/code-work/record-unit';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
+import type { Reports } from '@merv/reports/types';
+import { experimentReportSubject } from './report-subject.js';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import { latestReleases, leaseRows } from '@merv/workflows/lease-rows';
@@ -109,6 +111,7 @@ export type ExperimentsContext = Pick<
   | 'paper'
   | 'reviews'
   | 'captureEvidence'
+  | 'reports'
   | 'scope'
   | 'state'
   | 'workflows'
@@ -133,8 +136,11 @@ export class ExperimentService implements Experiments {
   }
   closed = false;
   captureEvidence?: Pick<SandboxCaptureEvidence, 'captures' | 'evidence'>;
+  /** Reports, while it is loaded: results submit the final report it rendered for the experiment. */
+  reports?: Pick<Reports, 'finalFor'>;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
-  readonly contexts = new Map<ActiveState, ContextRegistration>();
+  /** By state, and 'running:report' for the running recipe of versions that write the report. */
+  readonly contexts = new Map<string, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
   readonly checked = new CheckedTransitions();
   constructor(
@@ -200,6 +206,15 @@ export class ExperimentService implements Experiments {
       unregister(this);
       throw error;
     }
+  }
+  /** Registers experiment reports with Reports and checks submitted reports through it. */
+  bindReports(service: Pick<Reports, 'finalFor' | 'registerSubject'>): () => void {
+    this.reports = service;
+    const unregister = service.registerSubject('experiment', experimentReportSubject(this));
+    return () => {
+      unregister();
+      if (this.reports === service) this.reports = undefined;
+    };
   }
   bindCaptureEvidence(service: Pick<SandboxCaptureEvidence, 'captures' | 'evidence'>): () => void {
     this.open();
@@ -690,6 +705,9 @@ export const experimentsPlugin = {
       yield () => experiments.close();
       ctx.inject(['sandboxEvidence'], (ctx) => {
         ctx.effect(() => experiments.bindCaptureEvidence(ctx.sandboxEvidence));
+      });
+      ctx.inject(['reports'], (ctx) => {
+        ctx.effect(() => experiments.bindReports(ctx.reports));
       });
       yield ctx.provide('experiments', experiments);
       yield () => experiments.withdrawReviewOwner();

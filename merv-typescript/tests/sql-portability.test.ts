@@ -15,6 +15,7 @@ import { postgresMigrations as migrations8 } from '../packages/experiments/src/s
 import { postgresMigrations as migrations9 } from '../packages/feed/src/index.postgres.js';
 import { postgresMigrations as migrations10 } from '../packages/knowledge/src/storage.postgres.js';
 import { postgresMigrations as migrations11 } from '../packages/paper/src/storage.postgres.js';
+import { postgresMigrations as reportsMigrations } from '../packages/reports/src/storage.postgres.js';
 import { postgresMigrations as migrations12 } from '../packages/reflections/src/index.postgres.js';
 import { postgresMigrations as migrations13 } from '../packages/research/src/index.postgres.js';
 import { postgresMigrations as migrations14 } from '../packages/reviews/src/index.postgres.js';
@@ -51,6 +52,7 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/knowledge/src/storage.ts': migrations10,
   'packages/paper/src/storage.ts': migrations11,
   'packages/reflections/src/index.ts': migrations12,
+  'packages/reports/src/storage.ts': reportsMigrations,
   'packages/research/src/index.ts': migrations13,
   'packages/reviews/src/index.ts': migrations14,
   'packages/scope/src/index.ts': migrations15,
@@ -110,7 +112,7 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 136);
+  assert.equal(all.length, 137);
   all.push(
     ...[
       { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },

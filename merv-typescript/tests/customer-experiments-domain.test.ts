@@ -1,5 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,6 +87,8 @@ async function fixture(
       compute,
     ),
   );
+  const reports = legacyReports(state);
+  service.bindReports(reports);
   const work = currentWork(managed, { directory: dir, source: caller });
   t.after(async () => {
     await work.close();
@@ -170,6 +173,7 @@ async function fixture(
       { title: 'Run results', content: 'Retained measurements and report.' },
       (c, input) => artifacts.create(c, input as { title: string; content: string }),
     );
+    reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
     await work.commit(worker, { 'experiment.ts': `console.log('attempt ${exp.attempts}');\n` });
     await work.run(
       worker,
@@ -178,6 +182,7 @@ async function fixture(
         id: exp.id,
         expectedRevision: exp.workflow.revision,
         artifactIds: [artifact.id],
+        reportArtifactId: artifact.id,
         summary: 'Run finished.',
         requestId: id(),
       },
@@ -216,6 +221,7 @@ async function fixture(
     )) as CustomerExperiment;
   };
   return {
+    reports,
     state,
     scope,
     caller,
@@ -465,6 +471,7 @@ test('results wait for the final code capture, then dispatch a separate Astra re
     { title: 'Results', content: '100 cases: baseline 50%, candidate 100%.' },
     (caller, input) => f.artifacts.create(caller, input as { title: string; content: string }),
   );
+  f.reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
   await f.work.commit(producer, { 'experiment.ts': 'console.log({baseline:0.5,candidate:1});\n' });
   exp = await f.work.run(
     producer,
@@ -473,6 +480,7 @@ test('results wait for the final code capture, then dispatch a separate Astra re
       id: exp.id,
       expectedRevision: exp.workflow.revision,
       artifactIds: [artifact.id],
+      reportArtifactId: artifact.id,
       summary: 'The rule improves accuracy on the agreed fixed cases.',
       requestId: f.id(),
     },
@@ -569,6 +577,7 @@ test('native compute captures are scoped to the accepted attempt and frozen into
     { title: 'Report', content: 'Metrics refer to the retained remote Capture.' },
     (caller, input) => f.artifacts.create(caller, input as { title: string; content: string }),
   );
+  f.reports.claim(report.id, { kind: 'customer_experiment', id: exp.id });
   const unrelated = await f.artifacts.create(f.caller, {
     title: 'Other unverified artifact',
     content: 'Not from the worker or native evidence bridge',
@@ -578,6 +587,7 @@ test('native compute captures are scoped to the accepted attempt and frozen into
       id: exp.id,
       expectedRevision: exp.workflow.revision,
       artifactIds: [unrelated.id],
+      reportArtifactId: report.id,
       summary: 'Invalid inherited evidence',
       requestId: f.id(),
     }),
@@ -591,6 +601,7 @@ test('native compute captures are scoped to the accepted attempt and frozen into
       id: exp.id,
       expectedRevision: exp.workflow.revision,
       artifactIds: [report.id, remote.id],
+      reportArtifactId: report.id,
       summary: 'Finished on internally selected compute.',
       requestId: f.id(),
     },

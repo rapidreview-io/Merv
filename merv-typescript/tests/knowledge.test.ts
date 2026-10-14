@@ -1,5 +1,6 @@
 import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
 import { CodeService as CoreCodeService } from '@merv/code/service';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { currentWork } from './fixtures/current-work.js';
 import { currentTask } from './fixtures/current-work.js';
 import { currentExperiment } from './fixtures/current-experiment.js';
@@ -80,6 +81,7 @@ async function fixture(t: TestContext) {
         await createService(new PaperService(state, scope, artifacts)),
       ),
     );
+    experiments.bindReports(legacyReports(state));
     knowledge = await createService(
       new KnowledgeService(state, scope, tasks, experiments, artifacts, reviews, workflows, code),
     );

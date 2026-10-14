@@ -13,6 +13,7 @@ import { createApp } from './fixtures/app.js';
 const current = {
   'task@45': '613069c000987e6f5a47427c6d79402e3eebed5fbe05778af9b303f50602ac62',
   'task@44': '5321198840ce6b96801315034ce2ff29e7ef85858389ae4a4c8b3440241a344c',
+  'experiment@43': 'fdcac3a20bc3a2248f4e1222dc802e9712970df4893aa7feae65a76085132f16',
   'experiment@42': '3fc23c8963a5a323c6ea32a4ac63698dd0e555a4e4c884356af5153af070c887',
   'task@11': 'c01c239aec645fcff44e7727737c332a8086ecd2ea022df5e5c8d6b1680e5d60',
   'task@43': 'c1f2f37f67bc6ee96c86d7345419b6708d6938fd4f535c55f29720a84d22779b',
@@ -41,7 +42,7 @@ test('only current work contracts register, with unchanged permissions across re
     }
     for (const [name, last] of [
       ['task', 45],
-      ['experiment', 42],
+      ['experiment', 43],
     ] as const) {
       for (let version = 1; version <= last; version++) {
         if (`${name}@${version}` in current) continue;

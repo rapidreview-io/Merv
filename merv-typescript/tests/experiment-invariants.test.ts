@@ -1,5 +1,6 @@
 import { managedServices } from './fixtures/managed-services.js';
 import { currentWork } from './fixtures/current-work.js';
+import { legacyReports } from './fixtures/legacy-reports.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -68,6 +69,7 @@ async function fixture(t: TestContext) {
       await createService(new PaperService(state, scope, artifacts)),
     ),
   );
+  experiments.bindReports(legacyReports(state));
   const work = currentWork({ code: managed.code, sessions, events }, { directory, source });
   const issued = await scope.credentials.issueActor(source, {
     name: 'Independent reviewer',

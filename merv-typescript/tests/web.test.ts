@@ -906,8 +906,8 @@ test('the render composes web search into Main, where MCP clients list and call 
     }),
   );
   const catalog = (await mcp.listTools()).tools;
-  // A reader's agent is offered the default composition's 40 reads, and these two.
-  assert.equal(catalog.length, 42);
+  // A reader's agent is offered the default composition's 42 reads, and these two.
+  assert.equal(catalog.length, 44);
   for (const name of ['web.search', 'web.extract'])
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

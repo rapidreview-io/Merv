@@ -83,6 +83,7 @@ export const customerExperimentsPlugin = {
     'codeWork',
     'sessions',
     'sandboxEvidence',
+    'reports',
     'sbxMerv',
     'sbxAccounts',
     'sbxDb',
@@ -112,6 +113,7 @@ export const customerExperimentsPlugin = {
       );
       await domain.initialize();
       yield () => domain.close();
+      yield domain.bindReports(ctx.reports);
       const storage = config.storage
         ? new RequestBuckets({
             ...config.storage,

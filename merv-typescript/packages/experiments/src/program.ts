@@ -21,7 +21,11 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
  * (designCheckout), experiment@42 grants nisa.research; experiment@40 and @41 stay registered
  * for the experiments that run on them.
  */
-export const programVersions: readonly number[] = [40, 41, 42];
+export const programVersions: readonly number[] = [40, 41, 42, 43];
+/** experiment@43 (2026-10-14): the executor writes the one-page report with the report tools,
+ *  and results are submitted with its final render. Earlier versions keep their Markdown report. */
+export const REPORT_VERSION = 43;
+export const writesReport = (version: number) => version >= REPORT_VERSION;
 
 /**
  * Whether a design and its review read, in a read-only checkout, the code execution will start
@@ -50,7 +54,7 @@ export const runningNode = {
 };
 
 /** The contract a new experiment runs on. */
-export const programVersion = 42;
+export const programVersion = 43;
 
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.

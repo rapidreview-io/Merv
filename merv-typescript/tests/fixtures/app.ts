@@ -17,12 +17,16 @@ const committed = loadConfiguration({ directory: '.', configFile: defaultConfigF
   (entry) => entry.id === 'state',
 )?.config;
 
+// Reports renders in a browser; apps in tests take report artifacts as rendered (legacy-reports.ts).
+const legacyReports = fileURLToPath(new URL('./legacy-reports.ts', import.meta.url));
 const local = (directory: string, feed?: boolean) => (entry: ConfiguredPlugin) =>
   entry.name === '@merv/state' && isDeepStrictEqual(entry.config ?? {}, committed ?? {})
     ? { ...entry, config: stateConfig(directory) }
     : feed && /^feed(-|$)/.test(entry.id)
       ? { ...entry, disabled: false }
-      : entry;
+      : entry.name === '@merv/reports'
+        ? { ...entry, name: legacyReports }
+        : entry;
 
 export async function createApp({ feed, ...options }: AppOptions & { feed?: boolean }) {
   const adapt = local(options.directory, feed);

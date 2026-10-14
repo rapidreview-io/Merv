@@ -1,7 +1,7 @@
 import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import { type ContextRecipeDefinition } from '@merv/contracts';
 import type { FeasibilityStatement } from './evidence.js';
-import { activeStates, type ActiveState, reviewing } from './program.js';
+import { activeStates, type ActiveState, reviewing, writesReport } from './program.js';
 
 // The experiment recipes and review criteria: what each assignment is told, and what each
 // review judges.
@@ -232,3 +232,39 @@ export const REVIEW_RETURNS = {
     { value: 'running', label: 'Running, to repair under the approved plan' },
   ],
 } as const;
+
+/**
+ * What experiment@43's executor is handed instead of the Markdown report template: the report tools,
+ * a persistent draft and its final render. A new recipe version carries it, since published recipe
+ * and policy bytes never change.
+ */
+export const reportHandoff = `Retain result artifacts and attach them to this attempt as role result. Write the report with the report tools (subjectKind experiment, subjectId this experiment): report.open returns a draft prefilled from the approved plan, its question, inquiry and constraints locked, and the format guide; Merv renders it to a one-page PDF. The draft persists across rounds: when a review returns the work, act on its findings by editing the draft with report.write, or report.clear to start over from the plan; do not rewrite what still holds. Compute every number from the retained results; result artifacts can feed charts directly. Review each chart with report.review_visual, fix it until it makes its message, then report.approve_visual; check the whole page with report.render, then render it with final: true. Attach the returned sourceArtifactId as role report with the current numeric attemptIndex and expectedRevision; the report you submit must be rendered in this session. Verify inherited results before reusing their exact frozen records. Selecting what mattered is the authorship; do not hide known rework, pivots or failed attempts: record them by id in Execution. Declared JSON results must be finite valid JSON; explicitly qualitative results are distinct. Use experiment.exhibit to inspect the deterministic metrics exhibit. Submit via experiment.transition with transition submit_results, the current revision, and a stable requestId. The reviewer owns the paper update; submit the scientific evidence and report, not paper edits. Use retry_running only for an infrastructure interruption; it preserves the attempt and its approved plan.`;
+
+/** experiment@43's presentation guidance: the report is a fixed one-page layout Merv renders. */
+export const reportedPresentation =
+  'Presenting results in the report: choose the form by the shape of the content. Compare two or more items (arms, metrics, runs) in a table or a chart, never as a run of numbers in a sentence; use a sentence for one number and its comparison. Every number states what it is compared with and its unit; define each abbreviation once, where it first appears. Keep prose for reasoning, interpretation and caveats, and mark interpretation that was not tested. Make the report longer only by adding information, never by adding wording. Say plainly what was verified and how, as facts, not as a first-person account.';
+
+/** experiment@43's results criteria: the same three, and the rendered report's format last. */
+export const reportedResultsCriteria = [
+  ...resultsCriteria.slice(0, -1),
+  'Format: the report is the rendered one-page report: a one-line answer and a chart of every pre-registered criterion against its bar with uncertainty, execution with every deviation and its cost, data, verification and limitations, within each section’s limits and without padding; each chart makes the point its message states.',
+];
+
+const runningRecipe = EXPERIMENT_RECIPES.find((r) => r.name === recipeNames.running)!;
+/** experiment.execute@13: the running recipe of experiment@43, with the report tools' handoff. */
+export const REPORTED_EXECUTE_RECIPE: ContextRecipeDefinition = {
+  ...runningRecipe,
+  version: 13,
+  recipe: { ...runningRecipe.recipe, outputInstructions: reportHandoff },
+};
+
+/** The recipe key an experiment's state uses at its version. */
+export const recipeKey = (state: ActiveState, version: number) =>
+  state === 'running' && writesReport(version) ? 'running:report' : state;
+/** The handoff an experiment's state gives at its version. */
+export const handoffAt = (state: ActiveState, version: number) =>
+  state === 'running' && writesReport(version) ? reportHandoff : handoff(state);
+export const presentationAt = (version: number) =>
+  writesReport(version) ? reportedPresentation : reportPresentation;
+export const resultsCriteriaAt = (version: number) =>
+  writesReport(version) ? reportedResultsCriteria : resultsCriteria;
