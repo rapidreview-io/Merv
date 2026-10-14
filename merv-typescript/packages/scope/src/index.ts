@@ -220,10 +220,10 @@ export class ProjectScope implements Scope {
     });
   }
 
-  async caller(principal: Principal, projectId?: string) {
+  async caller(principal: Principal, projectId?: string, decide = true) {
     return principal?.kind === 'key'
-      ? await this.userKeys.caller(principal, projectId)
-      : await this.members.caller(principal, projectId);
+      ? await this.userKeys.caller(principal, projectId, decide)
+      : await this.members.caller(principal, projectId, decide);
   }
   async projects(principal: Principal) {
     return principal?.kind === 'key'

@@ -211,7 +211,7 @@ test('expiry rejects HTTP and MCP discovery/calls, including a credential invali
   scope.authenticate = auth;
 });
 
-test('registry rechecks credential and remote grants between initial admission and handler dispatch', async (t) => {
+test('registry decides credential and remote grants at handler dispatch, after every wait', async (t) => {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const operator = await scope.credentials.bootstrap({
@@ -237,9 +237,9 @@ test('registry rechecks credential and remote grants between initial admission a
     await state.close();
   });
   let admitted = 0;
-  // Both calls must pass initial admission before the rotation lands, and neither may dispatch
-  // before it commits. Reads do not queue behind the rotation's writer on PostgreSQL, so timing
-  // alone cannot place it between the two checks; each call waits at a gate after admission.
+  // Both calls wait at a gate until the rotation commits: a native call after parsing, a remote
+  // one right before its grant check. Reads do not queue behind the rotation's writer on
+  // PostgreSQL, so timing alone cannot place it before the decision.
   let gated = 0;
   let open!: () => void;
   const bothAdmitted = new Promise<void>((resolve) => {
@@ -255,11 +255,11 @@ test('registry rechecks credential and remote grants between initial admission a
   const grant = access.require.bind(access);
   let remoteAdmitted = false;
   t.mock.method(access, 'require', async (...args: Parameters<typeof grant>) => {
-    await grant(...args);
     if (!remoteAdmitted) {
       remoteAdmitted = true;
       await gate();
     }
+    await grant(...args);
   });
   tools.register({
     name: 'probe',
@@ -291,7 +291,7 @@ test('registry rechecks credential and remote grants between initial admission a
     assert.rejects(tools.call('_remote.probe', identity(issued), {}), { code: 'forbidden' }),
   ]);
   await rotated;
-  assert.equal(gated, 2, 'both calls passed initial admission before the rotation');
+  assert.equal(gated, 2, 'both calls waited for the rotation');
   assert.equal(admitted, 0);
 });
 

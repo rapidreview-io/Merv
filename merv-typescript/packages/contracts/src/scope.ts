@@ -197,7 +197,9 @@ export interface Scope {
   authenticate(token: string): Promise<AuthenticatedActor>;
   /** Recognize any issued local digest, including revoked/expired credentials. */
   recognizesCredential(token: string): Promise<boolean>;
-  caller(principal: Principal, projectId?: string): Promise<Caller>;
+  /** The caller `principal` is in the project selected, and its read decision. `decide: false`
+   *  only names it, for a use that decides where it acts (the tool registry's call). */
+  caller(principal: Principal, projectId?: string, decide?: boolean): Promise<Caller>;
   projects(principal: Principal): Promise<Project[]>;
   require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor>;
   /** Whether this actor may act with `permission`; with `{ except }`, whether any actor but

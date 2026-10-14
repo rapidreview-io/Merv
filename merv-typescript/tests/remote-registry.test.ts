@@ -469,11 +469,8 @@ test('compact mounted names preserve raw tool identities for grants and do not r
     assert.deepEqual(await registry.call(`_nisa.${rawName}`, caller, {}), {
       content: [{ type: 'text', text: 'ok' }],
     });
-    // Authority is checked at admission and again before queued remote dispatch.
-    assert.deepEqual(checks, [
-      ['nisa', rawName],
-      ['nisa', rawName],
-    ]);
+    // Authority is checked once, right before the remote handler.
+    assert.deepEqual(checks, [['nisa', rawName]]);
     await assert.rejects(registry.call('_nisa.qa.cancel', caller, {}), { code: 'tool_forbidden' });
     await assert.rejects(registry.call(`_another-plugin.${rawName}`, caller, {}), {
       code: 'tool_forbidden',

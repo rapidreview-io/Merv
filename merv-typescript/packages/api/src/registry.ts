@@ -490,20 +490,11 @@ export class ToolRegistry implements Tools {
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !this.offered(entry, false))
       throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
+    if (entry.remote && !this.access)
+      throw new MervError('tool_forbidden', 'Remote tools require an explicit access policy', 403);
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
-    // A native tool's read decision is made once, right before its handler (dispatch, below); a
-    // remote tool's is its grant check (ToolPolicy.require).
     const operation = Promise.resolve().then(async () => {
-      if (entry.remote) {
-        if (!this.access)
-          throw new MervError(
-            'tool_forbidden',
-            'Remote tools require an explicit access policy',
-            403,
-          );
-        await this.access.require(caller, entry.remote.mountId, entry.remote.toolName);
-      }
       const session = caller.session ? this.sessionPolicy() : undefined;
       const prepared = await session?.provider.prepare(
         caller,
@@ -515,38 +506,33 @@ export class ToolRegistry implements Tools {
       // even when a replacement now owns the slot.
       try {
         if (session) this.fence(session);
-        const dispatchCaller = prepared?.caller ?? caller;
         const parsed = await entry.parse(prepared ? prepared.input : input);
         rules?.admits?.(entry.tool, parsed);
-        const validate = async (caller: Caller) => {
-          if (session)
-            await this.fenced(session, session.provider.validate(caller, name, parsed as Data));
-        };
-        await validate(dispatchCaller);
+        if (session && prepared)
+          await this.fenced(
+            session,
+            session.provider.validate(prepared.caller, name, parsed as Data),
+          );
         let completed: ToolInvocation | undefined;
+        // A call's Scope decision is made once, where its tool acts (founder, 2026-10-14): a
+        // remote tool's is its grant check right before its handler, which Mounts relies on (a
+        // session's also has its admission); a session's native tool's is its admission
+        // (prepare); any other native tool's is made right before its handler, inside a read's
+        // snapshot so that it decides on the rows the read sees. An open-world read alone is
+        // decided again after its handler: a revocation while it waited on a service outside
+        // Merv withholds what it brought back (a signed link, an answer).
         const dispatch = async (activeCaller: Caller) => {
-          // The admission immediately before a remote handler: the grant check authorizes
-          // through Scope, and Mounts relies on it (a remote tool never runs on a snapshot).
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
           const run = async () => {
-            // One read decision, inside a read's snapshot when it has one. The provider's run
-            // validates a session again right before this handler.
             if (!prepared && !entry.remote) await this.scope.require(activeCaller, 'read');
             return await entry.definition.handler(activeCaller, parsed);
           };
           const result =
             this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
           rules?.returns?.(result);
-          // Read handlers can wait for external storage while their PostgreSQL snapshot
-          // retains old permissions, and permissions can change while an open-world read
-          // waits on another service. Reauthorize after releasing that snapshot, before
-          // handing any bytes or signed URL to the caller. Mutations keep their own
-          // transactional authorization and may legitimately end their worker session.
-          if (this.reads(entry)) {
+          if (this.reads(entry) && !this.snapshotted(entry))
             await this.scope.require(activeCaller, 'read');
-            await validate(activeCaller);
-          }
           completed = entry.complete(result);
           return result;
         };

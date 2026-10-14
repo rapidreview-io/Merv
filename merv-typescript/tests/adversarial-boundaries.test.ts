@@ -53,7 +53,8 @@ test('a PostgreSQL download must reject a caller revoked while its link is signe
     title: 'Private',
     content: 'private evidence',
   });
-  // This is the exact snapshot wrapper used by the shipped toolsPlugin.
+  // This is the exact snapshot wrapper used by the shipped toolsPlugin, and artifact.read is
+  // registered as shipped: an open-world read, which waits on storage outside any snapshot.
   const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
   t.after(() => tools.close());
   const { z } = await import('zod');
@@ -61,6 +62,7 @@ test('a PostgreSQL download must reject a caller revoked while its link is signe
     name: 'artifact.read',
     description: 'Download',
     readOnly: true,
+    openWorld: true,
     inputSchema: z.object({ artifactId: z.string() }),
     handler: (caller, input) => artifacts.download(caller, input.artifactId),
   });

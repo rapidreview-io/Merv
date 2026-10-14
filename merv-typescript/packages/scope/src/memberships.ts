@@ -69,6 +69,21 @@ export function identityValid(identity: VerifiedIdentity, time: string): boolean
   );
 }
 
+/** The caller an actor token is, which only ever selects its own project. */
+function actorCaller(principal: Extract<Principal, { kind: 'actor' }>, projectId?: string): Caller {
+  check(
+    projectId === undefined || projectId === principal.actor.projectId,
+    'forbidden',
+    'Actor credentials are bound to their original project',
+    403,
+  );
+  return {
+    actorId: principal.actor.id,
+    projectId: principal.actor.projectId,
+    credentialId: principal.actor.credential.id,
+  };
+}
+
 function checkIdentity(identity: VerifiedIdentity, time: string): void {
   check(
     identityValid(identity, time),
@@ -162,20 +177,11 @@ export class Memberships {
     principal: Principal,
     projectId: string | undefined,
     tx: Transaction,
+    decide = true,
   ): Promise<Caller> {
     if (principal?.kind === 'actor') {
-      check(
-        projectId === undefined || projectId === principal.actor.projectId,
-        'forbidden',
-        'Actor credentials are bound to their original project',
-        403,
-      );
-      const caller: Caller = {
-        actorId: principal.actor.id,
-        projectId: principal.actor.projectId,
-        credentialId: principal.actor.credential.id,
-      };
-      await this.require(caller, 'read', tx);
+      const caller = actorCaller(principal, projectId);
+      if (decide) await this.require(caller, 'read', tx);
       return caller;
     }
     const human = await this.human(principal, tx);
@@ -201,12 +207,14 @@ export class Memberships {
         membershipId: row.id,
       },
     };
-    await this.require(caller, 'read', tx);
+    if (decide) await this.require(caller, 'read', tx);
     return caller;
   }
 
-  async caller(principal: Principal, projectId?: string): Promise<Caller> {
-    return await forRead(this.state, async (tx) => await this.resolve(principal, projectId, tx));
+  async caller(principal: Principal, projectId?: string, decide = true): Promise<Caller> {
+    // An actor token names its caller by itself: only a decision reads storage for it.
+    if (principal?.kind === 'actor' && !decide) return actorCaller(principal, projectId);
+    return await forRead(this.state, (tx) => this.resolve(principal, projectId, tx, decide));
   }
 
   private async project(tx: Sql, projectId: string): Promise<Project> {

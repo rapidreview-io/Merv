@@ -127,6 +127,7 @@ export class UserKeys {
   async caller(
     principal: Extract<Principal, { kind: 'key' }>,
     projectId?: string,
+    decide = true,
   ): Promise<Caller> {
     return await forRead(this.state, async (tx) => {
       // Principal metadata is descriptive. Authority always comes from the current stored key.
@@ -151,7 +152,7 @@ export class UserKeys {
         projectId: selected,
         key: { id: key.id, membershipId: member.id },
       };
-      await this.require(caller, 'read', tx);
+      if (decide) await this.require(caller, 'read', tx);
       return caller;
     });
   }

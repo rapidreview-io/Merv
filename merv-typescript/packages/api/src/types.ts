@@ -13,7 +13,8 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   readOnly?: boolean;
   /** The tool calls a service outside Merv (the MCP openWorldHint). A read like this runs outside
    *  the snapshot other reads hold, so a slow remote call keeps no reader connection; it is
-   *  admitted and re-checked as any read. It must not write; a database read opens its own. */
+   *  admitted as any read and decided again before its result leaves. It must not write; a
+   *  database read opens its own. */
   openWorld?: boolean;
   /** How an agent conversation may use this tool (what it reads reaches the model provider).
    *  Omitted: the agent runs it as its person. 'propose': the person runs the proposed call.

@@ -172,7 +172,7 @@ test('native registration keeps validation paired with its description when the 
 });
 
 test('native read protection stays paired with published metadata despite definition mutation', async (t) => {
-  const { scope, actors } = fixture();
+  const { scope } = fixture();
   let snapshots = 0;
   const tools = new ToolRegistry(scope, undefined, async (run) => {
     snapshots++;
@@ -184,17 +184,13 @@ test('native read protection stays paired with published metadata despite defini
     description: 'A protected read',
     readOnly: true,
     inputSchema: z.object({}).strict(),
-    handler: () => {
-      // Mutable native handlers are supported, but metadata changes must require registration.
-      definition.readOnly = false;
-      actors[0].active = false;
-      return { private: 'must not be returned after revocation' };
-    },
+    handler: () => ({ read: true }),
   };
   tools.register(definition);
+  // Mutable native definitions are supported, but metadata changes must require registration.
   definition.readOnly = false;
   assert.equal((await tools.describe(caller))[0].annotations?.readOnlyHint, true);
-  await assert.rejects(tools.call(definition.name, caller, {}), { code: 'forbidden' });
+  assert.deepEqual(await tools.call(definition.name, caller, {}), { read: true });
   assert.equal(snapshots, 1, 'the registered read must still execute in the read scope');
 });
 

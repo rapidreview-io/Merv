@@ -139,7 +139,7 @@ test('a conversation sees every conversable native tool and never a mounted, nev
   assert.equal(fixture.calls(), 2);
 });
 
-test('revocation during parsing or after the read snapshot cannot release a result', async () => {
+test('revocation during parsing or before the read snapshot is refused before the handler', async () => {
   const fixture = registry();
   const parsed = gate();
   fixture.tools.register({
@@ -162,13 +162,13 @@ test('revocation during parsing or after the read snapshot cannot release a resu
   fixture.revokeSource();
   parsed.release();
   await rejected;
+  // The read's one decision is made inside its snapshot, on the rows its handler reads.
   const next = registry(async (run) => {
-    const result = await run();
     next.revokeSource();
-    return result;
+    return await run();
   });
   await assert.rejects(next.tools.call('read', caller, { value: 'ok' }), { code: 'forbidden' });
-  assert.equal(next.calls(), 1);
+  assert.equal(next.calls(), 0);
   assert.equal(fixture.calls(), 0);
 });
 

@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { after, test } from 'node:test';
+import { after, test, type TestContext } from 'node:test';
 import pg from 'pg';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -542,99 +542,234 @@ test('a provider cannot write on a read decision', async (t) => {
 });
 
 /**
- * Read decisions per request, counted where Scope makes them: resolving the caller, a read
- * requirement, and the tool policy's grant check, which decides through Scope once. A native
- * read is decided again after its snapshot is released, before its result leaves.
+ * A tool call's Scope decisions, counted where Scope makes them: a deciding caller resolution, a
+ * read requirement, and the tool policy's grant check, which decides through Scope once. A tool
+ * call's transport only names its caller; the registry decides once, where the tool acts: a
+ * read inside its snapshot, a write or open-world read right before its handler, a mounted tool
+ * by its grant check (founder, 2026-10-14). An open-world read is decided again after its
+ * handler, a different moment. A listing is not a call: it still decides per part.
  */
-test('a tool request makes one read decision per decision point', async (t) => {
+async function calls(t: TestContext) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.credentials.bootstrap({ projectName: 'Decisions', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
   // Twenty granted mounted tools, so a listing shows what its grant check costs.
   const mounted = Array.from({ length: 20 }, (_, n) => (n ? `look${n}` : 'look'));
   (scope.toolPolicy as ExactToolPolicy).replace([
-    { projectId: boot.project.id, actorId: boot.actor.id, mountId: 'fixture', tools: mounted },
+    { projectId: owner.projectId, actorId: owner.actorId, mountId: 'fixture', tools: mounted },
   ]);
   const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
-  const api = new ApiServer(scope, tools, { port: 0 });
+  // A person signs in with `human.<subject>`.
+  const issuer = 'https://identity.example/auth/v1';
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  const identity = {
+    verify: async (token: string) => ({ issuer, subject: token.slice(6), expiresAt }),
+    configuration: () => ({}) as never,
+  };
+  const api = new ApiServer(scope, tools, { port: 0 }, identity);
   const url = await api.start();
-  const client = new Client({ name: 'decisions', version: '1' });
+  const clients: Client[] = [];
   t.after(async () => {
-    await client.close();
+    for (const client of clients) await client.close();
     await api.stop();
     await tools.close();
     await state.close();
   });
+  let ran = 0;
   const empty = z.object({}).strict();
-  tools.register({
-    name: 'fixture.read',
-    description: 'Reads.',
-    readOnly: true,
-    inputSchema: empty,
-    handler: () => ({}),
-  });
-  tools.register({
-    name: 'fixture.write',
-    description: 'Writes.',
-    inputSchema: empty,
-    handler: () => ({}),
-  });
+  const native = (name: string, fields: object, handler = (_caller: Caller): unknown => ({})) =>
+    tools.register({
+      name,
+      description: name,
+      inputSchema: empty,
+      handler: (caller: Caller) => (ran++, handler(caller)),
+      ...fields,
+    });
+  native('fixture.read', { readOnly: true });
+  native('fixture.write', {});
+  native('fixture.open', { readOnly: true, openWorld: true });
+  native('fixture.nest', { readOnly: true }, (caller) => tools.call('fixture.read', caller, {}));
   await tools.createCatalog('fixture').replace(
     mounted.map((name) => ({
       kind: 'mcp' as const,
       name,
       inputSchema: { type: 'object' as const },
-      handler: async () => ({ content: [] }),
+      handler: async () => (ran++, { content: [] }),
     })),
   );
-  await client.connect(
-    new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${boot.token}` } },
-    }),
+  // Alice runs a project where Bob produces; each has a key to it.
+  const [alice, bob] = await Promise.all(
+    ['alice', 'bob'].map((subject) =>
+      scope.members.acceptVerifiedIdentity({ issuer, subject, expiresAt }),
+    ),
   );
-  // A decision that asks Scope again inside itself (caller resolution requires read) is one.
+  const project = await scope.members.createProject(alice!, { name: 'People', requestId: 'p' });
+  await scope.members.addMember(alice!, project.id, { subject: 'bob', role: 'producer' });
+  const key = async (person: typeof alice) =>
+    (await scope.userKeys.create(person!, { projectId: project.id })).token;
+  // A decision that asks Scope again inside itself (caller resolution requires read) is one; a
+  // resolution that only names the caller is none. `after` runs once a caller has been named.
   const deciding = new AsyncLocalStorage<true>();
-  let decisions = 0;
+  const counted = { decisions: 0, after: undefined as (() => Promise<unknown>) | undefined };
   for (const method of ['caller', 'require', 'authorityActor'] as const) {
     const decide = scope[method].bind(scope) as (...args: unknown[]) => Promise<unknown>;
     t.mock.method(scope, method, async (...args: unknown[]) => {
-      if (!deciding.getStore()) decisions++;
-      return await deciding.run(true, () => decide(...args));
+      const naming = method === 'caller' && args[2] === false;
+      if (!deciding.getStore() && !naming) counted.decisions++;
+      const value = await deciding.run(true, () => decide(...args));
+      const after = naming ? counted.after : undefined;
+      counted.after = undefined;
+      await after?.();
+      return value;
     });
   }
-  const counted = async (request: () => Promise<unknown>) => {
-    decisions = 0;
-    await request();
-    return decisions;
-  };
-  const post = (name: string) => async () => {
+  const post = async (name: string, token: string) => {
     const response = await fetch(`${url}/tools/${name}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${boot.token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(token.startsWith('human.') && { 'x-merv-project-id': project.id }),
+      },
       body: '{}',
     });
-    assert.equal(response.status, 200, await response.clone().text());
+    return {
+      status: response.status,
+      body: (await response.json()) as { error?: { code: string } },
+    };
   };
+  const mcp = async (token: string) => {
+    const client = new Client({ name: 'decisions', version: '1' });
+    clients.push(client);
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } },
+      }),
+    );
+    return client;
+  };
+  return {
+    scope,
+    boot,
+    owner,
+    tools,
+    counted,
+    post,
+    mcp,
+    alice,
+    bob,
+    project,
+    key,
+    ran: () => ran,
+  };
+}
+const paths = ['fixture.read', 'fixture.write', 'fixture.open', 'fixture.nest', '_fixture.look'];
+
+test('a tool call makes one Scope decision on every path', async (t) => {
+  const f = await calls(t);
+  const client = await f.mcp(f.boot.token);
+  const decisions = async (request: () => Promise<unknown>) => {
+    f.counted.decisions = 0;
+    await request();
+    return f.counted.decisions;
+  };
+  const post = (name: string, token: string) => async () =>
+    assert.equal((await f.post(name, token)).status, 200);
   const call = (name: string) => async () =>
     assert.equal((await client.callTool({ name, arguments: {} })).isError, undefined);
-  assert.deepEqual(
-    {
-      'native read': await counted(post('fixture.read')),
-      'native write': await counted(post('fixture.write')),
-      'MCP tools/list': await counted(async () =>
-        assert.equal((await client.listTools()).tools.length, 22),
-      ),
-      'MCP native read': await counted(call('fixture.read')),
-      // Mounts' own connection pool adds its two when the tool is a real mount.
-      'MCP remote call': await counted(call('_fixture.look')),
-    },
-    {
-      'native read': 3,
-      'native write': 2,
-      // One grant check for all twenty mounted tools is the third.
-      'MCP tools/list': 3,
-      'MCP native read': 3,
-      'MCP remote call': 3,
-    },
+  const counts: Record<string, number> = {};
+  for (const name of paths) counts[`POST ${name}`] = await decisions(post(name, f.boot.token));
+  counts['POST, as a person'] = await decisions(post('fixture.read', 'human.bob'));
+  counts['POST, by user key'] = await decisions(post('fixture.read', await f.key(f.alice)));
+  for (const name of paths)
+    counts[`in-process ${name}`] = await decisions(() => f.tools.call(name, f.owner, {}));
+  counts['MCP tools/list'] = await decisions(async () =>
+    assert.equal((await client.listTools()).tools.length, 24),
   );
+  // Mounts' own connection pool adds its two when the tool is a real mount.
+  for (const name of ['fixture.read', '_fixture.look'])
+    counts[`MCP ${name}`] = await decisions(call(name));
+  assert.deepEqual(counts, {
+    ...Object.fromEntries(
+      Object.keys(counts).map((path) => [
+        path,
+        // One for each call: a nested call shares its caller's snapshot, where Scope keeps the
+        // outer decision, so it reads nothing again. An open-world read is also decided after
+        // its handler, as a revocation while it waited withholds its result.
+        path.endsWith('fixture.nest') || path.endsWith('fixture.open') ? 2 : 1,
+      ]),
+    ),
+    // The caller's, the listing's own, and one grant check for all twenty mounted tools.
+    'MCP tools/list': 3,
+  });
+});
+
+test('a credential or membership revoked after its call named it is refused, on every path', async (t) => {
+  const f = await calls(t);
+  // A fresh credential of the owner per path, revoked once the transport has named its caller.
+  const credential = async () => {
+    const issued = await f.scope.credentials.issueActorCredential(f.owner, {
+      actorId: f.owner.actorId,
+    });
+    const caller = { ...f.owner, credentialId: issued.credential.id };
+    const revoke = () => f.scope.credentials.revokeCredential(f.owner, issued.credential.id);
+    return { token: issued.token, caller, revoke };
+  };
+  const refused = async (path: string, request: (token: string) => Promise<unknown>) => {
+    const { token, revoke } = await credential();
+    f.counted.after = revoke;
+    const before = f.ran();
+    await request(token);
+    assert.equal(f.counted.after, undefined, `${path}: its caller was named before the decision`);
+    assert.equal(f.ran(), before, `${path}: no handler ran`);
+  };
+  const forbidden = {
+    code: 'forbidden',
+    message: 'Credential cannot authorize this actor in this project',
+  };
+  for (const name of paths)
+    await t.test(`POST ${name}`, async () => {
+      await refused(name, async (token) =>
+        assert.deepEqual(await f.post(name, token), { status: 403, body: { error: forbidden } }),
+      );
+    });
+  for (const name of ['fixture.read', '_fixture.look'])
+    await t.test(`MCP ${name}`, async () => {
+      await refused(name, async (token) =>
+        assert.deepEqual(await (await f.mcp(token)).callTool({ name, arguments: {} }), {
+          isError: true,
+          content: [{ type: 'text', text: JSON.stringify({ error: forbidden }) }],
+        }),
+      );
+    });
+  for (const name of paths)
+    await t.test(`in-process ${name}`, async () => {
+      const { caller, revoke } = await credential();
+      await revoke();
+      const before = f.ran();
+      await assert.rejects(f.tools.call(name, caller, {}), { code: 'forbidden', status: 403 });
+      assert.equal(f.ran(), before, 'no handler ran');
+    });
+  await t.test('a person, or their key, removed from the project', async () => {
+    for (const token of ['human.bob', await f.key(f.bob)])
+      for (const name of ['fixture.read', 'fixture.write']) {
+        f.counted.after = () => f.scope.members.removeMember(f.alice!, f.project.id, 'bob');
+        const before = f.ran();
+        assert.equal((await f.post(name, token)).status, 403, name);
+        assert.equal(f.counted.after, undefined);
+        assert.equal(f.ran(), before, 'no handler ran');
+        // Removed before the call, resolution refuses it already.
+        const { body } = await f.post(name, token);
+        assert.equal(body.error?.code, 'membership_required', name);
+        await f.scope.members.addMember(f.alice!, f.project.id, {
+          subject: 'bob',
+          role: 'producer',
+        });
+      }
+  });
 });
