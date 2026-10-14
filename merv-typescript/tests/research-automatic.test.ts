@@ -689,6 +689,40 @@ test('a retry that fails while the database is still down is tried again', async
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
 });
 
+test('a hosted cycle whose own advance a passing outage refused is tried again without another event', async (t) => {
+  const f = await fixture(t, false, { afterMs: 50 });
+  await f.define();
+  await f.enable();
+  const work = await f.task();
+  const cycle = await f.create([work.id], { maxCycles: 3 });
+  await f.finishTask(work.id);
+  await f.pump();
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [work.id] });
+  // Git times out when the advance asks what main lacks, outside every transaction.
+  const code = f.research.providers.code;
+  const accepted = code.acceptedSince.bind(code);
+  let down = true;
+  let refused = 0;
+  code.acceptedSince = async (caller) => {
+    if (!down) return await accepted(caller);
+    refused++;
+    throw new MervError('code_git_timeout', 'A Git operation took too long', 503);
+  };
+  await f.approve(cycle.id, stop);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await f.pump();
+  assert.ok(refused > 0);
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+  // The outage passes, and nothing else happens in this project.
+  down = false;
+  for (let wait = 0; wait < 40; wait++) {
+    await f.app.ctx.domainEvents.drain();
+    if ((await f.research.get(f.owner, cycle.id)).workflow.state === 'consolidating') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'consolidating');
+});
+
 test('outages that alternate their codes are still tried again only for the bound, by one timer per project', async (t) => {
   const f = await fixture(t, false, { afterMs: 37, forMs: 400 });
   await f.define();

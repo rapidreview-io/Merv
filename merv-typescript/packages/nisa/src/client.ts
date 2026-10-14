@@ -13,8 +13,20 @@ export async function request(
   key: string,
   options: { body?: unknown; timeoutMs: number; maxBytes: number; signal: AbortSignal },
 ): Promise<Record<string, unknown>> {
-  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]);
-  const data = await fetchJson(url, key, { ...options, userAgent: USER_AGENT, signal });
+  // AbortSignal.any() holds its sources weakly, and on Node 22 a long-lived source keeps a trace
+  // of every signal composed from it: this call's own two are composed and held until it ends.
+  const timeout = AbortSignal.timeout(options.timeoutMs);
+  const stopped = new AbortController();
+  const stop = () => stopped.abort(options.signal.reason);
+  if (options.signal.aborted) stop();
+  else options.signal.addEventListener('abort', stop, { once: true });
+  const signal = AbortSignal.any([stopped.signal, timeout]);
+  const data = await fetchJson(url, key, { ...options, userAgent: USER_AGENT, signal }).finally(
+    () => {
+      options.signal.removeEventListener('abort', stop);
+      return timeout;
+    },
+  );
   // A success that carries an error is not one.
   if ('error' in data) throw new OutboundError({ kind: 'invalid' });
   return data;

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -433,7 +435,12 @@ test('Nisa is held to its deadline, bytes and JSON, never followed elsewhere, an
   await assert.rejects(find(), { code: 'nisa_invalid_response' });
   const started = Date.now();
   reply = () => new Promise<Reply>(() => {});
+  // Collecting garbage while the call waits: a timeout held only by AbortSignal.any() is lost.
+  setFlagsFromString('--expose-gc');
+  const collect = setInterval(runInNewContext('gc'), 20);
+  t.after(() => clearInterval(collect));
   await assert.rejects(find(), { code: 'nisa_timeout', status: 504 });
+  clearInterval(collect);
   assert.ok(Date.now() - started < 4000);
   // Closing ends a call in flight at once, and refuses the next.
   const asked = fake.seen.length;

@@ -374,8 +374,10 @@ export function soon(
         const left = (await ctx.workflows.blockers(caller, row.research_id, tx)).find(
           (item) => item.provider === AUTOMATIC_PROVIDER,
         );
-        if (left?.code === marker?.code && left?.message === marker?.message)
-          await publishBlocker(ctx.workflows, row, automaticBlocker(error), tx);
+        if (left?.code !== marker?.code || left?.message !== marker?.message) return;
+        await publishBlocker(ctx.workflows, row, automaticBlocker(error), tx);
+        // An outage is tried again, as when the consumer meets it: no other event may come.
+        if (error.status === 503) retryUnavailable(ctx, row);
       });
     }
   };
