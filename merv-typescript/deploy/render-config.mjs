@@ -394,6 +394,7 @@ if (customerExperimentsEnabled) {
     publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
     sponsor,
     computeProjectId: required('MERV_CUSTOMER_COMPUTE_PROJECT_ID'),
+    computeBudgetUsd: integer('MERV_CUSTOMER_COMPUTE_BUDGET_USD', 5, 1, 100000),
     computeProviders: json('MERV_CUSTOMER_COMPUTE_PROVIDERS'),
     maxRequestsPerDay: integer('MERV_CUSTOMER_REQUESTS_PER_DAY', 25, 1, 1000),
   };

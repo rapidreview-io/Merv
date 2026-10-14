@@ -17,6 +17,7 @@ export function hostedCustomerCompute(
     sponsor: { issuer: string; subject: string };
     computeProjectId: string;
     computeProviders: string[];
+    computeBudgetUsd: number;
   },
 ) {
   const source = async () => {
@@ -85,7 +86,7 @@ export function hostedCustomerCompute(
           window: 'all_time',
           metric: 'money',
           currency: 'USD',
-          cap: Decimal.fromInt(5),
+          cap: Decimal.fromInt(config.computeBudgetUsd),
           provider: null,
           source: null,
         });

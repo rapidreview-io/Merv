@@ -83,6 +83,7 @@ function fixture() {
       sponsor: { issuer: 'issuer', subject: 'subject' },
       computeProjectId: 'sponsor',
       computeProviders: ['lambda'],
+      computeBudgetUsd: 250,
     }),
     owner,
     calls,
@@ -103,7 +104,7 @@ test('intake inventory stays read-only; payment preflight links private bounded 
   await f.compute.prepareExecution(f.owner);
   assert.deepEqual(f.calls, ['catalog', 'limits', 'connect']);
   assert.equal(f.policy()?.window, 'all_time');
-  assert.equal(String(f.policy()?.cap), '5');
+  assert.equal(String(f.policy()?.cap), '250');
 });
 
 test('customer funding never bypasses prepaid provider admission by copying its credential', async () => {
