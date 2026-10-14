@@ -467,9 +467,10 @@ export class ArtifactStore implements Artifacts {
       }
       if (before !== undefined) {
         const cursor = await tx.get<{ created_at: string; id: string }>(
-          'SELECT created_at,id FROM artifacts WHERE id=? AND project_id=?',
+          `SELECT created_at,id FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
           before,
           caller.projectId,
+          ...visible.params,
         );
         check(cursor, 'not_found', 'Artifact not found in this project', 404);
         where.push('(created_at,id) < (?,?)');

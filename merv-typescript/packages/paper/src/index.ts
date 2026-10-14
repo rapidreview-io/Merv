@@ -35,6 +35,7 @@ import { PROBLEM_SECTIONS } from './rules.js';
 import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
+const MOST_CITATIONS = 2_000;
 const unique = (values: string[]) => [...new Set(values)].sort();
 /** A document before its first revision; the Problem already has its four empty sections. */
 const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
@@ -358,6 +359,13 @@ export class PaperService implements Paper {
           'paper_citation_not_found',
           'Citation not found in this project',
           404,
+        );
+        // Every read of the paper, and every citation, holds the whole ledger.
+        check(
+          before || citations.length < MOST_CITATIONS,
+          'paper_citations_full',
+          `The citation ledger holds at most ${MOST_CITATIONS} entries; revise an existing one instead`,
+          409,
         );
         check(
           (before?.revision ?? 0) === input.expectedRevision,

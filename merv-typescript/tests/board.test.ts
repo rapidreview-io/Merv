@@ -176,7 +176,7 @@ test('readers and reviewers see boards but cannot draw; archived boards leave th
   assert.deepEqual(await f.board.list(f.reader), []);
 });
 
-test('a page cannot save images, embeds or script links, and an agent cannot name a missing shape', async (t) => {
+test('a page cannot save images, embeds, script links or outsized shapes, and an agent cannot name a missing shape', async (t) => {
   const f = await fixture(t);
   const made = await f.board.create(f.operator, 'Guarded');
   const base = {
@@ -196,6 +196,8 @@ test('a page cannot save images, embeds or script links, and an agent cannot nam
     // Read as lists by board.read, board.draw and the picture.
     { ...base, type: 'rectangle', boundElements: 'not a list' },
     { ...base, type: 'rectangle', groupIds: 7 },
+    // Every read of the board would hold it.
+    { ...base, type: 'rectangle', customData: { blob: 'x'.repeat(256 * 1024) } },
     // Points are drawn into the picture an agent looks at.
     {
       ...base,

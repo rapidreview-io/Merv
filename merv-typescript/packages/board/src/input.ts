@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { idSchema, parsed, visible } from '@merv/contracts';
+import { idSchema, jsonBytes, parsed, visible } from '@merv/contracts';
 
 export const id = idSchema;
 export const title = z.string().trim().min(1).max(200).refine(visible);
@@ -200,7 +200,9 @@ export const elementSchema = z
     boundElements: z.array(z.object({ id: z.string(), type: z.string() }).passthrough()).nullish(),
     groupIds: z.array(z.string()).optional(),
   })
-  .passthrough();
+  .passthrough()
+  // Every read of a board holds all of it; an agent's longest sketch stroke is about 150 KiB.
+  .refine((el) => jsonBytes(el) <= 256 * 1024, 'A shape is at most 256 KiB');
 export const saveSchema = z
   .object({ id, elements: z.array(elementSchema).min(1).max(500) })
   .strict();

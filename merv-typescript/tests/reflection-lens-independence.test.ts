@@ -117,8 +117,17 @@ test('a lens agent reads no other lens report mid-wave, on a work or an inquiry 
     listed: await app.ctx.tools
       .invoke('artifact.list', caller, {})
       .then((r: any) => JSON.stringify(r.value).includes(report.id)),
+    cursor: await app.ctx.tools.invoke('artifact.list', caller, { before: report.id }).then(
+      () => 'paged',
+      (e: any) => `refused ${e.code}`,
+    ),
   });
-  const withheld = { read: 'refused not_found', get: 'refused not_found', listed: false };
+  const withheld = {
+    read: 'refused not_found',
+    get: 'refused not_found',
+    listed: false,
+    cursor: 'refused not_found',
+  };
   assert.deepEqual(
     await reads(lensWorker),
     withheld,

@@ -250,6 +250,37 @@ test('paper keeps ordered section history, structured scope and scoped citation 
   );
 });
 
+test('the citation ledger takes no 2,001st entry, and an existing one still revises', async (t) => {
+  const f = await fixture(t);
+  const { projectId, actorId } = f.operator;
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO paper_citations(id,project_id,revision,identifier,record)
+       SELECT 'citation_' || n, ?, 1, 'doi:' || n, json_build_object('id', 'citation_' || n,
+         'projectId', ?::text, 'revision', 1, 'identifier', 'doi:' || n, 'title', 'Seeded',
+         'authors', '[]'::json, 'year', null, 'url', null, 'notes', '', 'sectionIds', '[]'::json,
+         'refs', '[]'::json, 'createdAt', '2026-10-14T00:00:00.000Z',
+         'updatedAt', '2026-10-14T00:00:00.000Z', 'updatedBy', ?::text)::text
+       FROM generate_series(1, 1999) AS n`,
+      projectId,
+      projectId,
+      actorId,
+    ),
+  );
+  const cite = (identifier: string, more = {}) =>
+    f.paper.cite(f.producer, {
+      expectedRevision: 0,
+      requestId: f.request(),
+      identifier,
+      title: 'Cited',
+      ...more,
+    });
+  assert.equal((await cite('doi:last')).revision, 1, 'the 2,000th entry is taken');
+  await assert.rejects(cite('doi:over'), hasCode('paper_citations_full'));
+  const revised = await cite('doi:7', { id: 'citation_7', expectedRevision: 1 });
+  assert.equal(revised.revision, 2, 'an existing entry still revises');
+});
+
 test('paper inputs reject accessors and proxies without executing them', async (t) => {
   const f = await fixture(t);
   let calls = 0;
