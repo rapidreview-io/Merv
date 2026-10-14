@@ -83,6 +83,11 @@ test('independent leased review rejects fabricated claims and atomically rolls b
     code: 'leased_review_required',
   });
   const { held, review } = await f.claim(pending);
+  // A worker leased on one task's review claims no other task's review, even in-process.
+  const other = await f.submit(await f.delivery(await f.create()));
+  await assert.rejects(f.app.ctx.reviews.start(held.worker, other.reviewId!), {
+    code: 'stale_lease',
+  });
   const input = {
     ...reviewedFindings(review),
     reviewId: review.id,

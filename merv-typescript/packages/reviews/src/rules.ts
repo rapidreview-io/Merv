@@ -16,8 +16,6 @@ export function roundsUsed(verdicts: readonly Verdict[]): string {
     ? `Every review round is used: ${moves.join(', ')}, or an admin allows another round.`
     : 'Every review round is used: only an admin can allow another round.';
 }
-/** What a domain's review.submit step requires of its input. */
-export const REVIEW_SUBMIT_INPUT = ['verdict', 'notes', 'synopsis', 'findings'] as const;
 
 /** What a review action's callbacks read of a workflow check context. */
 interface ReviewActionContext {
@@ -49,7 +47,7 @@ export function reviewActions<C extends ReviewActionContext>(owner: {
       transitions: [...owner.transitions],
       tool: 'review.submit',
       instruction: owner.instructions.submit,
-      requiredInput: [...REVIEW_SUBMIT_INPUT],
+      requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
       arguments: async (context: C) => {
         const review = await owner.current(context);
         return {

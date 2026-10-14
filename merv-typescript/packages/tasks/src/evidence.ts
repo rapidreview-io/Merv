@@ -94,13 +94,11 @@ export function validateConfirmations(
       `Check ${item.checkNumber} must refer only to distinct submitted artifact IDs, at most ${CONFIRMATION_EVIDENCE}`,
     );
   }
+  const missing = checks.map((_, index) => index + 1).filter((number) => !seen.has(number));
   check(
-    seen.size === checks.length,
+    !missing.length,
     'invalid_confirmations',
-    `Missing confirmations for checks: ${acceptanceChecks(checks)
-      .filter(({ number }) => !seen.has(number))
-      .map(({ number }) => number)
-      .join(', ')}`,
+    `Missing confirmations for checks: ${missing.join(', ')}`,
   );
   return structuredClone(value as TaskConfirmation[]).sort((a, b) => a.checkNumber - b.checkNumber);
 }

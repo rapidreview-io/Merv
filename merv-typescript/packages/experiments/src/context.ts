@@ -67,17 +67,14 @@ export function approvedPlan(experiment: Experiment): string[] {
     experiment,
     'Execution requires this attempt’s exact approved design submission',
   );
-  const plans = submission.evidence
-    .filter((evidence) => evidence.role === 'plan')
-    .map((evidence) => evidence.artifactId);
+  const pinned = (role: string) =>
+    submission.evidence.filter((item) => item.role === role).map((item) => item.artifactId);
+  const plans = pinned('plan');
   check(plans.length > 0, 'approved_plan_required', 'The approved design has no pinned plan', 409);
   // The admitted feasibility statement travels with the plan, so the running worker and the
   // results reviewer see the budget the design was approved under. It is not required here:
   // submission and the design review are the gates, and this runs only after both.
-  const feasibility = submission.evidence
-    .filter((evidence) => evidence.role === 'feasibility')
-    .map((evidence) => evidence.artifactId);
-  return [...new Set([...plans, ...feasibility, ...submission.figureIds])];
+  return [...new Set([...plans, ...pinned('feasibility'), ...submission.figureIds])];
 }
 
 export function eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {

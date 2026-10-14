@@ -45,7 +45,8 @@ export function leaseHooks(ctx: TasksContext): NonNullable<WorkflowAssignmentRul
 /**
  * A claim made without a lease can never pass a Git task and shuts every leased reviewer out,
  * so it is admitted only once review_rounds is used up: no runner is offered the review then,
- * and the person the limit waits for may still end the task.
+ * and the person the limit waits for may still end the task. A worker claims as it takes this
+ * review's lease (acquireLease claims before the lease row is written) or while it holds it.
  */
 export async function leasedClaim(
   ctx: TasksContext,
@@ -54,7 +55,11 @@ export async function leasedClaim(
   tx: Transaction,
 ) {
   ctx.registration(snapshot.version);
-  if (caller.session) return;
+  if (caller.session) {
+    if ((await leaseRows(tx, { projectId: caller.projectId, id: caller.session.id })).length)
+      await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
+    return;
+  }
   check(
     !!(await ctx.workflows.exhaustedLimit(caller, snapshot.id, tx)),
     'leased_review_required',

@@ -456,7 +456,7 @@ export class ReviewService implements Reviews {
     await this.scope.require(caller, 'read', transaction);
     return await within(this.state, transaction, async (sql) => {
       const rows = await sql.all<ReviewRow>(
-        'SELECT * FROM reviews WHERE project_id = ? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        'SELECT * FROM reviews WHERE project_id = ? AND id = ANY(ARRAY(SELECT jsonb_array_elements_text(?::jsonb)))',
         caller.projectId,
         JSON.stringify([...new Set(ids)]),
       );

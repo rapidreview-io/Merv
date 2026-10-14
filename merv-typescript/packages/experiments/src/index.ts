@@ -499,7 +499,8 @@ export class ExperimentService implements Experiments {
         found.set(item.experiment_id, [...(found.get(item.experiment_id) ?? []), item]);
       return found;
     };
-    const within = 'experiment_id IN (SELECT jsonb_array_elements_text(?::jsonb))';
+    // An array is read by index; an IN (jsonb set) hash-joins every project's rows of the table.
+    const within = 'experiment_id = ANY(ARRAY(SELECT jsonb_array_elements_text(?::jsonb)))';
     const attemptRows = await grouped<AttemptRow>(
       `SELECT * FROM experiment_attempts WHERE ${within} ORDER BY experiment_id,attempt_index`,
     );
