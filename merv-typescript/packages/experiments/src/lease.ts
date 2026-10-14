@@ -164,15 +164,9 @@ export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignm
     ],
     role: async (context) => await leaseRole(ctx, context),
     acquire: async (context) => {
-      await leaseRole(ctx, { ...context, caller: context.source });
+      // workflows.offerLease ran lease.role(source) in this transaction just before this hook,
+      // matched the worker's role to it and checked its session, lease id and project.
       const experiment = await facts(ctx, context);
-      check(
-        context.caller.session?.id === context.leaseId &&
-          context.source.projectId === context.caller.projectId,
-        'invalid_lease',
-        'The offered experiment worker must match its source and lease',
-        403,
-      );
       // The first producing lease fixes the base, and it is normally the planner's; a later
       // one reads the same pin back, so execution inherits what the plan was written against.
       // A refused offer takes the pin back with its transaction.
