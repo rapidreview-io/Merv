@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { Caller } from '@merv/contracts';
+import { clip, type Caller } from '@merv/contracts';
 
 const id = z.string().regex(/^(?:op_|qa_)[a-f0-9]{32}$/);
 const requestId = z.string().trim().min(1).max(128);
@@ -92,7 +92,8 @@ const resultSchema = z.object({
 export function researchResult(data: unknown, offset = 0) {
   const value = resultSchema.parse(data);
   const answer = value.result?.answer ?? '';
-  const page = answer.slice(offset, offset + 12000);
+  // Ends on a whole character, so the next page starts on one too.
+  const page = clip(answer.slice(offset), 12000);
   return {
     operation_id: value.operationId,
     conversation_id: value.sessionId,

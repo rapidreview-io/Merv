@@ -187,6 +187,8 @@ export function strokesOf(d: string): Stroke[] {
         break;
       }
       case 'Z':
+        // Z reads no numbers: one after it would be read as another Z, forever.
+        if (typeof list[i] === 'number') refuse('Z takes no numbers');
         if (current) {
           current.points.push(start);
           current.closed = true;

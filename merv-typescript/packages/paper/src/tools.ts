@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
 import { z } from 'zod';
-import { check } from '@merv/contracts';
+import { check, clip } from '@merv/contracts';
 import { citeSchema, id, kind, patchSchema } from './input.js';
 import { paperSnapshot } from './context.js';
 const readSchema = z
@@ -51,12 +51,11 @@ export const paperToolsPlugin = {
           const found = sections.find(({ id }) => id === input.section);
           check(found, 'not_found', 'Section not found', 404);
           const offset = Math.min(input.offset ?? 0, found.content.length);
-          const end = input.length === undefined ? undefined : offset + input.length;
           return {
             ...found,
             kind: input.kind,
             revision,
-            content: found.content.slice(offset, end),
+            content: clip(found.content.slice(offset), input.length ?? Infinity),
             offset,
             total: found.content.length,
           };
@@ -69,7 +68,6 @@ export const paperToolsPlugin = {
         description:
           'The main agent can directly edit any living-paper document with expectedRevision. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual experiment name as the visible label and a stable ID in the link destination. New sections require title/content; afterId:null moves to the beginning, afterId moves below an existing section, remove:true removes an unreferenced section. Problem uses fixed problem/scope/goals/constraints keys. Assigned experiment and reflection reviewers submit Methods/Results edits in review.submit.paperChanges; producer assignments cannot edit the paper.',
         inputSchema: patchSchema,
-        readOnly: false,
         handler: async (caller, input) => await paper.patch(caller, input),
       }),
     );
@@ -79,7 +77,6 @@ export const paperToolsPlugin = {
         description:
           'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic_search, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.',
         inputSchema: citeSchema,
-        readOnly: false,
         handler: async (caller, input) => await paper.cite(caller, input),
       }),
     );

@@ -3,7 +3,9 @@ import { createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
+  idSchema,
   inTransaction,
+  parsed,
   type Artifacts,
   type Caller,
   type Reviews,
@@ -22,7 +24,7 @@ import type {
   KnowledgeReference,
   KnowledgeReferenceKind,
 } from './types.js';
-import { knowledgeIdSchema, knowledgeReferencesSchema, parseKnowledgeInput } from './input.js';
+import { knowledgeReferencesSchema } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 
 export type * from './types.js';
@@ -93,7 +95,7 @@ export class KnowledgeService implements Knowledge {
   ): Promise<KnowledgeReference[]> {
     caller = structuredClone(caller);
     this.open();
-    const input = parseKnowledgeInput(knowledgeReferencesSchema, { refs });
+    const input = parsed(knowledgeReferencesSchema, { refs }, 'invalid_knowledge_input');
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const result = await this.references(caller, input.refs, tx);
@@ -126,7 +128,7 @@ export class KnowledgeService implements Knowledge {
             : Object.hasOwn(SOURCES, kind)
               ? (kind as Source)
               : undefined;
-      const valid = !!id && knowledgeIdSchema.safeParse(id).success;
+      const valid = !!id && idSchema.safeParse(id).success;
       return { ref, id, kind, source: valid ? source : undefined };
     });
     /** What each owner holds of the ids asked of it; null when it could not be read. */

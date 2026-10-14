@@ -1,4 +1,4 @@
-import { researchInput, researchToolInput } from './research.js';
+import { researchToolInput } from './research.js';
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type { ToolDefinition } from '@merv/api/types';
@@ -40,7 +40,7 @@ export function nisaTools(nisa: Nisa): ToolDefinition[] {
       inputSchema: researchToolInput,
       readOnly: false,
       openWorld: true,
-      handler: (caller, input) => nisa.research(caller, researchInput.parse(input)),
+      handler: (caller, input) => nisa.research(caller, input),
     },
     read(
       'nisa.search',

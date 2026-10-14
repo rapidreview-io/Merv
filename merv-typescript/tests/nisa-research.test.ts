@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NisaService } from '../packages/nisa/src/index.js';
-import { researchScope } from '../packages/nisa/src/research.js';
+import { researchResult, researchScope } from '../packages/nisa/src/research.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
 import { provider, keyEnv } from './fixtures/web.js';
 import { execution } from '../packages/experiments/src/execution-policy.js';
@@ -101,4 +101,17 @@ test('only new workflow contracts grant stateful research, including independent
       true,
     );
   }
+});
+
+test('a report page ends on a whole character, so the next starts on one', () => {
+  const result = { answer: `${'x'.repeat(11_999)}🚀 end`, research_id: op };
+  const usage = { prompt_tokens: 1, completion_tokens: 2, cached_tokens: 0, cost_usd: 0 };
+  const data = { operationId: op, sessionId: session, status: 'completed', terminal: true };
+  const page = (offset: number) =>
+    researchResult(
+      { ...data, cancelRequested: false, failure: null, result: { ...result, usage } },
+      offset,
+    );
+  assert.equal(page(0).next_answer_offset, 11_999);
+  assert.equal(page(11_999).answer, '🚀 end');
 });

@@ -1,6 +1,7 @@
 import { createService, MervError, type Caller } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import { BoardService, boardPlugin, type BoardElement } from '@merv/board';
 import { boardToolsPlugin } from '@merv/board/tools';
 import { boardUiPlugin } from '@merv/board/ui';
 import { Drawing, summarize } from '@merv/board/elements';
+import { elementSchema, parse } from '@merv/board/input';
 import type { Context } from 'cordis';
 import type { ToolDefinition } from '@merv/api/types';
 import { openState } from './fixtures/state.js';
@@ -282,6 +284,19 @@ test('a sketch path reads as the points a pen passes: lines, curves, arcs and cl
   assert.throws(() => strokesOf('L 1 1'), /does not begin with M/);
   for (const d of ['M0 0 L1e999 5', 'M1e308 0 L-1e308 0'])
     assert.throws(() => strokesOf(d), /out of range/, 'no number overflows to no coordinate');
+  // Apart, with a deadline: a parser that read the number as another Z looped forever.
+  const run = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      "import { strokesOf } from './packages/board/src/path.ts'; try { strokesOf('M0 0 L9 9 Z 5') } catch (e) { console.log(e.code) }",
+    ],
+    { cwd: new URL('..', import.meta.url).pathname, timeout: 15_000, encoding: 'utf8' },
+  );
+  assert.equal(run.stdout.trim(), 'board_bad_path', 'a number after Z is refused');
 });
 
 test('an agent sketches with a pen: grouped strokes, painted petals, scaled and placed as one', () => {
@@ -476,6 +491,27 @@ test('a board holding a shape far out still places beside its shapes, and a vast
     [framed.find('n').x, framed.find('n').y, framed.find('vast').height],
     [30, 8000, 8150],
   );
+});
+
+test('a shape drawn in a frame or beside a framed one stands in it; a long word wraps whole', () => {
+  const drawing = new Drawing([], true);
+  drawing.apply({ op: 'frame', key: 'f', title: 'Area' });
+  drawing.apply({ op: 'note', key: 'n', text: `a${'🚀'.repeat(30)}`, in: 'f' });
+  drawing.apply({ op: 'box', key: 'b', text: 'Beside', near: 'n' });
+  drawing.apply({ op: 'link', key: 'l', text: 'Link', target: 'task_1', in: 'f' });
+  const frame = drawing.created.f;
+  assert.deepEqual(
+    summarize(drawing.result()).shapes.map((shape) => shape.frame),
+    [frame, frame, frame],
+  );
+  // Half an emoji is text the page could never save back.
+  const labels = drawing.result().filter((el) => el.type === 'text');
+  assert.equal(
+    labels.some((label) => /\p{Surrogate}/u.test(String(label.text))),
+    false,
+    'a label holds half an emoji',
+  );
+  parse(elementSchema.array(), labels);
 });
 
 test('edit rewords a shape’s own label: a narrow hand-drawn one wraps at 8, a frame only renames', () => {

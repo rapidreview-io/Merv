@@ -691,9 +691,11 @@ test('reads made outside a snapshot neither wait for nor take the writer lock', 
   assert.equal(waited, false, 'a read waited for an unrelated writer');
 });
 
-test('a revision past exact integers is refused as input, never sent to the database', () => {
+test('a revision past exact integers is refused as input; a section range ends whole', async (t) => {
+  const f = await fixture(t);
   const tools = new Map<string, ToolDefinition>();
   paperToolsPlugin.apply({
+    paper: f.paper,
     effect: (fn: () => unknown) => fn(),
     tools: {
       register: (tool: ToolDefinition) => tools.set(tool.name, tool),
@@ -701,6 +703,15 @@ test('a revision past exact integers is refused as input, never sent to the data
       contributeContext() {},
     },
   } as unknown as Context);
-  const read = tools.get('paper.read')!.inputSchema;
-  assert.equal(read.safeParse({ kind: 'methods', revision: 1e19 }).success, false);
+  const read = tools.get('paper.read')!;
+  assert.equal(read.inputSchema.safeParse({ kind: 'methods', revision: 1e19 }).success, false);
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'm', title: 'M', content: 'a🚀b' }],
+  });
+  // Two characters would end in half the emoji: the range stops before it.
+  const part = await read.handler(f.reader, { kind: 'methods', section: 'm', length: 2 });
+  assert.equal((part as { content: string }).content, 'a');
 });

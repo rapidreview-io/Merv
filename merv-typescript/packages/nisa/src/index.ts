@@ -91,17 +91,10 @@ export class NisaService implements Nisa {
 
   async search(caller: Caller, input: NisaSearchInput): Promise<NisaPaperList> {
     const value = parse(searchInput, input);
+    // The parsed fields as they stand (the JSON body leaves out what is unset). Enrichment starts
+    // one of Nisa's research agents; this plugin only ever looks papers up.
     const data = await this.call(caller, '/api/sdk/search', this.config.searchTimeoutMs, {
-      body: {
-        query: value.query,
-        max_results: value.max_results,
-        offset: value.offset,
-        ...(value.author !== undefined && { author: value.author }),
-        ...(value.date_from !== undefined && { date_from: value.date_from }),
-        ...(value.date_to !== undefined && { date_to: value.date_to }),
-        // Enrichment starts one of Nisa's research agents; this plugin only ever looks papers up.
-        enrich: false,
-      },
+      body: { ...value, enrich: false },
     });
     return list(data, 'search', value, MAX_SNIPPET_CHARS, SEARCH_OFFSETS);
   }
@@ -109,14 +102,7 @@ export class NisaService implements Nisa {
   async semanticSearch(caller: Caller, input: NisaSemanticSearchInput): Promise<NisaPaperList> {
     const value = parse(semanticInput, input);
     const data = await this.call(caller, '/api/sdk/semantic_search', this.config.searchTimeoutMs, {
-      body: {
-        query: value.query,
-        max_results: value.max_results,
-        offset: value.offset,
-        ...(value.author !== undefined && { author: value.author }),
-        ...(value.year_min !== undefined && { year_min: value.year_min }),
-        ...(value.year_max !== undefined && { year_max: value.year_max }),
-      },
+      body: value,
     });
     return list(data, 'semantic', value, LIST_ABSTRACT_CHARS, SEMANTIC_OFFSETS);
   }

@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { UNIT_MADE_LIMIT, unitFiles } from '@merv/artifacts/unit-files';
+import { UNIT_MADE_LIMIT, unitArtifacts, unitFiles } from '@merv/artifacts/unit-files';
 import { experimentFileIds } from '../packages/experiments/src/running.js';
 
 test('a unit made by forty visits lists what they made in one bounded read', async () => {
@@ -34,4 +34,14 @@ test('a unit made by forty visits lists what they made in one bounded read', asy
   lists.length = 0;
   await unitFiles(artifacts as never, {} as never, { ids: [], sessions: [] }, {} as never);
   assert.equal(lists.length, 0);
+});
+
+test('a unit file title is cut on a whole character', () => {
+  const title = `a${'🚀'.repeat(150)}`;
+  const graph = { state: 'open', edges: [] } as never;
+  const at = '2026-01-01T00:00:00.000Z';
+  const [file] = unitArtifacts(graph, [
+    { artifact: { id: 'a', title, mediaType: 'text/plain', size: 1, createdAt: at } },
+  ]);
+  assert.equal(file!.title, title.slice(0, 199));
 });

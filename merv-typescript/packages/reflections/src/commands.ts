@@ -1,12 +1,12 @@
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { reviewReturn } from '@merv/reviews/returns';
 import {
+  absent,
   visible,
   childRequest,
   recorded,
   check,
   inTransaction,
-  MervError,
   now,
   type Artifact,
   type ArtifactContent,
@@ -87,10 +87,7 @@ export async function plan(
   const plan = parseChangeSpec(content);
   // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
   for (const { workflowId } of plan.carriedOver) {
-    const carried = await ctx.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
-      if (error instanceof MervError && error.code === 'not_found') return undefined;
-      throw error;
-    });
+    const carried = await ctx.workflows.get(caller, workflowId, tx).catch(absent);
     check(
       carried && ['task', 'experiment'].includes(carried.workflow),
       'invalid_change_spec',
@@ -111,8 +108,7 @@ export async function submitLens(
     return await ctx.command(caller, 'submit_lens', input, tx, async () => {
       const lens = await ctx.lensRow(caller, input.lensId, tx);
       const snapshot = await ctx.workflows.get(caller, lens.id, tx);
-      const context = { caller, snapshot, tx };
-      await admit(ctx, context);
+      await admit(ctx, { caller, snapshot, tx });
       check(
         snapshot.revision === input.expectedRevision,
         'revision_conflict',

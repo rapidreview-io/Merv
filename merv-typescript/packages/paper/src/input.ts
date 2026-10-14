@@ -61,6 +61,7 @@ export const citeSchema = z
       .default(null),
     notes: z.string().max(16000).default(''),
     sectionIds: z.array(id).max(100).default([]),
+    // Project-scoped artifact:<id> evidence references.
     refs: z.array(id).max(200).default([]),
   })
   .strict();

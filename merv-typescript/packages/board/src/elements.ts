@@ -5,7 +5,7 @@
  * page measures exactly when it draws. Nothing here reads outside the board.
  */
 import { randomBytes } from 'node:crypto';
-import { MervError } from '@merv/contracts';
+import { clip, MervError } from '@merv/contracts';
 import { COLORS, INKS, PAINTS, type DrawOp } from './input.js';
 import { strokesOf } from './path.js';
 import type { BoardElement } from './types.js';
@@ -44,8 +44,10 @@ function wrap(text: string, chars: number): string {
             lines.push(line);
             line = '';
           } else {
-            lines.push(rest.slice(0, chars));
-            rest = rest.slice(chars);
+            // Cut on a whole character: half an emoji is text no page can save back.
+            const head = clip(rest, chars);
+            lines.push(head);
+            rest = rest.slice(head.length);
           }
         }
       }
@@ -123,8 +125,7 @@ export class Drawing {
         this.remove(text);
       else {
         box.boundElements = [...bound, { type: 'text', id: text.id }];
-        const middle = center(box);
-        Object.assign(text, { x: middle.x - text.width / 2, y: middle.y - text.height / 2 });
+        centre(text, box);
         this.touch(box);
         this.touch(text);
       }
@@ -226,20 +227,14 @@ export class Drawing {
       container.type === 'arrow'
         ? content
         : wrap(content, Math.floor((container.width - 30) / (size * CHAR)));
-    const { width, height } = measure(wrapped, size);
-    const middle = container.type === 'arrow' ? arrowMiddle(container) : center(container);
-    const text = this.text(
-      { x: middle.x - width / 2, y: middle.y - height / 2, width, height },
-      wrapped,
-      size,
-      {
-        originalText: content,
-        textAlign: 'center',
-        verticalAlign: 'middle',
-        containerId: container.id,
-        frameId: container.frameId,
-      },
-    );
+    const text = this.text({ x: 0, y: 0, ...measure(wrapped, size) }, wrapped, size, {
+      originalText: content,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+      containerId: container.id,
+      frameId: container.frameId,
+    });
+    centre(text, container);
     this.bind(container, 'text', text.id);
     return text;
   }
@@ -380,6 +375,7 @@ export class Drawing {
   ) {
     const at = this.place(size, where);
     const el = this.add(kind, at, {
+      frameId: at.frameId,
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
@@ -413,9 +409,7 @@ export class Drawing {
     });
     for (const bound of arrow.boundElements ?? []) {
       const text = this.elements.get(bound.id);
-      if (!text) continue;
-      const middle = arrowMiddle(arrow);
-      Object.assign(text, { x: middle.x - text.width / 2, y: middle.y - text.height / 2 });
+      if (text) centre(text, arrow);
     }
   }
   private arrow(fromRef: string, toRef: string, label?: string) {
@@ -624,13 +618,7 @@ export class Drawing {
               originalText: op.text,
               ...measure(content, textOf.fontSize ?? FONT),
             });
-            if (textOf.containerId) {
-              const middle = el.type === 'arrow' ? arrowMiddle(el) : center(el);
-              Object.assign(textOf, {
-                x: middle.x - textOf.width / 2,
-                y: middle.y - textOf.height / 2,
-              });
-            }
+            if (textOf.containerId) centre(textOf, el);
             this.touch(textOf);
           } else if (el.type !== 'frame') this.label(el, op.text);
           if (el.type === 'frame') {
@@ -734,7 +722,7 @@ export class Drawing {
 
 const rect = (el: Rect): Rect => ({ x: el.x, y: el.y, width: el.width, height: el.height });
 /** Where a shape stands, a line or a pen stroke by the points it passes through. */
-function rectOf(el: El): Rect {
+export function rectOf(el: El): Rect {
   if (!Array.isArray(el.points) || !el.points.length) return rect(el);
   return around((el.points as [number, number][]).map(([x, y]) => [el.x + x, el.y + y]));
 }
@@ -751,7 +739,7 @@ const contains = (outer: Rect, inner: Rect) =>
   inner.x + inner.width <= outer.x + outer.width &&
   inner.y + inner.height <= outer.y + outer.height;
 /** The box around these, walked once: a sketch's points are too many to spread into Math.min. */
-function bounds(rects: Rect[]): Rect | undefined {
+export function bounds(rects: Rect[]): Rect | undefined {
   if (!rects.length) return undefined;
   let [x, y, right, bottom] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const r of rects) {
@@ -768,6 +756,11 @@ const around = (points: number[][]) =>
 function arrowMiddle(arrow: El) {
   const [, end] = arrow.points as [number, number][];
   return { x: arrow.x + (end?.[0] ?? 0) / 2, y: arrow.y + (end?.[1] ?? 0) / 2 };
+}
+/** Text moved to stand centred on a shape: on an arrow's middle, on any other shape's centre. */
+function centre(text: El, on: El) {
+  const middle = on.type === 'arrow' ? arrowMiddle(on) : center(on);
+  Object.assign(text, { x: middle.x - text.width / 2, y: middle.y - text.height / 2 });
 }
 /** Each node's column in a flow: the longest path of edges reaching it, cycles cut. */
 function layers(keys: string[], edges: { from: string; to: string }[]) {

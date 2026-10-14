@@ -2,7 +2,12 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { visible, type Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type {} from './types.js';
+import type {
+  ReflectionCreate,
+  ReflectionEnd,
+  ReflectionLensSubmit,
+  ReflectionSubmit,
+} from './types.js';
 const id = z.string().min(1);
 const requestId = z.string().min(1).max(200);
 const expectedRevision = z.number().int().nonnegative();
@@ -22,7 +27,7 @@ export const reflectionToolsPlugin = {
             requestId,
           })
           .strict(),
-        handler: async (caller: Caller, input: { title?: string; requestId: string }) =>
+        handler: async (caller: Caller, input: ReflectionCreate) =>
           await ctx.reflections.create(caller, input),
       },
       {
@@ -55,15 +60,8 @@ export const reflectionToolsPlugin = {
         description:
           'Complete one lens workflow with your own immutable report from this execution, containing a Summary. The fifth completed independent lens opens synthesis.',
         inputSchema: z.object({ lensId: id, artifactId: id, expectedRevision, requestId }).strict(),
-        handler: async (
-          caller: Caller,
-          input: {
-            lensId: string;
-            artifactId: string;
-            expectedRevision: number;
-            requestId: string;
-          },
-        ) => await ctx.reflections.submitLens(caller, input),
+        handler: async (caller: Caller, input: ReflectionLensSubmit) =>
+          await ctx.reflections.submitLens(caller, input),
       },
       {
         name: 'reflection.submit',
@@ -78,16 +76,8 @@ export const reflectionToolsPlugin = {
             requestId,
           })
           .strict(),
-        handler: async (
-          caller: Caller,
-          input: {
-            reflectionId: string;
-            reportArtifactId: string;
-            changeSpecArtifactId: string;
-            expectedRevision: number;
-            requestId: string;
-          },
-        ) => await ctx.reflections.submit(caller, input),
+        handler: async (caller: Caller, input: ReflectionSubmit) =>
+          await ctx.reflections.submit(caller, input),
       },
       {
         name: 'reflection.end',
@@ -102,15 +92,8 @@ export const reflectionToolsPlugin = {
             requestId,
           })
           .strict(),
-        handler: async (
-          caller: Caller,
-          input: {
-            reflectionId: string;
-            expectedRevision: number;
-            reason: string;
-            requestId: string;
-          },
-        ) => await ctx.reflections.end(caller, input),
+        handler: async (caller: Caller, input: ReflectionEnd) =>
+          await ctx.reflections.end(caller, input),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));

@@ -1,63 +1,15 @@
 import type {} from 'cordis';
 import type { Caller } from '@merv/contracts';
+import type { z } from 'zod';
+import type * as input from './input.js';
 
-/** Configuration names the key's environment variable and never carries the key. */
-export interface NisaConfig {
-  /** Nisa's API origin: https, or loopback http for tests. https://api.rapidreview.io by default. */
-  origin?: string;
-  /** Environment variable holding the deployment's rr_sk_ key, read on every call. */
-  keyEnv?: string;
-  /** Deadline for a paper, excerpts or related call, headers and body together. */
-  timeoutMs?: number;
-  /** Deadline for a keyword or semantic search. */
-  searchTimeoutMs?: number;
-  /** A larger answer is refused, whatever its Content-Length says. */
-  maxResponseBytes?: number;
-  /** Calls this process has in flight to Nisa at once, and one project's (half of maxInFlight by
-   * default); a call past either waits its turn. */
-  maxInFlight?: number;
-  maxInFlightPerProject?: number;
-  /** How long a call waits for its turn before it is refused with nisa_busy. */
-  queueMs?: number;
-}
-
-/** An arXiv ID in either form: 2303.08774, or hep-th/9901001 (hep-th_9901001 as Nisa's index
- * writes it). A version suffix or an arxiv: prefix is dropped. */
-type NisaArxivId = string;
-
-export interface NisaSearchInput {
-  /** One plain keyword query, or up to 8 phrasings searched together. */
-  query: string | string[];
-  max_results?: number;
-  offset?: number;
-  /** Whole name words, all matching; commas separate alternative authors. */
-  author?: string;
-  /** YYYY, YYYY-MM or YYYY-MM-DD; Nisa's index keeps months, so a day narrows nothing. */
-  date_from?: string;
-  date_to?: string;
-}
-export interface NisaSemanticSearchInput {
-  /** One natural-language query, or up to 4 paraphrases. */
-  query: string | string[];
-  max_results?: number;
-  offset?: number;
-  /** A substring of the paper's author list. */
-  author?: string;
-  year_min?: number;
-  year_max?: number;
-}
-export interface NisaPaperInput {
-  arxiv_id: NisaArxivId;
-}
-export interface NisaExcerptsInput {
-  arxiv_id: NisaArxivId;
-  query: string;
-  max_excerpts?: number;
-}
-export interface NisaRelatedInput {
-  arxiv_id: NisaArxivId;
-  max_results?: number;
-}
+/** Each input as its schema in input.ts takes it, before defaults; the schema describes it. */
+export type NisaConfig = z.input<typeof input.nisaConfig>;
+export type NisaSearchInput = z.input<typeof input.searchInput>;
+export type NisaSemanticSearchInput = z.input<typeof input.semanticInput>;
+export type NisaPaperInput = z.input<typeof input.paperInput>;
+export type NisaExcerptsInput = z.input<typeof input.excerptsInput>;
+export type NisaRelatedInput = z.input<typeof input.relatedInput>;
 
 /** One paper as every Nisa tool answers it: only these fields, whatever Nisa sent. identifier,
  * title, authors, year and url name it as a citation does. */

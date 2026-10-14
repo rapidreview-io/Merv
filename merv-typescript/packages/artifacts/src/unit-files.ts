@@ -1,4 +1,4 @@
-import { MAX_ARTIFACT_IDS } from '@merv/contracts';
+import { clip, MAX_ARTIFACT_IDS } from '@merv/contracts';
 import type {
   Artifact,
   Artifacts,
@@ -48,7 +48,7 @@ export function unitArtifacts(graph: ProcessGraph, files: readonly UnitFile[]) {
     )
     .map(({ artifact, role }): RunningUnitArtifact => ({
       id: artifact.id,
-      title: artifact.title.slice(0, 200),
+      title: clip(artifact.title, 200),
       mediaType: artifact.mediaType,
       size: artifact.size,
       at: artifact.createdAt,

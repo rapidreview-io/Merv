@@ -5,9 +5,9 @@
  * there and where, not a copy of the hand-drawn look.
  */
 import type { BoardElement } from './models.js';
+import { bounds, rectOf } from './elements.js';
 
 type El = BoardElement & Record<string, any>;
-type Box = { x1: number; y1: number; x2: number; y2: number };
 /** The longest side of a picture, and how far a small part is enlarged. */
 const SIDE = 1600;
 const MOST_SCALE = 4;
@@ -23,26 +23,6 @@ const pointsOf = (el: El): [number, number][] =>
   Array.isArray(el.points)
     ? (el.points as [number, number][]).map(([px, py]) => [el.x + px, el.y + py])
     : [];
-function boxOf(el: El): Box {
-  const points = pointsOf(el);
-  if (points.length)
-    return {
-      x1: Math.min(...points.map((p) => p[0])),
-      y1: Math.min(...points.map((p) => p[1])),
-      x2: Math.max(...points.map((p) => p[0])),
-      y2: Math.max(...points.map((p) => p[1])),
-    };
-  return { x1: el.x, y1: el.y, x2: el.x + el.width, y2: el.y + el.height };
-}
-const union = (boxes: Box[]): Box | undefined =>
-  boxes.length
-    ? {
-        x1: Math.min(...boxes.map((b) => b.x1)),
-        y1: Math.min(...boxes.map((b) => b.y1)),
-        x2: Math.max(...boxes.map((b) => b.x2)),
-        y2: Math.max(...boxes.map((b) => b.y2)),
-      }
-    : undefined;
 
 function shape(el: El): string {
   const common = `stroke="${paint(el.strokeColor, '#1e1e1e')}" stroke-width="${Math.max(1, Number(el.strokeWidth) || 2)}" opacity="${(Number(el.opacity) || 100) / 100}"`;
@@ -116,9 +96,8 @@ export function pictureOf(elements: BoardElement[], focus?: string) {
         (group && el.groupIds?.includes(group)),
     );
   }
-  const area = union(target.map(boxOf)) ?? { x1: 0, y1: 0, x2: 400, y2: 300 };
-  const [x, y] = [area.x1 - PAD, area.y1 - PAD];
-  const [w, h] = [area.x2 - area.x1 + 2 * PAD, area.y2 - area.y1 + 2 * PAD];
+  const area = bounds(target.map(rectOf)) ?? { x: 0, y: 0, width: 400, height: 300 };
+  const [x, y, w, h] = [area.x - PAD, area.y - PAD, area.width + 2 * PAD, area.height + 2 * PAD];
   const scale = Math.min(MOST_SCALE, SIDE / Math.max(w, h));
   const [width, height] = [
     Math.max(200, Math.round(w * scale)),

@@ -1,4 +1,4 @@
-import { canonical, createService, plain } from '@merv/contracts';
+import { canonical, createService, plain, record } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { META, decode, fromRow, insert, isText, json, meta, span, view } from './content.js';
 import { Uploads } from './uploads.js';
@@ -28,16 +28,6 @@ import {
   type Blobs,
   type Transaction,
 } from '@merv/contracts';
-/** A row implies its bytes: storage that has lost them is a server fault, never a 404. */
-async function missing<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (error) {
-    if (error instanceof MervError && error.code === 'blob_not_found')
-      throw new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
-    throw error;
-  }
-}
 /** An id argument: a nonempty string. */
 const named = (id: unknown): id is string => typeof id === 'string' && id.length > 0;
 // Collection names are logical POSIX paths, never local filesystem paths. Reject aliases
@@ -92,6 +82,24 @@ export class ArtifactStore implements Artifacts {
       },
       tx,
     );
+  }
+  /** One row the caller may see, with `columns` beside the metadata; not_found when none. */
+  private async row<T extends object = object>(
+    caller: Caller,
+    artifactId: string,
+    tx: Transaction | undefined,
+    columns = '',
+  ) {
+    const row = await this.one(caller, tx, (tx, visible) =>
+      tx.get<Record<string, unknown> & T>(
+        `SELECT ${META}${columns} FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
+        artifactId,
+        caller.projectId,
+        ...visible.params,
+      ),
+    );
+    check(row, 'not_found', 'Artifact not found in this project', 404);
+    return row;
   }
   /** What every owner's read rule leaves a session caller; anyone else sees every row. */
   private async visible(caller: Caller, tx: Transaction): Promise<Visible> {
@@ -193,10 +201,7 @@ export class ArtifactStore implements Artifacts {
       return { name: file.name, size: file.size, hash: file.hash, provider: file.provider };
     });
     check(
-      input.metadata === undefined ||
-        (input.metadata !== null &&
-          !Array.isArray(input.metadata) &&
-          typeof input.metadata === 'object'),
+      input.metadata === undefined || record(input.metadata),
       'invalid_artifact',
       'Collection metadata must be an object',
     );
@@ -289,31 +294,13 @@ export class ArtifactStore implements Artifacts {
     });
   }
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
-    caller = structuredClone(caller);
-    const row = await this.one(caller, tx, (tx, visible) =>
-      tx.get(
-        `SELECT ${META} FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
-        artifactId,
-        caller.projectId,
-        ...visible.params,
-      ),
-    );
-    check(row, 'not_found', 'Artifact not found in this project', 404);
-    return fromRow(row);
+    return fromRow(await this.row(structuredClone(caller), artifactId, tx));
   }
   async download(caller: Caller, artifactId: string, fileName?: string) {
     caller = structuredClone(caller);
     if (fileName !== undefined) {
       check(collectionPath(fileName), 'invalid_artifact', 'Invalid collection file name');
-      const row = await this.one(caller, undefined, (tx, visible) =>
-        tx.get<Record<string, unknown>>(
-          `SELECT ${META},file_refs_json FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
-          artifactId,
-          caller.projectId,
-          ...visible.params,
-        ),
-      );
-      check(row, 'not_found', 'Artifact not found in this project', 404);
+      const row = await this.row(caller, artifactId, undefined, ',file_refs_json');
       const artifact = fromRow(row);
       const file = artifact.files?.find((member) => member.name === fileName);
       const ref = (
@@ -373,7 +360,13 @@ export class ArtifactStore implements Artifacts {
         503,
       );
     }
-    return { artifact, download: await missing(sign) };
+    // A row implies its bytes: storage that has lost them is a server fault, never a 404.
+    const download = await sign().catch((error: unknown) => {
+      throw error instanceof MervError && error.code === 'blob_not_found'
+        ? new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500)
+        : error;
+    });
+    return { artifact, download };
   }
   async bytes(
     caller: Caller,
@@ -381,15 +374,7 @@ export class ArtifactStore implements Artifacts {
     tx?: Transaction,
   ): Promise<{ artifact: Artifact; bytes: Buffer }> {
     caller = structuredClone(caller);
-    const row = await this.one(caller, tx, (tx, visible) =>
-      tx.get<Record<string, unknown> & { content: Buffer | null }>(
-        `SELECT ${META},content FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
-        artifactId,
-        caller.projectId,
-        ...visible.params,
-      ),
-    );
-    check(row, 'not_found', 'Artifact not found in this project', 404);
+    const row = await this.row<{ content: Buffer | null }>(caller, artifactId, tx, ',content');
     const artifact = fromRow(row);
     if (artifact.size > MAX_ARTIFACT_BYTES)
       throw new MervError(

@@ -1,19 +1,25 @@
 import type { Caller, ContextInput, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
+import type { z } from 'zod';
+import type { changesSchema, citeSchema, patchSchema, reviewSchema } from './input.js';
 import type {
   PaperWorkspace,
   PaperDocument,
   PaperKind,
   PaperRevision,
   PaperRevisionSummary,
-  PaperPatch,
-  PaperChanges,
-  PaperCite,
   PaperCitation,
-  PaperReview,
   PaperPublication,
 } from './models.js';
 export type * from './models.js';
+/** Each command's input as its schema in input.ts takes it, before defaults. */
+export type PaperPatch = z.input<typeof patchSchema>;
+export type PaperChanges = z.input<typeof changesSchema>;
+/** One document's edits in a reviewer's paper changes. */
+export type PaperEdit = PaperChanges['documents'][number];
+export type PaperCite = z.input<typeof citeSchema>;
+/** Trusted owner input: the owner verifies the live, independent review in the same transaction. */
+export type PaperReview = z.input<typeof reviewSchema>;
 /** One section of one paper revision, whole, as a context item needs it. */
 export interface PaperContextSection {
   kind: PaperKind;

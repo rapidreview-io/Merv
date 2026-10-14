@@ -7,10 +7,8 @@ const text = z.string().trim().min(1).max(2_000).refine(visible);
 /** A shape this call keys, or the id of one already on the board. */
 const shape = z.string().min(1).max(100);
 /** A name this call gives what it draws, for its later operations and its answer. */
-const key = z
-  .string()
-  .regex(/^[A-Za-z0-9_-]{1,40}$/)
-  .optional();
+const name = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
+const key = name.optional();
 export const COLORS = {
   yellow: '#ffec99',
   blue: '#a5d8ff',
@@ -69,7 +67,7 @@ const place = {
 };
 const node = z
   .object({
-    key: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+    key: name,
     text,
     shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
     color: color.optional(),

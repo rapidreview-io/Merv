@@ -3,46 +3,6 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { PaperRevision } from '@merv/paper/models';
 import type { CodeUnitPublication } from '@merv/code-work/models';
 
-export interface ResearchCreate {
-  name: string;
-  /** Existing project work selected by the coordinator, not automatically invented. */
-  dependsOn?: string[];
-  /**
-   * A finished or ended cycle this one follows. Its digest is composed now if it has none, and
-   * this cycle's reflection receives it. A cycle is followed by at most one other.
-   */
-  previousCycleId?: string;
-  /** Run the cycle and its approved successors without manual advances. Opt-in. */
-  automatic?: boolean;
-  /** Maximum cycles in this automatic run, including this one; defaults to 10. */
-  maxCycles?: number;
-  requestId: string;
-}
-/** What every command on an existing cycle names: the cycle, the revision it read, the request. */
-export interface ResearchCommandBase {
-  researchId: string;
-  expectedRevision: number;
-  requestId: string;
-}
-export interface ResearchAdvance extends ResearchCommandBase {
-  /**
-   * The owner's answer to an approved plan that continues, on the advance that completes the
-   * cycle: create its work and the next cycle, or complete without them. Required then, so
-   * no caller creates agent-planned work without saying so; ignored everywhere else.
-   */
-  nextWave?: 'create' | 'skip';
-  /** Inject a fresh consolidation task after the current one ended without acceptance. */
-  retryIntegration?: boolean;
-}
-/** Ending a cycle that cannot reach an answer. Terminal; the reason is recorded. */
-export interface ResearchEnd extends ResearchCommandBase {
-  outcome: 'abandoned' | 'failed';
-  reason: string;
-}
-/** The cycle's selected work, reselected whole: what is missing is added, what is left out is dropped. */
-export interface ResearchReplan extends ResearchCommandBase {
-  dependsOn: string[];
-}
 /** Where a cycle opened from an approved reflection plan came from, pinned when it was created. */
 export interface ResearchOrigin {
   /** The cycle whose completion created this one. */

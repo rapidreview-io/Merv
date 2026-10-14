@@ -53,21 +53,17 @@ export const nextWaveChoiceSchema = z.object({
   move: z.enum(['advance', 'complete', 'inject', 'reinject']).optional(),
 });
 export const replanSchema = commandSchema.extend({ dependsOn: z.array(id).max(100) }).strict();
-export const endSchema = commandSchema
-  .extend({
-    outcome: z.enum(['abandoned', 'failed']),
-    reason: z.string().trim().min(1).max(16000).refine(visible),
-  })
-  .strict();
+const ending = {
+  outcome: z.enum(['abandoned', 'failed']),
+  reason: z.string().trim().min(1).max(16000).refine(visible),
+};
+export const endSchema = commandSchema.extend(ending).strict();
 /**
  * What the caller decides when ending one; the cycle and revision are bound by the engine.
  * Not strict: a preflight legitimately carries the bound fields alongside the choice, and
  * refusing them there would report an action blocked that the call then accepts.
  */
-export const endChoiceSchema = z.object({
-  outcome: z.enum(['abandoned', 'failed']),
-  reason: z.string().trim().min(1).max(16000).refine(visible),
-});
+export const endChoiceSchema = z.object(ending);
 export const getSchema = z.object({ researchId: id }).strict();
 export const listSchema = z.object({}).strict();
 export const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> =>

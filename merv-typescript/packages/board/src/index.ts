@@ -59,17 +59,11 @@ export class BoardService implements Board {
     return JSON.parse(row.record) as BoardSummary;
   }
   private async elements(boardId: string, since: number | undefined, tx: Transaction) {
-    const rows =
-      since === undefined
-        ? await tx.all<{ record: string }>(
-            'SELECT record FROM board_elements WHERE board_id=? AND NOT deleted',
-            boardId,
-          )
-        : await tx.all<{ record: string }>(
-            'SELECT record FROM board_elements WHERE board_id=? AND revision>?',
-            boardId,
-            since,
-          );
+    const rows = await tx.all<{ record: string }>(
+      `SELECT record FROM board_elements WHERE board_id=? AND ${since === undefined ? 'NOT deleted' : 'revision>?'}`,
+      boardId,
+      ...(since === undefined ? [] : [since]),
+    );
     return stacked(rows.map((row) => JSON.parse(row.record) as BoardElement));
   }
   private async write(board: BoardSummary, tx: Transaction) {
@@ -134,22 +128,14 @@ export class BoardService implements Board {
   }
   async set(caller: Caller, boardId: string, change: { title?: string; archived?: boolean }) {
     caller = this.open(caller);
-    const input = parse(setSchema, { id: boardId, ...change });
+    // Parsed as plain data, which drops what is undefined: only the fields given are changed.
+    const { id: _id, ...fields } = parse(setSchema, { id: boardId, ...change });
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const board = await this.summary(caller, input.id, tx);
-      const next = {
-        ...board,
-        ...(input.title !== undefined && { title: input.title }),
-        ...(input.archived !== undefined && { archived: input.archived }),
-        updatedBy: caller.actorId,
-        updatedAt: now(),
-      };
+      const board = await this.summary(caller, boardId, tx);
+      const next = { ...board, ...fields, updatedBy: caller.actorId, updatedAt: now() };
       await this.write(next, tx);
-      await recorded(this.state, tx, caller, 'board.set', board.id, {
-        ...(input.title !== undefined && { title: input.title }),
-        ...(input.archived !== undefined && { archived: input.archived }),
-      });
+      await recorded(this.state, tx, caller, 'board.set', board.id, fields);
       return next;
     });
   }

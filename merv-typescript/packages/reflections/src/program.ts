@@ -140,19 +140,19 @@ export async function current(
   }
   return { wave, lens };
 }
+/** An action's arguments: the step it is on, as `key`, at its revision. */
+const on =
+  (key: 'lensId' | 'reflectionId') =>
+  ({ snapshot }: WorkflowCheckContext) => ({
+    [key]: snapshot.id,
+    expectedRevision: snapshot.revision,
+  });
 /** The step this check is about: the wave or lens at its revision. */
 const step = ({ caller, snapshot }: WorkflowCheckContext) => ({
   projectId: caller.projectId,
   instanceId: snapshot.id,
   revision: snapshot.revision,
 });
-/** The live lease on the step, whoever holds it. */
-export async function activeLease(
-  ctx: ReflectionsContext,
-  context: WorkflowCheckContext,
-): Promise<LeaseRow | undefined> {
-  return await liveLease<LeaseRow['details']>(ctx.state, context.tx, step(context));
-}
 /** The caller's own live lease on the step. */
 export async function lease(
   ctx: ReflectionsContext,
@@ -212,7 +212,10 @@ export async function admit(
   const { wave, lens } = await current(ctx, context);
   const reviewing = snapshot.state === 'in_review';
   await ctx.scope.require(caller, reviewing ? 'review' : 'write', tx);
-  const held = caller.session ? await lease(ctx, context) : await activeLease(ctx, context);
+  // A worker's own lease, or anyone's live one on the step.
+  const held = caller.session
+    ? await lease(ctx, context)
+    : await liveLease<LeaseRow['details']>(ctx.state, tx, step(context));
   if (!caller.session)
     check(!held, 'reflection_leased', 'A worker owns this reflection assignment', 409);
   if (lens) {
@@ -661,15 +664,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean, research = false)
         instruction: lens
           ? 'A lens ends only with its wave.'
           : 'Abandon this wave when it cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it and new tasks and experiments may start again. Requires a specific reason. This is terminal.',
-        ...(lens
-          ? {}
-          : {
-              requiredInput: ['reason'],
-              arguments: ({ snapshot }: WorkflowCheckContext) => ({
-                reflectionId: snapshot.id,
-                expectedRevision: snapshot.revision,
-              }),
-            }),
+        ...(lens ? {} : { requiredInput: ['reason'], arguments: on('reflectionId') }),
         check: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
           if (lens) {
             const wave = (await ctx.lensRow(caller, snapshot.id, tx)).reflection_id;
@@ -715,10 +710,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean, research = false)
               tool: 'reflection.submit_lens',
               instruction: 'Submit your own immutable lens report.',
               requiredInput: ['artifactId'],
-              arguments: ({ snapshot }: WorkflowCheckContext) => ({
-                lensId: snapshot.id,
-                expectedRevision: snapshot.revision,
-              }),
+              arguments: on('lensId'),
               check: async (c: WorkflowCheckContext) => {
                 if (ctx.checked.found(c)) return;
                 await admit(ctx, c);
@@ -740,10 +732,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean, research = false)
               instruction:
                 'Submit your report and change specification for independent review. An application/json change specification is validated as a structured plan and reviewed item by item; a text one is accepted but creates no work.',
               requiredInput: ['reportArtifactId', 'changeSpecArtifactId'],
-              arguments: ({ snapshot }: WorkflowCheckContext) => ({
-                reflectionId: snapshot.id,
-                expectedRevision: snapshot.revision,
-              }),
+              arguments: on('reflectionId'),
               check: async (c: WorkflowCheckContext) => {
                 if (ctx.checked.found(c)) return;
                 await admit(ctx, c);

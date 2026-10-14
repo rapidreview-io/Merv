@@ -198,8 +198,6 @@ export async function ready(
       'Complete the current reflection before starting another',
       409,
     );
-  }
-  if (stage === 'researching') {
     const selection = new Set(record.researchDependencies);
     const pending = (await ctx.workflows.prerequisites(caller, [record.id], tx))
       .get(record.id)!
@@ -233,7 +231,20 @@ export async function ready(
   const continued =
     choice.nextWave === 'skip' ? undefined : await continuing(ctx, caller, record, tx, chosen);
   if (continued && choice.nextWave === 'create') {
-    checkAutomaticContinuation(caller, record);
+    if (record.automation) {
+      check(
+        caller.actorId === record.ownerId,
+        'automatic_owner_required',
+        'Only the authorizing owner creates an automatic successor',
+        403,
+      );
+      check(
+        record.automation.cycle < record.automation.maxCycles,
+        'research_cycle_limit',
+        'The automatic research run has reached its cycle limit; complete with nextWave: skip',
+        409,
+      );
+    }
     await creatable(ctx, caller, continued.plan, tx);
   }
   return {
@@ -389,23 +400,6 @@ export async function creatable(
       ['task', 'experiment'].includes(carried.workflow),
       'next_wave_inapplicable',
       `Carried-over work ${workflowId} is neither a task nor an experiment; complete this cycle with nextWave: "skip"`,
-      409,
-    );
-  }
-}
-
-function checkAutomaticContinuation(caller: Caller, record: ResearchRecord) {
-  if (record.automation) {
-    check(
-      caller.actorId === record.ownerId,
-      'automatic_owner_required',
-      'Only the authorizing owner creates an automatic successor',
-      403,
-    );
-    check(
-      record.automation.cycle < record.automation.maxCycles,
-      'research_cycle_limit',
-      'The automatic research run has reached its cycle limit; complete with nextWave: skip',
       409,
     );
   }

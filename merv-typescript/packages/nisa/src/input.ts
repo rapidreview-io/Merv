@@ -1,17 +1,20 @@
 import { z } from 'zod';
 import { allowedOrigin, envName } from '@merv/contracts';
 
+/** Configuration names the key's environment variable and never carries the key. */
 export const nisaConfig = z
   .object({
     origin: z
       .string()
       .refine(allowedOrigin, 'Expected an https origin or a loopback one')
       .default('https://api.rapidreview.io'),
+    // Holds the deployment's rr_sk_ key, read on every call.
     keyEnv: envName.default('MERV_NISA_API_KEY'),
-    // Nisa's own paper routes wait 10 s on its index.
+    // A paper, excerpts or related call, headers and body; Nisa's paper routes wait 10 s.
     timeoutMs: z.number().int().min(1000).max(60_000).default(15_000),
     // Nisa's keyword search waits 30 s on its index and retries it; the semantic one embeds first.
     searchTimeoutMs: z.number().int().min(1000).max(120_000).default(40_000),
+    // A larger answer is refused, whatever its Content-Length says.
     maxResponseBytes: z
       .number()
       .int()
