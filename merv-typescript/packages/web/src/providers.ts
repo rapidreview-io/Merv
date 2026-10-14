@@ -31,10 +31,13 @@ export async function post(
   options: { timeoutMs: number; maxBytes: number; signal: AbortSignal; retries?: number },
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + options.timeoutMs;
-  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]);
+  const timeout = AbortSignal.timeout(options.timeoutMs);
+  const signal = AbortSignal.any([options.signal, timeout]);
+  const request = { ...options, body, userAgent: USER_AGENT, signal };
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fetchJson(url, key, { ...options, body, userAgent: USER_AGENT, signal });
+      // AbortSignal.any() holds the timeout weakly: this capture keeps it for the whole call.
+      return await fetchJson(url, key, request).finally(() => timeout);
     } catch (error) {
       const failure = error instanceof OutboundError ? error.failure : undefined;
       const passing =

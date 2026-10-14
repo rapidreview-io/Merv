@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
@@ -370,7 +370,6 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
         },
         { name: args.name ?? '', role: args.role as Role },
       );
-      const { mkdirSync } = await import('node:fs');
       mkdirSync(join(directory, 'credentials'), { recursive: true, mode: 0o700 });
       const actorPath = join(directory, 'credentials', `${credential.actor.id}.json`);
       writeFileSync(

@@ -324,8 +324,6 @@ END $merv$;`);
         connection.discard();
       }
       throw error;
-    } finally {
-      if (scope) scope.live = false;
     }
   }
 
@@ -607,7 +605,6 @@ END $merv$;`);
         throw error;
       }
     } finally {
-      scope.live = false;
       isolation.open = false;
     }
   }
