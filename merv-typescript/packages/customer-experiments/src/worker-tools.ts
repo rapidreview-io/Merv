@@ -13,6 +13,7 @@ export function registerWorkerTools(
   const disposers = [
     tools.register({
       name: 'customer_experiment.get',
+      conversation: 'never',
       description:
         'Read the fixed customer contract, manifest, current execution and result review for this experiment.',
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
@@ -21,6 +22,7 @@ export function registerWorkerTools(
     }),
     tools.register({
       name: 'customer_experiment.submit_results',
+      conversation: 'never',
       description:
         'Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.',
       inputSchema: submitResultsSchema,

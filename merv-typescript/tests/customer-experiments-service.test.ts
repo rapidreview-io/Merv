@@ -590,6 +590,13 @@ test('a replacement upload invalidates the offer until the newest file validates
 
 test('intake reads work in a read-only snapshot but ordinary project callers cannot use either intake tool', async (t) => {
   const f = await fixture(t);
+  for (const name of ['read', 'compute_options', 'propose']) {
+    const tool = f.registered.get(`customer_experiments.${name}`)!;
+    assert.equal(
+      'conversationProfile' in tool && tool.conversationProfile,
+      'customer-experiments-intake',
+    );
+  }
   const request = await f.create();
   const record = await f.store.get(request.id);
   const owner = await f.service.caller(record);

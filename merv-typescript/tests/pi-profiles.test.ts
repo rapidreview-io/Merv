@@ -5,6 +5,8 @@ import { MervError } from '@merv/contracts';
 import { piModelRelay } from '../packages/pi/src/relay.js';
 import type { PiProfile } from '../packages/pi/src/types.js';
 import { code, fixture, models } from './fixtures/pi.js';
+import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
+import type { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
 
 const astraModels = models.map((model) =>
   model.id === 'gpt-6-astra' ? { ...model, effort: 'medium' as const } : model,
@@ -29,6 +31,7 @@ test('trusted intake binds the request and exact Astra/medium model, offers only
   let authorizations = 0;
   f.tools.register({
     name: 'customer_experiments.read',
+    conversationProfile: profile.id,
     description: 'Read only this request',
     readOnly: true,
     inputSchema: z.object({ requestId: z.string() }).strict(),
@@ -94,6 +97,42 @@ test('trusted intake binds the request and exact Astra/medium model, offers only
   await f.pi.validateModel(grant);
   await f.pi.complete(bound.token, f.completion(bound.input));
   assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands[0].effort, 'medium');
+});
+
+test('customer tools do not overflow a full ordinary producer tool catalog or displace Nisa', async (t) => {
+  const f = await fixture(t);
+  const first = await f.claimed(await f.send(await f.create()));
+  await f.pi.begin(first.token, first.input);
+  await f.pi.complete(first.token, f.completion(first.input));
+  const extra = 128 - first.work.tools.length;
+  assert.ok(extra >= 2);
+  for (let i = 0; i < extra; i++)
+    f.tools.register({
+      name: i === 0 ? 'nisa.search' : i === 1 ? 'nisa.research' : `ordinary.tool_${i}`,
+      description: 'Ordinary producer tool',
+      inputSchema: z.object({}),
+      handler: () => ({}),
+    });
+  for (const name of ['read', 'compute_options', 'propose'])
+    f.tools.register({
+      name: `customer_experiments.${name}`,
+      conversationProfile: profile.id,
+      description: 'Bound intake tool',
+      inputSchema: z.object({}),
+      handler: () => ({}),
+    });
+  const dispose = registerWorkerTools(f.tools, {} as CustomerExperiments);
+  t.after(dispose);
+  const normal = await f.begun(f.operator);
+  assert.equal(normal.work.tools.length, 128);
+  assert.ok(normal.work.tools.some((t) => t.name === 'nisa.search'));
+  assert.ok(normal.work.tools.some((t) => t.name === 'nisa.research'));
+  assert.ok(normal.work.tools.every((t) => !t.name.startsWith('customer_experiment')));
+  await assert.rejects(
+    f.pi.tool(normal.token, { ...normal.input, name: 'customer_experiments.read', input: {} }),
+    code('pi_tool_forbidden'),
+  );
+  await f.pi.complete(normal.token, f.completion(normal.input));
 });
 
 test('public creation cannot set a profile, and the trusted request binding and model cannot change', async (t) => {

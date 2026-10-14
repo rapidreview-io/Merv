@@ -207,16 +207,21 @@ export class PiWorkerProtocol {
       const profile = conversation.profile && this.core.profiles.get(conversation.profile);
       // Every tool the person may use here, read-only for a reader, whose every other call a
       // handler would refuse.
-      const uses = new Map(
-        (await this.core.tools.list()).map((tool) => [
+      const registered = await this.core.tools.list();
+      const profileTools = new Map(
+        registered.map((tool) => [
           tool.name,
-          'kind' in tool ? undefined : tool.conversation,
+          'kind' in tool ? undefined : tool.conversationProfile,
         ]),
+      );
+      const uses = new Map(
+        registered.map((tool) => [tool.name, 'kind' in tool ? undefined : tool.conversation]),
       );
       // Every native tool but Pi's own, run as the person: Scope applies their live role, and
       // each tool's own registration says what only the person may run.
       const described = (await this.core.tools.describe(caller))
         .filter(({ name }) => !name.startsWith('pi.'))
+        .filter(({ name }) => !profileTools.get(name) || profileTools.get(name) === profile?.id)
         .filter(({ name }) => !profile || profile.tools.includes(name))
         .flatMap((description) => {
           const tool = piTool(description, uses.get(description.name));

@@ -21,6 +21,8 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
    *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
+  /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
+  conversationProfile?: string;
   /** What the card of a proposed call says it does, in the product's words ('Submit verdict').
    *  `title` reads the input as the agent proposed it, unparsed, where it says which act;
    *  `says` names the input field the title already said, which the card does not list again.

@@ -143,7 +143,8 @@ The supplied prompt can be:
 3. `GET {apiUrl}`, agent bearer, polls the transcript, draft, data readiness and workflow.
 4. Give the human `customerUrl`. Its fragment capability stays out of HTTP URLs and is
    exchanged locally for an Authorization header; the page strips it from the address bar.
-   Links expire after 30 days. Possessing the customer link permits approval, so agents
+   Agent access expires after 30 days; customer monitoring links remain available.
+   Possessing the customer link permits approval, so agents
    must follow the instruction to hand it to the human.
 
 The customer page handles upload begin, signed transfer, validation, exact-version

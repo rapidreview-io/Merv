@@ -247,6 +247,7 @@ export class CustomerService {
       () =>
         tools.register({
           name: 'customer_experiments.read',
+          conversationProfile: 'customer-experiments-intake',
           description:
             'Read this customer intake request, draft plan, data requirements, and readiness.',
           inputSchema: z.object({ id: z.string() }).strict(),
@@ -259,6 +260,7 @@ export class CustomerService {
       () =>
         tools.register({
           name: 'customer_experiments.compute_options',
+          conversationProfile: 'customer-experiments-intake',
           description:
             'Inspect current internal CPU/GPU hardware availability and pricing for planning. Does not reserve, rent, or change funding. Hardware selection remains internal to execution.',
           inputSchema: z.object({ id: z.string() }).strict(),
@@ -273,6 +275,7 @@ export class CustomerService {
       () =>
         tools.register({
           name: 'customer_experiments.propose',
+          conversationProfile: 'customer-experiments-intake',
           description:
             'Save the agreed experiment draft and exact data requirements. The server only offers approval after all required files pass validation. Never approves or executes.',
           inputSchema: z.object({ id: z.string(), plan: planSchema }).strict(),
