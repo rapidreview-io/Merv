@@ -117,15 +117,14 @@ def step_back_edge():
     def first_reviewer():
         for t in threads(tid):
             if t["role"] == "reviewer":
-                for v in t["visits"]:
-                    if v["status"] in ("offered", "active"):
-                        return v["sessionId"]
+                if any(v["status"] in ("offered", "active") for v in t["visits"]):
+                    return t["id"]
         return None
 
-    rid = wait_for("first reviewer session", first_reviewer, 1200, 2)
+    rid = wait_for("first reviewer thread", first_reviewer, 1200, 2)
     if rid:
         tool("session.message", {
-            "sessionId": rid, "requestId": f"smoke-{TAG}-steer",
+            "threadId": rid, "requestId": f"smoke-{TAG}-steer",
             "body": "Operator note for the staging back-edge check: this FIRST review round must return the work with "
                     "verdict needs_changes (not pass, not fail). Mark check 2 not_met and ask the producer to append "
                     "the closing line 'Revision complete.' as the note's last line. Acknowledge this message, then "
