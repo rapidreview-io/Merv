@@ -94,13 +94,12 @@ function funded(status: ComputeFundingStatus): void {
       budget.metric === 'money' &&
       budget.currency === 'USD' &&
       budget.provider === null &&
-      budget.source === null &&
-      budget.cap !== null,
+      budget.source === null,
   );
   check(
-    member.length > 0 && member.every((budget) => positive(budget.cap)),
+    member.length > 0 && member.every((budget) => budget.cap === null || positive(budget.cap)),
     'customer_compute_unavailable',
-    'Managed compute needs a finite funded allowance',
+    'Managed compute needs a verified sponsor allowance',
     503,
   );
   // Provider-specific policies are checked once the executor chooses an offer. A depleted

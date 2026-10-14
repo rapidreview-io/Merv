@@ -27,7 +27,7 @@ export const customerConfig = z
   .object({
     publicOrigin: origin,
     computeProjectId: z.string().min(1),
-    computeBudgetUsd: z.number().int().min(1).max(100000).default(1000),
+    computeBudgetUsd: z.number().int().min(1).max(100000).nullable().default(null),
     computeProviders: z.array(z.string().min(1)).min(1).max(8),
     sponsor: z.object({ issuer: z.string().min(1), subject: z.string().min(1) }).strict(),
     intakeKeyEnv: env.default('MERV_CUSTOMER_INTAKE_KEY'),

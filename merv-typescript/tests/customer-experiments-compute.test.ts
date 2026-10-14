@@ -149,12 +149,13 @@ test('execution preflight uses the native connection owner and requires verifiab
     'funding receipts stay server-side',
   );
   assert.equal(enables, 1);
+  result = { ...status(), allowance: { budgets: [{ ...budget, cap: null, available: null }] } };
+  await service.prepareExecution(caller);
   const invalidFunding: Partial<NativeConnectionStatus>[] = [
     { funding: 'personal' as const },
     { connected: false },
     { allowance: {} },
     { allowance: { budgets: [{ ...budget, target: 'another-member' }] } },
-    { allowance: { budgets: [{ ...budget, cap: null }] } },
     { allowance: { budgets: [{ ...budget, cap: '0', available: '0' }] } },
     { allowance: { budgets: [{ ...budget, available: '0.000' }] } },
     { allowance: { budgets: [{ ...budget, accounting_complete: false }] } },
