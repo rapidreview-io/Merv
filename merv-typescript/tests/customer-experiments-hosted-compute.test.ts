@@ -4,7 +4,7 @@ import type { Context } from 'cordis';
 import { hostedCustomerCompute } from '@merv/customer-experiments/hosted-compute';
 import { Decimal } from '@sandboxes/kernel';
 
-function fixture() {
+function fixture(computeBudgetUsd: number | null = 250) {
   const calls: string[] = [];
   const owner = { projectId: 'request', actorId: 'owner' };
   const source = { projectId: 'sponsor', actorId: 'owner' };
@@ -88,7 +88,7 @@ function fixture() {
       sponsor: { issuer: 'issuer', subject: 'subject' },
       computeProjectId: 'sponsor',
       computeProviders: ['lambda'],
-      computeBudgetUsd: 250,
+      computeBudgetUsd,
     }),
     owner,
     calls,
@@ -129,4 +129,10 @@ test('customer funding cannot take over another request namespace', async () => 
   });
   assert.equal(f.policy(), undefined);
   assert.ok(!f.calls.includes('connect'));
+});
+
+test('uncapped sponsored requests retain the account funding checks without a request dollar cap', async () => {
+  const f = fixture(null);
+  await f.compute.prepareExecution(f.owner);
+  assert.equal(f.policy()?.cap, null);
 });
