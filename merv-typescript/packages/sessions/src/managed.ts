@@ -395,7 +395,8 @@ export class ManagedRunnerBindings {
       const session = await tx.get<BoundRow>(
         `SELECT s.id,s.status,s.token_hash,s.expires_at,s.hard_deadline,s.closed_at,s.close_reason,
             COALESCE(a.source_json,(s.session_json::jsonb->'source')::text) AS source_json,
-            i.id AS inquiry_id,i.asker_source_json,i.token_budget
+            i.id AS inquiry_id,i.asker_source_json,
+            COALESCE(i.token_budget,(s.session_json::jsonb->>'tokenBudget')::bigint) AS token_budget
           FROM worker_sessions s LEFT JOIN session_managed_assignments a ON a.session_id=s.id
             LEFT JOIN session_inquiries i ON i.session_id=s.id
           WHERE s.${bearer ? 'token_hash' : 'id'}=?`,
@@ -425,8 +426,9 @@ export class ManagedRunnerBindings {
       return {
         ...(session.inquiry_id && {
           inquiry: { id: session.inquiry_id, asker: JSON.parse(session.asker_source_json!) },
-          tokenBudget: Number(session.token_budget),
         }),
+        // An inquiry's budget, or a work visit's fixed one (a customer experiment's Astra step).
+        ...(session.token_budget !== null && { tokenBudget: Number(session.token_budget) }),
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
