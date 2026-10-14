@@ -16,6 +16,7 @@ import { ApiServer, ToolRegistry } from '@merv/api';
 import { scopeRoutes } from '@merv/scope/api';
 import type { Caller, IssuedUserKey, Project, UserKey } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import pg from 'pg';
 
 const issuer = 'https://key-api.example/auth/v1';
 const secret = 'synthetic-merv-user-key-api-secret-at-least-32-bytes';
@@ -634,6 +635,20 @@ test('revocation and expiry between admission and dispatch fence key calls, with
   }
   assert.equal((await f.request('/account', { token: 'mk_unknown.with.dots' })).status, 401);
   assert.deepEqual(f.routing, { actor: 0, jwt: 0 });
+});
+
+test('resolving a key caller reads its key and ledger rows once', async (t) => {
+  const f = await fixture(t);
+  const key = await f.scope.userKeys.authenticate((await f.issue()).token);
+  const query = pg.Client.prototype.query;
+  const statements: string[] = [];
+  t.mock.method(pg.Client.prototype, 'query', function (this: pg.Client, ...args: unknown[]) {
+    statements.push(String(args[0]));
+    return (query as (...args: unknown[]) => unknown).apply(this, args);
+  });
+  await f.scope.caller({ kind: 'key', key });
+  const reads = (table: string) => statements.filter((sql) => sql.includes(`FROM ${table} `));
+  assert.deepEqual([reads('user_keys').length, reads('identity_credentials').length], [1, 1]);
 });
 
 test('existing opaque actor tokens can begin with mk_ without becoming user keys', async (t) => {
