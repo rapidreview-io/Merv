@@ -266,13 +266,7 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
           url: api.url,
           mcp: `${api.url}/mcp`,
           directory,
-          plugins: app.status().map(({ id, name, state, required, missingDependencies }) => ({
-            id,
-            name,
-            state,
-            required,
-            missingDependencies,
-          })),
+          plugins: app.status(),
         }),
       );
     } catch (error) {

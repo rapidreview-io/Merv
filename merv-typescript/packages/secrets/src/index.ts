@@ -8,6 +8,7 @@ import {
   digest,
   envName,
   MervError,
+  stateFault,
   type HumanPrincipal,
   type State,
 } from '@merv/contracts';
@@ -39,6 +40,8 @@ function encryptionKey(value: string | undefined): Uint8Array | undefined {
 const binding = ({ issuer, subject }: AccountIdentity) => digest(['huggingface', issuer, subject]);
 const unavailable = () =>
   new MervError('secrets_unavailable', 'Hugging Face token storage is unavailable', 503);
+/** Direct A256GCM encryption: how both a stored token and a grant are sealed. */
+const DIR = { keyManagementAlgorithms: ['dir'], contentEncryptionAlgorithms: ['A256GCM'] };
 export const huggingFaceToken = z
   .string()
   .min(1)
@@ -90,16 +93,15 @@ export class AccountSecrets implements Secrets {
   async resolveHuggingFaceGrant(token: string): Promise<string | null> {
     if (!this.#grantKey || !this.#authorize || token.length > 4096) return null;
     try {
-      const { plaintext, protectedHeader } = await compactDecrypt(token, this.#grantKey, {
-        keyManagementAlgorithms: ['dir'],
-        contentEncryptionAlgorithms: ['A256GCM'],
-      });
+      const { plaintext, protectedHeader } = await compactDecrypt(token, this.#grantKey, DIR);
       if (protectedHeader.typ !== 'merv-hf-grant') return null;
       const grant = grantSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
       if (grant.exp * 1000 <= this.clock()) return null;
       const identity = await this.#authorize(grant);
       return identity ? await this.resolveHuggingFaceToken(identity) : null;
-    } catch {
+    } catch (error) {
+      // A refusal is no grant (401); an outage judged nothing, and a client retries its 503.
+      if (stateFault(error)) throw error;
       return null;
     }
   }
@@ -183,10 +185,7 @@ export class AccountSecrets implements Secrets {
     );
     if (!row) return null;
     try {
-      const { plaintext, protectedHeader } = await compactDecrypt(row.ciphertext, this.#key, {
-        keyManagementAlgorithms: ['dir'],
-        contentEncryptionAlgorithms: ['A256GCM'],
-      });
+      const { plaintext, protectedHeader } = await compactDecrypt(row.ciphertext, this.#key, DIR);
       if (protectedHeader.kid !== binding(identity)) throw unavailable();
       return new TextDecoder().decode(plaintext);
     } catch {

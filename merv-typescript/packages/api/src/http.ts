@@ -27,7 +27,7 @@ import type {
 } from './types.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
-import { unknownEndpoint, validated } from './errors.js';
+import { projectSelection, unknownEndpoint, validated } from './errors.js';
 
 export { describeTool } from './registry.js';
 
@@ -194,16 +194,6 @@ function bearer(req: IncomingMessage): string {
   if (!authorization || !/^Bearer [^\s]+$/i.test(authorization))
     throw new MervError('unauthorized', 'A bearer token is required', 401);
   return authorization.slice(7);
-}
-
-function projectSelection(...selections: unknown[]): string | undefined {
-  const supplied = selections.filter((selection) => selection !== undefined);
-  for (const selection of supplied)
-    if (typeof selection !== 'string' || !selection.trim())
-      throw new MervError('invalid_input', 'projectId must be a non-empty string');
-  if (supplied.some((selection) => selection !== supplied[0]))
-    throw new MervError('invalid_input', 'Conflicting Merv project selections');
-  return supplied[0] as string | undefined;
 }
 
 /**

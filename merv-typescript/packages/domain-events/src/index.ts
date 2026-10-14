@@ -23,6 +23,8 @@ type Progress = {
 };
 
 const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
+const progressOf = (tx: Transaction, id: string) =>
+  tx.get<Progress>('SELECT * FROM event_consumers WHERE id=?', id);
 /** How many passes that reach their head answer a drain() while commits keep arriving. */
 const DRAIN_PASSES = 16;
 
@@ -84,10 +86,7 @@ export class DurableEvents implements DomainEvents {
     const consumer = { ...input, types: [...input.types] };
     const hash = digest([...consumer.types].sort());
     const registration = this.state.transaction(async (tx) => {
-      const previous = await tx.get<Progress>(
-        'SELECT * FROM event_consumers WHERE id=?',
-        consumer.id,
-      );
+      const previous = await progressOf(tx, consumer.id);
       if (previous)
         check(
           previous.definition_hash === hash,
@@ -228,10 +227,7 @@ export class DurableEvents implements DomainEvents {
     if (quiet.length)
       await this.state.transaction(async (tx) => {
         for (const consumer of quiet) {
-          const row = await tx.get<Progress>(
-            'SELECT * FROM event_consumers WHERE id=?',
-            consumer.id,
-          );
+          const row = await progressOf(tx, consumer.id);
           if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
             continue;
           // Under the writer lock every event up to the head is committed, and no smaller ID
@@ -251,10 +247,7 @@ export class DurableEvents implements DomainEvents {
         let attemptedCursor: number | undefined;
         try {
           const transaction = this.state.transaction(async (tx) => {
-            const progress = await tx.get<Progress>(
-              'SELECT * FROM event_consumers WHERE id=?',
-              consumer.id,
-            );
+            const progress = await progressOf(tx, consumer.id);
             // A progress row removed outside the application: deliver nothing, strand no one.
             if (!progress || progress.retry_at > Date.now()) return false;
             attemptedCursor = progress.cursor;
@@ -290,10 +283,7 @@ export class DurableEvents implements DomainEvents {
         } catch (error) {
           // Failed handler effects and cursor both rolled back. Record retry separately.
           await this.state.transaction(async (tx) => {
-            const row = await tx.get<Progress>(
-              'SELECT * FROM event_consumers WHERE id=?',
-              consumer.id,
-            );
+            const row = await progressOf(tx, consumer.id);
             if (!row || row.cursor !== attemptedCursor) return;
             const delay = 100 * 2 ** Math.min(row.attempts, 8);
             this.retryAt = Math.min(this.retryAt, Date.now() + delay);

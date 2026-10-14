@@ -50,13 +50,16 @@ class AuthoritySlot<T> {
   #value?: T;
   #token?: symbol;
   constructor(
-    private readonly code: { registered: string; unavailable: string },
-    private readonly text: { installed: string; unavailable: string; changed: string },
+    private readonly kind: string,
+    private readonly name: string,
+    private readonly unavailable: string,
+    private readonly retry = '',
   ) {}
   /** Throws at once when a provider is installed; the disposer withdraws only this registration. */
   install(value: T): () => void {
-    check(!this.#value, this.code.registered, this.text.installed, 409);
-    const token = Symbol(this.code.registered);
+    const registered = `${this.kind}_authority_registered`;
+    check(!this.#value, registered, `${this.name} authority is already installed`, 409);
+    const token = Symbol(registered);
     this.#value = value;
     this.#token = token;
     return () => {
@@ -71,15 +74,15 @@ class AuthoritySlot<T> {
   /** The installed provider, which a decision asks for only once it needs it. */
   provider(): T {
     const value = this.#value;
-    check(value, this.code.unavailable, this.text.unavailable, 503);
+    check(value, this.unavailable, `${this.name} authority is unavailable`, 503);
     return value;
   }
   /** Refuses a decision whose provider was withdrawn, or installed again, while it was pending. */
   fence(token: symbol | undefined): void {
     check(
       token !== undefined && this.#token === token,
-      this.code.unavailable,
-      this.text.changed,
+      this.unavailable,
+      `${this.name} authority changed during authorization${this.retry}`,
       503,
     );
   }
@@ -91,28 +94,20 @@ export class ProjectScope implements Scope {
   readonly credentials: ActorCredentials;
   private ledger: Ledger;
   private sessions = new AuthoritySlot<SessionAuthority>(
-    { registered: 'session_authority_registered', unavailable: 'session_unavailable' },
-    {
-      installed: 'Session authority is already installed',
-      unavailable: 'Session authority is unavailable',
-      changed: 'Session authority changed during authorization; retry with the current provider',
-    },
+    'session',
+    'Session',
+    'session_unavailable',
+    '; retry with the current provider',
   );
   private conversations = new AuthoritySlot<ConversationAuthority>(
-    { registered: 'conversation_authority_registered', unavailable: 'conversation_unavailable' },
-    {
-      installed: 'Conversation authority is already installed',
-      unavailable: 'Conversation authority is unavailable',
-      changed: 'Conversation authority changed during authorization',
-    },
+    'conversation',
+    'Conversation',
+    'conversation_unavailable',
   );
   private managed = new AuthoritySlot<ManagedRunnerAuthority>(
-    { registered: 'managed_authority_registered', unavailable: 'managed_runner_unavailable' },
-    {
-      installed: 'Managed runner authority is already installed',
-      unavailable: 'Managed runner authority is unavailable',
-      changed: 'Managed runner authority changed during authorization',
-    },
+    'managed',
+    'Managed runner',
+    'managed_runner_unavailable',
   );
   constructor(
     private state: State,
@@ -125,7 +120,6 @@ export class ProjectScope implements Scope {
       this.ledger,
       () => this.time(),
       async (caller, permission, tx) => await this.authorize(caller, permission, tx),
-      async (caller, permission, tx) => await this.require(caller, permission, tx),
     );
     this.members = new Memberships(
       state,
@@ -482,13 +476,7 @@ export class ProjectScope implements Scope {
   /** Shared membership predicate for verified JWT callers and durable human delegations. */
   private async requireHumanMembership(
     row: ActorRow,
-    human: {
-      actorId: string;
-      projectId: string;
-      issuer: string;
-      subject: string;
-      membershipId: string;
-    },
+    human: Omit<Extract<DelegationSource, { kind: 'human' }>, 'kind'>,
     sql: Sql,
   ): Promise<void> {
     check(

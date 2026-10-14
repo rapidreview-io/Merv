@@ -1,4 +1,4 @@
-import { filterAsync, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
+import { MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -435,17 +435,19 @@ export class ToolRegistry implements Tools {
       caller && this.access && offered.some((entry) => entry.remote)
         ? await this.access.granted(caller)
         : undefined;
-    return await filterAsync(
-      offered,
-      async (entry) =>
+    const shown: Entry[] = [];
+    for (const entry of offered)
+      if (
         (!caller ||
           !session ||
           (await this.fenced(
             session,
             session.provider.allowsTool(caller, entry.name, this.reads(entry)),
           ))) &&
-        (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true),
-    );
+        (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
+      )
+        shown.push(entry);
+    return shown;
   }
 
   /** agent: a person's own agent over MCP, never a leased worker. */

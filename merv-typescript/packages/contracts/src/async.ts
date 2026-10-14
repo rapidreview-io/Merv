@@ -7,15 +7,6 @@ export async function mapAsync<T extends readonly unknown[], U>(
   for (let index = 0; index < values.length; index++) output.push(await fn(values[index], index));
   return output;
 }
-export async function filterAsync<T>(
-  values: readonly T[],
-  fn: (value: T, index: number) => unknown | Promise<unknown>,
-): Promise<T[]> {
-  const output: T[] = [];
-  for (let index = 0; index < values.length; index++)
-    if (await fn(values[index], index)) output.push(values[index]);
-  return output;
-}
 export async function everyAsync<T>(
   values: readonly T[],
   fn: (value: T, index: number) => unknown | Promise<unknown>,

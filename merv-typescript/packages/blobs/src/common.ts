@@ -1,7 +1,6 @@
 import { check, MervError, sha256Hex } from '@merv/contracts';
 
 export const MAX_BLOB_BYTES = 2_000_000;
-export const hashBytes = (bytes: Uint8Array) => sha256Hex(bytes);
 
 export function validateNamespace(namespace: string): void {
   check(
@@ -33,7 +32,7 @@ export function storedSize(size: number): void {
 
 export function verifyBytes(bytes: Buffer, hash: string): Buffer {
   storedSize(bytes.byteLength);
-  check(hashBytes(bytes) === hash, 'blob_corrupt', 'Stored blob failed its integrity check', 500);
+  check(sha256Hex(bytes) === hash, 'blob_corrupt', 'Stored blob failed its integrity check', 500);
   return bytes;
 }
 

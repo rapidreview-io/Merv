@@ -1,5 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
-export { mapAsync, filterAsync, everyAsync } from './async.js';
+export { mapAsync, everyAsync } from './async.js';
 export type {
   ToolPolicy,
   ToolGrant,
@@ -293,11 +293,9 @@ export interface ReceiptTable {
   conflict?: string;
 }
 /** How receipted() compares and replays a table's receipts. */
-interface Receipt<T> extends ReceiptTable {
+interface Receipt extends ReceiptTable {
   /** Runs between the work and its record, for a domain that rechecks authority after yielding. */
   after?: () => Promise<unknown>;
-  /** Runs on a replayed answer: a recheck, or defaults for fields older answers lack. */
-  replay?: (result: T) => T | Promise<T>;
 }
 /**
  * One request's receipt in a domain's table, keyed by (project, actor, requestId): a retry with
@@ -375,7 +373,7 @@ export async function receipted<T>(
   requestId: string,
   hash: string,
   execute: () => T | Promise<T>,
-  receipt: Receipt<T>,
+  receipt: Receipt,
 ): Promise<T> {
   const journal = new RequestJournal(
     tx,
@@ -386,10 +384,7 @@ export async function receipted<T>(
     hash,
   );
   const previous = await journal.previous();
-  if (previous) {
-    const result = JSON.parse(previous[receipt.result ?? 'result']) as T;
-    return receipt.replay ? await receipt.replay(result) : result;
-  }
+  if (previous) return JSON.parse(previous[receipt.result ?? 'result']) as T;
   const result = await execute();
   await receipt.after?.();
   await journal.record(JSON.stringify(result));

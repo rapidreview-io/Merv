@@ -8,11 +8,10 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { check, MAX_OBJECT_BYTES, MervError, type Blobs } from '@merv/contracts';
+import { check, MAX_OBJECT_BYTES, MervError, sha256Hex, type Blobs } from '@merv/contracts';
 import {
   BlobOperations,
   copyBytes,
-  hashBytes,
   storageError,
   storedSize,
   validateKey,
@@ -162,7 +161,7 @@ export class S3Blobs implements Blobs {
     validateNamespace(namespace);
     const content = copyBytes(bytes);
     return this.operations.run(async () => {
-      const hash = hashBytes(content);
+      const hash = sha256Hex(content);
       const key = this.key(namespace, hash);
       const signal = AbortSignal.timeout(this.timeoutMs);
       try {

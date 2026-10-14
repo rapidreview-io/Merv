@@ -13,3 +13,14 @@ export function validated<T>(
   const issues = parsed.error.issues.map(({ path, message, code }) => ({ path, message, code }));
   throw new MervError('invalid_input', message, 400, issues);
 }
+
+/** The one project every given selection names, if any: 400 when one is blank or two differ. */
+export function projectSelection(...selections: unknown[]): string | undefined {
+  const supplied = selections.filter((selection) => selection !== undefined);
+  for (const selection of supplied)
+    if (typeof selection !== 'string' || !selection.trim())
+      throw new MervError('invalid_input', 'projectId must be a non-empty string');
+  if (supplied.some((selection) => selection !== supplied[0]))
+    throw new MervError('invalid_input', 'Conflicting Merv project selections');
+  return supplied[0] as string | undefined;
+}

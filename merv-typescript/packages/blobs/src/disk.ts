@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, link, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import type { Blobs } from '@merv/contracts';
+import { sha256Hex, type Blobs } from '@merv/contracts';
 import {
   BlobOperations,
   copyBytes,
-  hashBytes,
   storageError,
   storedSize,
   validateKey,
@@ -31,7 +30,7 @@ export class DiskBlobs implements Blobs {
     validateNamespace(namespace);
     const content = copyBytes(bytes);
     return this.operations.run(async () => {
-      const hash = hashBytes(content);
+      const hash = sha256Hex(content);
       const directory = this.directory(namespace, hash);
       const destination = join(directory, hash);
       try {

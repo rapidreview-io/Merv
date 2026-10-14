@@ -1,4 +1,5 @@
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
+import { record } from '@merv/contracts';
 
 export const supportedProtocolVersions = [...SUPPORTED_PROTOCOL_VERSIONS];
 
@@ -9,17 +10,10 @@ export const supportedProtocolVersions = [...SUPPORTED_PROTOCOL_VERSIONS];
  */
 export function protocolError(header: string | string[] | undefined, body: unknown) {
   for (const item of Array.isArray(body) ? [...body.flat(Infinity), undefined] : [body]) {
-    const message =
-      item && typeof item === 'object' ? (item as Record<string, unknown>) : undefined;
-    const params =
-      message?.params && typeof message.params === 'object'
-        ? (message.params as Record<string, unknown>)
-        : undefined;
-    const meta =
-      params?._meta && typeof params._meta === 'object'
-        ? (params._meta as Record<string, unknown>)
-        : undefined;
-    const declared = meta?.['io.modelcontextprotocol/protocolVersion'];
+    const message = record(item);
+    const declared = record(record(message?.params)?._meta)?.[
+      'io.modelcontextprotocol/protocolVersion'
+    ];
     const invalid = [header, declared].some(
       (value) =>
         value !== undefined &&

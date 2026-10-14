@@ -1,5 +1,6 @@
 import { expiry } from './expiry.js';
 import type { Ledger } from './ledger.js';
+import { insertProject } from './project-context.js';
 import {
   check,
   eventSource,
@@ -13,7 +14,6 @@ import {
   type DelegationSource,
   type IssuedActorCredential,
   type Permission,
-  type Project,
   type Role,
   type Sql,
   type State,
@@ -87,11 +87,6 @@ export class ActorCredentials {
       permission: Permission,
       tx: Transaction,
     ) => Promise<Decision>,
-    private readonly require: (
-      caller: Caller,
-      permission: Permission,
-      tx: Transaction,
-    ) => Promise<Actor>,
   ) {}
   private notBeyond(expiresAt: string | null, limit: string | null): void {
     check(
@@ -169,17 +164,7 @@ export class ActorCredentials {
       'Project needs a name of at most 200 characters',
     );
     return await this.state.transaction(async (tx) => {
-      const value: Project = {
-        id: newId('project'),
-        name: input.projectName.trim(),
-        createdAt: this.time(),
-      };
-      await tx.run(
-        'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',
-        value.id,
-        value.name,
-        value.createdAt,
-      );
+      const value = await insertProject(tx, input.projectName.trim(), this.time());
       const credential = await this.issue(tx, value.id, input.actorName, 'operator', null, null);
       await this.state.appendEvent(tx, {
         projectId: value.id,
@@ -218,7 +203,7 @@ export class ActorCredentials {
     caller = structuredClone(caller);
     return await forRead(this.state, async (tx) => {
       // A read of one's own metadata is not administration; a session or key holds none.
-      if (actorId === caller.actorId) await this.require(caller, 'read', tx);
+      if (actorId === caller.actorId) await this.authorize(caller, 'read', tx);
       else await this.administer(caller, tx);
       await this.actorRow(tx, caller.projectId, actorId);
       return (

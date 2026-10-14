@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest, Agent, type Server } from 'node:http';
-import { createService, type HumanPrincipal } from '@merv/contracts';
+import { createService, MervError, type HumanPrincipal } from '@merv/contracts';
 import { AccountSecrets } from '@merv/secrets';
 import { huggingFacePath, huggingFaceRead, huggingFaceProxy } from '@merv/secrets/api';
 import { openState } from './fixtures/state.js';
@@ -51,7 +51,8 @@ test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and
   t.after(() => state.close());
   let now = Date.now(),
     live = true,
-    checks = 0;
+    checks = 0,
+    fault: MervError | undefined;
   const person: HumanPrincipal = {
     kind: 'user',
     user: {
@@ -73,6 +74,7 @@ test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and
     // The authority gets back exactly the binding it issued; Secrets never reads into it.
     assert.deepEqual(grant, context);
     checks++;
+    if (fault) throw fault;
     return live ? person.user : null;
   });
   await secrets.saveHuggingFace(person, 'hf_SYNTHETIC_ROOT_ONLY');
@@ -202,6 +204,12 @@ test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and
   assert.equal((await call()).status, 401);
   assert.ok(checks >= 5);
   now -= 101000;
+  // An authority's refusal is no grant; a State outage judged nothing and is no 401.
+  fault = new MervError('session_forbidden', 'Session source differs', 403);
+  assert.equal((await call()).status, 401);
+  fault = new MervError('state_busy', 'Every database connection is in use; retry shortly', 503);
+  await assert.rejects(secrets.resolveHuggingFaceGrant(access.token), { code: 'state_busy' });
+  fault = undefined;
   unregister();
   assert.equal((await call()).status, 401);
 });

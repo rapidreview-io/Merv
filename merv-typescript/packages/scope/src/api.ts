@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
-import { unknownEndpoint, validated } from '@merv/api/errors';
+import { projectSelection, unknownEndpoint, validated } from '@merv/api/errors';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -87,11 +87,7 @@ export function scopeRoutes(scope: Scope): MountHandler {
     if (memberRoute) {
       const projectId = pathSegment(memberRoute[1]!);
       const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
-      const selected = req.headers['x-merv-project-id'];
-      if (selected !== undefined && (typeof selected !== 'string' || !selected.trim()))
-        throw new MervError('invalid_input', 'projectId must be a non-empty string');
-      if (selected !== undefined && selected !== projectId)
-        throw new MervError('invalid_input', 'Conflicting Merv project selections');
+      projectSelection(req.headers['x-merv-project-id'], projectId);
       if (subject === undefined && req.method === 'GET')
         return { memberships: await scope.members.memberships(principal, projectId) };
       if (subject === undefined && req.method === 'POST')

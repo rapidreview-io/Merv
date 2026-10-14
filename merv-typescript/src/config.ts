@@ -206,11 +206,9 @@ export function loadConfiguration(options: ConfigurationOptions): {
           )),
       'components must contain known default provider IDs',
     );
-    const apiSupport = ['identity'];
-    const selected = new Set(
-      options.components ?? providerIds.filter((id) => !['identity'].includes(id)),
-    );
-    if (options.api) for (const id of apiSupport) selected.add(id);
+    // Identity serves only the API, which loads it.
+    const selected = new Set(options.components ?? providerIds.filter((id) => id !== 'identity'));
+    if (options.api) selected.add('identity');
     // An adapter follows the provider whose package it extends (`code-tools` is Code Work's).
     const extended = (name: string) =>
       configured.find((entry) => entry.name === name.slice(0, name.lastIndexOf('/')))?.id ?? '';

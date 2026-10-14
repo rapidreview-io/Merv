@@ -19,7 +19,7 @@ import {
   type Transaction,
   type VerifiedIdentity,
 } from '@merv/contracts';
-import { projectValue, type ProjectRow } from './project-context.js';
+import { insertProject, projectValue, type ProjectRow } from './project-context.js';
 
 interface MembershipRow {
   id: string;
@@ -137,11 +137,7 @@ export class Memberships {
         insertedAt,
       );
       const user = await this.user(tx, identity.issuer, identity.subject);
-      return {
-        kind: 'user',
-        user,
-        expiresAt: identity.expiresAt,
-      };
+      return { kind: 'user', user, expiresAt: identity.expiresAt };
     });
   }
 
@@ -166,11 +162,7 @@ export class Memberships {
     checkIdentity(identity, this.time());
     const user = await this.user(tx, identity.issuer, identity.subject);
     checkIdentity(identity, this.time());
-    return {
-      kind: 'user',
-      user,
-      expiresAt: identity.expiresAt,
-    };
+    return { kind: 'user', user, expiresAt: identity.expiresAt };
   }
 
   async resolve(
@@ -286,24 +278,8 @@ export class Memberships {
         await this.resolve(human, old.project_id, tx);
         return await this.project(tx, old.project_id);
       }
-      const value: Project = {
-        id: newId('project'),
-        name,
-        createdAt: this.time(),
-      };
-      await tx.run(
-        'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',
-        value.id,
-        name,
-        value.createdAt,
-      );
-      const initial = await this.activate(
-        tx,
-        value.id,
-        human.user.issuer,
-        human.user.subject,
-        'operator',
-      );
+      const value = await insertProject(tx, name, this.time());
+      const initial = await this.activate(tx, value.id, human.user, 'operator');
       await tx.run(
         'INSERT INTO user_project_requests(issuer,subject,request_id,fingerprint,project_id) VALUES(?,?,?,?,?)',
         human.user.issuer,
@@ -352,8 +328,7 @@ export class Memberships {
   private async activate(
     tx: Transaction,
     projectId: string,
-    issuer: string,
-    subject: string,
+    { issuer, subject }: { issuer: string; subject: string },
     role: Role,
   ): Promise<ProjectMembership> {
     let mapping = await tx.get<{ actor_id: string }>(
@@ -429,7 +404,7 @@ export class Memberships {
         );
         return membership(old);
       }
-      const value = await this.activate(tx, projectId, issuer, subject, role);
+      const value = await this.activate(tx, projectId, { issuer, subject }, role);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,
@@ -479,26 +454,37 @@ export class Memberships {
       check(previous, 'not_found', 'Active project member not found', 404);
       if (previous.role === role) return membership(previous);
       await this.keepOperator(tx, previous, role);
-      await tx.run(
-        'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
-        this.time(),
-        previous.id,
-      );
-      const next = await this.activate(tx, projectId, previous.issuer, previous.subject, role);
-      await this.state.appendEvent(tx, {
-        projectId,
-        actorId: caller.actorId,
-        type: 'actor.permissions_changed',
-        subjectId: next.actorId,
-        data: {
-          beforeRole: previous.role,
-          role: next.role,
-          previousMembershipId: previous.id,
-          membershipId: next.id,
-        },
-      });
-      return next;
+      return await this.replace(tx, previous, role, caller.actorId);
     });
+  }
+
+  /** Ends the active membership `previous` and starts its person's next one with `role`, which
+   *  `actorId` (by default that person) records as a change of permissions. */
+  private async replace(
+    tx: Transaction,
+    previous: MembershipRow,
+    role: Role,
+    actorId?: string,
+  ): Promise<ProjectMembership> {
+    await tx.run(
+      'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
+      this.time(),
+      previous.id,
+    );
+    const next = await this.activate(tx, previous.project_id, previous, role);
+    await this.state.appendEvent(tx, {
+      projectId: previous.project_id,
+      actorId: actorId ?? next.actorId,
+      type: 'actor.permissions_changed',
+      subjectId: next.actorId,
+      data: {
+        beforeRole: previous.role,
+        role: next.role,
+        previousMembershipId: previous.id,
+        membershipId: next.id,
+      },
+    });
+    return next;
   }
 
   async removeMember(principal: Principal, projectId: string, subject: string): Promise<void> {
@@ -550,36 +536,11 @@ export class Memberships {
           human.user.issuer,
           human.user.subject,
         );
-        let value: ProjectMembership;
-        if (previous?.active && previous.role === 'operator') value = membership(previous);
-        else {
-          if (previous?.active)
-            await tx.run(
-              'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
-              this.time(),
-              previous.id,
-            );
-          value = await this.activate(
-            tx,
-            projectId,
-            human.user.issuer,
-            human.user.subject,
-            'operator',
-          );
-          if (previous?.active)
-            await this.state.appendEvent(tx, {
-              projectId,
-              actorId: value.actorId,
-              type: 'actor.permissions_changed',
-              subjectId: value.actorId,
-              data: {
-                beforeRole: previous.role,
-                role: value.role,
-                previousMembershipId: previous.id,
-                membershipId: value.id,
-              },
-            });
-        }
+        const value = !previous?.active
+          ? await this.activate(tx, projectId, human.user, 'operator')
+          : previous.role === 'operator'
+            ? membership(previous)
+            : await this.replace(tx, previous, 'operator');
         await this.state.appendEvent(tx, {
           projectId,
           actorId: value.actorId,
@@ -603,13 +564,7 @@ export class Memberships {
         'Only projects without membership history may be adopted',
         409,
       );
-      const value = await this.activate(
-        tx,
-        projectId,
-        human.user.issuer,
-        human.user.subject,
-        'operator',
-      );
+      const value = await this.activate(tx, projectId, human.user, 'operator');
       await this.state.appendEvent(tx, {
         projectId,
         actorId: value.actorId,
