@@ -17,8 +17,6 @@
 
 import type { CodeBlockerGroup, PersonMove } from './models.js';
 
-export type { PersonMove };
-
 /**
  * Which of four things a blocker's code says is holding work up. Quarantine is the strongest
  * word: nothing may ever be built on it again. A writer stuck mid-generation is recoverable

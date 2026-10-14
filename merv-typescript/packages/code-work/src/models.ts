@@ -128,11 +128,7 @@ export interface CodeCheckSpec {
   image: { provider: string; offerId: string; snapshotId: string | null };
 }
 export interface CodeStoreLimits extends CodeAdmissionLimits {
-  /**
-   * The project check, or null for none. The tag stays 1: an added field with a default is
-   * readable by the reader that was written for format 1, and every stored row reads back
-   * as no command configured, which is what those projects meant.
-   */
+  /** The project check, or null for none; Code Work keeps it beside Code's admission lists. */
   check: CodeCheckSpec | null;
 }
 /** Code Work exposes its check configuration alongside technical repository status. */

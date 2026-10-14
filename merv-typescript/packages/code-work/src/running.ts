@@ -27,10 +27,10 @@ import {
   isDirectHuman,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlocker } from '@merv/workflows/models';
-import { personMove, type PersonMove } from './blockers.js';
+import { personMove } from './blockers.js';
 import { PUBLICATION_CODES } from './unit-store.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';
-import type { CodeUnit } from './models.js';
+import type { CodeUnit, PersonMove } from './models.js';
 
 /**
  * Code's part of the Running page, read inside the page's snapshot and never written from.

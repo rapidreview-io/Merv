@@ -149,6 +149,10 @@ test('changed PR heads and non-passing checks prevent merge', async (t) => {
   assert.equal(stale.stale, true);
   assert.equal(stale.lastError, 'github_head_changed');
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
+  // Settled, it keeps the pull request it ended with: reading it again is no refusal.
+  const read = await f.publications.publicationDetails(f.caller, 'codeprop_fixture');
+  assert.equal(read.details, null);
+  assert.equal(read.publication.stale, true);
 });
 
 test('lost merge replies reconcile to the actual merge without reissuing it', async (t) => {

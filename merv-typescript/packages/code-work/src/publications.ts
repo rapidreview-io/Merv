@@ -680,22 +680,18 @@ export class CodePublicationService implements CodePublicationApi {
     caller = structuredClone(caller);
     const { proposalId: id } = parseCodeInput(codePublicationIdSchema, { proposalId });
     const row = await this.state.transaction((tx) => this.row(caller, id, tx)),
-      publication = this.decode(row);
-    if (!publication.pull) return { publication, details: null };
-    const details = await this.github.automation(
-      caller,
-      'read',
-      JSON.parse(row.binding_json),
-      async (client, token) => {
-        const details = await client.pullDetails(
-          token,
-          publication.repository,
-          publication.pull!.number,
-        );
+      publication = this.decode(row),
+      pull = publication.pull;
+    const details =
+      pull &&
+      (await this.github.automation(caller, 'read', JSON.parse(row.binding_json), async (c, t) => {
+        const details = await c.pullDetails(t, publication.repository, pull.number);
+        // Settled, it keeps the pull request it ended with: one changed since has no details.
+        if (Number(row.settled) && !this.pins(publication, details.pull)) return null;
         this.pinned(publication, details.pull);
         return details;
-      },
-    );
+      }));
+    if (!details) return { publication, details: null };
     const { state: _stored, ...fresh } = { ...publication, pull: details.pull };
     return { publication: { ...fresh, state: publicationState(fresh) }, details };
   }

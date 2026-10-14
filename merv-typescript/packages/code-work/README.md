@@ -64,7 +64,7 @@ flowchart LR
   class codeWork self
 ```
 
-Code work is the one bridge between research decisions and Git: Tasks, Experiments and Research bind to it when it is present, and it alone drives Code. Through Domain Events it initializes each new project, asks Code to open and end a session's writer generation as its workspace attaches and closes (Code owns writers and their generations), and reconciles research state on every workflow transition.
+Code work is the one bridge between research decisions and Git: Tasks, Experiments and Research bind to it when it is present, and it alone drives Code. Through Domain Events it initializes each new project and reconciles research state on every workflow transition; Code itself opens and ends a session's writer generation as its workspace attaches and closes.
 
 ## Composition
 
@@ -79,7 +79,7 @@ commit, so changing the project base cannot rewrite work already pinned to an ol
 Connection, retained server history, accepted changes and remote publication remain visible
 as distinct states. Connecting a repository is not approval to merge a research outcome.
 
-It has no settings: several accepted commits are always merged into one base on the server.
+Its one setting, `mainLanding` (`MERV_CODE_MAIN_LANDING`), lands accepted work on Merv main where no GitHub is linked. Several accepted commits are always merged into one base on the server.
 
 Review provenance is read through the Reviews service rather than its private tables.
 
