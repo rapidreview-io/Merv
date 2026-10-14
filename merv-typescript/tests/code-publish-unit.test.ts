@@ -916,6 +916,73 @@ test("a stale merge moves Merv's main only forward to GitHub's", async (t) => {
   assert.equal((await f.code.status(f.admin)).project?.main.oid, f.moved);
 });
 
+test("a merge verified late moves Merv's main only forward too", async (t) => {
+  for (const ahead of [true, false]) {
+    const f = await fixture(t, true);
+    const { publication } = await opened(f);
+    const tree = (commit: string) => f.source.git('rev-parse', `${commit}^{tree}`);
+    const commit = (from: string, ...parents: string[]) =>
+      f.source.git('commit-tree', tree(from), ...parents.flatMap((p) => ['-p', p]), '-m', from);
+    const merge = commit(f.feature, f.root0, f.feature);
+    const later = commit(merge, merge);
+    f.publishGitRef('later', later);
+    f.remote!.control.mergeSha = merge;
+    f.remote!.control.loseMergeReply = true;
+    const input = {
+      proposalId: publication.proposalId,
+      expectedHead: f.feature,
+      expectedBase: f.root0,
+      requestId: 'late',
+    };
+    await assert.rejects(f.code.mergePublication(f.admin, input), { code: 'github_unavailable' });
+    // Before the reply is reconciled Merv's main moved: past the merge, as another publication's
+    // stale merge follows a GitHub main merged onto since, or to a commit the merge lacks.
+    const ours = ahead ? later : f.moved;
+    await f.setMain(ours);
+    assert.equal((await f.code.mergePublication(f.admin, input)).verified, true);
+    assert.equal((await f.code.status(f.admin)).project?.main.oid, ours, `ahead=${ahead}`);
+  }
+});
+
+test('a publication settled while a sync pass is under way is left as it ended', async (t) => {
+  const f = await fixture(t, true);
+  await f.canary();
+  const ids: string[] = [];
+  for (const [name, commit] of [
+    ['First', f.feature],
+    ['Second', f.clashing],
+  ] as const) {
+    const work = await f.declare(name);
+    await f.publishes(work);
+    await f.pin(work);
+    await f.accept(work, commit);
+    ids.push(work.id);
+  }
+  const opened = await f.sync();
+  const [first, second] = ids.map((id) => opened.find((item) => item.instanceId === id)!);
+  const write = (sql: string, id: string) => f.state.transaction((tx) => tx.run(sql, id));
+  const order =
+    "UPDATE code_publications SET synced_at=CASE WHEN proposal_id=? THEN '1' ELSE '' END";
+  await write(order, second.proposalId);
+  // The pass reads both and, while it works on the first, the second settles stale as a merge
+  // that finds main moved settles it, with a failed close leaving its pull request open.
+  f.remote!.control.before = async (path) => {
+    if (!path.endsWith(`/pulls/${first.pull!.number}`)) return;
+    f.remote!.control.before = undefined;
+    const stale = "UPDATE code_publications SET stale=1,settled=1,error='code_main_changed'";
+    await write(`${stale} WHERE proposal_id=?`, second.proposalId);
+  };
+  await f.code.syncPublications(f.admin);
+  const row = await f.state.read((sql) =>
+    sql.get<{ settled: number; error: string | null }>(
+      'SELECT settled,error FROM code_publications WHERE proposal_id=?',
+      second.proposalId,
+    ),
+  );
+  // Saved, it was due again on every pass, its stale head approved on GitHub each time.
+  assert.deepEqual([Number(row!.settled), row!.error], [1, 'code_main_changed']);
+});
+
 test('a pull request closed unmerged wakes whoever waits on its publication', async (t) => {
   const f = await fixture(t, true);
   const { work } = await opened(f);

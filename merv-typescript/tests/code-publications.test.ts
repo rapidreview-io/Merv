@@ -57,6 +57,8 @@ const units = (f: { state: ConstructorParameters<typeof CodeUnitStore>[0] }) =>
 async function setup(t: TestContext) {
   const f = await githubFixture(t);
   await f.enable();
+  // A verified merge reads main, which this project never bound.
+  await units(f).initialize();
   const publications = await createService(
     new CodePublicationService(f.state, f.scope, f.github, units(f), host),
   );

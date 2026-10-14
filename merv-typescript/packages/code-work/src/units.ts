@@ -872,10 +872,8 @@ export class CodeUnitService {
     }
     if (!row || ended) return;
     const resolution = await this.resolutionBlocker(tx, projectId, unitId);
-    if (resolution || row.base_json !== null || row.acceptance_json !== null) {
-      await this.setBlockers(tx, projectId, unitId, resolution ? [resolution] : []);
-      return;
-    }
+    if (resolution || row.base_json !== null || row.acceptance_json !== null)
+      return await this.setBlockers(tx, projectId, unitId, resolution ? [resolution] : []);
     let derived = await this.derive(tx, projectId, unitId, row);
     // The first unit to wait on a set writes its record and plan; this is a writing path,
     // which a derivation itself never is.
@@ -907,12 +905,8 @@ export class CodeUnitService {
       await this.workflows
         .systemPrerequisites(PROVIDER)
         .replace({ projectId, instanceId: unitId, dependencies: prerequisites }, tx);
-    await this.setBlockers(
-      tx,
-      projectId,
-      unitId,
-      derived.status === 'blocked' ? derived.blockers : [],
-    );
+    const blockers = derived.status === 'blocked' ? derived.blockers : [];
+    await this.setBlockers(tx, projectId, unitId, blockers);
   }
 
   /**

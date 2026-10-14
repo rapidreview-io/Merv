@@ -271,7 +271,7 @@ A missing GitHub link, disabled automation or changed connection leaves the publ
 
 Sealed proposal publications, which carried no approval envelope, were deleted with their merge requests (`code_publications@3`): every remaining publication publishes an accepted unit. The former `code.publication.release` route is removed.
 
-A successful GitHub response is insufficient for completion. Code verifies two merge parents, the reviewed head as second parent, first parent contained in the reviewed head, and tree equality. A mismatch is `code_publication_incident`, retaining the observed commit, tree and parents with no automatic repair. A merge outside reviewed ancestry also records a failed canary and disables publication until the operator repairs enforcement. Local work and mirroring remain available.
+A successful GitHub response is insufficient for completion. Code verifies two merge parents, the reviewed head as second parent, first parent contained in the reviewed head, and tree equality. A verified merge moves Merv main only forward: a main that already holds it, or holds commits it lacks (verified late, after main moved on), stays where it is. A mismatch is `code_publication_incident`, retaining the observed commit, tree and parents with no automatic repair. A merge outside reviewed ancestry also records a failed canary and disables publication until the operator repairs enforcement. Local work and mirroring remain available.
 
 ### Mandatory real-GitHub release matrix
 

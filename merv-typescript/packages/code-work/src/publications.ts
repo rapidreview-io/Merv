@@ -148,6 +148,9 @@ export class CodePublicationService implements CodePublicationApi {
     check(row, 'publication_not_found', 'GitHub publication not found in this project', 404);
     return row;
   }
+  private fresh(caller: Caller, id: string) {
+    return this.state.transaction((tx) => this.row(caller, id, tx));
+  }
   /**
    * Opens the publication of an accepted unit with its passing review already sealed.
    */
@@ -290,6 +293,14 @@ export class CodePublicationService implements CodePublicationApi {
     return (await this.units.binding(sql, projectId))?.main.oid ?? null;
   }
   /**
+   * Merv's main, read before the transaction that moves it, when `to` holds it and goes past it:
+   * main follows GitHub's only forward, so one holding commits `to` lacks keeps them.
+   */
+  private async behind(projectId: string, to: string) {
+    const ours = await this.state.read((sql) => this.mainOf(sql, projectId));
+    return ours && ours !== to && (await this.host.ancestor(projectId, ours, to)) ? ours : null;
+  }
+  /**
    * An accepted unit publishes once: a row that can no longer merge as reviewed settles stale,
    * and whoever waits on it learns, in the same commit, that a successor must take it.
    */
@@ -351,7 +362,7 @@ export class CodePublicationService implements CodePublicationApi {
           ),
         () => undefined,
       );
-    return this.decode(await this.state.transaction((tx) => this.row(caller, row.proposal_id, tx)));
+    return this.decode(await this.fresh(caller, row.proposal_id));
   }
   /** `attempt`, but a base quarantine that reached the unit settles it stale as a changed head
    *  does, closing its pull request, whose head still carries Merv's approval on GitHub. */
@@ -378,6 +389,7 @@ export class CodePublicationService implements CodePublicationApi {
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
     const original = this.decode(row);
     let mainParent: string | undefined;
+    let forward: string | null = null;
     if (pull.merged && !original.verified) {
       try {
         check(
@@ -399,6 +411,7 @@ export class CodePublicationService implements CodePublicationApi {
           409,
         );
         mainParent = await this.host.verify(caller, original, pull.mergeCommitSha);
+        forward = await this.behind(caller.projectId, pull.mergeCommitSha);
       } catch (error) {
         if (error instanceof MervError && error.code === 'code_publication_incident')
           await this.state.transaction(async (tx) => {
@@ -433,7 +446,7 @@ export class CodePublicationService implements CodePublicationApi {
       );
       // The merge commit is written before the row is sealed as verified, because a verified
       // row's merge is immutable, and because what the host tells the unit next reads both.
-      if (pull.merged && record.merge && pull.mergeCommitSha) {
+      if (pull.merged && record.merge && pull.mergeCommitSha)
         await tx.run(
           'UPDATE code_publications SET merge_json=? WHERE proposal_id=?',
           canonical({
@@ -443,14 +456,14 @@ export class CodePublicationService implements CodePublicationApi {
           }),
           row.proposal_id,
         );
-      }
       if (pull.merged && !record.verified) {
         await this.host.check(caller, record, tx);
         await tx.run(
           'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
           record.proposalId,
         );
-        await this.host.main(caller, pull.mergeCommitSha!, tx);
+        if (forward) await this.host.main(caller, pull.mergeCommitSha!, tx, forward);
+        else await this.host.reconcile(caller, tx);
         // Commit the wake-up with the verified receipt and admitted main, never with a preview.
         await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
           unitId: record.instanceId,
@@ -551,10 +564,11 @@ export class CodePublicationService implements CodePublicationApi {
       if (stopped()) return;
       try {
         await this.locked(caller, proposal_id, async (row, lock) => {
-          if (this.decode(row).destination === 'local') {
-            await this.publishLocal(caller, row, lock);
-            return;
-          }
+          // Settled since this pass read it, by a person's merge or another pass: nothing is due,
+          // and a stale one must not be reopened (and its head approved again) by saving it.
+          if (Number(row.settled)) return;
+          if (this.decode(row).destination === 'local')
+            return await this.publishLocal(caller, row, lock);
           if (row.binding_json === 'null') {
             row = await this.state.transaction(async (tx) => {
               await this.owned(caller, row.proposal_id, lock, tx);
@@ -578,16 +592,14 @@ export class CodePublicationService implements CodePublicationApi {
                 : undefined;
               const close = (number: number) =>
                 client.updatePull(token, current.repository, number, { state: 'closed' });
-              if (!current.stale) {
-                await this.host.rules(caller, client, token, current, false);
-                const admit = () =>
-                  this.state.transaction((tx) => this.host.check(caller, current, tx));
-                if (await this.unquarantined(caller, row, lock, pull, close, admit)) return;
-                // A pull request already off the reviewed head settles stale below, wherever
-                // its branch now stands.
-                if (!pull || pull.merged || this.pins(current, pull))
-                  await this.host.snapshot(caller, current);
-              }
+              await this.host.rules(caller, client, token, current, false);
+              const admit = () =>
+                this.state.transaction((tx) => this.host.check(caller, current, tx));
+              if (await this.unquarantined(caller, row, lock, pull, close, admit)) return;
+              // A pull request already off the reviewed head settles stale below, wherever
+              // its branch now stands.
+              if (!pull || pull.merged || this.pins(current, pull))
+                await this.host.snapshot(caller, current);
               const proposed = () =>
                 client.pulls(token, current.repository, {
                   state: 'all',
@@ -680,7 +692,7 @@ export class CodePublicationService implements CodePublicationApi {
   async publicationDetails(caller: Caller, proposalId: string) {
     caller = structuredClone(caller);
     const { proposalId: id } = parseCodeInput(codePublicationIdSchema, { proposalId });
-    const row = await this.state.transaction((tx) => this.row(caller, id, tx)),
+    const row = await this.fresh(caller, id),
       publication = this.decode(row),
       pull = publication.pull;
     const details =
@@ -793,19 +805,14 @@ export class CodePublicationService implements CodePublicationApi {
           const main = await client.branch(token, record.repository, record.baseBranch);
           await this.host.import(caller, record, main.sha);
           if (!(await this.host.ancestor(caller.projectId, main.sha, record.headOid))) {
-            // Merv's main follows GitHub's only forward, from the main it was read against.
-            const ours = await this.state.read((sql) => this.mainOf(sql, caller.projectId));
-            const forward =
-              !!ours &&
-              ours !== main.sha &&
-              (await this.host.ancestor(caller.projectId, ours, main.sha));
+            const forward = await this.behind(caller.projectId, main.sha);
             // Quarantined work settles stale for that, closing its pull request, and moves nothing.
             return this.unquarantined(caller, row, lock, pull, close, () =>
               this.settleStale(caller, row, lock, 'code_main_changed', pull, close, async (tx) => {
                 await this.scope.require(caller, 'admin', tx);
                 await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
                 await this.host.check(caller, record, tx);
-                if (forward) await this.host.main(caller, main.sha, tx, ours!);
+                if (forward) await this.host.main(caller, main.sha, tx, forward);
               }),
             );
           }
@@ -911,12 +918,7 @@ export class CodePublicationService implements CodePublicationApi {
             'Refresh to reconcile the GitHub merge result',
             409,
           );
-          return this.save(
-            caller,
-            await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
-            lock,
-            pull,
-          );
+          return this.save(caller, await this.fresh(caller, record.proposalId), lock, pull);
         },
         async (tx) => {
           const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
