@@ -92,6 +92,8 @@ const credentials: [rule: string, pattern: RegExp][] = [
 const anyCredential = new RegExp(credentials.map(([, pattern]) => pattern.source).join('|'));
 /** Content is immutable; cache rule names, never a path-dependent exemption or credential text. */
 const credentialMemo = new Map<string, string[]>();
+/** Trees no blob under which holds a credential, wherever they stand: none of it is read again. */
+const cleanTrees = new Set<string>();
 const MAX_CREDENTIAL_MEMO = 50_000;
 
 /**
@@ -227,7 +229,6 @@ interface TreeEntry {
   name: Buffer;
   oid: string;
 }
-type KeptTree = { trees: string[]; links: string[]; inside: TreeEntry[] };
 function parseTree(
   content: Buffer,
   format: ObjectFormat,
@@ -497,16 +498,19 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   const roots: string[] = [];
   /** Kept trees a fresh tree or commit puts somewhere, with how many directories lie above them. */
   const borrowed: { oid: string; path: string | null; depth: number }[] = [];
-  const scan = (content: Buffer, path: string | null, oid: string) => {
+  /** Whether what this run judged holds no credential, also once the memo has been cleared. */
+  const clean = new Map<string, boolean>();
+  const scan = (content: Buffer | null, path: string | null, oid: string) => {
     let rules = credentialMemo.get(oid);
     if (!rules) {
-      const text = content.toString('latin1');
+      const text = content!.toString('latin1');
       rules = anyCredential.test(text)
         ? credentials.filter(([, pattern]) => pattern.test(text)).map(([rule]) => rule)
         : [];
       if (credentialMemo.size >= MAX_CREDENTIAL_MEMO) credentialMemo.clear();
       credentialMemo.set(oid, rules);
     }
+    clean.set(oid, !rules.length);
     for (const rule of rules) found(rule, path, oid);
   };
   await read(
@@ -529,17 +533,21 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     if (!blobPaths.has(entry.oid) || (blobPaths.get(entry.oid) === null && !skipped))
       blobPaths.set(entry.oid, skipped ? null : path);
   };
-  const links: { path: string; oid: string }[] = [];
-  const visited = new Set<string>();
-  const stack = roots.map((oid) => ({ oid, prefix: '', depth: 1 }));
-  for (let node = stack.pop(); node; node = stack.pop()) {
-    const key = `${node.oid}:${node.prefix}`;
-    if (visited.has(key)) continue;
-    if (visited.size >= MAX_TREE_VISITS) {
-      found('history_size', null, null);
-      break;
+  type Place = { oid: string; prefix: string; depth: number; clean?: boolean };
+  /** Visit each tree once at each place it stands, as long as the walk stays bounded. */
+  const walk = (stack: Place[], visit: (node: Place) => void) => {
+    const seen = new Set<string>();
+    for (let node = stack.pop(); node; node = stack.pop()) {
+      const key = `${node.oid}:${node.prefix}`;
+      if (seen.has(key)) continue;
+      if (seen.size >= MAX_TREE_VISITS) return found('history_size', null, null);
+      seen.add(key);
+      visit(node);
     }
-    visited.add(key);
+  };
+  const links: { path: string; oid: string }[] = [];
+  const stack = roots.map((oid) => ({ oid, prefix: '', depth: 1 }));
+  walk(stack, (node) => {
     const folded = new Set<string>();
     for (const entry of trees.get(node.oid) ?? []) {
       const path = node.prefix + entry.name.toString('utf8');
@@ -559,14 +567,17 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
       else if (entry.mode !== '100644' && entry.mode !== '100755') found('mode', path, entry.oid);
       noteBlob(entry, path);
     }
-  }
+  });
 
   // A kept tree was examined where it then stood, and a path decides these rules. Put
   // higher up, a link inside it that climbed to just below the root now climbs out; put further
   // down, what was shallow enough is too deep; put under a denied directory, what is inside it
   // is denied; outside an exemption, its blobs need credential checks. Read every borrowed tree
   // and judge path-dependent rules again, even if exemptions have since been removed.
-  const keptTrees = new Map<string, KeptTree>();
+  const keptTrees = new Map<string, TreeEntry[]>();
+  /** The objects a kept tree holds with one mode: its directories, or its links. */
+  const inside = (oid: string, mode: '40000' | '120000') =>
+    (keptTrees.get(oid) ?? []).filter((entry) => entry.mode === mode).map((entry) => entry.oid);
   for (let level = [...new Set(borrowed.map((item) => item.oid))]; level.length;) {
     if (keptTrees.size + level.length > MAX_TREE_VISITS) {
       found('history_size', null, null);
@@ -574,51 +585,34 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     }
     await read(level, (oid, content) => {
       const parsed = parseTree(content, header.objectFormat);
-      const entries = Array.isArray(parsed) ? parsed : [];
-      keptTrees.set(oid, {
-        trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
-        links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
-        inside: entries,
-      });
+      keptTrees.set(oid, Array.isArray(parsed) ? parsed : []);
     });
     const below = new Set<string>();
-    for (const oid of level) {
-      const node = keptTrees.get(oid);
-      for (const tree of node?.trees ?? []) below.add(tree);
-    }
+    for (const oid of level) for (const tree of inside(oid, '40000')) below.add(tree);
     level = [...below].filter((oid) => !keptTrees.has(oid));
   }
 
   // Match both denied paths and credential exemptions at the directory’s current location.
-  {
-    const seen = new Set<string>();
-    const stack = borrowed.map((item) => ({
-      oid: item.oid,
-      prefix: item.path === null ? '' : `${item.path}/`,
-      depth: item.depth + 1,
-    }));
-    for (let node = stack.pop(); node; node = stack.pop()) {
-      const key = `${node.oid}:${node.prefix}`;
-      if (seen.has(key)) continue;
-      if (seen.size >= MAX_TREE_VISITS) {
-        found('history_size', null, null);
-        break;
-      }
-      seen.add(key);
-      for (const entry of keptTrees.get(node.oid)?.inside ?? []) {
-        const path = node.prefix + entry.name.toString('utf8');
-        if (deny.some((pattern) => pattern.test(path))) found('deny_glob', path, entry.oid);
-        if (entry.mode === '40000' && node.depth <= MAX_DEPTH)
-          stack.push({ oid: entry.oid, prefix: `${path}/`, depth: node.depth + 1 });
-        noteBlob(entry, path);
-      }
+  const keptStack: Place[] = borrowed.map((item) => ({
+    oid: item.oid,
+    prefix: item.path === null ? '' : `${item.path}/`,
+    depth: item.depth + 1,
+  }));
+  walk(keptStack, (node) => {
+    const clean = node.clean || cleanTrees.has(node.oid);
+    for (const entry of keptTrees.get(node.oid) ?? []) {
+      const path = node.prefix + entry.name.toString('utf8');
+      if (deny.some((pattern) => pattern.test(path))) found('deny_glob', path, entry.oid);
+      if (entry.mode === '40000' && node.depth <= MAX_DEPTH)
+        keptStack.push({ oid: entry.oid, prefix: `${path}/`, depth: node.depth + 1, clean });
+      if (!clean) noteBlob(entry, path);
     }
-  }
+  });
 
   // A link's target is judged where the link stands, so a kept blob is read again for a new path.
   const targets = new Map<string, number>();
   const linked = new Set(links.map((link) => link.oid));
-  for (const node of keptTrees.values()) for (const oid of node.links) linked.add(oid);
+  for (const oid of keptTrees.keys()) for (const link of inside(oid, '120000')) linked.add(link);
   for (const [oid, type, size] of await describe(joined, [...linked]))
     targets.set(oid, type === 'blob' ? Number(size) : -1);
   const linkText = new Map<string, string>();
@@ -636,13 +630,12 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   const climb = (oid: string): number => {
     const known = climbs.get(oid);
     if (known !== undefined) return known;
-    const node = keptTrees.get(oid);
     let most = 0;
-    for (const link of node?.links ?? []) {
+    for (const link of inside(oid, '120000')) {
       const target = linkText.get(link);
       most = Math.max(most, target === undefined ? Infinity : linkClimb(target));
     }
-    for (const tree of node?.trees ?? []) most = Math.max(most, climb(tree) - 1);
+    for (const tree of inside(oid, '40000')) most = Math.max(most, climb(tree) - 1);
     climbs.set(oid, most);
     return most;
   };
@@ -652,7 +645,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     const known = depths.get(oid);
     if (known !== undefined) return known;
     let most = 0;
-    for (const tree of keptTrees.get(oid)?.trees ?? []) most = Math.max(most, deepest(tree) + 1);
+    for (const tree of inside(oid, '40000')) most = Math.max(most, deepest(tree) + 1);
     depths.set(oid, most);
     return most;
   };
@@ -666,13 +659,27 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     ...blobPaths.keys(),
   ]);
   const unread: string[] = [];
-  for (const oid of blobs) {
-    const path = blobPaths.get(oid);
-    if (path === null) continue;
-    const rules = credentialMemo.get(oid);
-    if (rules) for (const rule of rules) found(rule, path ?? null, oid);
+  for (const oid of blobs)
+    if (blobPaths.get(oid) === null) continue;
+    else if (credentialMemo.has(oid)) scan(null, blobPaths.get(oid) ?? null, oid);
     else unread.push(oid);
-  }
   await read(unread, (oid, content) => scan(content, blobPaths.get(oid) ?? null, oid));
+  // Each tree whose every blob was read clean is remembered, and so is each clean subtree of one
+  // that is not: kept later, or put somewhere else, none of their blobs is read again.
+  const cleanTree = (oid: string): boolean => {
+    let known = cleanTrees.has(oid) || clean.get(oid);
+    if (known !== undefined) return known;
+    const entries = trees.get(oid) ?? keptTrees.get(oid);
+    const unclean = (entries ?? []).filter((entry) =>
+      entry.mode === '40000'
+        ? !cleanTree(entry.oid)
+        : entry.mode !== '160000' && !clean.get(entry.oid),
+    );
+    clean.set(oid, (known = !!entries && !unclean.length));
+    if (known && cleanTrees.size >= MAX_CREDENTIAL_MEMO) cleanTrees.clear();
+    if (known) cleanTrees.add(oid);
+    return known;
+  };
+  for (const oid of [...roots, ...borrowed.map((item) => item.oid)]) cleanTree(oid);
   return result(tree, fresh.length, bytes);
 }

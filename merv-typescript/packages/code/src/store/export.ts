@@ -123,7 +123,6 @@ export class CodeExporter {
         await rm(file, { force: true });
         await git.run(['update-ref', '-d', ref], { env });
         await git.run(['update-ref', '-d', `${ref}-second`], { env });
-        this.exports.delete(exportId);
         // Any other failure is Git not writing the bundle at all. Calling that up to date
         // would send the machine away believing it holds a history it never received; said
         // as a failure, the machine defers and asks again.

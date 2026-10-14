@@ -21,7 +21,7 @@ import {
   type AdmissionLimits,
 } from '../packages/code/src/store/admission.js';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { ServerGit } from '@merv/code/git';
+import { ServerGit, type GitOptions } from '@merv/code/git';
 import { described, git, gitSource, type Bundle } from './fixtures/code-store.js';
 
 const open: AdmissionLimits = { ...defaultLimits, denyGlobs: [], secretExemptGlobs: [] };
@@ -639,3 +639,32 @@ for (const format of ['sha1', 'sha256'] as const)
         [],
       );
     });
+
+test('a kept tree read clean once is never read again, however many blobs are read since', async (t) => {
+  const f = await fixture(t);
+  // More blobs than the blob memo holds, then two one-file changes, written without a checkout.
+  const commit = (changes: string) =>
+    `commit refs/heads/main\ncommitter F <f@e.t> 0 +0000\ndata 0\n${changes}`;
+  const file = (path: string, content: string) =>
+    `M 100644 inline ${path}\ndata ${content.length}\n${content}\n`;
+  let files = '';
+  for (let at = 0; at < 50_500; at++) files += file(`d${at % 505}/${at}`, `${at}\n`);
+  const changes = [files, file('d0/0', 'a\n'), file('d0/0', 'b\n')];
+  git(f.source.repository, ['fast-import', '--quiet'], changes.map(commit).join(''));
+  const [base, one, two] = ['main~2', 'main~1', 'main'].map((rev) =>
+    f.source.git('rev-parse', rev),
+  );
+  f.keep(base);
+  assert.deepEqual((await f.judge(f.source.bundle(one, [base]))).findings, []);
+  f.keep(one);
+  const counting = new (class extends ServerGit {
+    read = 0;
+    override run(args: string[], options: GitOptions = {}) {
+      if (args[1] === '--batch') this.read += String(options.input).split('\n').length - 1;
+      return super.run(args, options);
+    }
+  })(f.source.directory);
+  assert.deepEqual((await f.judge(f.source.bundle(two, [one]), { git: counting })).findings, []);
+  // The trees and the changed directory's hundred blobs, not the 50,400 others again.
+  assert.ok(counting.read < 1_000, `${counting.read} objects read`);
+});
