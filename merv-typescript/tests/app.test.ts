@@ -459,8 +459,12 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         name,
       );
     // Whatever fails work, claims or decides a review, starts or ends a reflection wave, or
-    // moves or ends a cycle is proposed, by every tool that reaches it.
+    // moves or ends a cycle is proposed, by every tool that reaches it; so is every base control
+    // but a pause, since each spends merges and machines and release lifts a quarantine.
     for (const name of [
+      ...['retry', 'resume', 'cancel', 'quarantine', 'release', 'repair'].map(
+        (v) => `code.base.${v}`,
+      ),
       'task.mark_failed',
       'review.start',
       'review.submit',

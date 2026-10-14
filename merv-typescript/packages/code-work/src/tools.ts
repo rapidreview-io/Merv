@@ -136,9 +136,8 @@ export const codeToolsPlugin = {
         ] as const
       ).map(([action, instruction]) => ({
         name: `code.base.${action}`,
-        conversation: ['retry', 'cancel', 'quarantine'].includes(action)
-          ? ('propose' as const)
-          : undefined,
+        // Only a pause is the agent's own; every other verb spends work or lifts a quarantine.
+        conversation: action === 'suspend' ? undefined : ('propose' as const),
         description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a human or operator key with project admin permission may call it, never a leased worker.`,
         inputSchema: baseControlSchema.omit({ action: true }),
         handler: async (caller: Caller, input: Omit<CodeBaseControl, 'action'>) =>

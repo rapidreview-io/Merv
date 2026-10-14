@@ -238,18 +238,10 @@ export class CodePublicationService implements CodePublicationApi {
         );
         // A finished publication keeps its ending: a refused request never rewrites it.
         if (!held.changes) return;
-        const record = this.decode(row);
         // A base quarantine that reached the accepted unit ends its publication, which would be
         // refused on every pass and hold the repository for good; a successor takes it.
-        if (
-          code === 'code_quarantined' &&
-          (await tx.get(
-            'SELECT 1 FROM code_units WHERE project_id=? AND unit_id=? AND quarantine_base_key IS NOT NULL',
-            caller.projectId,
-            record.instanceId,
-          ))
-        )
-          await this.markStale(caller, record, code, null, tx);
+        if (code === 'code_quarantined' && (await this.reached(tx, caller, row)))
+          await this.markStale(caller, this.decode(row), code, null, tx);
         // A unit reads a failing sync as an operator's wait (unit-store publicationOf).
         else if (row.error !== code) await this.host.reconcile(caller, tx);
       });
@@ -320,6 +312,14 @@ export class CodePublicationService implements CodePublicationApi {
       reason,
     });
   }
+  /** Whether a base quarantine reached the publication's unit, which ends it for good. */
+  private reached(sql: Sql, caller: Caller, row: Row) {
+    return sql.get(
+      'SELECT 1 FROM code_units WHERE project_id=? AND unit_id=? AND quarantine_base_key IS NOT NULL',
+      caller.projectId,
+      this.decode(row).instanceId,
+    );
+  }
   /**
    * Settles a pull request that main overtook, or whose head is no longer the reviewed one, so
    * unreviewed commits never reach main. Only once that commits is the pull request closed,
@@ -331,7 +331,7 @@ export class CodePublicationService implements CodePublicationApi {
     lock: string,
     reason: string,
     pull: GitHubPullRequest,
-    close: () => Promise<GitHubPullRequest>,
+    close: (number: number) => Promise<GitHubPullRequest>,
     before: (tx: Transaction) => Promise<void> = async () => {},
   ) {
     await this.state.transaction(async (tx) => {
@@ -340,7 +340,7 @@ export class CodePublicationService implements CodePublicationApi {
       await this.markStale(caller, current, reason, pull, tx);
     });
     if (pull.state === 'open')
-      await close().then(
+      await close(pull.number).then(
         (closed) =>
           this.state.transaction((tx) =>
             tx.run(
@@ -352,6 +352,28 @@ export class CodePublicationService implements CodePublicationApi {
         () => undefined,
       );
     return this.decode(await this.state.transaction((tx) => this.row(caller, row.proposal_id, tx)));
+  }
+  /** `admit`, but a base quarantine that reached the unit settles it stale as a changed head does,
+   *  closing its pull request, whose head still carries Merv's approval on GitHub. */
+  private async unquarantined(
+    caller: Caller,
+    row: Row,
+    lock: string,
+    pull: GitHubPullRequest | undefined,
+    close: (number: number) => Promise<GitHubPullRequest>,
+    admit: (tx: Transaction) => Promise<unknown>,
+  ) {
+    try {
+      return void (await this.state.transaction(admit));
+    } catch (error) {
+      if (
+        !pull ||
+        !(error instanceof MervError && error.code === 'code_quarantined') ||
+        !(await this.state.read((sql) => this.reached(sql, caller, row)))
+      )
+        throw error;
+      return await this.settleStale(caller, row, lock, 'code_quarantined', pull, close);
+    }
   }
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
     const original = this.decode(row);
@@ -554,9 +576,12 @@ export class CodePublicationService implements CodePublicationApi {
               let pull = current.pull
                 ? await client.pull(token, current.repository, current.pull.number)
                 : undefined;
+              const close = (number: number) =>
+                client.updatePull(token, current.repository, number, { state: 'closed' });
               if (!current.stale) {
                 await this.host.rules(caller, client, token, current, false);
-                await this.state.transaction((tx) => this.host.check(caller, current, tx));
+                const admit = (tx: Transaction) => this.host.check(caller, current, tx);
+                if (await this.unquarantined(caller, row, lock, pull, close, admit)) return;
                 // A pull request already off the reviewed head settles stale below, wherever
                 // its branch now stands.
                 if (!pull || pull.merged || this.pins(current, pull))
@@ -603,10 +628,7 @@ export class CodePublicationService implements CodePublicationApi {
               }
               // A merged head that is not the reviewed one is an incident, which saving retains.
               if (!pull.merged && !this.pins(current, pull)) {
-                const { number } = pull;
-                await this.settleStale(caller, row, lock, 'github_head_changed', pull, () =>
-                  client.updatePull(token, current.repository, number, { state: 'closed' }),
-                );
+                await this.settleStale(caller, row, lock, 'github_head_changed', pull, close);
                 return;
               }
               // A unit's publication is opened with its passing review already sealed.
@@ -767,8 +789,8 @@ export class CodePublicationService implements CodePublicationApi {
           await this.scope.require(caller, 'admin');
           let pull = await client.pull(token, record.repository, record.pull!.number);
           if (pull.merged) return this.save(caller, row, lock, pull);
-          const close = () =>
-            client.updatePull(token, record.repository, pull.number, { state: 'closed' });
+          const close = (number: number) =>
+            client.updatePull(token, record.repository, number, { state: 'closed' });
           if (!this.pins(record, pull))
             return this.settleStale(caller, row, lock, 'github_head_changed', pull, close);
           const main = await client.branch(token, record.repository, record.baseBranch);
@@ -830,7 +852,7 @@ export class CodePublicationService implements CodePublicationApi {
             'GitHub checks must finish successfully before merging',
             409,
           );
-          await this.state.transaction(async (tx) => {
+          const admit = async (tx: Transaction) => {
             await this.scope.require(caller, 'admin', tx);
             await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
             requireHuman(caller, 'github_human_required', 'A signed-in human must merge');
@@ -872,7 +894,9 @@ export class CodePublicationService implements CodePublicationApi {
               'Publication reconciliation was superseded',
               409,
             );
-          });
+          };
+          const settled = await this.unquarantined(caller, row, lock, pull, close, admit);
+          if (settled) return settled;
           // GitHub atomically checks the head SHA and enforces protections. Its API has no expected-base CAS.
           const result = await client.mergePull(
             token,

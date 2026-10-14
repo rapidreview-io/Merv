@@ -234,16 +234,7 @@ test('a publication a quarantine reached after acceptance settles stale and free
   await f.publishes(work);
   await f.pin(work);
   await f.accept(work, f.feature);
-  // What a base quarantine reaching the accepted unit writes (units.ts propagateQuarantine).
-  await f.state.transaction(async (tx) => {
-    for (const table of ['code_units SET quarantine_base_key', 'code_workspaces SET blocked_by'])
-      await tx.run(
-        `UPDATE ${table}=? WHERE project_id=? AND unit_id=?`,
-        'base_tainted',
-        f.admin.projectId,
-        work.id,
-      );
-  });
+  await quarantine(f, work.id);
   const [publication] = await f.sync();
   assert.deepEqual(
     [publication.stale, publication.verified, publication.lastError],
@@ -253,6 +244,30 @@ test('a publication a quarantine reached after acceptance settles stale and free
     sql.all("SELECT 1 FROM code_repository_holds WHERE hold_key LIKE 'research:publication:%'"),
   );
   assert.deepEqual(holds, [], 'a rebind is no longer held by it');
+});
+
+test('a quarantine that reaches an approved pull request closes it, on sync and on merge', async (t) => {
+  for (const through of ['sync', 'merge']) {
+    const f = await fixture(t, true);
+    const { work, publication } = await opened(f);
+    await quarantine(f, work.id);
+    // Its head still carries Merv's approval on GitHub, so it must not stay open and mergeable.
+    const after =
+      through === 'sync'
+        ? (await f.sync())[0]
+        : await f.code.mergePublication(f.admin, {
+            proposalId: publication.proposalId,
+            expectedHead: f.feature,
+            expectedBase: f.root0,
+            requestId: 'quarantined',
+          });
+    const [pull] = f.remote!.pulls;
+    assert.deepEqual(
+      [after.stale, after.lastError, pull.state, pull.merged],
+      [true, 'code_quarantined', 'closed', false],
+      through,
+    );
+  }
 });
 
 test('incomplete rules visibility needs setup even with a canary until acknowledged, while failed enforcement is disabled', async (t) => {
@@ -769,6 +784,17 @@ async function opened(f: Awaited<ReturnType<typeof fixture>>) {
   const [publication] = await f.sync();
   return { work, publication };
 }
+/** What a base quarantine reaching an accepted unit writes (units.ts propagateQuarantine). */
+const quarantine = (f: Awaited<ReturnType<typeof fixture>>, unitId: string) =>
+  f.state.transaction(async (tx) => {
+    for (const table of ['code_units SET quarantine_base_key', 'code_workspaces SET blocked_by'])
+      await tx.run(
+        `UPDATE ${table}=? WHERE project_id=? AND unit_id=?`,
+        'base_tainted',
+        f.admin.projectId,
+        unitId,
+      );
+  });
 const staleWakes = async (f: Awaited<ReturnType<typeof fixture>>) =>
   (await f.state.events(f.admin.projectId))
     .filter((event) => event.type === 'code.publication_stale')
