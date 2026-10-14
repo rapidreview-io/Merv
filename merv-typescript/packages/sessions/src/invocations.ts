@@ -158,7 +158,7 @@ export class SessionInvocations implements SessionToolPolicy {
     if (!id) return inquiryCalls(name, read);
     let known = this.toolNames.get(id);
     if (!known || this.clock() - known.at >= 60_000) {
-      // The listing's own authentication checked the lease; this reads the policy it froze.
+      // The listing's own Scope decision checked the lease; this reads the policy it froze.
       known = await this.host.reading(async (tx) => {
         const session = await this.host.callSession(caller, tx);
         return {

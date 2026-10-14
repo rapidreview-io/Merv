@@ -311,8 +311,8 @@ const permission = (role: Session['role']): Permission =>
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
-/** The control fields a runner polls, from the columns kept beside the row's JSON (sessions@23):
- *  a poll never parses its assignment, execution or lease. */
+/** A runner's control view (`control`), with the kind, thread and close time a stream checks, from
+ *  the columns kept beside the row's JSON (sessions@23): a poll never parses its packets. */
 const CONTROL = `SELECT id,project_id,thread_id,owner_hash,json_build_object('id',id,'kind',kind,'projectId',project_id,
   'runnerId',runner_id,'hostRef',host_ref,'status',status,'expiresAt',expires_at,'hardDeadline',hard_deadline,'closedAt',
   closed_at,'closeReason',close_reason,'outcome',outcome)::text AS session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions`;
@@ -486,13 +486,10 @@ export class LeasedSessions implements Sessions {
       held: (caller, invocation, tx) => this.stillHeld(caller, invocation, tx),
       registration: (session) =>
         session.kind === 'work' ? this.workflows.leaseRegistration(session.lease) : undefined,
-      valid: async (session, tx, frozen) => {
-        try {
-          return await this.valid(session, tx, frozen);
-        } catch (error) {
-          return { error: await this.closure(session, error, tx) };
-        }
-      },
+      valid: (session, tx, frozen) =>
+        this.valid(session, tx, frozen).catch(async (error) => ({
+          error: await this.closure(session, error, tx),
+        })),
       acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
     });
     this.running = new SessionRunning(
@@ -1377,23 +1374,15 @@ export class LeasedSessions implements Sessions {
   }
   async control(caller: Caller, sessionId: string): Promise<SessionControlView> {
     caller = structuredClone(caller);
-    // Its controller's authority only: a closure its lease check would find is the sweep's.
-    const session = await this.reading((tx) =>
-      this.controlled(caller, sessionId, undefined, tx, CONTROL),
-    );
-    const { id, projectId, runnerId, hostRef, status, expiresAt, hardDeadline, closeReason } =
-      session;
-    return {
-      id,
-      projectId,
-      runnerId,
-      hostRef,
-      status,
-      expiresAt,
-      hardDeadline,
-      closeReason,
-      outcome: session.outcome ?? null,
-    };
+    // Its controller's authority only: a closure its lease check would find is the sweep's. The
+    // CONTROL row is the view, but for the kind, thread and close time a stream reads of it.
+    const {
+      kind: _kind,
+      threadId: _thread,
+      closedAt: _closed,
+      ...view
+    } = await this.reading((tx) => this.controlled(caller, sessionId, undefined, tx, CONTROL));
+    return view;
   }
   async attach(
     caller: Caller,

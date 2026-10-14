@@ -190,13 +190,15 @@ test('a leased worker’s MCP call checks its lease once: its preparation’s, n
   }
 });
 
-test('a leased worker’s tool listing reads its frozen policy, leaving the lease to its authentication', async (t) => {
+test('a leased worker’s tool listing checks its lease once, by its Scope decision, and reads its frozen policy', async (t) => {
   const f = await fixture(t);
   const { invocations } = f.app.ctx.sessions as unknown as LeasedSessions;
   f.checks.mock.resetCalls();
   assert.equal(await invocations.allowsTool(f.lease.worker, 'task.checkpoint'), true);
   assert.equal(await invocations.allowsTool(f.lease.worker, 'session.halt'), false);
   assert.equal(f.checks.mock.callCount(), 0);
+  assert.ok((await f.app.ctx.tools.describe(f.lease.worker)).length > 0, 'listed');
+  assert.equal(f.checks.mock.callCount(), 1);
 });
 
 for (const [name, end, inProcess, overMcp] of ends)

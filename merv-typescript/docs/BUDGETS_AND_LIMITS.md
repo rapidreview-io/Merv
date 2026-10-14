@@ -186,7 +186,8 @@ person per UTC day), and a local runner uses its owner's own subscription.
 An inquiry visit (`session.ask_thread`) is not a worker session of the work and counts in none
 of these: its `session_usage` row is of `kind='inquiry'`, which no project or instance total
 counts. It has a budget of its own (`Session.tokenBudget`): 300 000 model tokens plus four
-resends of the conversation it resumes, charged to the person who asked, at most 2 000 000 a day.
+resends of the conversation it resumes, charged to the person who asked in that project (its
+project actor), at most 4 164 000 a day: three questions to the longest-running agents.
 On a Fleet machine the relay charges each call to the asker's day and to the session's budget,
 and refuses a call past it; on a runner of one's own, the runner stops the visit past it.
 

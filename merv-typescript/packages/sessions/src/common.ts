@@ -38,14 +38,12 @@ export function ordinary(caller: Caller): void {
   );
 }
 /** A worker_sessions row with its workspace capture. */
-export interface Row {
+export interface Row extends Stored {
   id: string;
   project_id: string;
-  thread_id: string;
   owner_hash: string;
   token_hash: string;
   fingerprint: string;
-  session_json: string;
   attachment_json: string | null;
   result_json: string | null;
 }

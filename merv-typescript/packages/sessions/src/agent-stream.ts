@@ -1,3 +1,5 @@
+import { ellipsis } from '@merv/contracts/text';
+
 /**
  * Sessions' agent stream, as pure rules the runner runs too (`@merv/sessions/agent-stream`).
  *
@@ -274,7 +276,7 @@ export function plainLine(text: string, max = SUMMARY_CHARS): string {
     .replace(/(?:[\s,:;=/#-]|\(\)|\[\]|\{\})+$/, '')
     .replace(/^[\s,:;=/#-]+/, '')
     .trim();
-  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+  return ellipsis(line, max);
 }
 
 /** The fields whose value says what a call is about, most telling first. */

@@ -1,5 +1,6 @@
 import {
   check,
+  clip,
   ellipsis,
   mapAsync,
   MervError,
@@ -394,7 +395,7 @@ export function questionMarks(
 export function briefText(brief: string): { text: string; truncated: boolean } {
   if (brief.length <= briefCap) return { text: brief, truncated: false };
   const end = brief.lastIndexOf('\n', briefCap);
-  return { text: brief.slice(0, end > 0 ? end : briefCap).trimEnd(), truncated: true };
+  return { text: clip(brief, end > 0 ? end : briefCap).trimEnd(), truncated: true };
 }
 
 interface PanelRow extends LeaseRow {

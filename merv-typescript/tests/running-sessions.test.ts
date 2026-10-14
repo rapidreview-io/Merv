@@ -750,6 +750,8 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
   assert.ok(brief.text.length <= 16_000);
   assert.ok(long.startsWith(`${brief.text}\n`), 'cut at a line end');
   assert.deepEqual(briefText('short'), { text: 'short', truncated: false });
+  // A cut with no line end within the cap keeps whole characters.
+  assert.equal(briefText(`${'x'.repeat(15_999)}😀`).text, 'x'.repeat(15_999));
 
   assert.equal(panel.actions.length, 1);
   const [halt] = panel.actions;

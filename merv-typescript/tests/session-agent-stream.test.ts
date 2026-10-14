@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { toolLine } from '@merv/sessions/agent-stream';
+import { plainLine, toolLine } from '@merv/sessions/agent-stream';
 
 test('truncated tool arguments keep a useful summary at every JSON escape boundary', () => {
   const input = JSON.stringify({
@@ -25,4 +25,8 @@ test('truncated tool arguments keep a useful summary at every JSON escape bounda
       assert.doesNotThrow(() => toolLine('shell', input.slice(0, 400)));
     }
   }
+});
+
+test('a summary cut short keeps whole characters', () => {
+  assert.equal(plainLine(`${'x'.repeat(78)}😀 more`), `${'x'.repeat(78)}…`);
 });
