@@ -77,7 +77,10 @@ export class UserKeys {
       'User key identity is required',
       403,
     );
-    const row = await sql.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', id);
+    // Caller resolution and its read decision both ask, in one snapshot: one read serves them.
+    const row = await this.state.remember(`scope:key:${id}`, () =>
+      sql.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', id),
+    );
     const refusal = { code: 'forbidden', message: 'User key is invalid, expired or revoked' };
     check(row, refusal.code, refusal.message, 403);
     await this.ledger.live(row.token_hash, 'user-key', row.id, sql, { ...refusal, status: 403 });

@@ -311,7 +311,9 @@ export class CredentialStore {
 
   /** A hash's ledger row, live or not; undefined when the ledger never held it. */
   async read(tokenHash: string, sql: Sql): Promise<Credential | undefined> {
-    const row = await find(sql, tokenHash);
+    const row = await this.state.remember(`identity:credential:${tokenHash}`, () =>
+      find(sql, tokenHash),
+    );
     return row && record(row);
   }
 
