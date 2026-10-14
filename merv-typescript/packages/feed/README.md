@@ -41,7 +41,7 @@ Posts retain their exact body, author, timestamp, and up to ten distinct artifac
 
 Operators, producers, and reviewers can post. Readers can inspect posts and activity. The service does not grant a reviewer artifact-writing or workflow-changing permissions.
 
-`list` returns posts in ascending sequence order, with an exclusive `after` cursor and a default page size of 50 (maximum 100). `activity` exposes project-scoped durable events using their separate event ID cursor. Actor administration events (`actor.*`) are visible only to project operators, matching the actor-directory access boundary. For other actors, activity skips complete pages containing only hidden administration events so pagination can still reach subsequent visible events.
+`list` returns posts in ascending sequence order, with an exclusive `after` cursor and a default page size of 50 (maximum 100). `activity` exposes project-scoped durable events using their separate event ID cursor. Actor and membership administration events (`actor.*`, `membership.*`) are visible only to project operators, matching the actor-directory access boundary, and other readers see who acted in an event's source but not the credential they held. For other actors, activity skips complete pages containing only hidden administration events so pagination can still reach subsequent visible events.
 
 The optional `feedToolsPlugin` contributes `feed.post`, `feed.get`, `feed.list`, and `feed.activity`. Unloading the service removes its runtime consumers and tools; stored posts and artifact content remain for a later reinstall.
 

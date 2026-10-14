@@ -53,8 +53,9 @@ Knowledge is a read-only index over records other plugins own: it lists the proj
 | `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Workflows, Code Work | `knowledge` service                     |
 | `@merv/knowledge/tools` | Knowledge, Tools                                                           | `project.records`, `project.references` |
 
-`project.records` returns the current Scope project record, including its
-Introduction and all task/experiment metadata. It performs no
+`project.records` returns the current Scope project record (id, name and creation
+time; the Introduction is the paper's Problem, which `paper.read` returns) and all
+task/experiment metadata. It performs no
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
@@ -64,7 +65,7 @@ explicit forms are `task:ID`, `experiment:ID`, `reflection:ID`, `research:ID`,
 `session-final:ID`. A bare ID is whichever record holds it: Knowledge asks Workflows,
 Artifacts, Reviews and then Code Work in turn and never guesses a kind from the ID's
 prefix, and a work item names its task, experiment, reflection wave or research cycle.
-Results distinguish resolved, missing and unsupported; a bare ID nothing holds is missing. No lookup falls back to another project. A resolved code
+Results distinguish resolved, missing and unsupported; a bare ID nothing holds is missing, and one that an owner shutting down might hold is unavailable. No lookup falls back to another project. A resolved code
 reference can describe a pending observation rather than ready Git evidence.
 
 ## Service
@@ -94,7 +95,7 @@ packages/knowledge/
     ├── index.ts    # Transactional records and the exact resolver
     ├── types.ts    # Public contracts and Cordis capability
     ├── input.ts    # Bounded data-only inputs and canonical serialization
-    ├── storage.ts  # Migrations of the retired snapshot tables
+    ├── storage.postgres.ts  # Migrations of the retired snapshot tables
     └── tools.ts    # Two metadata-read tools
 ```
 

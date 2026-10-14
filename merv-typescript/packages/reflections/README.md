@@ -50,6 +50,6 @@ Reflections is the judging step of each research cycle, built from two workflows
 
 ## Surface
 
-- `@merv/reflections`: the `reflections` service. It registers `reflection@4` and `reflection.lens@3` with Workflows, the lens, synthesis and review recipes with Context Builder, the synthesis review owner with Reviews, and a read rule with Artifacts: while a wave reflects, a lens's agent (on a work visit or an inquiry visit to its thread) reads no report another lens made, nor anything those lenses' sessions made.
+- `@merv/reflections`: the `reflections` service. It registers `reflection@4`–`5` and `reflection.lens@3`–`4` with Workflows (new waves start on the latest, whose workers may also call `nisa.research`), the lens, synthesis and review recipes with Context Builder, the synthesis review owner with Reviews, and a read rule with Artifacts: while a wave reflects, a lens's agent (on a work visit or an inquiry visit to its thread) reads no report another lens made, nor anything those lenses' sessions made.
 - `@merv/reflections/tools`: `reflection.create`, `reflection.list`, `reflection.get`, `reflection.lens`, `reflection.submit_lens`, `reflection.submit` and `reflection.end`.
 - `@merv/reflections/ui`: the `/reflections` page, and the open wave at the head of the Running page's work lane.

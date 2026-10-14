@@ -20,7 +20,7 @@ export interface Research {
    */
   page(caller: Caller, id: string): Promise<{ record: ResearchRecord; process: ProcessGraph }>;
   list(caller: Caller, tx?: Transaction): Promise<ResearchRecord[]>;
-  /** What Home and the rail poll: every open cycle and the newest that ended, oldest first. */
+  /** What Home polls: open cycles, the newest ended and any still asking its owner, oldest first. */
   home(caller: Caller): Promise<ResearchRecord[]>;
   active(caller: Caller): Promise<number>;
   /** The cycles this one follows, oldest first, each with its digest, and the one that follows it. */

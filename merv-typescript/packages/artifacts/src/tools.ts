@@ -170,7 +170,7 @@ export const artifactToolsPlugin = {
       // In a Pi conversation a signed URL is shown only to the person; a leased worker may
       // request its own URL to download and inspect an artifact in its workspace.
       (i) => (i.mode === 'download' ? 'secret' : undefined),
-      // Open world: storage I/O (older rows' bytes, signing, the download mirror) waits holding
+      // Open world: download's storage I/O (signing, the download mirror) waits holding
       // no reader snapshot, since artifacts runs each database read in a short transaction.
       true,
       { title: ({ mode }) => (mode === 'download' ? 'Download file' : 'Read file'), says: 'mode' },

@@ -106,9 +106,9 @@ export class KnowledgeService implements Knowledge {
 
   /**
    * Every ref of a request, each owner read once for all the ids it might hold. A bare id is
-   * whichever record holds it, asked of each owner in SOURCES order; one an owner that is not
-   * loaded, or is shutting down, might hold is unavailable rather than missing. A ref that names
-   * an owner that is shutting down is refused.
+   * whichever record holds it, asked of each owner in SOURCES order; one an owner that is
+   * shutting down might hold is unavailable rather than missing. A ref that names an owner that
+   * is shutting down is refused.
    */
   private async references(
     caller: Caller,

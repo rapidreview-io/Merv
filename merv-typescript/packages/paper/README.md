@@ -30,9 +30,9 @@ flowchart LR
   experiments -- "applies paper changes" --> paper
   reflections -- "applies paper changes" --> paper
   tasks -- "reads paper context" --> paper
-  research -. "reads Problem" .-> paper
+  research -- "reads Problem" --> paper
   paper -- "emits paper.patched" --> research
-  paper -- "writes project Introduction" --> scope
+  paper -- "checks read and write" --> scope
   paper -- "checks cited artifacts" --> artifacts
   paper -- "imports @merv/reviews/rules" --> reviews
   paper -- "registers /paper page" --> ui
@@ -42,7 +42,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Paper is the one document the research cycle reads and writes: reviewers in Experiments and Reflections revise Methods and Results through it, and Tasks reads it into each assignment. A Problem patch rewrites the project Introduction and wakes a research cycle still defining; the dotted arrow is Research's optional binding.
+Paper is the one document the research cycle reads and writes: reviewers in Experiments and Reflections revise Methods and Results through it, and Tasks reads it into each assignment. A Problem patch changes the project Introduction, which Paper serves from the Problem (Scope holds none), and wakes a research cycle still defining.
 
 ## Surface
 

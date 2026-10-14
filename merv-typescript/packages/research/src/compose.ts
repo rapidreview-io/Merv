@@ -6,7 +6,7 @@ import type { ResearchDigest, ResearchRecord } from './types.js';
 // A cycle's digest: what it decided, composed from records once it is over and kept as an
 // artifact. Each runs on ResearchService (index.ts) as its ResearchContext.
 /**
- * A digest rides inside a 24000-character reflection context, behind the assignment and any
+ * A digest rides inside a 32000-character reflection context, behind the assignment and any
  * rework feedback. At this bound it still fits beside them instead of being omitted whole.
  */
 const DIGEST_MAX_CHARS = 12000;
@@ -105,7 +105,7 @@ export async function compose(
       state: task.workflow.state,
     })),
     dropped: selected.filter((item) => item.failed).map((item) => item.id),
-    carriedOver: selected.filter((item) => !item.settled).map((item) => item.id),
+    carriedOver: selected.filter((item) => !item.terminal).map((item) => item.id),
     rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
       title: text(entry.title),
       reason: text(entry.reason),

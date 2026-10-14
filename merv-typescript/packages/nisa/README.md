@@ -45,9 +45,9 @@ reads there, run as the caller, and the service sends each one to Nisa's
 
 ## Tools
 
-Every tool is a read (`readOnly`) of another service (`openWorld`): the
-registry runs it without holding a PostgreSQL snapshot while Nisa answers, and
-checks the caller again before handing back the result. None names a
+Every retrieval tool is a read (`readOnly`) of another service (`openWorld`):
+the registry runs it without holding a PostgreSQL snapshot while Nisa answers,
+and checks the caller again before handing back the result. None names a
 `conversation` use, so:
 
 - **Pi** offers them to every turn, a reader's too, as `nisa_search`,

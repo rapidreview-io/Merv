@@ -2,7 +2,7 @@
 
 Reflections is a peer domain program alongside Tasks and Experiments. Research coordinates the outer cycle; Reflections owns five independent lenses, synthesis, and independent review. It depends on State, Scope, Artifacts, Paper, Workflows, Reviews and Context Builder. It does not depend on Knowledge or Research.
 
-Waves use `reflection@4` and `reflection.lens@3`, which can be ended. Earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
+New waves use `reflection@5` and `reflection.lens@4`, whose leased workers may also call `nisa.research`; waves begun on `reflection@4` and `reflection.lens@3` stay on them. All four can be ended. Earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
 
 ## Work during a wave
 
@@ -40,10 +40,9 @@ A review may send a reflection back, to its synthesis or to its lenses, at most
 `REFLECTION_LIMITS.reviewReturns` times in total (2): the
 `review_returns` [loop limit](BUDGETS_AND_LIMITS.md) on the parent workflow. Restarting
 the lenses opens five more sessions, so this caps that fan-out. An escalated reflection
-waits for a human approval or an admin's `workflow.extend_limit`, or for `reflection.end`
-on a version-4 wave (a version-3 wave has no abandon edge), and while it waits it still
-pauses new tasks and experiments, as any open wave does. Lens sessions are counted in the
-wave's and the cycle's usage.
+waits for a human approval or an admin's `workflow.extend_limit`, or for `reflection.end`,
+and while it waits it still pauses new tasks and experiments, as any open wave does. Lens
+sessions are counted in the wave's and the cycle's usage.
 
 ## Structured change specification
 
@@ -81,7 +80,7 @@ Synthesis and review recipe 13 describes version-3 plans. The review context ref
 - `reflection.lens`: read one lens and its own output.
 - `reflection.submit_lens`: complete a lens.
 - `reflection.submit`: submit synthesis for review.
-- `reflection.end`: owner or operator: abandon an unfinished version-4 wave with a reason.
+- `reflection.end`: owner or operator: abandon an unfinished wave with a reason.
 - `review.submit`: pass or return synthesis/lenses through the existing review owner.
 
 Mutation replay, revision checks, independent review, lease recovery and immutable outputs are unchanged.

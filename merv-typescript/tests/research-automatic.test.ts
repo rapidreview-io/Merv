@@ -362,8 +362,9 @@ test('new manual cycles reflect on failed and abandoned work without weakening e
   assert.equal(cycle.workflow.state, 'complete');
   assert.equal((await f.app.ctx.tasks.get(f.owner, downstream.id)).workflow.state, 'in_progress');
   const digest = JSON.parse((await f.app.ctx.artifacts.read(f.owner, cycle.digest!.id)).content);
-  assert.ok(digest.dropped.includes(failed.id));
-  assert.ok(digest.dropped.includes(abandoned.id));
+  assert.deepEqual(digest.dropped.sort(), [failed.id, abandoned.id, pending.id].sort());
+  // Work that ended without success is dropped, never also still unfinished.
+  assert.deepEqual(digest.carriedOver, []);
 });
 
 test('a wave closes the unstarted work between its selection and a failed input it never named', async (t) => {
