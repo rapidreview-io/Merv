@@ -56,6 +56,7 @@ test('markdownSection() reads CommonMark headings in linear time', () => {
   const started = Date.now();
   assert.equal(summary(`## Summary\n${' '.repeat(2_000_000)}x`), 'x');
   assert.equal(summary(`## Summary\n${'\n'.repeat(2_000_000)}`), null);
+  assert.equal(summary(`# a${' '.repeat(50_000)}b\n## Summary\nbody`), 'body');
   assert.ok(Date.now() - started < 2_000);
 });
 

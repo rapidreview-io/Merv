@@ -476,7 +476,9 @@ export function markdownSection(text: string, title: string): string | null {
   let level = 0;
   let content: string[] = [];
   for (const line of visibleMarkdown(text).split('\n')) {
-    const heading = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    // One unambiguous pattern: normalizeHeading drops the spaces and closing hashes around the
+    // title, and a lazy title between optional runs of spaces was cubic on a long spaced line.
+    const heading = /^ {0,3}(#{1,6})\s(.+)$/s.exec(line);
     if (level && heading && heading[1].length <= level) {
       if (content.join('\n').trim()) break;
       level = 0;
