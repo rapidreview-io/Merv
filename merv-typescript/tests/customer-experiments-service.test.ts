@@ -748,3 +748,20 @@ test('unavailable internal compute prevents checkout and payment release, while 
   };
   await f.service.paid(payment);
 });
+
+test('the customer monitoring bookmark survives the agent intake expiry', async (t) => {
+  const f = await fixture(t);
+  const created = await f.create();
+  const future = Date.now() + 31 * 86400_000;
+  t.mock.method(Date, 'now', () => future);
+  assert.equal(
+    (await f.store.authorize(created.id, created.customerToken, ['customer'])).id,
+    created.id,
+  );
+  await assert.rejects(f.store.authorize(created.id, created.agentToken, ['agent']), {
+    code: 'access_expired',
+  });
+  await assert.rejects(f.store.authorize(created.id, created.customerToken, ['agent']), {
+    code: 'unauthorized',
+  });
+});

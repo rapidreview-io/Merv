@@ -144,12 +144,6 @@ export class RequestStore {
     roles: ('agent' | 'customer')[],
   ): Promise<RequestRecord> {
     const record = await this.get(id);
-    check(
-      Date.parse(record.expiresAt) > Date.now(),
-      'access_expired',
-      'Experiment access link has expired',
-      401,
-    );
     const supplied = Buffer.from(digest(bearer));
     check(
       roles.some((role) =>
@@ -157,6 +151,17 @@ export class RequestStore {
       ),
       'unauthorized',
       'This credential cannot access this experiment',
+      401,
+    );
+    // Customer bookmarks remain usable to monitor the run and retrieve its results.
+    // The external agent's capability still expires after the bounded intake period.
+    const customer =
+      roles.includes('customer') &&
+      timingSafeEqual(supplied, Buffer.from(digest(this.token(record, 'customer'))));
+    check(
+      customer || Date.parse(record.expiresAt) > Date.now(),
+      'access_expired',
+      'Experiment agent access has expired',
       401,
     );
     return record;
