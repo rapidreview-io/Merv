@@ -20,6 +20,8 @@ export type * from './types.js';
 
 /** The most live shapes one board holds. */
 const MOST = 5_000;
+/** How long a deleted shape is kept, and the most a save purges after it. */
+const [KEEP_MS, PURGE] = [30 * 86_400_000, 500];
 /** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
 const newer = (shape: BoardElement, held?: BoardElement) =>
   !held ||
@@ -49,14 +51,15 @@ export class BoardService implements Board {
     check(!this.closed, 'board_unavailable', 'Boards are unavailable', 503);
     return structuredClone(caller);
   }
-  private async summary(caller: Caller, boardId: string, tx: Transaction): Promise<BoardSummary> {
-    const row = await tx.get<{ record: string }>(
-      'SELECT record FROM boards WHERE id=? AND project_id=?',
+  /** A board, and the newest revision whose deletion Board has purged. */
+  private async summary(caller: Caller, boardId: string, tx: Transaction) {
+    const row = await tx.get<{ record: string; purged: number }>(
+      'SELECT record,purged FROM boards WHERE id=? AND project_id=?',
       parse(id, boardId),
       caller.projectId,
     );
     check(row, 'not_found', 'Board not found', 404);
-    return JSON.parse(row.record) as BoardSummary;
+    return [JSON.parse(row.record) as BoardSummary, row.purged] as const;
   }
   private async elements(boardId: string, since: number | undefined, tx: Transaction) {
     const rows = await tx.all<{ record: string }>(
@@ -94,8 +97,11 @@ export class BoardService implements Board {
     caller = this.open(caller);
     return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const board = await this.summary(caller, boardId, tx);
-      return { board, elements: await this.elements(board.id, since, tx) };
+      const [board, purged] = await this.summary(caller, boardId, tx);
+      // A deletion purged after `since` can no longer be named, so that reader is told it all.
+      const whole = since !== undefined && since < purged;
+      const elements = await this.elements(board.id, whole ? undefined : since, tx);
+      return whole ? { board, elements, whole } : { board, elements };
     });
   }
   private async created(caller: Caller, name: string, tx: Transaction): Promise<BoardSummary> {
@@ -132,7 +138,7 @@ export class BoardService implements Board {
     const { id: _id, ...fields } = parse(setSchema, { id: boardId, ...change });
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const board = await this.summary(caller, boardId, tx);
+      const [board] = await this.summary(caller, boardId, tx);
       const next = { ...board, ...fields, updatedBy: caller.actorId, updatedAt: now() };
       await this.write(next, tx);
       await recorded(this.state, tx, caller, 'board.set', board.id, fields);
@@ -184,14 +190,24 @@ export class BoardService implements Board {
     };
     for (const shape of kept)
       await tx.run(
-        `INSERT INTO board_elements(board_id,element_id,revision,deleted,record) VALUES(?,?,?,?,?)
-         ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,record=excluded.record`,
+        `INSERT INTO board_elements(board_id,element_id,revision,deleted,deleted_at,record) VALUES(?,?,?,?,?,?)
+         ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,deleted_at=excluded.deleted_at,record=excluded.record`,
         board.id,
         shape.id,
         next.revision,
         shape.isDeleted ? 'true' : 'false',
+        shape.isDeleted ? next.updatedAt : null,
         JSON.stringify(shape),
       );
+    // Shapes deleted over 30 days ago go, the oldest first and a bounded number a save; the board
+    // keeps the newest revision it purged, so scene() knows which readers missed a deletion.
+    await tx.run(
+      `WITH gone AS (DELETE FROM board_elements WHERE (board_id,element_id) IN (SELECT board_id,element_id FROM board_elements
+         WHERE board_id=? AND deleted AND deleted_at<? ORDER BY deleted_at LIMIT ${PURGE}) RETURNING board_id,revision)
+       UPDATE boards SET purged=GREATEST(purged,(SELECT MAX(revision) FROM gone)) WHERE id IN (SELECT board_id FROM gone)`,
+      board.id,
+      new Date(Date.parse(next.updatedAt) - KEEP_MS).toISOString(),
+    );
     await this.write(next, tx);
     await recorded(this.state, tx, caller, 'board.changed', board.id, {
       revision: next.revision,
@@ -204,7 +220,7 @@ export class BoardService implements Board {
     const elements = parse(elementSchema.array().min(1).max(500), shapes) as BoardElement[];
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return await this.merge(caller, await this.summary(caller, boardId, tx), elements, tx);
+      return await this.merge(caller, (await this.summary(caller, boardId, tx))[0], elements, tx);
     });
   }
   async draw(caller: Caller, value: DrawInput): Promise<BoardDrawn> {
@@ -218,7 +234,7 @@ export class BoardService implements Board {
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       let board = input.board
-        ? await this.summary(caller, input.board, tx)
+        ? (await this.summary(caller, input.board, tx))[0]
         : await this.created(caller, input.title!, tx);
       if (input.board && input.title && input.title !== board.title) {
         board = { ...board, title: input.title, updatedBy: caller.actorId, updatedAt: now() };

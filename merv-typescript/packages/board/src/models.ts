@@ -35,6 +35,8 @@ export interface BoardScene {
   board: BoardSummary;
   /** Every live shape, or with `since` every shape changed after that revision, deleted ones too. */
   elements: BoardElement[];
+  /** A shape deleted after `since` was purged (30 days on): `elements` is every live shape. */
+  whole?: true;
 }
 
 /**

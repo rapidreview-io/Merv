@@ -146,7 +146,7 @@ export default function BoardCanvas({ id }: { id: string }) {
         () => null,
       );
       asking = false;
-      if (!live || !scene || !scene.elements.length) return;
+      if (!live || !scene || !(scene.elements.length || scene.whole)) return;
       revision.current = scene.board.revision;
       // Never repair bindings here: these are only the shapes that changed, and a box whose text
       // did not change would lose it.
@@ -155,12 +155,16 @@ export default function BoardCanvas({ id }: { id: string }) {
       }) as unknown as RemoteExcalidrawElement[];
       for (const el of scene.elements)
         known.current.set(el.id, Math.max(known.current.get(el.id) ?? 0, el.version));
+      // Told it all (a deletion after the revision in hand was purged): a shape held here as Board
+      // last had it, and not among them, is gone.
+      const named = new Set(scene.elements.map((el) => el.id));
+      const held = api
+        .getSceneElementsIncludingDeleted()
+        .filter(
+          (el) => !scene.whole || named.has(el.id) || known.current.get(el.id) !== el.version,
+        );
       api.updateScene({
-        elements: reconcileElements(
-          api.getSceneElementsIncludingDeleted(),
-          remote,
-          api.getAppState(),
-        ),
+        elements: reconcileElements(held, remote, api.getAppState()),
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     };

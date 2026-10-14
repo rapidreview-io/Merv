@@ -11,6 +11,7 @@ import { boardToolsPlugin } from '@merv/board/tools';
 import { boardUiPlugin } from '@merv/board/ui';
 import { Drawing, summarize } from '@merv/board/elements';
 import { elementSchema, parse } from '@merv/board/input';
+import { postgresMigrations } from '@merv/board/storage.postgres';
 import type { Context } from 'cordis';
 import type { ToolDefinition } from '@merv/api/types';
 import { openState } from './fixtures/state.js';
@@ -159,6 +160,71 @@ test('shapes merge by version: a stale save loses, and a page asks only for what
     0,
     'a whole read is live shapes only',
   );
+});
+
+test('a shape deleted over 30 days ago goes at the next save, and a reader from before is told it all', async (t) => {
+  const f = await fixture(t);
+  const made = await f.board.create(f.operator, 'Purged');
+  const [a, b, c] = crowd(3) as BoardElement[];
+  await f.board.save(f.operator, made.id, [a!, b!, c!]);
+  const held = new Map((await f.board.scene(f.reader, made.id)).elements.map((el) => [el.id, el]));
+  for (const shape of [a!, b!])
+    await f.board.save(f.operator, made.id, [{ ...shape, version: 2, isDeleted: true }]);
+  await f.state.transaction(async (tx) => {
+    for (const [days, element] of [
+      [31, 'e0'],
+      [29, 'e1'],
+    ] as const)
+      await tx.run(
+        'UPDATE board_elements SET deleted_at=? WHERE element_id=?',
+        new Date(Date.now() - days * 86_400_000).toISOString(),
+        element,
+      );
+  });
+  const kept = async () =>
+    (
+      await f.state.transaction((tx) =>
+        tx.all<{ element_id: string }>('SELECT element_id FROM board_elements ORDER BY 1'),
+      )
+    ).map((row) => row.element_id);
+  assert.deepEqual(await kept(), ['e0', 'e1', 'e2'], 'a deletion stays until the next change');
+  await f.board.save(f.operator, made.id, [{ ...c!, version: 2, x: 9 }]);
+  assert.deepEqual(await kept(), ['e1', 'e2'], 'only the deletion over 30 days old is purged');
+  // Revision 1 predates the purged deletion (revision 2): its reader is told every live shape.
+  const stale = await f.board.scene(f.reader, made.id, 1);
+  assert.equal(stale.whole, true);
+  for (const id of held.keys()) if (!stale.elements.some((el) => el.id === id)) held.delete(id);
+  for (const el of stale.elements) held.set(el.id, el);
+  const live = await f.board.scene(f.reader, made.id);
+  assert.deepEqual([...held.values()], live.elements, 'that reader converges on the live board');
+  const later = await f.board.scene(f.reader, made.id, 2);
+  assert.deepEqual(
+    [later.whole, later.elements.map((el) => el.id).sort()],
+    [undefined, ['e1', 'e2']],
+    'a reader from after it is told only the changes',
+  );
+});
+
+test('a shape deleted before deletions were dated starts its 30 days at the migration', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'board-'));
+  const state = await openState(dir);
+  t.after(async () => {
+    await state.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  await state.migrate('board', { 1: postgresMigrations[1]! });
+  await state.transaction(async (tx) => {
+    await tx.run("INSERT INTO board_elements VALUES('b','e',1,true,'{}'),('b','f',1,false,'{}')");
+  });
+  await state.migrate('board', postgresMigrations);
+  const rows = await state.transaction((tx) =>
+    tx.all<{ deleted_at: string | null }>(
+      'SELECT deleted_at FROM board_elements ORDER BY element_id',
+    ),
+  );
+  // Written as now() writes a date, so the purge compares them as text.
+  assert.match(rows[0]!.deleted_at!, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.equal(rows[1]!.deleted_at, null);
 });
 
 test('readers and reviewers see boards but cannot draw; archived boards leave the list', async (t) => {
