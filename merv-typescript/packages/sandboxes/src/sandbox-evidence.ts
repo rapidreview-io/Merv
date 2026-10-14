@@ -196,8 +196,8 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         (run) =>
           run.retired >= 4 ||
           (run.retired >= 1 &&
-          (this.checkedWorks.get(JSON.stringify([projectId, run.namespace, instanceId])) ?? -Infinity) >=
-            Date.parse(notBefore)),
+            (this.checkedWorks.get(JSON.stringify([projectId, run.namespace, instanceId])) ??
+              -Infinity) >= Date.parse(notBefore)),
       )
     );
   }

@@ -405,7 +405,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
         const demand = await this.sessions.dispatch
           .dispatchDemand(sourceCaller(source), demandInput(platform))
           .catch(refusedAs({ candidates: [] }, 401, 403, 404));
-        for (const candidate of demand.candidates) current.set(targetId(candidate), candidate.since);
+        for (const candidate of demand.candidates)
+          current.set(targetId(candidate), candidate.since);
       }
     }
     return current;
