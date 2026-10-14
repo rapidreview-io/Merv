@@ -59,6 +59,14 @@ type Usage = {
 };
 const tokens = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+/** A frame's data as JSON, or undefined where it is none. */
+const json = (data: string): { [key: string]: any } | undefined => {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return undefined;
+  }
+};
 /** Whether a frame is itself an error: its own top-level type, not one its content quotes. */
 const failedFrame = (data: string) => {
   if (!/"type"\s*:\s*"(?:error|response\.failed)"/.test(data)) return false;
@@ -71,22 +79,15 @@ const failedFrame = (data: string) => {
 /** A failure the provider streamed, as the client receives it: its kind and code, which tell the
  *  client what to do (Codex compacts on `context_length_exceeded`), and none of its words. */
 const providerCode = (data: string) => {
-  let parsed: { type?: unknown; code?: unknown; error?: unknown; response?: unknown } | undefined;
-  try {
-    parsed = JSON.parse(data);
-  } catch {}
+  const parsed = json(data);
   const errorOf = (value: unknown) => (value as { error?: { code?: unknown } } | null)?.error;
   const raw = errorOf(parsed?.response)?.code ?? errorOf(parsed)?.code ?? parsed?.code;
   return typeof raw === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(raw) ? raw : 'upstream_failed';
 };
 const providerFailure = (data: string, failedResponse: boolean) => {
-  let parsed: { type?: unknown } | undefined;
-  try {
-    parsed = JSON.parse(data);
-  } catch {}
   const code = providerCode(data);
   const message = 'The model provider failed this call';
-  return failedResponse || parsed?.type === 'response.failed'
+  return failedResponse || json(data)?.type === 'response.failed'
     ? `event: response.failed\ndata: ${JSON.stringify({
         type: 'response.failed',
         response: { status: 'failed', error: { code, message } },
@@ -216,31 +217,13 @@ export class ModelRelay<
   }
 
   readonly handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (req.url !== this.config.route) {
-      this.error(res, 404, 'not_found');
-      return;
-    }
-    if (req.method !== 'POST') {
-      this.error(res, 405, 'method_not_allowed');
-      return;
-    }
-    if (req.headers.origin !== undefined) {
-      this.error(res, 403, 'browser_forbidden');
-      return;
-    }
-    if (this.stopped) {
-      this.error(res, 503, 'relay_unavailable');
-      return;
-    }
+    if (req.url !== this.config.route) return this.error(res, 404, 'not_found');
+    if (req.method !== 'POST') return this.error(res, 405, 'method_not_allowed');
+    if (req.headers.origin !== undefined) return this.error(res, 403, 'browser_forbidden');
+    if (this.stopped) return this.error(res, 503, 'relay_unavailable');
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
-    if (!token || !this.config.token.test(token)) {
-      this.error(res, 401, 'unauthorized');
-      return;
-    }
-    if (this.active.size >= this.options.maxConcurrent) {
-      this.error(res, 429, 'relay_busy');
-      return;
-    }
+    if (!token || !this.config.token.test(token)) return this.error(res, 401, 'unauthorized');
+    if (this.active.size >= this.options.maxConcurrent) return this.error(res, 429, 'relay_busy');
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -426,11 +409,7 @@ export class ModelRelay<
       // Usage is kept the moment its frame arrives: a client may hang up right after it.
       const keep = (data: string) => {
         if (usage !== undefined) return;
-        try {
-          usage = JSON.parse(data).response?.usage ?? null;
-        } catch {
-          usage = null;
-        }
+        usage = json(data)?.response?.usage ?? null;
         if (usage && typeof usage === 'object')
           report((record) => this.config.onUsage?.(record, grant, reserved), {
             event: `${this.config.name}_relay_usage` as const,
@@ -469,12 +448,8 @@ export class ModelRelay<
             keep(data);
             if (!terminalReported) {
               terminalReported = true;
-              let reason: unknown;
-              if (terminal === 'incomplete') {
-                try {
-                  reason = JSON.parse(data).response?.incomplete_details?.reason;
-                } catch {}
-              }
+              const reason =
+                terminal === 'incomplete' && json(data)?.response?.incomplete_details?.reason;
               report(this.config.onTerminal, {
                 event: `${this.config.name}_relay_terminal` as const,
                 model: grant.model,

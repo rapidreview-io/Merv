@@ -100,7 +100,7 @@ export class LocalLedger {
   readonly runnerId: string;
   private readonly db: DatabaseSync;
   private readonly machineKey: Buffer;
-  private lock?: DatabaseSync;
+  private unlock?: () => void;
 
   constructor(options: { directory: string; binding: LedgerBinding }) {
     if (process.platform !== 'darwin' && process.platform !== 'linux') {
@@ -193,7 +193,7 @@ export class LocalLedger {
   }
 
   acquireController(): () => void {
-    if (this.lock) throw new Error('Runner controller is already locked');
+    if (this.unlock) throw new Error('Runner controller is already locked');
     const path = join(this.directory, 'controller-lock.sqlite');
     privateFile(path);
     const lock = new DatabaseSync(path);
@@ -205,13 +205,13 @@ export class LocalLedger {
       lock.close();
       throw new Error('Another runner controller owns this directory');
     }
-    this.lock = lock;
-    return () => {
-      if (this.lock !== lock) return;
-      this.lock = undefined;
+    const unlock = () => {
+      if (this.unlock !== unlock) return;
+      this.unlock = undefined;
       lock.exec('ROLLBACK');
       lock.close();
     };
+    return (this.unlock = unlock);
   }
 
   request(platform: LaunchPlatform): PendingLaunchRequest {
@@ -287,14 +287,14 @@ export class LocalLedger {
       .run(input.id, input.sessionId, input.deadline, metadata, now, now, runDirectory);
     return this.get(input.id)!;
   }
+  private records(sql: string, ...values: string[]): LaunchRecord[] {
+    return (this.db.prepare(sql).all(...values) as Row[]).map(launchRecord);
+  }
   get(id: string): LaunchRecord | undefined {
-    const row = this.db.prepare('SELECT * FROM launches WHERE id=?').get(id) as Row | undefined;
-    return row ? launchRecord(row) : undefined;
+    return this.records('SELECT * FROM launches WHERE id=?', id)[0];
   }
   list(): LaunchRecord[] {
-    return (this.db.prepare('SELECT * FROM launches ORDER BY created_at,id').all() as Row[]).map(
-      launchRecord,
-    );
+    return this.records('SELECT * FROM launches ORDER BY created_at,id');
   }
   resumeFailed(conversationId: string): boolean {
     const sql = "SELECT 1 FROM launches WHERE json_extract(metadata_json,'$.resumeFailed')=?";
@@ -302,19 +302,16 @@ export class LocalLedger {
   }
   /** Immediate predecessor only, and only after every local handoff obligation was settled. */
   previousSettled(id: string): LaunchRecord | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM launches WHERE rowid = (
+    return this.records(
+      `SELECT * FROM launches WHERE rowid = (
       SELECT MAX(rowid) FROM launches WHERE rowid < (SELECT rowid FROM launches WHERE id=?)
     ) AND settled=1`,
-      )
-      .get(id) as Row | undefined;
-    return row ? launchRecord(row) : undefined;
+      id,
+    )[0];
   }
   /** Launches not yet settled: running, or ended but still owing the server something. */
   open(): LaunchRecord[] {
-    const sql = 'SELECT * FROM launches WHERE settled=0 ORDER BY created_at,id';
-    return (this.db.prepare(sql).all() as Row[]).map(launchRecord);
+    return this.records('SELECT * FROM launches WHERE settled=0 ORDER BY created_at,id');
   }
   /** Mark ended launches as owing nothing, in one statement. */
   settle(ids: string[]): void {
@@ -359,11 +356,7 @@ export class LocalLedger {
     }
   }
   close(): void {
-    if (this.lock) {
-      this.lock.exec('ROLLBACK');
-      this.lock.close();
-      this.lock = undefined;
-    }
+    this.unlock?.();
     this.machineKey.fill(0);
     this.db.close();
   }

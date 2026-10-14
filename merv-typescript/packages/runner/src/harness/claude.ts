@@ -208,23 +208,16 @@ function claudeArgs(
     '--strict-mcp-config',
     '--mcp-config',
     JSON.stringify({
-      mcpServers: {
-        merv: {
-          type: 'http',
-          url,
-          headers: { Authorization: `Bearer \${${sessionTokenVariable}}` },
-        },
-        ...Object.fromEntries(
-          servers.map((server) => [
-            server.name,
-            {
-              type: 'http',
-              url: server.url,
-              headers: { Authorization: `Bearer \${${server.bearerEnv}}` },
-            },
-          ]),
-        ),
-      },
+      mcpServers: Object.fromEntries(
+        [{ name: 'merv', url, bearerEnv: sessionTokenVariable }, ...servers].map((server) => [
+          server.name,
+          {
+            type: 'http',
+            url: server.url,
+            headers: { Authorization: `Bearer \${${server.bearerEnv}}` },
+          },
+        ]),
+      ),
     }),
     '--tools',
     builtIn.join(','),

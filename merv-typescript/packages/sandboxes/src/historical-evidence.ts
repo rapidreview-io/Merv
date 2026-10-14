@@ -75,8 +75,8 @@ export function historicalEvidenceDownloads(
         }
         const parsed = nativeReference.safeParse(decoded);
         check(parsed.success, 'invalid_sandbox_evidence', 'Invalid retained file reference');
-        const [, connectionId, retainedNamespace, , , , , retainedObject, digest, count] =
-          parsed.data;
+        const connectionId = parsed.data[1];
+        [, , namespace, , , , , objectId, sha256, bytes] = parsed.data;
         const owner = await state.read((sql) =>
           sql.get(
             `SELECT c.id FROM sandbox_native_connections c
@@ -88,10 +88,6 @@ export function historicalEvidenceDownloads(
         );
         // Disconnecting or reconnecting changes the current pointer, not historical ownership.
         check(owner, 'not_found', 'Retained file does not belong to this project', 404);
-        namespace = retainedNamespace;
-        objectId = retainedObject;
-        sha256 = digest;
-        bytes = count;
       }
       const verify = (object: ObjectRecord) =>
         check(

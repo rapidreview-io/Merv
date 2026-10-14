@@ -197,6 +197,8 @@ const view = (s: Session) => {
   };
 };
 type SessionView = ReturnType<typeof view>;
+const sessionOf = (record: LaunchRecord) =>
+  record.metadata.session as unknown as SessionView | undefined;
 /**
  * What a launch owes of its transcript and of the conversation it kept, each in its metadata
  * under its own name: hashes and sizes, never bytes.
@@ -209,15 +211,13 @@ type Transcript = Owed<TranscriptFacts>;
 const kinds = ['transcript', 'conversation'] as const;
 type Kind = (typeof kinds)[number];
 /**
- * Ten PUTs at most, a minute apart after a failure; one at a time, off the tick. The delivery
- * after the tenth only confirms it.
- */
-/**
  * How often a live writer's checkout is committed to Code, as the agent's own code.commit would
  * be, when it holds changes Code has not admitted. A session's close ends its writer generation
  * at what Code admitted, so losing a machine costs at most about this much work.
  */
 const checkpointMs = 5 * 60_000;
+/** Ten PUTs at most, a minute apart after a failure, one at a time off the tick; the delivery
+ *  after the tenth only confirms it. */
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
 /** A declaration's facts: what its route is sent. */
@@ -338,11 +338,7 @@ export class MachineRunner implements Runner {
         !this.config.workInstanceId ||
           this.ledger
             .list()
-            .every(
-              (record) =>
-                (record.metadata.session as unknown as SessionView | undefined)?.instanceId ===
-                this.config.workInstanceId,
-            ),
+            .every((record) => sessionOf(record)?.instanceId === this.config.workInstanceId),
         'invalid_runner_config',
         'Retained runner history belongs to another work item',
       );
@@ -389,9 +385,7 @@ export class MachineRunner implements Runner {
     this.started = true;
     await this.tick();
     if (!this.stopping && this.autoPoll)
-      this.timer = setInterval(() => {
-        void this.tick();
-      }, this.config.pollIntervalMs ?? 1000);
+      this.timer = setInterval(() => void this.tick(), this.config.pollIntervalMs ?? 1000);
   }
   tick(): Promise<void> {
     if (this.stopping || this.stopped || !this.started) return Promise.resolve();
@@ -433,8 +427,7 @@ export class MachineRunner implements Runner {
     if (
       !record ||
       !terminalLaunch(record) ||
-      (record.metadata.session as unknown as SessionView | undefined)?.instanceId !==
-        this.config.workInstanceId
+      sessionOf(record)?.instanceId !== this.config.workInstanceId
     )
       return undefined;
     const workspace = this.driverOf(record)?.get(record.id);
@@ -548,14 +541,8 @@ export class MachineRunner implements Runner {
         this.ledger.pendingRequests().some((p) => p.platform.name === profile.name)
       )
         continue;
-      const declared = platformOf(profile);
-      const pending = this.ledger.request({
-        name: declared.name,
-        harness: declared.harness,
-        ...(declared.model ? { model: declared.model } : {}),
-        ...(declared.effort ? { effort: declared.effort } : {}),
-      });
-      await this.acquire(pending);
+      const { enabled: _enabled, parallelism: _parallelism, ...platform } = platformOf(profile);
+      await this.acquire(this.ledger.request(platform));
     }
     const records = this.ledger.open();
     this.state =
@@ -571,6 +558,7 @@ export class MachineRunner implements Runner {
    * replayed closed; anything else keeps it and its secret, so the next tick replays the receipt.
    */
   private async acquire(pending: PendingLaunchRequest): Promise<void> {
+    const complete = () => this.ledger.completeRequest(pending.platform.name, pending.requestId);
     try {
       const result = await this.client
         .lease({
@@ -591,8 +579,7 @@ export class MachineRunner implements Runner {
         this.declinedAt.set(pending.platform.name, this.clock());
         // The server waits for presence to report its settings: the next cycle sends it at once.
         if (result.reason === 'settings_pending') this.presented = undefined;
-        this.ledger.completeRequest(pending.platform.name, pending.requestId);
-        return;
+        return complete();
       }
       this.lastDeclined = undefined;
       check(
@@ -602,10 +589,7 @@ export class MachineRunner implements Runner {
       );
       const id = `launch_${createHash('sha256').update(session.id).digest('hex').slice(0, 32)}`;
       let record = this.ledger.get(id);
-      if (!record && !liveSession(session)) {
-        this.ledger.completeRequest(pending.platform.name, pending.requestId);
-        return;
-      }
+      if (!record && !liveSession(session)) return complete();
       if (!record) {
         const configured = this.config.profiles.find((p) => p.name === pending.platform.name);
         check(
@@ -633,13 +617,12 @@ export class MachineRunner implements Runner {
         });
         if (session.status === 'active') this.ledger.markUncertain(id);
       }
-      this.ledger.completeRequest(pending.platform.name, pending.requestId);
+      complete();
       await this.reconcileLaunch(this.ledger.get(id)!);
     } catch (error) {
       if (error instanceof RunnerSourceRefusal) throw error;
       this.lastError = diagnostic(error);
-      if (error instanceof RunnerControlError && error.final)
-        this.ledger.completeRequest(pending.platform.name, pending.requestId);
+      if (error instanceof RunnerControlError && error.final) complete();
     }
   }
   private deadline(session: Pick<Session, 'expiresAt' | 'hardDeadline'>): number {
@@ -926,10 +909,7 @@ export class MachineRunner implements Runner {
     // Work the capture moved aside or rescued is reported, never passed over in silence.
     const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
     if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
-    await this.reconcileCodeCommands(
-      record,
-      record.metadata.session as unknown as SessionView | undefined,
-    );
+    await this.reconcileCodeCommands(record, sessionOf(record));
     // Only an attached checkout has a result to report; the session is closed by now.
     if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
       await this.answer(() =>
@@ -947,7 +927,9 @@ export class MachineRunner implements Runner {
       await this.resetAssignment();
       record = this.save(record.id, { assignmentSettled: true });
     }
-    return await this.deliver(record);
+    let done = true;
+    for (const kind of kinds) done = (await this.deliverOne(kind, record)) && done;
+    return done;
   }
   /**
    * Before the release: what the process printed and the conversation it kept, declared (no store
@@ -987,11 +969,6 @@ export class MachineRunner implements Runner {
    * Sessions' HEAD finds the bytes. Every call is a delivery, so a lost PUT, a 412 or a restart
    * between them takes the same path. True once nothing is owed.
    */
-  private async deliver(record: LaunchRecord): Promise<boolean> {
-    let done = true;
-    for (const kind of kinds) done = (await this.deliverOne(kind, record)) && done;
-    return done;
-  }
   private async deliverOne(kind: Kind, record: LaunchRecord): Promise<boolean> {
     const t = record.metadata[kind] as Owed<TranscriptFacts | ConversationFacts> | undefined;
     if (t?.state !== 'owed') return true;
@@ -1060,7 +1037,7 @@ export class MachineRunner implements Runner {
    */
   private keep(record: LaunchRecord): Owed<ConversationFacts> {
     const profile = record.metadata.profile as RunnerProfile | undefined;
-    const kept = record.metadata.session as unknown as SessionView | undefined;
+    const kept = sessionOf(record);
     // Where the launch ran, whose copy of a conversation is its own.
     let cwd: string | undefined;
     try {
@@ -1314,14 +1291,10 @@ export class MachineRunner implements Runner {
       launches: this.stopped ? this.finalLaunches : this.summaries(),
     };
   }
-  private disposeDrivers(): void {
-    this.workspaces.dispose();
-    for (const driver of this.drivers.values()) driver.dispose();
-  }
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {
     return this.ledger.list().map((r) => {
-      const session = r.metadata.session as unknown as SessionView | undefined;
+      const session = sessionOf(r);
       const workspace = this.driverOf(r)?.get(r.id);
       return {
         id: r.id,
@@ -1380,7 +1353,8 @@ export class MachineRunner implements Runner {
   private finalize(): void {
     this.finalLaunches = this.summaries();
     this.finalPendingRequests = this.ledger.pendingRequests().length;
-    this.disposeDrivers();
+    this.workspaces.dispose();
+    for (const driver of this.drivers.values()) driver.dispose();
     this.unlock?.();
     this.ledger.close();
     this.stopped = true;

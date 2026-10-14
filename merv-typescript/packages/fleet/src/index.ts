@@ -120,6 +120,8 @@ const readyAttempts = 3;
 const machineKey = (a: FleetAllocation, kind: 'create' | 'launch') =>
   a.replaced ? `${a.id}:${kind}:${a.replaced + 1}` : `${a.id}:${kind}`;
 const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** Math.min(failures, 6));
+/** For `update`: stop it. */
+const halt = (a: FleetAllocation) => void (a.intent = 'stop');
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
@@ -187,11 +189,10 @@ export class FleetService implements Fleet {
   async free(projectId: string, tx?: Transaction): Promise<number> {
     if (tx) this.state.assertTransaction(tx);
     if (!(await this.connected(projectId))) return 0;
-    const open = await (tx ? this.all(tx) : this.state.read((sql) => this.all(sql)));
+    const read = async (sql: Sql) =>
+      [await this.all(sql), await this.limits(sql, projectId)] as const;
+    const [open, limits] = await (tx ? read(tx) : this.state.read(read));
     const mine = open.filter((a) => a.projectId === projectId).length;
-    const limits = await (tx
-      ? this.limits(tx, projectId)
-      : this.state.read((sql) => this.limits(sql, projectId)));
     return Math.max(
       0,
       Math.min(this.config.globalLimit - open.length, this.limit(projectId, limits) - mine),
@@ -248,14 +249,9 @@ export class FleetService implements Fleet {
   async projectLimit(caller: Caller): Promise<FleetProjectLimit> {
     return this.state.snapshotTransaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const set = await tx.get<{ machines: number }>(
-        'SELECT machines FROM fleet_project_limits WHERE project_id=?',
-        caller.projectId,
-      );
-      const fallback = this.config.projectLimits[caller.projectId] ?? this.config.projectLimit;
       return {
-        machines: set ? Number(set.machines) : fallback,
-        default: fallback,
+        machines: this.limit(caller.projectId, await this.limits(tx, caller.projectId)),
+        default: this.config.projectLimits[caller.projectId] ?? this.config.projectLimit,
         max: Math.min(64, this.config.globalLimit),
       };
     });
@@ -886,17 +882,12 @@ export class FleetService implements Fleet {
     };
     const owner = this.owners.get(a.owner.kind);
     if (a.intent !== 'stop' && (a.deadlineAt <= this.time() || this.stale(a) || this.orphan(a)))
-      a = await this.update(a.id, (current) => {
-        current.intent = 'stop';
-      });
+      a = await this.update(a.id, halt);
     if (a.intent !== 'stop' && owner) {
       const valid = await this.state.snapshotTransaction(async (tx) =>
         this.authorized(await this.get(tx, a.id), owner, tx),
       );
-      if (!valid)
-        a = await this.update(a.id, (current) => {
-          current.intent = 'stop';
-        });
+      if (!valid) a = await this.update(a.id, halt);
     }
     // Nothing is created before its owner registers; a machine it has is still watched.
     if (!a.runtime && a.intent === 'run' && !owner) return;
@@ -989,16 +980,12 @@ export class FleetService implements Fleet {
       handle.state === 'deleting' ||
       handle.launch?.state === 'revoked'
     )
-      a = await this.update(a.id, (current) => {
-        current.intent = 'stop';
-      });
+      a = await this.update(a.id, halt);
     if (a.intent === 'stop') return await stop(a, handle);
     if (!owner || !handle.ready) return;
     if (handle.launch?.deliveryState !== 'launched') {
       if (a.intent === 'drain') {
-        await this.update(a.id, (current) => {
-          current.intent = 'stop';
-        });
+        await this.update(a.id, halt);
         return;
       }
       // Durable cancellation and source authority are checked again after slow bootstrap work.
@@ -1041,9 +1028,7 @@ export class FleetService implements Fleet {
       a = await this.observed(a, exchanged, status);
     }
     if (status === 'finished') {
-      a = await this.update(a.id, (current) => {
-        current.intent = 'stop';
-      });
+      a = await this.update(a.id, halt);
       await stop(a, handle);
     } else {
       if (status === 'starting') await this.observed(a, handle, status);

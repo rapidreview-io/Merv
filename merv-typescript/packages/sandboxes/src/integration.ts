@@ -45,10 +45,8 @@ export const sandboxIntegrationPlugin = {
         from: 'now',
         handle: (event, tx) => runs.event(event, tx),
       });
-      const runTimer = setInterval(() => runs.reconcile().catch(() => {}), 1000);
-      const evidenceTimer = setInterval(() => evidence.reconcile().catch(() => {}), 5000);
-      runTimer.unref();
-      evidenceTimer.unref();
+      const runTimer = setInterval(() => runs.reconcile().catch(() => {}), 1000).unref();
+      const evidenceTimer = setInterval(() => evidence.reconcile().catch(() => {}), 5000).unref();
       void runs.reconcile().catch(() => {});
       void evidence.reconcile().catch(() => {});
       yield async () => {

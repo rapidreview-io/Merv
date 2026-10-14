@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
+import { check, MervError, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import { dailyTokens, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
@@ -122,6 +122,10 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   };
 }
 
+const refusals = {
+  budget: ['token_budget_spent', "This session's model tokens are spent"],
+  ceiling: ['fleet_model_ceiling', 'The daily model token ceiling is reached'],
+} as const;
 const day = () => new Date().toISOString().slice(0, 10);
 const ledger = dailyTokens('fleet_model_usage');
 /** A grant's own budget, the same ledger keyed by the grant. */
@@ -294,19 +298,11 @@ export function codexModelRelay(
         }
         return null;
       });
-      if (refused) log({ event: `codex_relay_${refused}`, model: grant.model, charge: most });
-      check(
-        refused !== 'budget',
-        'token_budget_spent',
-        "This session's model tokens are spent",
-        403,
-      );
-      check(
-        refused !== 'ceiling',
-        'fleet_model_ceiling',
-        'The daily model token ceiling is reached',
-        403,
-      );
+      if (refused) {
+        log({ event: `codex_relay_${refused}`, model: grant.model, charge: most });
+        const [code, message] = refusals[refused];
+        throw new MervError(code, message, 403);
+      }
       return { day: today, tokens: most };
     },
     grant: (raw) => raw as ManagedModelGrant,

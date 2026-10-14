@@ -126,6 +126,11 @@ const downloadSchema = z.object({
 const streamSchema = z.object({
   stream: z.object({ until: z.number().int().nonnegative().safe() }).passthrough(),
 });
+/** Whether a reply's workspace is the one sent, as the shared schema read it before sending. */
+const sameWorkspace = (actual: unknown, sent: z.SafeParseReturnType<unknown, unknown>) => {
+  const read = workspaceSchema.safeParse(actual);
+  return read.success && sent.success && JSON.stringify(read.data) === JSON.stringify(sent.data);
+};
 /** Where a bearer or transcript may go: https, or plain http to this machine only. */
 const secureUrl = (url: URL) =>
   url.protocol === 'https:' ||
@@ -325,7 +330,7 @@ export class RunnerClient {
     hostRef: string,
     workspace?: SessionWorkspace,
   ): Promise<{ session: Session; prompt: string }> {
-    const expected = workspaceSchema.safeParse(workspace);
+    const sent = workspaceSchema.safeParse(workspace);
     const reply = await this.request(`/sessions/${encodeURIComponent(id)}/attach`, {
       runnerId,
       hostRef,
@@ -337,15 +342,8 @@ export class RunnerClient {
       hostRef,
       statuses: ['offered', 'active'],
     });
-    if (workspace) {
-      const actual = workspaceSchema.safeParse(session.workspace?.attachment);
-      if (
-        !actual.success ||
-        !expected.success ||
-        JSON.stringify(actual.data) !== JSON.stringify(expected.data)
-      )
-        throw new RunnerControlError('invalid_control_response', 0);
-    }
+    if (workspace && !sameWorkspace(session.workspace?.attachment, sent))
+      throw new RunnerControlError('invalid_control_response', 0);
     // What Sessions tells the worker of its lease; a server too old to say it launches nothing.
     const prompt: unknown = reply?.prompt;
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 32_000)
@@ -387,19 +385,10 @@ export class RunnerClient {
             endpoint: z
               .string()
               .url()
+              // Exactly https://<host>/hf: no port, credentials, query or fragment.
               .refine((value) => {
-                const url = new URL(value);
-                return (
-                  url.protocol === 'https:' &&
-                  !url.port &&
-                  /^[a-z0-9.-]+$/.test(url.hostname) &&
-                  value === `https://${url.hostname}/hf` &&
-                  url.pathname === '/hf' &&
-                  !url.search &&
-                  !url.hash &&
-                  !url.username &&
-                  !url.password
-                );
+                const { hostname } = new URL(value);
+                return /^[a-z0-9.-]+$/.test(hostname) && value === `https://${hostname}/hf`;
               }),
           })
           .strict()
@@ -416,7 +405,7 @@ export class RunnerClient {
     hostRef: string,
     workspace: SessionWorkspace,
   ): Promise<Session> {
-    const expected = workspaceSchema.safeParse(workspace);
+    const sent = workspaceSchema.safeParse(workspace);
     const session = this.session(
       (
         await this.request(`/sessions/${encodeURIComponent(id)}/workspace-result`, {
@@ -427,12 +416,7 @@ export class RunnerClient {
       )?.session,
       { id, runnerId, hostRef },
     );
-    const actual = workspaceSchema.safeParse(session.workspace?.result);
-    if (
-      !actual.success ||
-      !expected.success ||
-      JSON.stringify(actual.data) !== JSON.stringify(expected.data)
-    )
+    if (!sameWorkspace(session.workspace?.result, sent))
       throw new RunnerControlError('invalid_control_response', 0);
     return session;
   }

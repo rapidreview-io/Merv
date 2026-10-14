@@ -88,6 +88,18 @@ function readOwned(path: string, uid: number | undefined, cap: number, head = fa
   }
 }
 
+/** A file written afresh without following a link, private to the runner or to `user`. */
+function writeOwned(path: string, bytes: Uint8Array, user?: { uid: number; gid: number }) {
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW;
+  const fd = openSync(path, flags, 0o600);
+  try {
+    if (user) fchownSync(fd, user.uid, user.gid);
+    writeSync(fd, bytes);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * After a launch ends: the conversation its harness wrote, found by the id it printed, redacted
  * into the run directory and, on the runner's own machine, taken out of the harness's home.
@@ -107,16 +119,7 @@ export function keepConversation(
   const raw = readOwned(path, owner(profile)?.uid ?? process.getuid?.(), MAX_TRANSCRIPT_BYTES);
   const bytes = redactConversation(raw, secrets);
   if (bytes.length === 0 || bytes.length > MAX_TRANSCRIPT_BYTES) return undefined;
-  const fd = openSync(
-    conversationFile(runDirectory),
-    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
-    0o600,
-  );
-  try {
-    writeSync(fd, bytes);
-  } finally {
-    closeSync(fd);
-  }
+  writeOwned(conversationFile(runDirectory), bytes);
   return {
     harness: found.harness.name,
     conversationId: id,
@@ -206,16 +209,6 @@ export function restoreConversation(
       lchownSync((path = join(path, part)), user.uid, user.gid);
   }
   const path = join(directory, name);
-  const fd = openSync(
-    path,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
-    0o600,
-  );
-  try {
-    if (user) fchownSync(fd, user.uid, user.gid);
-    writeSync(fd, bytes);
-  } finally {
-    closeSync(fd);
-  }
+  writeOwned(path, bytes, user);
   return path;
 }

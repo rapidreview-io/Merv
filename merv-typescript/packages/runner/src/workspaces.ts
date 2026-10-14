@@ -39,10 +39,8 @@ interface WorkspaceRow {
   status: WorkspaceHandle['status'];
 }
 class WorkspaceError extends Error {
-  readonly code: string;
-  constructor(code: string) {
+  constructor(readonly code: string) {
     super(code);
-    this.code = code;
   }
 }
 const statIfPresent = (path: string) => {
@@ -141,26 +139,23 @@ export class RunnerWorkspaces implements WorkspaceDriver {
     private readonly previousWorkspace?: (launchId: string) => WorkspaceHandle | undefined,
   ) {
     if (assignment) {
-      const assignmentWorkspaceDirectory = assignment.directory;
-      if (
-        !isAbsolute(assignmentWorkspaceDirectory) ||
-        resolve(assignmentWorkspaceDirectory) !== assignmentWorkspaceDirectory
-      )
+      const root = assignment.directory;
+      if (!isAbsolute(root) || resolve(root) !== root)
         throw new WorkspaceError('workspace_assignment_root_invalid');
-      const info = lstatSync(assignmentWorkspaceDirectory);
+      const info = lstatSync(root);
       if (
         !info.isDirectory() ||
         info.isSymbolicLink() ||
         info.uid !== process.getuid?.() ||
         (info.mode & 0o022) !== 0 ||
-        realpathSync(assignmentWorkspaceDirectory) !== assignmentWorkspaceDirectory
+        realpathSync(root) !== root
       )
         throw new WorkspaceError('workspace_assignment_root_invalid');
     }
     this.rows = new WorkspaceRows(ledger);
   }
   get(launchId: string): WorkspaceHandle | undefined {
-    const row = this.row(launchId);
+    const row = this.rows.workspace(launchId);
     if (!row) return undefined;
     return { path: row.path, retain: true, readOnly: !!row.read_only, status: row.status };
   }
@@ -173,18 +168,15 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       this.requireLaunch(record);
       if (record.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
       const policy = effectiveWorkspace(session.execution.policy);
-      const existing = this.row(record.id);
+      const existing = this.rows.workspace(record.id);
       if (existing) {
         if (
           existing.policy_json !== JSON.stringify(policy) ||
           !!existing.read_only !== session.execution.policy.readOnly
         )
           throw new WorkspaceError('workspace_policy_changed');
-        if (existing.status !== 'preparing') {
-          if (existing.status === 'ready') this.validate(existing);
-          return this.get(record.id)!;
-        }
-        this.prepareScratch(existing);
+        if (existing.status === 'preparing') this.prepareScratch(existing);
+        else if (existing.status === 'ready') this.within(this.parent(existing), existing.path);
         return this.get(record.id)!;
       }
       if (terminalLaunch(this.ledger.get(record.id)!))
@@ -207,28 +199,22 @@ export class RunnerWorkspaces implements WorkspaceDriver {
           );
         },
       );
-      this.prepareScratch(this.row(record.id)!);
+      this.prepareScratch(this.rows.workspace(record.id)!);
       return this.get(record.id)!;
     });
   }
   /** A scratch directory is the launch's own: nothing in it is captured or checked. */
   capture(record: WorkspaceLaunch): Promise<SessionWorkspace | undefined> {
     return this.run(record, async (record) => {
-      this.requireLaunch(record);
-      if (!terminalLaunch(this.ledger.get(record.id)!))
-        throw new WorkspaceError('workspace_process_stop_unconfirmed');
-      const row = this.row(record.id);
-      if (!row || row.status === 'captured' || row.status === 'closed') return undefined;
-      this.rows.update(record.id, 'captured');
+      const row = this.ended(record);
+      if (row && row.status !== 'captured' && row.status !== 'closed')
+        this.rows.update(record.id, 'captured');
       return undefined;
     });
   }
   close(record: WorkspaceLaunch): Promise<void> {
     return this.run(record, async (record) => {
-      this.requireLaunch(record);
-      if (!terminalLaunch(this.ledger.get(record.id)!))
-        throw new WorkspaceError('workspace_process_stop_unconfirmed');
-      const row = this.row(record.id);
+      const row = this.ended(record);
       if (!row || row.status === 'closed') return;
       if (!['captured', 'closing'].includes(row.status))
         throw new WorkspaceError('workspace_capture_required');
@@ -249,8 +235,12 @@ export class RunnerWorkspaces implements WorkspaceDriver {
     this.serial = operation.catch(() => {});
     return operation;
   }
-  private row(id: string): WorkspaceRow | undefined {
-    return this.rows.workspace(id);
+  /** An ended launch's row: refused while its process may still run. */
+  private ended(record: WorkspaceLaunch): WorkspaceRow | undefined {
+    this.requireLaunch(record);
+    if (!terminalLaunch(this.ledger.get(record.id)!))
+      throw new WorkspaceError('workspace_process_stop_unconfirmed');
+    return this.rows.workspace(record.id);
   }
   private requireLaunch(record: WorkspaceLaunch): void {
     const actual = this.ledger.get(record.id);
@@ -279,9 +269,6 @@ export class RunnerWorkspaces implements WorkspaceDriver {
         throw new WorkspaceError('workspace_foreign_checkout');
     } else privateDirectory(row.path);
     this.rows.update(row.launch_id, 'ready');
-  }
-  private validate(row: WorkspaceRow): void {
-    this.within(this.parent(row), row.path);
   }
   private within(root: string, path: string): void {
     const name = relative(root, path);

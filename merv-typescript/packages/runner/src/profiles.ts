@@ -15,8 +15,7 @@ import {
   sessionTokenVariable,
 } from './harness/shared.js';
 
-export { assignmentCodexHome } from './harness/codex.js';
-export { conversationIdPattern, sessionTokenVariable };
+export { sessionTokenVariable };
 
 const common = {
   name: z.string().regex(platformName),
@@ -187,17 +186,14 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
         handle.closeSync();
       }
     };
-    for (const root of repository ? ancestors : [canonical]) {
-      const agents = join(root, '.agents');
-      const agentsStat = stat(agents);
-      if (!agentsStat) continue;
-      if (!agentsStat.isDirectory()) throw failure();
-      const skills = join(agents, 'skills');
-      const skillsStat = stat(skills);
-      if (!skillsStat) continue;
-      if (!skillsStat.isDirectory()) throw failure();
-      scan(skills, 0);
-    }
+    const folder = (path: string) => {
+      const value = stat(path);
+      if (value && !value.isDirectory()) throw failure();
+      return !!value;
+    };
+    for (const root of repository ? ancestors : [canonical])
+      if (folder(join(root, '.agents')) && folder(join(root, '.agents', 'skills')))
+        scan(join(root, '.agents', 'skills'), 0);
     return [...paths].sort();
   } catch (error) {
     if (error instanceof MervError) throw error;
@@ -256,21 +252,18 @@ function runtimeEnvironment(environment: Readonly<NodeJS.ProcessEnv>): Record<st
 }
 
 function protectLogging(spec: LaunchSpec): LaunchSpec {
+  const env = () => Object.fromEntries(Object.keys(spec.env).map((key) => [key, '[redacted]']));
   const safe = () => ({
     executable: spec.executable,
     args: spec.args,
     cwd: spec.cwd,
-    env: Object.fromEntries(Object.keys(spec.env).map((key) => [key, '[redacted]'])),
+    env: env(),
     stdin: '[frozen assignment omitted]',
   });
-  Object.defineProperty(spec, 'toJSON', { value: safe });
-  Object.defineProperty(spec, inspect.custom, { value: safe });
-  Object.defineProperty(spec.env, 'toJSON', {
-    value: () => Object.fromEntries(Object.keys(spec.env).map((key) => [key, '[redacted]'])),
-  });
-  Object.defineProperty(spec.env, inspect.custom, {
-    value: () => Object.fromEntries(Object.keys(spec.env).map((key) => [key, '[redacted]'])),
-  });
+  for (const key of ['toJSON', inspect.custom]) {
+    Object.defineProperty(spec, key, { value: safe });
+    Object.defineProperty(spec.env, key, { value: env });
+  }
   return spec;
 }
 

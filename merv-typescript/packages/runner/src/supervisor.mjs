@@ -160,21 +160,15 @@ function groupOwner(group) {
     if (message.type === 'deadline' && started && !stopping) {
       deadline = message.deadline;
       arm();
-      send({ type: 'deadline', deadline });
-      return;
+      return send({ type: 'deadline', deadline });
     }
-    if (message.type === 'stop') {
-      stop(message.reason === 'deadline' ? 'deadline' : 'controller_stop');
-      return;
-    }
+    if (message.type === 'stop')
+      return stop(message.reason === 'deadline' ? 'deadline' : 'controller_stop');
     if (message.type !== 'start' || started) return;
     started = true;
     const { command, sessionToken, runDirectory } = message;
     deadline = message.deadline;
-    if (deadline <= Date.now()) {
-      stop('deadline');
-      return;
-    }
+    if (deadline <= Date.now()) return stop('deadline');
     const env = { ...command.env, MERV_AGENT_SESSION_TOKEN: sessionToken };
     const secrets = [
       ...new Set([
@@ -192,6 +186,11 @@ function groupOwner(group) {
     ];
     const out = redactedFile(join(runDirectory, 'stdout.log'), secrets);
     const err = redactedFile(join(runDirectory, 'stderr.log'), secrets);
+    const ended = (reason, code = 127, signal = null) => {
+      out.end();
+      err.end();
+      stop(reason, code, signal);
+    };
     try {
       child = spawn(command.executable, command.args, {
         cwd: command.cwd,
@@ -205,24 +204,14 @@ function groupOwner(group) {
         arm();
         send({ type: 'running' });
       });
-      child.once('error', () => {
-        out.end();
-        err.end();
-        stop('launch_failed', 127);
-      });
-      child.once('close', (code, signal) => {
-        out.end();
-        err.end();
-        stop('exit', code, signal);
-      });
+      child.once('error', () => ended('launch_failed'));
+      child.once('close', (code, signal) => ended('exit', code, signal));
       child.stdin.on('error', () => {});
       child.stdin.end(command.stdin ?? '');
       // Arm even if spawn/error delivery stalls; a disconnected controller never extends this timer.
       arm();
     } catch {
-      out.end();
-      err.end();
-      stop('launch_failed', 127);
+      ended('launch_failed');
     }
   });
   // A guardian lost between spawn and its first message cannot leave an idle owner forever.
@@ -383,24 +372,19 @@ function guardian(path, id) {
     socket.on('data', (data) => {
       if (done) return;
       body += data.toString('utf8');
-      if (Buffer.byteLength(body) > 1048576) {
-        socket.destroy();
-        return;
-      }
+      if (Buffer.byteLength(body) > 1048576) return socket.destroy();
       const line = body.indexOf('\n');
       if (line < 0) return;
       let message;
       try {
         message = JSON.parse(body.slice(0, line));
       } catch {
-        reply({ error: 'invalid_request' });
-        return;
+        return reply({ error: 'invalid_request' });
       }
       const candidate = Buffer.from(String(message.auth ?? ''));
       const expected = Buffer.from(ipcToken);
       if (candidate.length !== expected.length || !timingSafeEqual(candidate, expected)) {
-        reply({ error: 'unauthorized' });
-        return;
+        return reply({ error: 'unauthorized' });
       }
       try {
         if (message.action === 'inspect') {
@@ -420,8 +404,7 @@ function guardian(path, id) {
               shutdown?.exitSignal ?? null,
             );
           }
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         if (message.action === 'stop') {
           if (!owner) finish('stopped', 'controller_stop');
@@ -430,8 +413,7 @@ function guardian(path, id) {
             update('stopping', 'controller_stop');
             owner.send({ type: 'stop' });
           }
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         if (message.action === 'deadline') {
           if (
@@ -449,8 +431,7 @@ function guardian(path, id) {
             id,
           );
           if (owner?.connected) owner.send({ type: 'deadline', deadline: message.deadline });
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         if (message.action !== 'launch') throw new Error('invalid_request');
         const row = current();
@@ -460,14 +441,12 @@ function guardian(path, id) {
           .digest('hex');
         if (row.command_hash) {
           if (row.command_hash !== hash) throw new Error('launch_conflict');
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         if (row.status !== 'starting') throw new Error('not_startable');
         if (row.deadline <= Date.now()) {
           finish('stopped', 'deadline');
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         db.prepare('UPDATE launches SET command_hash=?,updated_at=? WHERE id=?').run(
           hash,
@@ -490,8 +469,7 @@ function guardian(path, id) {
           );
         } catch {
           finish('exited', 'launch_failed', 127); // nothing was spawned
-          reply({ ok: true });
-          return;
+          return reply({ ok: true });
         }
         owner.on('message', (message) => {
           if (message.type === 'running') {
