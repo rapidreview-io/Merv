@@ -1,5 +1,5 @@
 import { check, type Blobs, type Caller, type State, type Transaction } from '@merv/contracts';
-import { isoNow, readFirst } from './common.js';
+import { attached, isoNow, readFirst } from './common.js';
 import { postgresMigrations } from './transcripts.postgres.js';
 import type {
   Session,
@@ -80,12 +80,7 @@ export class SessionTranscripts {
     // Like a workspace result: the runner that held it, whatever the session's state now.
     const row = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      check(
-        session.hostRef !== null && session.hostRef === input.hostRef,
-        'host_conflict',
-        'A transcript must name the attached host',
-        409,
-      );
+      attached(session, input.hostRef, 'A transcript');
       const select = () =>
         tx.get<Row>('SELECT * FROM session_transcripts WHERE session_id=?', session.id);
       const found = await select();

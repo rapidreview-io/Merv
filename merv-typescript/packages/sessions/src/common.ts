@@ -41,6 +41,27 @@ export interface Row {
   result_json: string | null;
 }
 
+/** A thread of the project, or `thread_not_found`. */
+export async function threadIn(tx: Transaction, projectId: string, id: string) {
+  const thread = await tx.get<{
+    id: string;
+    project_id: string;
+    instance_id: string;
+    status: string;
+    size: number | string | null;
+  }>('SELECT * FROM session_threads WHERE id=? AND project_id=?', id, projectId);
+  check(thread, 'thread_not_found', 'Thread not found in this project', 404);
+  return thread;
+}
+/** A runner's control names the host its session is attached to. */
+export const attached = (session: { hostRef: string | null }, hostRef: string, what: string) =>
+  check(
+    session.hostRef !== null && session.hostRef === hostRef,
+    'host_conflict',
+    `${what} must name the attached host`,
+    409,
+  );
+
 /** A refusal as it is, anything else as Sessions being unavailable. */
 export const safeError = (error: unknown): MervError =>
   error instanceof MervError

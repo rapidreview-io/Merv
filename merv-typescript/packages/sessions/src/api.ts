@@ -44,6 +44,8 @@ const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).st
 const messageInput = z
   .object({ body: z.string().min(1).max(8000), requestId: z.string().min(1).max(200) })
   .strict();
+/** A session's own lease controls, whose bodies take the server's limit. */
+const leaseControls = new Set(['attach', 'workspace-result', 'heartbeat', 'release']);
 
 /**
  * What a runner tells the worker it launches about the lease, sent with each attach: the runner
@@ -167,56 +169,35 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       return { control: await sessions.control(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
       return await sessions.dispatch.halt(caller, { ...(await r.json(haltInput)), sessionId });
-    if (req.method === 'POST' && route[2] === 'huggingface-access') {
-      if (!caller.managed)
+    // Control is read, never posted.
+    const action = req.method === 'POST' && route[2] !== 'control' ? route[2] : undefined;
+    if (action) {
+      if (action === 'huggingface-access' && !caller.managed)
         throw new MervError('managed_runner_forbidden', 'Managed runner authority required', 403);
-      return await sessions.huggingfaceAccess(
-        caller,
-        bound(await r.json(undefined, 4096), 'sessionId', sessionId),
-      );
-    }
-    if (req.method === 'POST' && route[2] === 'launch-connections')
-      return await sessions.launchConnections(
-        caller,
-        bound(await r.json(undefined, 4096), 'sessionId', sessionId),
-      );
-    if (req.method === 'POST' && route[2] === 'stream') {
-      // A runner's batch is under a megabyte; this leaves it room.
-      const input = bound(await r.json(undefined, 2 << 20), 'sessionId', sessionId);
-      return { stream: await sessions.streams.append(caller, input) };
-    }
-    if (req.method === 'POST' && route[2] === 'transcript') {
-      const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
-      return { transcript: await sessions.transcript(caller, input) };
-    }
-    if (req.method === 'POST' && route[2] === 'conversation') {
-      const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
-      return { conversation: await sessions.conversation(caller, input) };
-    }
-    if (req.method === 'POST' && route[2] === 'resume')
-      return {
-        download: await sessions.resume(
-          caller,
-          bound(await r.json(undefined, 4096), 'sessionId', sessionId),
-        ),
-      };
-    if (req.method === 'POST' && route[2]) {
-      const input = bound(await r.json(), 'sessionId', sessionId);
+      // A runner's stream batch is under a megabyte; this leaves it room. The lease controls
+      // take the server's limit, and every other body 4 KiB.
+      const limit = action === 'stream' ? 2 << 20 : leaseControls.has(action) ? undefined : 4096;
+      const input = bound(await r.json(undefined, limit), 'sessionId', sessionId);
+      if (action === 'huggingface-access') return await sessions.huggingfaceAccess(caller, input);
+      if (action === 'launch-connections') return await sessions.launchConnections(caller, input);
+      if (action === 'stream') return { stream: await sessions.streams.append(caller, input) };
+      if (action === 'transcript') return { transcript: await sessions.transcript(caller, input) };
+      if (action === 'conversation')
+        return { conversation: await sessions.conversation(caller, input) };
+      if (action === 'resume') return { download: await sessions.resume(caller, input) };
       const session =
-        route[2] === 'attach'
+        action === 'attach'
           ? await sessions.attach(caller, input)
-          : route[2] === 'workspace-result'
+          : action === 'workspace-result'
             ? await sessions.workspaceResult(caller, input)
-            : route[2] === 'heartbeat'
+            : action === 'heartbeat'
               ? await sessions.heartbeat(caller, input)
               : await sessions.release(caller, input);
       // Runners released before the unconditional call ask for launch connections only when
       // attach says so; self-hosted ones may still be running.
       return {
         session,
-        ...(route[2] === 'attach'
-          ? { launchConnections: true, prompt: workerPrompt(session) }
-          : {}),
+        ...(action === 'attach' ? { launchConnections: true, prompt: workerPrompt(session) } : {}),
       };
     }
   }

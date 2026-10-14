@@ -123,11 +123,9 @@ export function claudeEvents() {
       }
       return [];
     }
+    const content: HarnessLine[] = Array.isArray(line.message?.content) ? line.message.content : [];
     if (line.type === 'assistant') {
       const id = str(line.message?.id);
-      const content: HarnessLine[] = Array.isArray(line.message?.content)
-        ? line.message.content
-        : [];
       return content.flatMap((item, index): AgentEvent[] => {
         if (item?.type === 'tool_use')
           return [
@@ -145,10 +143,7 @@ export function claudeEvents() {
         return [{ kind, id: `${id}.whole${at}-${index}`, delta: str(item[kind]), done: true }];
       });
     }
-    if (line.type === 'user') {
-      const content: HarnessLine[] = Array.isArray(line.message?.content)
-        ? line.message.content
-        : [];
+    if (line.type === 'user')
       return content.flatMap((item): AgentEvent[] =>
         item?.type === 'tool_result'
           ? [
@@ -161,7 +156,6 @@ export function claudeEvents() {
             ]
           : [],
       );
-    }
     return [];
   };
 }

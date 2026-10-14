@@ -10,7 +10,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
-import { isoNow, live, ordinary, text, type Row } from './common.js';
+import { isoNow, live, ordinary, text, threadIn, type Row } from './common.js';
 import { QuestionResponders } from './question-responder.js';
 import type { QuestionResponse } from './models.js';
 import { messageInquiry } from './inquiries.js';
@@ -55,12 +55,6 @@ export interface QuestionRow {
   asked_at: string;
   answered_at: string | null;
   answer_message_id: string | null;
-}
-interface ThreadRow {
-  id: string;
-  project_id: string;
-  instance_id: string;
-  status: 'open' | 'dormant' | 'retired';
 }
 /**
  * The threads whose messages a visit of a thread reads: its own, and each other one of its
@@ -388,7 +382,8 @@ export class SessionMessages {
           'Message requestId was used for different input',
           409,
         );
-        return await this.view(tx, old);
+        const { instance_id } = await threadIn(tx, caller.projectId, old.thread_id);
+        return this.publicMessage(old, instance_id);
       }
       let threadId = input.threadId;
       if (threadId === undefined) {
@@ -422,19 +417,6 @@ export class SessionMessages {
       row.inquiry?.role ?? null,
     );
     return id;
-  }
-  private async threadRow(tx: Transaction, caller: Caller, id: string): Promise<ThreadRow> {
-    const thread = await tx.get<ThreadRow>(
-      'SELECT id,project_id,instance_id,status FROM session_threads WHERE id=?',
-      id,
-    );
-    check(
-      thread && thread.project_id === caller.projectId,
-      'thread_not_found',
-      'Thread not found in this project',
-      404,
-    );
-    return thread;
   }
   /**
    * The one read of whether a question stands, which threads, counts, attention, the Agents
@@ -483,7 +465,7 @@ export class SessionMessages {
     tx: Transaction,
     questionId?: string,
   ): Promise<SessionMessage> {
-    const thread = await this.threadRow(tx, caller, threadId);
+    const thread = await threadIn(tx, caller.projectId, threadId);
     await this.host.readable(caller, thread.instance_id, tx);
     const standing = await this.standing(tx, caller.projectId, {
       threads: [thread.id],
@@ -563,14 +545,6 @@ export class SessionMessages {
       });
     }
     return this.publicMessage(await this.messageRow(tx, id), thread.instance_id);
-  }
-  /** A message as its sender reads it again, from its own row. */
-  private async view(tx: Transaction, row: MessageRow): Promise<SessionMessage> {
-    const thread = await tx.get<ThreadRow>(
-      'SELECT instance_id FROM session_threads WHERE id=?',
-      row.thread_id,
-    );
-    return this.publicMessage(row, thread!.instance_id);
   }
   /**
    * Sessions' opinion of one work item: a blocker for each of its threads with a question still
@@ -709,7 +683,7 @@ export class SessionMessages {
     caller = structuredClone(caller);
     return await this.host.reading(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const thread = await this.threadRow(tx, caller, threadId);
+      const thread = await threadIn(tx, caller.projectId, threadId);
       await this.host.readable(caller, thread.instance_id, tx);
       // The context an answered inquiry left its work repeats the question and its reply.
       const rows = await tx.all<MessageRow>(

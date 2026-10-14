@@ -1,6 +1,6 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
-import { ordinary as unmanaged, safeCount, text } from './common.js';
+import { ordinary as unmanaged, safeCount, text, threadIn } from './common.js';
 import type { Session, ThreadCall, ThreadCalls } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -127,16 +127,7 @@ export class AgentObservations {
     return await this.state.snapshotTransaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);
-      check(
-        await tx.get(
-          'SELECT 1 FROM session_threads WHERE id=? AND project_id=?',
-          threadId,
-          caller.projectId,
-        ),
-        'thread_not_found',
-        'Thread not found in this project',
-        404,
-      );
+      await threadIn(tx, caller.projectId, threadId);
       const from =
         'FROM session_tool_calls c JOIN worker_sessions s ON s.id=c.execution_id WHERE s.thread_id=? AND s.project_id=?';
       const calls = await tx.all<ThreadCall>(

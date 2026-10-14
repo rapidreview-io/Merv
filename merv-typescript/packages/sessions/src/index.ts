@@ -38,6 +38,7 @@ import { SessionRunning } from './running.js';
 import { tokenDigest } from '@merv/identity/credentials';
 import { AgentObservations } from './observations.js';
 import {
+  attached,
   isoNow,
   live,
   ordinary,
@@ -94,11 +95,6 @@ const between = (least: number, most: number, fallback: number) =>
     .max(most)
     .nullish()
     .transform((value) => value ?? fallback);
-/**
- * Closing for idleness is off unless a deployment asks for it: a tool call is the only
- * progress the server sees, and honest work can be hours of local computing with none.
- * Any other key is refused.
- */
 const configSchema = z
   .object({
     /** Maximum simultaneous server executions in one project, across every provider. */
@@ -403,7 +399,7 @@ export class LeasedSessions implements Sessions {
       visits: this.visits,
       close: (session, reason, tx) =>
         this.closeSession(session, reason, tx, 'released', 'completed'),
-      ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
+      work: (projectId, instanceIds, tx) => this.workAt(projectId, instanceIds, tx),
       message: (tx, row) => this.messaging.insert(tx, row),
     });
     this.dispatch = await createService(
@@ -807,7 +803,6 @@ export class LeasedSessions implements Sessions {
         await this.messaging.requireMessagesAcknowledged(session.id, tx);
       }
     }
-    await this.source(session, tx);
     const current = await this.valid(session, tx);
     if (invocation)
       check(
@@ -986,26 +981,19 @@ export class LeasedSessions implements Sessions {
       if (failure.status >= 500) return failure;
       // The record moved by this worker's own hand: that is its handoff, not a conflict.
       const handoff = failure.code === 'session_completed';
-      const close = async (
-        ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never
-      ) => {
-        try {
-          await this.closeSession(session, ...rest);
-        } catch (error) {
-          if (!report || !refused(error)) throw error;
-        }
-      };
-      if (!handoff) {
-        await close(failure.code, tx);
-        // Time says expired; a record moved by another hand says the session ended, so a
-        // worker is not sent to refresh and retry into a closed session.
-        return failure.code === 'revision_conflict'
-          ? new MervError('session_closed', `This session has ended: ${failure.message}`, 401)
-          : failure;
+      try {
+        if (handoff) await this.closeSession(session, 'handoff', tx, 'released', 'completed');
+        else await this.closeSession(session, failure.code, tx);
+      } catch (error) {
+        if (!report || !refused(error)) throw error;
       }
-      await close('handoff', tx, 'released', 'completed');
       // The close set its reason first, so this is the landed handoff's refusal.
-      return ended(session);
+      if (handoff) return ended(session);
+      // Time says expired; a record moved by another hand says the session ended, so a
+      // worker is not sent to refresh and retry into a closed session.
+      return failure.code === 'revision_conflict'
+        ? new MervError('session_closed', `This session has ended: ${failure.message}`, 401)
+        : failure;
     }
   }
   async contributors(
@@ -1126,12 +1114,7 @@ export class LeasedSessions implements Sessions {
     // Dispatch chose this work by the capabilities the runner advertised; a work host's
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
     if (!dispatched && workspace.mode !== 'none')
-      check(
-        await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx),
-        'runner_incompatible',
-        'This runner does not advertise the workspace driver the assignment needs',
-        409,
-      );
+      await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx);
     for (const packet of [
       frozen.assignment,
       frozen.execution.policy,
@@ -1372,15 +1355,14 @@ export class LeasedSessions implements Sessions {
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
     caller = structuredClone(caller);
-    const result = await this.reading(async (tx) => {
+    return await this.reading(async (tx) => {
       const session = await this.controlled(caller, sessionId, undefined, tx);
       // A poll reports a closure to its controller, recorded only in a caller's writer, else by
       // the sweep; provider outages are retryable. A managed poll only reads.
       const error = caller.managed ? undefined : await this.reconcile(session, tx, true);
-      return error && error.status >= 500 ? { error } : { session };
+      if (error && error.status >= 500) throw error;
+      return session;
     });
-    if (result.error) throw result.error;
-    return result.session!;
   }
   async control(caller: Caller, sessionId: string): Promise<SessionControlView> {
     caller = structuredClone(caller);
@@ -1425,16 +1407,11 @@ export class LeasedSessions implements Sessions {
       );
       // A hand offer names its runner itself, so the driver it needs is asked for here too.
       if (policy.mode !== 'none')
-        check(
-          await this.dispatch.capable(
-            caller.managed ? (await this.managed.require(caller, tx)).sourceCaller : caller,
-            session.runnerId,
-            policy.driver,
-            tx,
-          ),
-          'runner_incompatible',
-          'This runner does not advertise the workspace driver the assignment needs',
-          409,
+        await this.dispatch.capable(
+          caller.managed ? (await this.managed.require(caller, tx)).sourceCaller : caller,
+          session.runnerId,
+          policy.driver,
+          tx,
         );
       if (workspace && policy.mode !== 'none') {
         const name = policy.base.slice('reference:'.length);
@@ -1510,12 +1487,7 @@ export class LeasedSessions implements Sessions {
     const authorize = () =>
       this.reading(async (tx) => {
         const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-        check(
-          session.hostRef !== null && session.hostRef === input.hostRef,
-          'host_conflict',
-          'Credential delivery must name the attached host',
-          409,
-        );
+        attached(session, input.hostRef, 'Credential delivery');
         if (caller.managed) {
           const host = (await this.managed.require(caller, tx)).row;
           const row = await this.managed.forSession(host, session.id, tx);
@@ -1596,12 +1568,7 @@ export class LeasedSessions implements Sessions {
       'Session source differs from its managed binding',
       403,
     );
-    check(
-      session.hostRef !== null && session.hostRef === hostRef,
-      'host_conflict',
-      'Credential delivery must name the attached host',
-      409,
-    );
+    attached(session, hostRef, 'Credential delivery');
     await this.valid(session, tx);
     const workspace = effectiveWorkspace(session.execution.policy);
     if (
@@ -1667,12 +1634,7 @@ export class LeasedSessions implements Sessions {
       // Capturing a finished process is independent of current workflow admission.
       // In particular this operation never reactivates a remotely closed session.
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      check(
-        session.hostRef !== null && session.hostRef === input.hostRef,
-        'host_conflict',
-        'Workspace result must name the attached host',
-        409,
-      );
+      attached(session, input.hostRef, 'Workspace result');
       check(
         session.workspace,
         'workspace_not_attached',
@@ -2043,15 +2005,6 @@ export class LeasedSessions implements Sessions {
         )?.definition.terminal.includes(item.state),
       });
     return found;
-  }
-  /** Which of these work items stand in an end state of their own pinned program. */
-  private async endedWork(
-    projectId: string,
-    instanceIds: string[],
-    tx: Transaction,
-  ): Promise<Set<string>> {
-    const work = await this.workAt(projectId, instanceIds, tx);
-    return new Set([...work].filter(([, item]) => item.ended).map(([id]) => id));
   }
   async sweep(): Promise<void> {
     check(!this.state.ambient, 'nested_transaction', 'A sweep runs its own transactions');

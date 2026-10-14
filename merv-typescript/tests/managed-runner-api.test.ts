@@ -410,7 +410,7 @@ async function credentialGate(t: TestContext) {
 }
 
 type GateRow = {
-  bearer: 'mr_' | 'me_' | 'ms_' | 'ms_bad.jwt.token';
+  bearer: 'mr_' | 'me_' | 'ms_' | 'ms_bad.jwt.token' | 'actor';
   method: string;
   path: string;
   body?: unknown;
@@ -427,6 +427,7 @@ const bearers = {
   me_: `me_${'b'.repeat(64)}`,
   ms_: `ms_${'c'.repeat(50)}`,
   'ms_bad.jwt.token': 'ms_bad.jwt.token',
+  actor: 'actor-token',
 };
 const control = { sessionId: 'session_1', runnerId: 'runner', hostRef: 'host' };
 const listTools = { jsonrpc: '2.0', id: 1, method: 'tools/list' };
@@ -576,6 +577,14 @@ const ownersPresent: GateRow[] = [
     reaches: '/codex-model',
   },
   { bearer: 'ms_', method: 'GET', path: '/ui', reaches: '/ui' },
+  // A session's control is read, never posted: a POST to it releases nothing.
+  {
+    bearer: 'actor',
+    method: 'POST',
+    path: '/sessions/session_1/control',
+    body: control,
+    refused: [404, 'not_found'],
+  },
 ];
 
 // A runner treats 401 and 403 as final, so an absent owner must answer 503.

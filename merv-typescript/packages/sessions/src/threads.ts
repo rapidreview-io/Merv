@@ -17,6 +17,7 @@ import {
   type AgentStreamEvent,
 } from './agent-stream.js';
 import { isoNow, live, ordinary, readFirst, safeError, text, workNameOf } from './common.js';
+import { attached, threadIn } from './common.js';
 import { messageInquiry, openInquiry } from './inquiries.js';
 import { takesMessage, type Standing } from './messages.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
@@ -331,12 +332,7 @@ export class SessionThreads {
     } = input;
     const row = await readFirst(this.state, async (tx) => {
       const session = await this.host.controlled(caller, input.sessionId, input.runnerId, tx);
-      check(
-        session.hostRef !== null && session.hostRef === input.hostRef,
-        'host_conflict',
-        'A conversation must name the attached host',
-        409,
-      );
+      attached(session, input.hostRef, 'A conversation');
       check(session.continuity, 'conversation_unkept', 'This session keeps no conversation', 409);
       // The fork: an inquiry visit's conversation is never saved back, so the thread's next work
       // visit resumes the conversation as it was (and reads the exchange as a message).
@@ -347,30 +343,23 @@ export class SessionThreads {
         409,
       );
       const found = await this.row(session.threadId, tx);
-      const superseded = () =>
-        check(
-          false,
-          'conversation_superseded',
-          'A later session of this work holds its conversation',
-          409,
-        );
-      if (found.status === 'retired') superseded();
-      if (found.latest_session_id === session.id && found.sha256 !== null) return found;
       // A closed visit may still declare while it is the thread's latest, or newer than it,
       // though a later one closed since with nothing declared.
-      if (
-        found.latest_session_id !== session.id &&
-        !live(session) &&
-        !(
-          found.latest_session_id !== null &&
-          (await tx.get(
-            'SELECT 1 FROM worker_sessions s, worker_sessions r WHERE s.id=? AND r.id=? AND s._merv_rowid>r._merv_rowid',
-            session.id,
-            found.latest_session_id,
-          ))
-        )
-      )
-        superseded();
+      check(
+        found.status !== 'retired' &&
+          (found.latest_session_id === session.id ||
+            live(session) ||
+            (found.latest_session_id !== null &&
+              !!(await tx.get(
+                'SELECT 1 FROM worker_sessions s, worker_sessions r WHERE s.id=? AND r.id=? AND s._merv_rowid>r._merv_rowid',
+                session.id,
+                found.latest_session_id,
+              )))),
+        'conversation_superseded',
+        'A later session of this work holds its conversation',
+        409,
+      );
+      if (found.latest_session_id === session.id && found.sha256 !== null) return found;
       // The conversation delivered last stays resumable until this one is delivered.
       await tx.run(
         'UPDATE session_threads SET latest_session_id=?,harness=?,conversation_id=?,sha256=?,size=?,uploaded_at=NULL,delivered_json=?,updated_at=? WHERE id=?',
@@ -821,16 +810,7 @@ export class SessionThreads {
         'Only an operator reads an agent’s conversation',
         403,
       );
-      check(
-        await tx.get(
-          'SELECT 1 FROM session_threads WHERE id=? AND project_id=?',
-          threadId,
-          caller.projectId,
-        ),
-        'thread_not_found',
-        'Thread not found in this project',
-        404,
-      );
+      await threadIn(tx, caller.projectId, threadId);
       return await tx.all<Said>(
         `SELECT s.id,s.project_id,s.status,t.sha256,t.size,t.declared_at,
             EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) AS streamed

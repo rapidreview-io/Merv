@@ -115,6 +115,12 @@ export class ManagedRunnerBindings {
       if (this.validator === validator) this.validator = undefined;
     };
   }
+  private async allocation(id: string, tx: Transaction) {
+    return await tx.get<ManagedBindingRow>(
+      'SELECT * FROM session_managed_runners WHERE allocation_id=?',
+      id,
+    );
+  }
   private signingSecret(): string {
     check(this.secretEnv, 'managed_unavailable', 'Managed runner secret is not configured', 503);
     const secret = process.env[this.secretEnv];
@@ -197,10 +203,7 @@ export class ManagedRunnerBindings {
         401,
       );
       await this.scope.requireDelegation(value.source, 'read', tx);
-      const row = await tx.get<ManagedBindingRow>(
-        'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-        value.allocationId,
-      );
+      const row = await this.allocation(value.allocationId, tx);
       if (row) {
         check(
           Number(row.epoch) === value.epoch &&
@@ -432,10 +435,7 @@ export class ManagedRunnerBindings {
   ): Promise<{ row: ManagedBindingRow; sourceCaller: Caller }> {
     const managed = caller.managed;
     check(managed, 'forbidden', 'Managed runner authority required', 403);
-    const row = await tx.get<ManagedBindingRow>(
-      'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-      managed.allocationId,
-    );
+    const row = await this.allocation(managed.allocationId, tx);
     check(
       row &&
         Number(row.epoch) === managed.epoch &&
@@ -468,12 +468,7 @@ export class ManagedRunnerBindings {
     } catch {
       grant = undefined;
     }
-    const row =
-      grant &&
-      (await tx.get<ManagedBindingRow>(
-        'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-        grant.allocationId,
-      ));
+    const row = grant && (await this.allocation(grant.allocationId, tx));
     check(
       grant &&
         row &&
@@ -744,10 +739,7 @@ export class ManagedRunnerBindings {
       'Managed allocation identity is invalid',
     );
     const read = async (tx: Transaction) => {
-      const row = await tx.get<ManagedBindingRow>(
-        'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-        allocationId,
-      );
+      const row = await this.allocation(allocationId, tx);
       if (!row || Number(row.epoch) !== epoch) return null;
       const runner = {
         runnerId: row.runner_id,

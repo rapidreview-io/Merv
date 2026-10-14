@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import { AGENT_EVENT_TEXT, type AgentEvent, type AgentStreamEvent } from './agent-stream.js';
-import { isoNow, live, readFirst } from './common.js';
+import { attached, isoNow, live, readFirst } from './common.js';
 import { readsAgents } from './rules.js';
 import { postgresMigrations } from './stream.postgres.js';
 import type { LiveFeedFrame, Session, SessionStreamReads } from './types.js';
@@ -130,12 +130,7 @@ export class SessionStreams implements SessionStreamReads {
     const held = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, batch.sessionId, batch.runnerId, tx);
       projectId = session.projectId;
-      check(
-        session.hostRef !== null && session.hostRef === batch.hostRef,
-        'host_conflict',
-        'A stream must name the attached host',
-        409,
-      );
+      attached(session, batch.hostRef, 'A stream');
       check(
         live(session) || Date.parse(session.closedAt ?? '') + STREAM_GRACE_MS > this.clock(),
         'stream_closed',

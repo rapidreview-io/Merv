@@ -207,16 +207,11 @@ export async function halt(
   return await ctx.state.transaction(async (tx) => {
     await ctx.ordinary(caller, 'admin', tx);
     if (!input.sessionId) await set(ctx, caller, { enabled: false }, tx);
-    const rows = input.sessionId
-      ? await tx.all<SessionRow>(
-          'SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND id=?',
-          caller.projectId,
-          input.sessionId,
-        )
-      : await tx.all<SessionRow>(
-          "SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
-          caller.projectId,
-        );
+    const rows = await tx.all<SessionRow>(
+      `SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND ${input.sessionId ? 'id=?' : "status IN ('offered','active')"}`,
+      caller.projectId,
+      ...(input.sessionId ? [input.sessionId] : []),
+    );
     if (input.sessionId)
       check(rows.length, 'session_not_found', 'Session not found in this project', 404);
     let halted = 0;

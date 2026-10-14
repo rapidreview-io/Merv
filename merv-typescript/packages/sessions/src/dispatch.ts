@@ -273,16 +273,15 @@ export class SessionDispatch {
     failure: { code: string; message: string; sessionId: string | null },
     tx: Transaction,
   ): Promise<DispatchHold | undefined> {
-    const where = 'project_id=? AND instance_id=? AND revision=?';
     const old = await tx.get<HoldRow>(
-      `SELECT * FROM session_dispatch_holds WHERE ${where}`,
+      'SELECT * FROM session_dispatch_holds WHERE project_id=? AND instance_id=? AND revision=?',
       projectId,
       target.instanceId,
       target.expectedRevision,
     );
     const time = isoNow(this.clock);
-    await tx.run(
-      'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at)',
+    const row = (await tx.get<HoldRow>(
+      'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at) RETURNING *',
       projectId,
       target.instanceId,
       target.expectedRevision,
@@ -292,12 +291,6 @@ export class SessionDispatch {
       time,
       time,
       (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
-    );
-    const row = (await tx.get<HoldRow>(
-      `SELECT * FROM session_dispatch_holds WHERE ${where}`,
-      projectId,
-      target.instanceId,
-      target.expectedRevision,
     ))!;
     if (!row.held_at || old?.held_at) return undefined;
     await this.reportHold(projectId, target.instanceId, row, tx);

@@ -58,22 +58,25 @@ export interface RunnerRow {
   last_decision_at: string | null;
   decision_since: string | null;
 }
-/** Whether the caller's own runner last said it has a capability. No presence means no. */
+/** A checkout goes only to the caller's own runner that last said it carries the driver. */
 export async function capable(
   ctx: DispatchContext,
   caller: Caller,
   runnerId: string,
-  capability: string,
+  driver: string,
   tx: Transaction,
-): Promise<boolean> {
+): Promise<void> {
   const runner = await tx.get<RunnerRow>(
     'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
     (await ownerOf(ctx.scope, caller, tx)).hash,
     runnerId,
   );
-  return (
+  check(
     !!runner &&
-    ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(capability)
+      ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(driver),
+    'runner_incompatible',
+    'This runner does not advertise the workspace driver the assignment needs',
+    409,
   );
 }
 /** Whether the key a runner registered with may still read the project. */

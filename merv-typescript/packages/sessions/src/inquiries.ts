@@ -12,8 +12,8 @@ import {
 } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
 import { tokenDigest } from '@merv/identity/credentials';
-import { isoNow, ordinary, ownerOf, text, workName } from './common.js';
-import type { MessageInsert } from './messages.js';
+import { isoNow, ordinary, ownerOf, text, threadIn, workName } from './common.js';
+import type { MessageHost, MessageInsert } from './messages.js';
 import type { VisitRequest, Visits } from './visits.js';
 import type {
   DispatchState,
@@ -226,8 +226,8 @@ export interface InquiryHost {
   visits: Visits;
   /** Closes a visit as Sessions closes every one (which calls `closed` below). */
   close(session: InquirySession, reason: string, tx: Transaction): Promise<unknown>;
-  /** Which of these work items of the project have ended. */
-  ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
+  /** Where these work items of the project stand, and whether each has ended. */
+  work: MessageHost['work'];
   /** Messages, the one writer of `session_messages`. */
   message(tx: Transaction, row: MessageInsert): Promise<string>;
 }
@@ -278,18 +278,7 @@ export class Inquiries implements SessionInquiries {
         );
         return view(old);
       }
-      const thread = await tx.get<{
-        id: string;
-        project_id: string;
-        instance_id: string;
-        size: number | string | null;
-      }>('SELECT id,project_id,instance_id,size FROM session_threads WHERE id=?', input.threadId);
-      check(
-        thread && thread.project_id === caller.projectId,
-        'thread_not_found',
-        'Thread not found in this project',
-        404,
-      );
+      const thread = await threadIn(tx, caller.projectId, input.threadId);
       await this.host.readable(caller, thread.instance_id, tx);
       const refused = (await this.refusals(tx, caller.projectId, [thread.id])).get(thread.id);
       if (refused) throw refused;
@@ -568,7 +557,8 @@ export class Inquiries implements SessionInquiries {
     ))!;
     if (
       thread.status === 'retired' ||
-      (await this.host.ended(session.projectId, [thread.instance_id], tx)).size
+      (await this.host.work(session.projectId, [thread.instance_id], tx)).get(thread.instance_id)
+        ?.ended
     )
       return;
     const ref = session.inquiry;

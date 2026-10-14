@@ -1,5 +1,5 @@
 import { mapAsync, type Caller, type Transaction } from '@merv/contracts';
-import type { WorkflowProvidedBlocker, WorkflowDispatchCandidate } from '@merv/workflows/models';
+import type { WorkflowDispatchCandidate } from '@merv/workflows/models';
 import type {
   DispatchState,
   RunnerPresence,
@@ -290,19 +290,19 @@ async function readingOf(
  */
 async function attention(
   ctx: DispatchContext,
-  projectId: string,
+  caller: Caller,
   tx: Transaction,
   reading: Reading,
-  facts: {
-    activity: Map<string, string>;
-    blockers: WorkflowProvidedBlocker[];
-  },
+  activity: Map<string, string>,
 ): Promise<StuckReport> {
   const now = ctx.clock(),
     observedAt = isoNow(ctx.clock),
     limits = ctx.thresholds;
   const { runners, dispatch, waiting, deferred, quiet } = reading;
-  const { activity } = facts;
+  // A hold is reported as dispatch_held, not again as what it publishes.
+  const blockers = (await ctx.workflows.blockers(caller, undefined, tx)).filter(
+    (blocker) => blocker.provider !== HOLD_PROVIDER,
+  );
   const older = (since: string, seconds: number) => Date.parse(since) + seconds * 1000 <= now;
   const items: StuckItem[] = [];
   const add = (item: Omit<StuckItem, 'forSeconds'>) =>
@@ -315,7 +315,7 @@ async function attention(
   >(
     `SELECT s.id,s.instance_id AS "instanceId",s.revision AS "expectedRevision",x.j #>> '{activatedAt}' AS "activatedAt",x.j #>> '{assignment,label}' AS label
       FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x WHERE s.project_id=? AND s.status='active'`,
-    projectId,
+    caller.projectId,
   )) {
     const since = lastActivity(session, activity.get(session.id));
     if (since === null || !older(since, limits.idleNoticeSeconds)) continue;
@@ -352,7 +352,7 @@ async function attention(
   // Work its owner refuses to lease never becomes a candidate, so nothing above or below can
   // see it. What the refusing plugin published is the only trace, and it is read from
   // Workflows' own rows, so it is still here when that plugin is not.
-  for (const blocker of facts.blockers)
+  for (const blocker of blockers)
     add({
       kind: 'work_blocked',
       instanceId: blocker.instanceId,
@@ -473,20 +473,9 @@ export async function stuck(ctx: DispatchContext, caller: Caller): Promise<Stuck
   caller = structuredClone(caller);
   return await ctx.state.transaction(async (tx) => {
     await ctx.ordinary(caller, 'read', tx);
-    const admissible = await ctx.candidates(caller, tx);
-    return await attention(
-      ctx,
-      caller.projectId,
-      tx,
-      await readingOf(ctx, caller.projectId, tx, admissible),
-      {
-        activity: await ctx.observations.activity(tx, caller.projectId),
-        // A hold is reported as dispatch_held, not again as what it publishes.
-        blockers: (await ctx.workflows.blockers(caller, undefined, tx)).filter(
-          (blocker) => blocker.provider !== HOLD_PROVIDER,
-        ),
-      },
-    );
+    const reading = await readingOf(ctx, caller.projectId, tx, await ctx.candidates(caller, tx));
+    const activity = await ctx.observations.activity(tx, caller.projectId);
+    return await attention(ctx, caller, tx, reading, activity);
   });
 }
 /** With `report`, `stuck` is the whole report session.stuck reads, from the same moment. */
@@ -579,13 +568,7 @@ export async function projectStatus(
     const admissible = await ctx.candidates(caller, tx);
     const { queue, retriesExhausted, budgets } = admissible;
     const reading = await readingOf(ctx, caller.projectId, tx, admissible);
-    const stuck = await attention(ctx, caller.projectId, tx, reading, {
-      activity,
-      // A hold is reported as dispatch_held, not again as what it publishes.
-      blockers: (await ctx.workflows.blockers(caller, undefined, tx)).filter(
-        (blocker) => blocker.provider !== HOLD_PROVIDER,
-      ),
-    });
+    const stuck = await attention(ctx, caller, tx, reading, activity);
     return {
       observedAt: stuck.observedAt,
       liveSessionCount: counts.live,

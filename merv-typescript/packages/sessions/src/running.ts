@@ -372,28 +372,24 @@ export function questionMarks(
 ): RunningMark[] {
   return blockers
     .filter((blocker) => blocker.provider === QUESTION_PROVIDER)
-    .map((blocker) =>
-      blocker.code === 'agent_question_investigating'
-        ? {
-            key: runningKey('work', blocker.instanceId),
-            says: ['Investigating its agent’s question'],
-            to: { route: questionRoute(blocker.key), text: 'Open its thread' },
-            quiet: true as const,
-          }
-        : answers.has(blocker.instanceId)
-          ? {
-              key: runningKey('work', blocker.instanceId),
-              says: ['Asked you a question'],
-              who: 'You answer it with a message to its agent’s thread',
-              to: { route: questionRoute(blocker.key), text: 'Answer it' },
-            }
-          : {
-              key: runningKey('work', blocker.instanceId),
-              says: ['Its agent asked its owner a question'],
-              to: { route: questionRoute(blocker.key), text: 'Open its thread' },
-              quiet: true as const,
-            },
-    );
+    .map((blocker) => {
+      const investigating = blocker.code === 'agent_question_investigating';
+      const yours = !investigating && answers.has(blocker.instanceId);
+      return {
+        key: runningKey('work', blocker.instanceId),
+        says: [
+          investigating
+            ? 'Investigating its agent’s question'
+            : yours
+              ? 'Asked you a question'
+              : 'Its agent asked its owner a question',
+        ],
+        ...(yours
+          ? { who: 'You answer it with a message to its agent’s thread' }
+          : { quiet: true as const }),
+        to: { route: questionRoute(blocker.key), text: yours ? 'Answer it' : 'Open its thread' },
+      };
+    });
 }
 
 /** The brief as the sidebar carries it: whole, or cut at the last line end within the cap. */
