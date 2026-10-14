@@ -19,7 +19,7 @@ import {
   type WorkspaceHandle,
   type WorkspaceTransport,
 } from '@merv/contracts';
-import { DriverGit, hash, identity, pathStat, WorkspaceError } from './git.js';
+import { DriverGit, hash, pathStat, WorkspaceError } from './git.js';
 
 export interface CodeDriverOptions {
   /** How often an admission that outlasts its request is asked about again. */
@@ -299,18 +299,11 @@ export abstract class DriverCore {
     return join(driverDirectory(join(this.root, 'rejected')), hash(row.launch_id));
   }
 
-  protected priorWriter(row: WorkspaceRow): WorkspaceRow | undefined {
+  /** The last other launch that finished on this path; with `writer`, the last writer's. */
+  protected prior(row: WorkspaceRow, writer = false): WorkspaceRow | undefined {
     return this.db
       .prepare(
-        "SELECT * FROM code_v2_workspaces WHERE path=? AND launch_id<>? AND read_only=0 AND status IN ('captured','closed') ORDER BY rowid DESC LIMIT 1",
-      )
-      .get(row.path, row.launch_id) as WorkspaceRow | undefined;
-  }
-
-  protected priorVisible(row: WorkspaceRow): WorkspaceRow | undefined {
-    return this.db
-      .prepare(
-        "SELECT * FROM code_v2_workspaces WHERE path=? AND launch_id<>? AND status IN ('captured','closed') ORDER BY rowid DESC LIMIT 1",
+        `SELECT * FROM code_v2_workspaces WHERE path=? AND launch_id<>?${writer ? ' AND read_only=0' : ''} AND status IN ('captured','closed') ORDER BY rowid DESC LIMIT 1`,
       )
       .get(row.path, row.launch_id) as WorkspaceRow | undefined;
   }

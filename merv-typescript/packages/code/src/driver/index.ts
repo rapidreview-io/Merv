@@ -125,7 +125,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
         if (info?.isSymbolicLink() || (info && !info.isDirectory()))
           throw new WorkspaceError('workspace_foreign_checkout');
         if (info) {
-          const previous = this.priorWriter(row);
+          const previous = this.prior(row, true);
           if (previous && this.priorCaptureRefused(previous)) {
             const rejected = this.rejectedPath(previous);
             const saved = pathStat(rejected);
@@ -302,7 +302,7 @@ export class CodeWorkspaceDriver extends DriverTransfer implements WorkspaceDriv
         this.assignmentPath(row.path);
         const preserved = this.preservedPath();
         const info = pathStat(preserved);
-        const writer = this.priorWriter(row);
+        const writer = this.prior(row, true);
         if (writer && this.priorCaptureRefused(writer)) {
           // Keep the refused writer private. Replace the disposable review tree with
           // Code's frozen head so a later scratch phase cannot inherit review edits.

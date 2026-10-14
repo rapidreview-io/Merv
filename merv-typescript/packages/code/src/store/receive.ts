@@ -369,10 +369,7 @@ export class CodeReceiver {
       const directory = join(this.core.repositories.paths(row.project_id).quarantine, row.id);
       const file = join(directory, 'bundle.part');
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const held = await stat(file).then(
-        (found) => found.size,
-        () => 0,
-      );
+      const held = (await stat(file).catch(() => null))?.size ?? 0;
       check(
         !(await lstat(join(directory, 'bundle')).catch(() => null)),
         'code_upload_closed',
@@ -999,10 +996,7 @@ export class CodeReceiver {
     const part = join(directory, 'bundle.part'),
       bundle = join(directory, 'bundle');
     if (await lstat(bundle).catch(() => null)) return { oid: payload.tip };
-    const held = await stat(part).then(
-      (found) => found.size,
-      () => 0,
-    );
+    const held = (await stat(part).catch(() => null))?.size ?? 0;
     check(
       held === payload.bundle.bytes,
       'code_upload_incomplete',
@@ -1170,10 +1164,7 @@ export class CodeReceiver {
       ],
       { env, timeoutMs: FETCH_TIMEOUT_MS },
     );
-    const size = await stat(part).then(
-      (found) => found.size,
-      () => 0,
-    );
+    const size = (await stat(part).catch(() => null))?.size ?? 0;
     // Only Git's refusal to write an empty bundle means the repository already holds that
     // history. Any other failure reported as "already current" would send an administrator
     // away from the retry the import actually needs.

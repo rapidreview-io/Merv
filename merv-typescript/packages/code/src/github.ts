@@ -692,17 +692,11 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       });
     });
   }
-  private repositoryRead<T>(
-    caller: Caller,
-    fn: (client: GitHubClient, token: string, repo: GitHubRepository) => Promise<T>,
-  ) {
-    return this.run(caller, (caller) =>
-      this.withToken(caller, (token, row) => fn(this.client(), token, this.repository(row))),
-    );
-  }
   branches(caller: Caller) {
-    return this.repositoryRead(caller, (client, token, repo) =>
-      client.branches(token, repo.fullName),
+    return this.run(caller, (caller) =>
+      this.withToken(caller, (token, row) =>
+        this.client().branches(token, this.repository(row).fullName),
+      ),
     );
   }
   /** Internal Code capability. The caller and original human owner's live authority are both required. */

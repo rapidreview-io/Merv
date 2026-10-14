@@ -368,6 +368,27 @@ test('a worker that ended its own visit hands over its final capture within the 
   );
 });
 
+test('a checkpoint finishing after its worker ended its own visit leaves the owed final open', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  const bundle = f.source.bundle(first, [f.root]);
+  const inFlight = await f.begin('checkpoint', 'ses_1', 1, f.root, bundle);
+  await f.code.v2!.putPart(f.admin, inFlight.id, 0, bundle.content);
+  f.end('ses_1', 'handoff');
+  await f.event('session.closed', 'ses_1', true);
+  assert.equal((await f.send(inFlight, bundle)).status, 'completed');
+  assert.equal((await f.unit()).writerState, 'closing', 'the final capture is still owed');
+  const after = f.source.commit({ 'a.txt': 'two\n' }, 'after');
+  const final = await f.upload('final', 'ses_1', 1, first, f.source.bundle(after, [first]));
+  assert.equal(final.status, 'completed');
+  assert.deepEqual(
+    [(await f.unit()).writerState, (await f.unit()).canonicalHead],
+    ['closed', after],
+  );
+});
+
 test('an upload fully on Main when its session closed is admitted within the grace', async (t) => {
   const f = await fixture(t);
   await f.lease('ses_1');

@@ -38,6 +38,8 @@ export interface WriterRow {
   mirrored_at: string | null;
   quarantine_operation_id: string | null;
   blocked_by: string | null;
+  /** A worker that ended its own visit closed it: its final capture is still owed. */
+  final_owed: boolean;
 }
 /** Everything a mutation of a unit's branch names; the server compares all of it. */
 export interface WriterFence {
@@ -51,7 +53,7 @@ export interface WriterFence {
   moves: boolean;
 }
 export const writerColumns =
-  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,blocked_by';
+  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,blocked_by,final_owed';
 
 /**
  * The writer fence of a unit. One leased session at a time may advance a unit's branch in
@@ -169,14 +171,14 @@ export class CodeWriterService {
     }
     if (row.writer_state !== 'reserved' && row.writer_state !== 'active') return;
     if (ownEnd && row.writer_state === 'active') {
-      await this.move(tx, row, 'closing');
+      await this.move(tx, row, 'closing', true);
       await this.changed(tx, projectId, row.unit_id);
       return;
     }
     // An upload already in flight may still finish within the grace; nothing else may.
     const uploads = await this.uploads(tx, row);
     if (uploads.admitted || uploads.received) {
-      await this.failUnfinished(tx, row, uploads.unfinished, 'The writer’s session closed');
+      await this.failUnfinished(tx, uploads.unfinished);
       await this.move(tx, row, 'closing');
       await this.changed(tx, projectId, row.unit_id);
     } else await this.end(tx, row, 'session_closed');
@@ -212,12 +214,12 @@ export class CodeWriterService {
   }
 
   /** Uploads that can never be completed: held where no route serves them, never admitted. */
-  private async failUnfinished(tx: Transaction, row: WriterRow, ids: string[], why: string) {
+  private async failUnfinished(tx: Transaction, ids: string[]) {
     const at = now();
     for (const id of ids)
       await tx.run(
         "UPDATE code_operations SET status='failed',error='code_generation_stale',detail_json=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared' AND phase='receiving'",
-        canonical({ message: `${why}; its generation ended` }),
+        canonical({ message: 'The writer’s session closed; its generation ended' }),
         at,
         at,
         id,
@@ -229,12 +231,7 @@ export class CodeWriterService {
    * the next lease continues from there. What it was still receiving is held, never admitted.
    */
   private async end(tx: Transaction, row: WriterRow, reason: string): Promise<void> {
-    await this.failUnfinished(
-      tx,
-      row,
-      (await this.uploads(tx, row)).receiving,
-      'The writer’s session closed',
-    );
+    await this.failUnfinished(tx, (await this.uploads(tx, row)).receiving);
     await this.move(tx, row, 'closed');
     await this.changed(tx, row.project_id, row.unit_id);
     await this.state.appendEvent(tx, {
@@ -342,9 +339,11 @@ export class CodeWriterService {
       fence.unitId,
     );
     const row = (await this.row(tx, fence.projectId, fence.unitId))!;
-    // A final capture ends its generation; so does the last upload a closed session left.
+    // A final capture ends its generation; so does the last upload a closed session left,
+    // unless its worker ended its own visit and still owes that final.
     if (row.writer_state === 'closing' && !input.final) {
-      if (!(await this.uploads(tx, row)).admitted) await this.end(tx, row, 'session_closed');
+      if (!row.final_owed && !(await this.uploads(tx, row)).admitted)
+        await this.end(tx, row, 'session_closed');
       return;
     }
     if (!input.final) return;
@@ -461,7 +460,6 @@ export class CodeWriterService {
     );
   }
 
-  /** The completed upload of this unit that delivered a commit, which is its receipt. */
   /** The first admitted upload of this unit that left it at `commit`, and the merge it verified. */
   async receipt(tx: Transaction, projectId: string, unitId: string, commit: string) {
     const row = await tx.get<{ id: string; result_json: string }>(
@@ -612,9 +610,9 @@ export class CodeWriterService {
     };
   }
 
-  private async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
+  private async move(tx: Transaction, row: WriterRow, to: CodeWriterState, owed = false) {
     await tx.run(
-      'UPDATE code_workspaces SET writer_state=?,writer_changed_at=? WHERE project_id=? AND unit_id=?',
+      `UPDATE code_workspaces SET writer_state=?,writer_changed_at=?,final_owed=${owed} WHERE project_id=? AND unit_id=?`,
       to,
       now(),
       row.project_id,

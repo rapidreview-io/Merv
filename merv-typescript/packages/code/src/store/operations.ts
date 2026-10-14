@@ -34,7 +34,6 @@ import {
   type OperationRow,
 } from './core.js';
 
-export { defaultStoreConfig } from './core.js';
 export type { CodeImportRemote, CodeStoreConfig, CodeStoreHooks, FaultPoint } from './core.js';
 export type { CodeExport } from './export.js';
 

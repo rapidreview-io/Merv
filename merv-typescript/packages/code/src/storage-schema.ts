@@ -217,11 +217,14 @@ END $upgrade$;
 
 /** Nothing releases the upgrade hold any more: a database that still has one is opened again. */
 const upgraded = `DELETE FROM code_repository_holds WHERE hold_key='code-storage-upgrade';`;
+/** A closing generation whose worker ended its own visit still owes its final (writers.ts). */
+const owed = `ALTER TABLE code_workspaces ADD COLUMN final_owed BOOLEAN NOT NULL DEFAULT false;`;
 
 export async function initializeCodeStorage(state: State): Promise<void> {
   await state.migrate('code_storage', [
     { version: 1, sql: schema },
     { version: 2, sql: upgraded },
+    { version: 3, sql: owed },
   ]);
   await migratePendingMerges(state);
 }

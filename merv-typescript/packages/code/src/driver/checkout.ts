@@ -15,7 +15,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import { CODE_DRIVER, type SessionWorkspace } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { CodeWorkspaceManifest } from '../store/protocol.js';
-import { diffStats, hash, identity, oid, pathStat, WorkspaceError } from './git.js';
+import { diffStats, hash, oid, pathStat, WorkspaceError } from './git.js';
 import { type WorkspaceRow, driverDirectory, stageAssignmentBundle, DriverCore } from './core.js';
 
 /** Where a launch's code comes from: the cache, its fetches and the checkouts. */
@@ -225,7 +225,7 @@ export abstract class DriverCheckout extends DriverCore {
    * continues in place records the directory, so its close checks nothing replaced it.
    */
   protected async continuesInPlace(cache: string, row: WorkspaceRow): Promise<boolean> {
-    const last = this.priorVisible(row);
+    const last = this.prior(row);
     if (!last || this.priorCaptureRefused(last) || pathStat(this.preservedPath())) return false;
     const left = last.result_json
       ? (JSON.parse(last.result_json) as SessionWorkspace).headOid
@@ -261,8 +261,8 @@ export abstract class DriverCheckout extends DriverCore {
     this.assignmentPath(row.path);
     if (await this.continuesInPlace(cache, row)) return;
     const preserved = this.preservedPath();
-    const previous = this.priorWriter(row);
-    const lastVisible = this.priorVisible(row);
+    const previous = this.prior(row, true);
+    const lastVisible = this.prior(row);
     // A Code phase can follow CPU-only scratch, including a new attempt after an
     // earlier Code writer. The runner vouches for the immediate closed predecessor;
     // a path found on disk alone is never enough to adopt as input.

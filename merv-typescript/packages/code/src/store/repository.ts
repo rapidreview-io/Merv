@@ -62,11 +62,6 @@ const incidental = new Set([
   'extensions.objectformat',
 ]);
 
-/**
- * The name of a project's directory under the root: the first 32 hex of sha256(projectId).
- */
-export const directoryKey = (projectId: string) => sha256Hex(projectId).slice(0, 32);
-
 /** The bytes beneath a path; a missing path holds none. */
 export async function diskBytes(path: string): Promise<number> {
   let entries;
@@ -184,7 +179,8 @@ export class CodeRepositories {
   }
 
   paths(projectId: string): ProjectPaths {
-    const directory = join(this.config.root, directoryKey(projectId));
+    // A project's directory under the root: the first 32 hex of sha256(projectId).
+    const directory = join(this.config.root, sha256Hex(projectId).slice(0, 32));
     return {
       directory,
       repository: join(directory, 'repository.git'),

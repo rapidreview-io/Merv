@@ -558,6 +558,27 @@ test('a remote ref that only ends with the published name is not the published r
   assert.equal(await transport.lsRemote('project', 'refs/heads/merv/work/unit'), null);
 });
 
+test('one held credential serves a project’s refs until its repository is linked anew', async () => {
+  let id = 101;
+  const minted: number[] = [];
+  const git = { run: async () => ({ code: 0, stdout: Buffer.from(''), stderr: '' }) };
+  const transport = new GitMirrorTransport(
+    { git, environment: () => ({}) } as unknown as CodeRepositories,
+    {
+      target: async () => ({ id, fullName: 'fixture/private' }),
+      token: async (_projectId, use) => (minted.push(id), await use(`token-${id}`)),
+    },
+  );
+  const read = (ref: string) => transport.hold('project', () => transport.lsRemote('project', ref));
+  await transport.hold('project', async () => {
+    await read('refs/heads/merv/work/a');
+    await read('refs/heads/merv/work/b');
+    id = 102;
+    await read('refs/heads/merv/work/c');
+  });
+  assert.deepEqual(minted, [101, 102]);
+});
+
 test('disconnected projects cannot hide connected mirrors beyond the first batch', async (t) => {
   const f = await mirrored(t);
   const other = await f.scope.credentials.bootstrap({

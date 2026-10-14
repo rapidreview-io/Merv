@@ -217,14 +217,20 @@ export abstract class DriverTransfer extends DriverCheckout {
     });
     if (operation.status !== 'completed')
       throw new UploadRefused(operation.error ?? 'code_upload_failed');
+    return await this.admitted(row, journal);
+  }
+
+  /** Code admitted the journalled commit: the branch moves to it and its receipt is kept. */
+  private async admitted(row: WorkspaceRow, journal: TransferRow) {
     await this.advance(row, journal);
     const stats = (await this.snapshot(row, journal.target_oid!)).stats;
+    const command = JSON.parse(journal.command_json!) as CodeCommitCommand;
     const receipt = commitReceipt(command, journal.target_oid!, journal.tree_oid!, stats);
     this.db
       .prepare(
         'UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=? AND receipt_json IS NULL',
       )
-      .run(JSON.stringify(receipt), command.id);
+      .run(JSON.stringify(receipt), journal.request_id);
     return receipt;
   }
 
@@ -517,31 +523,28 @@ export abstract class DriverTransfer extends DriverCheckout {
       let outcome = 'workspace_commit_fenced';
       if (journal.operation_id && journal.target_oid) {
         const deadline = Date.now() + this.admissionMs;
-        for (;;) {
+        for (let then = ''; ;) {
           const { operation } = (await this.ask(() =>
-            this.transport.call(`uploads/${journal.operation_id}`, {}),
+            this.transport.call(`uploads/${journal.operation_id}${then}`, {}),
           ).catch((error: unknown) => {
             const code = (error as TransportFailure).code;
             if (typeof code === 'string' && terminal.includes(code))
               return { operation: { status: 'failed', phase: null, error: code } };
             throw error;
-          })) as { operation: Pick<CodeStoreOperation, 'status' | 'phase' | 'error'> };
+          })) as { operation: Pick<CodeStoreOperation, 'status' | 'error' | 'received'> };
           if (operation.status === 'completed') {
-            await this.advance(row, journal);
-            const command = JSON.parse(journal.command_json!) as CodeCommitCommand;
-            const stats = (await this.snapshot(row, journal.target_oid)).stats;
-            const receipt = commitReceipt(command, journal.target_oid, journal.tree_oid!, stats);
-            this.db
-              .prepare('UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=?')
-              .run(JSON.stringify(receipt), journal.request_id);
+            await this.admitted(row, journal);
             outcome = '';
             break;
           }
-          // Still only receiving: nobody will send the rest, and the final supersedes it.
-          if (operation.status === 'failed' || operation.phase === 'receiving') {
+          // Only part of it arrived: nobody will send the rest, and the final supersedes it.
+          if (operation.status === 'failed' || operation.received < journal.bundle_bytes!) {
             outcome = operation.error ?? 'code_upload_superseded';
             break;
           }
+          // Every byte is on Code, which may admit it at any moment: it is finished first, so
+          // that the final continues from the head Code then holds.
+          then = '/complete';
           if (Date.now() > deadline)
             throw new WorkspaceDeferred('store_busy', 'code_admission_pending');
           await new Promise((done) => setTimeout(done, this.pollMs));

@@ -1054,6 +1054,38 @@ test("an agent commit during admission is rescued: the receipt names Code's comm
   assert.equal((await f.unit()).canonicalHead, result!.headOid);
 });
 
+test('a checkpoint whose every byte reached Code is finished before the final capture, not dropped', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  let busy = true;
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    call: async (route, body) => {
+      if (busy && route.endsWith('/complete'))
+        throw Object.assign(new Error('busy'), { code: 'code_store_unavailable', status: 503 });
+      return await inner.call(route, body);
+    },
+  }));
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'checkpointed\n');
+  const work = await command(f, driver, 'ses_1', f.root);
+  await assert.rejects(driver.checkpointCommit(m.launch('ses_1'), work), WorkspaceDeferred);
+  writeFileSync(join(path, 'b.txt'), 'after the checkpoint\n');
+  busy = false;
+  m.terminal.add('launch-ses_1');
+  const result = (await driver.capture(m.launch('ses_1')))!;
+  const unit = await f.unit();
+  assert.equal(result.headOid, unit.canonicalHead);
+  assert.ok(
+    'receipt' in driver.commitOutcome(work.id)!,
+    'the checkpoint was admitted, not dropped',
+  );
+  assert.equal(git(path, ['show', `${unit.canonicalHead}~1:a.txt`]), 'checkpointed');
+  assert.equal(git(path, ['show', `${unit.canonicalHead}:b.txt`]), 'after the checkpoint');
+});
+
 test('an interrupted upload continues where Code stands, and a final capture is replayed and never rebuilt', async (t) => {
   const f = await writerFixture(t);
   await f.open({ config: { partBytes: 1024 } });

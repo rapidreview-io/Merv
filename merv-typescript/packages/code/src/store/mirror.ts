@@ -61,6 +61,9 @@ export const defaultMirrorConfig: CodeMirrorConfig = {
   claimSeconds: 120,
 };
 const MAX_BACKOFF_MS = 3600_000;
+/** How long one credential serves a project's refs: an installation token lives an hour, and
+ *  one ref's Git children end within four of GitMirrorTransport's two-minute timeouts. */
+const HOLD_MS = 10 * 60_000;
 const WARNINGS = 20;
 const PRINCIPAL = 'system:code';
 // Kinds are persisted in code_operations rows.
@@ -209,7 +212,7 @@ export class CodeMirrorService {
     this.running ??= (async () => {
       try {
         const at = now();
-        const linked = new Map<string, boolean>();
+        const linked = new Map<string, MirrorTarget>();
         let cursor: MirrorRow | undefined;
         let remaining = 50;
         // Page past disconnected projects without modifying their waiting work. The cursor
@@ -229,21 +232,28 @@ export class CodeMirrorService {
           );
           if (!due.length) break;
           cursor = due[due.length - 1];
-          for (const row of due) {
-            if (this.closed || remaining === 0) return;
-            if (!linked.has(row.project_id))
-              linked.set(
-                row.project_id,
-                !(
-                  'blocked' in
-                  (await this.transport
-                    .target(row.project_id)
-                    .catch(() => ({ blocked: 'code_mirror_unavailable' })))
-                ),
-              );
-            if (!linked.get(row.project_id)) continue;
-            remaining--;
-            await this.one(row).catch(() => {});
+          const projects = new Map<string, MirrorRow[]>();
+          for (const row of due)
+            projects.set(row.project_id, [...(projects.get(row.project_id) ?? []), row]);
+          for (const [projectId, rows] of projects) {
+            const target =
+              linked.get(projectId) ??
+              (await this.transport
+                .target(projectId)
+                .catch(() => ({ blocked: 'code_mirror_unavailable' })));
+            linked.set(projectId, target);
+            // One credential serves a project's refs for at most HOLD_MS, and each ref still asks
+            // whether its project publishes at all. One that cannot be had fails each ref alone.
+            while (!('blocked' in target) && rows.length && remaining > 0 && !this.closed) {
+              const until = Date.now() + HOLD_MS;
+              const refs = async () => {
+                while (rows.length && remaining > 0 && !this.closed && Date.now() < until) {
+                  remaining--;
+                  await this.one(rows.shift()!).catch(() => {});
+                }
+              };
+              await (this.transport.hold?.(projectId, refs) ?? refs()).catch(refs);
+            }
           }
           if (due.length < 50) break;
         }
@@ -367,12 +377,7 @@ export class CodeMirrorService {
         at,
         input.operationId,
       );
-      await this.warn(
-        tx,
-        row.project_id,
-        null,
-        (JSON.parse(row.payload_json) as MirrorPayload).ref,
-      );
+      await warnRef(tx, row.project_id, null, (JSON.parse(row.payload_json) as MirrorPayload).ref);
       await journal.complete(
         newId('cop'),
         'mirror-retry',
@@ -571,7 +576,7 @@ export class CodeMirrorService {
           row.project_id,
           payload.unitId,
         );
-      await this.warn(tx, row.project_id, null, payload.ref);
+      await warnRef(tx, row.project_id, null, payload.ref);
       const head = await tx.get<{ head_oid: string | null }>(
         'SELECT head_oid FROM code_workspaces WHERE project_id=? AND unit_id=?',
         row.project_id,
@@ -648,7 +653,7 @@ export class CodeMirrorService {
         claim,
       );
       if (changed.changes !== 1) return;
-      await this.warn(
+      await warnRef(
         tx,
         row.project_id,
         { code: detail.code, message: detail.message, at },
@@ -669,29 +674,20 @@ export class CodeMirrorService {
       });
     });
   }
-
-  /** One warning per ref on the project, newest last; a ref that came right loses its own. */
-  private async warn(
-    tx: Transaction,
-    projectId: string,
-    warning: { code: string; message: string; at: string } | null,
-    ref: string,
-  ): Promise<void> {
-    await warnRef(tx, projectId, warning, published(ref));
-  }
 }
 
 /**
- * One warning per ref on the project, newest last; a ref that came right loses its own.
- * `warnings_json` is the one mutable column of the binding row, and it is already what a
+ * One warning per published ref on the project, newest last; a ref that came right loses its
+ * own. `warnings_json` is the one mutable column of the binding row, and it is already what a
  * reader looks at, so trouble that stops nothing needs no storage of its own.
  */
-export async function warnRef(
+async function warnRef(
   tx: Transaction,
   projectId: string,
   warning: { code: string; message: string; at: string } | null,
-  ref: string,
+  unpublished: string,
 ): Promise<void> {
+  const ref = published(unpublished);
   const row = await tx.get<{ warnings_json: string }>(
     'SELECT warnings_json FROM code_projects WHERE project_id=?',
     projectId,
@@ -724,6 +720,7 @@ export interface MirrorAuthority {
 export class GitMirrorTransport implements MirrorTransport {
   private readonly held = new AsyncLocalStorage<{
     projectId: string;
+    id: number;
     remote: string;
     env: Record<string, string>;
   }>();
@@ -744,8 +741,12 @@ export class GitMirrorTransport implements MirrorTransport {
     if ('blocked' in found)
       throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
     const remote = this.url(found.fullName);
+    // The credential held for this very repository serves; one linked anew gets its own.
+    const held = this.held.getStore();
+    if (held?.projectId === projectId && held.id === found.id && held.remote === remote)
+      return await use();
     return await this.authority.token(projectId, (token) =>
-      this.held.run({ projectId, remote, env: githubGitEnv(token) }, use),
+      this.held.run({ projectId, id: found.id, remote, env: githubGitEnv(token) }, use),
     );
   }
 
