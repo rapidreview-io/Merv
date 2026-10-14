@@ -91,27 +91,24 @@ export async function begin(
     'Assigned workers cannot create an outer research cycle',
     403,
   );
-  for (const id of input.dependsOn) await ctx.workflows.get(caller, id, tx);
+  for (const id of input.dependsOn) {
+    const work = await ctx.workflows.get(caller, id, tx);
+    check(
+      !input.automatic || ['task', 'experiment'].includes(work.workflow),
+      'invalid_research_input',
+      'Automatic research selects tasks and experiments',
+    );
+  }
   check(
     input.automatic || input.maxCycles === undefined,
     'invalid_research_input',
     'maxCycles requires automatic mode',
   );
-  if (input.automatic) {
-    check(
-      input.dependsOn.length > 0,
-      'research_work_required',
-      'Select at least one task or experiment for automatic research',
-    );
-    for (const id of input.dependsOn) {
-      const work = await ctx.workflows.get(caller, id, tx);
-      check(
-        ['task', 'experiment'].includes(work.workflow),
-        'invalid_research_input',
-        'Automatic research selects tasks and experiments',
-      );
-    }
-  }
+  check(
+    !input.automatic || input.dependsOn.length > 0,
+    'research_work_required',
+    'Select at least one task or experiment for automatic research',
+  );
   const workflow = await ctx.handle!.start(
     caller,
     {
@@ -236,7 +233,7 @@ export async function ready(
   const continued =
     choice.nextWave === 'skip' ? undefined : await continuing(ctx, caller, record, tx, chosen);
   if (continued && choice.nextWave === 'create') {
-    checkAutomaticContinuation(ctx, caller, record);
+    checkAutomaticContinuation(caller, record);
     await creatable(ctx, caller, continued.plan, tx);
   }
   return {
@@ -267,7 +264,13 @@ export async function move(
   // would refuse is reported before the advance, as it always was.
   const judged = (holds: Move, lacks: Move): Move => {
     if (since !== undefined) {
-      asked(ctx, since);
+      // Git answers what main lacks outside every transaction; null says it could not be asked.
+      check(
+        since !== null,
+        'integration_candidates_unavailable',
+        'What main lacks is asked of Git outside a transaction; this advance runs again on its own',
+        409,
+      );
       return since.unitIds.length ? lacks : holds;
     }
     return (choice.move ?? (choice.nextWave ? holds : lacks)) === holds ? holds : lacks;
@@ -312,19 +315,6 @@ export async function move(
         `The consolidation task ${taskId} is accepted, but Code holds no publication for it`,
         409,
       );
-}
-
-/** Git answers what main lacks outside every transaction; null says it could not be asked. */
-export function asked(
-  ctx: ResearchContext,
-  since: Unpublished | null,
-): asserts since is Unpublished {
-  check(
-    since !== null,
-    'integration_candidates_unavailable',
-    'What main lacks is asked of Git outside a transaction; this advance runs again on its own',
-    409,
-  );
 }
 
 /** The cycle's approved wave; a cycle moves past reflecting only once it is approved. */
@@ -404,11 +394,7 @@ export async function creatable(
   }
 }
 
-export function checkAutomaticContinuation(
-  ctx: ResearchContext,
-  caller: Caller,
-  record: ResearchRecord,
-) {
+function checkAutomaticContinuation(caller: Caller, record: ResearchRecord) {
   if (record.automation) {
     check(
       caller.actorId === record.ownerId,
@@ -439,7 +425,6 @@ export async function materialise(
   tx: Transaction,
 ): Promise<ResearchRecord> {
   const { plan } = approved;
-  checkAutomaticContinuation(ctx, caller, record);
   const created = new Map<string, string>();
   for (const item of ordered<ChangeSpec['items'][number]>(plan.items)!) {
     // The text was written by a leased agent and is filed under the owner who accepted it;

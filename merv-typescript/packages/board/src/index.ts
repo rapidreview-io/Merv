@@ -19,6 +19,11 @@ export type * from './types.js';
 
 /** The most live shapes one board holds. */
 const MOST = 5_000;
+/** Whether a shape is newer than the one held: the lower nonce wins a tie, as Excalidraw reconciles. */
+const newer = (shape: BoardElement, held?: BoardElement) =>
+  !held ||
+  shape.version > held.version ||
+  (shape.version === held.version && shape.versionNonce < held.versionNonce);
 
 /**
  * Whiteboards (founder, 2026-10-09): unlimited per project, drawn on by people in Excalidraw and by
@@ -66,7 +71,7 @@ export class BoardService implements Board {
           );
     return stacked(rows.map((row) => JSON.parse(row.record) as BoardElement));
   }
-  private async write(caller: Caller, board: BoardSummary, tx: Transaction) {
+  private async write(board: BoardSummary, tx: Transaction) {
     await tx.run(
       'UPDATE boards SET revision=?,record=? WHERE id=?',
       board.revision,
@@ -139,7 +144,7 @@ export class BoardService implements Board {
         updatedBy: caller.actorId,
         updatedAt: now(),
       };
-      await this.write(caller, next, tx);
+      await this.write(next, tx);
       await recorded(this.state, tx, caller, 'board.set', board.id, {
         ...(input.title !== undefined && { title: input.title }),
         ...(input.archived !== undefined && { archived: input.archived }),
@@ -147,35 +152,31 @@ export class BoardService implements Board {
       return next;
     });
   }
-  /**
-   * Keeps each shape whose version is newer than the stored one (the lower nonce winning a tie,
-   * as Excalidraw reconciles), all in one revision of the board.
-   */
+  /** Keeps each shape whose version is newer than the stored one, all in one revision of the board. */
   private async merge(
     caller: Caller,
     board: BoardSummary,
     shapes: BoardElement[],
     tx: Transaction,
   ) {
+    // A save may name a shape twice: its newest version stands for it.
+    const latest = new Map<string, BoardElement>();
+    for (const shape of shapes) if (newer(shape, latest.get(shape.id))) latest.set(shape.id, shape);
     const stored = new Map(
       (
         await tx.all<{ element_id: string; record: string }>(
-          `SELECT element_id,record FROM board_elements WHERE board_id=? AND element_id IN (${shapes.map(() => '?').join(',')})`,
+          `SELECT element_id,record FROM board_elements WHERE board_id=? AND element_id IN (${[...latest.keys()].map(() => '?').join(',')})`,
           board.id,
-          ...shapes.map((shape) => shape.id),
+          ...latest.keys(),
         )
       ).map((row) => [row.element_id, JSON.parse(row.record) as BoardElement]),
     );
-    const newer = shapes.filter((shape) => {
-      const old = stored.get(shape.id);
-      return (
-        !old ||
-        shape.version > old.version ||
-        (shape.version === old.version && shape.versionNonce < old.versionNonce)
-      );
-    });
-    if (!newer.length) return { board, accepted: 0 };
-    const added = newer.filter((shape) => !stored.has(shape.id) && !shape.isDeleted).length;
+    const kept = [...latest.values()].filter((shape) => newer(shape, stored.get(shape.id)));
+    if (!kept.length) return { board, accepted: 0 };
+    // A shape new to the board, or brought back from deletion, counts against the cap.
+    const added = kept.filter(
+      (shape) => !shape.isDeleted && (stored.get(shape.id)?.isDeleted ?? true),
+    ).length;
     if (added) {
       const live = await tx.get<{ n: number }>(
         'SELECT COUNT(*)::int AS n FROM board_elements WHERE board_id=? AND NOT deleted',
@@ -194,7 +195,7 @@ export class BoardService implements Board {
       updatedBy: caller.actorId,
       updatedAt: now(),
     };
-    for (const shape of newer)
+    for (const shape of kept)
       await tx.run(
         `INSERT INTO board_elements(board_id,element_id,revision,deleted,record) VALUES(?,?,?,?,?)
          ON CONFLICT(board_id,element_id) DO UPDATE SET revision=excluded.revision,deleted=excluded.deleted,record=excluded.record`,
@@ -204,12 +205,12 @@ export class BoardService implements Board {
         shape.isDeleted ? 'true' : 'false',
         JSON.stringify(shape),
       );
-    await this.write(caller, next, tx);
+    await this.write(next, tx);
     await recorded(this.state, tx, caller, 'board.changed', board.id, {
       revision: next.revision,
-      shapes: newer.length,
+      shapes: kept.length,
     });
-    return { board: next, accepted: newer.length };
+    return { board: next, accepted: kept.length };
   }
   async save(caller: Caller, boardId: string, shapes: BoardElement[]) {
     caller = this.open(caller);
@@ -234,7 +235,7 @@ export class BoardService implements Board {
         : await this.created(caller, input.title!, tx);
       if (input.board && input.title && input.title !== board.title) {
         board = { ...board, title: input.title };
-        await this.write(caller, board, tx);
+        await this.write(board, tx);
       }
       const drawing = new Drawing(
         await this.elements(board.id, undefined, tx),

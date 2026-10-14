@@ -189,6 +189,15 @@ test('a page cannot save images, embeds or script links, and an agent cannot nam
     { ...base, type: 'image' },
     { ...base, type: 'embeddable' },
     { ...base, type: 'rectangle', link: 'javascript:alert(1)' },
+    // Points are drawn into the picture an agent looks at.
+    {
+      ...base,
+      type: 'freedraw',
+      points: [
+        [0, 0],
+        ['1"/><script>x()</script>', 0],
+      ],
+    },
   ])
     await assert.rejects(
       f.board.save(f.operator, made.id, [element as BoardElement]),
@@ -416,4 +425,64 @@ test('a page is handed shapes in their stacking order, and a label under its own
   const next = new Drawing(buried as BoardElement[], false);
   const lifted = next.result().find((el) => el.id === label.id)!;
   assert.ok(String(lifted.index) > String(box.index), 'the label stands over its box again');
+});
+
+/** A crowded board: 480 boxes in a grid, with no room between them. */
+const crowd = (count: number) =>
+  Array.from({ length: count }, (_, i) => ({
+    id: `e${i}`,
+    type: 'rectangle',
+    version: 1,
+    versionNonce: 1,
+    isDeleted: false,
+    x: (i % 22) * 220,
+    y: Math.floor(i / 22) * 100,
+    width: 200,
+    height: 80,
+  }));
+
+test('a crowded board places shapes where it always did', () => {
+  const drawing = new Drawing(crowd(480), true);
+  drawing.apply({ op: 'note', key: 'a', text: 'Beside', near: 'e250' });
+  drawing.apply({ op: 'box', key: 'b', text: 'Above', near: 'e260', side: 'above' });
+  drawing.apply({ op: 'note', key: 'c', text: 'Left', near: 'e100', side: 'left' });
+  assert.deepEqual(
+    ['a', 'b', 'c'].map((key) => [drawing.find(key).x, drawing.find(key).y]),
+    [
+      [1740, 2220],
+      [4840, 1100],
+      [2620, -150],
+    ],
+  );
+});
+
+test('a move takes a shape to an exact spot, and a sketch of many points is drawn', () => {
+  const drawing = new Drawing([], true);
+  drawing.apply({ op: 'box', key: 'b', text: 'One' });
+  drawing.apply({ op: 'move', id: 'b', at: [5000, 6000] });
+  assert.deepEqual([drawing.find('b').x, drawing.find('b').y], [5000, 6000]);
+  // 40 strokes of about 4,000 points each: too many to spread into Math.min.
+  const path = `M0 0 ${'c1 1 2 2 3 3 '.repeat(249)}`;
+  drawing.apply({ op: 'sketch', key: 's', strokes: Array.from({ length: 40 }, () => ({ path })) });
+  assert.ok(drawing.find('s'));
+});
+
+test('a save naming a shape twice keeps its newest version, and an undeleted shape counts', async (t) => {
+  const f = await fixture(t);
+  const made = await f.board.create(f.operator, 'Full');
+  const [one] = crowd(1) as BoardElement[];
+  await f.board.save(f.operator, made.id, [
+    { ...one!, version: 5, x: 500 },
+    { ...one!, version: 3, x: 300 },
+  ]);
+  assert.equal((await f.board.scene(f.operator, made.id)).elements[0]!.version, 5);
+  const full = crowd(5000).slice(1) as BoardElement[];
+  for (let at = 0; at < full.length; at += 500)
+    await f.board.save(f.operator, made.id, full.slice(at, at + 500));
+  await f.board.save(f.operator, made.id, [{ ...one!, version: 6, isDeleted: true }]);
+  await f.board.save(f.operator, made.id, [{ ...one!, id: 'last', version: 1 }]);
+  await assert.rejects(
+    f.board.save(f.operator, made.id, [{ ...one!, version: 7 }]),
+    refused('board_full'),
+  );
 });

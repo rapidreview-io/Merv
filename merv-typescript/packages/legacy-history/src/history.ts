@@ -235,41 +235,30 @@ export class LegacyHistoryReader {
   ): Promise<LegacyHistoryRecord> {
     await this.authorize(caller);
     const query = parse(detailInput, input);
-    const result = await this.state.read(async (sql) => {
-      const metadata = await sql.get<{ detail_bytes: number }>(
-        'SELECT detail_bytes FROM legacy_history_records WHERE source_id=? AND project_id=? AND record_type=? AND source_key=?',
+    // A record past the interactive limit is not read: its size alone answers.
+    const row = await this.state.read((sql) =>
+      sql.get<{
+        detail_bytes: number;
+        data_json: string;
+        content_hash: string;
+        summary_json: string;
+      }>(
+        'SELECT detail_bytes,CASE WHEN detail_bytes<=? THEN data_json END AS data_json,content_hash,summary_json FROM legacy_history_records WHERE source_id=? AND project_id=? AND record_type=? AND source_key=?',
+        maxDetailBytes,
         query.sourceId,
         caller.projectId,
         query.type,
         query.id,
-      );
-      const row =
-        metadata && metadata.detail_bytes <= maxDetailBytes
-          ? await sql.get<{ data_json: string; content_hash: string; summary_json: string }>(
-              'SELECT data_json,content_hash,summary_json FROM legacy_history_records WHERE source_id=? AND project_id=? AND record_type=? AND source_key=?',
-              query.sourceId,
-              caller.projectId,
-              query.type,
-              query.id,
-            )
-          : undefined;
-      return { metadata, row };
-    });
-    await this.authorize(caller);
-    check(
-      result.metadata,
-      'legacy_history_not_found',
-      'History record is unavailable in this project',
-      404,
+      ),
     );
+    await this.authorize(caller);
+    check(row, 'legacy_history_not_found', 'History record is unavailable in this project', 404);
     check(
-      result.metadata.detail_bytes <= maxDetailBytes,
+      row.detail_bytes <= maxDetailBytes,
       'legacy_history_detail_too_large',
       'History record exceeds the interactive detail limit; its complete canonical content remains archived',
       413,
     );
-    const { row } = result;
-    check(row, 'legacy_history_not_found', 'History record is unavailable in this project', 404);
     const summary = withFileRetention(JSON.parse(row.summary_json) as LegacyHistorySummaryRow);
     return {
       type: query.type,

@@ -6,8 +6,6 @@ import {
   type Caller,
   type DelegationSource,
   type DomainEvents,
-  type Scope,
-  type State,
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
@@ -91,17 +89,27 @@ const CONSUMER = 'research.automatic.v4';
 const UNAVAILABLE_RETRIES = 8;
 const TRANSIENT = ['state_timeout', 'state_busy', 'state_unavailable'];
 
-/** Existing durable events drive Research. This neither schedules nor launches workers. */
-export async function automaticResearch(
-  state: State,
-  scope: Scope,
-  workflows: Pick<Workflows, 'open' | 'replaceBlockers'>,
+export const automaticBlocker = (error: MervError): NonNullable<AutomaticBlocker> => ({
+  code: error.code,
+  message: clip(error.message, 2000),
+  status: error.status,
+});
+
+export const automaticRequest = (cycle: string, revision: number, action: string) =>
+  `research-auto:${digest({ cycle, revision, action })}`;
+
+// Automatic progress, run on ResearchService (index.ts) as its ResearchContext: binding the
+// consumer, waking cycles, the advance it makes, and closing work a failed input stranded.
+/**
+ * Existing durable events drive Research, which neither schedules nor launches workers; they keep
+ * their fixed grants.
+ */
+export async function bindAutomatic(
+  ctx: ResearchContext,
   events: DomainEvents,
-  reconcile: (caller: Caller, row: AutomaticRow, tx: Transaction) => Promise<AutomaticBlocker>,
-  /** Asked to try a cycle that an outage refused again later; it reads what was committed. */
-  unavailable: (row: AutomaticRow) => void,
 ): Promise<() => void | Promise<void>> {
-  return await events.subscribe({
+  ctx.open();
+  const release = await events.subscribe({
     id: CONSUMER,
     // New subscriptions start here; bindAutomatic's startup wake revisits every open cycle.
     from: 'now',
@@ -119,9 +127,10 @@ export async function automaticResearch(
     handle: async (event, tx) => {
       // Startup asks for a resume, as does a retry; a later one still to come answers this.
       const later = { projectId: event.projectId, type: 'research.resume', after: event.id };
-      if (event.type === 'research.resume' && (await state.findEvents(later, 1, tx)).length) return;
+      if (event.type === 'research.resume' && (await ctx.state.findEvents(later, 1, tx)).length)
+        return;
       // Only a defining cycle reads the paper, so only it can be unblocked by a patch.
-      const cycles = (await workflows.open('research', event.projectId, tx)).filter(
+      const cycles = (await ctx.workflows.open('research', event.projectId, tx)).filter(
         (cycle) => event.type !== 'paper.patched' || cycle.state === 'defining',
       );
       const rows = await tx.all<AutomaticRow>(
@@ -138,9 +147,9 @@ export async function automaticResearch(
         let delegated = false;
         try {
           const source = JSON.parse(row.source_json) as DelegationSource;
-          await scope.requireDelegation(source, 'write', tx);
+          await ctx.scope.requireDelegation(source, 'write', tx);
           delegated = true;
-          blocker = await reconcile(sourceCaller(source), row, tx);
+          blocker = await reconcileAutomatic(ctx, sourceCaller(source), row, tx);
           await tx.run('RELEASE SAVEPOINT research_automatic_cycle');
         } catch (error) {
           await tx.run('ROLLBACK TO SAVEPOINT research_automatic_cycle');
@@ -160,39 +169,12 @@ export async function automaticResearch(
           // A lapsed delegation, or a refusal only a person moves past, is somebody's move.
           const next = delegated ? OWNERS[error.code] : error.status !== 503 && LAPSED;
           if (next) blocker = { ...blocker, next, whose: 'owner' };
-          if (error.status === 503) unavailable(row);
+          if (error.status === 503) retryUnavailable(ctx, row);
         }
-        await publishBlocker(workflows, row, blocker, tx);
+        await publishBlocker(ctx.workflows, row, blocker, tx);
       }
     },
   });
-}
-
-export const automaticBlocker = (error: MervError): NonNullable<AutomaticBlocker> => ({
-  code: error.code,
-  message: clip(error.message, 2000),
-  status: error.status,
-});
-
-export const automaticRequest = (cycle: string, revision: number, action: string) =>
-  `research-auto:${digest({ cycle, revision, action })}`;
-
-// Automatic progress, run on ResearchService (index.ts) as its ResearchContext: binding the
-// consumer, waking cycles, the advance it makes, and closing work a failed input stranded.
-/** Subscribe through the existing engine's durable events; workers keep their fixed grants. */
-export async function bindAutomatic(
-  ctx: ResearchContext,
-  events: DomainEvents,
-): Promise<() => void | Promise<void>> {
-  ctx.open();
-  const release = await automaticResearch(
-    ctx.state,
-    ctx.scope,
-    ctx.workflows,
-    events,
-    async (caller, row, tx) => await reconcileAutomatic(ctx, caller, row, tx),
-    (row) => retryUnavailable(ctx, row),
-  );
   try {
     await wakeAutomatic(ctx);
   } catch (error) {

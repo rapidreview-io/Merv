@@ -247,6 +247,35 @@ export class Drawing {
   }
 
   /**
+   * Whether a spot of this size overlaps a standing shape as `overlaps` judges it, asking only the
+   * shapes filed under the cells the spot meets. A cell is at least the spot's size, so a spot
+   * meets at most four; a shape is filed with a GAP of room, more than the margin, and one that
+   * would meet more than nine cells is filed under `all`, which every spot asks.
+   */
+  private taken(size: { width: number; height: number }) {
+    const side = Math.max(200, Math.abs(size.width), Math.abs(size.height));
+    const cellsOf = (r: Rect, pad: number) => {
+      const [x0, x1, y0, y1] = [
+        Math.min(r.x, r.x + r.width) - pad,
+        Math.max(r.x, r.x + r.width) + pad,
+        Math.min(r.y, r.y + r.height) - pad,
+        Math.max(r.y, r.y + r.height) + pad,
+      ].map((at) => Math.floor(at / side)) as [number, number, number, number];
+      const keys: string[] = [];
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 9)
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) keys.push(`${x},${y}`);
+      return keys;
+    };
+    const cells = new Map<string, Rect[]>();
+    for (const o of this.occupied) {
+      const keys = cellsOf(o, GAP);
+      for (const key of keys.length ? keys : ['all'])
+        (cells.get(key) ?? cells.set(key, []).get(key)!).push(o);
+    }
+    return (r: Rect) =>
+      [...cellsOf(r, 0), 'all'].some((key) => !!cells.get(key)?.some((o) => overlaps(o, r)));
+  }
+  /**
    * Where a new shape of this size goes: at the place the operation names (`at`, the top-left
    * corner in board coordinates, as board.read reports them), in a frame, as near a shape as
    * there is room (on its `side` if one is asked), or in the next free place.
@@ -299,6 +328,7 @@ export class Drawing {
         above: { x: mid.x, y: t.y - GAP - size.height },
       };
       const sides = [...new Set([side ?? 'right', 'right', 'below', 'left', 'above'] as const)];
+      const taken = this.taken(size);
       // Outward from the shape ring by ring, its asked side first: the nearest room there is.
       for (let ring = 0; !at && ring <= 25; ring++)
         for (const name of sides) {
@@ -312,9 +342,7 @@ export class Drawing {
             (a, b) =>
               Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y),
           );
-          const free = spots.find(
-            (spot) => !this.occupied.some((o) => overlaps(o, { ...spot, ...size })),
-          );
+          const free = spots.find((spot) => !taken({ ...spot, ...size }));
           if (free) {
             at = { ...free, ...size };
             break;
@@ -611,7 +639,7 @@ export class Drawing {
       }
       case 'move': {
         const el = this.find(op.id);
-        if (!op.near && !op.in) return;
+        if (!op.near && !op.in && !op.at) return;
         this.survey(new Set([el, ...this.carried(el)]));
         const at = this.place(el, op);
         const dx = at.x - el.x;
@@ -647,12 +675,9 @@ export class Drawing {
         // size asked for, and placed like any shape; the strokes move together as a group.
         const read = op.strokes.map((stroke) => ({ stroke, lines: strokesOf(stroke.path) }));
         const points = read.flatMap(({ lines }) => lines.flatMap((line) => line.points));
-        const [minX, minY] = [
-          Math.min(...points.map((p) => p[0])),
-          Math.min(...points.map((p) => p[1])),
-        ];
-        const width = Math.max(...points.map((p) => p[0])) - minX || 1;
-        const height = Math.max(...points.map((p) => p[1])) - minY || 1;
+        const { x: minX, y: minY, ...extent } = around(points);
+        const width = extent.width || 1;
+        const height = extent.height || 1;
         const scale = { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
         const at = this.place({ width: width * scale, height: height * scale }, op);
         const group = elementId();
@@ -667,16 +692,9 @@ export class Drawing {
             // A painted shape is a closed outline.
             if (filled && (drawn[0]![0] !== drawn.at(-1)![0] || drawn[0]![1] !== drawn.at(-1)![1]))
               drawn.push([...drawn[0]!]);
-            const ox = Math.min(...drawn.map((p) => p[0]!));
-            const oy = Math.min(...drawn.map((p) => p[1]!));
-            const box = {
-              x: ox,
-              y: oy,
-              width: Math.max(...drawn.map((p) => p[0]!)) - ox,
-              height: Math.max(...drawn.map((p) => p[1]!)) - oy,
-            };
+            const box = around(drawn);
             const el = this.add(filled ? 'line' : 'freedraw', box, {
-              points: drawn.map(([x, y]) => [x! - ox, y! - oy]),
+              points: drawn.map(([x, y]) => [x! - box.x, y! - box.y]),
               strokeColor: INKS[stroke.color ?? stroke.fill ?? 'black'],
               backgroundColor: filled ? PAINTS[stroke.fill!] : 'transparent',
               strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
@@ -711,14 +729,7 @@ const rect = (el: Rect): Rect => ({ x: el.x, y: el.y, width: el.width, height: e
 /** Where a shape stands, a line or a pen stroke by the points it passes through. */
 function rectOf(el: El): Rect {
   if (!Array.isArray(el.points) || !el.points.length) return rect(el);
-  const xs = (el.points as [number, number][]).map((p) => el.x + p[0]);
-  const ys = (el.points as [number, number][]).map((p) => el.y + p[1]);
-  return {
-    x: Math.min(...xs),
-    y: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
-  };
+  return around((el.points as [number, number][]).map(([x, y]) => [el.x + x, el.y + y]));
 }
 /** Where an operation puts what it makes. */
 type Where = {
@@ -732,17 +743,21 @@ const contains = (outer: Rect, inner: Rect) =>
   inner.y >= outer.y &&
   inner.x + inner.width <= outer.x + outer.width &&
   inner.y + inner.height <= outer.y + outer.height;
+/** The box around these, walked once: a sketch's points are too many to spread into Math.min. */
 function bounds(rects: Rect[]): Rect | undefined {
   if (!rects.length) return undefined;
-  const x = Math.min(...rects.map((r) => r.x));
-  const y = Math.min(...rects.map((r) => r.y));
-  return {
-    x,
-    y,
-    width: Math.max(...rects.map((r) => r.x + r.width)) - x,
-    height: Math.max(...rects.map((r) => r.y + r.height)) - y,
-  };
+  let [x, y, right, bottom] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const r of rects) {
+    x = Math.min(x, r.x);
+    y = Math.min(y, r.y);
+    right = Math.max(right, r.x + r.width);
+    bottom = Math.max(bottom, r.y + r.height);
+  }
+  return { x, y, width: right - x, height: bottom - y };
 }
+/** The box a nonempty list of points stands in. */
+const around = (points: number[][]) =>
+  bounds(points.map(([x, y]) => ({ x: x!, y: y!, width: 0, height: 0 })))!;
 function arrowMiddle(arrow: El) {
   const [, end] = arrow.points as [number, number][];
   return { x: arrow.x + (end?.[0] ?? 0) / 2, y: arrow.y + (end?.[1] ?? 0) / 2 };

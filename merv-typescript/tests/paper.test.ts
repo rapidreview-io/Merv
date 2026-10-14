@@ -190,6 +190,13 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     })),
   );
   assert.ok(!JSON.stringify(listed).includes('Updated evidence only.'));
+  // Each is its revision with section bodies left out, field for field, sections last.
+  const whole = await Promise.all([1, 2].map((n) => f.paper.revision(f.reader, 'literature', n)));
+  const bare = whole.map((revision) => {
+    const { sections, ...head } = revision!;
+    return { ...head, sections: sections.map(({ id, title }) => ({ id, title })) };
+  });
+  assert.equal(JSON.stringify(listed), JSON.stringify(bare));
   // One retained revision reads by its number alone; a number never written reads as none.
   assert.deepEqual(await f.paper.revision(f.reader, 'literature', 2), updated);
   assert.equal((await f.paper.revision(f.reader, 'literature', 1))?.revision, 1);

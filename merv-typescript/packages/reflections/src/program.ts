@@ -172,12 +172,7 @@ export async function assignmentInputs(
     : await inputs(ctx, context, current);
 }
 /** Each lens of an attempt has its own author. */
-export function distinctAuthor(
-  ctx: ReflectionsContext,
-  lens: LensRow,
-  lenses: LensRow[],
-  actorId: string,
-): void {
+export function distinctAuthor(lens: LensRow, lenses: LensRow[], actorId: string): void {
   check(
     !lenses.some((other) => other.id !== lens.id && other.producer_id === actorId),
     'lens_independence',
@@ -229,7 +224,7 @@ export async function admit(
     );
     if (!delegated) {
       const lenses = await ctx.lensRows(wave, tx);
-      distinctAuthor(ctx, lens, lenses, caller.actorId);
+      distinctAuthor(lens, lenses, caller.actorId);
       const parallel = await ctx.once(`leases:${caller.projectId}:${caller.actorId}`, () =>
         leaseRows(tx, { projectId: caller.projectId, actorId: caller.actorId, active: true }),
       );
@@ -481,7 +476,6 @@ export async function build(ctx: ReflectionsContext, context: WorkflowCheckConte
   };
 }
 export function execution(
-  ctx: ReflectionsContext,
   lens: boolean,
   reviewing: boolean,
   research = false,
@@ -552,8 +546,7 @@ export function hooks(
     acquire: async (context) => {
       const source = { ...context, caller: context.source };
       const { wave, lens } = await admit(ctx, source, true);
-      if (lens)
-        distinctAuthor(ctx, lens, await ctx.lensRows(wave, context.tx), context.caller.actorId);
+      if (lens) distinctAuthor(lens, await ctx.lensRows(wave, context.tx), context.caller.actorId);
       // Reviews refuses a worker who wrote a lens or the synthesis (review_independence), and
       // Workflows admits the worker through admit() right after this hook.
       const review =
@@ -607,7 +600,7 @@ export function policy(ctx: ReflectionsContext, lens: boolean, research = false)
     },
     build: async (c: WorkflowCheckContext) => await build(ctx, c),
     references: async (c: WorkflowCheckContext) => await references(ctx, c),
-    execution: execution(ctx, lens, state === 'in_review', research),
+    execution: execution(lens, state === 'in_review', research),
     lease: hooks(ctx),
   }));
   return {

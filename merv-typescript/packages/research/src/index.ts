@@ -60,7 +60,6 @@ import type {
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
-export { definition } from './policy.js';
 export type * from './types.js';
 /** What Research asks of Code; a test may hand it exactly this much. */
 type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance' | 'unit'>;
@@ -332,18 +331,12 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'create', input, tx, async () => {
-        if (input.previousCycleId) {
-          await follow(this, caller, input.previousCycleId, tx);
-          // What the ended cycle asked of its owner is answered by the cycle that follows it.
-          await publishBlocker(
-            this.workflows,
-            { project_id: caller.projectId, research_id: input.previousCycleId },
-            null,
-            tx,
-          );
-        } else if (!caller.session) {
-          // A cycle its owner starts by hand without naming one answers the latest run that
-          // stopped for that owner all the same; anyone else's cycle leaves the decision theirs.
+        // What an ended cycle asked of its owner is answered by the cycle that follows it. One its
+        // owner starts by hand without naming one answers the latest run that stopped for that
+        // owner all the same; anyone else's cycle leaves the decision theirs.
+        let answered = input.previousCycleId;
+        if (answered) await follow(this, caller, answered, tx);
+        else if (!caller.session) {
           const asked = (await this.workflows.blockers(caller, undefined, tx))
             .filter((item) => item.provider === AUTOMATIC_PROVIDER)
             .filter((item) => item.code === 'research_needs_owner')
@@ -354,13 +347,15 @@ export class ResearchService implements Research {
             (caller.actorId === ended.ownerId ||
               (await this.scope.eligible(caller.projectId, caller.actorId, 'admin', tx)))
           )
-            await publishBlocker(
-              this.workflows,
-              { project_id: caller.projectId, research_id: ended.id },
-              null,
-              tx,
-            );
+            answered = ended.id;
         }
+        if (answered)
+          await publishBlocker(
+            this.workflows,
+            { project_id: caller.projectId, research_id: answered },
+            null,
+            tx,
+          );
         return await begin(this, caller, input, 'create', null, tx);
       });
     });
@@ -470,14 +465,16 @@ export class ResearchService implements Research {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
       return await this.command(caller, 'end', input, tx, async () => {
-        // A completed run whose plan stopped for its owner ends with their decision to stop.
-        if (record.automation?.blocker?.code === 'research_needs_owner') {
+        // Ending forgets whatever the run said of the cycle, an outage's first sighting too.
+        if (record.automation)
           await publishBlocker(
             this.workflows,
             { project_id: caller.projectId, research_id: record.id },
             null,
             tx,
           );
+        // A completed run whose plan stopped for its owner ends with their decision to stop.
+        if (record.automation?.blocker?.code === 'research_needs_owner') {
           await this.event(
             caller,
             'stopped',
@@ -487,14 +484,6 @@ export class ResearchService implements Research {
           );
           return await this.get(caller, record.id, tx);
         }
-        // Ending forgets whatever the run said of the cycle, an outage's first sighting too.
-        if (record.automation)
-          await publishBlocker(
-            this.workflows,
-            { project_id: caller.projectId, research_id: record.id },
-            null,
-            tx,
-          );
         const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
         const moved = await this.checked.take(
           tx,

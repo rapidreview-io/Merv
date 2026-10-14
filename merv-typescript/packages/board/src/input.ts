@@ -197,6 +197,8 @@ export const elementSchema = z
     width: z.number().finite(),
     height: z.number().finite(),
     link,
+    // A line's points are drawn into the picture an agent looks at, so they are numbers only.
+    points: z.array(z.tuple([z.number().finite(), z.number().finite()])).optional(),
   })
   .passthrough();
 export const saveSchema = z

@@ -152,16 +152,16 @@ export class PaperService implements Paper {
     parse(kind, documentKind);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      // Each revision without its section bodies, which are most of it, in its own key order.
       return (
-        await tx.all<{ record: string }>(
-          'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? ORDER BY revision',
+        await tx.all<{ head: string; sections: string | null }>(
+          `SELECT (SELECT json_object_agg(key,value ORDER BY n) FROM json_each(record::json) WITH ORDINALITY e(key,value,n) WHERE key<>'sections')::text AS head,
+            (SELECT json_agg(json_build_object('id',s->'id','title',s->'title') ORDER BY n) FROM json_array_elements(record::json->'sections') WITH ORDINALITY t(s,n))::text AS sections
+           FROM paper_revisions WHERE project_id=? AND kind=? ORDER BY revision`,
           caller.projectId,
           documentKind,
         )
-      ).map((row) => {
-        const { sections, ...revision } = JSON.parse(row.record) as PaperRevision;
-        return { ...revision, sections: sections.map(({ id, title }) => ({ id, title })) };
-      });
+      ).map((row) => ({ ...JSON.parse(row.head), sections: JSON.parse(row.sections ?? '[]') }));
     });
   }
   async revision(
