@@ -12,6 +12,7 @@ import {
 } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { CaptureSummary, SbxPipelines, WorkflowRecord } from '@sandboxes/pipelines';
+import type { SbxJobs } from '@sandboxes/jobs';
 import type { SbxObjects } from '@sandboxes/storage';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
 
@@ -40,8 +41,9 @@ type Work = {
   account_id: string;
   work_ref: string;
   released: boolean;
+  quiesced: boolean;
 };
-type Receipt = Omit<Work, 'account_id' | 'released'> & {
+type Receipt = Omit<Work, 'account_id' | 'released' | 'quiesced'> & {
   workflow_id: string;
   node_id: string;
   attempt_ref: string | null;
@@ -64,6 +66,7 @@ CREATE INDEX sandbox_capture_work ON sandbox_capture_index(project_id,work_ref,a
 
 export class SandboxEvidence implements SandboxCaptureEvidence {
   private reconciling?: Promise<void>;
+  private readonly checkedWorks = new Map<string, number>();
   private readonly doneWorkflows = new Set<string>();
 
   constructor(
@@ -74,6 +77,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     private readonly objects: Pick<SbxObjects, 'evidence' | 'download'>,
     private readonly accounts: Pick<SbxAccounts, 'namespace'>,
     private readonly clock: () => number = Date.now,
+    private readonly jobs?: Pick<SbxJobs, 'listPage'>,
   ) {}
 
   async initialize() {
@@ -138,13 +142,20 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
   private async pass() {
     const works = await this.state.read((sql) =>
       sql.all<Work>(
-        `SELECT project_id,namespace,account_id,work_ref,bool_and(retired=3) AS released
+        `SELECT project_id,namespace,account_id,work_ref,bool_and(retired=3) AS released,
+           bool_and(retired>=1) AS quiesced
          FROM sandbox_run_intents WHERE retired<4 GROUP BY 1,2,3,4`,
       ),
     );
-    for (const work of works)
+    for (const work of works) {
+      const key = JSON.stringify([work.project_id, work.namespace, work.work_ref]);
       try {
-        if ((await this.work(work)) && work.released)
+        const started = this.clock();
+        const done = await this.work(work);
+        if (done && work.quiesced && this.jobs && (await this.jobsDone(work)))
+          this.checkedWorks.set(key, started);
+        else this.checkedWorks.delete(key);
+        if (done && work.released)
           await this.state.transaction((tx) =>
             tx.run(
               `UPDATE sandbox_run_intents SET retired=4
@@ -156,8 +167,49 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
             ),
           );
       } catch {
+        this.checkedWorks.delete(key);
         // The next pass retries unavailable Sandboxes services.
       }
+    }
+  }
+
+  /** Customer finalization waits for retired worker authority and a later complete evidence scan.
+   * Provider I/O is confined to reconcile(), never held inside the caller's Merv transaction. */
+  async settled(
+    projectId: string,
+    instanceId: string,
+    epoch: string,
+    notBefore: string,
+    tx: Transaction,
+  ) {
+    this.state.assertTransaction(tx);
+    const runs = await tx.all<{ namespace: string; retired: number }>(
+      'SELECT namespace,retired FROM sandbox_run_intents WHERE project_id=? AND work_ref=? AND attempt_ref=?',
+      projectId,
+      instanceId,
+      epoch,
+    );
+    return (
+      runs.length > 0 &&
+      runs.every(
+        // A run at 4 was released with every capture settled, so nothing more can arrive.
+        (run) =>
+          run.retired >= 4 ||
+          (run.retired >= 1 &&
+          (this.checkedWorks.get(JSON.stringify([projectId, run.namespace, instanceId])) ?? -Infinity) >=
+            Date.parse(notBefore)),
+      )
+    );
+  }
+
+  private async jobsDone(work: Work) {
+    const page = await this.jobs!.listPage({
+      namespace: work.namespace,
+      workRef: work.work_ref,
+      states: ['queued', 'launching', 'running', 'cancel_requested'],
+      limit: 1,
+    });
+    return page.jobs.length === 0;
   }
 
   private async work(work: Work) {

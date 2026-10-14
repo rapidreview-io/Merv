@@ -52,6 +52,9 @@ const workflowEnabled = sandboxesEnabled && optIn('MERV_FLEET_WORKFLOW_ENABLED')
 // ignored, whatever their value: every workflow machine is a work host, and the hosted release's
 // workflow gate proves each image can be one before it is switched in (PI_OPERATIONS.md).
 const piEnabled = sandboxesEnabled && optIn('MERV_PI_ENABLED');
+const customerExperimentsEnabled = optIn('MERV_CUSTOMER_EXPERIMENTS_ENABLED');
+if (customerExperimentsEnabled && (!piEnabled || !workflowEnabled))
+  throw new Error('Customer experiments require Pi and Fleet workflow');
 if (workflowEnabled && !fleetEnabled) throw new Error('Fleet workflow requires MERV_FLEET_ENABLED');
 if (piEnabled && !fleetEnabled) throw new Error('Pi requires MERV_FLEET_ENABLED');
 const mode = required('MERV_TS_AUTH_MODE');
@@ -139,7 +142,10 @@ set('api', {
 const uiAssets = process.env.MERV_UI_ASSETS;
 if (uiAssets !== undefined && !/^\/[\w./-]*\/$/.test(uiAssets))
   throw new Error('Invalid MERV_UI_ASSETS');
-set('ui', uiAssets ? { assets: uiAssets } : {});
+set('ui', {
+  ...(uiAssets ? { assets: uiAssets } : {}),
+  admins: process.env.MERV_ADMIN_IDENTITIES ? json('MERV_ADMIN_IDENTITIES') : [],
+});
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
@@ -268,6 +274,7 @@ if (fleetEnabled) {
       id: 'fleet-workflow',
       name: '@merv/fleet/workflow',
       config: {
+        ...(customerExperimentsEnabled && { astraMediumEnabled: true }),
         people,
         modelApiKeyEnv,
         baseUrl: origin('MERV_FLEET_WORKFLOW_BASE_URL'),
@@ -385,6 +392,60 @@ if (nisaKey) {
       },
     },
   );
+}
+if (customerExperimentsEnabled) {
+  if (!sandboxesEnabled)
+    throw new Error('Customer experiments require native Sandboxes with managed ML funding');
+  const models = piModels(json('MERV_PI_MODELS'), 'MERV_PI_MODELS');
+  if (!models.some((model) => model.id === 'gpt-6-astra'))
+    throw new Error('Customer experiments require gpt-6-astra in MERV_PI_MODELS');
+  const sponsor = {
+    issuer: required('MERV_CUSTOMER_SPONSOR_ISSUER'),
+    subject: required('MERV_CUSTOMER_SPONSOR_SUBJECT'),
+  };
+  const people = json('MERV_FLEET_WORKFLOW_PEOPLE');
+  if (!people.includes('*') && !people.includes(`${sponsor.issuer} ${sponsor.subject}`))
+    throw new Error('Customer sponsor must be served by Fleet workflow');
+  for (const name of ['MERV_CUSTOMER_ACCESS_KEY', 'MERV_CUSTOMER_INTAKE_KEY'])
+    if (Buffer.byteLength(required(name)) < 32)
+      throw new Error(`${name} requires at least 32 bytes`);
+  const customer = {
+    publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+    sponsor,
+    computeProjectId: required('MERV_CUSTOMER_COMPUTE_PROJECT_ID'),
+    computeBudgetUsd:
+      process.env.MERV_CUSTOMER_COMPUTE_BUDGET_USD === undefined
+        ? null
+        : integer('MERV_CUSTOMER_COMPUTE_BUDGET_USD', 1000, 1, 100000),
+    computeProviders: json('MERV_CUSTOMER_COMPUTE_PROVIDERS'),
+    publicIntake: process.env.MERV_CUSTOMER_PUBLIC_INTAKE === 'true',
+    maxRequestsPerDay: integer('MERV_CUSTOMER_REQUESTS_PER_DAY', 25, 1, 1000),
+  };
+  if (process.env.MERV_CUSTOMER_DATA_ENDPOINT !== undefined) {
+    required('MERV_CUSTOMER_DATA_ACCESS_KEY_ID');
+    required('MERV_CUSTOMER_DATA_SECRET_ACCESS_KEY');
+    customer.storage = {
+      endpoint: origin('MERV_CUSTOMER_DATA_ENDPOINT'),
+      region: process.env.MERV_CUSTOMER_DATA_REGION ?? 'us-east-1',
+      bucketPrefix: required('MERV_CUSTOMER_DATA_BUCKET_PREFIX'),
+      accessKeyIdEnv: 'MERV_CUSTOMER_DATA_ACCESS_KEY_ID',
+      secretAccessKeyEnv: 'MERV_CUSTOMER_DATA_SECRET_ACCESS_KEY',
+    };
+  }
+  if (process.env.MERV_CUSTOMER_STRIPE_SECRET_KEY !== undefined) {
+    required('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET');
+    customer.stripe = { live: optIn('MERV_CUSTOMER_STRIPE_LIVE') };
+  }
+  if (process.env.MERV_CUSTOMER_RESEND_KEY !== undefined) {
+    customer.email = { from: required('MERV_CUSTOMER_EMAIL_FROM') };
+  }
+  if (customer.stripe?.live && !customer.email)
+    throw new Error('Live customer checkout requires a results email sender');
+  config.plugins.push({
+    id: 'customer-experiments',
+    name: '@merv/customer-experiments',
+    config: customer,
+  });
 }
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {

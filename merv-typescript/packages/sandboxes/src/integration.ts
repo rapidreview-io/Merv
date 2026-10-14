@@ -16,6 +16,7 @@ export const sandboxIntegrationPlugin = {
     'sbxPipelines',
     'sbxObjects',
     'sbxAccounts',
+    'sbxJobs',
   ],
   async apply(ctx: Context, config: { legacyCaptures?: { namespace: string } } = {}) {
     await ctx.effect(async function* () {
@@ -28,6 +29,8 @@ export const sandboxIntegrationPlugin = {
         ctx.sbxPipelines,
         ctx.sbxObjects,
         ctx.sbxAccounts,
+        Date.now,
+        ctx.sbxJobs,
       );
       await evidence.initialize();
       yield ctx.provide('sandboxEvidence', evidence);

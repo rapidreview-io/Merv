@@ -18,7 +18,7 @@ export type PiRelayConfig = Omit<
 > &
   Partial<Pick<PiRelay, 'maxRequestBytes' | 'totalTimeoutMs'>> & {
     /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
-    models: readonly { id: string; effort: 'none' | 'low' }[];
+    models: readonly { id: string; effort: 'none' | 'low' | 'medium' }[];
   };
 
 const piLedger = dailyTokens('pi_model_usage');

@@ -151,4 +151,18 @@ export const modelMigrations = [
   workflowRetryMigration,
   grantTokensMigration,
   relayFaultsMigration,
+  {
+    version: 7,
+    sql: `CREATE TABLE fleet_workflow_platforms (
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      request_id TEXT NOT NULL,
+      platform_json TEXT NOT NULL,
+      PRIMARY KEY(project_id, request_id)
+    );
+    CREATE OR REPLACE FUNCTION fleet_workflow_platform_immutable() RETURNS trigger LANGUAGE plpgsql AS $merv$
+    BEGIN RAISE EXCEPTION 'Hosted workflow platforms are immutable'; END;
+    $merv$;
+    CREATE TRIGGER fleet_workflow_platform_no_update BEFORE UPDATE OR DELETE ON fleet_workflow_platforms
+    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_platform_immutable();`,
+  },
 ];

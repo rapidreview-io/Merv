@@ -430,6 +430,7 @@ export class ManagedRunnerBindings {
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
+        platform: JSON.parse(row.platform_json) as RunnerPlatform,
         expiresAt: new Date(
           Math.min(Date.parse(session.hard_deadline), Date.parse(row.control_expires_at)),
         ).toISOString(),

@@ -1,0 +1,32 @@
+{
+  "name": "@merv/customer-experiments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1133.0",
+    "@merv/api": "0.1.0",
+    "@merv/artifacts": "0.1.0",
+    "@merv/blobs": "0.1.0",
+    "@merv/code-work": "0.1.0",
+    "@merv/contracts": "0.1.0",
+    "@merv/pi": "0.1.0",
+    "@merv/reviews": "0.1.0",
+    "@merv/sandboxes": "0.1.0",
+    "@merv/sessions": "0.1.0",
+    "@merv/workflows": "0.1.0",
+    "cordis": "4.0.0-rc.10",
+    "stripe": "^23.0.0",
+    "zod": "^3.25.0",
+    "@sandboxes/accounts": "0.1.0",
+    "@sandboxes/billing": "0.1.0",
+    "@sandboxes/db": "0.1.0",
+    "@sandboxes/providers": "0.1.0",
+    "@sandboxes/kernel": "0.1.0",
+    "@sandboxes/merv-host": "0.1.0"
+  }
+}

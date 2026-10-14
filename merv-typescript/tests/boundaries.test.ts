@@ -165,6 +165,7 @@ const capabilities: Record<string, readonly string[]> = {
     'sbxPipelines',
     'sbxObjects',
     'sbxAccounts',
+    'sbxJobs',
   ],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
@@ -241,6 +242,7 @@ const adapterKind = (path: string) =>
   undefined;
 // The in-process host's console composes API and UI; its proxy is transport-only.
 const consoleAdapters = new Set([
+  join('customer-experiments', 'src', 'index.ts'),
   join('sandboxes', 'src', 'console.ts'),
   join('sandboxes', 'src', 'sandboxes-proxy.ts'),
 ]);
@@ -295,6 +297,7 @@ const pureRules = new Set([
   '@merv/paper/rules',
   '@merv/context-builder/artifact-item',
   '@merv/sessions/rules',
+  '@merv/sessions/compute',
   '@merv/sessions/agent-stream',
   '@merv/ui/manifest',
 ]);
@@ -522,7 +525,15 @@ function assertComponentReferences(
       // The integration publishes its capture reader contract alongside its implementation.
       const captureTypes = typeOnly && specifier === '@merv/sandboxes/sandbox-evidence';
       // Pure rules (no service, see the test below) that any unit may run.
-      if (!utility && !credentials && !events && !captureTypes && !pureRules.has(specifier)) {
+      const requestStorage = owner === 'customer-experiments' && specifier === '@merv/blobs/s3';
+      if (
+        !utility &&
+        !credentials &&
+        !events &&
+        !captureTypes &&
+        !requestStorage &&
+        !pureRules.has(specifier)
+      ) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,
@@ -890,6 +901,35 @@ test('Cordis service requirements match the architecture and every accessed capa
           actualProvided.push(child.arguments[0].text);
         }
       });
+      if (name.text === 'merv-customer-experiments') {
+        assert.equal(relative(packagesRoot, path), join('customer-experiments', 'src', 'index.ts'));
+        assert.deepEqual(
+          sorted(declared),
+          sorted([
+            'state',
+            'scope',
+            'artifacts',
+            'workflows',
+            'reviews',
+            'codeWork',
+            'sessions',
+            'sandboxEvidence',
+            'sbxMerv',
+            'sbxAccounts',
+            'sbxDb',
+            'sbxBilling',
+            'sbxProviders',
+            'sbxVault',
+            'sbxSettings',
+            'sbxResourceLimits',
+            'pi',
+            'tools',
+            'api',
+          ]),
+        );
+        assert.deepEqual(actualProvided, []);
+        return;
+      }
       if (name.text === 'merv-fleet-workflow') {
         assert.equal(relative(packagesRoot, path), join('fleet', 'src', 'workflow.ts'));
         assert.deepEqual(sorted(declared), ['api', 'fleet', 'scope', 'sessions', 'state', 'tools']);

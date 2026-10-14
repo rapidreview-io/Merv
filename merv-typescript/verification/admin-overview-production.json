@@ -1,0 +1,18 @@
+{
+  "release": "20261014T070642Z-8c5c8909-733fa7fece71",
+  "adminAccount": "gural@rapidreview.io",
+  "anonymousDataStatus": 401,
+  "pageStatus": 200,
+  "healthStatus": 200,
+  "verifiedInBrowser": {
+    "totalExperiments": 50,
+    "nonterminal": 8,
+    "assignedExecutionAgents": 0,
+    "standaloneExperiments": 2,
+    "filters": true,
+    "detailPanel": true
+  },
+  "backendTests": 13,
+  "uiTypecheck": "pass",
+  "build": "pass"
+}

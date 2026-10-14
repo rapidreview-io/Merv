@@ -373,6 +373,9 @@ test('Sandboxes integration issues connections and follows committed session and
   ctx.provide('sbxObjects', {} as SbxObjects);
   ctx.provide('sbxAccounts', {} as SbxAccounts);
   await ctx.plugin(sessionsPlugin, { sweepIntervalMs: 60_000 });
+  ctx.provide('sbxJobs', {
+    listPage: async () => ({ jobs: [], next: null }),
+  } as unknown as Context['sbxJobs']);
   await ctx.plugin(sandboxIntegrationPlugin);
   const boot = await scope.credentials.bootstrap({ projectName: 'Runs', actorName: 'Owner' });
   const caller = {

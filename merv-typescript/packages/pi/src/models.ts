@@ -1,6 +1,10 @@
 /** Portable conversation read models, shared by the server and the browser. */
 import type { Data } from '@merv/contracts/data';
-import type { PiModelConfig } from './schema.js';
+export interface PiModelConfig {
+  id: string;
+  label: string;
+  effort: 'none' | 'low' | 'medium';
+}
 
 type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
 /** Why a command was interrupted; the UI turns each into a sentence. */
@@ -58,6 +62,8 @@ export interface PiCommand {
   machine?: string;
   /** The model it answers on, fixed when a worker claims it. */
   model?: string;
+  /** Profile turns record the enforced reasoning effort alongside their model. */
+  effort?: PiModelConfig['effort'];
   status: PiStatus;
   messages: PiMessage[];
   outcomes: PiToolOutcome[];

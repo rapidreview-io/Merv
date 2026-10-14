@@ -55,6 +55,7 @@ export interface WorkflowDispatchCandidate extends WorkflowExecutionTarget {
   policyHash: string;
   registrationId: string;
   workspace: WorkflowWorkspacePolicy;
+  platform?: { harness: 'codex' | 'claude'; model: string; effort: string };
   /** When the instance last changed revision: how long this step has been waiting. */
   updatedAt: string;
 }

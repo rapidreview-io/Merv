@@ -18,6 +18,7 @@
     "@sandboxes/storage": "0.1.0",
     "@sandboxes/accounts": "0.1.0",
     "cordis": "4.0.0-rc.10",
-    "zod": "^3.25.0"
+    "zod": "^3.25.0",
+    "@sandboxes/jobs": "0.1.0"
   }
 }

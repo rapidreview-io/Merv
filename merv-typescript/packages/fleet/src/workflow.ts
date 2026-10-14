@@ -11,6 +11,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type Sql,
   requireHuman,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
@@ -19,10 +20,16 @@ import type {
   ManagedRunnerBindingIdentity,
   Sessions,
   SessionsProjectStatus,
+  RunnerPlatform,
 } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner, ManagedModelGrant } from './types.js';
 import { personKey } from './model-ledger.js';
-import { hostedCodexCapabilities, hostedCodexPlatform } from './hosted-codex.js';
+import {
+  hostedAstraPlatform,
+  hostedCodexCapabilities,
+  hostedCodexPlatform,
+  type HostedCodexPlatform,
+} from './hosted-codex.js';
 import {
   budgetIn,
   codexModelRelay,
@@ -48,6 +55,8 @@ const workflowConfig = z
     baseUrl: z.string().url().max(2048),
     maxAgents: z.number().int().min(1).max(64).default(10),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
+    /** Requires the hosted image that accepts an exact Astra/medium bootstrap. */
+    astraMediumEnabled: z.boolean().default(false),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
   .strict();
@@ -128,10 +137,10 @@ const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'l
 /** What Fleet rents for: work its machines can take, and questions to agents whose conversations
  *  they can resume (an image that runs inquiry visits says so in its heartbeat; one that does not
  *  is never offered one, and its host goes unclaimed). */
-const demandInput = {
-  platform: hostedCodexPlatform,
+const demandInput = (platform: HostedCodexPlatform = hostedCodexPlatform) => ({
+  platform,
   capabilities: [...hostedCodexCapabilities, INQUIRY_CAPABILITY],
-};
+});
 /** A refusal with one of `statuses` read as `value`; any other failure is thrown on. */
 const refusedAs =
   <T>(value: T, ...statuses: number[]) =>
@@ -208,7 +217,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
           ],
           retired: (binding, tx) => this.fleet.retired(binding.allocationId, tx),
           // Hosted Codex's image brokers Hugging Face downloads through HF_TOKEN/HF_ENDPOINT.
-          huggingFace: (binding) => canonical(binding.platform) === canonical(hostedCodexPlatform),
+          huggingFace: (binding) =>
+            this.platforms.some((platform) => canonical(binding.platform) === canonical(platform)),
           // The person a machine is rented for pays its model calls: while they have no tokens
           // left today, it takes no new work, and a visit the relay cut off waits too.
           // Said to the person whose limit it is, the one who raises it, in Settings.
@@ -257,13 +267,46 @@ export class FleetWorkflowAdapter implements FleetOwner {
   private accepted(a: FleetAllocation): boolean {
     return a.owner.kind === ownerKind;
   }
+  private get platforms() {
+    return this.config.astraMediumEnabled
+      ? [hostedCodexPlatform, hostedAstraPlatform]
+      : [hostedCodexPlatform];
+  }
+  /** Chosen before rent and retained across process restarts. Historical requests had only the
+   * original platform. No current workflow state or worker input can change an allocated host. */
+  private async allocationPlatform(a: FleetAllocation, sql?: Sql): Promise<HostedCodexPlatform> {
+    const read = async (sql: Sql) => {
+      const row = await sql.get<{ platform_json: string }>(
+        'SELECT platform_json FROM fleet_workflow_platforms WHERE project_id=? AND request_id=?',
+        a.projectId,
+        a.requestId,
+      );
+      const platform = row
+        ? (JSON.parse(row.platform_json) as RunnerPlatform)
+        : hostedCodexPlatform;
+      const offered = this.platforms.find(
+        (candidate) => canonical(candidate) === canonical(platform),
+      );
+      check(offered, 'fleet_model_unavailable', 'The allocated hosted model is not enabled', 503);
+      return offered;
+    };
+    return sql ? read(sql) : this.state.read(read);
+  }
   async valid(a: FleetAllocation, tx: Transaction): Promise<boolean> {
-    return (
+    if (!(
       this.accepted(a) &&
       a.deadlineAt > new Date(this.clock()).toISOString() &&
       !!workId(a) &&
       !!(await this.director(a.source, tx))
-    );
+    ))
+      return false;
+    try {
+      await this.allocationPlatform(a, tx);
+      return true;
+    } catch (error) {
+      if (error instanceof MervError && error.code === 'fleet_model_unavailable') return false;
+      throw error;
+    }
   }
   /** A step's machine is for the person who directs it; a review director's, for its voucher.
    * A lookup that fails refuses the request. */
@@ -358,10 +401,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const current = new Map<string, string | undefined>();
     for (const source of sources.values()) {
       // Historical directors can be revoked; another current director may still serve work.
-      const demand = await this.sessions.dispatch
-        .dispatchDemand(sourceCaller(source), demandInput)
-        .catch(refusedAs({ candidates: [] }, 401, 403, 404));
-      for (const candidate of demand.candidates) current.set(targetId(candidate), candidate.since);
+      for (const platform of this.platforms) {
+        const demand = await this.sessions.dispatch
+          .dispatchDemand(sourceCaller(source), demandInput(platform))
+          .catch(refusedAs({ candidates: [] }, 401, 403, 404));
+        for (const candidate of demand.candidates) current.set(targetId(candidate), candidate.since);
+      }
     }
     return current;
   }
@@ -564,28 +609,34 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
-      canonical(binding.platform) !== canonical(hostedCodexPlatform) ||
       canonical(binding.capabilities) !==
-        canonical([...hostedCodexCapabilities, workHostCapability])
+      canonical([...hostedCodexCapabilities, workHostCapability])
     )
       return false;
-    const a = await this.fleet
-      .inspectOwned(this, binding.allocationId, tx)
-      .catch(refusedAs(null, 403, 404));
-    return (
-      !!a &&
-      this.accepted(a) &&
-      a.phase !== 'released' &&
-      a.intent !== 'stop' &&
-      a.deadlineAt > new Date(this.clock()).toISOString() &&
-      a.epoch === binding.epoch &&
-      a.profileId === binding.runtimeProfileId &&
-      !!workId(a) &&
-      workId(a) === binding.workInstanceId &&
-      binding.stepSeconds === stepSeconds &&
-      a.deadlineAt === binding.expiresAt &&
-      digest(a.source) === digest(binding.source)
-    );
+    try {
+      const a = await this.fleet.inspectOwned(this, binding.allocationId, tx);
+      return (
+        this.accepted(a) &&
+        canonical(binding.platform) === canonical(await this.allocationPlatform(a, tx)) &&
+        a.phase !== 'released' &&
+        a.intent !== 'stop' &&
+        a.deadlineAt > new Date(this.clock()).toISOString() &&
+        a.epoch === binding.epoch &&
+        a.profileId === binding.runtimeProfileId &&
+        !!workId(a) &&
+        workId(a) === binding.workInstanceId &&
+        binding.stepSeconds === stepSeconds &&
+        a.deadlineAt === binding.expiresAt &&
+        digest(a.source) === digest(binding.source)
+      );
+    } catch (error) {
+      if (
+        error instanceof MervError &&
+        ([403, 404].includes(error.status) || error.code === 'fleet_model_unavailable')
+      )
+        return false;
+      throw error;
+    }
   }
   async bootstrap(a: FleetAllocation): Promise<string> {
     const workInstanceId = workId(a);
@@ -595,12 +646,13 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow allocation is unavailable',
       403,
     );
+    const platform = await this.allocationPlatform(a);
     const { enrollmentToken } = await this.sessions.managed.ensure({
       allocationId: a.id,
       epoch: a.epoch,
       source: a.source,
       runtimeProfileId: a.profileId,
-      platform: hostedCodexPlatform,
+      platform,
       capabilities: [...hostedCodexCapabilities, workHostCapability],
       workInstanceId,
       stepSeconds,
@@ -611,6 +663,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       projectId: a.projectId,
       enrollmentToken,
       workInstanceId,
+      ...(platform.model === hostedAstraPlatform.model && { platform }),
     });
   }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
@@ -643,9 +696,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // A work host is rented under the owner for its reviews too, which only the reviewer sees;
       // it is wanted only for its own instance.
       let wanted = false;
+      const platform = await this.allocationPlatform(a);
       for (const director of [a.source, await this.reviewer(a.source)])
         wanted ||= (
-          await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
+          await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput(platform))
         ).candidates.some((c) => c.instanceId === workId(a));
       if (!wanted && !(await this.sessions.managed.inspect(a.id, a.epoch))?.session)
         return 'finished';
@@ -680,6 +734,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // Each target a project wants, with the director whose machine takes it, and since when its
     // revision has stood.
     const served = new Map<string, Map<string, DelegationSource>>();
+    const targetPlatforms = new Map<string, HostedCodexPlatform>();
     const since = new Map<string, string | undefined>();
     // Targets Sessions says no running host of the item covers.
     const ownHost: [projectId: string, id: string][] = [];
@@ -694,15 +749,20 @@ export class FleetWorkflowAdapter implements FleetOwner {
           served.set(projectId, wanted);
           continue;
         }
-        for (const director of [source, await this.reviewer(source)])
-          for (const target of (
-            await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
-          ).candidates)
-            if (!wanted.has(targetId(target))) {
-              wanted.set(targetId(target), director);
-              since.set(grantKey(projectId, targetId(target)), target.since);
-              if (target.ownHost) ownHost.push([projectId, targetId(target)]);
-            }
+        for (const platform of this.platforms)
+          for (const director of [source, await this.reviewer(source)])
+            for (const target of (
+              await this.sessions.dispatch.dispatchDemand(
+                sourceCaller(director),
+                demandInput(platform),
+              )
+            ).candidates)
+              if (!wanted.has(targetId(target))) {
+                wanted.set(targetId(target), director);
+                targetPlatforms.set(grantKey(projectId, targetId(target)), platform);
+                since.set(grantKey(projectId, targetId(target)), target.since);
+                if (target.ownHost) ownHost.push([projectId, targetId(target)]);
+              }
         served.set(projectId, wanted);
       } catch (error) {
         skipped(projectId, error);
@@ -723,9 +783,29 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // the pause, one target at a time is tried until one is admitted.
     const paused = newestRefused > newestAdmitted;
     const active = allocations.filter(occupied);
+    const allocationPlatforms = new Map(
+      await Promise.all(
+        active.map(
+          async (a) =>
+            [
+              a.id,
+              await this.allocationPlatform(a).catch((error: unknown) => {
+                if (error instanceof MervError && error.code === 'fleet_model_unavailable')
+                  return null;
+                throw error;
+              }),
+            ] as const,
+        ),
+      ),
+    );
     // The steps of its work item a running host covers: every revision the project wants.
     const steps = (a: FleetAllocation) =>
-      [...(served.get(a.projectId)?.keys() ?? [])].filter((id) => workOwner(id) === a.owner.id);
+      [...(served.get(a.projectId)?.keys() ?? [])].filter(
+        (id) =>
+          workOwner(id) === a.owner.id &&
+          canonical(allocationPlatforms.get(a.id)) ===
+            canonical(targetPlatforms.get(grantKey(a.projectId, id))),
+      );
     for (const a of active)
       if (a.intent === 'run' && !launched(a) && !failed.has(a.projectId) && !steps(a).length)
         await this.fleet.cancelOwned(this, a.id);
@@ -763,11 +843,33 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
       const generation = attempts.length;
       try {
+        const platform = targetPlatforms.get(grantKey(projectId, id))!;
+        const requestId = `wf:${digest({ id: owner, generation, ...(platform.model === hostedAstraPlatform.model && { platform }) })}`;
+        // Persist the requested platform before Fleet can asynchronously start provisioning.
+        await this.state.transaction(async (tx) => {
+          await tx.run(
+            'INSERT INTO fleet_workflow_platforms(project_id,request_id,platform_json) VALUES(?,?,?) ON CONFLICT DO NOTHING',
+            projectId,
+            requestId,
+            canonical(platform),
+          );
+          const kept = await tx.get<{ platform_json: string }>(
+            'SELECT platform_json FROM fleet_workflow_platforms WHERE project_id=? AND request_id=?',
+            projectId,
+            requestId,
+          );
+          check(
+            kept?.platform_json === canonical(platform),
+            'fleet_platform_conflict',
+            'Hosted request already selected another platform',
+            409,
+          );
+        });
         // A host serves the work item's reviews too, so it is rented under the owner.
         await this.fleet.request(
           sourceCaller(source.kind === 'service' ? source.vouchedBy : source),
           {
-            requestId: `wf:${digest({ id: owner, generation })}`,
+            requestId,
             owner: { kind: ownerKind, id: owner },
             seconds: hostSeconds,
           },

@@ -45,7 +45,11 @@ import type {
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
-import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
+import {
+  hostedAstraPlatform,
+  hostedCodexCapabilities,
+  hostedCodexPlatform,
+} from '@merv/fleet/hosted-codex';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   fleetWorkflowPlugin,
@@ -209,13 +213,16 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
       },
       async dispatchDemand(caller: Caller, input: unknown) {
         // Its work, and questions to its agents (inquiry visits), which its image runs too.
+        const astra = (input as { platform: { model: string } }).platform.model === 'gpt-6-astra';
         assert.deepEqual(input, {
-          platform: hostedCodexPlatform,
+          platform: astra ? hostedAstraPlatform : hostedCodexPlatform,
           capabilities: [...hostedCodexCapabilities, 'inquiry.1'],
         });
         await scope.require(caller, 'read');
         const demand =
-          demands.get(caller.service ? `review:${caller.projectId}` : caller.projectId) ?? [];
+          demands.get(
+            `${astra ? 'astra:' : ''}${caller.service ? `review:${caller.projectId}` : caller.projectId}`,
+          ) ?? [];
         if (demand instanceof Error) throw demand;
         return { candidates: demand };
       },
@@ -285,6 +292,9 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
     },
     demand: (value: Target[] | Error, projectId = main.id) => {
       demands.set(projectId, value);
+    },
+    astraDemand: (value: Target[] | Error, projectId = main.id) => {
+      demands.set(`astra:${projectId}`, value);
     },
     refuse: (
       projectId: string,
@@ -1246,6 +1256,56 @@ test('a release’s hold rents nothing and stops each work host whose step has s
   assert.ok(f.open().length > 0);
 });
 
+test('Astra work waits for opt-in and keeps its exact hosted model through bootstrap and restart', async (t) => {
+  const f = await fixture(t);
+  f.astraDemand([{ instanceId: 'service_request', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 0, 'Astra demand never falls back to Sol');
+  await f.restart({ astraMediumEnabled: true });
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 1);
+  const allocation = f.allocations[0]!;
+  const bootstrap = JSON.parse(await f.owner().bootstrap(allocation));
+  assert.deepEqual(bootstrap.platform, hostedAstraPlatform);
+  const binding = f.ensureInputs.at(-1) as ManagedRunnerBindingIdentity;
+  assert.deepEqual(binding.platform, hostedAstraPlatform);
+  assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), true);
+  assert.equal(
+    await f.state.transaction((tx) =>
+      f.validator().current(
+        {
+          ...binding,
+          platform: hostedCodexPlatform,
+        },
+        tx,
+      ),
+    ),
+    false,
+    'a Sol host cannot claim the Astra allocation',
+  );
+  await f.restart({ astraMediumEnabled: true });
+  assert.equal(await f.owner().bootstrap(allocation), JSON.stringify(bootstrap));
+  assert.equal(f.allocations.length, 1, 'restart reuses its recorded model');
+  await f.restart({ astraMediumEnabled: false });
+  await assert.rejects(f.owner().bootstrap(allocation), { code: 'fleet_model_unavailable' });
+});
+
+test('opt-in Astra capacity leaves ordinary hosted work on the existing Sol profile', async (t) => {
+  const f = await fixture(t, { astraMediumEnabled: true, maxAgents: 2 });
+  f.demand([{ instanceId: 'ordinary_task', expectedRevision: 0 }]);
+  f.astraDemand([{ instanceId: 'service_request', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const [ordinary, service] = f.allocations;
+  assert.equal(ordinary!.owner.id, 'work:ordinary_task');
+  assert.equal(service!.owner.id, 'work:service_request');
+  assert.equal(JSON.parse(await f.owner().bootstrap(ordinary!)).platform, undefined);
+  assert.deepEqual(
+    (f.ensureInputs.at(-1) as ManagedRunnerBindingIdentity).platform,
+    hostedCodexPlatform,
+  );
+  assert.deepEqual(JSON.parse(await f.owner().bootstrap(service!)).platform, hostedAstraPlatform);
+});
+
 test('a missing model key serves nothing, and the adapter still starts', async (t) => {
   const f = await fixture(t);
   delete process.env[f.modelEnv];
@@ -1507,7 +1567,7 @@ test('the review director takes only what the owner’s own hand may not, within
 });
 
 /** Real Scope, Workflows, Sessions and Fleet; only the sandbox provider is a test double. */
-async function hosted(t: TestContext, workers: number, lostLaunch = false) {
+async function hosted(t: TestContext, workers: number, lostLaunch = false, astra = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-fleet-workflow-'));
   const secretEnv = `MERV_WORKFLOW_HMAC_${randomUUID().replaceAll('-', '')}`;
   const modelEnv = `MERV_WORKFLOW_KEY_${randomUUID().replaceAll('-', '')}`;
@@ -1578,6 +1638,11 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
         }),
         execution: {
           readOnly: false,
+          ...(astra && {
+            platform: { harness: 'codex' as const, model: 'gpt-6-astra', effort: 'medium' },
+            maxDurationSeconds: 600,
+            maxModelTokens: 120_000,
+          }),
           tools: [
             {
               name: 'finish',
@@ -1703,6 +1768,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
       baseUrl: 'https://merv.example.test',
       pollIntervalMs: 60_000,
       maxAgents: workers,
+      astraMediumEnabled: astra,
     },
     () => now,
     state,
@@ -2065,6 +2131,69 @@ test('a target that returns after more than 200 released allocations gets a new 
 });
 
 type Hosted = Awaited<ReturnType<typeof hosted>>;
+
+test('real Sessions and Fleet carry Astra/medium and the fixed budget from dispatch to the model grant', async (t) => {
+  const h = await hosted(t, 1, false, true);
+  const caller = await h.project('Astra service');
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
+  const target = await h.start(caller);
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  assert.equal(allocation.owner.id, `work:${target.id}`);
+  await h.fleet.tick();
+  await h.fleet.tick();
+  const current = await h.fleet.inspectOwned(h.adapter, allocation.id);
+  const bootstrap = JSON.parse(h.bootstraps.get(current.runtime!.sandboxId)!);
+  assert.deepEqual(bootstrap.platform, hostedAstraPlatform);
+  const enrolled = await h.sessions.managed.enroll(bootstrap.enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  const managed = await h.sessions.managed.authenticate(enrolled.controlToken);
+  const runnerId = 'astra-managed';
+  await assert.rejects(h.sessions.dispatch.heartbeatRunner(managed, heartbeat(runnerId)), {
+    code: 'managed_profile',
+  });
+  await h.sessions.dispatch.heartbeatRunner(managed, {
+    ...heartbeat(runnerId),
+    platforms: [hostedAstraPlatform],
+  });
+  const request = {
+    ...claim(runnerId),
+    platform: {
+      name: hostedAstraPlatform.name,
+      harness: 'codex' as const,
+      model: hostedAstraPlatform.model,
+      effort: hostedAstraPlatform.effort,
+    },
+  };
+  const { session } = await h.sessions.dispatch.lease(managed, request);
+  assert.ok(session);
+  assert.equal(session.tokenBudget, 120_000);
+  assert.equal(Date.parse(session.hardDeadline) - Date.parse(session.createdAt), 600_000);
+  await h.sessions.authenticate(request.secret);
+  const grant = await h.adapter.modelGrant(request.secret);
+  assert.equal(grant.model, 'gpt-6-astra');
+  assert.equal(grant.effort, 'medium');
+  assert.equal(grant.tokenBudget, 120_000);
+  const launch = buildLaunch(
+    validateProfile({
+      ...hostedAstraPlatform,
+      executable: '/usr/bin/codex',
+      isolatedLauncher: '/opt/merv/assignment',
+      hosted: true,
+    }),
+    {
+      session,
+      secret: request.secret,
+      mcpUrl: 'https://merv.example.test/mcp',
+      cwd: '/home/assignment/work',
+      prompt: 'Execute fixed plan',
+    },
+    {},
+  );
+  assert.equal(launch.args[launch.args.indexOf('--model') + 1], 'gpt-6-astra');
+  assert.ok(launch.args.includes('model_reasoning_effort="medium"'));
+});
 /** A task someone delivered at the desk, awaiting its review. */
 async function delivered(h: Hosted, by: Caller, requestId: string) {
   const task = await currentTask(h, by, {

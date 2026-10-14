@@ -1,0 +1,17 @@
+{
+  "release": "20261014T064554Z-c6e1d9e7-8cb4de90ccb1",
+  "request": "ce_6a1b92a9f40842c6d49402fc77f44e40",
+  "publicCreation": 200,
+  "retrySame": true,
+  "anonymousRead": 401,
+  "agentApproval": 401,
+  "agentCheckout": 401,
+  "intakeReply": true,
+  "state": "planning",
+  "stripeMode": "sandbox",
+  "serviceTests": 11,
+  "build": "pass",
+  "platformHealth": 200,
+  "platformAnonymous": 401,
+  "unapprovedOrigin": 403
+}

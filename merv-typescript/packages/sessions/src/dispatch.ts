@@ -594,6 +594,7 @@ export class SessionDispatch {
     capabilities: ReadonlySet<string>,
     failures: readonly Failure[] = [],
     skipped: ReadonlySet<string> = new Set(),
+    platform?: Pick<RunnerPlatform, 'harness' | 'model' | 'effort'>,
   ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
     if (!(await this.dispatch(caller.projectId, tx)).enabled)
       return { candidates: [], reason: 'dispatch_disabled' };
@@ -611,7 +612,13 @@ export class SessionDispatch {
     const open = admissible.queue;
     // A checkout goes only to a runner carrying its driver.
     const compatible = open.filter(
-      (item) => item.workspace.mode === 'none' || capabilities.has(item.workspace.driver),
+      (item) =>
+        (item.workspace.mode === 'none' || capabilities.has(item.workspace.driver)) &&
+        (!item.platform ||
+          (!!platform &&
+            item.platform.harness === platform.harness &&
+            item.platform.model === platform.model &&
+            item.platform.effort === platform.effort)),
     );
     const candidates = compatible.filter(
       (item) =>
@@ -677,6 +684,7 @@ export class SessionDispatch {
         new Set(input.capabilities ?? []),
         await this.recentFailures(tx, owner, input.platform.name),
         this.passing(owner),
+        input.platform,
       );
       const candidates: DispatchDemand['candidates'] = selected.candidates.map(
         ({ instanceId, expectedRevision, updatedAt }) => ({
@@ -1024,6 +1032,7 @@ export class SessionDispatch {
           capabilities,
           failures,
           new Set([...skipped, ...this.passing(phaseOwner.hash)]),
+          platform,
         );
         candidate = selected.candidates.find(
           (item) => !managed || item.instanceId === managed.row.work_instance_id,

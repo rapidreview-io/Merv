@@ -1,0 +1,75 @@
+{
+  "verifiedAt": "2026-10-14T01:54:20.085Z",
+  "origin": "https://experiments.rapidreview.io",
+  "stripeMode": "sandbox",
+  "mainRelease": "20261014T014715Z-c8a0d84b-d54cdcf47cf5",
+  "mainImageId": "sha256:17927d91355797da3a4856f0cc829048d59b4e859785a30ce1acd031b68e2da0",
+  "hostedRelease": "rt1_df41f54b751a6e80ac49c2ac28361bf541e62248c7241f7e85e0757e94e2bbb4",
+  "requestId": "ce_70c801f3fc4a6706a0305620ab75b985",
+  "workflowId": "wf_407095f5b55148efb147149740e987cc",
+  "contractHash": "428d4abb5ec2447c5c623465ed291ac8d7e65d02111cb9a4c7a4adaff61872be",
+  "state": "complete",
+  "review": {
+    "id": "review_ac9a1ddec52b4af6a48a89bbd8e909cb",
+    "verdict": "pass",
+    "synopsis": "Independent checks confirm the frozen contract: all 80 candidate scores, selected model and 24 held-out predictions agree. Accuracy improves from 0.50 to 1.00; 60 >= 24 meets the fixture criterion. Captured deliverables and the disclosed checker correction are verified."
+  },
+  "platform": {
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "verifiedOn": [
+      "intake",
+      "execution",
+      "independent-results-review"
+    ]
+  },
+  "payment": {
+    "checkoutSessionId": "cs_test_a1hEA30upAWrArOgzlByN64V2Q5d2QsdqfySJ7NaAuy9ShXGNzcnayiSfF",
+    "confirmedBy": "signed Stripe webhook",
+    "amountCents": 500
+  },
+  "results": {
+    "trainingRows": 40,
+    "evaluationRows": 24,
+    "baselineAccuracy": 0.5,
+    "thresholdAccuracy": 1,
+    "improvement": 0.5,
+    "inputHashesMatched": true,
+    "reportAndMetricsDownloaded": true
+  },
+  "email": {
+    "provider": "Resend",
+    "from": "support@rapidreview.io",
+    "providerMessageId": "01a1381b-6890-74d8-bf5c-56e8a8d473ec",
+    "event": "Delivered"
+  },
+  "ordinaryPiCanary": {
+    "conversation": "pic_b8eca08bb3c946c099344afed07f4f22",
+    "status": "completed",
+    "toolCount": 124,
+    "customerTools": [],
+    "nisaSearch": true,
+    "nisaResearch": true,
+    "reply": true
+  },
+  "health": {
+    "health": 200,
+    "ui": 200,
+    "anonymous": 401,
+    "approvedOrigin": 200,
+    "unapprovedOrigin": 403
+  },
+  "validation": {
+    "build": "pass",
+    "priorOrdinaryRegressionTests": 219,
+    "piWorkerTests": 48,
+    "profileAndCustomerServiceTests": 15,
+    "boundary": "128 ordinary tools retained; customer-only tools excluded; Nisa retained"
+  },
+  "limitations": [
+    "Browser file chooser was blocked by automation extension file access; uploads were verified using the same application HTTP endpoints and signed object transfers.",
+    "Browser download click opened a new tab, but the automation download event timed out; artifact downloads and contents were independently verified over the authenticated HTTP endpoints.",
+    "This small test used a CPU sandbox. GPU selection and funding plumbing are implemented; an actual GPU rental was not exercised by this fixture.",
+    "Stripe is sandbox only; no live customer charge was tested."
+  ]
+}

@@ -14,4 +14,11 @@ export const hostedCodexPlatform = Object.freeze({
   enabled: true,
   parallelism: 1,
 });
+/** Opt-in profile for paid service experiments. A host is pinned to one of these profiles. */
+export const hostedAstraPlatform = Object.freeze({
+  ...hostedCodexPlatform,
+  model: 'gpt-6-astra',
+  effort: 'medium',
+});
+export type HostedCodexPlatform = typeof hostedCodexPlatform | typeof hostedAstraPlatform;
 export const hostedCodexCapabilities = Object.freeze(['code.v2']);

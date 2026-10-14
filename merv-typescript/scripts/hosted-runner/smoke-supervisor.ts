@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { hostedCodexPlatform } from '@merv/fleet/hosted-codex';
+import { hostedAstraPlatform, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { MachineRunner } from '@merv/runner';
 import { codeWorkspaceDriver } from '@merv/code/driver/index';
 
@@ -18,6 +18,17 @@ const schema = z
     projectId: z.string().min(1),
     enrollmentToken: z.string().regex(/^me_[0-9a-f]{64}$/),
     workInstanceId: z.string().min(1).max(200),
+    platform: z
+      .object({
+        name: z.literal('hosted-codex'),
+        harness: z.literal('codex'),
+        model: z.literal('gpt-6-astra'),
+        effort: z.literal('medium'),
+        enabled: z.literal(true),
+        parallelism: z.literal(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const directory = '/var/lib/merv-runner';
@@ -98,7 +109,12 @@ async function main() {
       workInstanceId: data.workInstanceId,
       assignmentWorkspaceDirectory: assignmentRoot,
       profiles: [
-        { ...hostedCodexPlatform, executable: codex, isolatedLauncher: launcher, hosted: true },
+        {
+          ...(data.platform ? hostedAstraPlatform : hostedCodexPlatform),
+          executable: codex,
+          isolatedLauncher: launcher,
+          hosted: true,
+        },
       ],
     },
     { autoPoll: false, drivers: [codeWorkspaceDriver], resetAssignment },

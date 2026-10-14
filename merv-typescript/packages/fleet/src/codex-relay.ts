@@ -3,7 +3,7 @@ import { check, MervError, sessionSecretPattern, type Sql, type State } from '@m
 import { dailyTokens, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
-import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
+import { codexHandoffGraceMs, hostedAstraPlatform, hostedCodexPlatform } from './hosted-codex.js';
 import type { ManagedModelGrant, ModelRelayConfig, ModelRelayFailure } from './types.js';
 
 /** Hosted Codex's grant of the model for a session its runner holds: while the session is live,
@@ -20,14 +20,27 @@ export function hostedGrant(
     'No live managed session holds this credential',
     401,
   );
-  const { model, effort } = hostedCodexPlatform;
+  const platform = bound.platform ?? hostedCodexPlatform;
+  check(
+    [hostedCodexPlatform, hostedAstraPlatform].some(
+      (offered) =>
+        platform.name === offered.name &&
+        platform.harness === offered.harness &&
+        platform.model === offered.model &&
+        platform.effort === offered.effort,
+    ),
+    'unauthorized',
+    'Managed session uses an unsupported model platform',
+    401,
+  );
+  const { model, effort } = platform;
   const { sessionId: id, projectId, allocationId, expiresAt, tokenBudget } = bound;
   return {
     id,
     projectId,
     allocationId,
     person,
-    model,
+    model: model!,
     effort,
     expiresAt,
     ...(tokenBudget !== undefined && { tokenBudget }),
@@ -117,7 +130,9 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   const { reasoning, ...rest } = parsed.data;
   return {
     ...rest,
-    ...(reasoning && { reasoning: { ...reasoning, effort: grant.effort } }),
+    ...((reasoning || (grant.model === hostedAstraPlatform.model && grant.effort === 'medium')) && {
+      reasoning: { ...reasoning, effort: grant.effort },
+    }),
     max_output_tokens: maxOutputTokens,
   };
 }

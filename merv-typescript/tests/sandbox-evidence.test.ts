@@ -100,8 +100,11 @@ async function fixture(t: TestContext, registerProvider = true) {
       };
     },
   };
+  let pendingJobs = false;
   function service() {
-    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts);
+    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts, Date.now, {
+      listPage: async () => ({ jobs: pendingJobs ? [{} as never] : [], next: null }),
+    });
   }
   const evidence = await createService(service());
   if (registerProvider) artifacts.registerFileProvider('sbx-evidence', evidence);
@@ -148,6 +151,9 @@ async function fixture(t: TestContext, registerProvider = true) {
       ),
     );
   return {
+    pendingJobs: (value: boolean) => {
+      pendingJobs = value;
+    },
     state,
     scope,
     pipelines,
@@ -336,6 +342,9 @@ test('the integration projection backfills startup and reconciles an interval pa
   ctx.provide('sbxPipelines', f.pipelines as Context['sbxPipelines']);
   ctx.provide('sbxObjects', f.objects as Context['sbxObjects']);
   ctx.provide('sbxAccounts', f.accounts as Context['sbxAccounts']);
+  ctx.provide('sbxJobs', {
+    listPage: async () => ({ jobs: [], next: null }),
+  } as unknown as Context['sbxJobs']);
   const plugin = ctx.plugin(sandboxIntegrationPlugin);
   try {
     await plugin.await();
@@ -355,4 +364,25 @@ test('the integration projection backfills startup and reconciles an interval pa
     await plugin.dispose();
     t.mock.timers.reset();
   }
+});
+
+test('customer finalization waits for retirement, remote jobs, and published evidence', async (t) => {
+  const f = await fixture(t);
+  const w = f.workflow();
+  const settled = () =>
+    f.state.snapshotTransaction((tx) =>
+      f.evidence.settled(f.caller.projectId, 'work', 'epoch-1', new Date(0).toISOString(), tx),
+    );
+  await f.evidence.reconcile();
+  assert.equal(await settled(), false);
+  await f.state.transaction((tx) => tx.run('UPDATE sandbox_run_intents SET retired=1,target=1'));
+  f.pendingJobs(true);
+  await f.evidence.reconcile();
+  assert.equal(await settled(), false);
+  f.pendingJobs(false);
+  await f.evidence.reconcile();
+  assert.equal(await settled(), true);
+  f.workflows.set('running', { ...f.workflow('running'), state: 'running' });
+  await f.evidence.reconcile();
+  assert.equal(await settled(), false);
 });

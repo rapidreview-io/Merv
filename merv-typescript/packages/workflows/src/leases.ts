@@ -201,6 +201,7 @@ export class WorkflowLeases extends WorkflowGuidance {
               policyHash: executionFingerprint(execution),
               registrationId: registration.registrationId,
               workspace: effectiveWorkspace(execution),
+              ...(execution.platform && { platform: execution.platform }),
               updatedAt: snapshot.updatedAt,
             });
           } catch (error) {
