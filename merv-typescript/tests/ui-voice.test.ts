@@ -109,3 +109,86 @@ test('a voice session ended or refused while the microphone is asked for opens n
   assert.deepEqual(contexts.at(-1), { closed: true });
   assert.ok(!requests.some((line) => line.endsWith('/tools/pi.voice')), 'no session is opened');
 });
+
+test('a request is answered, and voice listens again, though another conversation is opened while Pi works on it', async (t) => {
+  t.after(unmount);
+  let channel!: { onmessage(message: { data: string }): void };
+  const sent: { type: string; delegation_id?: string; content?: string }[] = [];
+  const source = () => ({ connect() {} });
+  Object.assign(globalThis, {
+    Audio: class {
+      setAttribute() {}
+    },
+    AudioContext: class {
+      createAnalyser = () => ({});
+      createMediaStreamSource = source;
+      async close() {}
+    },
+    RTCPeerConnection: class {
+      iceGatheringState = 'complete';
+      localDescription = { sdp: 'offer' };
+      createDataChannel = () =>
+        (channel = {
+          readyState: 'open',
+          send: (text: string) => sent.push(JSON.parse(text)),
+        } as never);
+      addTrack() {}
+      createOffer = async () => ({});
+      setLocalDescription = async () => {};
+      setRemoteDescription = async () => {};
+      close() {}
+    },
+  });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: async () => ({ getTracks: () => [] }) },
+  });
+  serve('/tools/pi.voice', { body: { result: { sdp: 'answer' } } });
+  // The request's own conversation, read on its own: its turn has ended.
+  const said = [
+    { role: 'user', text: 'What runs?' },
+    { role: 'assistant', text: 'Two tasks.' },
+  ];
+  serve('/tools/pi.snapshot', {
+    body: {
+      result: {
+        conversation: { id: 'conv_a' },
+        commands: [{ status: 'completed', messages: said }],
+      },
+    },
+  });
+  const { createElement, useState } = await import('react');
+  const { act } = await import('react-dom/test-utils');
+  const pi = (id: string) => ({
+    selected: id,
+    snapshot: { conversation: { id }, commands: [] },
+    send: async () => true,
+    warmUp() {},
+  });
+  let voice!: ReturnType<typeof useVoice>;
+  let show!: (shown: ReturnType<typeof pi>) => void;
+  await mount(
+    createElement(() => {
+      const [shown, set] = useState(pi('conv_a'));
+      show = set;
+      voice = useVoice(shown as never);
+      return null;
+    }),
+  );
+  await act(async () => voice.start());
+  await settle(10);
+  const say = (event: object) =>
+    act(async () => channel.onmessage({ data: JSON.stringify(event) }));
+  await say({ type: 'session.started' });
+  await say({ type: 'session.input_transcript.delta', delta: 'What runs?' });
+  await say({ type: 'session.delegation.created', delegation: { id: 'del_1' } });
+  assert.equal(voice.state, 'working');
+  await act(async () => show(pi('conv_b')));
+  await settle(10);
+  const answers = sent.filter((event) => event.type === 'session.commentary.append');
+  assert.deepEqual(
+    answers.map((event) => [event.delegation_id, event.content]),
+    [['del_1', 'Two tasks.']],
+  );
+  assert.equal(voice.state, 'listening', 'Pi is no longer said to be working on it');
+});

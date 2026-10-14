@@ -11,7 +11,7 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import type { PiShow } from '@merv/pi/models';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { call } from '../api';
+import { call, safely } from '../api';
 import { routeOf, type Reference } from '../markdown';
 import { useRows } from '../navigation';
 import type { Conversation } from './pi-conversation';
@@ -82,13 +82,7 @@ export function snapshotPage(win: Window = window) {
     )
     .forEach((node) => node.remove());
   const css = [...doc.styleSheets]
-    .map((sheet) => {
-      try {
-        return [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
-      } catch {
-        return '';
-      }
-    })
+    .map((sheet) => safely(() => [...sheet.cssRules].map((rule) => rule.cssText).join('\n'), ''))
     .join('\n');
   const head =
     clone.querySelector('head') ?? clone.insertBefore(doc.createElement('head'), clone.firstChild);

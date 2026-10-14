@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { call } from '../api';
-import type { PiCommand } from '@merv/pi/models';
+import type { PiCommand, PiSnapshot } from '@merv/pi/models';
 import type { Conversation } from './pi-conversation';
 
 /** How long a session may go without anyone speaking, and no answer pending, before it closes. */
@@ -35,8 +35,8 @@ interface Live {
   speaker?: 'person' | 'voice';
   last: number;
   quiet?: ReturnType<typeof setTimeout>;
-  /** The request Pi is answering: GPT-Live's delegation and the turn sent for it. */
-  pending?: { delegation: string; text: string; after: number };
+  /** The request Pi is answering: GPT-Live's delegation, the turn sent for it and where. */
+  pending?: { delegation: string; text: string; after: number; id: string | null };
 }
 
 /** An answer written for the screen, as words to be said: no markup, no tables, no code. */
@@ -146,7 +146,7 @@ export function useVoice(pi: Conversation | null) {
         'Pi is still working on the last request; I will tell you when it is done.',
         delegation,
       );
-    held.pending = { delegation, text, after: pi.snapshot?.commands.length ?? 0 };
+    held.pending = { delegation, text, after: pi.snapshot?.commands.length ?? 0, id: pi.selected };
     setState('working');
     const sent = await pi.send(text);
     if (!sent && live.current === held) {
@@ -288,13 +288,14 @@ export function useVoice(pi: Conversation | null) {
     }
   };
 
-  // When the turn sent for a request ends, its answer goes back for GPT-Live to say.
-  useEffect(() => {
+  /** Once the turn sent for a request has ended in its conversation, its answer goes back for
+   *  GPT-Live to say. */
+  const answered = (snapshot?: PiSnapshot | null) => {
     const held = live.current;
     const pending = held?.pending;
-    const commands = pi?.snapshot?.commands;
-    if (!held || !pending || !commands) return;
-    const turn = commands
+    if (!held || !pending || !snapshot) return;
+    if (pending.id && snapshot.conversation.id !== pending.id) return;
+    const turn = snapshot.commands
       .slice(pending.after)
       .find((command) =>
         command.messages.some((m) => m.role === 'user' && m.text.trim() === pending.text),
@@ -304,7 +305,19 @@ export function useVoice(pi: Conversation | null) {
     held.last = Date.now();
     send('session.commentary.append', resultOf(turn), pending.delegation);
     setState('listening');
-  }, [pi?.snapshot]);
+  };
+  useEffect(() => answered(pi?.snapshot), [pi?.snapshot]);
+  // Another conversation opened meanwhile: the request's own is read, at once and every few
+  // seconds, until its turn ends.
+  const asked = live.current?.pending?.id;
+  const away = asked !== pi?.snapshot?.conversation.id && asked;
+  useEffect(() => {
+    if (!away) return;
+    const look = () => void call<PiSnapshot>('pi.snapshot', { id: away }).then(answered, () => {});
+    look();
+    const timer = setInterval(look, 5_000);
+    return () => clearInterval(timer);
+  }, [away]);
 
   // No time limit; a session nobody has spoken in, with nothing pending, closes itself, and so
   // does one whose page is put away.

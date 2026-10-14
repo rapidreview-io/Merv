@@ -9,7 +9,7 @@ import type {
   UiRecordSpec,
   UiSection,
 } from '@merv/ui/manifest';
-import { useTool } from '../api';
+import { safely, useTool } from '../api';
 import {
   Ago,
   ConfirmAction,
@@ -403,11 +403,7 @@ function RemoteRecord({ row }: ViewProps) {
 function consoleHref(href: string, id: string, origin: string): string {
   const path = href.replaceAll('{id}', encodeURIComponent(id));
   if (!origin || /^[a-z]+:/i.test(path)) return path;
-  try {
-    return new URL(path, origin).toString();
-  } catch {
-    return path;
-  }
+  return safely(() => new URL(path, origin).toString(), path);
 }
 
 /** A collection row: its list, and the record it opens beside it on a wide screen. */

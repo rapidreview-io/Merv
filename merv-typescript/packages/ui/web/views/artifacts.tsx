@@ -6,6 +6,7 @@ import {
   Ago,
   ErrorBoundary,
   LoadState,
+  PageLoad,
   SearchField,
   Short,
   useDismiss,
@@ -1154,12 +1155,7 @@ function ArtifactList() {
 function ArtifactDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
   const meta = useTool<Artifact>('artifact.get', { artifactId: id });
-  if (!meta.data)
-    return (
-      <div className="page-stage">
-        <LoadState {...meta} back={{ to: row.path, label: row.label }} />
-      </div>
-    );
+  if (!meta.data) return <PageLoad {...meta} back={{ to: row.path, label: row.label }} />;
   return (
     <div className="page-stage">
       <ArtifactBody artifactId={meta.data.id} metadata={meta.data} named="page" />

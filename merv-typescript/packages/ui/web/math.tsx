@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type katexModule from 'katex';
+import { safely } from './api';
 
 /**
  * Mathematics, typeset. KaTeX and its stylesheet load the first time a formula is
@@ -17,18 +18,15 @@ const load = () =>
     import('./katex-style').catch(() => undefined),
   ]);
 
-const typeset = (tex: string, display: boolean): string | undefined => {
-  try {
-    return katex?.renderToString(tex, {
+const typeset = (tex: string, display: boolean) =>
+  safely(() =>
+    katex?.renderToString(tex, {
       displayMode: display,
       trust: false,
       throwOnError: false,
       strict: 'ignore',
-    });
-  } catch {
-    return undefined;
-  }
-};
+    }),
+  );
 
 export function TeX({ tex, display = false }: { tex: string; display?: boolean }) {
   const [ready, setReady] = useState(!!katex);
