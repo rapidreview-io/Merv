@@ -31,9 +31,9 @@ that are already over it**, retroactively, the moment the new server starts.
 - The transition is refused inside the committing transaction with `loop_limit_reached`
   (409), before the owning rule's guard, so the distinct code is what the caller sees. The
   whole command rolls back, including the review that would have returned the work.
-- `workflow.status_and_next` reports `limits[]` for the current state (`base`, `granted`,
-  `max`, `used`, `remaining`, `exhausted`). At an exhausted limit the gate and first
-  blocker are `loop_limit_reached`. The uncapped actions stay available: a human reviewer
+- `workflow.status_and_next` reports `limits[]`, every limit of the work with the state it
+  leaves (`from`, `base`, `granted`, `max`, `used`, `remaining`, `exhausted`). Where one
+  leaving the current state is exhausted the gate and first blocker are `loop_limit_reached`. The uncapped actions stay available: a human reviewer
   can still accept or fail the work, and an experiment can still be abandoned.
 - The project overview lists the instance under `escalated`, and under neither `ready`
   nor `blocked`. Work stalled on a failed dependency stays `stalled`, the stronger reason.

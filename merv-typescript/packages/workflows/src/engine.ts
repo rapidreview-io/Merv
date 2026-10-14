@@ -9,7 +9,7 @@ import type {
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
-import type { WorkflowSnapshot, WorkflowHistoryEntry } from './models.js';
+import type { WorkflowSnapshot } from './models.js';
 import { DATA_LIMITS, workflowJson } from './json.js';
 import { PinnedContracts } from './pinned.js';
 
@@ -105,41 +105,6 @@ export class WorkflowEngine {
       await this.scope.require(copy, 'read', tx);
       return await fn(tx, copy);
     });
-  }
-
-  /**
-   * The instance's history in revision order, without `data`: a row's data can be as large as
-   * the data it merged, and a traversal shows none of it.
-   */
-  protected async historyIn(
-    tx: Transaction,
-    projectId: string,
-    instanceId: string,
-  ): Promise<WorkflowHistoryEntry[]> {
-    const rows = await tx.all<{
-      instance_id: string;
-      revision: number;
-      action: string;
-      actor_id: string;
-      request_id: string;
-      from_state: string | null;
-      to_state: string;
-      created_at: string;
-    }>(
-      'SELECT instance_id,revision,action,actor_id,request_id,from_state,to_state,created_at FROM wf_history WHERE project_id = ? AND instance_id = ? ORDER BY revision',
-      projectId,
-      instanceId,
-    );
-    return rows.map((row) => ({
-      instanceId: row.instance_id,
-      revision: row.revision,
-      action: row.action,
-      actorId: row.actor_id,
-      requestId: row.request_id,
-      fromState: row.from_state,
-      toState: row.to_state,
-      createdAt: row.created_at,
-    }));
   }
 
   protected definition(name: string, version: number): Registration {

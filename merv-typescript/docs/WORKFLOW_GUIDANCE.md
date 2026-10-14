@@ -24,18 +24,19 @@ normal action is recommended for this actor; terminal workflows explicitly say
 they have ended. Recovery actions such as reissuing a review remain listed when
 applicable but are not recommended as ordinary progress.
 
-`limits` lists each [loop limit](BUDGETS_AND_LIMITS.md) leaving the current state, with
-its `base`, `granted`, `max`, `used`, `remaining` and `exhausted`; it is an empty array
-elsewhere. When a limit is exhausted the gate and first blocker are
-`loop_limit_reached`: every allowed return is used, the work is not failed, and it waits
-for a human. Uncapped actions stay available, so a reviewer can still accept or fail it
+`limits` lists every [loop limit](BUDGETS_AND_LIMITS.md) of the definition, with the state it
+leaves (`from`), its `base`, `granted`, `max`, `used`, `remaining` and `exhausted`; it is an
+empty array once the work has ended. When one leaving the current state is exhausted the
+gate and first blocker are `loop_limit_reached`: every allowed return is used, the work is
+not failed, and it waits for a human. Uncapped actions stay available, so a reviewer can still accept or fail it
 by hand, and a project admin can allow more rounds with `workflow.extend_limit`. The
 commit refuses the capped edge with the same code, before the rule's own guard.
 
 With no arguments, the tool returns a project-scoped overview of **instances**,
-including `ready`, `blocked`, `escalated`, `terminal`, and `unavailable` ID lists.
-`escalated` instances have an exhausted loop limit; they appear in neither `ready` nor
-`blocked`, and automatic dispatch leaves them alone. Here `ready`
+including `ready`, `blocked`, `stalled`, `escalated`, `terminal`, and `unavailable` ID
+lists. `stalled` instances have a prerequisite that ended without succeeding: every action
+still open to them ends them. `escalated` instances have an exhausted loop limit. Neither
+appears in `ready` or `blocked`, and automatic dispatch leaves both alone. Here `ready`
 means the caller has a recommended action, including preparation needing input;
 it does not mean an execution lease can be granted. This view neither schedules
 agents nor chooses project research priorities.
@@ -92,7 +93,7 @@ It displays the current gate, next step and blockers and remains read-only.
 
 `workflows.register(definition, policy)` accepts the existing versioned graph and
 an optional policy. Each policy action declares its states, public tool,
-instructions, required input fields, and a synchronous `check(context)` function.
+instructions, required input fields, and an awaited `check(context)` function.
 It maps to zero or more graph transition names. An auxiliary step such as claiming
 a review need not itself change the task graph.
 
@@ -104,12 +105,11 @@ both still commit or roll back together.
 
 `context` carries the authenticated caller, a frozen snapshot, the current
 transaction, optional proposed input and the actual transition when enforcing a
-command. Checks must be synchronous, read-only local operations. They may call
+command. Checks are awaited in that transaction and must be read-only. They may call
 the owning program's normal read capabilities; they must not write, perform
 network I/O or launch work. Typed domain errors become blockers; unexpected
-errors fail the evaluation instead of reporting a ready action. Async functions
-and returned promises are rejected. The transaction is a trusted plugin port,
-not a sandbox for hostile plugin code.
+errors fail the evaluation instead of reporting a ready action. The transaction
+is a trusted plugin port, not a sandbox for hostile plugin code.
 
 Optional `arguments(context)` supplies the current task/review/claim IDs and
 revision. Optional `describe(context)` supplies a label, references and
@@ -126,9 +126,9 @@ version. Persisted recipe definitions also remain unchanged.
 ## Lifecycle and boundaries
 
 Workflows still injects only State and Scope. Tasks registers callbacks using its
-own declared dependencies. The single guidance tool is published by the
-Workflows tool adapter, which injects Workflows and Tools. The removed catalog,
-list/get/history tools have not been restored.
+own declared dependencies. The Workflows tool adapter, which injects Workflows
+and Tools, publishes its six `workflow.*` tools (see the package README); `get` and
+`list` stay in-process methods.
 
 Unloading a program unregisters its policy. Its stored active instances report
 `workflow_unavailable` with no recommended actions; terminal history stays

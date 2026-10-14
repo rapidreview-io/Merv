@@ -133,8 +133,8 @@ program must authorize its specific action (for example `write` or `review`).
   version, loaded or not, is in one of its nonterminal states (`workflow_creation_paused`). The
   check reads only instances in those states, through an index, so ended ones cost nothing, and
   a version with no nonterminal state pauses nothing.
-- Starting without a version chooses the latest installed version. Retrying that
-  request returns the original response even if a newer version was installed.
+- A start without a version starts the handle's own. Retrying a start returns the original
+  response even if a newer version was installed since.
 - Start data, transition data and input, and preflight input are each a JSON object of
   at most 256,000 encoded characters, 16,000 values and 32 levels of nesting; anything
   larger is `invalid_data` 400. The merged instance data is not capped.

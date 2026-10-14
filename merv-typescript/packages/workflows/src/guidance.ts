@@ -4,6 +4,7 @@ import type {
   WorkflowDecision,
   WorkflowOverview,
   WorkflowProvidedBlocker,
+  WorkflowHistoryEntry,
   ProcessGraph,
 } from './models.js';
 import { processGraph } from './process.js';
@@ -38,7 +39,12 @@ export class WorkflowGuidance extends WorkflowEngine {
         tx,
         checks,
       );
-      const history = await this.historyIn(tx, caller.projectId, instanceId);
+      // Without `data`: a row's data can be as large as what it merged, and a traversal shows none.
+      const history = await tx.all<Omit<WorkflowHistoryEntry, 'instanceId'>>(
+        'SELECT revision,action,actor_id AS "actorId",request_id AS "requestId",from_state AS "fromState",to_state AS "toState",created_at AS "createdAt" FROM wf_history WHERE project_id=? AND instance_id=? ORDER BY revision',
+        caller.projectId,
+        instanceId,
+      );
       return processGraph({
         definition: facts.definition,
         rules: facts.registration?.policy?.actions ?? [],

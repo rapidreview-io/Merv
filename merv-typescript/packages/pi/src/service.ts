@@ -144,15 +144,16 @@ export class PiService implements Pi {
     );
     await this.hosts.tick();
     // Every call Run began before this process started is cut off. Only turns with a call that ran
-    // are read, as text: jsonb refuses some JSON an older turn may hold.
+    // and was never kept are read; a turn jsonb refuses (some older JSON) is left to keep().
     const ran = await this.core.read((tx) =>
-      tx.all<{ conversation_id: string; id: string; data_json: string }>(
-        `SELECT conversation_id,id,data_json FROM pi_commands WHERE strpos(data_json,'"ran"') > 0`,
+      tx.all<{ conversation_id: string; id: string }>(
+        `SELECT conversation_id,id FROM pi_commands WHERE strpos(data_json,'"ran"') > 0 AND CASE
+          WHEN pg_input_is_valid(data_json,'jsonb') THEN jsonb_path_exists(data_json::jsonb,
+            '$.proposals[*].ran ? (!exists(@.ok))') ELSE true END`,
       ),
     );
     for (const row of ran)
-      if (decode<PiCommandRecord>(row).proposals?.some((p) => p.ran && p.ran.ok === undefined))
-        await this.keep(row.conversation_id, row.id, (proposal) => interrupted(proposal.name));
+      await this.keep(row.conversation_id, row.id, (proposal) => interrupted(proposal.name));
     this.timer = setInterval(() => {
       void this.tick().catch(() => undefined);
     }, this.core.config.pollIntervalMs);

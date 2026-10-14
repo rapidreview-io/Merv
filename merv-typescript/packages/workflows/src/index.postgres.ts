@@ -278,17 +278,17 @@ CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,re
   // keep neither, as before. Read-only prod check (rows that keep reading as they do):
   // SELECT provider, COUNT(*) FROM wf_blockers GROUP BY provider;
   14: `ALTER TABLE wf_blockers ADD COLUMN whose TEXT CHECK (whose IN ('owner','admin')), ADD COLUMN revision BIGINT;`,
-  // (unpublished) A blocker's move may also be an operator's (an admin signed in as a person) or
-  // nobody's (a wait on the server). Only the constraint widens; read-only prod check first:
+  // A blocker's move may also be an operator's (an admin signed in as a person) or nobody's (a
+  // wait on the server). Only the constraint widens; read-only prod check first:
   // SELECT whose, COUNT(*) FROM wf_blockers GROUP BY whose;
   15: `ALTER TABLE wf_blockers DROP CONSTRAINT wf_blockers_whose_check, ADD CONSTRAINT wf_blockers_whose_check CHECK (whose IN ('owner','admin','operator','nobody'));`,
-  // (unpublished) A blocker's move may be one actor's alone (`actor:<id>`), as a person's own
-  // model limit is. Only the constraint widens; read-only prod check first:
+  // A blocker's move may be one actor's alone (`actor:<id>`), as a person's own model limit is.
+  // Only the constraint widens; read-only prod check first:
   // SELECT whose, COUNT(*) FROM wf_blockers GROUP BY whose;
   16: `ALTER TABLE wf_blockers DROP CONSTRAINT wf_blockers_whose_check, ADD CONSTRAINT wf_blockers_whose_check CHECK (whose IN ('owner','admin','operator','nobody') OR whose ~ '^actor:[^[:space:]]{1,200}$');`,
-  // (unpublished) When a lease's worker first took it up: the work start is the revision's
-  // first, so a later visit at that revision is told apart only by its own lease. A live lease
-  // whose revision already started keeps that start, as it read before. Read-only prod check:
+  // When a lease's worker first took it up: the work start is the revision's first, so a later
+  // visit at that revision is told apart only by its own lease. A live lease whose revision
+  // already started keeps that start, as it read before. Read-only prod check:
   // SELECT count(*) AS live, count(s.instance_id) AS started FROM wf_leases l LEFT JOIN wf_work_starts s ON s.instance_id=l.instance_id AND s.revision=l.revision WHERE l.released_at IS NULL;
   17: `ALTER TABLE wf_leases ADD COLUMN started_at TEXT;
 UPDATE wf_leases l SET started_at=s.started_at FROM wf_work_starts s WHERE l.released_at IS NULL AND s.instance_id=l.instance_id AND s.revision=l.revision;`,

@@ -26,8 +26,8 @@ revision when called. Changing guidance does not change the declared permission.
 
 ## Declarations and binding facts
 
-An assignment rule may supply `execution` and a synchronous `references`
-resolver. The declaration contains a Boolean `readOnly` and exact tool names.
+An assignment rule may supply `execution` and an awaited, metadata-only
+`references` resolver. The declaration contains a Boolean `readOnly` and exact tool names.
 Each tool has one or more complete argument-binding alternatives. All bindings
 within one alternative must match; values from different alternatives are never
 combined.

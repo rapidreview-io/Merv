@@ -10,6 +10,7 @@ import {
   toldMigration,
   usageMigration,
 } from '../packages/pi/src/schema.js';
+import type { PiCommandRecord } from '../packages/pi/src/types.js';
 import { openState } from './fixtures/state.js';
 import { fixture } from './fixtures/pi.js';
 
@@ -70,12 +71,29 @@ test('Pi starts over a kept turn jsonb cannot read', async (t) => {
       '2026-10-01T00:00:00Z',
       JSON.stringify({
         id: 'c_nul',
+        conversationId: conversation.id,
+        status: 'completed',
         messages: [{ role: 'user', text: 'see\u0000this' }],
-        proposals: [{ id: 'pip_1', name: 'x', ran: { at: '2026-10-01T00:00:00Z', ok: true } }],
+        proposals: [
+          { id: 'pip_1', name: 'x', ran: { at: '2026-10-01T00:00:00Z', ok: true } },
+          { id: 'pip_2', name: 'y', ran: { at: '2026-10-01T00:00:00Z' } },
+        ],
       }),
     ),
   );
+  // Its call cut off by the restart is kept as interrupted all the same, and the kept one stands.
   await f.restart();
+  const [turn] = await f.state.read((sql) =>
+    sql.all<{ data_json: string }>("SELECT data_json FROM pi_commands WHERE id='c_nul'"),
+  );
+  const proposals = (JSON.parse(turn!.data_json) as PiCommandRecord).proposals!;
+  assert.deepEqual(
+    proposals.map(({ ran }) => [ran!.ok, ran!.code]),
+    [
+      [true, undefined],
+      [false, 'interrupted'],
+    ],
+  );
 });
 
 test('Pi keeps no NUL or lone surrogate, whoever words the text', async (t) => {

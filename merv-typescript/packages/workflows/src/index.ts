@@ -3,7 +3,6 @@ import type { Context } from 'cordis';
 import { WorkflowsService } from './service.js';
 
 export { WorkflowsService } from './service.js';
-export type { WorkflowHistoryEntry } from './models.js';
 
 export const workflowsPlugin = {
   name: 'merv-workflows',
