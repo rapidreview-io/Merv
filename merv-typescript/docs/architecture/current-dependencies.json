@@ -1,24 +1,24 @@
 {
   "snapshot": "2026-10-14",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 74,
-  "serviceProviders": 33,
-  "toolAdapters": 18,
+  "pluginCount": 77,
+  "serviceProviders": 34,
+  "toolAdapters": 19,
   "uiAdapters": 16,
   "apiAdapters": 5,
-  "defaultEntries": 54,
-  "apiEntries": 41,
-  "serverPlugins": 73,
+  "defaultEntries": 56,
+  "apiEntries": 43,
+  "serverPlugins": 76,
   "machinePlugins": 1,
-  "directDependencyCount": 215,
-  "optionalDependencyCount": 12,
+  "directDependencyCount": 242,
+  "optionalDependencyCount": 13,
   "directConsumers": {
-    "api": 8,
-    "artifacts": 12,
+    "api": 9,
+    "artifacts": 14,
     "blobs": 3,
     "board": 2,
     "code": 1,
-    "codeWork": 7,
+    "codeWork": 8,
     "contextBuilder": 3,
     "domainEvents": 6,
     "experiments": 4,
@@ -30,31 +30,36 @@
     "mounts": 1,
     "nisa": 1,
     "paper": 6,
-    "pi": 3,
+    "pi": 4,
     "reflections": 3,
+    "reports": 3,
     "research": 2,
-    "reviews": 7,
+    "reviews": 8,
     "runner": 0,
-    "sandboxEvidence": 2,
-    "scope": 28,
+    "sandboxEvidence": 3,
+    "scope": 30,
     "secrets": 2,
-    "sessions": 8,
-    "state": 23,
+    "sessions": 9,
+    "state": 25,
     "tasks": 4,
-    "tools": 24,
+    "tools": 26,
     "ui": 17,
     "web": 1,
-    "workflows": 11,
-    "sbxMerv": 4,
+    "workflows": 12,
+    "sbxMerv": 5,
     "sbxPipelines": 2,
     "sbxObjects": 2,
-    "sbxAccounts": 1,
+    "sbxAccounts": 2,
+    "sbxBilling": 1,
+    "sbxProviders": 1,
+    "sbxVault": 1,
+    "sbxResourceLimits": 1,
     "sbxRegistry": 2,
-    "sbxJobs": 1,
+    "sbxJobs": 2,
     "sbxSnapshots": 1,
-    "sbxDb": 1,
+    "sbxDb": 2,
     "sbxClock": 1,
-    "sbxSettings": 1
+    "sbxSettings": 2
   },
   "plugins": [
     {
@@ -267,6 +272,37 @@
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-customer-experiments",
+      "source": "packages/customer-experiments/src/index.ts",
+      "provides": [],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "codeWork",
+        "sessions",
+        "sandboxEvidence",
+        "reports",
+        "sbxMerv",
+        "sbxAccounts",
+        "sbxDb",
+        "sbxBilling",
+        "sbxProviders",
+        "sbxVault",
+        "sbxSettings",
+        "sbxResourceLimits",
+        "pi",
+        "tools",
+        "api"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-domain-events",
       "source": "packages/domain-events/src/index.ts",
       "provides": [
@@ -297,7 +333,8 @@
         "paper"
       ],
       "optional": [
-        "sandboxEvidence"
+        "sandboxEvidence",
+        "reports"
       ],
       "kind": "service",
       "runtime": "server",
@@ -709,6 +746,35 @@
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-reports",
+      "source": "packages/reports/src/index.ts",
+      "provides": [
+        "reports"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-reports-tools",
+      "source": "packages/reports/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "reports",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
       "plugin": "merv-research",
       "source": "packages/research/src/index.ts",
       "provides": [
@@ -830,7 +896,8 @@
         "sbxMerv",
         "sbxPipelines",
         "sbxObjects",
-        "sbxAccounts"
+        "sbxAccounts",
+        "sbxJobs"
       ],
       "optional": [],
       "kind": "service",
@@ -1148,6 +1215,10 @@
         "sbxPipelines",
         "sbxObjects",
         "sbxAccounts",
+        "sbxBilling",
+        "sbxProviders",
+        "sbxVault",
+        "sbxResourceLimits",
         "sbxRegistry",
         "sbxJobs",
         "sbxSnapshots",

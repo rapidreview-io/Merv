@@ -30,6 +30,7 @@
         "experiments",
         "knowledge",
         "paper",
+        "reports",
         "board",
         "reflections",
         "research",
@@ -166,6 +167,10 @@
       "label": "Paper",
       "purpose": "Stores the living research narrative, citations and revision history. Main agents edit all sections; experiment and reflection reviewers author Methods/Results updates with their verdicts. Experiment references display names and link to the underlying records; earlier proposals remain historical."
     },
+    "reports": {
+      "label": "Reports",
+      "purpose": "Keeps one editable one-page report draft per experiment or customer experiment, prefilled from its approved plan with the question and constraints locked. Agents write, check, visually review and render it; the final render stores the Markdown source, a PDF and page images as artifacts. A rejected submission keeps its draft for the next round."
+    },
     "reflections": {
       "label": "Reflections",
       "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required."
@@ -238,13 +243,13 @@
         "id": "domain",
         "label": "Domain & agent capabilities",
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
-        "members": ["paper", "board", "reviews", "codeWork", "pi"]
+        "members": ["paper", "reports", "board", "reviews", "codeWork", "pi"]
       },
       {
         "id": "work",
         "label": "Research work",
         "purpose": "Use the platform to deliver tasks and execute reviewed experiments.",
-        "members": ["tasks", "experiments"]
+        "members": ["tasks", "experiments", "merv-customer-experiments"]
       },
       {
         "id": "synthesis",
