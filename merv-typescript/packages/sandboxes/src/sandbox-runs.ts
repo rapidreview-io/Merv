@@ -160,12 +160,8 @@ export class SandboxRuns {
       this.waits.set(run.run_ref, this.clock() + 15_000);
       try {
         const caller = await this.scope.serviceActor('sessions', run.project_id);
-        const retire = [
-          this.host.retireRun.bind(this.host),
-          this.host.retireAttempt.bind(this.host),
-          this.host.releaseWork.bind(this.host),
-        ][run.target - 1];
-        if ((await retire(caller, scopeOf(run))) === false) continue;
+        const retire = (['retireRun', 'retireAttempt', 'releaseWork'] as const)[run.target - 1]!;
+        if ((await this.host[retire](caller, scopeOf(run))) === false) continue;
         await this.state.transaction(async (tx) => {
           await tx.run(
             'UPDATE sandbox_run_intents SET retired=? WHERE run_ref=? AND retired<?',

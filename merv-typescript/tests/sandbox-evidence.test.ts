@@ -285,6 +285,22 @@ test('a not-yet-available held object is retried', async (t) => {
   assert.equal((await f.artifacts.list(f.caller)).length, 1);
 });
 
+test('a released work is read until its captures settle, then never again, after a restart too', async (t) => {
+  const f = await fixture(t);
+  f.workflow();
+  await f.state.transaction((tx) => tx.run('UPDATE sandbox_run_intents SET target=3,retired=3'));
+  const ready = f.retained.get('object')!;
+  f.retained.set('object', { ...ready, state: 'uploading' });
+  await (await createService(f.service())).reconcile();
+  f.retained.set('object', ready);
+  await (await createService(f.service())).reconcile();
+  assert.equal((await f.artifacts.list(f.caller)).length, 1);
+  const lists = () => f.calls.filter((call) => call === 'list').length;
+  assert.equal(lists(), 2, 'the unsettled capture kept the work in the pass');
+  await (await createService(f.service())).reconcile();
+  assert.equal(lists(), 2, 'a settled released work is not read again');
+});
+
 test('downloads refuse a released hold and a moved namespace', async (t) => {
   const f = await fixture(t);
   f.workflow();

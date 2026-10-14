@@ -65,7 +65,6 @@ CREATE INDEX sandbox_capture_work ON sandbox_capture_index(project_id,work_ref,a
 export class SandboxEvidence implements SandboxCaptureEvidence {
   private reconciling?: Promise<void>;
   private readonly doneWorkflows = new Set<string>();
-  private readonly doneWorks = new Set<string>();
 
   constructor(
     private readonly state: State,
@@ -134,22 +133,31 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     await this.reconciling?.catch(() => {});
   }
 
+  /** A released work (its runs' `retired` 3) whose captures have all settled owes nothing more:
+   *  its runs rise to 4, which no pass reads again, after a restart either. */
   private async pass() {
     const works = await this.state.read((sql) =>
       sql.all<Work>(
         `SELECT project_id,namespace,account_id,work_ref,bool_and(retired=3) AS released
-         FROM sandbox_run_intents GROUP BY 1,2,3,4`,
+         FROM sandbox_run_intents WHERE retired<4 GROUP BY 1,2,3,4`,
       ),
     );
-    for (const work of works) {
-      const key = JSON.stringify([work.project_id, work.namespace, work.work_ref]);
-      if (this.doneWorks.has(key)) continue;
+    for (const work of works)
       try {
-        if ((await this.work(work)) && work.released) this.doneWorks.add(key);
+        if ((await this.work(work)) && work.released)
+          await this.state.transaction((tx) =>
+            tx.run(
+              `UPDATE sandbox_run_intents SET retired=4
+               WHERE retired=3 AND project_id=? AND namespace=? AND account_id=? AND work_ref=?`,
+              work.project_id,
+              work.namespace,
+              work.account_id,
+              work.work_ref,
+            ),
+          );
       } catch {
         // The next pass retries unavailable Sandboxes services.
       }
-    }
   }
 
   private async work(work: Work) {
@@ -196,9 +204,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         try {
           await this.register(work, workflow, node);
         } catch (error) {
-          pending =
-            !(await this.refuse(work, workflow.id, workflow.attempt_ref, node.id, error)) ||
-            pending;
+          pending = !(await this.refuse(work, workflow, node.id, error)) || pending;
         }
       }
       after = page.next;
@@ -272,16 +278,11 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     });
   }
 
-  private async refuse(
-    work: Work,
-    workflow: string,
-    attempt: string | null,
-    node: string,
-    error: unknown,
-  ) {
+  private async refuse(work: Work, workflow: WorkflowRecord, node: string, error: unknown) {
     const status = (error as { status?: number })?.status;
     if (!status || status >= 500 || status === 409 || status === 429) return false;
     const detail = error instanceof Error ? clip(error.message, 500) : 'Evidence is unavailable';
+    const { id: workflowId, attempt_ref: attempt } = workflow;
     await this.state.transaction(async (tx) => {
       const row = await tx.get(
         `INSERT INTO sandbox_capture_index(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,error)
@@ -289,7 +290,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         work.project_id,
         work.namespace,
         work.work_ref,
-        workflow,
+        workflowId,
         node,
         attempt,
         detail,
@@ -301,7 +302,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           await this.scope.serviceActor('sandboxes', work.project_id, tx),
           'sandboxes.capture_refused',
           work.work_ref,
-          { workflowId: workflow, captureNode: node, attempt, error: detail },
+          { workflowId, captureNode: node, attempt, error: detail },
         );
     });
     return true;
