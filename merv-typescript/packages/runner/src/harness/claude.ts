@@ -140,6 +140,21 @@ export const claude: Harness = {
       : /^\{"type":"(?:assistant|result)"/.test(head)
         ? 'whole'
         : undefined,
+  piece(text) {
+    const line = readLine(text),
+      event = line?.event;
+    const field = ['text', 'thinking', 'partial_json'].find(
+      (key) => event?.type === 'content_block_delta' && typeof event.delta?.[key] === 'string',
+    );
+    return field
+      ? {
+          block: `${event.index} ${event.delta.type}`,
+          text: event.delta[field],
+          line: (text) =>
+            `${JSON.stringify({ ...line, event: { ...event, delta: { ...event.delta, [field]: text } } })}\n`,
+        }
+      : undefined;
+  },
   home: (_profile, _runDirectory, environment) =>
     environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), '.claude'),
   locate(root, id, cwd) {

@@ -106,6 +106,9 @@ export interface Harness {
   /** A log line, by its first 32 bytes, as a transcript sees it: a partial-message piece, a
    *  whole message that repeats such pieces, or neither. */
   line(head: string): 'delta' | 'whole' | undefined;
+  /** A partial-message line's piece of text, the block it continues, and that line holding a
+   *  longer text instead: a transcript joins each block's pieces, so a bearer is never parted. */
+  piece?(line: string): { block: string; text: string; line(text: string): string } | undefined;
   /** Where a launch keeps its conversations. */
   home(profile: RunnerProfile, runDirectory: string, environment: NodeJS.ProcessEnv): string;
   /** A conversation's file in that home: the one the launch run in `cwd` wrote, where a home

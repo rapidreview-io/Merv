@@ -18,6 +18,7 @@ import {
   type WorkspaceDriverFactory,
   type WorkspaceHandle,
 } from '@merv/contracts';
+import { AGENT_EVENT_TEXT } from '@merv/sessions/agent-stream';
 import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
 import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
 import { readTranscript } from '../packages/runner/src/transcript.js';
@@ -140,9 +141,19 @@ test('partial-message deltas a whole message repeats are left out; those after t
   log(path, `${delta}\n${whole}\n${delta}\n${delta}\n{"type":"result"}\n${delta}`);
   for (const chunk of [7, 1000])
     assert.equal(text(path, [], undefined, chunk), `${whole}\n{"type":"result"}\n${delta}`);
-  // A run stopped mid-message: what it streamed after its last whole message stays.
+  // A run stopped mid-message: what it streamed after its last whole message stays, each block's
+  // pieces as one line, so a bearer streamed across two is blanked.
+  const lines = (...said: string[]) => said.map((one) => `${delta.replace('Hi', one)}\n`).join('');
   log(path, `${delta}\n${whole}\n${delta}\n${delta}\n`);
-  assert.equal(text(path), `${whole}\n${delta}\n${delta}\n`);
+  assert.equal(text(path), `${whole}\n${lines('HiHi')}`);
+  const bearer = `mk_${b64('Q')}`;
+  log(path, lines(`key ${bearer.slice(0, 20)}`, `${bearer.slice(20)} ok`));
+  assert.equal(text(path), lines('key [REDACTED] ok'));
+  // A run holds what an event does, and more only where a word would be parted.
+  const long = 'w '.repeat(AGENT_EVENT_TEXT / 2),
+    word = 'w'.repeat(AGENT_EVENT_TEXT);
+  log(path, lines(long, 'x', 'y ', word, 'z'));
+  assert.equal(text(path), lines(long, 'xy ', `${word}z`));
   // Codex prints no deltas; a plain command's output is kept as it is.
   log(path, `${delta}\n${whole}\n`);
   for (const harness of [codexHarness, undefined])

@@ -338,22 +338,13 @@ export class LocalLedger {
     patch = plain(patch, 'invalid_runner_metadata', limits);
     // Only the controller writes metadata, and every tick saves what it read: unchanged, nothing is written.
     const current = this.get(id);
-    if (current && encode({ ...current.metadata, ...patch }) === encode(current.metadata))
-      return current;
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const record = this.get(id);
-      if (!record) throw new Error('Unknown launch');
-      const encoded = encode({ ...record.metadata, ...patch });
-      this.db
-        .prepare('UPDATE launches SET metadata_json=?,updated_at=? WHERE id=?')
-        .run(encoded, Date.now(), id);
-      this.db.exec('COMMIT');
-      return this.get(id)!;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    if (!current) throw new Error('Unknown launch');
+    const encoded = encode({ ...current.metadata, ...patch });
+    if (encoded === encode(current.metadata)) return current;
+    this.db
+      .prepare('UPDATE launches SET metadata_json=?,updated_at=? WHERE id=?')
+      .run(encoded, Date.now(), id);
+    return this.get(id)!;
   }
   close(): void {
     this.unlock?.();

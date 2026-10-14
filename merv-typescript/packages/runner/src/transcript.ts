@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_TRANSCRIPT_BYTES } from '@merv/contracts';
+import { AGENT_EVENT_TEXT } from '@merv/sessions/agent-stream';
 import type { SessionTranscriptDeclaration } from '@merv/sessions/types';
 import type { Harness } from './harness/index.js';
 
@@ -139,20 +140,44 @@ const marker = (omittedBytes: number) =>
 /**
  * Moves each segment's lines to its start, but the partial-message lines that a later whole
  * message repeats (the live view read them from stdout.log); those after the last whole message,
- * as of a run stopped mid-message, are kept.
+ * as of a run stopped mid-message, are kept, each block's run of pieces as one line where it fits
+ * in theirs, so the blanking sees a bearer streamed across pieces whole. A run holds what an event
+ * does, and more only where a word would be parted.
  */
 function dropDeltas(out: Buffer, segments: [number, number][], harness: Harness) {
   let last = -1;
   for (const find of [true, false])
     for (const segment of segments) {
-      let to = segment[0];
+      let to = segment[0],
+        run: (ReturnType<NonNullable<Harness['piece']>> & { at: number; n: number }) | undefined;
+      const fold = () => {
+        const line = run && run.n > 1 && Buffer.from(run.line(run.text));
+        if (line && line.length <= to - run!.at) to = run!.at + line.copy(out, run!.at);
+      };
       for (let line = segment[0], stop; line < segment[1]; line = stop) {
         const newline = out.indexOf(0x0a, line);
         stop = newline < 0 || newline >= segment[1] ? segment[1] : newline + 1;
         const kind = harness.line(out.toString('latin1', line, Math.min(stop, line + 32)));
         if (find) last = kind === 'whole' ? line : last;
-        else if (kind !== 'delta' || line > last) to += out.copy(out, to, line, stop);
+        else if (kind !== 'delta' || line > last) {
+          const piece = kind === 'delta' && harness.piece?.(out.toString('utf8', line, stop));
+          if (
+            piece &&
+            piece.block === run?.block &&
+            (run.text.length + piece.text.length <= AGENT_EVENT_TEXT ||
+              /\S\S/.test(run.text.slice(-1) + piece.text.slice(0, 1)))
+          )
+            [run.text, run.n] = [run.text + piece.text, run.n + 1];
+          else {
+            fold();
+            run = piece ? { ...piece, at: to, n: 1 } : undefined;
+          }
+          to += out.copy(out, to, line, stop);
+        }
       }
-      if (!find) segment[1] = to;
+      if (!find) {
+        fold();
+        segment[1] = to;
+      }
     }
 }
