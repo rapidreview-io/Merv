@@ -18,8 +18,8 @@ export const producing = (state: string) => state === 'planned' || state === 'ru
  * The executable contracts. Each grants the large-upload tools, which refuse where the blob
  * store cannot sign uploads; the twin without them (experiment@36) is retired. experiment@41
  * gives the design and its review a read-only checkout of the code execution starts from
- * (designCheckout);
- * experiment@40 stays registered for the experiments that run on it.
+ * (designCheckout), experiment@42 grants nisa.research; experiment@40 and @41 stay registered
+ * for the experiments that run on them.
  */
 export const programVersions: readonly number[] = [40, 41, 42];
 

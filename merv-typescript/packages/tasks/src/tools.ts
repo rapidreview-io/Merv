@@ -6,7 +6,7 @@ import type {
   TaskCheckpointInput,
 } from './types.js';
 import type { Task } from './models.js';
-import { visible } from '@merv/contracts';
+import { MAX_ARTIFACT_IDS, visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
@@ -116,7 +116,7 @@ export const taskToolsPlugin = {
           .object({
             taskId: id,
             // Only a Git task may deliver its commit alone, and only Tasks knows which task is one.
-            artifactIds: z.array(id),
+            artifactIds: z.array(id).max(MAX_ARTIFACT_IDS),
             commandId: id.optional(),
             confirmations: z
               .array(

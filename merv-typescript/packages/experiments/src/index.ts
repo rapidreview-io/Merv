@@ -48,6 +48,7 @@ import {
   TERMINAL,
 } from './program.js';
 import { handleFor, register, unregister } from './policy.js';
+import { leaseOf } from './lease.js';
 import { attach, closeUnstarted, create, exhibit, submitReview, transition } from './commands.js';
 import { REVIEW_RETURNS } from './definitions.js';
 import { postgresMigrations } from './storage.postgres.js';
@@ -161,9 +162,13 @@ export class ExperimentService implements Experiments {
             review.subjectId,
             review.projectId,
           )),
+        // A worker claims only while taking this review's lease (no row yet) or holding it.
         claim: async (caller, review, tx) => {
           const workflow = await this.workflows.get(caller, review.subjectId, tx);
           handleFor(this, workflow.version);
+          const { projectId } = caller;
+          if (caller.session && (await leaseRows(tx, { projectId, id: caller.session.id })).length)
+            await leaseOf(this, caller, { id: workflow.id, projectId, workflow }, tx);
         },
         submit: async (caller, input, tx) => await submitReview(this, caller, input, tx),
         returns: async (review, tx) => {

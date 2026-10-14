@@ -67,8 +67,8 @@ export const GIT_DELIVERY =
 export const GIT_REVIEW =
   'This is a Git task: the read-only checkout prepared for this assignment is pinned to the exact delivered commit named by the ‘Delivered commit’ record in your evidence; do not substitute another branch or a newer head. Cite that record’s artifact id in the findings the commit supports. Only this leased review, working in that checkout, can pass the task.';
 /**
- * Reviews admits an interactive claim without asking Tasks, and a claimed review can no longer be
- * leased. The reviewer is told before claiming, because afterwards only a release frees the task.
+ * A claimed review can no longer be leased, so the reviewer is told before claiming, because
+ * afterwards only a release frees the task.
  */
 export const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until its claimer or an admin hands it back with review.release.';

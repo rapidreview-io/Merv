@@ -57,6 +57,15 @@ test('a task delivery or failure and an experiment transition tell Pi the record
     summary: { id: 'task_1', state: 'researching', revision: 1, reviewId: 'review_1' },
     reread: ['task.get', 'workflow.status_and_next'],
   });
+  // A delivery past MAX_ARTIFACT_IDS is refused as input, before its lookups bind every id.
+  const delivery = (count: number) =>
+    tasks.get('task.submit_delivery')!.inputSchema.safeParse({
+      taskId: 'task_1',
+      artifactIds: Array.from({ length: count }, (_, index) => `a${index}`),
+      expectedRevision: 1,
+      requestId: 'r',
+    }).success;
+  assert.deepEqual([delivery(2000), delivery(2001)], [true, false]);
   assert.deepEqual(tasks.get('task.mark_failed')!.receipt!(task, {}).summary, {
     id: 'task_1',
     state: 'researching',

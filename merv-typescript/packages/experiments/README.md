@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers two current contracts, `experiment@41` for new experiments and `experiment@40` for those pinned to it, on which Sessions attaches Sandboxes compute. It grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
+independent review gates. It registers three current contracts, `experiment@42` for new experiments (it adds `nisa.research`) and `experiment@41` and `@40` for those pinned to them, on which Sessions attaches Sandboxes compute. Each grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twin `experiment@36` is retired. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 ## Where it sits
 
@@ -31,7 +31,7 @@ flowchart LR
   end
   worker -- "calls experiment.* tools" --> experiments
   research -- "creates plan experiments" --> experiments
-  reflections -- "pauses new experiments" --> experiments
+  reflections -- "applies experiment name and active-limit rules" --> experiments
   experiments -- "registers experiment workflow; keeps its leases" --> workflows
   experiments -- "requests design, results reviews" --> reviews
   experiments -- "registers four recipes" --> contextBuilder
@@ -50,11 +50,11 @@ Experiments carries a research question through planning, a run and two independ
 
 Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 
-| Entrypoint                | Requires                                                                  | Provides                                                        |
-| ------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Paper, Code | `experiments` service and owned workflow/context/review routing |
-| `@merv/experiments/tools` | Experiments, Tools                                                        | Six experiment tools                                            |
-| `@merv/experiments/ui`    | Experiments, UI                                                           | Experiment inventory and detail page                            |
+| Entrypoint                | Requires                                                                       | Provides                                                        |
+| ------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `@merv/experiments`       | State, Scope, Artifacts, Workflows, Reviews, Context Builder, Paper, Code Work | `experiments` service and owned workflow/context/review routing |
+| `@merv/experiments/tools` | Experiments, Tools                                                             | Six experiment tools                                            |
+| `@merv/experiments/ui`    | Experiments, UI                                                                | Experiment inventory and detail page                            |
 
 The tools are `experiment.create`, `experiment.list`, `experiment.get_state`,
 `experiment.attach`, `experiment.transition` and `experiment.exhibit`.

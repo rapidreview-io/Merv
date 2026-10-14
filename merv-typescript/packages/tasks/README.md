@@ -50,17 +50,17 @@ Tasks is the reviewed unit of work in the research cycle: it registers the `task
 Tasks registers its action checks and descriptions with Workflows. `task.get` and
 `task.list` include caller-specific `guidance`; `workflow.status_and_next` returns
 the same evaluated decision. The required task section carries it into every
-context recipe, and the task UI displays it. Delivery/reissue/verdict commands
+context recipe, and the task UI displays it. Delivery/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@43`, on which Sessions attaches Sandboxes compute, and conflict-resolution service work at `task@11`. Both grant the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twins `task@39` and `task@6` are retired. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
+Tasks registers the current contracts: ordinary managed-Git work at `task@44` for new tasks (it adds `nisa.research`) and `task@43` for those pinned to it, on which Sessions attaches Sandboxes compute, and conflict-resolution service work at `task@45` (new) and `task@11`. Each grants the large-upload tools, which refuse where the blob store cannot sign uploads; the upload-less twins `task@39` and `task@6` are retired. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
 
 Other stored versions remain read-only history: records, evidence, verdicts, context packages and pinned graphs are retained. Their runtime implementations are not registered, so they cannot dispatch or accept new contexts, checkpoints, claims or submissions. No old record is upgraded into another contract. The program retains private registration handles; generic workflow tools cannot bypass task gates.
 
 - **Create:** render and pin the goal and numbered checks as an immutable brief, or validate a compatible producer-supplied text brief; the record's `composed` says which. The current actor owns the task. Brief and goal fields are immutable.
 - **Submit delivery:** the producer supplies immutable artifacts and the current task revision. Every task requires a structured confirmation for every numbered check, with evidence references and verification notes. Merv pins a generated assessment alongside the evidence. The task enters `in_review` and a review request pins the brief plus delivery manifest in the same transaction.
-- **Reissue review:** the producer or project operator can replace an unavailable or revoked reviewer’s open claim with a reason and expected revision. This supersedes the old request, advances the task revision, and pins the same evidence in a new request atomically. Prior reviewers cannot submit against the replacement.
+- **Release a claim:** `review.release` hands an unfinished interactive claim back without moving the task (a leased reviewer's claim goes with its lease); the old `reissue_review` command is retired, though its edge stays in every pinned graph.
 - **Submit review:** the actor who independently claimed the current review supplies a verdict and the pinned task revision, with a synopsis and per-criterion findings. Passing outcomes prefer structured evidence.outcome, then synopsis, then legacy notes. `pass` routes to `done`, `needs_changes` returns to `in_progress`, and `fail` routes to `failed`. Verdict, workflow transition/history, task events, and request deduplication commit or roll back together.
 
 Confirmation coverage and evidence references are structural gates; the independent reviewer evaluates whether the submitted evidence actually meets the checks. Review notes become the workflow's outcome or revision context. A revised delivery receives a new review request; prior evidence and verdicts remain readable.

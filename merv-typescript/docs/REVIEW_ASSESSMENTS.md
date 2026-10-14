@@ -67,8 +67,7 @@ of them `met`, which already needs retained evidence; `waived` is refused with
 `criterion_not_waivable`, and the way out is `needs_changes`. Other criteria on
 the same review stay waivable, and `needs_changes` and `fail` are unaffected.
 The field is set only at request (`review.request` is not a tool), is immutable,
-is part of the snapshot hash when supplied, is carried onto a reissued review
-and is returned by `review.get`, so the reviewer sees it beside the numbered
+is part of the snapshot hash when supplied and is returned by `review.get`, so the reviewer sees it beside the numbered
 criteria. Reviews does not know what a required criterion means: Experiments
 requires the feasibility criterion of a design review. The rule runs where a verdict is
 submitted, inside the committing transaction, not in verdict-free guidance.
@@ -117,9 +116,8 @@ current assignment authorization is rechecked.
 
 Revocation releases only an unfinished review claim. It preserves the required
 format, criteria, manifest and snapshot hash, and the next reviewer gets a new
-claim ID. Submitted assessments remain immutable and cannot be reissued. Reissue
-replaces an unsubmitted request and preserves its evidence and format; a later domain
-submission creates a separate request without earlier findings, verdict or route.
+claim ID. Submitted assessments remain immutable. A later domain submission creates
+a separate request without earlier findings, verdict or route.
 
 ## Python parity and limits
 

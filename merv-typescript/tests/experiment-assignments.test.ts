@@ -1018,6 +1018,9 @@ test('review leases claim before freezing, recover exactly once, and claim as th
   assert.equal(claimed.producerId, f.source.actorId);
   assert.notEqual(worker.actorId, lead.actorId);
   assert.match(offered.session.assignment.context!.prompt, new RegExp(claimed.claimId!));
+  // A worker leased on one experiment's review claims no other one's, even in-process.
+  const other = (await f.design()).experiment;
+  await assert.rejects(f.reviews.start(worker, other.reviewId!), { code: 'stale_lease' });
   await assert.rejects(
     async () =>
       await f.sessions.invocations.prepare(worker, 'artifact.create', {

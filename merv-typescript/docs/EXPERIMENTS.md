@@ -13,7 +13,7 @@ Reviewers carry what it means into the living paper.
 The provider injects **State, Scope, Artifacts, Workflows, Reviews, Context Builder,
 Code and Paper**. It owns experiment/attempt/evidence/submission records, the
 managed `experiment` programs, four context recipes and its Reviews submission
-route. New experiments select managed-Git contracts 28/32 or native Sandboxes contracts 36/40, according to upload support. Every design carries a feasibility statement. Other stored versions retain their records as read-only history and have no registered runtime implementation.
+route. New experiments run on `experiment@42`; `@40` and `@41` stay registered for the experiments pinned to them. Every design carries a feasibility statement. Other stored versions retain their records as read-only history and have no registered runtime implementation.
 Workflows continues to own transitions, guidance and execution authority;
 Reviews owns independent claims and verdicts; Artifacts owns immutable file
 metadata and bytes.
@@ -103,12 +103,12 @@ cancellation remains possible while a production lease is active. Retained evide
 
 `retry_running` records infrastructure feedback and advances the workflow
 revision while preserving the attempt, approved plan and first execution clock.
-Its default reason is `infrastructure failure`. It is a recovery marker, not a
+It requires the interruption's reason in `evidence.reason`. It is a recovery marker, not a
 new scientific attempt or a command that launches another process.
 
-Planning and design review may proceed while prerequisites are unfinished.
-Execution assignment, activation and result submission wait for successful
-dependencies. Design approval itself does not start the experiment clock.
+Planning waits for successful dependencies, as execution does: a plan is
+written against its prerequisites' outputs (founder, 2026-09-18). Planning and
+execution assignment, attachment and submission all wait; design review does not. Design approval itself does not start the experiment clock.
 `attempt.startedAt` derives from the first `running` Workflows work-start in
 that attempt's revision interval. Execution repair preserves it; returning to
 planning starts a new interval with no execution start. Historical attempt
@@ -250,8 +250,8 @@ experiment as a task, was retired on 2026-09-25. Packets include experiment meta
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 
-The current versions (`experiment.design`, `experiment.design_review` and
-`experiment.execute` at 11, `experiment.attempt_review` at 12) are format 2,
+The current versions (`experiment.design_review` at 11; `experiment.design`,
+`experiment.execute` and `experiment.attempt_review` at 12) are format 2,
 the item renderer. The experiment record and the pinned review are always
 embedded; the paper, as the items `paper.contextInput` chooses for the
 recipe's budget, the approved plan (priority 900), the evidence (800) and the feedback (700) are
@@ -327,14 +327,15 @@ and production code consolidation and central publication.
 
 ## Git execution
 
-Every current contract executes in managed Git through Code. Planning and
-design review have no checkout. `running` uses a retained private persistent
+Every current contract executes in managed Git through Code. From `experiment@41`
+planning and design review read a read-only checkout of the code execution starts
+from; on `@40` they have none. `running` uses a retained private persistent
 checkout based on `reference:base`, and `experiment_review` uses an ephemeral
 read-only checkout based on `reference:code`.
 
 The base is never named at creation. Code derives it from what the `dependsOn`
 tasks were accepted with and pins it when the first producing lease is acquired.
-That is normally the planner's, although planning has no checkout, so the plan is
+That is normally the planner's, so the plan is
 written against a fixed base and the `running` checkout inherits it; a revised
 plan or a new attempt keeps the same pin. While no base can be derived the
 experiment is not offered and shows `code_base_pending` or `code_base_wait`
@@ -350,11 +351,9 @@ freezes `references.code` to its head OID, with source/worker/revision provenanc
 in context. Later captures cannot substitute. An accepted result is recorded with Code as the
 unit's acceptance, so later work can take its base from it.
 
-Every new experiment uses the native Sandboxes contracts (36/40). They run the
-same graph; Sandboxes attaches native compute to each leased assignment
-([compute as an assignment capability](COMPUTE_CAPABILITY.md)). The older
-contracts (28/32) stay registered for live work, and their pinned grants of the
-retired `compute.*` tools grant nothing.
+Every current contract (40, 41 and 42) runs the same graph; Sandboxes attaches
+native compute to each leased assignment
+([compute as an assignment capability](COMPUTE_CAPABILITY.md)).
 Experiments does not publish code; Sessions/Runner still own process and checkout
 lifecycle. The seven-experiment cap does not implement the future reflection
 scheduler's reserved slots. Exact capture and compatibility details are in

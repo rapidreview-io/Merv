@@ -77,7 +77,7 @@ work's **compute epoch** changes:
 
 ## Versions
 
-New tasks and experiments always use the native contracts (task@43 and experiment@41),
+New tasks and experiments always use the native contracts (task@44 and experiment@42),
 whether or not the project is connected. Their execution policies grant no compute tools, so they
 need no new versions.
 
