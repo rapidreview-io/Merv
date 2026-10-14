@@ -7,6 +7,7 @@ import { Icon } from './icons';
 import { MOVED, dormantOwner, humanizeGroup } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
 import { HomeView } from './views/home';
+import { AdminView } from './views/admin';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
 
@@ -125,10 +126,16 @@ function Workspace() {
   );
 }
 
+function AppContent() {
+  const { pathname } = useLocation();
+  return pathname === '/admin' ? <AdminView /> : <Workspace />;
+}
+
 export function App() {
+  const { pathname } = useLocation();
   return (
-    <SessionProvider>
-      <Workspace />
+    <SessionProvider accountOnly={pathname === '/admin'}>
+      <AppContent />
     </SessionProvider>
   );
 }

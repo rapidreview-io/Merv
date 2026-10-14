@@ -466,7 +466,13 @@ function Projects({
   );
 }
 
-export function SessionProvider({ children }: { children: ReactNode }) {
+export function SessionProvider({
+  children,
+  accountOnly = false,
+}: {
+  children: ReactNode;
+  accountOnly?: boolean;
+}) {
   const navigate = useNavigate();
   const [auth, setAuth] = useState<Awaited<ReturnType<typeof browserAuth>>>();
   const [authReady, setAuthReady] = useState(false);
@@ -608,6 +614,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }}
       />
     );
+  // Account-wide pages authorize their own reads without granting project membership.
+  if (accountOnly) return <>{children}</>;
   // The page that was asked for opens in the chosen project.
   const choose = (id: string) => {
     setProject(id);
