@@ -389,11 +389,7 @@ export class CodeWriterService {
       409,
     );
     check(
-      !(await tx.get(
-        "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
-        caller.projectId,
-        input.unitId,
-      )),
+      !(await this.uploads(tx, row)).admitted,
       'code_operation_unresolved',
       'An admitted upload of this unit is unfinished; it must complete or be recovered first',
       409,
