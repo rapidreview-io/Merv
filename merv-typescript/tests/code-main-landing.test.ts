@@ -337,6 +337,31 @@ test('local publication counts a main that already holds its head, and waits whi
   assert.equal((await f.code.unit(f.admin, moved.id)).publication?.state, 'published');
 });
 
+test('a local publication whose landing was skipped settles stale instead of waiting for it', async (t) => {
+  const f = await fixture(t);
+  t.mock.method(f.landing, 'soon', () => {});
+  const moved = await f.declare('Moved');
+  await f.publishes(moved);
+  await f.pin(moved);
+  await f.accept(moved, f.commitOn(f.root0, { 'moved.txt': 'moved\n' }, 'own'));
+  await f.setMain(f.commitOn(f.root0, { 'bound.txt': 'bound\n' }, 'bound'));
+  await f.landing.work(f.project);
+  await f.code.controlBase(f.admin, {
+    key: (await f.status()).current!.baseKey!,
+    action: 'cancel',
+    reason: 'Handled by successor work.',
+    requestId: 'cancel-landing',
+  });
+  await f.drive();
+  assert.deepEqual(outcomes(await f.status()), [[moved.id, 'skipped']]);
+  const publication = (await f.sync()).find((item) => item.instanceId === moved.id)!;
+  assert.equal(publication.stale, true);
+  assert.deepEqual(
+    (await f.blockers(moved.id)).map((item) => item.code),
+    ['code_publication_stale'],
+  );
+});
+
 test('a conflict with main is one resolution task, and main takes its reviewed result', async (t) => {
   const f = await baseResolutionFixture(t, false, { mainLanding: true });
   const landing = landingOf(f.code);

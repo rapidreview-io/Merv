@@ -452,26 +452,6 @@ export class WorkUnitRecords {
     return row && { ...row };
   }
 
-  private async retainAcceptance(
-    caller: Caller,
-    unitId: string,
-    body: AcceptanceBody,
-    at: string,
-    tx: Transaction,
-  ) {
-    if (body.code)
-      await this.code.retainStoredCommit(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        key: `unit:${unitId}`,
-        ...(body.storage === 'code' ? { ref: resultRef(unitId), mirror: true } : {}),
-        unitId,
-        commit: body.code.commit,
-        storage: body.storage === 'code' ? 'code' : 'external',
-        ...(body.receipt ? { receipt: body.receipt } : {}),
-      });
-  }
-
   /** What the sealed publication of this unit says now, as the policy reads it. */
   async publicationOf(
     sql: Sql,
@@ -674,6 +654,17 @@ export class WorkUnitRecords {
       caller.projectId,
       body.unitId,
     );
-    await this.retainAcceptance(caller, body.unitId, body, at, tx);
+    const { unitId } = body;
+    if (body.code)
+      await this.code.retainStoredCommit(tx, {
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        key: `unit:${unitId}`,
+        ...(body.storage === 'code' ? { ref: resultRef(unitId), mirror: true } : {}),
+        unitId,
+        commit: body.code.commit,
+        storage: body.storage === 'code' ? 'code' : 'external',
+        ...(body.receipt ? { receipt: body.receipt } : {}),
+      });
   }
 }

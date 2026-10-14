@@ -125,6 +125,17 @@ export class MainLanding {
     return { reason, main: project?.main.stored ? project.main.oid : null };
   }
 
+  /** Whether landing will still carry this acceptance to main: it is on here and never skipped it. */
+  async lands(sql: Sql, projectId: string, unitId: string, hash: string): Promise<boolean> {
+    if ((await this.standing(sql, projectId)).reason) return false;
+    return !(await sql.get(
+      "SELECT 1 FROM code_main_landings WHERE project_id=? AND unit_id=? AND acceptance_hash=? AND outcome='skipped'",
+      projectId,
+      unitId,
+      hash,
+    ));
+  }
+
   /** Asked from inside a transaction that may have made work to land: it runs after a beat. */
   soon(projectId: string): void {
     if (!this.enabled || this.closed) return;
@@ -242,16 +253,7 @@ export class MainLanding {
         base ? null : at,
       );
       if (!base) return await this.moveMain(tx, projectId, main, next.commit, next.unitId, 'ff');
-      // Main is no unit's acceptance, so the lineage names it: a resolution of a clash with
-      // main is reviewed like any other, with main contributing no authors (provenance.ts).
-      await tx.run(
-        'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
-        projectId,
-        `base:${base.key}`,
-        'merges',
-        `main:${main}`,
-        at,
-      );
+      await this.units.bases.mergesMain(tx, projectId, base.key, main, at);
       this.units.bases.soon(projectId);
       return true;
     });

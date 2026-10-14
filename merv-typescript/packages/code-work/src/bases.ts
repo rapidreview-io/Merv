@@ -6,7 +6,7 @@ import {
 } from './check-configuration.js';
 import { migrateBases } from './base-schema.js';
 import { CodeWorkReceipt } from './receipts.js';
-import { canonical, check, digest, newId, MervError } from '@merv/contracts';
+import { canonical, check, digest, newId, now, MervError } from '@merv/contracts';
 import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
 import type { SandboxChecks } from './check-types.js';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
@@ -76,7 +76,6 @@ const RETRIES = 5;
 const RECLAIM_ATTEMPTS = 5;
 /** Only these two say a machine may still be Merv's; anything else is a handle to give back. */
 const IN_FLIGHT = "check_state IN ('queued','running')";
-const now = () => new Date().toISOString();
 /** After five refusals retain ownership and retry slowly, including after a restart. */
 const CLEANUP_RETRY_MS = 5 * 60_000;
 interface CleanupRow {
@@ -254,7 +253,7 @@ export class CodeBaseService {
     const tick = () =>
       void this.due()
         .then(async (projects) => {
-          for (const projectId of projects) await this.work(projectId);
+          for (const projectId of projects) await this.work(projectId).catch(() => undefined);
         })
         .catch(() => undefined);
     this.timer = setInterval(tick, everyMs);
@@ -392,6 +391,21 @@ export class CodeBaseService {
     );
   }
 
+  /**
+   * Main is no unit's acceptance, so the lineage names it: a resolution of a clash with main is
+   * reviewed like any other, with main contributing no authors (provenance.ts).
+   */
+  async mergesMain(tx: Transaction, projectId: string, key: string, main: string, at = now()) {
+    await tx.run(
+      'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
+      projectId,
+      `base:${key}`,
+      'merges',
+      `main:${main}`,
+      at,
+    );
+  }
+
   /** Keep the intact acceptance as durable work; Git never runs in the caller's transaction. */
   async recordAcceptance(
     tx: Transaction,
@@ -426,11 +440,7 @@ export class CodeBaseService {
         : null);
     let result: CodeBaseRecord['result'] = null;
     if (!error) {
-      const ref = `refs/merv/bases/${base.key}`;
-      const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], { env });
-      if (held.code !== 0) await this.repositories.git.ok(['update-ref', ref, commit, ''], { env });
-      else if (held.stdout.toString('utf8').trim() !== commit)
-        throw new MervError('code_base_diverged', 'A base ref names another commit', 500);
+      await this.holdRef(projectId, base.key, commit);
       const tree = (await this.repositories.git.ok(['rev-parse', `${commit}^{tree}`], { env }))
         .toString('utf8')
         .trim();
@@ -751,20 +761,8 @@ export class CodeBaseService {
               'The merge exceeded its execution deadline',
               409,
             );
-          if (result.outcome !== 'conflict') {
-            const ref = `refs/merv/bases/${base.key}`;
-            const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], {
-              env,
-              signal: abort.signal,
-            });
-            if (held.code !== 0)
-              await this.repositories.git.ok(['update-ref', ref, result.commit, ''], {
-                env,
-                signal: abort.signal,
-              });
-            else if (held.stdout.toString('utf8').trim() !== result.commit)
-              throw new MervError('code_base_diverged', 'A base ref names another commit', 500);
-          }
+          if (result.outcome !== 'conflict')
+            await this.holdRef(projectId, base.key, result.commit, abort.signal);
           return result;
         })(),
         new Promise<never>((_, reject) => {
@@ -1147,7 +1145,7 @@ export class CodeBaseService {
     );
     const configured = await this.state.read((sql) => this.checkSpec(sql, projectId));
     const env = this.repositories.environment(projectId);
-    const commit = await this.heldCommit(projectId, base);
+    const commit = await this.heldCommit(projectId, base.key);
     check(commit, 'code_check_unavailable', 'the merged base holds no commit to check', 409);
     // The operator withdrew the command while this check was in flight. Verification was not
     // asked for any more, and the merge is already complete and sound, so the base seals the
@@ -1206,12 +1204,26 @@ export class CodeBaseService {
     );
   }
 
-  private async heldCommit(projectId: string, base: CodeBaseRecord): Promise<string | null> {
+  /** The commit a base's ref holds, or null. */
+  private async heldCommit(projectId: string, key: string, signal?: AbortSignal) {
+    const env = this.repositories.environment(projectId);
     const held = await this.repositories.git.run(
-      ['rev-parse', '--verify', '-q', `refs/merv/bases/${base.key}`],
-      { env: this.repositories.environment(projectId) },
+      ['rev-parse', '--verify', '-q', `refs/merv/bases/${key}`],
+      { env, signal },
     );
     return held.code === 0 ? held.stdout.toString('utf8').trim() : null;
+  }
+
+  /** Writes a base's ref once; a ref that already names another commit stops the base. */
+  private async holdRef(projectId: string, key: string, commit: string, signal?: AbortSignal) {
+    const held = await this.heldCommit(projectId, key, signal);
+    const env = this.repositories.environment(projectId);
+    if (held === null)
+      await this.repositories.git.ok(['update-ref', `refs/merv/bases/${key}`, commit, ''], {
+        env,
+        signal,
+      });
+    else check(held === commit, 'code_base_diverged', 'A base ref names another commit', 500);
   }
 
   /** What the machine has reached so far, under the epoch that owns it. */
@@ -1366,12 +1378,11 @@ export class CodeBaseService {
       'Only an unresolved base that is not running can have its ref dropped',
       409,
     );
-    const env = this.repositories.environment(caller.projectId);
-    const ref = `refs/merv/bases/${input.key}`;
-    const held = await this.repositories.git.run(['rev-parse', '--verify', '-q', ref], { env });
-    check(held.code === 0, 'code_base_changed', 'This base holds no ref to drop', 409);
-    const commit = held.stdout.toString('utf8').trim();
-    await this.repositories.git.ok(['update-ref', '-d', ref, commit], { env });
+    const commit = await this.heldCommit(caller.projectId, input.key);
+    check(commit, 'code_base_changed', 'This base holds no ref to drop', 409);
+    await this.repositories.git.ok(['update-ref', '-d', `refs/merv/bases/${input.key}`, commit], {
+      env: this.repositories.environment(caller.projectId),
+    });
     return commit;
   }
 

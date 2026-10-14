@@ -410,10 +410,6 @@ export class CodeService implements Code {
   }
   unit: Code['unit'] = (...args) => this.unitStore.records.unit(...args);
   /**
-   * A folder or file of the project's code, as of `ref`: main (the default), a task or
-   * experiment by its id (its accepted code, or else the newest Code admitted for it), or a commit.
-   */
-  /**
    * What a merge of accepted work says it merges: the tasks and experiments whose accepted
    * commits are its members, by their names, which never change, so a repeat makes the same
    * commit. A member no unit accepted (main, an earlier merge) is counted, not named.
@@ -450,24 +446,19 @@ export class CodeService implements Code {
   /** The commit `ref` names: main (the default), a unit's accepted code or newest head, or a commit. */
   private async commitOf(caller: Caller, input: { ref?: string }) {
     const ref = input.ref?.trim() || 'main';
-    const commit = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(ref)
-      ? ref
-      : ref === 'main'
-        ? await this.state.snapshotTransaction(async (tx) => {
-            await this.scope.require(caller, 'read', tx);
-            return (await this.utility.units.project(tx, caller.projectId))?.main.oid;
-          })
-        : await (async () => {
-            const unit = await this.unit(caller, ref);
-            return unit.acceptance?.reference ?? unit.canonicalHead;
-          })();
+    const commit = await this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(ref)) return ref;
+      if (ref === 'main') return (await this.utility.units.project(tx, caller.projectId))?.main.oid;
+      const unit = await this.unit(caller, ref, tx);
+      return unit.acceptance?.reference ?? unit.canonicalHead;
+    });
     if (!commit)
       throw new MervError(
         'code_ref_empty',
         ref === 'main' ? 'This project has no main yet' : `${ref} has no code yet`,
         404,
       );
-    await this.state.snapshotTransaction((tx) => this.scope.require(caller, 'read', tx));
     return { ref, commit };
   }
   /**

@@ -503,7 +503,6 @@ export class CodeRunningReader {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      if (!bases) return null;
       const check = await bases.checkOf(tx, caller.projectId, baseKey);
       if (!check || !hasCheck(check)) return null;
       const command = await bases.checkCommand(tx, caller.projectId);

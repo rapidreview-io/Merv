@@ -899,18 +899,9 @@ export class CodeUnitService {
     let prerequisites: string[] = [];
     if (derived.status !== 'waiting' && derived.merge) {
       const base = await this.bases.ensure(tx, projectId, derived.merge);
-      // Main is no unit's acceptance, so the lineage names it: a resolution of a clash with
-      // main is then reviewed like any other, with main contributing no authors.
       const main = row.publishes_at && (await this.code.project(tx, projectId))?.main.oid;
       if (main && derived.merge.includes(main))
-        await tx.run(
-          'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
-          projectId,
-          `base:${base.key}`,
-          'merges',
-          `main:${main}`,
-          now(),
-        );
+        await this.bases.mergesMain(tx, projectId, base.key, main);
       let path = await this.bases.path(tx, projectId, base.key);
       if (
         path.some((record) => record.state === 'awaiting_resolution' && !record.resolutionTaskId)
@@ -1135,7 +1126,11 @@ export class CodeUnitService {
       }
     }
     for (const unit of units) {
-      const key = reached.get(unit.unit_id) ?? null;
+      // A key is retained while its unit is reached: which path reaches it first can change
+      // from one pass to the next, and the stored key may only be cleared, never replaced.
+      const key = reached.has(unit.unit_id)
+        ? (unit.quarantine_base_key ?? reached.get(unit.unit_id)!)
+        : null;
       if (key !== unit.quarantine_base_key) {
         await tx.run(
           'UPDATE code_units SET quarantine_base_key=? WHERE project_id=? AND unit_id=?',
@@ -1203,8 +1198,11 @@ export class CodeUnitService {
         for (const writer of await this.writers.writerIdentities(sql)) ids.add(writer.projectId);
       return [...ids].sort();
     });
+    // One project that cannot be reconciled must not keep the others, or Code, from starting.
     for (const projectId of projects)
-      await this.state.transaction((tx) => this.reconcileProject(tx, projectId, !resolving));
+      await this.state
+        .transaction((tx) => this.reconcileProject(tx, projectId, !resolving))
+        .catch(() => undefined);
   }
 
   /**

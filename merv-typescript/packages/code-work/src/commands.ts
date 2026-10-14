@@ -315,7 +315,6 @@ export class CodeCommandService implements CodeCommands {
         message: input.message,
         createdAt: now(),
       };
-      await this.scope.require(caller, 'write', tx);
       await tx.run(
         `INSERT INTO code_commands(id,project_id,session_id,actor_id,request_id,input_hash,command_json,status)
          VALUES (?,?,?,?,?,?,?,'queued')`,

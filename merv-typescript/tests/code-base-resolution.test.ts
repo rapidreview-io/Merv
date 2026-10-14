@@ -438,14 +438,18 @@ test('conflict recovery creates and links the task atomically', async (t) => {
   await f.bases.work(f.admin.projectId);
   assert.equal((await f.record())!.state, 'awaiting_resolution');
   assert.equal((await f.record())!.resolutionTaskId, null);
+  let crashed = 0;
   f.units.resolutionTasks = {
     resume: provider.resume,
     create: async (input, tx) => {
       await provider.create(input, tx);
+      crashed += 1;
       throw new Error('Crash before linkage');
     },
   };
-  await assert.rejects(f.code.reconcileAll(), /Crash before linkage/);
+  // A project that cannot be reconciled is left for the next pass; the pass itself goes on.
+  await f.code.reconcileAll();
+  assert.equal(crashed, 1);
   assert.equal(
     (await f.tasks.list(f.admin)).filter((item) => item.workflow.version === 45).length,
     0,

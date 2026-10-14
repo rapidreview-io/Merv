@@ -21,6 +21,7 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
+import { baseKey } from '../packages/code-work/src/base-plan.js';
 import { openState } from './fixtures/state.js';
 import { ReviewService } from '@merv/reviews';
 
@@ -736,4 +737,62 @@ test('units waiting on the same two accepted commits get one merged base, and a 
   assert.equal(next.generation, released.generation + 1);
   assert.equal(next.state, 'reserved');
   assert.equal((await f.pin(waiters[0]!)).reference, pins[0]!.reference);
+});
+
+test('a unit keeps the quarantine key it was first given, whichever path reaches it later', async (t) => {
+  const f = await fixture(t);
+  const [e1, e2, q, c1, c2, m, f1, f2, r] = [...'123456789'].map(oid);
+  // Bases Q (e1+e2→q), R (f1+f2→r), M (c1+c2→m). D1 stands on r and was accepted with c1, D2
+  // on q with c2; U stands on m with sources D1 and D2, and is read after D2.
+  const [d1, d2, u] = [(await f.start()).id, (await f.start()).id, (await f.start()).id].sort();
+  const [Q, R] = [baseKey([e1!, e2!]), baseKey([f1!, f2!])];
+  await f.state.transaction(async (tx) => {
+    for (const [x, y, commit] of [
+      [e1, e2, q],
+      [f1, f2, r],
+      [c1, c2, m],
+    ])
+      await tx.run(
+        `INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,result_json,created_at,updated_at,sponsors_json)
+         VALUES (?,?,?,?,?,'fixture','resolved',?,'now','now','[]')`,
+        f.project.id,
+        baseKey([x!, y!]),
+        JSON.stringify([x, y]),
+        baseKey([x!]),
+        baseKey([y!]),
+        JSON.stringify({ method: 'auto', commit, tree: null, engine: 'x' }),
+      );
+    for (const [id, reference, sources, commit] of [
+      [d1!, r!, [], c1!],
+      [d2!, q!, [], c2!],
+      [u!, m!, [d1!, d2!], null],
+    ] as const)
+      await tx.run(
+        "INSERT INTO code_units (project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at) VALUES (?,?,'build',1,'now',?,'h','lease','now',?,?,?)",
+        f.project.id,
+        id,
+        JSON.stringify({ reference, sources: sources.map((unitId) => ({ unitId })) }),
+        commit && JSON.stringify({ code: { commit } }),
+        commit && 'h',
+        commit && 'now',
+      );
+  });
+  const keys = async () =>
+    (
+      await f.state.read((sql) =>
+        sql.all<{ key: string }>(
+          'SELECT quarantine_base_key AS key FROM code_units WHERE project_id=? ORDER BY unit_id',
+          f.project.id,
+        ),
+      )
+    ).map((row) => row.key);
+  const quarantine = (key: string) =>
+    f.code.controlBase(f.admin, { key, action: 'quarantine', reason: 'bad', requestId: key });
+  // Q reaches U through its source D2 first, and M inherits Q. Every later pass reaches U
+  // through M, and quarantining R would reach it through D1: its retained key stays Q.
+  await quarantine(Q);
+  assert.deepEqual(await keys(), [null, Q, Q]);
+  await quarantine(R);
+  await f.code.reconcileAll();
+  assert.deepEqual(await keys(), [R, Q, Q]);
 });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeBases } from '../packages/code/src/base-merge.js';
+import { CodeBaseService } from '../packages/code-work/src/bases.js';
 import { baseKey, members } from '../packages/code-work/src/base-plan.js';
 import { baseFixture as fixture } from './fixtures/code-bases.js';
 
@@ -451,4 +452,31 @@ test('a base planned with another merge engine is not merged again under this on
   assert.equal(held.state, 'blocked_infra');
   assert.match(held.blocker!, /merge-tree@0/);
   assert.equal(held.result, null);
+});
+
+test('a project whose drain keeps failing does not stop the timer from merging the projects after it', async (t) => {
+  const f = await fixture(t);
+  const { a, b } = f.commits;
+  // `0broken` sorts first; each of its state changes fails to reconcile.
+  const bases = new CodeBaseService(
+    f.state,
+    f.repositories,
+    {
+      ...f.hooks,
+      changed: async (_tx, projectId) => {
+        if (projectId === '0broken') throw new Error('reconcile failed');
+      },
+    },
+    f.clock,
+  );
+  t.after(() => bases.close());
+  const [x, y] = ['1'.repeat(40), '2'.repeat(40)];
+  await f.state.transaction((tx) => bases.ensure(tx, '0broken', [x, y]));
+  await f.state.transaction((tx) => bases.ensure(tx, f.projectId, [a, b]));
+  bases.start(20);
+  const state = async () =>
+    (await f.state.read((sql) => bases.find(sql, f.projectId, [a, b])))!.state;
+  for (let i = 0; i < 100 && (await state()) !== 'resolved'; i++)
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(await state(), 'resolved');
 });

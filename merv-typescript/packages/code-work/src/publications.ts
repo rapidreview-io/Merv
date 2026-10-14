@@ -106,7 +106,7 @@ export const publicationState = (p: Omit<CodePublication, 'state'>): CodePublica
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
 export class CodePublicationService implements CodePublicationApi {
   /** Set by Code Work's start: where it is on, a main that moved is merged by landing.ts. */
-  landing?: { standing(sql: Sql, projectId: string): Promise<{ reason: string | null }> };
+  landing?: { lands(sql: Sql, projectId: string, unitId: string, hash: string): Promise<boolean> };
   constructor(
     private state: State,
     private scope: Scope,
@@ -460,8 +460,10 @@ export class CodePublicationService implements CodePublicationApi {
         main !== current.headOid &&
         !(held && main === seen)
       ) {
-        // Where accepted work lands on main, landing merges this head; it waits for that.
-        if ((await this.landing?.standing(tx, caller.projectId))?.reason === null) return;
+        // Where accepted work lands on main, landing merges this head; it waits for that,
+        // unless landing skipped it, which leaves it to a successor like any moved main.
+        const { instanceId, manifestHash } = current;
+        if (await this.landing?.lands(tx, caller.projectId, instanceId, manifestHash)) return;
         await this.markStale(caller, current, 'code_main_changed', null, tx);
         return;
       }
