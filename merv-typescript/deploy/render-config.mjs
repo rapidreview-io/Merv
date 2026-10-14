@@ -111,10 +111,26 @@ set('secrets', {
   encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY',
   huggingFaceEndpoint: `${origin('MERV_TS_PUBLIC_ORIGIN')}/hf`,
 });
+const projectInvitations = optIn('MERV_PROJECT_INVITATIONS');
+if (projectInvitations) {
+  required('SUPABASE_SERVICE_KEY');
+  const resendKeyEnv = process.env.MERV_INVITATION_RESEND_KEY_ENV
+    ? envName('MERV_INVITATION_RESEND_KEY_ENV')
+    : 'RESEND_API_KEY';
+  required(resendKeyEnv);
+  set('scope-api', {
+    invitations: {
+      apiKeyEnv: resendKeyEnv,
+      from: process.env.MERV_INVITATION_FROM?.trim() || 'Merv <invites@rapidreview.io>',
+      publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+    },
+  });
+}
 set('identity', {
   supabaseUrl: origin('SUPABASE_URL'),
   mode,
   publishableKeyEnv: 'SUPABASE_ANON_KEY',
+  ...(projectInvitations ? { directoryKeyEnv: 'SUPABASE_SERVICE_KEY' } : {}),
   ...(mode === 'hs256' ? { secretEnv: 'SUPABASE_JWT_SECRET' } : {}),
 });
 set('api', {

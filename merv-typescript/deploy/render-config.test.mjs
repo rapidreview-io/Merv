@@ -106,7 +106,7 @@ test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t
     MERV_PI_ENABLED: 'true',
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 11);
+  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 12);
   assert.ok(
     JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
   );
@@ -141,9 +141,10 @@ function renderer(t) {
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins: 'state scope blobs secrets identity api ui code code-work code-work-api sessions'
-        .split(' ')
-        .map((id) => ({ id, name: id })),
+      plugins:
+        'state scope scope-api blobs secrets identity api ui code code-work code-work-api sessions'
+          .split(' ')
+          .map((id) => ({ id, name: id })),
     }),
   );
   const output = join(directory, 'rendered.json');
@@ -160,7 +161,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 14);
+  assert.equal(config.plugins.length, 15);
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
@@ -173,7 +174,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 16);
+  assert.equal(config.plugins.length, 17);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -653,4 +654,27 @@ test('customer experiments opt in to Astra without exposing secrets or altering 
     },
   ])
     assert.notEqual(run({ ...customer, ...broken }).status, 0);
+});
+
+test('invitation delivery is opt-in and renders credential names, never secret values', (t) => {
+  const { run, plugin, output } = renderer(t);
+  assert.equal(run().status, 0);
+  assert.equal(plugin('scope-api').config?.invitations, undefined);
+  assert.notEqual(run({ MERV_PROJECT_INVITATIONS: 'true' }).status, 0);
+  assert.equal(
+    run({
+      MERV_PROJECT_INVITATIONS: 'true',
+      SUPABASE_SERVICE_KEY: 'private-directory-fixture',
+      RESEND_API_KEY: 'private-mail-fixture',
+    }).status,
+    0,
+  );
+  assert.equal(plugin('identity').config.directoryKeyEnv, 'SUPABASE_SERVICE_KEY');
+  assert.deepEqual(plugin('scope-api').config.invitations, {
+    apiKeyEnv: 'RESEND_API_KEY',
+    from: 'Merv <invites@rapidreview.io>',
+    publicOrigin: 'https://merv.example',
+  });
+  assert.ok(!readFileSync(output, 'utf8').includes('private-mail-fixture'));
+  assert.ok(!readFileSync(output, 'utf8').includes('private-directory-fixture'));
 });

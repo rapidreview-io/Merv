@@ -12,6 +12,7 @@ import type {
   IssuedUserKey,
   Permission,
   Project,
+  ProjectInvitation,
   Role,
   UserKey,
 } from './scope-models.js';
@@ -68,13 +69,33 @@ export interface ProjectMembership {
   createdAt: string;
   revokedAt: string | null;
 }
+export type { ProjectInvitation } from './scope-models.js';
 /** Scope's people: verified identities, the projects they create and their memberships. */
 export interface ScopeMembers {
   /** Trusted provider output only; accepting an invitation does not verify an identity. */
   acceptVerifiedIdentity(identity: VerifiedIdentity): Promise<HumanPrincipal>;
   createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
   memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
-  /** Membership administration names subjects of the operator's own identity issuer only. */
+  inviteMember(
+    principal: Principal,
+    projectId: string,
+    input: {
+      issuer: string;
+      subject: string;
+      email: string;
+      role: Role;
+    },
+  ): Promise<ProjectInvitation>;
+  invitations(principal: Principal, projectId?: string): Promise<ProjectInvitation[]>;
+  respondToInvitation(
+    principal: Principal,
+    id: string,
+    response: 'accept' | 'decline',
+  ): Promise<ProjectMembership | null>;
+  revokeInvitation(principal: Principal, projectId: string, id: string): Promise<void>;
+  invitationSent(principal: Principal, projectId: string, id: string): Promise<void>;
+  /** Internal provisioning only. HTTP sharing must invite and wait for acceptance.
+   * Membership administration names subjects of the operator's own identity issuer only. */
   addMember(
     principal: Principal,
     projectId: string,

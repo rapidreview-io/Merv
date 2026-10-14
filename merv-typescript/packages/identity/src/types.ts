@@ -9,6 +9,7 @@ export interface IdentityConfiguration {
 export interface IdentityProvider {
   verify(token: string): Promise<VerifiedIdentity>;
   configuration(): IdentityConfiguration;
+  findUserByEmail?(email: string): Promise<{ issuer: string; subject: string } | null>;
 }
 
 /** Trusted deployment configuration; secrets are environment references only. */
@@ -17,6 +18,7 @@ export interface IdentityConfig {
   mode?: 'jwks' | 'hs256';
   secretEnv?: string;
   publishableKeyEnv?: string;
+  directoryKeyEnv?: string;
   audience?: string;
   allowLocalHttp?: boolean;
 }

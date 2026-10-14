@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { Invitations } from './invitations';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
 import { permits } from '@merv/scope/rules';
@@ -395,6 +396,7 @@ function Projects({
             )}
           </span>
         </div>
+        {account.kind === 'user' && <Invitations key={whoOf(account)} accepted={choose} />}
         {account.kind === 'user' && creating && (
           <form onSubmit={create} className="chooser-create">
             <label htmlFor={box} className="sr-only">
@@ -473,6 +475,8 @@ export function SessionProvider({
   children: ReactNode;
   accountOnly?: boolean;
 }) {
+  const invitationId = new URLSearchParams(window.location.search).get('invitation');
+  if (invitationId) sessionStorage.setItem('merv:invitation', invitationId);
   const navigate = useNavigate();
   const [auth, setAuth] = useState<Awaited<ReturnType<typeof browserAuth>>>();
   const [authReady, setAuthReady] = useState(false);
@@ -547,7 +551,9 @@ export function SessionProvider({
     // A page that is open stays open while the same scope is checked again.
     setState((old) => (old.phase === 'ready' && old.epoch === epoch ? old : { phase: 'checking' }));
     checking.current = true;
-    resolveAccountSession()
+    resolveAccountSession({
+      invitations: !!(invitationId ?? sessionStorage.getItem('merv:invitation')),
+    })
       .then((result) => {
         failures.current = 0;
         if (!cancelled) setState(result);
@@ -618,6 +624,10 @@ export function SessionProvider({
   if (accountOnly) return <>{children}</>;
   // The page that was asked for opens in the chosen project.
   const choose = (id: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invitation');
+    window.history.replaceState(null, '', url);
+    sessionStorage.removeItem('merv:invitation');
     setProject(id);
     reload();
   };
