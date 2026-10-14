@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { accountRequest, useScopeVersion, ApiError } from '../api';
 import type { AdminExperiment, AdminOverview } from '../../src/admin-models';
-import './admin.css';
 
 const terminal = (r: AdminExperiment) => ['complete', 'failed', 'abandoned'].includes(r.state);
 const words = (s: string) => s.replaceAll('_', ' ');

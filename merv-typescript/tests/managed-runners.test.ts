@@ -1217,6 +1217,7 @@ test('a managed runner’s bound session reads while it is live or handed off, a
     sessionId: session.id,
     projectId: f.source.projectId,
     allocationId: f.input.allocationId,
+    platform: f.input.platform,
     expiresAt: new Date(
       Math.min(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt)),
     ).toISOString(),
