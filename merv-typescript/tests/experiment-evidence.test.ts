@@ -216,6 +216,8 @@ test('retained evidence uses exact UTF-8 byte bounds', () => {
   invalidEvidence(() => decodeEvidence(Buffer.from([0xc3, 0x28])));
   invalidEvidence(() => decodeEvidence(Buffer.alloc(0)));
   invalidEvidence(() => decodeEvidence(Buffer.from('  \n')));
+  // NUL is UTF-8, but a report's Conclusion stored with it would refuse every passing verdict.
+  invalidEvidence(() => decodeEvidence(Buffer.from(report.replace('result is', 'result\0is'))));
   assert.equal(decodeEvidence(Buffer.from('xkeptx').subarray(1, 5)), 'kept');
 });
 
@@ -258,6 +260,8 @@ test('figures must be retained, verified inline artifact references', () => {
     '<img src="art_figure">',
   ])
     invalidEvidence(() => markdownImageTargets(`${plan}\n${figure}`));
+  // Alt text stops at a bracket: a flood of `![` is refused in one pass, not one per `![`.
+  invalidEvidence(() => markdownImageTargets('!['.repeat(32_000)));
   assert.deepEqual(
     markdownImageTargets(
       `${plan}\n<!-- ![X](https://host/a) -->\n\`![X](https://host/a)\`\n\`\`\`\n![X](https://host/a)\n\`\`\``,

@@ -22,7 +22,8 @@ export function decodeEvidence(bytes: Uint8Array): string {
     bytes.byteLength > 0 && bytes.byteLength <= evidenceByteLimit,
     'Evidence must contain 1–64000 bytes',
   );
-  error(isUtf8(bytes), 'Evidence must contain valid UTF-8');
+  // NUL is UTF-8 but no text column takes it: a report's Conclusion is stored as its verdict.
+  error(isUtf8(bytes) && !bytes.includes(0), 'Evidence must be valid UTF-8 text without NUL');
   const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');
   error(visible(text), 'Evidence must not be empty');
   return text;
@@ -169,7 +170,8 @@ export function markdownImageTargets(text: string): string[] {
   );
   const targets: string[] = [];
   const remainder = visible.replace(
-    /!\[(?:\\.|[^\]\\])*\]\(\s*<?(art_[A-Za-z0-9_.:-]+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
+    // Alt text stops at a bracket, so each `![` scans only to the next one: linear, not quadratic.
+    /!\[(?:\\.|[^[\]\\])*\]\(\s*<?(art_[A-Za-z0-9_.:-]+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
     (_match, target: string) => {
       targets.push(target);
       return '';
