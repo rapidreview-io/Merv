@@ -60,11 +60,9 @@ export class QuestionResponders {
     );
   }
   async read(tx: Transaction, id: string): Promise<ResponseRow | undefined> {
-    return (
-      (await tx.get<ResponseRow>(
-        'SELECT * FROM session_question_responses WHERE question_id=?',
-        id,
-      )) ?? undefined
+    return await tx.get<ResponseRow>(
+      'SELECT * FROM session_question_responses WHERE question_id=?',
+      id,
     );
   }
   async finish(
@@ -110,8 +108,7 @@ export class QuestionResponders {
         `SELECT q.*,r.* FROM session_question_responses r JOIN session_questions q ON q.id=r.question_id WHERE r.state='investigating' AND r.check_at<=? ORDER BY r.check_at LIMIT 16 FOR UPDATE OF r SKIP LOCKED`,
         new Date(this.clock()).toISOString(),
       );
-      const pending: { question: QuestionRow; response: ResponseRow; source: DelegationSource }[] =
-        [];
+      const pending: { question: QuestionRow & ResponseRow; source: DelegationSource }[] = [];
       for (const row of rows) {
         if (row.answered_at || !(await this.standing(tx, row))) {
           await this.finish(tx, row, row.answered_at ? 'answered' : 'obsolete');
@@ -133,19 +130,19 @@ export class QuestionResponders {
             row.id,
           );
           const session = this.host.decode(await this.host.row(tx, row.session_id));
-          pending.push({ question: row, response: row, source: session.source });
+          pending.push({ question: row, source: session.source });
         }
       }
       return pending;
     });
     await Promise.all(
-      batch.map(async ({ question, response, source }) => {
+      batch.map(async ({ question, source }) => {
         const responder = this.responder;
-        if (!responder || responder.name !== response.responder) return;
+        if (!responder || responder.name !== question.responder) return;
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const run = async () => {
-            const data: QuestionResponse = JSON.parse(response.data_json);
+            const data: QuestionResponse = JSON.parse(question.data_json);
             if (data.reference) return await responder.inspect(source, data.reference);
             await responder.start({
               question: this.view(question, true),

@@ -624,6 +624,26 @@ test('an inquiry visit spends a budget of its own, charged in the model relay’
   await f.present('runner-q');
   const visit = (await f.lease('runner-q')).session!;
   assert.equal(visit.tokenBudget, asked.tokenBudget);
+  // Hosted, its relay's check reads its question and budget beside it, never its packet.
+  const until = new Date(Date.now() + 3_600_000).toISOString();
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,
+        capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,runner_id,created_at)
+        VALUES('allocation_test',1,?,?,'source','profile','{}','[]','enrollment',?,'control',?,'runner-q',?)`,
+      ...[visit.projectId, JSON.stringify(visit.source), until, until, until],
+    );
+    await tx.run(
+      "INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at) VALUES(?,'allocation_test','runner-q',?,?)",
+      ...[visit.id, JSON.stringify(visit.source), until],
+    );
+  });
+  t.after(f.sessions.managed.registerValidator({ current: async () => true } as never));
+  const hosted = await f.sessions.managed.boundSession(visit.id);
+  assert.deepEqual(
+    [hosted.inquiry?.id, hosted.inquiry?.asker.actorId, hosted.tokenBudget, hosted.expiresAt],
+    [asked.id, f.owner.actorId, asked.tokenBudget, visit.hardDeadline],
+  );
   await f.app.ctx.state.migrate('fleet_workflow', modelMigrations);
   // A hosted visit's grant carries its budget, and charges its asker, call by call.
   const bound = {

@@ -108,6 +108,7 @@ async function groups(
   tx: Transaction,
   projectId: string,
   instanceIds: string[] | null,
+  observed: boolean,
 ): Promise<{ row: GroupRow; totals: UsageTotals }[]> {
   const select =
     "SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=? AND u.kind='work'";
@@ -121,13 +122,14 @@ async function groups(
   const result: { row: GroupRow; totals: UsageTotals }[] = [];
   for (const slice of slices) {
     const within = slice ? ` AND u.instance_id IN (${slice.map(() => '?').join(',')})` : '';
-    const observed = new Map(
-      (
-        await tx.all<{ instance_id: string; calls: number | string; payload: number | string }>(
-          `${calls}${within} GROUP BY u.instance_id`,
-          projectId,
-          ...(slice ?? []),
-        )
+    const tools = new Map(
+      (observed
+        ? await tx.all<{ instance_id: string; calls: number | string; payload: number | string }>(
+            `${calls}${within} GROUP BY u.instance_id`,
+            projectId,
+            ...(slice ?? []),
+          )
+        : []
       ).map((row) => [row.instance_id, row]),
     );
     for (const row of await tx.all<GroupRow>(
@@ -136,7 +138,7 @@ async function groups(
       ...(slice ?? []),
     )) {
       // An instance has one workflow, so the tool calls joined by instance belong to this row.
-      const tools = observed.get(row.instance_id);
+      const called = tools.get(row.instance_id);
       result.push({
         row,
         totals: {
@@ -145,8 +147,8 @@ async function groups(
           wallMs: sum(row.wall_ms),
           inputTokens: sum(row.input_tokens),
           outputTokens: sum(row.output_tokens),
-          toolCalls: sum(tools?.calls ?? 0),
-          toolPayloadTokensEstimate: sum(tools?.payload ?? 0),
+          toolCalls: sum(called?.calls ?? 0),
+          toolPayloadTokensEstimate: sum(called?.payload ?? 0),
         },
       });
     }
@@ -154,12 +156,14 @@ async function groups(
   return result;
 }
 
-/** Totals over a project (`instanceIds` null) or over the given instances of it. */
+/** Totals over a project (`instanceIds` null) or over the given instances of it; without
+ *  `observed`, its tool calls (every one the project made) are not counted. */
 export async function usageTotals(
   tx: Transaction,
   projectId: string,
   instanceIds: string[] | null,
   serviceScopeId?: string,
+  observed = true,
 ) {
   const totals = empty(),
     workflows = new Map<string, UsageTotals>(),
@@ -167,7 +171,7 @@ export async function usageTotals(
   let since: string | null = null,
     // Activated sessions that reported nothing; a launch that never ran has nothing to say.
     unreported = 0;
-  for (const { row, totals: item } of await groups(tx, projectId, instanceIds)) {
+  for (const { row, totals: item } of await groups(tx, projectId, instanceIds, observed)) {
     add(totals, item);
     unreported += sum(row.unreported);
     if (!workflows.has(row.workflow)) workflows.set(row.workflow, empty());
@@ -236,11 +240,13 @@ export async function budgetStatuses(
         if (!(error instanceof MervError) || error.code !== 'closure_too_large') throw error;
         unwalked = true;
       }
+    // A bound judges wall time and tokens, never tool calls: each lease poll reads it.
     const { totals, unreported: unreportedSessions } = await usageTotals(
       tx,
       projectId,
       unwalked ? [row.scope_id] : instanceIds,
       row.scope_id,
+      false,
     );
     // What nobody reported is unknown, not nothing.
     const known = unreportedSessions === 0 || totals.reportedSessions > 0;

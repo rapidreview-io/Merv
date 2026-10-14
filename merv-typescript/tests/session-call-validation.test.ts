@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, State, Transaction } from '@merv/contracts';
 import type { TaskCheckpointInput } from '@merv/tasks/types';
+import type { LeasedSessions } from '../packages/sessions/src/index.js';
 import { createApp } from './fixtures/app.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 
@@ -187,6 +188,15 @@ test('a leased worker’s MCP call checks its lease once: its preparation’s, n
     assert.equal(result.isError, undefined, JSON.stringify(result));
     assert.equal(f.checks.mock.callCount(), 1, name);
   }
+});
+
+test('a leased worker’s tool listing reads its frozen policy, leaving the lease to its authentication', async (t) => {
+  const f = await fixture(t);
+  const { invocations } = f.app.ctx.sessions as unknown as LeasedSessions;
+  f.checks.mock.resetCalls();
+  assert.equal(await invocations.allowsTool(f.lease.worker, 'task.checkpoint'), true);
+  assert.equal(await invocations.allowsTool(f.lease.worker, 'session.halt'), false);
+  assert.equal(f.checks.mock.callCount(), 0);
 });
 
 for (const [name, end, inProcess, overMcp] of ends)

@@ -104,29 +104,20 @@ FOR EACH ROW EXECUTE FUNCTION session_service_work_guard();`,
     return row;
   }
 
-  /** Sweep abandoned reservations even while their provider is unloaded. */
+  /** Sweep abandoned reservations, charged their full reserved time, even while their provider is
+   *  unloaded. Read first, so a pass with none takes no writer. */
   async expire(tx: Transaction, projectId?: string): Promise<void> {
     this.state.assertTransaction(tx);
-    const at = new Date(this.clock()).toISOString();
-    for (const row of await tx.all<{
-      provider: string;
-      operation_id: string;
-      execution_epoch: number;
-      started_at: string;
-      deadline: string;
-    }>(
-      `SELECT provider,operation_id,execution_epoch,started_at,deadline FROM session_service_work WHERE settled_at IS NULL AND deadline<=?${projectId ? ' AND project_id=?' : ''}`,
-      at,
-      ...(projectId ? [projectId] : []),
-    ))
-      await tx.run(
-        "UPDATE session_service_work SET settled_at=?,outcome='expired',wall_ms=? WHERE provider=? AND operation_id=? AND execution_epoch=? AND settled_at IS NULL",
-        at,
-        Date.parse(row.deadline) - Date.parse(row.started_at),
-        row.provider,
-        row.operation_id,
-        row.execution_epoch,
-      );
+    const due = `settled_at IS NULL AND deadline<=?${projectId ? ' AND project_id=?' : ''}`;
+    const params = [new Date(this.clock()).toISOString(), ...(projectId ? [projectId] : [])];
+    if (!(await tx.get(`SELECT 1 FROM session_service_work WHERE ${due} LIMIT 1`, ...params)))
+      return;
+    await tx.run(
+      `UPDATE session_service_work SET settled_at=?,outcome='expired',wall_ms=CAST(EXTRACT(EPOCH FROM
+        CAST(deadline AS timestamptz)-CAST(started_at AS timestamptz))*1000 AS BIGINT) WHERE ${due}`,
+      params[0],
+      ...params,
+    );
   }
 
   async admit(tx: Transaction, value: ServiceWorkInput): ReturnType<ServiceWork['admit']> {

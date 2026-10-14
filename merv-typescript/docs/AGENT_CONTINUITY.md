@@ -41,7 +41,7 @@ Threads live in the Sessions-owned `session_threads` table, at most one not reti
 
 ## Agent activity UI and observations
 
-`/ui/sessions` lists the project's threads (`GET /sessions/threads`): every live one first, then the newest 50 others, and older pages a press further (`?before=<next>`). Each row names the work item, role and stage. A row opens the same thread view a unit's Agents tab opens: its messages and the box that sends it one, then its conversation (an operator's), its visits and its Merv calls. An active identity or lease does not prove that an external process is connected.
+`/ui/sessions` lists the project's threads (`GET /sessions/threads`): every one that wants attention first (live, being asked a question, asking its owner one, or holding a message its agent has not read), then the newest 50 others, and older pages a press further (`?before=<next>`). Each row names the work item, role and stage. A row opens the same thread view a unit's Agents tab opens: its messages and the box that sends it one, then its conversation (an operator's), its visits and its Merv calls. An active identity or lease does not prove that an external process is connected.
 
 The calls tab uses `GET /sessions/threads/:id/calls` (tool `session.observe {threadId}`). Ordinary project readers may read this sanitized metadata; worker credentials cannot browse it, and other projects receive a not-found response. It does not activate, reconcile, impersonate, or acquire work.
 

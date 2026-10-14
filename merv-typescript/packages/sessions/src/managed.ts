@@ -47,9 +47,18 @@ const huggingFaceBinding = z
   .strict();
 export type HuggingFaceBinding = z.infer<typeof huggingFaceBinding>;
 
+/** What a relay's check reads of a bound session (ManagedRunnerBindings.boundSession). */
+type BoundRow = Record<
+  'id' | 'status' | 'token_hash' | 'expires_at' | 'hard_deadline' | 'source_json',
+  string
+> &
+  Record<
+    'closed_at' | 'close_reason' | 'inquiry_id' | 'asker_source_json' | 'token_budget',
+    string | null
+  >;
 /** A session's allocation by either binding, its work host's or (before every machine was a work
  *  host) its runner's own: two index lookups, never a scan of every one. */
-const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
+export const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
   UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?)`;
 const enrollment = z
   .object({
@@ -381,11 +390,17 @@ export class ManagedRunnerBindings {
       const credential = bearer
         ? await this.credentials.authenticate(tokenOrSessionId, 'session-execution', tx)
         : undefined;
-      const found = await tx.get<{ session_json: string; token_hash: string }>(
-        `SELECT session_json,token_hash FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
+      // A relay asks on every model call, so the packet is never read: its columns (sessions@23),
+      // the source its binding copied, and an inquiry visit's question with its budget.
+      const session = await tx.get<BoundRow>(
+        `SELECT s.id,s.status,s.token_hash,s.expires_at,s.hard_deadline,s.closed_at,s.close_reason,
+            COALESCE(a.source_json,(s.session_json::jsonb->'source')::text) AS source_json,
+            i.id AS inquiry_id,i.asker_source_json,i.token_budget
+          FROM worker_sessions s LEFT JOIN session_managed_assignments a ON a.session_id=s.id
+            LEFT JOIN session_inquiries i ON i.session_id=s.id
+          WHERE s.${bearer ? 'token_hash' : 'id'}=?`,
         bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
       );
-      const session: Session | undefined = found && JSON.parse(found.session_json);
       const row = session && (await tx.get<ManagedBindingRow>(boundTo, session.id, session.id));
       check(
         !credential || credential.subject === session?.id,
@@ -397,35 +412,28 @@ export class ManagedRunnerBindings {
         session &&
           row &&
           (live(session)
-            ? Date.parse(session.expiresAt) > this.clock()
-            : ownEnd(session.closeReason)),
+            ? Date.parse(session.expires_at) > this.clock()
+            : ownEnd(session.close_reason)),
         'unauthorized',
         'No live managed session holds this credential',
         401,
       );
       if (!bearer)
-        await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
+        await this.credentials.authenticateHash(session.token_hash, 'session-execution', tx);
       await this.current(row, tx);
-      await this.scope.requireDelegation(session.source, 'read', tx);
-      // Its stored JSON names an inquiry visit's kind; a work visit's older JSON names none.
-      const inquiry = session.kind === 'inquiry' ? session.inquiry : undefined;
-      const asker =
-        inquiry &&
-        (await tx.get<{ asker_source_json: string }>(
-          'SELECT asker_source_json FROM session_inquiries WHERE id=?',
-          inquiry.id,
-        ));
+      await this.scope.requireDelegation(JSON.parse(session.source_json), 'read', tx);
       return {
-        ...(inquiry &&
-          asker && { inquiry: { id: inquiry.id, asker: JSON.parse(asker.asker_source_json) } }),
+        ...(session.inquiry_id && {
+          inquiry: { id: session.inquiry_id, asker: JSON.parse(session.asker_source_json!) },
+          tokenBudget: Number(session.token_budget),
+        }),
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
-        ...(session.tokenBudget !== undefined && { tokenBudget: session.tokenBudget }),
         expiresAt: new Date(
-          Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
+          Math.min(Date.parse(session.hard_deadline), Date.parse(row.control_expires_at)),
         ).toISOString(),
-        ...(ownEnd(session.closeReason) ? { handedOffAt: session.closedAt! } : {}),
+        ...(ownEnd(session.close_reason) ? { handedOffAt: session.closed_at! } : {}),
       };
     });
   }
@@ -625,12 +633,8 @@ export class ManagedRunnerBindings {
     );
     return true;
   }
-  async bind(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<void> {
-    const found = await tx.get<{ session_json: string }>(
-      'SELECT session_json FROM worker_sessions WHERE id=?',
-      sessionId,
-    );
-    const session: Session = JSON.parse(found!.session_json);
+  /** The visit this lease just offered, as it was written, bound to the machine's allocation. */
+  async bind(row: ManagedBindingRow, session: Session, tx: Transaction): Promise<void> {
     check(
       session.projectId === row.project_id &&
         session.instanceId === row.work_instance_id &&
@@ -641,7 +645,7 @@ export class ManagedRunnerBindings {
     );
     await tx.run(
       'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at) VALUES(?,?,?,?,?)',
-      sessionId,
+      session.id,
       row.allocation_id,
       row.runner_id,
       canonical(session.source),

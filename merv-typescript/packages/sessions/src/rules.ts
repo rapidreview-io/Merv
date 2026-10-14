@@ -18,12 +18,12 @@ export const RUNNER_HARNESSES = Object.keys(harnesses) as [
   RunnerPlatform['harness'],
   ...RunnerPlatform['harness'][],
 ];
-/** One line of visible text: trimmed, at most 200 characters, no NUL or line break. */
+/** One line of visible text: trimmed, at most 200 characters, no NUL, line break or lone surrogate. */
 export const label = z
   .string()
   .min(1)
   .max(200)
-  .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
+  .refine((value) => value.trim() === value && !/[\0\r\n\p{Surrogate}]/u.test(value));
 /** What names a runner platform. */
 export const platformName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 /** What a runner's server-owned settings tune of one of its platforms. */

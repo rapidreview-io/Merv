@@ -52,7 +52,12 @@ import {
 } from './common.js';
 import { ownEnd } from './rules.js';
 import { SessionServiceWork } from './service-work.js';
-import { ManagedRunnerBindings, managedRunnerRules, type HuggingFaceBinding } from './managed.js';
+import {
+  boundTo,
+  ManagedRunnerBindings,
+  managedRunnerRules,
+  type HuggingFaceBinding,
+} from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
 import { SessionStreams } from './stream.js';
 import { SessionThreads } from './threads.js';
@@ -119,13 +124,14 @@ const thresholds: StuckReport['thresholds'] = {
   quietReadySeconds: 21_600,
   refusalSeconds: 300,
 };
-/** Trimmed text with something to read, as it is stored and compared. */
+/** Trimmed text with something to read, as it is stored and compared: no NUL or lone surrogate,
+ *  which the jsonb of the row's columns (sessions@23) refuses on every retry. */
 const trimmed = (max: number) =>
   z
     .string()
     .trim()
     .max(max)
-    .refine((value) => visible(value) && !value.includes('\0'));
+    .refine((value) => visible(value) && !/[\0\p{Surrogate}]/u.test(value));
 const secret = z.string().regex(sessionSecretPattern);
 const offerSchema = z
   .object({
@@ -884,14 +890,7 @@ export class LeasedSessions implements Sessions {
     await this.save(tx, session);
     // Hosted Codex may finish its already-started model call for one minute after handoff.
     // The model relay alone grants that grace; MCP still sees the closed execution.
-    const managedHandoff =
-      ownEnd(reason) &&
-      (await tx.get(
-        'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=? UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?',
-        session.id,
-        session.id,
-      ));
-    if (!managedHandoff)
+    if (!(ownEnd(reason) && (await tx.get(boundTo, session.id, session.id))))
       await this.credentials.revoke(await this.tokenHash(tx, session.id), 'sessions', tx);
     await recordUsage(tx, session);
     // An inquiry visit counts against no work and leaves its thread exactly as it was: its

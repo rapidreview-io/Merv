@@ -156,6 +156,9 @@ test('simultaneous service records share one project cap; expired work releases 
   const refused = inputs[outcomes.findIndex((o) => !o.admitted)]!;
   await assert.rejects(f.settle(refused), { code: 'service_work_missing' });
   f.advance(11_000);
+  // The sweep charges a lost reservation its whole reserved time, and frees its slot.
+  await f.sessions.sweep();
+  assert.equal((await f.usage()).totals.wallMs, 10_000);
   const retry = {
     ...reserved,
     executionEpoch: 2,

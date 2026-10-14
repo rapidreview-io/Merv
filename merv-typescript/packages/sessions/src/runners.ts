@@ -58,6 +58,13 @@ export interface RunnerRow {
   last_decision_at: string | null;
   decision_since: string | null;
 }
+/** The runner `ownerHash` registered as `runnerId`, if any. */
+export const runnerOf = (tx: Transaction, ownerHash: string, runnerId: string) =>
+  tx.get<RunnerRow>(
+    'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
+    ownerHash,
+    runnerId,
+  );
 /** A checkout goes only to the caller's own runner that last said it carries the driver. */
 export async function capable(
   ctx: DispatchContext,
@@ -66,11 +73,7 @@ export async function capable(
   driver: string,
   tx: Transaction,
 ): Promise<void> {
-  const runner = await tx.get<RunnerRow>(
-    'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-    (await ownerOf(ctx.scope, caller, tx)).hash,
-    runnerId,
-  );
+  const runner = await runnerOf(tx, (await ownerOf(ctx.scope, caller, tx)).hash, runnerId);
   check(
     !!runner &&
       ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(driver),
@@ -132,11 +135,7 @@ export async function decided(
   tx: Transaction,
 ): Promise<void> {
   const time = isoNow(ctx.clock);
-  const old = await tx.get<RunnerRow>(
-    'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-    ownerHash,
-    runnerId,
-  );
+  const old = await runnerOf(tx, ownerHash, runnerId);
   // The same answer is refreshed at most every 15 s, so an idle poll writes nothing.
   if (old?.last_decision === decision && fresh(ctx, old.last_decision_at, 15_000)) return;
   await tx.run(
@@ -171,11 +170,7 @@ export async function heartbeatRunner(
     // review for Fleet's review director, which takes only reviews.
     await ctx.scope.require(source, source.service ? 'review' : 'write', tx);
     const owner = await ownerOf(ctx.scope, source, tx);
-    const old = await tx.get<RunnerRow>(
-      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-      owner.hash,
-      input.runnerId,
-    );
+    const old = await runnerOf(tx, owner.hash, input.runnerId);
     check(
       (input.appliedVersion ?? 0) <= (old?.desired_version ?? 0),
       'invalid_settings_version',

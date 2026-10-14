@@ -742,11 +742,7 @@ export class SessionDispatch {
     | { ok: true; runner: RunnerRow; platform: RunnerPlatform }
     | { ok: false; reason: DispatchDecision }
   > {
-    const runner = await tx.get<RunnerRow>(
-      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-      ownerHash,
-      input.runnerId,
-    );
+    const runner = await runners.runnerOf(tx, ownerHash, input.runnerId);
     check(
       runner,
       'runner_required',
@@ -943,7 +939,7 @@ export class SessionDispatch {
           'Runner controls changed while building the offer',
           409,
         );
-        if (managed) await this.hooks.managed.bind(managed.row, session.id, tx);
+        if (managed) await this.hooks.managed.bind(managed.row, session, tx);
         await tx.run(
           'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
           owner.hash,

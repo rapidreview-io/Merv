@@ -1,4 +1,4 @@
-import { createService, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { createService, type Caller, type Transaction, type WorkflowPolicy } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -383,7 +383,28 @@ test('a reached project budget pauses automatic offers, stops nothing, and lifts
   await f.spend((await f.instance()).id, 60_000);
   await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
 
+  // Every poll judges the budget on wall time and tokens: never by reading each tool call.
+  const sql: string[] = [];
+  for (const name of ['transaction', 'snapshotTransaction'] as const) {
+    const original = f.state[name].bind(f.state);
+    t.mock.method(f.state, name, (run: (tx: Transaction) => unknown) =>
+      original((tx) => {
+        const all = tx.all.bind(tx);
+        return run(
+          Object.assign(tx, {
+            all: (query: string, ...rest: []) => (sql.push(query), all(query, ...rest)),
+          }),
+        );
+      }),
+    );
+  }
   assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'budget_exceeded');
+  assert.ok(
+    sql.some((query) => query.includes('FROM session_usage')),
+    'the budget was judged',
+  );
+  assert.ok(!sql.some((query) => query.includes('session_tool_calls')), sql.join('\n'));
+  t.mock.restoreAll();
   assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'budget_exceeded');
   const status = await f.sessions.dispatch.projectStatus(f.owner);
   assert.deepEqual(status.budgets[0]!.exceeded, ['wall']);

@@ -1682,6 +1682,25 @@ test('release retains its validated reason, outcome and session while pending', 
   assert.equal(released.outcome, 'launch_failed');
 });
 
+test('a host or reason holding a lone surrogate is refused, where a stored one fails every retry', async (t) => {
+  const f = await fixture(t),
+    { session, token } = await f.offer();
+  await f.sessions.authenticate(token);
+  const control = { sessionId: session.id, runnerId: 'runner' };
+  for (const [refused, code] of [
+    [() => f.sessions.attach(f.source, { ...control, hostRef: 'host\ud800' }), 'invalid_host'],
+    [() => f.sessions.release(f.source, { ...control, reason: '\udc00 stop' }), 'invalid_reason'],
+    [() => f.sessions.dispatch.halt(f.owner, { reason: 'halt\ud83d' }), 'invalid_halt'],
+  ] as const)
+    await assert.rejects(refused, { code, status: 400 });
+  assert.equal(
+    (await f.sessions.attach(f.source, { ...control, hostRef: 'host 🙂' })).hostRef,
+    'host 🙂',
+  );
+  const released = await f.sessions.release(f.source, { ...control, reason: 'stopped 🙂' });
+  assert.equal(released.closeReason, 'stopped 🙂');
+});
+
 test('source revocation retires an offered agent and its actor', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();
