@@ -325,7 +325,18 @@ test('disconnect stops follow-up GitHub reads and automation setup', async (t) =
               baseBranch: 'main',
             });
       await assert.rejects(pending, { code: 'github_owner' });
-      assert.equal(f.calls.length - before, 1, 'no further request may use the disconnected token');
+      const after = f.calls.slice(before);
+      const revoked = after.filter((c) => c.method === 'DELETE');
+      assert.equal(
+        after.length - revoked.length,
+        1,
+        'no further request uses the disconnected token',
+      );
+      assert.deepEqual(
+        revoked.map((c) => [c.path, c.body?.access_token]),
+        [['/applications/fixture-client/token', 'synthetic-oauth-token']],
+        'disconnecting gives the token back to GitHub',
+      );
     });
   }
 });
@@ -370,6 +381,8 @@ test('a settings change during an owner-token refresh keeps the refreshed tokens
   const f = await githubFixture(t);
   await f.enable('write');
   await expiring(f, 1);
+  const revoked = () => f.calls.filter((c) => c.method === 'DELETE').map((c) => c.path);
+  assert.deepEqual(revoked(), ['/applications/fixture-client/token'], 'reconnecting revoked');
   f.control.expiresIn = 3600;
   let entered!: () => void, release!: () => void;
   const refreshing = new Promise<void>((resolve) => (entered = resolve));
@@ -390,9 +403,5 @@ test('a settings change during an owner-token refresh keeps the refreshed tokens
   release();
   assert.equal((await listing)[0]!.name, 'main');
   assert.equal((await f.github.status(f.caller)).status, 'connected');
-  assert.deepEqual(
-    f.calls.filter((c) => c.method === 'DELETE').map((c) => c.path),
-    [],
-    'the new tokens were never revoked',
-  );
+  assert.equal(revoked().length, 1, 'the new tokens were never revoked');
 });

@@ -109,11 +109,11 @@ export abstract class DriverTransfer extends DriverCheckout {
 
   /** Refuse a file no repository of Code's would keep, before Git spends time on it. */
   protected async checkFiles(row: WorkspaceRow, env?: Record<string, string>): Promise<void> {
-    const root = realpathSync(row.path);
+    const root = realpathSync.native(row.path);
     for (const name of await changedNames((args) => this.git.ok(args, { cwd: row.path, env }))) {
       const file = resolve(root, name);
       // A tracked final-component symlink is Git data. Never traverse a symlink parent.
-      const parent = existsSync(dirname(file)) ? realpathSync(dirname(file)) : dirname(file);
+      const parent = existsSync(dirname(file)) ? realpathSync.native(dirname(file)) : dirname(file);
       if (parent !== root && !parent.startsWith(root + sep))
         throw new WorkspaceError('workspace_foreign_path');
       let stat;

@@ -251,6 +251,15 @@ export class CodeReceiver {
     // A replayed begin takes no more room: its bytes already count.
     if (input.bundle && !(await this.core.state.read((sql) => journal(sql).previous())))
       await this.core.repositories.assertRoom(caller.projectId, input.bundle.bytes);
+    // A head that does not move was admitted before: Git, not the machine, names its tree.
+    const kept = input.bundle
+      ? null
+      : await this.core.owned(() =>
+          this.core.repositories.git.run(
+            ['rev-parse', '--verify', '--quiet', `${input.proposedHead}^{tree}`],
+            { env: this.core.repositories.environment(caller.projectId) },
+          ),
+        );
     const superseded: OperationRow[] = [];
     const id = await this.core.state.transaction(async (tx) => {
       await this.core.scope.require(caller, 'read', tx);
@@ -313,7 +322,7 @@ export class CodeReceiver {
           'completed',
           canonical({
             head: input.proposedHead,
-            tree: input.treeOid,
+            tree: kept?.code === 0 ? kept.stdout.toString('utf8').trim() : null,
             receiptRef: null,
             objects: 0,
             bytes: 0,

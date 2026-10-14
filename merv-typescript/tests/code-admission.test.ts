@@ -292,6 +292,16 @@ test('sizes, counts, modes, paths, links and deny globs are findings that name a
     kept,
   );
   assert.deepEqual((await f.judge(f.source.bundle(nested, [kept]))).findings, []);
+  // A kept link whose `..` follows a name may climb out wherever it is put.
+  symlinkSync('x/..', join(f.source.repository, 'links/named'));
+  const odd = f.source.commit({});
+  f.keep(odd);
+  const links = f.source.git('rev-parse', `${odd}:links`);
+  const reused = f.crafted([['40000', 'tree', links, 'again']], odd);
+  assert.deepEqual((await f.judge(f.source.bundle(reused, [odd]))).findings, [
+    { rule: 'symlink_escape', path: 'again', oid: links },
+  ]);
+  f.source.git('reset', '--quiet', '--hard', kept);
 
   const named = f.crafted(
     [
@@ -343,8 +353,10 @@ test('sizes, counts, modes, paths, links and deny globs are findings that name a
       ['a', 'C:/x'],
       ['a', 'b\\..\\..\\x'],
       ['a', ''],
+      // Through d/up -> .. this climbs out, whatever counting names says.
+      ['x', 'd/up/..'],
     ].map(([path, target]) => symlinkEscapes(path, target)),
-    [true, false, true, true, true, false, true, true, true],
+    [true, false, true, true, true, false, true, true, true, true],
   );
 
   const deep = f.source.commit({
@@ -498,6 +510,8 @@ test('the deny-glob matcher knows literals, ?, * within a segment and ** across 
   ];
   for (const [glob, path, matches] of table)
     assert.equal(globPattern(glob).test(path), matches, `${glob} against ${path}`);
+  // A run of wildcards no backtracking matcher would finish in this lifetime.
+  assert.equal(globPattern(`${'*a'.repeat(12)}*b`).test('a'.repeat(255)), false);
 });
 
 test('a credential anywhere in the delivered history is found, and never echoed', async (t) => {

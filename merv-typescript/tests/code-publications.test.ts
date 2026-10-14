@@ -287,8 +287,8 @@ test('an exact completed merge retry returns its saved receipt without GitHub ac
   const input = f.merge('completed-retry');
   const first = await f.publications.mergePublication(f.caller, input);
   assert.equal(first.pull?.merged, true);
-  const calls = f.calls.length;
   await f.github.disconnect(f.caller, { expectedRevision: 3 });
+  const calls = f.calls.length;
   assert.deepEqual(await f.publications.mergePublication(f.caller, input), first);
   assert.equal(f.calls.length, calls, 'reading the saved receipt needs no remote credential');
   await assert.rejects(

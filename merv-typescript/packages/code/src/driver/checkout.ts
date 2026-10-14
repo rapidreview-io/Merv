@@ -347,7 +347,7 @@ export abstract class DriverCheckout extends DriverCore {
           (entry.isFile() && entry.nlink === 1)
         ))
           return false;
-        const parent = realpathSync(dirname(target));
+        const parent = realpathSync.native(dirname(target));
         if (parent !== row.path && !parent.startsWith(row.path + sep))
           throw new WorkspaceError('workspace_foreign_path');
         copied.push(target);

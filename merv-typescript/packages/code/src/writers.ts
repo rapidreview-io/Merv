@@ -440,11 +440,14 @@ export class CodeWriterService {
       input.commandId,
       command.instanceId,
     );
+    const admitted =
+      upload?.status === 'completed'
+        ? (JSON.parse(upload.result_json!) as { head: string; tree?: string | null })
+        : null;
     check(
-      upload?.status === 'completed' &&
-        (JSON.parse(upload.result_json!) as { head: string }).head === input.receipt.headOid,
+      admitted?.head === input.receipt.headOid && admitted.tree === input.receipt.treeOid,
       'code_upload_required',
-      'This commit succeeds only once Code admitted exactly it',
+      'This commit succeeds only once Code admitted exactly it, with its tree',
       409,
     );
   }
@@ -503,20 +506,21 @@ export class CodeWriterService {
     const writer = await this.row(tx, projectId, unitId);
     if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
     const final = writer.head_operation_id
-      ? await tx.get<{ payload_json: string }>(
-          "SELECT payload_json FROM code_operations WHERE id=? AND project_id=? AND kind='upload'",
+      ? await tx.get<{ payload_json: string; result_json: string }>(
+          "SELECT payload_json,result_json FROM code_operations WHERE id=? AND project_id=? AND kind='upload' AND status='completed'",
           writer.head_operation_id,
           projectId,
         )
       : undefined;
     const upload = final && (JSON.parse(final.payload_json) as Record<string, unknown>);
-    return upload &&
-      upload.kind === 'final' &&
+    // The tree is the one Code admitted, never the one the machine said it sent.
+    const tree = final && (JSON.parse(final.result_json) as { tree?: string | null }).tree;
+    return upload?.kind === 'final' &&
       upload.sessionId === sessionId &&
       typeof upload.tip === 'string' &&
       upload.tip === writer.head_oid &&
-      typeof upload.treeOid === 'string'
-      ? { headOid: upload.tip, treeOid: upload.treeOid }
+      tree
+      ? { headOid: upload.tip, treeOid: tree }
       : { headOid: writer.head_oid ?? this.base(writer) };
   }
 

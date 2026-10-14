@@ -189,7 +189,7 @@ test('a later upload ends one that was only receiving, and a commit succeeds onl
   assert.ok(!existsSync(join(f.paths.quarantine, abandoned.id)), 'superseded bytes are swept');
 
   const writers = new CodeWriterService(f.state, f.scope, 900);
-  const receipt = { headOid: first } as never;
+  let receipt = { headOid: first, treeOid: f.source.git('rev-parse', `${first}^{tree}`) };
   const completion = (commandId: string) => ({ sessionId: 'ses_1', commandId, receipt }) as never;
   const command = { projectId: f.admin.projectId, instanceId: f.unitId };
   await assert.rejects(
@@ -213,6 +213,14 @@ test('a later upload ends one that was only receiving, and a commit succeeds onl
   assert.equal((await f.send(retried, bundle)).status, 'completed');
   await f.state.transaction(
     async (tx) => await writers.requireAdmitted(completion('command-b'), command, tx),
+  );
+  // The receipt's tree is the one Code admitted with that head, or nothing succeeds.
+  receipt = { ...receipt, treeOid: f.source.git('rev-parse', `${f.root}^{tree}`) };
+  await assert.rejects(
+    f.state.transaction(
+      async (tx) => await writers.requireAdmitted(completion('command-b'), command, tx),
+    ),
+    refused('code_upload_required'),
   );
   await assert.rejects(
     f.state.transaction(
@@ -239,6 +247,38 @@ test('a later upload ends one that was only receiving, and a commit succeeds onl
   assert.equal(final.status, 'completed');
   assert.equal((await f.operationRow(pending.id))?.error, 'code_upload_superseded');
   assert.equal(git(f.paths.repository, ['rev-parse', `${third}~1`]), second);
+});
+
+test('an upload records the tree Code holds for its head, never the tree its machine claimed', async (t) => {
+  const f = await fixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const known = f.source.commit({ 'a.txt': 'zero\n' });
+  await f.deliver(f.source.bundle(known, [f.root]));
+  const call = f.code.v2!.call.bind(f.code.v2);
+  f.code.v2!.call = async (caller, route, body) =>
+    await call(caller, route, { ...(body as object), treeOid: f.root });
+  const tree = (commit: string) => f.source.git('rev-parse', `${commit}^{tree}`);
+  const admitted = async ({ id }: { id: string }) =>
+    JSON.parse(
+      (await f.state.read((sql) =>
+        sql.get<{ result_json: string }>('SELECT result_json FROM code_operations WHERE id=?', id),
+      ))!.result_json,
+    ).tree;
+  // A head that does not move, one the repository already holds, then a new one.
+  assert.equal(await admitted(await f.begin('checkpoint', 'ses_1', 1, f.root, null)), tree(f.root));
+  const moved = await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(known, [f.root]));
+  assert.equal(await admitted(moved), tree(known));
+  const tip = f.source.commit({ 'a.txt': 'one\n' });
+  const final = await f.upload('final', 'ses_1', 1, known, f.source.bundle(tip, [known]));
+  assert.equal(await admitted(final), tree(tip));
+  await f.event('session.closed', 'ses_1');
+  assert.deepEqual(
+    await f.state.read((sql) =>
+      f.core.writers.closedHead(f.admin.projectId, f.unitId, 'ses_1', sql),
+    ),
+    { headOid: tip, treeOid: tree(tip) },
+  );
 });
 
 test('a quarantined final capture blocks the unit until a signed-in administrator fences it', async (t) => {

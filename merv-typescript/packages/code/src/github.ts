@@ -355,7 +355,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       const tokens = await client.exchange(payload.code, payload.verifier);
       try {
         const user = await client.user(tokens.accessToken);
-        return await this.state.transaction(async (tx) => {
+        return await this.replacing(async (tx) => {
           await this.authorize(caller, tx, true);
           const f = await this.flow(tx, cookie);
           check(f.phase === 'exchanging', 'github_flow', 'GitHub connection was replaced', 409);
@@ -388,7 +388,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           );
           await tx.run("UPDATE code_github_flows SET phase='complete' WHERE id=?", flow.id);
           await this.event(tx, caller, 'connected', { githubUserId: user.id });
-          return this.describe(caller, tx);
+          return [await this.describe(caller, tx), current] as const;
         });
       } catch (error) {
         await client.revoke(tokens.accessToken);
@@ -561,6 +561,23 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         });
       throw error;
     }
+  }
+  /**
+   * A transaction that replaces the connection's user token and returns the row it replaced;
+   * that token is then revoked at GitHub, as far as GitHub answers.
+   */
+  private async replacing<T>(fn: (tx: Transaction) => Promise<readonly [T, Connection]>) {
+    const [result, row] = await this.state.transaction(fn);
+    if (row.credentials && this.#client)
+      try {
+        const binding = `tokens:${row.project_id}:${row.token_version}`;
+        await this.#client.revoke(
+          this.#client.open<GitHubTokens>(row.credentials, binding).accessToken,
+        );
+      } catch {
+        /* Tokens that no longer open could not be used either. */
+      }
+    return result;
   }
   private async unchanged(
     caller: Caller,
@@ -867,10 +884,11 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   disconnect(caller: Caller, value: { expectedRevision: number }) {
     return this.run(caller, (caller) => {
       const input = parseCodeInput(githubRevisionSchema, value);
-      return this.state.transaction(async (tx) => {
+      return this.replacing(async (tx) => {
         await this.authorize(caller, tx, true);
         await this.ensure(tx, caller.projectId);
-        this.revision(await this.row(tx, caller.projectId), input.expectedRevision);
+        const row = await this.row(tx, caller.projectId);
+        this.revision(row, input.expectedRevision);
         const result = await tx.run(
           `UPDATE code_github SET owner=NULL,user_json=NULL,credentials=NULL,refresh_id=NULL,refresh_until=NULL,owner_source=NULL,automation='off',base_branch=NULL,
         token_version=token_version+1,revision=revision+1 WHERE project_id=? AND revision=?`,
@@ -885,7 +903,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         );
         await tx.run('DELETE FROM code_github_flows WHERE project_id=?', caller.projectId);
         await this.event(tx, caller, 'disconnected');
-        return this.describe(caller, tx);
+        return [await this.describe(caller, tx), row] as const;
       });
     });
   }

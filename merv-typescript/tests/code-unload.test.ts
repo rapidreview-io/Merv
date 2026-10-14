@@ -271,7 +271,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 1 },
   };
   const completion = { ...control, commandId: queued.command.id, receipt };
-  await admitUpload(app.ctx.state, queued.command, receipt.headOid);
+  await admitUpload(app.ctx.state, queued.command, receipt);
   const finished = (await ok('/code/commands/complete', completion)).operation as CodeCommandRecord;
   assert.equal(finished.status, 'succeeded');
   assert.deepEqual(finished.receipt, receipt);

@@ -98,22 +98,39 @@ const MAX_CREDENTIAL_MEMO = 50_000;
  * The project deny-glob matcher: a literal matches itself, `?` one character and `*` any run
  * within one path segment, and `**` any run across segments; a whole segment of `**` also
  * matches no segment at all. A glob is matched against the whole path from the repository root.
+ * Every step of the glob a path can have reached is followed at once, so a match costs at most
+ * the path's length times the glob's, where a regular expression backtracks without bound.
  */
-export function globPattern(glob: string): RegExp {
-  let source = '';
-  for (let at = 0; at < glob.length; at++) {
-    const char = glob[at];
-    if (char === '*' && glob[at + 1] === '*') {
-      at++;
-      if (glob[at + 1] === '/' && (at === 1 || glob[at - 2] === '/')) {
-        at++;
-        source += '(?:.*/)?';
-      } else source += '.*';
-    } else if (char === '*') source += '[^/]*';
-    else if (char === '?') source += '[^/]';
-    else source += char.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-  }
-  return new RegExp(`^${source}$`, 's');
+export function globPattern(glob: string): { test(path: string): boolean } {
+  // A step is a character, `?`, `*`, `**`, or `skip`: a whole `**/` may match no segment.
+  const steps: string[] = [];
+  for (let at = 0; at < glob.length; at++)
+    if (glob[at] !== '*' || glob[at + 1] !== '*') steps.push(glob[at]);
+    else if (glob[++at + 1] === '/' && (at === 1 || glob[at - 2] === '/'))
+      steps.push('skip', '**', glob[++at]);
+    else steps.push('**');
+  let reached = new Uint8Array(steps.length + 1),
+    next = new Uint8Array(steps.length + 1);
+  return {
+    test(path) {
+      reached.fill(0)[0] = 1;
+      for (let index = 0; ; index++) {
+        // In order, so what a step reaches without reading a character is followed in this pass.
+        next.fill(0);
+        for (let at = 0; at < steps.length; at++)
+          if (!reached[at]) continue;
+          else if (steps[at] === 'skip') reached[at + 1] = reached[at + 3] = 1;
+          else if (steps[at] === '*' || steps[at] === '**') {
+            reached[at + 1] = 1;
+            if (steps[at] === '**' || path[index] !== '/') next[at] = 1;
+          } else if (steps[at] === path[index] || (steps[at] === '?' && path[index] !== '/'))
+            next[at + 1] = 1;
+        if (index === path.length) return reached[steps.length] === 1;
+        if (!next.includes(1)) return false;
+        [reached, next] = [next, reached];
+      }
+    },
+  };
 }
 
 /** HFS+ ignores these code points in a name, so a `.git` spelt with one of them is still `.git` on a Mac. */
@@ -136,19 +153,27 @@ export function nameFinding(raw: Buffer): string | null {
   return null;
 }
 
-/** Whether a symbolic link at `path` with this target stays inside the checkout. */
-export function symlinkEscapes(path: string, target: string): boolean {
-  if (target === '' || target.startsWith('/') || /[\x00\\]/.test(target)) return true;
-  if (/^[A-Za-z]:/.test(target)) return true;
-  let depth = path.split('/').length - 1;
-  for (const part of target.split('/')) {
-    if (part === '' || part === '.') continue;
+/**
+ * How many directories a symbolic link with this target climbs above its own, or Infinity when
+ * it may leave the checkout wherever it stands. A `..` may only lead the target: it then climbs
+ * real directories, whereas after a name it climbs from wherever that name resolves, which may
+ * be another link.
+ */
+function linkClimb(target: string): number {
+  if (/^$|^\/|^[A-Za-z]:|[\x00\\]/.test(target)) return Infinity;
+  let climb = 0,
+    named = false;
+  for (const part of target.split('/'))
     if (part === '..') {
-      if (--depth < 0) return true;
-    } else depth++;
-  }
-  return false;
+      if (named) return Infinity;
+      climb++;
+    } else if (part !== '' && part !== '.') named = true;
+  return climb;
 }
+
+/** Whether a symbolic link at `path` with this target may leave the checkout. */
+export const symlinkEscapes = (path: string, target: string) =>
+  linkClimb(target) > path.split('/').length - 1;
 
 /** Read a bundle's header without Git. A filtered bundle, or one with two refs, is not a transfer. */
 export async function bundleHeader(file: string, multiple = false): Promise<BundleHeader> {
@@ -401,7 +426,10 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
 
   const fresh = [...quarantined].filter(([oid]) => reached.has(oid));
   const bytes = fresh.reduce((sum, [, object]) => sum + object.size, 0);
-  let tree = '';
+  // Git names the head's tree, also when the repository already held that commit.
+  const tree = (await git.ok(['rev-parse', `${input.head}^{tree}`], { env: joined }))
+    .toString('utf8')
+    .trim();
   if (fresh.length > limits.objects) found('object_count', null, null);
   if (bytes > limits.expandedBytes) found('expanded_size', null, null);
   if (findings.length) return result(tree, fresh.length, bytes);
@@ -485,7 +513,6 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     fresh.filter(([, object]) => object.type === 'commit').map(([oid]) => oid),
     (oid, content) => {
       const root = /^tree ([0-9a-f]+)\n/.exec(content.toString('latin1', 0, 80))?.[1];
-      if (oid === input.head) tree = root ?? '';
       if (root && trees.has(root)) roots.push(root);
       else if (root) borrowed.push({ oid: root, path: null, depth: 0 });
       scan(content, null, oid);
@@ -613,12 +640,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     let most = 0;
     for (const link of node?.links ?? []) {
       const target = linkText.get(link);
-      let at = 0,
-        lowest = 0;
-      for (const part of target?.split('/') ?? [])
-        if (part === '..') lowest = Math.min(lowest, --at);
-        else if (part !== '' && part !== '.') at++;
-      most = Math.max(most, target === undefined ? Infinity : -lowest);
+      most = Math.max(most, target === undefined ? Infinity : linkClimb(target));
     }
     for (const tree of node?.trees ?? []) most = Math.max(most, climb(tree) - 1);
     climbs.set(oid, most);

@@ -7,7 +7,7 @@ import type { State } from '@merv/contracts';
 export async function admitUpload(
   state: State,
   command: { id: string; projectId: string; sessionId: string; instanceId: string },
-  head: string,
+  admitted: { headOid: string; treeOid: string },
 ): Promise<void> {
   await state.transaction((tx) =>
     tx.run(
@@ -16,7 +16,7 @@ export async function admitUpload(
       command.projectId,
       `session:${command.sessionId}`,
       command.id,
-      JSON.stringify({ head }),
+      JSON.stringify({ head: admitted.headOid, tree: admitted.treeOid }),
       command.instanceId,
     ),
   );
