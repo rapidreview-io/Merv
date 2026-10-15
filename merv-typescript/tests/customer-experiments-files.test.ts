@@ -158,7 +158,28 @@ test('request bucket files: CORS exposes ETag, parts sign their length, large co
   clients.client.send = fake;
   clients.files.send = fake;
   const id = 'ce_' + 'b'.repeat(32);
-  await storage.provisionFiles(id);
+  // The bucket's CORS rule is not live at once: the first preflight is refused, the next allowed.
+  const preflights: { url: string; origin: string | null }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    preflights.push({ url, origin: new Headers(init.headers).get('origin') });
+    return new Response(null, {
+      status: 204,
+      headers:
+        preflights.length > 1 ? { 'access-control-allow-origin': 'https://merv.example.com' } : {},
+    });
+  }) as typeof fetch;
+  try {
+    await storage.provisionFiles(id);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(preflights.length, 2);
+  assert.equal(
+    preflights[0]!.url,
+    'https://s3.example.com/merv-customer-' + 'b'.repeat(32) + '/cors-check',
+  );
+  assert.equal(preflights[0]!.origin, 'https://merv.example.com');
   assert.deepEqual(
     calls.map((c) => c.name),
     ['CreateBucketCommand', 'PutPublicAccessBlockCommand', 'PutBucketCorsCommand'],
