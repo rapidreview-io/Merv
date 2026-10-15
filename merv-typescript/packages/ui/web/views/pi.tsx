@@ -184,6 +184,24 @@ export function Transcript({ pi }: { pi: Conversation }) {
     following.current = true;
   }, [following]);
   useLayoutEffect(follow);
+  // Messages also grow after they are drawn (fonts, highlighted code, diagrams), and the panel
+  // can change height: a reader at the latest words stays there as they settle.
+  useEffect(() => {
+    const list = pi.transcript.current;
+    if (!list || typeof ResizeObserver === 'undefined') return;
+    const sizes = new ResizeObserver(() => follow());
+    sizes.observe(list);
+    const watch = () => {
+      for (const child of list.children) sizes.observe(child);
+    };
+    watch();
+    const added = new MutationObserver(watch);
+    added.observe(list, { childList: true });
+    return () => {
+      sizes.disconnect();
+      added.disconnect();
+    };
+  }, [pi.transcript, follow]);
   // Whether a call's card is drawn: the latest calls the agent proposed stay under their turn
   // until it proposes again, and a full result held here stays in its card while the
   // conversation is open.
@@ -197,6 +215,10 @@ export function Transcript({ pi }: { pi: Conversation }) {
       aria-live="polite"
       onScroll={(event) => {
         const list = event.currentTarget;
+        // The transcript's own scroll lands where it put it, though the words grew since.
+        if (pi.pinnedAt.current !== null && Math.abs(list.scrollTop - pi.pinnedAt.current) < 2)
+          return;
+        pi.pinnedAt.current = null;
         following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
       }}
     >

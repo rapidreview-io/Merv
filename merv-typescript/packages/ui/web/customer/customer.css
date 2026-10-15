@@ -170,7 +170,7 @@ button.cx-brand {
 .cx-plan-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-2);
 }
 .cx-plan-actions {
@@ -225,8 +225,195 @@ button.cx-brand {
   font-size: var(--text-sm);
   resize: none;
 }
-.cx-plan-doc {
-  flex: 1;
+/* The plan in the report card's language (packages/reports/src/format/html.ts): paper, serif
+   body, Geist labels, a two-half band, a rule, then blocks in three columns. */
+.plan-card {
+  --pc-ink: #111113;
+  --pc-text: #2b2b2e;
+  --pc-muted: #6b6b70;
+  container-type: inline-size;
+  flex: none;
+  padding: 36px 44px 44px;
+  background: #fff;
+  color: var(--pc-text);
+  border-radius: 6px;
+  font-family: 'Source Serif 4', Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+}
+.plan-card__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font:
+    11px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  color: var(--pc-muted);
+}
+.plan-card h1 {
+  margin: 26px 0 0;
+  font-family: inherit;
+  font-size: 34px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--pc-ink);
+}
+.plan-card__band {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 40px;
+  margin-top: 26px;
+  align-items: start;
+}
+.plan-card__left {
+  font-size: 16.5px;
+  line-height: 1.6;
+}
+.plan-card__right {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--pc-ink);
+}
+.plan-card .md {
+  font-size: inherit;
+  line-height: inherit;
+}
+.plan-card .md > * + * {
+  margin-top: 10px;
+}
+/* Criteria read as the report's bold answer line: no bullets, one statement each. */
+.plan-card__right :is(ul, ol) {
+  padding-left: 0;
+  list-style: none;
+}
+.plan-card .plan-card__right li + li {
+  margin-top: 12px;
+}
+.plan-card .plan-card__limits {
+  margin: 18px 0 0 !important;
+  font:
+    11.5px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  font-weight: 400;
+  color: var(--pc-muted);
+}
+.plan-card__rule {
+  margin: 30px 0 28px;
+  border: 0;
+  border-top: 1px solid var(--pc-ink);
+}
+.plan-card__body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  gap: 30px 36px;
+  align-items: start;
+}
+.plan-card__block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.62;
+}
+.plan-card__block.span-2 {
+  grid-column: span 2;
+}
+.plan-card__block.span-3 {
+  grid-column: 1 / -1;
+}
+.plan-card h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+.plan-card :is(p, ul, ol, table) {
+  margin: 0;
+  color: inherit;
+  font-family: inherit;
+}
+.plan-card :is(p, ul, ol) + :is(p, ul, ol, table) {
+  margin-top: 10px;
+}
+.plan-card :is(ul, ol) {
+  padding-left: 20px;
+}
+.plan-card li + li {
+  margin-top: 3px;
+}
+.plan-card :is(b, strong) {
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+.plan-card code {
+  padding: 0 3px;
+  font:
+    0.86em 'Geist Mono',
+    ui-monospace,
+    monospace;
+  background: #f1f1ee;
+  color: var(--pc-text);
+  border-radius: 3px;
+}
+.plan-card a {
+  color: var(--pc-ink);
+  text-underline-offset: 3px;
+}
+.plan-card table {
+  border-collapse: collapse;
+  font:
+    13px 'Geist Sans',
+    Geist,
+    sans-serif;
+}
+.plan-card th {
+  padding: 0 12px 6px 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--pc-muted);
+  text-align: left;
+  border: 0;
+  background: none;
+}
+.plan-card td {
+  padding: 4px 12px 4px 0;
+  border: 0;
+  vertical-align: baseline;
+}
+@container (max-width: 720px) {
+  .plan-card__body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plan-card__block.span-2,
+  .plan-card__block.span-3 {
+    grid-column: 1 / -1;
+  }
+}
+@container (max-width: 520px) {
+  .plan-card__band,
+  .plan-card__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan-card__right {
+    margin-top: 22px;
+  }
+}
+@media (max-width: 640px) {
+  .plan-card {
+    padding: 24px 20px 28px;
+  }
+  .plan-card h1 {
+    font-size: 27px;
+  }
 }
 .cx-pay {
   display: grid;

@@ -7,6 +7,7 @@ const { act } = await import('react-dom/test-utils');
 const { CustomerApp } = await import('../packages/ui/web/customer/app.js');
 const { Uploader } = await import('../packages/ui/web/customer/uploads.js');
 const { deletionNotice, POLICY } = await import('../packages/ui/web/customer/files.js');
+const { splitPlan } = await import('../packages/ui/web/customer/plan-card.js');
 const { setCredentials } = await import('../packages/ui/web/customer/api.js');
 
 const ID = `ce_${'a'.repeat(32)}`;
@@ -244,6 +245,10 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   await click('Plan');
   await settle(10);
   assert.match(text(), /Draft/);
+  // A written plan opens as its card; Edit opens the text.
+  assert.ok(document.querySelector('.plan-card h1'));
+  assert.equal(document.querySelector('.cx-plan-text'), null);
+  await click('Edit');
   const area = document.querySelector<HTMLTextAreaElement>('.cx-plan-text')!;
   assert.equal(area.value, '# Plan\n\nTrain twice.');
   const setter = Object.getOwnPropertyDescriptor(
@@ -439,4 +444,17 @@ test('a link the server refuses is not valid', async (t) => {
   await open();
   assert.match(text(), /Request not found/);
   assert.equal(text().includes('Retry'), false);
+});
+
+test('the plan card takes its title, question and sections from the free text', () => {
+  const plan = splitPlan(
+    '# Does it help?\n\nIntro line.\n\n## Question\nWhy ask.\n\n```\n## not a heading\n```\n\n## Method\n1. Train.\n\n## Empty\n',
+  );
+  assert.equal(plan.title, 'Does it help?');
+  assert.equal(plan.lead, 'Intro line.');
+  assert.deepEqual(
+    plan.sections.map((s) => s.name),
+    ['Question', 'Method'],
+  );
+  assert.match(plan.sections[0]!.body, /## not a heading/);
 });

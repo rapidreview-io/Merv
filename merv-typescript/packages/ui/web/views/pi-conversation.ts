@@ -94,6 +94,8 @@ export function useConversation(transport: PiTransport = toolTransport) {
   const transcript = useRef<HTMLDivElement>(null);
   // The transcript follows new text until the reader scrolls away from its end.
   const following = useRef(true);
+  // Where the transcript last scrolled itself, so its own scroll is not read as the reader's.
+  const pinnedAt = useRef<number | null>(null);
   const createId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
   // How far the server's clock ran ahead of this one when the latest snapshot arrived.
@@ -284,7 +286,9 @@ export function useConversation(transport: PiTransport = toolTransport) {
         : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
   const follow = useRef(() => {
     const list = transcript.current;
-    if (list && following.current) list.scrollTop = list.scrollHeight;
+    if (!list || !following.current) return;
+    list.scrollTop = list.scrollHeight;
+    pinnedAt.current = list.scrollTop;
   }).current;
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
@@ -497,6 +501,7 @@ export function useConversation(transport: PiTransport = toolTransport) {
     composer,
     transcript,
     following,
+    pinnedAt,
     skew,
     proposing,
     active,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api';
 import { Markdown } from '../markdown';
 import { customerRequest, said } from './api';
+import { PlanCard } from './plan-card';
 
 /** GET /plan: the one free-text document both sides edit, and where its verification stands. */
 export interface Plan {
@@ -62,7 +63,8 @@ export function PlanEditor({
   reload(): void;
 }) {
   const [draft, setDraft] = useState(plan?.document ?? '');
-  const [preview, setPreview] = useState(false);
+  // The card is the plan's face; the text editor opens on Edit, or by itself for an empty plan.
+  const [chosen, setPreview] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'' | 'saving' | 'submitting' | 'paying'>('');
   const [conflict, setConflict] = useState<Plan | null>(null);
@@ -71,6 +73,7 @@ export function PlanEditor({
     plan ? { revision: plan.revision, document: plan.document } : null,
   );
   const saving = useRef<Promise<boolean> | null>(null);
+  const preview = chosen ?? !!(plan?.document ?? '').trim();
   const editable = !!plan && (plan.status === 'drafting' || plan.status === 'changes_requested');
   const dirty = !!synced.current && draft !== synced.current.document;
 
@@ -171,16 +174,13 @@ export function PlanEditor({
   return (
     <section className="cx-plan" aria-label="Plan">
       <div className="cx-plan-bar">
-        <span className={`cx-status cx-status--${plan.status}`}>
-          {paid ? (STATE[state!] ?? STATUS.accepted) : STATUS[plan.status]}
-        </span>
         {editable && (
           <div className="cx-plan-actions">
             <button
               type="button"
               className="btn btn--quiet"
               aria-pressed={preview}
-              onClick={() => setPreview((value) => !value)}
+              onClick={() => setPreview(!preview)}
             >
               {preview ? 'Edit' : 'Preview'}
             </button>
@@ -243,9 +243,21 @@ export function PlanEditor({
           onBlur={() => void save()}
         />
       ) : (
-        <div className="cx-plan-doc">
-          <Markdown source={editable ? draft : plan.document} />
-        </div>
+        <PlanCard
+          document={editable ? draft : plan.document}
+          status={paid ? (STATE[state!] ?? STATUS.accepted) : STATUS[plan.status]}
+          meta={[
+            `revision ${plan.revision}`,
+            plan.updatedAt &&
+              new Date(plan.updatedAt).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+              }),
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+          {...(plan.contract?.limits ? { limits: plan.contract.limits } : {})}
+        />
       )}
       {error && (
         <p className="pi-error" role="alert">
