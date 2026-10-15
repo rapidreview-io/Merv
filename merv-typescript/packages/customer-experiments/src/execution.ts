@@ -11,7 +11,7 @@ import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { heldLease, insertLease, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
 import { directsIndependently, excludedFromReview, reviewActions } from '@merv/reviews/rules';
 import type { CustomerExperiments } from './domain.js';
-import { SERVICE_EXPERIMENT, writesReport } from './program.js';
+import { SERVICE_EXPERIMENT, plansDocument, writesReport } from './program.js';
 
 /** The executor writes, reviews and renders its report for this request only (version 2). */
 const REPORT_TOOLS = [
@@ -23,11 +23,17 @@ const REPORT_TOOLS = [
   'report.approve_visual',
   'report.render',
 ];
-import { SERVICE_MODEL } from './types.js';
+import { SERVICE_MODEL, contractDatasets, contractLimits } from './types.js';
 
 /** What version 2's executor is told: the report tools and their persistent draft. */
 const reportInstruction =
   'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results as artifacts. Write the report with the report tools (subjectKind customer_experiment, subjectId this request): report.open returns a draft prefilled from the contract, its question, inquiry and constraints locked, and the format guide; it persists, so after a review returns the work edit it (report.write) or start over (report.clear) instead of rewriting it. Compute every number from the retained results, review and approve each chart (report.review_visual, report.approve_visual), check the page (report.render), render it with final: true, then call customer_experiment.submit_results with its sourceArtifactId as reportArtifactId and your result artifacts. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the report; do not change scope.';
+
+/** Version 3's executor: the accepted plan document is the specification. */
+const documentInstruction = reportInstruction.replace(
+  'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use.',
+  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with. Check every downloaded request file against its manifest size and ETag before use.",
+);
 
 export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
   return {
@@ -105,7 +111,7 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
       409,
     );
     check(
-      exp.attempts <= exp.contract!.plan.limits.maxAttempts,
+      exp.attempts <= contractLimits(exp.contract!).maxAttempts,
       'attempt_limit',
       'The accepted execution limit is exhausted',
       409,
@@ -182,21 +188,16 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
         409,
       );
       const prior = await ctx.priorUsage(exp, c.tx);
+      const limits = contractLimits(exp.contract!);
       const remainingSeconds = Math.floor(
-        exp.contract!.plan.limits.wallMinutes * 60 - (usage.totals.wallMs - prior.wallMs) / 1000,
+        limits.wallMinutes * 60 - (usage.totals.wallMs - prior.wallMs) / 1000,
       );
       const remainingTokens =
-        exp.contract!.plan.limits.maxTokens -
-        usage.totals.inputTokens -
-        usage.totals.outputTokens +
-        prior.tokens;
+        limits.maxTokens - usage.totals.inputTokens - usage.totals.outputTokens + prior.tokens;
       // Keep part of the customer's total allowance for the mandatory results review.
-      const reserve =
-        c.snapshot.state === 'running' ? Math.ceil(exp.contract!.plan.limits.maxTokens * 0.2) : 0;
+      const reserve = c.snapshot.state === 'running' ? Math.ceil(limits.maxTokens * 0.2) : 0;
       const reserveSeconds =
-        c.snapshot.state === 'running'
-          ? Math.ceil(exp.contract!.plan.limits.wallMinutes * 60 * 0.2)
-          : 0;
+        c.snapshot.state === 'running' ? Math.ceil(limits.wallMinutes * 60 * 0.2) : 0;
       check(
         remainingSeconds > reserveSeconds && remainingTokens > reserve,
         'budget_exhausted',
@@ -261,7 +262,7 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
           artifacts: [
             ...new Set([
               await ctx.contractArtifact(exp, c.tx),
-              ...exp.contract!.datasets.map((d) => d.artifactId),
+              ...contractDatasets(exp.contract!).map((d) => d.artifactId),
               ...captures,
               ...(review?.artifactIds ?? []),
             ]),
@@ -283,9 +284,11 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
         const compute = ctx.compute ? computeGuidance(review ? 'check' : 'execute') : '';
         const instruction = review
           ? 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
-          : writesReport(c.snapshot.version)
-            ? reportInstruction
-            : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
+          : plansDocument(c.snapshot.version)
+            ? documentInstruction
+            : writesReport(c.snapshot.version)
+              ? reportInstruction
+              : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
         return {
           role: review ? 'Independent results reviewer' : 'Experiment executor',
           label: `${review ? 'Review' : 'Run'}: ${exp.title}`,
