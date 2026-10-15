@@ -35,7 +35,7 @@ It does not publish a paper, update the main research project, or start reflecti
 
 ## First offer
 
-The initial price is $5 USD. Intake can discuss broad ideas, but a submitted offer is
+The initial price is $10 USD. Intake can discuss broad ideas, but a submitted offer is
 bounded by at most 24 worker wall hours, 500,000,000 model tokens and two execution attempts.
 These are aggregate contract limits; 20% is reserved for results review. Sessions enforce
 per-visit deadlines and Fleet's model relay enforces token budgets. Missing usage accounting
@@ -50,9 +50,9 @@ Before checkout and payment release, the server links a private Sandboxes namesp
 request project under the configured sponsor's existing account. Only the explicitly configured
 sponsor providers are provisioned there; credentials stay in the Sandboxes vault. Prepaid
 provider connections are refused rather than bypassing their entitlement and wallet checks.
-The sponsor pays compute costs independently of the $5 customer price.
+The sponsor pays compute costs independently of the $10 customer price.
 `MERV_CUSTOMER_COMPUTE_BUDGET_USD` sets the lifetime compute ceiling per request
-(unset means no per-request compute cap, independent of the $5 checkout price). The account and payer budgets also apply.
+(unset means no per-request compute cap, independent of the $10 checkout price). The account and payer budgets also apply.
 Each request permits one concurrent machine,
 and a 24-hour maximum machine lifetime. Existing account/provider rules also apply.
 These internal limits do not fix a GPU type. Native capture retention and cleanup remain in Merv.

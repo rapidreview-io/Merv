@@ -386,7 +386,7 @@ test('a ready contract needs customer acceptance and a matching verified payment
     contractHash: exp.contract!.hash,
     checkoutId: checkout.body.id,
     paymentId: 'pi_paid',
-    amountCents: 500,
+    amountCents: 1000,
     currency: 'usd',
   };
   const webhook = (event: PaidCheckout, signature = 'fixture-valid-signature') =>
@@ -747,7 +747,7 @@ test('unavailable internal compute prevents checkout and payment release, while 
     checkoutId: checkout.body.id,
     contractHash: exp.contract!.hash,
     paymentId: 'pi_compute_retry',
-    amountCents: 500,
+    amountCents: 1000,
     currency: 'usd',
   };
   f.compute.prepareExecution = async () => {

@@ -88,7 +88,7 @@ export class CustomerExperiments {
     readonly reviews: Reviews,
     readonly code: Code,
     readonly sessions: Sessions,
-    readonly price = { amountCents: 500, currency: 'usd' as const },
+    readonly price = { amountCents: 1000, currency: 'usd' as const },
     readonly compute?: SandboxCaptureEvidence & {
       settled(
         projectId: string,
