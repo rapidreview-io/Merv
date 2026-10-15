@@ -22,6 +22,8 @@ export interface RequestRecord {
   projectId?: string;
   experimentId?: string;
   conversationId?: string;
+  /** The request files the intake agent was last told of (keys and ETags), for its next turn. */
+  toldFiles?: string[];
   bucketReady?: boolean;
   draft?: ExperimentPlan;
   uploads: UploadRecord[];

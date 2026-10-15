@@ -13,6 +13,7 @@ import {
 } from '@merv/contracts';
 import {
   commandInput,
+  failInput,
   completionInput,
   defaultTitle,
   nextInput,
@@ -914,7 +915,16 @@ export class PiWorkerProtocol {
   }
 
   async fail(token: string, input: unknown): Promise<{ interrupted: true }> {
-    const value = parse(commandInput, input);
+    const value = parse(failInput, input);
+    // The machine's own words: without them a stopped turn says nothing about why.
+    process.stdout.write(
+      JSON.stringify({
+        event: 'pi_turn_failed',
+        conversationId: value.conversationId,
+        commandId: value.commandId,
+        reason: value.reason ?? 'unreported',
+      }) + '\n',
+    );
     await this.core.state.transaction(async (tx) => {
       const { command } = await this.bound(token, value, tx, false);
       await this.hosts.interrupt(tx, command, 'worker_interrupted');
