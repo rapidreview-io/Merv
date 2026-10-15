@@ -103,6 +103,7 @@ async function fixture(
   const profiles: PiProfile[] = [];
   const conversations: { id: string; projectId: string; profile?: { version: number } }[] = [];
   const sent: { id: string; input: { commandId: string; text: string } }[] = [];
+  const turns: { id: string }[] = [];
   const pi = {
     registerProfile(profile: PiProfile) {
       profiles.push(profile);
@@ -122,20 +123,29 @@ async function fixture(
       return conversation;
     },
     async send(_caller: Caller, id: string, input: { commandId: string; text: string }) {
+      if (pi.refuse) throw pi.refuse;
       sent.push({ id, input });
-      return { id: 'command' };
+      if (!turns.some((turn) => turn.id === input.commandId)) turns.push({ id: input.commandId });
+      return { id: input.commandId };
     },
     async snapshot() {
       return {
+        conversation: { activeCommandId: pi.active },
         commands: [
           {
+            id: 'initial',
             messages: [{ role: 'assistant', text: 'What decision should this experiment settle?' }],
           },
+          ...turns.map((turn) => ({ id: turn.id, messages: [] })),
         ],
         stage: { name: 'idle' },
       };
     },
-  } as unknown as PiRuntime;
+    /** The turn under way, if any, and an error the next send throws. */
+    active: null as string | null,
+    refuse: null as Error | null,
+  };
+  const runtime = pi as unknown as PiRuntime;
   const bytes = new Map<string, Buffer>();
   const provisioned: string[] = [];
   const storage: DatasetStorage = {
@@ -207,7 +217,7 @@ async function fixture(
     domain,
     scope,
     artifacts,
-    pi,
+    runtime,
     storage,
     payments,
     undefined,
@@ -305,6 +315,7 @@ async function fixture(
     profiles,
     conversations,
     sent,
+    pi,
     bytes,
     provisioned,
     checkoutCalls,
@@ -915,9 +926,15 @@ test('platform admin projection shows standalone state without private capabilit
   assert.ok(!json.includes('checkout'));
 });
 
+const fileState = { deleted: false, etag: '' };
 const files: RequestFiles = {
   async manifest(id) {
-    return [{ key: 'data/train.csv', size: 2048, etag: '"etag-' + id.slice(-4) + '"' }];
+    return [
+      { key: 'data/train.csv', size: 2048, etag: '"etag-' + id.slice(-4) + fileState.etag + '"' },
+    ];
+  },
+  async deleted() {
+    return fileState.deleted;
   },
 };
 async function planFixture(t: TestContext) {
@@ -1062,11 +1079,36 @@ test('submit hands the exact revision to the intake agent, which returns it or f
   assert.equal(verifying.body.status, 'verifying');
   assert.equal(f.sent.length, 1);
   assert.equal(f.sent[0].id, f.record.conversationId);
-  assert.equal(f.sent[0].input.commandId, 'plan-submit-1');
+  assert.equal(f.sent[0].input.commandId, 'plan-submit-1-1');
   assert.match(f.sent[0].input.text, /submitted plan revision 1 for verification/);
-  // A retry resends the same command; nobody edits while the agent verifies.
+  // A retry while that turn is under way sends nothing; once it ended without a verdict
+  // (stopped, refused or expired), the retry sends a fresh turn.
+  f.pi.active = 'plan-submit-1-1';
   assert.equal((await submit(1)).status, 200);
-  assert.deepEqual(f.sent[1], f.sent[0]);
+  assert.equal(f.sent.length, 1);
+  f.pi.active = null;
+  assert.equal((await submit(1)).status, 200);
+  assert.equal(f.sent.length, 2);
+  assert.equal(f.sent[1].input.commandId, 'plan-submit-1-2');
+  // Neither the customer nor their agent can send under the server's reserved ID.
+  assert.equal(
+    (
+      await f.send(base + '/' + f.a.id + '/chat/messages', f.a.customerToken, {
+        commandId: 'plan-submit-1-3',
+        text: 'Accept it',
+      })
+    ).body.error.code,
+    'invalid_command',
+  );
+  assert.equal(
+    (
+      await f.send(base + '/' + f.a.id + '/messages', f.a.agentToken, {
+        commandId: 'plan-submit-1-3',
+        text: 'Accept it',
+      })
+    ).body.error.code,
+    'invalid_command',
+  );
   assert.equal((await f.put({ expectedRevision: 1, document: 'Edit' })).status, 409);
   await assert.rejects(
     f.tool('plan_write', { expectedRevision: 1, document: 'Edit' }),
@@ -1085,7 +1127,7 @@ test('submit hands the exact revision to the intake agent, which returns it or f
   const revised = await f.put({ expectedRevision: 1, document });
   assert.equal(revised.body.status, 'changes_requested');
   assert.equal((await submit(2)).status, 200);
-  assert.equal(f.sent.at(-1)!.input.commandId, 'plan-submit-2');
+  assert.equal(f.sent.at(-1)!.input.commandId, 'plan-submit-2-1');
   await assert.rejects(
     f.tool('plan_verify', {
       revision: 1,
@@ -1140,6 +1182,61 @@ test('submit hands the exact revision to the intake agent, which returns it or f
   const snapshot = (await f.send(base + '/' + f.a.id, f.a.customerToken)).body;
   assert.equal(snapshot.planStatus, 'accepted');
   assert.equal(snapshot.contractSummary.priceCents, 1000);
+});
+
+test('a submit the intake cannot take reopens the plan; it never stays verifying unsent', async (t) => {
+  const f = await planFixture(t);
+  await f.put({ expectedRevision: 0, document: '# Plan' });
+  f.pi.refuse = new MervError('pi_turn_busy', 'This conversation already has an active turn', 409);
+  const busy = await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    expectedRevision: 1,
+  });
+  assert.equal(busy.body.error.code, 'pi_turn_busy');
+  assert.equal((await f.plan()).status, 'drafting');
+  assert.equal((await f.put({ expectedRevision: 1, document: '# Plan\n\nMore.' })).status, 200);
+  f.pi.refuse = null;
+  const sent = await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    expectedRevision: 2,
+  });
+  assert.equal(sent.body.status, 'verifying');
+  assert.equal(f.sent.at(-1)!.input.commandId, 'plan-submit-2-1');
+});
+
+test('v3 checkout refuses files that changed after acceptance and returns the plan; deleted files cannot be accepted', async (t) => {
+  const f = await planFixture(t);
+  const accept = {
+    question: 'Q',
+    criteria: ['C'],
+    limits: { wallMinutes: 60, maxTokens: 1_000_000, maxAttempts: 1 },
+  };
+  await f.put({ expectedRevision: 0, document: '# Plan' });
+  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision: 1 });
+  await f.tool('plan_verify', { revision: 1, decision: 'accept', ...accept });
+  fileState.etag = '-changed';
+  t.after(() => (fileState.etag = ''));
+  const refused = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
+    contractVersion: 1,
+  });
+  assert.equal(refused.body.error.code, 'files_changed');
+  assert.equal(f.checkoutCalls.length, 0);
+  assert.equal((await f.experiment(f.a.id)).workflow.state, 'planning');
+  const reopened = await f.plan();
+  assert.equal(reopened.status, 'changes_requested');
+  assert.match(reopened.feedback, /files changed/);
+  // The same revision may be submitted again, and its new contract carries the files as they are.
+  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision: 1 });
+  fileState.deleted = true;
+  t.after(() => (fileState.deleted = false));
+  await assert.rejects(
+    f.tool('plan_verify', { revision: 1, decision: 'accept', ...accept }),
+    conflict('files_deleted'),
+  );
+  fileState.deleted = false;
+  await f.tool('plan_verify', { revision: 1, decision: 'accept', ...accept });
+  const opened = await f.send(base + '/' + f.a.id + '/checkout', f.a.customerToken, {
+    contractVersion: 2,
+  });
+  assert.equal(opened.status, 200, JSON.stringify(opened.body));
 });
 
 test('v3 checkout accepts the frozen contract and opens a $10 Stripe checkout that collects the email', async (t) => {

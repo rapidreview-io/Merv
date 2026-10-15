@@ -23,9 +23,18 @@ import {
   type PlanVerification,
 } from './schema.js';
 import { plansDocument } from './program.js';
-import { isDocumentContract, type ExperimentPlan, type RequestFiles } from './types.js';
+import {
+  isDocumentContract,
+  type ExperimentPlan,
+  type RequestFile,
+  type RequestFiles,
+} from './types.js';
 import type { CustomerCompute } from './compute.js';
 import { CustomerAccess } from './access.js';
+
+/** Commands the server sends into the intake conversation when the customer submits the plan;
+ *  no customer or agent message may use the prefix. */
+export const PLAN_SUBMIT = 'plan-submit-';
 
 export interface CustomerServiceOptions {
   publicOrigin: string;
@@ -251,6 +260,7 @@ export class CustomerService {
       409,
     );
     check(record.conversationId, 'request_initializing', 'Intake is initializing', 409);
+    check(!input.commandId.startsWith(PLAN_SUBMIT), 'invalid_command', 'Choose another command ID');
     return this.pi.send(caller, record.conversationId, input);
   }
   /** service_experiment@3 requests only: the rest keep their structured offer. */
@@ -269,15 +279,33 @@ export class CustomerService {
     });
   }
   /** Marks the revision verifying, then hands it to the intake agent as a turn in its own
-   *  conversation. A retry while verifying resends the same command, which Pi deduplicates. */
+   *  conversation (`plan-submit-<revision>-<attempt>`, an ID only the server sends). A submit
+   *  while verifying sends the turn again unless one is under way: a turn stopped, refused or
+   *  ended without a verdict is retried this way. A turn that cannot be sent reopens the plan. */
   async submitPlan(record: RequestRecord, input: { expectedRevision: number }) {
     check(record.conversationId, 'request_initializing', 'Intake is initializing', 409);
-    const caller = await this.caller(record);
-    const plan = await this.domain.submitPlan(caller, { id: record.experimentId!, ...input });
-    await this.pi.send(caller, record.conversationId, {
-      commandId: `plan-submit-${plan.revision}`,
-      text: `The customer submitted plan revision ${plan.revision} for verification. Read it with customer_experiments.plan_read, verify it, call customer_experiments.plan_verify, and tell the customer the outcome.`,
-    });
+    const caller = await this.caller(record),
+      id = record.experimentId!,
+      conversation = record.conversationId;
+    const before = await this.domain.plan(caller, id);
+    const plan = await this.domain.submitPlan(caller, { id, ...input });
+    try {
+      const prefix = `${PLAN_SUBMIT}${plan.revision}-`;
+      const snapshot = await this.pi.snapshot(caller, conversation);
+      const turns = snapshot.commands.filter((command) => command.id.startsWith(prefix));
+      if (turns.some((command) => command.id === snapshot.conversation.activeCommandId))
+        return plan;
+      await this.pi.send(caller, conversation, {
+        commandId: prefix + (turns.length + 1),
+        text: `The customer submitted plan revision ${plan.revision} for verification. Read it with customer_experiments.plan_read, verify it, call customer_experiments.plan_verify, and tell the customer the outcome.`,
+      });
+    } catch (error) {
+      if (before.status === 'drafting' || before.status === 'changes_requested')
+        await this.domain
+          .withdrawPlan(caller, { id, revision: plan.revision, status: before.status })
+          .catch(() => {});
+      throw error;
+    }
     return plan;
   }
   /** v3: acceptance and Stripe checkout are one step. The page collects no email: Stripe
@@ -289,6 +317,35 @@ export class CustomerService {
       'This request is approved on its page',
       409,
     );
+    if (this.files) {
+      check(
+        !(await this.files.deleted(record.id)),
+        'files_deleted',
+        'This request’s files were deleted',
+        410,
+      );
+      const caller = await this.caller(record);
+      const exp = await this.domain.get(caller, record.experimentId!);
+      const c = exp.contract;
+      // A file edit already under way when the plan was accepted can land after it froze the
+      // manifest: such a contract is never paid for, and the plan goes back to the customer.
+      if (exp.workflow.state === 'ready' && c && isDocumentContract(c)) {
+        const now = await this.files.manifest(record.id);
+        const same = (f: RequestFile) => `${f.key}\0${f.size}\0${f.etag}`;
+        if (
+          now.length !== c.files.length ||
+          now.map(same).sort().join('\n') !== c.files.map(same).sort().join('\n')
+        ) {
+          await this.domain.reopenPlan(caller, {
+            id: exp.id,
+            contractVersion: c.version,
+            feedback:
+              'The request files changed after this plan was accepted. Check the plan still fits them and submit it again.',
+          });
+          check(false, 'files_changed', 'The request files changed; submit the plan again', 409);
+        }
+      }
+    }
     await this.approveContract(record, { ...input, email: null });
     return this.checkout(record, { ...input, email: null });
   }
@@ -427,6 +484,13 @@ export class CustomerService {
             const { id: _id, ...fields } = input;
             const verdict = fields as PlanVerification;
             // Provider I/O stays outside the transaction that freezes the manifest.
+            if (verdict.decision === 'accept' && this.files)
+              check(
+                !(await this.files.deleted(record.id)),
+                'files_deleted',
+                'This request’s files were deleted; it cannot be accepted',
+                410,
+              );
             const files =
               verdict.decision === 'accept' && this.files
                 ? await this.files.manifest(record.id)

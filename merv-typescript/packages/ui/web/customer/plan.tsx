@@ -51,11 +51,14 @@ const price = (contract: NonNullable<Plan['contract']>) =>
 export function PlanEditor({
   plan,
   state,
+  agentBusy = false,
   reload,
 }: {
   plan: Plan | null;
   /** The experiment's workflow state (GET /), which says whether it is paid. */
   state: string | null;
+  /** The intake agent is in a turn: a submit waits for it, and a verifying plan is in hand. */
+  agentBusy?: boolean;
   reload(): void;
 }) {
   const [draft, setDraft] = useState(plan?.document ?? '');
@@ -131,12 +134,12 @@ export function PlanEditor({
 
   const submit = async () => {
     if (busy || !plan) return;
-    if (!(await save())) return;
+    if (editable && !(await save())) return;
     setBusy('submitting');
     try {
       await customerRequest('/plan/submit', {
         method: 'POST',
-        body: { expectedRevision: synced.current!.revision },
+        body: { expectedRevision: editable ? synced.current!.revision : plan.revision },
       });
       setError('');
     } catch (cause) {
@@ -184,10 +187,17 @@ export function PlanEditor({
             <button
               type="button"
               className="btn btn--primary"
-              disabled={!!busy || !!conflict || !draft.trim()}
+              disabled={!!busy || !!conflict || !draft.trim() || agentBusy}
               onClick={() => void submit()}
             >
               {busy === 'submitting' ? 'Submitting…' : 'Submit'}
+            </button>
+          </div>
+        )}
+        {plan.status === 'verifying' && !agentBusy && (
+          <div className="cx-plan-actions">
+            <button type="button" className="btn" disabled={!!busy} onClick={() => void submit()}>
+              {busy === 'submitting' ? 'Sending…' : 'Resend'}
             </button>
           </div>
         )}

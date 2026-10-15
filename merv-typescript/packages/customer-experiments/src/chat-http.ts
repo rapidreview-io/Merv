@@ -4,7 +4,7 @@ import { serveEvents } from '@merv/api/event-stream';
 import type { MountHandler } from '@merv/api/types';
 import { piLiveView } from '@merv/pi/live';
 import type { PiSnapshot } from '@merv/pi/models';
-import type { CustomerService } from './service.js';
+import { PLAN_SUBMIT, type CustomerService } from './service.js';
 
 const route =
   /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})\/(session|chat)(?:\/(messages|stop|events))?$/;
@@ -48,7 +48,12 @@ export function customerChat(snapshot: PiSnapshot): PiSnapshot {
       epoch: 0,
       runtimeId: '',
       status: command.status,
-      messages: command.messages,
+      // The server's instruction to verify a submitted plan is the customer's press of Submit.
+      messages: command.id.startsWith(PLAN_SUBMIT)
+        ? command.messages.map((message) =>
+            message.role === 'user' ? { ...message, text: 'Submitted the plan.' } : message,
+          )
+        : command.messages,
       outcomes: [],
       error: command.error,
       createdAt: command.createdAt,

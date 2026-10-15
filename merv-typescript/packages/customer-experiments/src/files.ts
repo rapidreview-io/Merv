@@ -1,4 +1,4 @@
-import { check, MervError, type State } from '@merv/contracts';
+import { check, MervError, type State, type Transaction } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { RequestRecord, RequestStore } from './store.js';
 import type { RequestFiles } from './types.js';
@@ -15,8 +15,11 @@ const HOUR = 3600_000;
 export const DELETE_AFTER_END_MS = 48 * HOUR;
 export const ABANDONED_AFTER_MS = 7 * 24 * HOUR;
 export const DELETION_POLICY = 'Deleted 48 hours after the experiment ends';
-/** Not yet paid: nothing runs, so a quiet request has been left. */
-const UNSTARTED = ['planning', 'ready', 'awaiting_payment'];
+/** No plan accepted: a quiet request has been left. An accepted contract's frozen files stay
+ *  until its experiment ends, so a later payment always finds them. */
+const UNSTARTED = ['planning'];
+/** Plan statuses in which the request's files may change: not while one is verified or fixed. */
+const OPEN_PLAN = ['drafting', 'changes_requested'];
 
 export interface StoredFile {
   key: string;
@@ -48,7 +51,10 @@ export interface RequestFileStorage {
   presignDownload(id: string, key: string): Promise<{ url: string; expiresAt: string }>;
   destroy(id: string): Promise<number>;
 }
-export type FilesLifecycle = Pick<WorkflowSnapshot, 'version' | 'state' | 'updatedAt'>;
+export type FilesLifecycle = Pick<WorkflowSnapshot, 'version' | 'state' | 'updatedAt'> & {
+  /** Where the request's plan document stands (service_experiment@3). */
+  planStatus?: string;
+};
 
 /** A relative path: `\` read as `/`, empty and `.` segments dropped, `..` refused, ≤ 1024 bytes. */
 export function normalizeKey(value: string): string {
@@ -228,8 +234,26 @@ export class FilesService implements RequestFiles {
         'Files are fixed by the accepted contract',
         409,
       );
+      // The agent verifies the files a submitted plan relies on; they hold still meanwhile.
+      check(
+        !lifecycle.planStatus || OPEN_PLAN.includes(lifecycle.planStatus),
+        'files_frozen',
+        'Files are fixed while the plan is verified',
+        409,
+      );
     }
     return { storage, lifecycle, row };
+  }
+  /** Bytes reserved by unfinished uploads; one left for a week no longer holds its share. */
+  private async pending(id: string, tx?: Transaction) {
+    const read = (sql: Pick<Transaction, 'all'>) =>
+      sql.all<UploadRow>(
+        'SELECT size FROM customer_experiment_file_uploads WHERE request_id=? AND created_at>?',
+        id,
+        new Date(Date.now() - ABANDONED_AFTER_MS).toISOString(),
+      );
+    const rows = tx ? await read(tx) : await this.state.read(read);
+    return rows.reduce((n, u) => n + Number(u.size), 0);
   }
   async list(record: RequestRecord, prefix = '', cursor?: string) {
     const { storage, lifecycle, row } = await this.open(record, false);
@@ -271,17 +295,9 @@ export class FilesService implements RequestFiles {
     );
     try {
       await this.state.transaction(async (tx) => {
-        // Unfinished uploads count at their declared size, so parallel creates share the cap;
-        // one left for a week no longer holds its share.
-        const pending = await tx.all<UploadRow>(
-          'SELECT size FROM customer_experiment_file_uploads WHERE request_id=? AND created_at>?',
-          record.id,
-          new Date(Date.now() - ABANDONED_AFTER_MS).toISOString(),
-        );
+        // Unfinished uploads count at their declared size, so parallel creates share the cap.
         const total =
-          listed.reduce((n, f) => n + f.size, 0) +
-          pending.reduce((n, u) => n + Number(u.size), 0) +
-          input.size;
+          listed.reduce((n, f) => n + f.size, 0) + (await this.pending(record.id, tx)) + input.size;
         check(
           total <= FILES_LIMIT_BYTES,
           'files_limit',
@@ -423,11 +439,25 @@ export class FilesService implements RequestFiles {
         'A folder with that name exists',
         409,
       );
-      for (const f of inside) moves.push([f, to + f.key.slice(from.length)]);
+      // Every new name is checked before the first copy, so a refusal copies nothing.
+      for (const f of inside) moves.push([f, normalizeKey(to + f.key.slice(from.length))]);
     }
-    for (const [f, to] of moves) {
-      normalizeKey(to);
-      await storage.copyFile(record.id, f, to);
+    check(
+      all.reduce((n, f) => n + f.size, 0) + (await this.pending(record.id)) <= FILES_LIMIT_BYTES,
+      'files_limit',
+      'Files for one experiment are limited to 1 TB',
+      413,
+    );
+    const copied: string[] = [];
+    try {
+      for (const [f, to] of moves) {
+        await storage.copyFile(record.id, f, to);
+        copied.push(to);
+      }
+    } catch (error) {
+      // A rename that fails partway leaves the originals as they were and no copies.
+      if (copied.length) await storage.deleteFiles(record.id, copied).catch(() => {});
+      throw error;
     }
     await storage.deleteFiles(
       record.id,
@@ -465,6 +495,10 @@ export class FilesService implements RequestFiles {
       404,
     );
     return storage.presignDownload(record.id, name);
+  }
+  /** Whether the request's files were deleted, so no contract can rely on them. */
+  async deleted(id: string) {
+    return !!(await this.row(id))?.deleted_at;
   }
   /** The request's files as they stand: what an accepting contract freezes. */
   async manifest(id: string) {

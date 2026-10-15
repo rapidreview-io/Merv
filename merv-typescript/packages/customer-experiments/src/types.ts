@@ -69,6 +69,8 @@ export interface RequestFile {
 /** The request bucket's current objects (FilesService); a v3 acceptance freezes them. */
 export interface RequestFiles {
   manifest(id: string): Promise<RequestFile[]>;
+  /** True once the request's files were deleted: nothing may accept or pay against them. */
+  deleted(id: string): Promise<boolean>;
 }
 /** service_experiment@3: the verified plan document is the specification. Only its summary
  *  (question, criteria, limits) is structured, filled by the intake agent at verification. */

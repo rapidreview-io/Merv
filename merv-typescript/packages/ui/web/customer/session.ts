@@ -13,6 +13,8 @@ export interface SessionInfo {
 export type CustomerSession =
   | { phase: 'loading' }
   | { phase: 'invalid'; message: string }
+  /** The page could not be opened just now: a server, network or sign-in failure. */
+  | { phase: 'failed'; message: string }
   /** Another browser holds the request; this one may take it over. */
   | { phase: 'elsewhere'; busy?: boolean; error?: string }
   | { phase: 'ready'; info: SessionInfo };
@@ -20,9 +22,15 @@ export type CustomerSession =
 export interface SessionControls {
   /** Rebinds the request to this browser (POST /session {takeOver: true}). */
   takeOver(): Promise<void>;
+  /** Opens the page again after a failure. */
+  retry(): void;
 }
 
 const INVALID = 'This link is not valid.';
+const FAILED = 'Couldn’t open the experiment. Try again.';
+/** Only the server refusing the link means the link is wrong; anything else may pass. */
+const refused = (cause: unknown) =>
+  cause instanceof ApiError && [401, 403, 404].includes(cause.status);
 
 /**
  * Who is acting on this request: the link's capability, plus this browser's anonymous Supabase
@@ -35,6 +43,7 @@ export function useCustomerSession(
   options: { createClient?: typeof createClient } = {},
 ): [CustomerSession, SessionControls] {
   const [state, setState] = useState<CustomerSession>({ phase: 'loading' });
+  const [attempt, setAttempt] = useState(0);
   const client = useRef<SupabaseClient | null>(null);
   const token = useRef<string | null>(null);
   const info = useRef<SessionInfo | null>(null);
@@ -101,7 +110,12 @@ export function useCustomerSession(
           else throw cause;
         }
       } catch (cause) {
-        if (!cancelled) setState({ phase: 'invalid', message: said(cause, INVALID) });
+        if (cancelled) return;
+        setState(
+          refused(cause)
+            ? { phase: 'invalid', message: said(cause, INVALID) }
+            : { phase: 'failed', message: FAILED },
+        );
       }
     })();
     return () => {
@@ -109,9 +123,9 @@ export function useCustomerSession(
       unsubscribe();
       away();
     };
-    // The page serves one request for its life.
+    // The page serves one request for its life; a retry opens it again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request]);
+  }, [request, attempt]);
 
   const controls = useMemo<SessionControls>(
     () => ({
@@ -122,6 +136,10 @@ export function useCustomerSession(
         } catch (cause) {
           setState({ phase: 'elsewhere', error: said(cause, 'Try again.') });
         }
+      },
+      retry: () => {
+        setState({ phase: 'loading' });
+        setAttempt((value) => value + 1);
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

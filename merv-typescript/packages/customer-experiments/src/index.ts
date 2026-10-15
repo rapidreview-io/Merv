@@ -17,6 +17,7 @@ import { customerHttp, startHttp } from './http.js';
 import { registerWorkerTools } from './worker-tools.js';
 import { FilesService } from './files.js';
 import { hostedCustomerCompute } from './hosted-compute.js';
+import { plansDocument } from './program.js';
 
 const env = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const origin = z
@@ -146,7 +147,11 @@ export const customerExperimentsPlugin = {
       // The request bucket's files; the plan freezes their manifest into a v3 contract.
       const files: FilesService = new FilesService(ctx.state, store, storage, async (record) => {
         check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
-        return (await domain.get(await service.caller(record), record.experimentId)).workflow;
+        const caller = await service.caller(record);
+        const { workflow } = await domain.get(caller, record.experimentId);
+        return plansDocument(workflow.version)
+          ? { ...workflow, planStatus: (await domain.plan(caller, record.experimentId)).status }
+          : workflow;
       });
       await files.initialize();
       const service = new CustomerService(

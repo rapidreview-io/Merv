@@ -262,6 +262,10 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   // Read-only while it is verified: no editor, no Submit.
   assert.equal(document.querySelector('.cx-plan-text'), null);
   assert.equal(text().includes('Submit'), false);
+  // With the agent idle, the verification turn can be sent again for the same revision.
+  await click('Resend');
+  await settle(20);
+  assert.deepEqual(submitted, [{ expectedRevision: 2 }, { expectedRevision: 2 }]);
 
   state.plan = {
     ...state.plan,
@@ -403,4 +407,36 @@ test('the file manager lists folders with their sizes and deletes after confirmi
   await settle(10);
   assert.deepEqual(deleted, ['notes.md']);
   assert.ok(requests.includes(`DELETE ${BASE}/files?key=notes.md`));
+});
+
+test('a failure opening the page offers a retry; only a refused link is called invalid', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setCredentials(null);
+  });
+  const state = { plan: plan(), files: listing(), commands: [] };
+  boot(state);
+  serve(`${BASE}/session`, { status: 503, body: { error: { code: 'unavailable', message: 'x' } } });
+  await open();
+  assert.match(text(), /Couldn’t open the experiment\. Try again\./);
+  assert.equal(text().includes('not valid'), false);
+  boot(state);
+  await click('Retry');
+  await settle(20);
+  assert.match(text(), /Drop datasets, papers, context/);
+});
+
+test('a link the server refuses is not valid', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setCredentials(null);
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  serve(`${BASE}/session`, {
+    status: 404,
+    body: { error: { code: 'not_found', message: 'Request not found' } },
+  });
+  await open();
+  assert.match(text(), /Request not found/);
+  assert.equal(text().includes('Retry'), false);
 });

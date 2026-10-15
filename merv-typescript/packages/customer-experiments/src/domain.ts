@@ -524,6 +524,56 @@ export class CustomerExperiments {
       return this.plan(caller, input.id, tx);
     });
   }
+  /** Undoes a submit whose turn never reached the intake agent: the plan reopens as it was. */
+  async withdrawPlan(
+    caller: Caller,
+    input: { id: string; revision: number; status: 'drafting' | 'changes_requested' },
+    transaction?: Transaction,
+  ): Promise<PlanView> {
+    caller = structuredClone(caller);
+    input = plain(input);
+    return inTransaction(this.state, transaction, async (tx) => {
+      const plan = await this.openPlan(caller, input.id, input.revision, tx);
+      if (plan.status !== 'verifying') return plan;
+      await this.setPlanStatus(input.id, input.status, plan.feedback, tx);
+      await tx.run(
+        'UPDATE customer_experiment_plans SET submitted_revision=NULL WHERE experiment_id=?',
+        input.id,
+      );
+      return this.plan(caller, input.id, tx);
+    });
+  }
+  /** An accepted, unpaid plan whose request files no longer match its contract goes back to
+   *  the customer: the workflow returns to planning and the plan to changes requested. */
+  async reopenPlan(
+    caller: Caller,
+    input: { id: string; contractVersion: number; feedback: string },
+    transaction?: Transaction,
+  ): Promise<PlanView> {
+    caller = structuredClone(caller);
+    input = plain(input);
+    return inTransaction(this.state, transaction, async (tx) => {
+      this.open();
+      await this.scope.require(caller, 'write', tx);
+      const exp = await this.get(caller, input.id, tx);
+      const plan = await this.plan(caller, input.id, tx);
+      check(
+        exp.workflow.state === 'ready' &&
+          plan.status === 'accepted' &&
+          exp.contract?.version === input.contractVersion,
+        'stale_contract',
+        'The plan changed; reload the current version',
+        409,
+      );
+      await this.move(caller, exp, 'revise', `plan-reopen-${input.contractVersion}`, tx);
+      await this.setPlanStatus(input.id, 'changes_requested', input.feedback, tx);
+      await tx.run(
+        'UPDATE customer_experiment_plans SET submitted_revision=NULL WHERE experiment_id=?',
+        input.id,
+      );
+      return this.plan(caller, input.id, tx);
+    });
+  }
   /** The intake agent's verdict on the submitted revision. Accepting freezes the contract:
    *  the document, its summary, the request's file manifest and the price. */
   async verifyPlan(
@@ -584,7 +634,8 @@ export class CustomerExperiments {
       );
       await tx.run('UPDATE customer_experiments SET contract_id=? WHERE id=?', contract.id, exp.id);
       await this.setPlanStatus(input.id, 'accepted', input.feedback ?? null, tx);
-      await this.move(caller, exp, 'propose', `plan-${plan.revision}`, tx);
+      // One acceptance per contract: a reopened plan may be accepted again at the same revision.
+      await this.move(caller, exp, 'propose', `plan-${plan.revision}-v${version}`, tx);
       return this.plan(caller, input.id, tx);
     });
   }

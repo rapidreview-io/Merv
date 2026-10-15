@@ -132,7 +132,12 @@ test('files end 48 hours after completion, failure, or seven quiet days before p
   assert.equal(
     deletionSchedule(record, { version: 3, state: 'planning', updatedAt: ago(9 * day) }, ago(day)),
     null,
-  );
+  ); // An accepted contract's frozen files wait for its payment and run, however quiet.
+  for (const state of ['ready', 'awaiting_payment'])
+    assert.equal(
+      deletionSchedule(record, { version: 3, state, updatedAt: ago(9 * day) }, ago(8 * day)),
+      null,
+    );
 });
 
 test('request bucket files: CORS exposes ETag, parts sign their length, large copies go part by part, deletion removes the bucket', async () => {
@@ -453,6 +458,45 @@ test('v3 request files: upload, list, rename, delete, download, manifest and the
   await assert.rejects(f.files.remove(r, { key: 'docs/paper.pdf' }), code('files_frozen'));
   await assert.rejects(f.files.rename(r, { from: 'docs/', to: 'd' }), code('files_frozen'));
   assert.equal((await f.files.manifest(r.id)).length, 1);
+});
+
+test('a rename checks every new name first and leaves no copies when it fails; files hold still while the plan is verified', async () => {
+  const f = await fixture();
+  const r = await f.request();
+  await f.upload(r, 'data/a.csv', 1);
+  await f.upload(r, 'data/' + 'b'.repeat(1000), 2);
+  // The second file's new name is too long: nothing is copied and nothing moves.
+  await assert.rejects(
+    f.files.rename(r, { from: 'data/', to: 'x'.repeat(30) }),
+    code('invalid_key'),
+  );
+  const keys = () => [...f.storage.buckets.get(r.id)!.keys()].sort();
+  assert.deepEqual(keys(), ['data/a.csv', 'data/' + 'b'.repeat(1000)]);
+  // A copy failing partway removes the copies already made.
+  const copy = f.storage.copyFile;
+  let copies = 0;
+  f.storage.copyFile = async (id, from, to) => {
+    if (++copies === 2) throw new Error('copy failed');
+    await copy(id, from, to);
+  };
+  await assert.rejects(f.files.rename(r, { from: 'data/', to: 'in' }), /copy failed/);
+  f.storage.copyFile = copy;
+  assert.deepEqual(keys(), ['data/a.csv', 'data/' + 'b'.repeat(1000)]);
+
+  const at = new Date().toISOString();
+  for (const planStatus of ['verifying', 'accepted']) {
+    f.lifecycles.set(r.id, { version: 3, state: 'planning', updatedAt: at, planStatus });
+    await assert.rejects(f.files.createUpload(r, { key: 'late', size: 1 }), code('files_frozen'));
+    await assert.rejects(f.files.rename(r, { from: 'data/', to: 'in' }), code('files_frozen'));
+    await assert.rejects(f.files.remove(r, { key: 'data/a.csv' }), code('files_frozen'));
+  }
+  f.lifecycles.set(r.id, {
+    version: 3,
+    state: 'planning',
+    updatedAt: at,
+    planStatus: 'changes_requested',
+  });
+  assert.deepEqual(await f.files.rename(r, { from: 'data/', to: 'in' }), { renamed: 2 });
 });
 
 test('the sweeper deletes every object and the bucket at deleteAt and records it', async () => {

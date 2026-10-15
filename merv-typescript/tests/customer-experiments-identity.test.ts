@@ -388,6 +388,23 @@ test('the customer view of a snapshot keeps Pi’s shape and drops every sponsor
   assert.equal('screen' in view, false);
 });
 
+test('the server’s plan verification turn reads as the customer’s Submit, with the agent’s reply', () => {
+  const sponsor = sponsorSnapshot('pi_1');
+  const reply = { role: 'assistant' as const, text: 'Accepted.' };
+  sponsor.commands.push({
+    ...sponsor.commands[0]!,
+    id: 'plan-submit-2-1',
+    messages: [
+      { role: 'user', text: 'The customer submitted plan revision 2 for verification. Read it…' },
+      reply,
+    ],
+  });
+  assert.deepEqual(customerChat(sponsor).commands.at(-1)!.messages, [
+    { role: 'user', text: 'Submitted the plan.' },
+    reply,
+  ]);
+});
+
 test('v1/v2 requests keep capability-only customers and get no chat', async (t) => {
   const f = await fixture(t, { version: 2 });
   assert.equal((await f.send('', f.customer)).status, 200);

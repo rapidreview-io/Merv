@@ -71,6 +71,15 @@ function Gate({ session, controls }: { session: CustomerSession; controls: Sessi
         {session.message}
       </p>
     );
+  if (session.phase === 'failed')
+    return (
+      <div className="cx-center cx-elsewhere">
+        <p role="alert">{session.message}</p>
+        <button type="button" className="btn btn--primary" onClick={controls.retry}>
+          Retry
+        </button>
+      </div>
+    );
   if (session.phase !== 'elsewhere') return null;
   return (
     <div className="cx-center cx-elsewhere">
@@ -155,7 +164,8 @@ function Experiment() {
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
   const [request] = usePoll<{ state?: string }>('', 15_000);
   const uploader = useMemo(() => new Uploader({ onDone: reloadFiles }), [reloadFiles]);
-  const frozen = plan?.status === 'accepted';
+  // Files hold still while the agent verifies a submitted plan, and once one is accepted.
+  const frozen = !!plan && plan.status !== 'drafting' && plan.status !== 'changes_requested';
   const planned = !!plan?.document.trim();
   // The chat is drawn in one place at a time, so the transcript and composer refs are its own.
   const nav = view !== 'arrive' && (
@@ -202,6 +212,7 @@ function Experiment() {
           <PlanEditor
             plan={plan}
             state={request?.state ?? null}
+            agentBusy={pi.active}
             reload={() => {
               reloadPlan();
             }}
