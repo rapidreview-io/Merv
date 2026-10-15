@@ -16,9 +16,11 @@ import {
   partCount,
   partLength,
   partSize,
+  READ_WINDOW,
   type FilesLifecycle,
   type RequestFileStorage,
   type StoredFile,
+  WARM_BUCKET_IDLE_MS,
 } from '../packages/customer-experiments/src/files.js';
 import { filesHttp, isFilesPath } from '../packages/customer-experiments/src/files-http.js';
 import { CustomerAccess } from '../packages/customer-experiments/src/access.js';
@@ -308,6 +310,19 @@ function memoryStorage() {
     async presignDownload(id, key) {
       return { url: `https://bucket.test/${id}/${key}?get`, expiresAt: new Date().toISOString() };
     },
+    // A file's bytes are its path's digits repeated to its size; a `.bin` file holds a NUL.
+    async readFile(id, key, offset, length) {
+      const file = bucket(id).get(key);
+      assert.ok(file, 'file exists');
+      const all = new TextEncoder().encode(
+        key.endsWith('.bin') ? '\0'.repeat(file.size) : 'x'.repeat(file.size),
+      );
+      return {
+        bytes: all.subarray(offset, offset + length),
+        size: file.size,
+        contentType: 'text/plain',
+      };
+    },
     async destroy(id) {
       const count = buckets.get(id)?.size ?? 0;
       buckets.delete(id);
@@ -561,6 +576,34 @@ test('the sweeper deletes every object and the bucket at deleteAt and records it
   assert.equal((await f.files.list(other)).files.length, 1);
 });
 
+test('a warmed bucket waits for the first upload, and goes after half an hour with none', async () => {
+  const f = await fixture();
+  const old = await f.request(2);
+  await f.files.warm(old);
+  assert.equal(f.storage.buckets.has(old.id), false);
+  const r = await f.request(),
+    used = await f.request();
+  await f.files.warm(r);
+  await f.files.warm(used);
+  assert.ok(f.storage.buckets.has(r.id));
+  await f.upload(used, 'a.csv', 3);
+  // Warming again is a no-op; a quiet sweep within the half hour keeps the bucket.
+  await f.files.warm(r);
+  await f.files.sweep();
+  assert.deepEqual(f.storage.destroyed, []);
+  const quiet = new Date(Date.now() - WARM_BUCKET_IDLE_MS - 60_000).toISOString();
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE customer_experiment_files SET last_activity_at=?', quiet),
+  );
+  await f.files.sweep();
+  // Only the empty bucket goes; the request's files are not deleted, and an upload makes it again.
+  assert.deepEqual(f.storage.destroyed, [r.id]);
+  assert.equal((await f.files.list(r)).deletedAt, null);
+  await f.upload(r, 'b.csv', 4);
+  assert.equal((await f.files.list(r)).files.length, 1);
+  assert.equal((await f.files.list(used)).files.length, 1);
+});
+
 test('files HTTP: the customer writes, the agent only lists and downloads', async () => {
   const f = await fixture();
   const r = await f.request();
@@ -702,5 +745,35 @@ test('the executing worker reads the frozen v3 files and nothing before acceptan
   await assert.rejects(
     handlers.get('customer_experiment.files')!(caller, { id: r.experimentId }),
     code('not_found'),
+  );
+});
+
+test('the intake agent reads a file as text, a window at a time, and only the type of a binary', async () => {
+  const f = await fixture();
+  const r = await f.request();
+  await f.upload(r, 'data/train.csv', READ_WINDOW + 10);
+  await f.upload(r, 'model.bin', 64);
+  const first = (await f.files.read(r.id, 'data/train.csv')) as {
+    text: string;
+    nextOffset: number | null;
+    size: number;
+  };
+  assert.equal(first.size, READ_WINDOW + 10);
+  assert.equal(first.text.length, READ_WINDOW);
+  assert.equal(first.nextOffset, READ_WINDOW);
+  const rest = (await f.files.read(r.id, 'data/train.csv', first.nextOffset!)) as {
+    text: string;
+    nextOffset: number | null;
+  };
+  assert.equal(rest.text.length, 10);
+  assert.equal(rest.nextOffset, null);
+  assert.deepEqual(
+    { ...(await f.files.read(r.id, './model.bin')), contentType: undefined },
+    { key: 'model.bin', size: 64, contentType: undefined, binary: true, offset: 0 },
+  );
+  await assert.rejects(f.files.read(r.id, '../escape.csv'));
+  await assert.rejects(
+    f.files.read(r.id, 'missing.csv'),
+    (e: { code?: string }) => e.code === 'not_found',
   );
 });

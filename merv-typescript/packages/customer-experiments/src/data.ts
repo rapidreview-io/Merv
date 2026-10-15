@@ -493,6 +493,24 @@ export class RequestBuckets implements DatasetStorage, RequestFileStorage {
     );
     return { url, expiresAt: new Date(signingDate.getTime() + 300_000).toISOString() };
   }
+  /** Up to `length` bytes of one request file from `offset`, and how large the whole file is. */
+  async readFile(id: string, key: string, offset: number, length: number) {
+    const out = await this.send<{
+      Body?: { transformToByteArray(): Promise<Uint8Array> };
+      ContentRange?: string;
+      ContentLength?: number;
+      ContentType?: string;
+    }>(
+      new GetObjectCommand({
+        Bucket: this.bucket(id),
+        Key: key,
+        Range: `bytes=${offset}-${offset + length - 1}`,
+      }),
+    );
+    const bytes = (await out.Body?.transformToByteArray()) ?? new Uint8Array();
+    const total = Number(/\/(\d+)$/.exec(out.ContentRange ?? '')?.[1] ?? out.ContentLength ?? 0);
+    return { bytes, size: total, contentType: out.ContentType ?? null };
+  }
   /** Every object, every unfinished upload, then the bucket itself. Returns the objects removed. */
   async destroy(id: string): Promise<number> {
     const Bucket = this.bucket(id);

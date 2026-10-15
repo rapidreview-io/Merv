@@ -49,6 +49,12 @@ export interface RequestFileStorage {
   copyFile(id: string, from: StoredFile, to: string): Promise<void>;
   deleteFiles(id: string, keys: string[]): Promise<void>;
   presignDownload(id: string, key: string): Promise<{ url: string; expiresAt: string }>;
+  readFile(
+    id: string,
+    key: string,
+    offset: number,
+    length: number,
+  ): Promise<{ bytes: Uint8Array; size: number; contentType: string | null }>;
   destroy(id: string): Promise<number>;
 }
 export type FilesLifecycle = Pick<WorkflowSnapshot, 'version' | 'state' | 'updatedAt'> & {
@@ -160,6 +166,11 @@ CREATE INDEX customer_experiment_file_uploads_request ON customer_experiment_fil
 `,
 };
 
+/** How much of a file the intake agent reads in one call. */
+export const READ_WINDOW = 64 * 1024;
+/** An empty bucket made ahead of an upload is removed after this long without activity. */
+export const WARM_BUCKET_IDLE_MS = 30 * 60_000;
+
 /** When a request's files are deleted: 48 hours after it ends (complete, failed or abandoned). */
 export function deletionSchedule(
   record: Pick<RequestRecord, 'createdAt'>,
@@ -214,6 +225,20 @@ export class FilesService implements RequestFiles {
         ...Object.values(fields),
       ),
     );
+  }
+  /** Makes a v3 request's bucket before its first upload: a new bucket's CORS takes a moment. */
+  async warm(record: RequestRecord) {
+    if (!this.storage) return;
+    const lifecycle = await this.lifecycle(record);
+    if (lifecycle.version < 3 || lifecycle.state !== 'planning') return;
+    const row = await this.row(record.id);
+    if (row?.provisioned_at || row?.deleted_at) return;
+    await this.storage.provisionFiles(record.id);
+    const now = new Date().toISOString();
+    await this.upsert(record.id, {
+      provisioned_at: now,
+      last_activity_at: row?.last_activity_at ?? now,
+    });
   }
   /** Customer activity keeps an unaccepted request from being treated as abandoned. */
   async touch(id: string) {
@@ -501,6 +526,41 @@ export class FilesService implements RequestFiles {
     return !!(await this.row(id))?.deleted_at;
   }
   /** The request's files as they stand: what an accepting contract freezes. */
+  /**
+   * One request file as the intake agent reads it: a window of its text from `offset`, or, for a
+   * binary file, only what it is. The agent pages through a large file with nextOffset.
+   */
+  async read(id: string, key: string, offset = 0) {
+    const row = await this.row(id);
+    check(
+      this.storage && row?.provisioned_at && !row.deleted_at,
+      'not_found',
+      'This request has no files',
+      404,
+    );
+    const name = normalizeKey(key);
+    const file = await this.storage!.head(id, name);
+    check(file, 'not_found', `No file ${name}`, 404);
+    const start = Math.max(0, Math.min(Math.floor(offset), file.size));
+    if (start === file.size)
+      return { key: name, size: file.size, offset: start, text: '', nextOffset: null };
+    const { bytes, contentType } = await this.storage!.readFile(id, name, start, READ_WINDOW);
+    if (bytes.includes(0))
+      return { key: name, size: file.size, contentType, binary: true as const, offset: start };
+    // A window ends on a whole character: a cut multi-byte sequence waits for the next one.
+    let end = bytes.length;
+    while (end > 0 && end < file.size - start && (bytes[end - 1]! & 0xc0) === 0x80) end--;
+    if (end > 0 && end < file.size - start && bytes[end - 1]! >= 0xc0) end--;
+    const next = start + end;
+    return {
+      key: name,
+      size: file.size,
+      contentType,
+      offset: start,
+      text: new TextDecoder().decode(bytes.subarray(0, end)),
+      nextOffset: next < file.size ? next : null,
+    };
+  }
   async manifest(id: string) {
     const row = await this.row(id);
     if (!this.storage || !row?.provisioned_at || row.deleted_at) return [];
@@ -526,6 +586,19 @@ export class FilesService implements RequestFiles {
         const record = await this.store.get(row.request_id);
         const lifecycle = await this.lifecycle(record);
         if (lifecycle.version < 3 || !this.storage) continue;
+        // A bucket made ahead of a first upload that never came goes after half an hour of quiet;
+        // the next upload makes it again.
+        const quietSince = Date.parse(row.last_activity_at ?? row.provisioned_at!);
+        if (
+          lifecycle.state === 'planning' &&
+          Date.now() - quietSince > WARM_BUCKET_IDLE_MS &&
+          !(await this.pending(record.id)) &&
+          !(await this.storage.listFiles(record.id)).length
+        ) {
+          await this.storage.destroy(record.id);
+          await this.upsert(record.id, { provisioned_at: null });
+          continue;
+        }
         const schedule = deletionSchedule(record, lifecycle, row.last_activity_at);
         await this.upsert(record.id, {
           ended_at: schedule?.endedAt ?? null,
