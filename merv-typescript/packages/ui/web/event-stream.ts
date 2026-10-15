@@ -66,26 +66,38 @@ export function frameParser(accept: (frame: Frame) => void, maxFrameChars = 65_5
 }
 
 /**
+ * A stream another page opens with credentials of its own rather than the account's: the
+ * headers it sends, and how it renews them once the server refuses them (true when it did).
+ */
+export interface StreamSource {
+  url: string;
+  headers(): Record<string, string>;
+  renew?(): Promise<boolean>;
+}
+/** The signed-in account's credential and project, as every stream of this app sends them. */
+const accountHeaders = (): Record<string, string> => ({
+  ...(currentToken() ? { authorization: `Bearer ${currentToken()}` } : {}),
+  ...(projectSelection() ? { 'x-merv-project-id': projectSelection()! } : {}),
+});
+
+/**
  * Reads one server-sent event stream of this app (`path`, with the caller's credential and
- * project) until it ends or `signal` aborts, handing each frame's event name and its JSON
- * object to `accept`. Resolves true when the server closed the stream on purpose (`rotate`),
- * so reconnecting says nothing.
+ * project, or `headers` where the page has its own) until it ends or `signal` aborts, handing
+ * each frame's event name and its JSON object to `accept`. Resolves true when the server closed
+ * the stream on purpose (`rotate`), so reconnecting says nothing.
  */
 export async function readEventStream(
   path: string,
   signal: AbortSignal,
   accept: (event: string, value: object) => void,
+  headers: Record<string, string> = accountHeaders(),
 ): Promise<boolean> {
   // The credential goes to this app's own host and nowhere else, whatever path it is handed.
   if (!sameOriginPath(path)) throw new StreamError(403);
   const response = await fetch(path, {
     signal,
     credentials: 'omit',
-    headers: {
-      accept: 'text/event-stream',
-      ...(currentToken() ? { authorization: `Bearer ${currentToken()}` } : {}),
-      ...(projectSelection() ? { 'x-merv-project-id': projectSelection()! } : {}),
-    },
+    headers: { accept: 'text/event-stream', ...headers },
   });
   if (!response.ok || !response.body) throw new StreamError(response.status);
   const reader = response.body.getReader();
@@ -140,18 +152,20 @@ export const STALL_MS = 10_000;
  * names the last event the reader holds, so a reconnect asks only for what follows it
  * (`?after=`). A stream with no frame STALL_MS after it was first opened from nothing held, and
  * not ended or refused, is `stalled`; `retry` opens the stream again at once, from the last event
- * held.
+ * held. A `StreamSource` in the url's place sends its own headers and renews them itself.
  */
 export function useEventStream(
-  url: string | null,
+  source: string | StreamSource | null,
   onEvent: (event: string, value: object) => void,
   after?: () => number,
 ): { state: EventStreamState; retry(): void } {
   const [state, setState] = useState<EventStreamState>('connecting');
   const [attempt, setAttempt] = useState(0);
   const visible = useSyncExternalStore(onShown, shown);
-  const latest = useRef({ onEvent, after });
-  latest.current = { onEvent, after };
+  const url = typeof source === 'string' ? source : (source?.url ?? null);
+  const own = typeof source === 'string' ? undefined : (source ?? undefined);
+  const latest = useRef({ onEvent, after, own });
+  latest.current = { onEvent, after, own };
   useEffect(() => {
     if (!visible || !url) return;
     // A new stream (another url, or the tab shown again) owes nothing to the last one's state.
@@ -177,6 +191,7 @@ export function useEventStream(
       const since = Date.now();
       const from = latest.current.after?.() ?? 0;
       const bearer = currentToken();
+      const own = latest.current.own;
       let [ended, busy] = [false, false];
       try {
         const rotated = await readEventStream(
@@ -190,6 +205,7 @@ export function useEventStream(
             setState('open');
             latest.current.onEvent(event, value);
           },
+          own?.headers(),
         );
         if (stopped) return;
         if (ended) {
@@ -203,7 +219,7 @@ export function useEventStream(
         // A credential that expired while the tab was hidden is renewed once, as a request's is.
         if (status === 401 && !renewing) {
           renewing = true;
-          const fresh = await renewed(bearer);
+          const fresh = own ? await (own.renew?.() ?? false) : await renewed(bearer);
           if (stopped) return;
           if (fresh) return void connect();
         }

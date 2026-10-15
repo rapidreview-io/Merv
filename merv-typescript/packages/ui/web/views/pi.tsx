@@ -308,17 +308,20 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
           }
         }}
       />
-      {/* Beside the box: voice mode over Send, which is Stop while an answer runs. */}
+      {/* Beside the box: voice mode over Send, which is Stop while an answer runs. A page that
+          gives no voice (the customer page) has no Audio. */}
       <div className="pi-compose-actions">
-        <button
-          className="btn"
-          type="button"
-          disabled={!voice || blocked || unavailable || !pi.snapshot}
-          title="Talk with your agent"
-          onClick={voice?.start}
-        >
-          Audio
-        </button>
+        {voice && (
+          <button
+            className="btn"
+            type="button"
+            disabled={blocked || unavailable || !pi.snapshot}
+            title="Talk with your agent"
+            onClick={voice.start}
+          >
+            Audio
+          </button>
+        )}
         {/* While an answer runs, Stop stands where Send was: nothing can be sent until it ends. */}
         {active ? (
           <button

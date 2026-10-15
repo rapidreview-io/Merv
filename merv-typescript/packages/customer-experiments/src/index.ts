@@ -3,6 +3,7 @@ import type {} from '@merv/api/types';
 import type {} from '@merv/pi/types';
 import type {} from '@merv/sessions/types';
 import type {} from '@merv/code-work/types';
+import type {} from '@merv/ui/types';
 import type {} from '@merv/sandboxes/sandbox-evidence';
 import type {} from '@merv/identity/types';
 import { z } from 'zod';
@@ -173,7 +174,11 @@ export const customerExperimentsPlugin = {
       });
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain, files);
-      yield ctx.api.mount('/customer-experiments', customerHttp(service, files), { public: true });
+      // v3 requests open the customer app the UI bundle builds, where the UI is loaded.
+      const app = async () => await ctx.get('ui')?.document('customer');
+      yield ctx.api.mount('/customer-experiments', customerHttp(service, { files, app }), {
+        public: true,
+      });
       yield ctx.api.mount(
         '/start',
         startHttp(

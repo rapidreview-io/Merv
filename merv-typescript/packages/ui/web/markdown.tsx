@@ -3,6 +3,7 @@ import {
   Fragment,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useReducer,
@@ -15,7 +16,7 @@ import { call, scopeVersion, useTool } from './api';
 import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
-import { pathOf, rowOf, useRows } from './navigation';
+import { pathOf, Records, rowOf, useRows } from './navigation';
 import { offThread } from './off-thread';
 import { codeFile, safeHref, splitIds } from './markdown-links';
 import { filesPath } from './code-paths';
@@ -252,7 +253,8 @@ export function useReferences(
  * rail already holds. A text with no ids in it costs nothing at all.
  */
 export function useRecordNames(text: string): RecordNames {
-  const ids = useMemo(() => idsIn(text).slice(0, 200), [text]);
+  const known = useContext(Records);
+  const ids = useMemo(() => (known ? idsIn(text).slice(0, 200) : []), [text, known]);
   const referenced = useReferences(ids);
   const home = useTool<NamedHome>(ids.length ? 'ui.home' : null);
   const rows = useRows();
@@ -277,7 +279,10 @@ export function RecordLink({
   names?: RecordNames;
   plain?: boolean;
 }) {
+  // Where no project's records are known, an id is text as written.
+  const known = useContext(Records);
   const found = names?.get(id);
+  if (!known) return <>{id}</>;
   const to = found?.to;
   const said = found?.name ?? shortId(id);
   const className = found ? 'record-link' : 'record-link record-link--id';

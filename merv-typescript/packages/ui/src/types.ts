@@ -101,6 +101,11 @@ export interface Ui {
   contribute(contribution: RunningContribution): () => void;
   /** Registered contributions, ordered by owner. That order is the board's tie-break everywhere. */
   contributions(): RunningContribution[];
+  /**
+   * A page the bundle builds besides the app, as HTML, for the plugin whose route serves it:
+   * `customer` is the customer experiments page (web/customer.html). Null while it is not built.
+   */
+  document(name: 'customer'): Promise<string | null>;
 }
 
 declare module 'cordis' {
