@@ -85,3 +85,7 @@ export interface CustomerExperiment {
   review: ReviewRequest | null;
   createdAt: string;
 }
+/** service_experiment@3: the request's files as frozen into an accepted contract. */
+export interface RequestFiles {
+  manifest(id: string): Promise<{ key: string; size: number; etag: string }[]>;
+}

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1133.0",
+    "@aws-sdk/s3-request-presigner": "^3.1133.0",
     "@merv/api": "0.1.0",
     "@merv/artifacts": "0.1.0",
     "@merv/blobs": "0.1.0",

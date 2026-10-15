@@ -13,6 +13,7 @@ import { ResendResultMailer, StripePayments } from './payment.js';
 import { CustomerService } from './service.js';
 import { customerHttp, startHttp } from './http.js';
 import { registerWorkerTools } from './worker-tools.js';
+import { FilesService } from './files.js';
 import { hostedCustomerCompute } from './hosted-compute.js';
 
 const env = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -152,9 +153,14 @@ export const customerExperimentsPlugin = {
         { ...config, intakeKey: secret(config.intakeKeyEnv) },
         hostedCustomerCompute(ctx, config),
       );
+      const files = new FilesService(ctx.state, store, storage, async (record) => {
+        check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
+        return (await domain.get(await service.caller(record), record.experimentId)).workflow;
+      });
+      await files.initialize();
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
-      yield registerWorkerTools(ctx.tools, domain);
-      yield ctx.api.mount('/customer-experiments', customerHttp(service), { public: true });
+      yield registerWorkerTools(ctx.tools, domain, files);
+      yield ctx.api.mount('/customer-experiments', customerHttp(service, files), { public: true });
       yield ctx.api.mount(
         '/start',
         startHttp(
@@ -183,6 +189,17 @@ export const customerExperimentsPlugin = {
       yield async () => {
         clearInterval(timer);
         await pending;
+      };
+      let sweeping: Promise<void> | undefined;
+      const sweeper = setInterval(() => {
+        sweeping ??= files.sweep().finally(() => {
+          sweeping = undefined;
+        });
+      }, 600_000);
+      sweeper.unref();
+      yield async () => {
+        clearInterval(sweeper);
+        await sweeping;
       };
     });
   },
