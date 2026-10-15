@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../icons';
 import { safely } from '../api';
+import { useTyped } from './typing';
 import { fromDrop } from './uploads';
 
 /**
@@ -73,6 +74,7 @@ async function create(message?: string): Promise<string> {
 }
 
 export function Start({ opened }: { opened(id: string): void }) {
+  const typed = useTyped('What do you want to learn?');
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
@@ -159,7 +161,7 @@ export function Start({ opened }: { opened(id: string): void }) {
             maxLength={32_000}
             value={draft}
             readOnly={busy}
-            placeholder="What do you want to learn?"
+            placeholder={typed}
             onChange={(event) => setDraft(event.target.value)}
             enterKeyHint="send"
             onKeyDown={(event) => {

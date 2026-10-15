@@ -56,24 +56,56 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  height: 56px;
+  height: 76px;
 }
+/* Merv, then where in Merv the person is: a pill for the New experiment feature. */
 .cx-brand {
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: var(--text-md);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
-button.cx-brand {
-  cursor: pointer;
+.cx-brand-merv {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  text-decoration: none;
+}
+.cx-brand-merv:hover {
+  opacity: 0.75;
 }
 .cx-brand-bar {
   color: var(--ghost);
-  font-weight: 400;
-  margin: 0 2px;
+  font-size: 20px;
+  font-weight: 300;
+}
+.cx-feature {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.cx-feature {
+  cursor: pointer;
+}
+button.cx-feature:hover {
+  border-color: var(--line-strong);
+}
+.cx-feature-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--active);
+  box-shadow: 0 0 0 3px rgba(var(--active-rgb), 0.15);
 }
 .cx-nav {
   display: flex;
@@ -136,7 +168,7 @@ button.cx-brand {
   gap: 6px;
   width: min(100%, 440px);
   min-height: 150px;
-  margin: 0 auto;
+  margin: var(--space-5) auto 0;
   padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
