@@ -188,7 +188,12 @@ test('the customer page signs in silently, keeps the capability off the address 
   assert.equal(first.headers.get('x-merv-identity'), null);
 
   // Arrive: the drop zone with the request's size, the reused transcript and composer below.
-  assert.match(text(), /Merv \| Experiment/);
+  // Merv leads to runmerv.com; the pill says this is Merv's New experiment.
+  assert.equal(
+    document.querySelector<HTMLAnchorElement>('.cx-brand-merv')!.href,
+    'https://runmerv.com/',
+  );
+  assert.match(document.querySelector('.cx-feature')!.textContent!, /New experiment/);
   assert.match(text(), /Chug anything/);
   assert.match(text(), /48 MB/);
   assert.match(text(), /What do you want to test\? ce_abc_123/);
@@ -514,10 +519,11 @@ test('before the first question the chat has no heading and asks for one mid-pag
   assert.equal(document.querySelector('#cx-chat-title'), null);
   assert.equal(document.querySelector('.cx-chat')!.getAttribute('aria-label'), 'Chat');
   assert.equal(document.querySelector('.pi-messages'), null);
-  assert.equal(
-    document.querySelector<HTMLTextAreaElement>('#pi-draft')!.placeholder,
-    'What do you want to learn?',
-  );
+  // The question types itself out: it starts empty and grows toward the full prompt.
+  const placeholder = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!.placeholder;
+  assert.ok('What do you want to learn?'.startsWith(placeholder().replace(/[\u258F ]$/, '')));
+  await settle(2500);
+  assert.match(placeholder(), /^What do you want to learn\?[\u258F ]$/);
   // The machine is already starting for that first question.
   assert.equal(requests.filter((request) => request === `POST ${BASE}/chat/warm`).length, 1);
 });

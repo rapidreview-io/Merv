@@ -12,6 +12,7 @@ import { currentCredentials, customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
 import { Start, takePending, takeVoice } from './start';
+import { useTyped } from './typing';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
 import { formatBytes, fromDrop, Uploader } from './uploads';
@@ -52,17 +53,31 @@ export function CustomerApp({ client }: { client?: typeof createClient } = {}) {
 }
 
 function Header({ children, home }: { children?: ReactNode; home?(): void }) {
+  // Merv leads to Merv itself; the pill names where the person is in it, and takes them back to
+  // the start of this experiment's page.
+  const feature = (
+    <>
+      <span className="cx-feature-dot" aria-hidden="true" />
+      New experiment
+    </>
+  );
   return (
     <header className="cx-head">
-      {home ? (
-        <button type="button" className="cx-brand" onClick={home}>
-          Merv <span className="cx-brand-bar">|</span> Experiment
-        </button>
-      ) : (
-        <span className="cx-brand">
-          Merv <span className="cx-brand-bar">|</span> Experiment
+      <div className="cx-brand">
+        <a className="cx-brand-merv" href="https://runmerv.com">
+          Merv
+        </a>
+        <span className="cx-brand-bar" aria-hidden="true">
+          /
         </span>
-      )}
+        {home ? (
+          <button type="button" className="cx-feature" onClick={home}>
+            {feature}
+          </button>
+        ) : (
+          <span className="cx-feature">{feature}</span>
+        )}
+      </div>
       {children && <nav className="cx-nav">{children}</nav>}
     </header>
   );
@@ -290,6 +305,7 @@ function Experiment() {
 
 /** The reused Pi transcript and composer, and how the conversation stands when it cannot. */
 function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
+  const typed = useTyped('What do you want to learn?');
   if (voice.compact && voice.state !== 'off') return null;
   // Before the first question there is no conversation to head: the box waits mid-page.
   const empty = pi.listed && !!pi.snapshot && !pi.snapshot.commands.length;
@@ -334,12 +350,7 @@ function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
         </button>
       )}
       {pi.listed && (
-        <Speak
-          pi={pi}
-          voice={voice}
-          rows={3}
-          {...(empty ? { placeholder: 'What do you want to learn?' } : {})}
-        />
+        <Speak pi={pi} voice={voice} rows={3} {...(empty ? { placeholder: typed } : {})} />
       )}
     </section>
   );
