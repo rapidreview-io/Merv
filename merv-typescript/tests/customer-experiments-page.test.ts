@@ -439,7 +439,10 @@ test('an already-present immutable upload still completes server validation on r
   const input = document.querySelector<HTMLInputElement>('input[type=file]')!;
   Object.defineProperty(input, 'files', { value: [file] });
   input.dispatchEvent(new page.window.Event('change'));
-  await settle();
+  // Hashing, the refused transfer and completion each take turns; under load they outlast one
+  // settle, so wait for the page to show the server's verdict.
+  for (let i = 0; i < 200 && !/validated/.test(document.querySelector('#app')!.textContent!); i++)
+    await settle();
   assert.equal(completed, true);
   assert.equal(calls.filter((call) => call.url.endsWith('/complete')).length, 1);
   assert.match(document.querySelector('#app')!.textContent!, /validated/);
