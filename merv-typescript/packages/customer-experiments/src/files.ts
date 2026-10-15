@@ -521,6 +521,19 @@ export class FilesService implements RequestFiles {
     );
     return storage.presignDownload(record.id, name);
   }
+  /** A 5-minute download link to one request file, for the intake agent's terminal. */
+  async link(id: string, key: string) {
+    const row = await this.row(id);
+    check(
+      this.storage && row?.provisioned_at && !row.deleted_at,
+      'not_found',
+      'This request has no files',
+      404,
+    );
+    const name = normalizeKey(key);
+    check(await this.storage!.head(id, name), 'not_found', `No file ${name}`, 404);
+    return { key: name, ...(await this.storage!.presignDownload(id, name)) };
+  }
   /** Whether the request's files were deleted, so no contract can rely on them. */
   async deleted(id: string) {
     return !!(await this.row(id))?.deleted_at;

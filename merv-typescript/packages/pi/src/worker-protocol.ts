@@ -276,6 +276,7 @@ export class PiWorkerProtocol {
         notes: sent,
         context: sentContext,
         ...(previous.interrupted && { previousInterrupted: true as const }),
+        ...(profile?.shell && { shell: true as const }),
       };
     } catch {
       // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept

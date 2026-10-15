@@ -170,6 +170,8 @@ export interface PiWork {
    * began from: the worker compacts nothing this turn, and sends what it would have compacted
    * within the window, so a summary that cannot finish is not tried (and charged) every turn. */
   previousInterrupted?: true;
+  /** The conversation's role has a terminal: the worker offers PI_SHELL_TOOLS in its folder. */
+  shell?: true;
 }
 /** Agent tool machine.switch, seen by the model as switch_machine. Input: switchMachineInput. */
 export type PiSwitchMachineResult =

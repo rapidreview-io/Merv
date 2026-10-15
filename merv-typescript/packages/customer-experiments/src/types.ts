@@ -76,6 +76,8 @@ export interface RequestFiles {
   warm?(record: RequestRecord): Promise<void>;
   /** A window of one request file's text, for the intake agent (see FilesService.read). */
   read?(id: string, key: string, offset?: number): Promise<unknown>;
+  /** A short-lived download link for one request file, for the intake agent's terminal. */
+  link?(id: string, key: string): Promise<{ key: string; url: string; expiresAt: string }>;
 }
 /** service_experiment@3: the verified plan document is the specification. Only its summary
  *  (question, criteria, limits) is structured, filled by the intake agent at verification. */

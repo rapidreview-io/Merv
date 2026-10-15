@@ -996,9 +996,11 @@ const conflict = (code: string) => (error: unknown) =>
 test('v3 requests start on service_experiment@3 with the plan-document intake profile', async (t) => {
   const f = await planFixture(t);
   assert.equal((await f.experiment(f.a.id)).workflow.version, 3);
-  // New requests talk to the guide (profile 3): their files, the web and the literature too.
-  assert.equal(f.conversations[0].profile!.version, 3);
-  const profile = f.profiles.find((p) => p.version === 3)!;
+  // New requests talk to the guide with a terminal (profile 4): files, web, literature, shell.
+  assert.equal(f.conversations[0].profile!.version, 4);
+  const profile = f.profiles.find((p) => p.version === 4)!;
+  assert.equal(profile.shell, true);
+  assert.equal(f.profiles.find((p) => p.version === 3)!.shell, undefined);
   assert.deepEqual(profile.tools, [
     'customer_experiments.read',
     'customer_experiments.compute_options',
@@ -1007,6 +1009,7 @@ test('v3 requests start on service_experiment@3 with the plan-document intake pr
     'customer_experiments.plan_verify',
     'customer_experiments.files',
     'customer_experiments.file_read',
+    'customer_experiments.file_fetch',
     'web.search',
     'web.extract',
     'nisa.search',
@@ -1015,8 +1018,10 @@ test('v3 requests start on service_experiment@3 with the plan-document intake pr
     'nisa.excerpts',
   ]);
   assert.match(profile.instructions, /at most two questions in a turn/);
-  // Version 2 stays registered for the conversations already bound to it.
+  assert.match(profile.instructions, /customer_experiments\.file_fetch/);
+  // Earlier versions stay registered for the conversations already bound to them.
   assert.ok(f.profiles.find((p) => p.version === 2));
+  assert.ok(f.profiles.find((p) => p.version === 3));
   // The structured offer stays on version 1 of the profile and is refused for v3 requests.
   assert.ok(
     f.profiles.find((p) => p.version === 1)!.tools.includes('customer_experiments.propose'),

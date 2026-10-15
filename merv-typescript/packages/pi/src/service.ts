@@ -34,7 +34,7 @@ import {
   type PiProfiledCreate,
   type PiStoredProfile,
 } from './profiles.js';
-import { piModelToolName } from './tool-names.js';
+import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import { openVoice, voiceHistory } from './voice.js';
 import { describeScreen, renderScreen, screenRequest, type ScreenAnswer } from './screen.js';
 import type {
@@ -961,7 +961,12 @@ export class PiService implements Pi {
         expiresAt: command.expiresAt,
         model: this.core.conversationModel(conversation, command).id,
         // Only the tools this turn was offered, the same for every call of the turn.
-        toolNames: (command.tools ?? []).map(piModelToolName),
+        toolNames: [
+          ...(command.tools ?? []).map(piModelToolName),
+          ...(conversation.profile && this.core.profiles.get(conversation.profile)?.shell
+            ? PI_SHELL_TOOLS
+            : []),
+        ],
       };
     });
   }
