@@ -21,6 +21,9 @@
   },
   "devDependencies": {
     "@excalidraw/excalidraw": "0.18.1",
+    "@fontsource/geist-mono": "5.2.7",
+    "@fontsource/geist-sans": "5.2.5",
+    "@fontsource/source-serif-4": "5.2.9",
     "@types/mdast": "^4.0.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

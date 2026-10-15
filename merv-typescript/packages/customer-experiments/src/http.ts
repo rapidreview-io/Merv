@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import { check, MervError } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
-import { customerPage } from './customer-page.js';
+import { customerDocument, type CustomerApp } from './customer-app.js';
+import { planHttp, unhandled } from './plan-http.js';
 import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
+import { chatHttp } from './chat-http.js';
+import type { FilesService } from './files.js';
+import { filesHttp, isFilesPath } from './files-http.js';
 
 // The invitation can be shared. Idempotency must be an unguessable client secret, not a title
 // or counter another invite holder could replay to recover this customer's capabilities.
@@ -71,7 +75,12 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
   };
 }
 
-export function customerHttp(service: CustomerService): MountHandler {
+/** `files` serves v3 request files; `app` is the v3 customer page the UI bundle builds. */
+export function customerHttp(
+  service: CustomerService,
+  { files, app }: { files?: FilesService; app?: CustomerApp } = {},
+): MountHandler {
+  const chat = chatHttp(service);
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -83,7 +92,7 @@ export function customerHttp(service: CustomerService): MountHandler {
     const page = /^\/customer-experiments\/r\/(ce_[a-f0-9]{32})$/.exec(path);
     if (page && method === 'GET') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(customerPage(page[1]!));
+      res.end(await customerDocument(service, page[1]!, app));
       return;
     }
     if (path === '/customer-experiments/stripe-webhook' && method === 'POST') {
@@ -97,8 +106,13 @@ export function customerHttp(service: CustomerService): MountHandler {
       if (event) await service.paid(event);
       return { received: true };
     }
+    if (isFilesPath(path)) return filesHttp(service.access, files, req, r);
     if (path === '/customer-experiments/requests' && method === 'POST')
       return service.create(r.bearer(), await r.json(createSchema, 40000));
+    const routed = chat(req, res, r);
+    if (routed) return routed;
+    const planned = await planHttp(service, req, res, r);
+    if (planned !== unhandled) return planned;
     const match =
       /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
         path,
@@ -106,9 +120,10 @@ export function customerHttp(service: CustomerService): MountHandler {
     if (!match) throw new MervError('not_found', 'Route not found', 404);
     const [, id, action, child, end] = match;
     const customerOnly = action === 'accept' || action === 'checkout';
-    const record = await service.store.authorize(
+    const { record } = await service.access.authorize(
       id!,
       r.bearer(),
+      req,
       customerOnly ? ['customer'] : ['agent', 'customer'],
     );
     if (!action && method === 'GET') return service.snapshot(record);

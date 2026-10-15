@@ -2,14 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, call } from '../api';
 import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
-import type {
-  PiConversation,
-  PiEvent,
-  PiHostView,
-  PiProposal,
-  PiRan,
-  PiSnapshot,
-} from '@merv/pi/models';
+import { toolTransport, type PiTransport } from './pi-transport';
+import type { PiConversation, PiEvent, PiHostView, PiProposal, PiSnapshot } from '@merv/pi/models';
 
 type PiDelta = PiEvent & { streamId: string };
 const isDelta = (value: object): value is PiDelta =>
@@ -67,17 +61,13 @@ const said = (cause: unknown, fallback: string): string => {
     return 'Something went wrong on the server. Try again.';
   return cause.message;
 };
-/** Starts the person's machine here before anything is sent, quietly: it never holds up a
- * question. */
-const warm = (id: string | null, requestId = identifier()) =>
-  call<PiSnapshot>('pi.warm', { requestId, ...(id ? { conversationId: id } : {}) }).catch(
-    () => null,
-  );
 /**
  * The open conversation: what the Agent page held, read, streamed and sent, now held by
  * `PiProvider` so that it outlives the page. It begins as the page did when it opened.
+ * `transport` says how it is reached (views/pi-transport.ts); the Agent page's is Pi's tools,
+ * and it is kept for the life of the conversation.
  */
-export function useConversation() {
+export function useConversation(transport: PiTransport = toolTransport) {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<PiSnapshot | null>(null);
@@ -104,6 +94,8 @@ export function useConversation() {
   const transcript = useRef<HTMLDivElement>(null);
   // The transcript follows new text until the reader scrolls away from its end.
   const following = useRef(true);
+  // Where the transcript last scrolled itself, so its own scroll is not read as the reader's.
+  const pinnedAt = useRef<number | null>(null);
   const createId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
   // How far the server's clock ran ahead of this one when the latest snapshot arrived.
@@ -160,10 +152,12 @@ export function useConversation() {
   const warmUp = () => {
     const id = selection.current;
     const current = canonical.current;
-    if (!id || warming.current || current?.conversation.id !== id || !current.available) return;
+    const warm = transport.warm;
+    if (!warm || !id || warming.current || current?.conversation.id !== id || !current.available)
+      return;
     if (current.host.state !== 'none') return;
     warming.current = true;
-    void warm(id).then((next) => {
+    void warm(id, identifier()).then((next) => {
       warming.current = false;
       if (next) replace(next);
     });
@@ -175,7 +169,7 @@ export function useConversation() {
     let cancelled = false;
     const fresh = () => !cancelled && valid() && !selection.current;
     setError('');
-    call<PiConversation[]>('pi.list').then(
+    transport.list().then(
       (items) => {
         if (cancelled || !valid()) return;
         setConversations(items);
@@ -183,7 +177,7 @@ export function useConversation() {
         if (kept) choose(kept.id);
         // A question sent before this answers opens the same conversation, not another.
         else
-          void warm(null, createId.current).then((next) => {
+          void transport.warm?.(null, createId.current).then((next) => {
             if (next && fresh()) adopt(next.conversation);
           });
         setListed(true);
@@ -199,7 +193,8 @@ export function useConversation() {
 
   /** The conversation read again, drawn while still chosen; a failed read changes nothing. */
   const refresh = (id: string) =>
-    call<PiSnapshot>('pi.snapshot', { id })
+    transport
+      .snapshot(id)
       .then(replace)
       .catch(() => {});
   // A conversation chosen (or retried) is read first, then streamed: the stream's snapshots
@@ -223,24 +218,21 @@ export function useConversation() {
     };
   }, [selected, snapshotRetry]);
   const live = streaming !== null && streaming === selected;
-  const stream = useEventStream(
-    live ? `/pi/${encodeURIComponent(streaming)}/events` : null,
-    (event, value) => {
-      if (!valid() || !streaming || selection.current !== streaming) return;
-      if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
-        return replace(value as PiSnapshot);
-      if (event !== 'delta' || !isDelta(value)) return;
-      const current = canonical.current;
-      if (!current || current.streamId !== value.streamId) return void refresh(streaming);
-      if (value.sequence <= current.sequence) return;
-      canonical.current = { ...current, sequence: value.sequence };
-      // A turn's own step changes no record: the stage is shown as of this event.
-      if (value.stage)
-        setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
-      else if (value.type === 'changed') void refresh(streaming);
-      else setResponse((before) => accumulateResponse(before, value));
-    },
-  );
+  const stream = useEventStream(live ? transport.events(streaming) : null, (event, value) => {
+    if (!valid() || !streaming || selection.current !== streaming) return;
+    if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
+      return replace(value as PiSnapshot);
+    if (event !== 'delta' || !isDelta(value)) return;
+    const current = canonical.current;
+    if (!current || current.streamId !== value.streamId) return void refresh(streaming);
+    if (value.sequence <= current.sequence) return;
+    canonical.current = { ...current, sequence: value.sequence };
+    // A turn's own step changes no record: the stage is shown as of this event.
+    if (value.stage)
+      setSnapshot((canonical.current = { ...canonical.current, stage: value.stage }));
+    else if (value.type === 'changed') void refresh(streaming);
+    else setResponse((before) => accumulateResponse(before, value));
+  });
   const retrying = live && stream.state === 'retrying';
   const unavailable = live && stream.state === 'refused';
   const streamError = retrying ? RECONNECTING : unavailable ? UNAVAILABLE : '';
@@ -255,7 +247,10 @@ export function useConversation() {
     (item) => item.id === snapshot.conversation.activeCommandId,
   );
   const latest = snapshot?.commands.at(-1);
-  const proposing = snapshot?.commands.filter((item) => item.proposals?.length).at(-1);
+  // Proposed calls are drawn only where the transport can run them.
+  const proposing = transport.run
+    ? snapshot?.commands.filter((item) => item.proposals?.length).at(-1)
+    : undefined;
   const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
   const active = inFlight(status);
   const blocked = refused || snapshot?.available === false;
@@ -291,14 +286,17 @@ export function useConversation() {
         : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
   const follow = useRef(() => {
     const list = transcript.current;
-    if (list && following.current) list.scrollTop = list.scrollHeight;
+    if (!list || !following.current) return;
+    list.scrollTop = list.scrollHeight;
+    pinnedAt.current = list.scrollTop;
   }).current;
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
   const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
 
   const open = async () => {
-    const item = await call<PiConversation>('pi.create', { requestId: createId.current });
+    if (!transport.create) return null;
+    const item = await transport.create(createId.current);
     if (!valid()) return null;
     adopt(item);
     return item.id;
@@ -306,6 +304,7 @@ export function useConversation() {
   // A new conversation opens at once and never locks the composer: a question sent before the
   // server answers goes to the conversation this creates, because pi.create is keyed by createId.
   const create = () => {
+    if (!transport.create) return;
     pending.current = null;
     selection.current = null;
     canonical.current = null;
@@ -314,7 +313,7 @@ export function useConversation() {
     setDraft('');
     setError('');
     composer.current?.focus();
-    call<PiConversation>('pi.create', { requestId: createId.current }).then(
+    transport.create(createId.current).then(
       (item) => {
         if (valid() && !selection.current) adopt(item);
       },
@@ -342,12 +341,12 @@ export function useConversation() {
       // Sent on the model the bar shows, or not at all.
       const shown =
         canonical.current?.conversation.id === id && canonical.current.conversation.model;
-      await call('pi.send', { id, commandId, text, ...(shown && { model: shown }) });
+      await transport.send(id, { commandId, text, ...(shown && { model: shown }) });
       if (!valid() || selection.current !== id) return true;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
       following.current = true;
-      const next = await call<PiSnapshot>('pi.snapshot', { id }).catch(() => null);
+      const next = await transport.snapshot(id).catch(() => null);
       if (next) replace(next);
       return true;
     } catch (cause) {
@@ -355,8 +354,8 @@ export function useConversation() {
       if (cause instanceof ApiError && cause.code === 'sandbox_not_connected') setRefused(true);
       else setError(said(cause, 'Could not send the message.'));
       // Another page picked a model: the bar shows it before the question is sent again.
-      if (cause instanceof ApiError && cause.code === 'pi_model_changed')
-        void call<PiSnapshot>('pi.snapshot', { id }).then(replace, () => {});
+      if (id && cause instanceof ApiError && cause.code === 'pi_model_changed')
+        void transport.snapshot(id).then(replace, () => {});
       return false;
     } finally {
       if (valid()) {
@@ -398,18 +397,14 @@ export function useConversation() {
    * itself refuses ran nothing, and tells the agent nothing; one whose answer was lost may have
    * run, and what Pi kept of it says, now or once it comes out. */
   const run = async (commandId: string, proposal: PiProposal) => {
-    if (!selected || running || busy || active) return;
+    if (!transport.run || !selected || running || busy || active) return;
     setRunning(proposal.id);
     setError('');
     let told: string | undefined;
     try {
       // The server writes what the agent is told, a refusal too; a result it is not told whole
       // is shown here.
-      const ran = await call<PiRan>('pi.run', {
-        id: selected,
-        commandId,
-        proposalId: proposal.id,
-      });
+      const ran = await transport.run({ id: selected, commandId, proposalId: proposal.id });
       if (!ran.whole)
         setLocalResults((value) => ({
           ...value,
@@ -420,7 +415,7 @@ export function useConversation() {
       const kept =
         cause instanceof ApiError && cause.status >= 400 && cause.status < 500
           ? null
-          : await call<PiSnapshot>('pi.snapshot', { id: selected }).catch(() => null);
+          : await transport.snapshot(selected).catch(() => null);
       if (kept) replace(kept);
       told = kept?.commands
         .find(({ id }) => id === commandId)
@@ -479,7 +474,7 @@ export function useConversation() {
     setBusy(true);
     setError('');
     try {
-      replace(await call<PiSnapshot>('pi.stop', { id: selected }));
+      replace(await transport.stop(selected));
     } catch (cause) {
       if (valid() && selection.current === selected)
         setError(said(cause, 'Could not stop the agent.'));
@@ -489,6 +484,7 @@ export function useConversation() {
   };
 
   return {
+    transport,
     conversations,
     selected,
     snapshot,
@@ -506,6 +502,7 @@ export function useConversation() {
     composer,
     transcript,
     following,
+    pinnedAt,
     skew,
     proposing,
     active,

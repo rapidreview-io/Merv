@@ -45,6 +45,8 @@ export interface VerifiedIdentity {
   issuer: string;
   subject: string;
   expiresAt: string;
+  /** A Supabase anonymous user, verified only when the caller opted in (verify allowAnonymous). */
+  anonymous?: true;
 }
 export interface SharedUser {
   issuer: string;

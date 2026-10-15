@@ -167,6 +167,14 @@ test('math: inline by pandoc’s rule, display blocks and fences, and prices sta
     { type: 'text', value: 'It costs $5 and $10 today.' },
   ]);
   assert.deepEqual(parseInline('Energy $E = mc^2$ holds.')[1], { type: 'math', value: 'E = mc^2' });
+  // A price does not swallow the emphasis between it and the next dollar sign.
+  assert.deepEqual(parseInline('The price is **$10**. Press **Pay $10** to start.'), [
+    { type: 'text', value: 'The price is ' },
+    { type: 'strong', children: [{ type: 'text', value: '$10' }] },
+    { type: 'text', value: '. Press ' },
+    { type: 'strong', children: [{ type: 'text', value: 'Pay $10' }] },
+    { type: 'text', value: ' to start.' },
+  ]);
   assert.deepEqual(kinds('$ x$ and $y $'), ['text']);
   assert.deepEqual(kinds('`$x$` is code'), ['code', 'text']);
   assert.deepEqual(kinds('\\$x$ is escaped'), ['text']);

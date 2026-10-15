@@ -111,7 +111,7 @@ function event(overrides: Record<string, unknown> = {}, session: Record<string, 
         mode: 'payment',
         payment_status: 'paid',
         payment_intent: 'pi_customer',
-        amount_total: 500,
+        amount_total: 1000,
         currency: 'usd',
         client_reference_id: 'ce_request',
         metadata: {
@@ -136,7 +136,7 @@ test('only authentic paid same-mode checkout events can release the exact refere
     contractHash: 'fixed-contract',
     checkoutId: 'cs_test_customer',
     paymentId: 'pi_customer',
-    amountCents: 500,
+    amountCents: 1000,
     currency: 'usd',
   });
   const unpaid = event({}, { payment_status: 'unpaid' });

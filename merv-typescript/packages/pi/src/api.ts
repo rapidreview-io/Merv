@@ -5,6 +5,7 @@ import { MervError, check, type Caller } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
 import type { ApiCredential, MountHandler } from '@merv/api/types';
 import type { PiRuntime } from './types.js';
+import { piLiveView } from './live.js';
 
 /** A completion carries an answer of up to messageChars (at most six bytes each as JSON) and its
  * checkpoint (2 MB). */
@@ -121,35 +122,10 @@ export class PiHttp {
     const held = [...this.responses.values()].filter((actor) => actor === caller.actorId);
     check(held.length < 4, 'pi_stream_busy', 'Too many agent streams are open', 429);
     this.responses.set(res, caller.actorId);
-    let sequence = -1;
-    // A page's authority is read at most once a second, however often words arrive.
-    let authorized = Date.now();
     try {
       await serveEvents(req, res, {
         rotateMs: this.rotateMs,
-        subscribe: (wake) => this.pi.streams.subscribe(id, wake),
-        step: async (send) => {
-          if (Date.now() - authorized >= 1000) {
-            await this.pi.authorizeStream(caller, id);
-            authorized = Date.now();
-          }
-          const tail = this.pi.streams.snapshot(id);
-          const events = tail.tail.filter((event) => event.sequence > sequence);
-          if (
-            sequence < 0 ||
-            events.some((event) => event.type === 'changed') ||
-            (events[0] && events[0].sequence > sequence + 1)
-          ) {
-            const snapshot = await this.pi.snapshot(caller, id);
-            await send('snapshot', snapshot);
-            sequence = snapshot.sequence;
-          } else {
-            for (const event of events) {
-              await send('delta', { streamId: tail.streamId, ...event });
-              sequence = event.sequence;
-            }
-          }
-        },
+        ...piLiveView(this.pi, caller, id),
       });
     } finally {
       this.responses.delete(res);

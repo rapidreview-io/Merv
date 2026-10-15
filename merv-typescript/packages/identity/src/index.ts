@@ -317,7 +317,10 @@ export class SupabaseIdentity implements IdentityProvider {
     }
   }
 
-  async verify(token: string): Promise<VerifiedIdentity> {
+  async verify(
+    token: string,
+    options: { allowAnonymous?: boolean } = {},
+  ): Promise<VerifiedIdentity> {
     try {
       if (
         !this.#key ||
@@ -344,7 +347,7 @@ export class SupabaseIdentity implements IdentityProvider {
         !Number.isFinite(payload.exp) ||
         !Number.isFinite(now) ||
         payload.exp * 1000 <= this.#clock() ||
-        payload.is_anonymous ||
+        (payload.is_anonymous && !options.allowAnonymous) ||
         payload.role !== 'authenticated'
       )
         throw unauthorized();
@@ -352,6 +355,7 @@ export class SupabaseIdentity implements IdentityProvider {
         issuer: this.#issuer,
         subject: payload.sub,
         expiresAt: new Date(payload.exp * 1000).toISOString(),
+        ...(payload.is_anonymous ? { anonymous: true as const } : {}),
       };
     } catch (error) {
       throw error instanceof MervError && error.status === 503 ? error : unauthorized();

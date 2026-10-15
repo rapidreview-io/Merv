@@ -46,15 +46,67 @@ export interface ExperimentPlan {
   executionSpec: string;
   feasibility: string;
 }
-export interface ExperimentContract {
+export type PlanLimits = ExperimentPlan['limits'];
+interface ContractTerms {
   id: string;
   version: number;
   hash: string;
-  plan: ExperimentPlan;
-  datasets: ValidatedDataset[];
   model: typeof SERVICE_MODEL;
   price: { amountCents: number; currency: 'usd' };
   createdAt: string;
+}
+/** service_experiment@1-2: the structured offer and its validated datasets. */
+export interface StructuredContract extends ContractTerms {
+  plan: ExperimentPlan;
+  datasets: ValidatedDataset[];
+}
+/** One object in the request's bucket, as frozen into a v3 contract. */
+export interface RequestFile {
+  key: string;
+  size: number;
+  etag: string;
+}
+/** The request bucket's current objects (FilesService); a v3 acceptance freezes them. */
+export interface RequestFiles {
+  manifest(id: string): Promise<RequestFile[]>;
+  /** True once the request's files were deleted: nothing may accept or pay against them. */
+  deleted(id: string): Promise<boolean>;
+}
+/** service_experiment@3: the verified plan document is the specification. Only its summary
+ *  (question, criteria, limits) is structured, filled by the intake agent at verification. */
+export interface DocumentContract extends ContractTerms {
+  document: string;
+  revision: number;
+  question: string;
+  criteria: string[];
+  limits: PlanLimits;
+  files: RequestFile[];
+}
+export type ExperimentContract = StructuredContract | DocumentContract;
+export const isDocumentContract = (c: ExperimentContract): c is DocumentContract => 'document' in c;
+export const contractLimits = (c: ExperimentContract): PlanLimits =>
+  isDocumentContract(c) ? c.limits : c.plan.limits;
+export const contractTitle = (c: ExperimentContract): string =>
+  isDocumentContract(c) ? c.question : c.plan.title;
+/** Validated dataset artifacts; v3 request files live in the request bucket instead. */
+export const contractDatasets = (c: ExperimentContract): ValidatedDataset[] =>
+  isDocumentContract(c) ? [] : c.datasets;
+
+export type PlanStatus = 'drafting' | 'verifying' | 'changes_requested' | 'accepted';
+export interface PlanView {
+  revision: number;
+  document: string;
+  /** Null only before the first revision. */
+  updatedBy: 'customer' | 'agent' | null;
+  updatedAt: string | null;
+  status: PlanStatus;
+  feedback: string | null;
+  contract: null | {
+    version: number;
+    priceCents: number;
+    currency: 'usd';
+    limits: PlanLimits;
+  };
 }
 export interface ResultSubmission {
   id: string;

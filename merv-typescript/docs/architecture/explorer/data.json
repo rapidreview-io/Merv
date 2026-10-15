@@ -195,7 +195,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-14",
+  "snapshot": "2026-10-15",
   "groups": [
     {
       "id": "front",
@@ -950,7 +950,9 @@
         "tools",
         "api"
       ],
-      "optional": [],
+      "optional": [
+        "identity"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
@@ -3659,6 +3661,11 @@
       "optional": false
     },
     {
+      "from": "merv-customer-experiments",
+      "to": "identity",
+      "optional": true
+    },
+    {
       "from": "domainEvents",
       "to": "state",
       "optional": false
@@ -4568,7 +4575,7 @@
     "plugins": 77,
     "providers": 34,
     "adapters": 43,
-    "dependencies": 242
+    "dependencies": 243
   },
   "network": [
     {

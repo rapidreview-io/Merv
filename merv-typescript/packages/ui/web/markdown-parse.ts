@@ -263,13 +263,35 @@ function blocksOf(nodes: RootContent[], source: string, depth: number): Block[] 
 }
 
 /**
+ * A price is not a formula, and must not swallow what lies between it and the next `$`: in
+ * "**$10**. Press **Pay $10**" the run from the first `$` to the second is no formula by
+ * pandoc's rule, yet read as one it eats the emphasis around it. Each such opening `$` is
+ * escaped and the text read again, until every formula left is one.
+ */
+function priceless(source: string): { tree: ReturnType<typeof fromMarkdown>; source: string } {
+  for (let round = 0; ; round++) {
+    const tree = fromMarkdown(source, READ);
+    const prices: number[] = [];
+    const visit = (node: Nodes) => {
+      if (node.type === 'inlineMath' && priced(source, node)) prices.push(startOf(node));
+      if ('children' in node) for (const child of node.children) visit(child as Nodes);
+    };
+    visit(tree);
+    if (!prices.length || round === 8) return { tree, source };
+    for (const at of prices.sort((a, b) => b - a))
+      source = `${source.slice(0, at)}\\${source.slice(at)}`;
+  }
+}
+
+/**
  * Markdown source to its tree. Pure, and total: whatever it is given — half a table,
  * an unclosed fence, a thousand nested quotes, no Markdown at all — it answers with
  * blocks, and a text it cannot read as anything else is a paragraph of that text.
  */
 export function parseMarkdown(source: string): Block[] {
   try {
-    return blocksOf(fromMarkdown(source, READ).children, source, 0);
+    const read = priceless(source);
+    return blocksOf(read.tree.children, read.source, 0);
   } catch {
     return source.trim() ? [{ type: 'paragraph', children: [literal(source)] }] : [];
   }

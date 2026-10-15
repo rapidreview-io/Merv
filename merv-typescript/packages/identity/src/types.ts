@@ -7,7 +7,9 @@ export interface IdentityConfiguration {
 }
 
 export interface IdentityProvider {
-  verify(token: string): Promise<VerifiedIdentity>;
+  /** Anonymous users are refused unless `allowAnonymous`: only a caller that binds a browser,
+   *  never an account, opts in. */
+  verify(token: string, options?: { allowAnonymous?: boolean }): Promise<VerifiedIdentity>;
   configuration(): IdentityConfiguration;
   findUserByEmail?(email: string): Promise<{ issuer: string; subject: string } | null>;
 }

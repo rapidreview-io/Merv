@@ -16,6 +16,7 @@ import { media } from '../theme';
 import type { PiSnapshot } from '@merv/pi/models';
 import { Speak, Standing, Transcript, useAgent } from './pi';
 import type { Conversation } from './pi-conversation';
+import type { Voice } from './pi-voice';
 
 /** Where the window was last dragged to, for every page this browser opens after. */
 const PLACE = 'merv:agent-dock';
@@ -36,6 +37,7 @@ function releasedAt({ host }: PiSnapshot, skew: number): number | null {
 
 export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   const agent = useAgent();
+  const navigate = useNavigate();
   const { pathname } = useLocation();
   const roomy = useRoomy();
   const row = rows.find((row) => row.view.kind === 'pi');
@@ -64,7 +66,7 @@ export function PiDock({ rows }: { rows: UiRowDescription[] }) {
   }, [at, end]);
   if (!drawn || !pi || !row || !agent) return null;
   return (
-    <Floating pi={pi} to={row.path} hide={agent.hide}>
+    <Floating pi={pi} expand={() => navigate(row.path)} hide={agent.hide}>
       {agent.shown && <Opened key={agent.shown.at} {...agent.shown} />}
     </Floating>
   );
@@ -98,40 +100,48 @@ const kept = (): Spot | null =>
     return Number.isFinite(spot?.x) && Number.isFinite(spot?.y) ? spot : null;
   }, null);
 /** The same place, moved only as far as keeps the whole window inside the viewport. */
-const inside = (spot: Spot, { width, height }: DOMRect): Spot => {
-  const x = Math.min(Math.max(0, spot.x), window.innerWidth - width);
-  const y = Math.min(Math.max(0, spot.y), window.innerHeight - height);
+const inside = (spot: Spot, { width, height }: DOMRect, inset = 0): Spot => {
+  const x = Math.min(Math.max(inset, spot.x), Math.max(inset, window.innerWidth - width - inset));
+  const y = Math.min(Math.max(inset, spot.y), Math.max(inset, window.innerHeight - height - inset));
   return x === spot.x && y === spot.y ? spot : { x, y };
 };
 
-function Floating({
+export function Floating({
   pi,
-  to,
+  expand,
+  voice,
   hide,
   children,
 }: {
   pi: Conversation;
-  to: string;
+  expand(): void;
+  voice?: Voice;
   hide(): void;
   children?: ReactNode;
 }) {
-  const navigate = useNavigate();
+  const agent = useAgent();
+  const activeVoice = voice ?? agent?.voice;
+  const compact = !!activeVoice?.compact && activeVoice.state !== 'off';
   const box = useRef<HTMLElement>(null);
   const [spot, setSpot] = useState(kept);
   const held = useRef(spot);
   held.current = spot;
   // Where the pointer took hold of the head, from the window's corner.
   const grab = useRef<Spot | null>(null);
+  const origin = useRef<Spot | null>(null);
+  const dragged = useRef(false);
   // A place kept from a larger window, or a window made smaller, is brought back inside it.
   useLayoutEffect(() => {
     const fit = () =>
       setSpot((spot) =>
-        spot && box.current ? inside(spot, box.current.getBoundingClientRect()) : spot,
+        spot && box.current
+          ? inside(spot, box.current.getBoundingClientRect(), compact ? 64 : 0)
+          : spot,
       );
     fit();
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
-  }, []);
+  }, [compact]);
   const drop = () => {
     if (!grab.current) return;
     grab.current = null;
@@ -139,60 +149,122 @@ function Floating({
   };
   return (
     <aside
-      className="pi-dock"
+      className={`pi-dock${compact ? ' pi-dock--voice' : ''}`}
       role="complementary"
       aria-label="Agent"
       ref={box}
+      onPointerDownCapture={(event) => {
+        if (
+          !compact ||
+          event.button ||
+          (event.target as Element).closest('.voice-hover-controls') ||
+          !box.current
+        )
+          return;
+        const { left, top } = box.current.getBoundingClientRect();
+        grab.current = { x: event.clientX - left, y: event.clientY - top };
+        origin.current = { x: event.clientX, y: event.clientY };
+        dragged.current = false;
+      }}
+      onPointerMove={(event) => {
+        if (!compact || !grab.current || !origin.current || !box.current) return;
+        if (
+          Math.hypot(event.clientX - origin.current.x, event.clientY - origin.current.y) < 5 &&
+          !dragged.current
+        )
+          return;
+        dragged.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setSpot(
+          inside(
+            { x: event.clientX - grab.current.x, y: event.clientY - grab.current.y },
+            box.current.getBoundingClientRect(),
+            64,
+          ),
+        );
+      }}
+      onPointerUp={() => {
+        if (compact) {
+          drop();
+          origin.current = null;
+        }
+      }}
+      onPointerCancel={() => {
+        if (compact) {
+          drop();
+          origin.current = null;
+        }
+      }}
+      onClickCapture={(event) => {
+        if (compact && dragged.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          dragged.current = false;
+        }
+      }}
       style={spot ? { left: spot.x, top: spot.y, right: 'auto', bottom: 'auto' } : undefined}
     >
-      <div
-        className="pi-dock-head"
-        onPointerDown={(event) => {
-          if (event.button || (event.target as Element).closest('button') || !box.current) return;
-          const { left, top } = box.current.getBoundingClientRect();
-          grab.current = { x: event.clientX - left, y: event.clientY - top };
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          if (!grab.current || !box.current) return;
-          const to = { x: event.clientX - grab.current.x, y: event.clientY - grab.current.y };
-          setSpot(inside(to, box.current.getBoundingClientRect()));
-        }}
-        onPointerUp={drop}
-        onPointerCancel={drop}
-      >
-        <span className="pi-dock-title" title={pi.title}>
-          {pi.title}
-        </span>
-        <span className="pi-state" role="status">
-          <Standing pi={pi} dot />
-        </span>
-        <button
-          type="button"
-          className="btn-icon"
-          aria-label="Expand"
-          title="Expand"
-          onClick={() => navigate(to)}
+      {!compact && (
+        <div
+          className="pi-dock-head"
+          onPointerDown={(event) => {
+            if (event.button || (event.target as Element).closest('button') || !box.current) return;
+            const { left, top } = box.current.getBoundingClientRect();
+            grab.current = { x: event.clientX - left, y: event.clientY - top };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!grab.current || !box.current) return;
+            const to = { x: event.clientX - grab.current.x, y: event.clientY - grab.current.y };
+            setSpot(inside(to, box.current.getBoundingClientRect()));
+          }}
+          onPointerUp={drop}
+          onPointerCancel={drop}
         >
-          <ExpandIcon />
-        </button>
-        <button type="button" className="btn-icon" aria-label="Close" title="Close" onClick={hide}>
-          <CloseIcon />
-        </button>
-      </div>
-      {children}
-      <Transcript pi={pi} />
-      {pi.error && (
+          <span className="pi-dock-title" title={pi.title}>
+            {pi.title}
+          </span>
+          <span className="pi-state" role="status">
+            <Standing pi={pi} dot />
+          </span>
+          <button
+            type="button"
+            className="btn-icon"
+            aria-label="Expand"
+            title="Expand"
+            onClick={() => {
+              activeVoice?.setCompact(false);
+              expand();
+            }}
+          >
+            <ExpandIcon />
+          </button>
+          {!compact && (
+            <button
+              type="button"
+              className="btn-icon"
+              aria-label="Close"
+              title="Close"
+              onClick={hide}
+            >
+              <CloseIcon />
+            </button>
+          )}
+        </div>
+      )}
+      {!compact && children}
+      {!compact && <Transcript pi={pi} />}
+      {!compact && pi.error && (
         <p className="pi-error" role="alert">
           {pi.error}
         </p>
       )}
-      {pi.streamError && (
+      {!compact && pi.streamError && (
         <p className="muted" role="status">
           {pi.streamError}
         </p>
       )}
-      <Speak pi={pi} rows={2} />
+      <Speak pi={pi} rows={2} voice={voice} />
     </aside>
   );
 }

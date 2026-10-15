@@ -210,8 +210,12 @@ export interface Pi {
   /** See pi.prompt. */
   prompt(caller: Caller, id: string): Promise<PiPrompt>;
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
-  /** pi.voice {id, sdp}: open a GPT-Live voice session for this conversation; see voice.ts. */
-  voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }>;
+  /** Open voice for this conversation. allowProfile is a trusted adapter option, never tool input. */
+  voice(
+    caller: Caller,
+    input: unknown,
+    options?: { allowProfile: boolean },
+  ): Promise<{ sessionId: string; sdp: string }>;
   /** screen.look {question}: the agent sees the person's screen, answered in words (screen.ts). */
   look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }>;
   /** screen.show {record | page}: the agent puts a record or a page on the person's screen. */

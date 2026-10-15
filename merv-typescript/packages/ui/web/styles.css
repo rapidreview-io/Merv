@@ -7737,3 +7737,111 @@ html.modal-open {
   display: block;
   margin-left: auto;
 }
+
+/* Compact voice keeps the call controls and caption visible without the transcript. */
+.voice-display {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.pi-dock--voice {
+  right: 64px;
+  bottom: 64px;
+  width: 64px;
+  height: 64px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.pi-dock--voice .voice--sphere {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+}
+.voice-sphere-button {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  touch-action: none;
+}
+.pi-dock--voice .voice-orb {
+  width: 42px;
+  height: 42px;
+  margin: 0;
+}
+.voice[data-state='paused'] {
+  --orb: var(--ghost);
+}
+.voice-hover-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  display: flex;
+  gap: 8px;
+  width: max-content;
+  padding: 12px 0 2px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(8px) scale(0.94);
+  transform-origin: bottom center;
+  transition:
+    opacity 180ms,
+    transform 180ms;
+}
+.voice--sphere:is(:hover, :focus-within) .voice-hover-controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+.voice-hover-controls button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 50%;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-elev) 86%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow:
+    0 3px 14px rgba(0, 0, 0, 0.13),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+  cursor: pointer;
+  transition:
+    transform 160ms,
+    background 160ms,
+    box-shadow 160ms;
+}
+.voice-hover-controls button:is(:hover, :focus-visible) {
+  transform: translateY(-3px);
+  background: var(--bg-soft);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.18);
+}
+.voice-sphere-button:focus-visible {
+  outline: 2px solid var(--active);
+  outline-offset: 3px;
+}
+@media (hover: none) {
+  .voice-hover-controls {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-hover-controls,
+  .voice-hover-controls button {
+    transition: none;
+  }
+}

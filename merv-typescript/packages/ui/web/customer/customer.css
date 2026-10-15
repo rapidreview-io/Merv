@@ -1,0 +1,902 @@
+/* The customer experiments page (customer/app.tsx), on the app's tokens (styles.css). One column
+   with 16px gutters on a phone; the chat is the reused Pi transcript and composer. The file
+   manager keeps the braziliano bucket UI's grid, rows, tray and dialog. */
+
+.cx-page {
+  --pi-column: 100%;
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 0 var(--space-4) var(--space-4);
+}
+/* Conversation views fill the window; the transcript scrolls above the composer. */
+.cx-page--arrive,
+.cx-page--chat,
+.cx-page--plan {
+  height: 100dvh;
+  min-height: 0;
+}
+.cx-page--plan {
+  width: min(1200px, 100%);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cx-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 56px;
+}
+.cx-brand {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+button.cx-brand {
+  cursor: pointer;
+}
+.cx-brand-bar {
+  color: var(--ghost);
+  font-weight: 400;
+  margin: 0 2px;
+}
+.cx-nav {
+  display: flex;
+  gap: var(--space-1);
+}
+.cx-nav-button {
+  position: relative;
+  min-height: var(--hit);
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.cx-nav-button:hover,
+.cx-nav-button[aria-current='page'] {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+.cx-dot {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--active);
+}
+.cx-center {
+  margin: 20vh auto 0;
+  text-align: center;
+}
+
+.cx-elsewhere {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  max-width: 420px;
+}
+.cx-elsewhere p {
+  margin: 0;
+}
+
+/* Arrive: the drop zone, then the chat under it. */
+.cx-arrive {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.cx-drop {
+  flex: none;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  min-height: 180px;
+  padding: var(--space-5) var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast);
+}
+.cx-drop:hover,
+.cx-drop--over {
+  border-color: var(--muted);
+  background: var(--hover);
+}
+.cx-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+/* The chat: the transcript scrolls between the header and the composer. */
+.cx-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.cx-chat > :is(.pi-error, .muted) {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.cx-chat .pi-compose {
+  flex: none;
+}
+.cx-chat .pi-compose .textarea {
+  resize: none;
+}
+
+/* The plan beside its docked chat; stacked on a phone. */
+.cx-plan-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+}
+.cx-plan {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+}
+.cx-plan-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.cx-plan-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.cx-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.cx-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ghost);
+}
+.cx-status--verifying::before {
+  background: var(--qualifies);
+}
+.cx-status--changes_requested::before {
+  background: var(--refutes);
+}
+.cx-status--accepted::before {
+  background: var(--supports);
+}
+.cx-feedback {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--refutes);
+  background: var(--bg-soft);
+  font-size: var(--text-sm);
+}
+.cx-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.cx-conflict > span {
+  flex: 1;
+}
+.cx-plan-text {
+  flex: 1;
+  min-height: 320px;
+  width: 100%;
+  max-width: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  resize: none;
+}
+/* The plan in the report card's language (packages/reports/src/format/html.ts): paper, serif
+   body, Geist labels, a two-half band, a rule, then blocks in three columns. */
+.plan-card {
+  --pc-ink: var(--text);
+  --pc-text: var(--text);
+  --pc-muted: var(--muted);
+  container-type: inline-size;
+  flex: none;
+  padding: 36px 44px 44px;
+  background: var(--bg-elev);
+  color: var(--pc-text);
+  border-radius: 6px;
+  font-family: 'Source Serif 4', Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+}
+.plan-card__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font:
+    11px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  color: var(--pc-muted);
+}
+.plan-card h1 {
+  margin: 26px 0 0;
+  font-family: inherit;
+  font-size: 34px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--pc-ink);
+}
+.plan-card__band {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 40px;
+  margin-top: 26px;
+  align-items: start;
+}
+.plan-card__left {
+  font-size: 16.5px;
+  line-height: 1.6;
+}
+.plan-card__right {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--pc-ink);
+}
+.plan-card .md {
+  font-size: inherit;
+  line-height: inherit;
+}
+.plan-card .md > * + * {
+  margin-top: 10px;
+}
+/* Criteria read as the report's bold answer line: no bullets, one statement each. */
+.plan-card__right :is(ul, ol) {
+  padding-left: 0;
+  list-style: none;
+}
+.plan-card .plan-card__right li + li {
+  margin-top: 12px;
+}
+.plan-card .plan-card__limits {
+  margin: 18px 0 0 !important;
+  font:
+    11.5px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  font-weight: 400;
+  color: var(--pc-muted);
+}
+.plan-card__rule {
+  margin: 30px 0 28px;
+  border: 0;
+  border-top: 1px solid var(--pc-ink);
+}
+.plan-card__body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  gap: 30px 36px;
+  align-items: start;
+}
+.plan-card__block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.62;
+}
+.plan-card__block.span-2 {
+  grid-column: span 2;
+}
+.plan-card__block.span-3 {
+  grid-column: 1 / -1;
+}
+.plan-card h2 {
+  margin: 0;
+  font-family: inherit;
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+.plan-card :is(p, ul, ol, table) {
+  margin: 0;
+  color: inherit;
+  font-family: inherit;
+}
+.plan-card :is(p, ul, ol) + :is(p, ul, ol, table) {
+  margin-top: 10px;
+}
+.plan-card :is(ul, ol) {
+  padding-left: 20px;
+}
+.plan-card li + li {
+  margin-top: 3px;
+}
+.plan-card :is(b, strong) {
+  font-weight: 600;
+  color: var(--pc-ink);
+}
+.plan-card code {
+  padding: 0 3px;
+  font:
+    0.86em 'Geist Mono',
+    ui-monospace,
+    monospace;
+  background: var(--bg-soft);
+  color: var(--pc-text);
+  border-radius: 3px;
+}
+.plan-card a {
+  color: var(--pc-ink);
+  text-underline-offset: 3px;
+}
+.plan-card table {
+  border-collapse: collapse;
+  font:
+    13px 'Geist Sans',
+    Geist,
+    sans-serif;
+}
+.plan-card th {
+  padding: 0 12px 6px 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--pc-muted);
+  text-align: left;
+  border: 0;
+  background: none;
+}
+.plan-card td {
+  padding: 4px 12px 4px 0;
+  border: 0;
+  vertical-align: baseline;
+}
+@container (max-width: 720px) {
+  .plan-card__body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plan-card__block.span-2,
+  .plan-card__block.span-3 {
+    grid-column: 1 / -1;
+  }
+}
+@container (max-width: 520px) {
+  .plan-card__band,
+  .plan-card__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan-card__right {
+    margin-top: 22px;
+  }
+}
+@media (max-width: 640px) {
+  .plan-card {
+    padding: 24px 20px 28px;
+  }
+  .plan-card h1 {
+    font-size: 27px;
+  }
+}
+.cx-pay {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.cx-pay p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.cx-pay .btn {
+  justify-self: start;
+}
+.cx-chat--docked {
+  min-height: 0;
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+
+/* Files: the braziliano bucket UI. */
+.cx-files {
+  flex: 1;
+  padding-bottom: 160px;
+}
+.cx-files-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  margin-bottom: var(--space-3);
+}
+.cx-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.cx-crumb {
+  display: inline-flex;
+  min-width: 0;
+}
+.cx-crumbs button {
+  flex: none;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.cx-crumbs button:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+.cx-crumbs button[aria-current] {
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cx-sep {
+  color: var(--ghost);
+  padding: 0 1px;
+}
+.cx-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.cx-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.cx-icon:hover {
+  color: var(--text);
+  background: var(--line);
+}
+.cx-icon.rm:hover {
+  color: var(--refutes);
+}
+.cx-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+.cx-deletion {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.cx-deletion--done {
+  color: var(--refutes);
+}
+.cx-cols,
+.cx-entry {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 84px 132px 92px;
+  column-gap: 14px;
+  align-items: center;
+  padding: 0 10px;
+}
+.cx-cols {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.cx-cols span:first-child {
+  grid-column: 2;
+}
+.cx-cols .r,
+.cx-entry .size,
+.cx-entry .date {
+  text-align: right;
+}
+.cx-entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  transition: opacity 0.15s;
+}
+.cx-entries.loading {
+  opacity: 0.5;
+}
+.cx-entry {
+  height: 46px;
+  border-bottom: 1px solid var(--line);
+}
+.cx-entry:hover {
+  background: var(--bg-soft);
+}
+.cx-entry .kind {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+.cx-entry .kind svg {
+  display: block;
+}
+.cx-entry.folder .kind {
+  color: var(--text);
+}
+.cx-entry .name {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.cx-entry .name:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--ghost);
+  text-underline-offset: 3px;
+}
+.cx-entry.folder .name {
+  font-weight: 500;
+}
+.cx-entry .size,
+.cx-entry .date {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.cx-entry:hover .row-actions,
+.cx-entry:focus-within .row-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .row-actions {
+    opacity: 1;
+  }
+}
+.cx-entry.busy {
+  pointer-events: none;
+}
+.cx-entry.busy > :not(.date) {
+  opacity: 0.45;
+}
+.cx-entry.busy .date {
+  color: var(--text);
+}
+.cx-rename {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: var(--text-sm);
+}
+.cx-empty {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 72px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.cx-empty:hover {
+  border-color: var(--muted);
+}
+.cx-empty svg {
+  width: 28px;
+  height: 28px;
+}
+.cx-empty span {
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.cx-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-4);
+}
+.cx-totals {
+  margin: 14px 10px 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.cx-tray {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+.cx-tray-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+}
+.cx-tray-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.cx-tray-bytes {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cx-tray-toggle svg {
+  transition: transform 0.15s;
+}
+.cx-tray.collapsed .cx-tray-toggle svg {
+  transform: rotate(180deg);
+}
+.cx-tray > .cx-bar {
+  margin: 0 14px 4px;
+}
+.cx-uploads {
+  max-height: 260px;
+  margin: 0;
+  padding: 0 14px 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+.cx-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 24px;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 9px 0 8px;
+  border-top: 1px solid var(--line);
+}
+.cx-upload .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.cx-upload .name .dir {
+  color: var(--muted);
+}
+.cx-upload .state {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+.cx-upload .cx-bar {
+  grid-column: 1 / -1;
+  height: 1px;
+}
+.cx-upload .cx-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--faint);
+}
+.cx-upload .cx-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.cx-upload.done .state {
+  color: var(--supports);
+}
+.cx-upload.failed .state {
+  color: var(--refutes);
+}
+.cx-upload.failed .cx-bar > i {
+  background: var(--refutes);
+}
+.cx-upload.cancelled .state {
+  color: var(--faint);
+}
+.cx-upload.done .cx-bar,
+.cx-upload.cancelled .cx-bar {
+  visibility: hidden;
+}
+.cx-bar {
+  height: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+.cx-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transition: width 0.25s ease;
+}
+
+.cx-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--scrim);
+}
+.cx-dialog {
+  width: min(400px, 100%);
+  padding: 20px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+.cx-dialog p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+#cx-confirm-text {
+  font-weight: 500;
+}
+.cx-dialog .muted {
+  margin: 4px 0 20px;
+  font-size: var(--text-sm);
+}
+.cx-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.cx-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: var(--text);
+  color: var(--bg);
+  font-size: var(--text-sm);
+  transform: translateX(-50%);
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 720px) {
+  .cx-page--plan {
+    height: auto;
+    min-height: 100dvh;
+  }
+  .cx-plan-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cx-plan {
+    overflow: visible;
+  }
+  .cx-chat--docked {
+    height: 70dvh;
+    padding: var(--space-3) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .cx-files-head {
+    flex-wrap: wrap;
+    row-gap: var(--space-3);
+  }
+  .cx-crumbs {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .cx-tools {
+    margin-left: auto;
+  }
+  .cx-cols,
+  .cx-entry {
+    grid-template-columns: 16px minmax(0, 1fr) 64px 88px;
+    column-gap: 10px;
+    padding: 0 4px;
+  }
+  .cx-cols .d,
+  .cx-entry .date {
+    display: none;
+  }
+  .cx-entry.busy .date {
+    display: block;
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .cx-entry.busy .size {
+    display: none;
+  }
+  .cx-tray {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}
+
+/* Use Pi's movable conversation window over the rendered plan and file browser. */
+.cx-page .pi-dock {
+  max-width: calc(100vw - 2 * var(--space-4));
+  max-height: calc(100dvh - 72px);
+}
+.cx-chat-reopen {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 4;
+}
+.cx-chat > .voice {
+  flex: none;
+}

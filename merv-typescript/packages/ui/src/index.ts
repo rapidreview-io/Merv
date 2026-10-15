@@ -1,5 +1,7 @@
 import { clip, visible, mapAsync, runningKeyPattern, sameOriginPath } from '@merv/contracts';
 import type { Context } from 'cordis';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { check, MervError, type Caller, type Json } from '@merv/contracts';
@@ -27,10 +29,21 @@ export type {
 } from './types.js';
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
+const defaultAssets = fileURLToPath(new URL('../dist/', import.meta.url));
 
 /** Feature adapters' sidebar rows and Running parts; a disposed registration leaves at once. */
 export class UiRegistry extends RunningRegistry implements Ui {
   private readonly byId = new Map<string, UiRow>();
+
+  /** `assets` is the built bundle, as /ui serves it. */
+  constructor(private readonly assets = defaultAssets) {
+    super();
+  }
+
+  async document(name: 'customer'): Promise<string | null> {
+    check(name === 'customer', 'invalid_input', 'Unknown page');
+    return await readFile(join(this.assets, `${name}.html`), 'utf8').catch(() => null);
+  }
 
   register(row: UiRow): () => void {
     check(row && typeof row === 'object', 'invalid_row', 'Row must be an object');
@@ -129,7 +142,8 @@ export const uiPlugin = {
     .default({}),
   inject: ['api', 'tools'],
   apply(ctx: Context, config: { assets?: string; admins?: AdminIdentity[] } = {}) {
-    const ui = new UiRegistry();
+    const assets = config.assets ?? defaultAssets;
+    const ui = new UiRegistry(assets);
     if (config.admins?.length) {
       const state = ctx.get('state');
       check(state, 'admin_unavailable', 'Admin overview needs state', 503);
@@ -140,7 +154,6 @@ export const uiPlugin = {
       const state = ctx.get('state');
       return state ? await state.isolated(read) : await read();
     };
-    const assets = config.assets ?? fileURLToPath(new URL('../dist/', import.meta.url));
     // The composition root's own report; composed without createApp, the table is empty.
     const plugins = () =>
       (ctx.get('composition')?.status() ?? []).map(({ id, name, state }) => ({ id, name, state }));

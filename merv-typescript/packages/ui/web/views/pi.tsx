@@ -22,6 +22,7 @@ import { useMenu } from '../record-picker';
 import { useConversation, type Conversation } from './pi-conversation';
 import { useVoice, VoicePanel, type Voice } from './pi-voice';
 import { useScreenAnswer } from './pi-screen';
+import { Floating } from './pi-dock';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -184,6 +185,24 @@ export function Transcript({ pi }: { pi: Conversation }) {
     following.current = true;
   }, [following]);
   useLayoutEffect(follow);
+  // Messages also grow after they are drawn (fonts, highlighted code, diagrams), and the panel
+  // can change height: a reader at the latest words stays there as they settle.
+  useEffect(() => {
+    const list = pi.transcript.current;
+    if (!list || typeof ResizeObserver === 'undefined') return;
+    const sizes = new ResizeObserver(() => follow());
+    sizes.observe(list);
+    const watch = () => {
+      for (const child of list.children) sizes.observe(child);
+    };
+    watch();
+    const added = new MutationObserver(watch);
+    added.observe(list, { childList: true });
+    return () => {
+      sizes.disconnect();
+      added.disconnect();
+    };
+  }, [pi.transcript, follow]);
   // Whether a call's card is drawn: the latest calls the agent proposed stay under their turn
   // until it proposes again, and a full result held here stays in its card while the
   // conversation is open.
@@ -197,6 +216,10 @@ export function Transcript({ pi }: { pi: Conversation }) {
       aria-live="polite"
       onScroll={(event) => {
         const list = event.currentTarget;
+        // The transcript's own scroll lands where it put it, though the words grew since.
+        if (pi.pinnedAt.current !== null && Math.abs(list.scrollTop - pi.pinnedAt.current) < 2)
+          return;
+        pi.pinnedAt.current = null;
         following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
       }}
     >
@@ -308,17 +331,20 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
           }
         }}
       />
-      {/* Beside the box: voice mode over Send, which is Stop while an answer runs. */}
+      {/* Beside the box: voice mode over Send, which is Stop while an answer runs. A page that
+          gives no voice has no Audio. */}
       <div className="pi-compose-actions">
-        <button
-          className="btn"
-          type="button"
-          disabled={!voice || blocked || unavailable || !pi.snapshot}
-          title="Talk with your agent"
-          onClick={voice?.start}
-        >
-          Audio
-        </button>
+        {voice && (
+          <button
+            className="btn"
+            type="button"
+            disabled={blocked || unavailable || !pi.snapshot}
+            title="Talk with your agent"
+            onClick={voice.start}
+          >
+            Audio
+          </button>
+        )}
         {/* While an answer runs, Stop stands where Send was: nothing can be sent until it ends. */}
         {active ? (
           <button
@@ -344,7 +370,7 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
 }
 
 function PiConversationPage() {
-  const { pi, start } = useAgent()!;
+  const { pi, start, voice } = useAgent()!;
   const [params] = useSearchParams();
   const requested = params.get('conversation');
   const opened = useRef<string | null>(null);
@@ -364,6 +390,15 @@ function PiConversationPage() {
   if (!pi) return <Notice>Opening conversations…</Notice>;
   const { listed, error, streamError, unavailable, busy, blocked, snapshot, host, title } = pi;
   const { conversations, selected } = pi;
+  if (voice.compact && voice.state !== 'off')
+    return (
+      <Floating
+        pi={pi}
+        voice={voice}
+        expand={() => voice.setCompact(false)}
+        hide={() => voice.setCompact(false)}
+      />
+    );
   return (
     <div className="page-stage pi-page">
       {!listed && !error && <p role="status">Opening conversations…</p>}
@@ -492,8 +527,18 @@ function PiConversationPage() {
 }
 
 /** The page's composer, or, while voice is on, the voice panel in its place. */
-export function Speak({ pi, rows = 3 }: { pi: Conversation; rows?: number }) {
-  const { voice } = useAgent()!;
+export function Speak({
+  pi,
+  rows = 3,
+  voice: supplied,
+}: {
+  pi: Conversation;
+  rows?: number;
+  voice?: Voice;
+}) {
+  const agent = useAgent();
+  const voice = supplied ?? agent?.voice;
+  if (!voice) return <Composer pi={pi} rows={rows} />;
   return voice.state === 'off' ? (
     <>
       {voice.problem && (

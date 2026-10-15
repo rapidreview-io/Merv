@@ -87,6 +87,8 @@ async function fixture(
       compute,
     ),
   );
+  // These cover the structured offer: requests start on service_experiment@2.
+  service.startVersion = 2;
   const reports = legacyReports(state);
   service.bindReports(reports);
   const work = currentWork(managed, { directory: dir, source: caller });
@@ -126,7 +128,7 @@ async function fixture(
       id: exp.id,
       contractHash: exp.contract!.hash,
       paymentId: `pi_${id()}`,
-      amountCents: 500,
+      amountCents: 1000,
       currency: 'usd',
       requestId: id(),
     });
@@ -279,7 +281,7 @@ test('customer workflow cannot dispatch before exact acceptance and payment; rec
     id: exp.id,
     contractHash: exp.contract!.hash,
     paymentId: 'pi_verified',
-    amountCents: 500,
+    amountCents: 1000,
     currency: 'usd',
     requestId: f.id(),
   };
@@ -430,7 +432,7 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
       id: exp.id,
       contractHash: exp.contract!.hash,
       paymentId: oldPayment,
-      amountCents: 500,
+      amountCents: 1000,
       currency: 'usd',
       requestId: f.id(),
     }),
@@ -440,7 +442,7 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
     id: exp.id,
     contractHash: exp.contract!.hash,
     paymentId: 'pi_new_scope',
-    amountCents: 500,
+    amountCents: 1000,
     currency: 'usd',
     requestId: f.id(),
   });
