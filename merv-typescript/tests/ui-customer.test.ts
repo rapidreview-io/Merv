@@ -418,7 +418,10 @@ test('the file manager lists folders with their sizes and deletes after confirmi
     return { body: { deleted: 1 } };
   });
   await open();
-  await click('Chug anything');
+  // The drop zone opens the file picker; the size beside it opens the files.
+  await act(async () => {
+    document.querySelector<HTMLElement>('.cx-drop-size')!.click();
+  });
   await settle(10);
   assert.match(text(), /images/);
   assert.match(text(), /3\.2 MB/);

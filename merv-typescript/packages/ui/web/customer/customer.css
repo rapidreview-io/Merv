@@ -955,8 +955,23 @@ button.cx-brand {
 .cx-page .pi-compose {
   border-top: 0;
 }
-/* /start has no conversation yet: the composer sits at the foot of the chat's space. */
-.cx-start-space {
+/* /start has no conversation yet: the drop zone keeps its place at the top, and the composer
+   stands in the middle of the space below it, a little above centre. */
+.cx-start {
   flex: 1;
-  min-height: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.cx-start-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding-bottom: 8vh;
+}
+.cx-start-middle > * {
+  width: min(100%, 640px);
 }
