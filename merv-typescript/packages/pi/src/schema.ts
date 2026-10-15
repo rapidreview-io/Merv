@@ -86,6 +86,17 @@ export const nextInput = workerInput
   .strict();
 /** Per-turn routes name the conversation too: one worker serves many. */
 export const commandInput = workerInput.extend({ commandId: id, conversationId: id }).strict();
+/** A failed turn: what went wrong on the machine, in at most 120 plain characters. */
+export const failInput = workerInput
+  .extend({
+    commandId: id,
+    conversationId: id,
+    reason: z
+      .string()
+      .regex(/^[A-Za-z0-9 ()]{1,120}$/)
+      .optional(),
+  })
+  .strict();
 export const message = z
   .object({ role: z.enum(['user', 'assistant']), text: z.string().max(messageChars) })
   .strict();

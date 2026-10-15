@@ -83,6 +83,16 @@ export function cause(error: unknown): string {
   return /^[A-Za-z0-9 ()]{1,120}$/.test(text) ? text : 'Unexpected error';
 }
 
+/** What Main is told about a failed turn: the error's name and words, reduced to plain text. */
+export function reasonOf(error: unknown): string {
+  const named = error instanceof Error ? `${error.name} ${error.message}` : '';
+  const plain = named
+    .replace(/[^A-Za-z0-9 ()]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.slice(0, 120).trim() || 'Unexpected error';
+}
+
 export interface WorkerOptions {
   workerId?: string;
   fetchImpl?: typeof fetch;
@@ -283,7 +293,7 @@ export async function runPiWorker(
       process.stderr.write(`Pi worker turn failed: ${cause(error)}\n`);
       if (!savedResult && (applied || !options.signal?.aborted)) {
         try {
-          await request('fail', ids, undefined, 3);
+          await request('fail', { ...ids, reason: reasonOf(error) }, undefined, 3);
         } catch {}
       }
     } finally {

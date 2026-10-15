@@ -237,12 +237,14 @@ export function useConversation(transport: PiTransport = toolTransport) {
   const retrying = live && stream.state === 'retrying';
   const unavailable = live && stream.state === 'refused';
   const streamError = retrying ? RECONNECTING : unavailable ? UNAVAILABLE : '';
-  // While the stream is away the conversation is still read, now and then.
+  // While the stream is away, or while an answer is under way (a stream that went quiet without
+  // closing must not leave the page thinking forever), the conversation is still read now and then.
+  const answering = !!snapshot?.conversation.activeCommandId;
   useEffect(() => {
-    if (!retrying || !streaming) return;
+    if ((!retrying && !answering) || !streaming) return;
     const timer = setInterval(() => void refresh(streaming), 10_000);
     return () => clearInterval(timer);
-  }, [retrying, streaming]);
+  }, [retrying, answering, streaming]);
 
   const command = snapshot?.commands.find(
     (item) => item.id === snapshot.conversation.activeCommandId,

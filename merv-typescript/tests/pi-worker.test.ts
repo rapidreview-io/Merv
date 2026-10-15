@@ -1562,8 +1562,14 @@ test('an assignment for another slot or with oversized notes is failed and never
       model: () => assert.fail('A refused turn reached the model'),
     });
     await stderrOf(() => server.run());
+    // Main is told why, in plain words.
     assert.deepEqual(server.bodies('fail'), [
-      { workerId: 'worker_1', conversationId: 'conv_a', commandId: 'cmd_a' },
+      {
+        workerId: 'worker_1',
+        conversationId: 'conv_a',
+        commandId: 'cmd_a',
+        reason: 'Error Invalid worker assignment',
+      },
     ]);
     assert.equal(server.bodies('begin').length, 0);
   }

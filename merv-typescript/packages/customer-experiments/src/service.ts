@@ -161,6 +161,11 @@ export class CustomerService {
         r.conversationId = convo.id;
       });
       record = await this.store.get(record.id);
+      // A plan-document request's agent works on the large machine: it reads and runs on files.
+      if (plansDocument(exp.workflow.version))
+        await Promise.resolve()
+          .then(() => this.pi.setMachine(caller, { machine: 'large' }))
+          .catch(() => undefined);
     }
     if (input.message)
       await this.pi.send(caller, record.conversationId!, {
@@ -390,7 +395,29 @@ export class CustomerService {
           'Request context belongs to its isolated project',
           403,
         );
-        return JSON.stringify(await this.snapshot(record, false)).slice(0, 32000);
+        // Every turn opens with the request's files as they are now and what changed since the
+        // agent's last turn, so an upload between two messages is never missed.
+        const files = this.files ? await this.files.manifest(record.id) : [];
+        const now = files.map((f) => `${f.key}@${f.etag}`);
+        const told = new Set(record.toldFiles ?? []);
+        const added = files.filter((f) => !told.has(`${f.key}@${f.etag}`)).map((f) => f.key);
+        const kept = new Set(files.map((f) => f.key));
+        const removed = [...told]
+          .map((k) => k.slice(0, k.lastIndexOf('@')))
+          .filter((k) => !kept.has(k));
+        await this.store.mutate(record.id, (r) => {
+          r.toldFiles = now;
+        });
+        const lines = [
+          `Request files now (${files.length}): ${files.map((f) => `${f.key} (${f.size} bytes)`).join(', ') || 'none'}.`,
+          ...(added.length ? [`New or changed since your last turn: ${added.join(', ')}.`] : []),
+          ...(removed.length ? [`Removed since your last turn: ${removed.join(', ')}.`] : []),
+        ];
+        return (
+          lines.join('\n').slice(0, 8000) +
+          '\n\n' +
+          JSON.stringify(await this.snapshot(record, false))
+        ).slice(0, 32000);
       },
       authorizeTool: async ({
         binding,

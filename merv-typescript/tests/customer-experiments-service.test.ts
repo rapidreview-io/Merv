@@ -1375,3 +1375,23 @@ test('/start opens the customer app with public intake, and keeps the guide for 
   assert.match(await serve(true, '/start/agent.md'), /# Merv experiment setup/);
   assert.match(await serve(true, '/start', 'text/markdown'), /# Merv experiment setup/);
 });
+
+test('each intake turn opens with the request files and what changed since the agent last looked', async (t) => {
+  const f = await planFixture(t);
+  const record = await f.store.get(f.a.id);
+  const profile = f.profiles.find((p) => p.version === 4)!;
+  const context = () =>
+    profile.context!({
+      binding: { id: profile.id, version: 4, requestId: f.a.id },
+      caller: { projectId: record.projectId!, actorId: 'actor' } as Caller,
+    });
+  const first = await context();
+  assert.match(first, /^Request files now \(1\): data\/train\.csv \(2048 bytes\)\./);
+  assert.match(first, /New or changed since your last turn: data\/train\.csv\./);
+  // Nothing changed: no news.
+  assert.doesNotMatch(await context(), /since your last turn/);
+  // A replaced upload (new ETag) is news again.
+  fileState.etag = '-v2';
+  t.after(() => void (fileState.etag = ''));
+  assert.match(await context(), /New or changed since your last turn: data\/train\.csv\./);
+});
