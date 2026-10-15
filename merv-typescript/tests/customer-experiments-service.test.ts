@@ -996,10 +996,13 @@ const conflict = (code: string) => (error: unknown) =>
 test('v3 requests start on service_experiment@3 with the plan-document intake profile', async (t) => {
   const f = await planFixture(t);
   assert.equal((await f.experiment(f.a.id)).workflow.version, 3);
-  // New requests talk to the guide with a terminal (profile 4): files, web, literature, shell.
-  assert.equal(f.conversations[0].profile!.version, 4);
-  const profile = f.profiles.find((p) => p.version === 4)!;
+  // New requests talk to the guide with a terminal and the compute budget (profile 5).
+  assert.equal(f.conversations[0].profile!.version, 5);
+  const profile = f.profiles.find((p) => p.version === 5)!;
   assert.equal(profile.shell, true);
+  assert.match(profile.instructions, /up to \$1,000 of compute/);
+  assert.match(profile.instructions, /Modal or Lambda/);
+  assert.equal(f.profiles.find((p) => p.version === 4)!.shell, true);
   assert.equal(f.profiles.find((p) => p.version === 3)!.shell, undefined);
   assert.deepEqual(profile.tools, [
     'customer_experiments.read',
@@ -1379,10 +1382,10 @@ test('/start opens the customer app with public intake, and keeps the guide for 
 test('each intake turn opens with the request files and what changed since the agent last looked', async (t) => {
   const f = await planFixture(t);
   const record = await f.store.get(f.a.id);
-  const profile = f.profiles.find((p) => p.version === 4)!;
+  const profile = f.profiles.find((p) => p.version === 5)!;
   const context = () =>
     profile.context!({
-      binding: { id: profile.id, version: 4, requestId: f.a.id },
+      binding: { id: profile.id, version: 5, requestId: f.a.id },
       caller: { projectId: record.projectId!, actorId: 'actor' } as Caller,
     });
   const first = await context();
@@ -1399,12 +1402,12 @@ test('each intake turn opens with the request files and what changed since the a
 test('the intake agent may search the web and the literature: only its request tools name the request', async (t) => {
   const f = await planFixture(t);
   const record = await f.store.get(f.a.id);
-  const profile = f.profiles.find((p) => p.version === 4)!;
+  const profile = f.profiles.find((p) => p.version === 5)!;
   const caller = {
     ...(await f.service.caller(record)),
     conversation: { id: record.conversationId },
   } as Caller;
-  const binding = { id: profile.id, version: 4, requestId: f.a.id };
+  const binding = { id: profile.id, version: 5, requestId: f.a.id };
   // A web search carries no request id and is allowed.
   await profile.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
   await profile.authorizeTool!({ binding, caller, name: 'nisa.search', input: { query: 'x' } });
