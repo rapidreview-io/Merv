@@ -66,7 +66,7 @@ export interface RequestFile {
   size: number;
   etag: string;
 }
-/** The request bucket's current objects; implemented by the request files store. */
+/** The request bucket's current objects (FilesService); a v3 acceptance freezes them. */
 export interface RequestFiles {
   manifest(id: string): Promise<RequestFile[]>;
 }

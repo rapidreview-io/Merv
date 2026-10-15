@@ -6,6 +6,8 @@ import { planHttp, unhandled } from './plan-http.js';
 import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
 import { chatHttp } from './chat-http.js';
+import type { FilesService } from './files.js';
+import { filesHttp, isFilesPath } from './files-http.js';
 
 // The invitation can be shared. Idempotency must be an unguessable client secret, not a title
 // or counter another invite holder could replay to recover this customer's capabilities.
@@ -73,7 +75,7 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
   };
 }
 
-export function customerHttp(service: CustomerService): MountHandler {
+export function customerHttp(service: CustomerService, files?: FilesService): MountHandler {
   const chat = chatHttp(service);
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'private, no-store');
@@ -100,6 +102,7 @@ export function customerHttp(service: CustomerService): MountHandler {
       if (event) await service.paid(event);
       return { received: true };
     }
+    if (isFilesPath(path)) return filesHttp(service.access, files, req, r);
     if (path === '/customer-experiments/requests' && method === 'POST')
       return service.create(r.bearer(), await r.json(createSchema, 40000));
     const routed = chat(req, res, r);

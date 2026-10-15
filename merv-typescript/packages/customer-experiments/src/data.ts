@@ -1,14 +1,29 @@
 import { isUtf8 } from 'node:buffer';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
+  DeleteBucketCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListMultipartUploadsCommand,
+  ListObjectsV2Command,
   PutBucketCorsCommand,
   PutPublicAccessBlockCommand,
   S3Client,
+  UploadPartCommand,
+  UploadPartCopyCommand,
   type BucketLocationConstraint,
+  type CORSRule,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { S3Blobs, type S3BlobOptions } from '@merv/blobs/s3';
 import { check, digest } from '@merv/contracts';
 import type { DataRequirement } from './types.js';
+import { partLength, partSize, type RequestFileStorage, type StoredFile } from './files.js';
 
 /** Initial offer: bounded UTF-8 tables. Content, not the filename, determines validity. */
 export function validateDataset(bytes: Buffer, requirement: DataRequirement) {
@@ -162,8 +177,11 @@ export interface DatasetStorage {
   close(): Promise<void>;
 }
 /** One literal bucket per request. Provisioning failures never fall back to shared storage. */
-export class RequestBuckets implements DatasetStorage {
+export class RequestBuckets implements DatasetStorage, RequestFileStorage {
   private client: S3Client;
+  /** service_experiment@3 files: presigned URLs the browser uses as they are, so the SDK adds no
+   *  checksum the browser could not send. */
+  private files: S3Client;
   private blobs = new Map<string, S3Blobs>();
   constructor(
     private options: Omit<S3BlobOptions, 'bucket' | 'prefix'> & {
@@ -189,6 +207,15 @@ export class RequestBuckets implements DatasetStorage {
       forcePathStyle: true,
       maxAttempts: 3,
     });
+    this.files = new S3Client({
+      endpoint: options.endpoint,
+      region: options.region ?? 'us-east-1',
+      credentials: { accessKeyId: options.accessKeyId, secretAccessKey: options.secretAccessKey },
+      forcePathStyle: true,
+      maxAttempts: 3,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+    });
   }
   bucket(id: string) {
     check(/^ce_[a-f0-9]{32}$/.test(id), 'invalid_request', 'Invalid request ID');
@@ -203,6 +230,15 @@ export class RequestBuckets implements DatasetStorage {
     return blob;
   }
   async provision(id: string) {
+    await this.create(id);
+    await this.cors(id, {
+      AllowedOrigins: [this.options.publicOrigin],
+      AllowedMethods: ['PUT'],
+      AllowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
+      MaxAgeSeconds: 600,
+    });
+  }
+  private async create(id: string) {
     const Bucket = this.bucket(id),
       region = this.options.region;
     try {
@@ -237,19 +273,12 @@ export class RequestBuckets implements DatasetStorage {
         }),
         { abortSignal: AbortSignal.timeout(30000) },
       );
+  }
+  private async cors(id: string, rule: CORSRule) {
     await this.client.send(
       new PutBucketCorsCommand({
-        Bucket,
-        CORSConfiguration: {
-          CORSRules: [
-            {
-              AllowedOrigins: [this.options.publicOrigin],
-              AllowedMethods: ['PUT'],
-              AllowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
-              MaxAgeSeconds: 600,
-            },
-          ],
-        },
+        Bucket: this.bucket(id),
+        CORSConfiguration: { CORSRules: [rule] },
       }),
       { abortSignal: AbortSignal.timeout(30000) },
     );
@@ -263,8 +292,209 @@ export class RequestBuckets implements DatasetStorage {
   download(id: string, hash: string, size: number, filename: string) {
     return this.storage(id).download('dataset', hash, size, filename);
   }
+  /** A v3 request's bucket: the page's origin uploads parts directly and reads their ETags. */
+  async provisionFiles(id: string) {
+    await this.create(id);
+    await this.cors(id, {
+      AllowedOrigins: [this.options.publicOrigin],
+      AllowedMethods: ['PUT', 'GET', 'HEAD'],
+      AllowedHeaders: ['content-type', 'x-amz-checksum-sha256', 'if-none-match'],
+      ExposeHeaders: ['ETag'],
+      MaxAgeSeconds: 600,
+    });
+  }
+  private send<T>(command: { input: unknown }): Promise<T> {
+    const send = this.files.send.bind(this.files) as (c: unknown, o: unknown) => Promise<unknown>;
+    return send(command, { abortSignal: AbortSignal.timeout(60000) }) as Promise<T>;
+  }
+  async listFiles(id: string): Promise<StoredFile[]> {
+    const files: StoredFile[] = [];
+    let ContinuationToken: string | undefined;
+    do {
+      let page: {
+        Contents?: { Key?: string; Size?: number; ETag?: string; LastModified?: Date }[];
+        IsTruncated?: boolean;
+        NextContinuationToken?: string;
+      };
+      try {
+        page = await this.send(
+          new ListObjectsV2Command({ Bucket: this.bucket(id), ContinuationToken }),
+        );
+      } catch (error) {
+        if ((error as { name?: string }).name === 'NoSuchBucket') return [];
+        throw error;
+      }
+      for (const o of page.Contents ?? [])
+        if (o.Key)
+          files.push({
+            key: o.Key,
+            size: o.Size ?? 0,
+            etag: o.ETag ?? '',
+            uploaded: (o.LastModified ?? new Date(0)).toISOString(),
+          });
+      ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (ContinuationToken);
+    return files;
+  }
+  async head(id: string, key: string): Promise<StoredFile | null> {
+    try {
+      const o = await this.send<{ ContentLength?: number; ETag?: string; LastModified?: Date }>(
+        new HeadObjectCommand({ Bucket: this.bucket(id), Key: key }),
+      );
+      return {
+        key,
+        size: o.ContentLength ?? 0,
+        etag: o.ETag ?? '',
+        uploaded: (o.LastModified ?? new Date(0)).toISOString(),
+      };
+    } catch (error) {
+      const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (e.name === 'NotFound' || e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404)
+        return null;
+      throw error;
+    }
+  }
+  async createMultipart(id: string, key: string, contentType: string) {
+    const out = await this.send<{ UploadId?: string }>(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket(id),
+        Key: key,
+        ContentType: contentType,
+      }),
+    );
+    check(out.UploadId, 'storage_unavailable', 'Storage did not start the upload', 502);
+    return out.UploadId;
+  }
+  /** Signs the part's exact length, so a part cannot carry more than its upload declared. */
+  async presignPart(id: string, key: string, uploadId: string, partNumber: number, length: number) {
+    return getSignedUrl(
+      this.files,
+      new UploadPartCommand({
+        Bucket: this.bucket(id),
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+        ContentLength: length,
+      }),
+      { expiresIn: 3600 },
+    );
+  }
+  async completeMultipart(
+    id: string,
+    key: string,
+    uploadId: string,
+    parts: { partNumber: number; etag: string }[],
+  ) {
+    await this.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket(id),
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: parts.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+        },
+      }),
+    );
+  }
+  async abortMultipart(id: string, key: string, uploadId: string) {
+    try {
+      await this.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket(id), Key: key, UploadId: uploadId }),
+      );
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'NoSuchUpload') throw error;
+    }
+  }
+  /** CopyObject stops at 5 GiB; larger objects are copied part by part on the server. */
+  async copyFile(id: string, from: StoredFile, to: string) {
+    const Bucket = this.bucket(id),
+      CopySource = `${Bucket}/${from.key.split('/').map(encodeURIComponent).join('/')}`;
+    if (from.size <= 5 * 1024 ** 3) {
+      await this.send(new CopyObjectCommand({ Bucket, Key: to, CopySource }));
+      return;
+    }
+    const UploadId = await this.createMultipart(id, to, 'application/octet-stream');
+    try {
+      const size = partSize(from.size),
+        parts: { partNumber: number; etag: string }[] = [];
+      for (let n = 1, start = 0; start < from.size; n++, start += size) {
+        const out = await this.send<{ CopyPartResult?: { ETag?: string } }>(
+          new UploadPartCopyCommand({
+            Bucket,
+            Key: to,
+            UploadId,
+            PartNumber: n,
+            CopySource,
+            CopySourceRange: `bytes=${start}-${start + partLength(from.size, size, n) - 1}`,
+          }),
+        );
+        parts.push({ partNumber: n, etag: out.CopyPartResult?.ETag ?? '' });
+      }
+      await this.completeMultipart(id, to, UploadId, parts);
+    } catch (error) {
+      await this.abortMultipart(id, to, UploadId).catch(() => {});
+      throw error;
+    }
+  }
+  async deleteFiles(id: string, keys: string[]) {
+    for (let i = 0; i < keys.length; i += 1000) {
+      const out = await this.send<{ Errors?: { Key?: string; Code?: string }[] }>(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket(id),
+          Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
+        }),
+      );
+      check(!out.Errors?.length, 'storage_unavailable', 'Storage could not delete every file', 502);
+    }
+  }
+  async presignDownload(id: string, key: string) {
+    const name = key.slice(key.lastIndexOf('/') + 1);
+    const signingDate = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const url = await getSignedUrl(
+      this.files,
+      new GetObjectCommand({
+        Bucket: this.bucket(id),
+        Key: key,
+        ResponseContentDisposition: `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+        ResponseContentType: 'application/octet-stream',
+        ResponseCacheControl: 'private, no-store',
+      }),
+      { expiresIn: 300, signingDate },
+    );
+    return { url, expiresAt: new Date(signingDate.getTime() + 300_000).toISOString() };
+  }
+  /** Every object, every unfinished upload, then the bucket itself. Returns the objects removed. */
+  async destroy(id: string): Promise<number> {
+    const Bucket = this.bucket(id);
+    const objects = await this.listFiles(id);
+    await this.deleteFiles(
+      id,
+      objects.map((o) => o.key),
+    );
+    try {
+      let KeyMarker: string | undefined, UploadIdMarker: string | undefined;
+      do {
+        const page = await this.send<{
+          Uploads?: { Key?: string; UploadId?: string }[];
+          IsTruncated?: boolean;
+          NextKeyMarker?: string;
+          NextUploadIdMarker?: string;
+        }>(new ListMultipartUploadsCommand({ Bucket, KeyMarker, UploadIdMarker }));
+        for (const u of page.Uploads ?? [])
+          if (u.Key && u.UploadId) await this.abortMultipart(id, u.Key, u.UploadId);
+        [KeyMarker, UploadIdMarker] = page.IsTruncated
+          ? [page.NextKeyMarker, page.NextUploadIdMarker]
+          : [undefined, undefined];
+      } while (KeyMarker);
+      await this.send(new DeleteBucketCommand({ Bucket }));
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'NoSuchBucket') throw error;
+    }
+    return objects.length;
+  }
   async close() {
     await Promise.all([...this.blobs.values()].map((b) => b.close()));
     this.client.destroy();
+    this.files.destroy();
   }
 }

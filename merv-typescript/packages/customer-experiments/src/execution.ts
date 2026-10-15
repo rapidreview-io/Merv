@@ -32,7 +32,7 @@ const reportInstruction =
 /** Version 3's executor: the accepted plan document is the specification. */
 const documentInstruction = reportInstruction.replace(
   'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use.',
-  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with. Check every downloaded request file against its manifest size and ETag before use.",
+  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with: list them with customer_experiment.files and fetch each through customer_experiment.file_download. Check every downloaded request file against its manifest size and ETag before use.",
 );
 
 export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
@@ -46,6 +46,13 @@ export function serviceExecution(review: boolean, version = 1): WorkflowExecutio
       grant('workflow.status_and_next', { instanceId: target('instanceId') }),
       grant('workflow.assignment', { instanceId: target('instanceId') }),
       grant('customer_experiment.get', { id: target('instanceId') }),
+      // v3: the request files frozen into the contract, read-only.
+      ...(plansDocument(version)
+        ? [
+            grant('customer_experiment.files', { id: target('instanceId') }),
+            grant('customer_experiment.file_download', { id: target('instanceId') }),
+          ]
+        : []),
       grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
       grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
       grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),

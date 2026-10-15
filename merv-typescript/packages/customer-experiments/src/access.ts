@@ -23,6 +23,8 @@ export type CustomerGrant =
 export class CustomerAccess {
   /** The identity plugin, while one is installed. */
   identity?: CustomerIdentityProvider;
+  /** Told of every acting v3 customer call; keeps an unpaid request from looking abandoned. */
+  activity?: (requestId: string) => Promise<void>;
   constructor(
     private readonly owner: {
       readonly store: RequestStore;
@@ -64,6 +66,7 @@ export class CustomerAccess {
       'This experiment is open in another browser',
       409,
     );
+    await this.activity?.(record.id);
     return { record, role, identity: bound };
   }
   /** The customer role alone: the capability plus, from service_experiment@3, its bound browser. */
@@ -101,6 +104,7 @@ export class CustomerAccess {
       'This experiment is open in another browser',
       409,
     );
+    await this.activity?.(record.id);
     return { bound: true };
   }
 }
