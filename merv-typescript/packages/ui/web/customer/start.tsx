@@ -133,54 +133,56 @@ export function Start({ opened }: { opened(id: string): void }) {
           if (files.length) void begin(undefined, files);
         }}
       />
-      <form
-        className="pi-compose cx-start-compose"
-        onSubmit={(event) => {
-          event.preventDefault();
-          send();
-        }}
-      >
-        <label htmlFor="cx-start-draft" className="sr-only">
-          What do you want to learn?
-        </label>
-        <textarea
-          id="cx-start-draft"
-          className="textarea"
-          rows={3}
-          maxLength={32_000}
-          value={draft}
-          readOnly={busy}
-          placeholder="What do you want to learn?"
-          onChange={(event) => setDraft(event.target.value)}
-          enterKeyHint="send"
-          onKeyDown={(event) => {
-            const { key, shiftKey, altKey, metaKey, ctrlKey, nativeEvent } = event;
-            if (key !== 'Enter' || shiftKey || altKey || metaKey || ctrlKey) return;
-            if (nativeEvent.isComposing) return;
+      <div className="cx-start-middle">
+        <form
+          className="pi-compose cx-start-compose"
+          onSubmit={(event) => {
             event.preventDefault();
             send();
           }}
-        />
-        <div className="pi-compose-actions">
-          <button
-            className="btn"
-            type="button"
-            disabled={busy}
-            title="Talk with Merv"
-            onClick={() => void begin(undefined, [], true)}
-          >
-            Audio
-          </button>
-          <button className="btn btn--primary" type="submit" disabled={busy || !draft.trim()}>
-            {busy ? 'Starting…' : 'Send'}
-          </button>
-        </div>
-      </form>
-      {error && (
-        <p className="pi-error" role="alert">
-          {error}
-        </p>
-      )}
+        >
+          <label htmlFor="cx-start-draft" className="sr-only">
+            What do you want to learn?
+          </label>
+          <textarea
+            id="cx-start-draft"
+            className="textarea"
+            rows={3}
+            maxLength={32_000}
+            value={draft}
+            readOnly={busy}
+            placeholder="What do you want to learn?"
+            onChange={(event) => setDraft(event.target.value)}
+            enterKeyHint="send"
+            onKeyDown={(event) => {
+              const { key, shiftKey, altKey, metaKey, ctrlKey, nativeEvent } = event;
+              if (key !== 'Enter' || shiftKey || altKey || metaKey || ctrlKey) return;
+              if (nativeEvent.isComposing) return;
+              event.preventDefault();
+              send();
+            }}
+          />
+          <div className="pi-compose-actions">
+            <button
+              className="btn"
+              type="button"
+              disabled={busy}
+              title="Talk with Merv"
+              onClick={() => void begin(undefined, [], true)}
+            >
+              Audio
+            </button>
+            <button className="btn btn--primary" type="submit" disabled={busy || !draft.trim()}>
+              {busy ? 'Starting…' : 'Send'}
+            </button>
+          </div>
+        </form>
+        {error && (
+          <p className="pi-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -955,18 +955,23 @@ button.cx-brand {
 .cx-page .pi-compose {
   border-top: 0;
 }
-/* /start has no conversation yet: the drop zone and the composer stand together in the middle
-   of the window, a little above centre, as one quiet group. */
+/* /start has no conversation yet: the drop zone keeps its place at the top, and the composer
+   stands in the middle of the space below it, a little above centre. */
 .cx-start {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.cx-start-middle {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-5);
-  padding-bottom: 10vh;
+  gap: var(--space-3);
+  padding-bottom: 8vh;
 }
-.cx-start > .cx-start-compose,
-.cx-start > .pi-error {
+.cx-start-middle > * {
   width: min(100%, 640px);
 }
