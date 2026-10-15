@@ -175,7 +175,7 @@ test('the customer page signs in silently, keeps the capability off the address 
   assert.match(text(), /Drop datasets, papers, context/);
   assert.match(text(), /48 MB/);
   assert.match(text(), /What do you want to test\? ce_abc_123/);
-  assert.equal(text().includes('Audio'), false);
+  assert.equal(text().includes('Audio'), true);
   // No project's records are read on this page, and the account's token is never sent.
   assert.equal(
     requests.some((request) => request.includes('/tools/')),
@@ -242,7 +242,30 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   await settle(0);
   // A written document lights the Plan button's dot.
   assert.ok(document.querySelector('.cx-dot'));
+  await write('Keep this draft while I read the plan');
   await click('Plan');
+  await settle(10);
+  assert.ok(document.querySelector('.pi-dock'));
+  assert.equal(
+    document.querySelector<HTMLTextAreaElement>('#pi-draft')!.value,
+    'Keep this draft while I read the plan',
+  );
+  assert.match(document.querySelector('.pi-dock')!.textContent!, /Audio/);
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('button[aria-label="Expand"]')!.click(),
+  );
+  assert.equal(document.querySelector('.pi-dock'), null);
+  assert.equal(
+    document.querySelector<HTMLTextAreaElement>('#pi-draft')!.value,
+    'Keep this draft while I read the plan',
+  );
+  await click('Plan');
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click(),
+  );
+  assert.equal(document.querySelector('.pi-dock'), null);
+  await click('Chat');
+  assert.ok(document.querySelector('.pi-dock'));
   await settle(10);
   assert.match(text(), /Draft/);
   // A written plan opens as its card; Edit opens the text.
@@ -457,4 +480,137 @@ test('the plan card takes its title, question and sections from the free text', 
     ['Question', 'Method'],
   );
   assert.match(plan.sections[0]!.body, /## not a heading/);
+});
+
+test('customer audio uses its authenticated transport and survives moving into and out of the plan dock', async (t) => {
+  const headers = recordHeaders();
+  t.after(async () => {
+    await unmount();
+    headers.restore();
+    setCredentials(null);
+  });
+  let connections = 0,
+    closed = 0,
+    stopped = 0;
+  let channel: { onmessage?: (event: { data: string }) => void; readyState: string; send(): void };
+  const original = {
+    Audio: globalThis.Audio,
+    AudioContext: globalThis.AudioContext,
+    RTCPeerConnection: globalThis.RTCPeerConnection,
+  };
+  const media = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+  t.after(() => {
+    Object.assign(globalThis, original);
+    if (media) Object.defineProperty(navigator, 'mediaDevices', media);
+    else Reflect.deleteProperty(navigator, 'mediaDevices');
+  });
+  Object.assign(globalThis, {
+    Audio: class {
+      setAttribute() {}
+    },
+    AudioContext: class {
+      createAnalyser = () => ({
+        fftSize: 512,
+        getByteTimeDomainData(data: Uint8Array) {
+          data.fill(128);
+        },
+      });
+      createMediaStreamSource = () => ({ connect() {} });
+      async close() {}
+    },
+    RTCPeerConnection: class {
+      constructor() {
+        connections++;
+      }
+      iceGatheringState = 'complete';
+      localDescription = { sdp: 'customer-offer' };
+      createDataChannel = () => (channel = { readyState: 'open', send() {} });
+      addTrack() {}
+      createOffer = async () => ({});
+      setLocalDescription = async () => {};
+      setRemoteDescription = async () => {};
+      close() {
+        closed++;
+      }
+    },
+  });
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: async () => ({
+        getAudioTracks: () => [],
+        getTracks: () => [
+          {
+            stop() {
+              stopped++;
+            },
+          },
+        ],
+      }),
+    },
+  });
+  boot({ plan: plan({ document: '# Test plan' }), files: listing(), commands: [] });
+  serve(`${BASE}/chat/voice`, { body: { sdp: 'customer-answer' } });
+  await open();
+  await click('Audio');
+  const offer = headers.seen.find((entry) => entry.request === `POST ${BASE}/chat/voice`)!;
+  assert.ok(offer);
+  assert.equal(offer.headers.get('authorization'), `Bearer ${CAPABILITY}`);
+  assert.equal(offer.headers.get('x-merv-identity'), 'anon-token');
+  assert.equal(
+    requests.some((request) => request.includes('/tools/pi.voice')),
+    false,
+  );
+  await act(async () =>
+    document
+      .querySelector('.cx-arrive')!
+      .dispatchEvent(new window.WheelEvent('wheel', { deltaY: 40, bubbles: true })),
+  );
+  await click('Collapse to voice');
+  assert.ok(document.querySelector('.pi-dock--voice'));
+  assert.equal(document.querySelector('.pi-messages'), null);
+  assert.match(text(), /Chat/);
+  await act(async () => {
+    channel.onmessage?.({ data: JSON.stringify({ type: 'session.started' }) });
+    channel.onmessage?.({
+      data: JSON.stringify({ type: 'session.input_transcript.delta', delta: 'Explain this plan' }),
+    });
+  });
+  assert.match(document.querySelector('.voice--sphere')!.textContent!, /Explain this plan/);
+  const sphere = document.querySelector<HTMLButtonElement>('.voice-sphere-button')!;
+  await act(async () =>
+    sphere.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 })),
+  );
+  await settle(350);
+  assert.equal(sphere.getAttribute('aria-pressed'), 'true');
+  await click('Resume');
+  assert.equal(sphere.getAttribute('aria-pressed'), 'false');
+  await click('Plan');
+  assert.ok(document.querySelector('.pi-dock--voice .voice'));
+  assert.equal(document.querySelector('.pi-messages'), null);
+  await act(async () => {
+    const sphere = document.querySelector<HTMLButtonElement>('.voice-sphere-button')!;
+    sphere.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+    sphere.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 2 }));
+    sphere.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+  });
+  await settle(350);
+  assert.ok(document.querySelector('.pi-dock .pi-messages'));
+  assert.equal(document.querySelector('.pi-dock--voice'), null);
+  assert.equal(connections, 1);
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('button[aria-label="Expand"]')!.click(),
+  );
+  assert.ok(document.querySelector('.cx-chat .voice'));
+  assert.equal(connections, 1);
+  assert.equal(closed, 0);
+  await click('Collapse to voice');
+  assert.equal(document.querySelector('.pi-messages'), null);
+  await click('Close');
+  await act(async () => channel.onmessage?.({ data: JSON.stringify({ type: 'session.closed' }) }));
+  assert.equal(closed, 1);
+  assert.equal(stopped, 1);
+  assert.equal(document.querySelector('.pi-dock--voice'), null);
+  assert.ok(document.querySelector('.pi-messages'));
+  assert.match(text(), /Audio/);
 });

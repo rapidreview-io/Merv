@@ -484,6 +484,7 @@ export function useConversation(transport: PiTransport = toolTransport) {
   };
 
   return {
+    transport,
     conversations,
     selected,
     snapshot,

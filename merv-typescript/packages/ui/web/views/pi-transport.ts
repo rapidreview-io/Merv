@@ -18,6 +18,7 @@ export interface PiTransport {
   stop(id: string): Promise<PiSnapshot>;
   /** The conversation's live stream: a path of this app, or one with credentials of its own. */
   events(id: string): string | StreamSource;
+  voice?(id: string, sdp: string): Promise<{ sdp: string }>;
   create?(requestId: string): Promise<PiConversation>;
   warm?(id: string | null, requestId: string): Promise<PiSnapshot | null>;
   run?(input: { id: string; commandId: string; proposalId: string }): Promise<PiRan>;
@@ -25,6 +26,7 @@ export interface PiTransport {
 
 /** The Agent page's transport: Pi's tools, as the signed-in person in the selected project. */
 export const toolTransport: PiTransport = {
+  voice: (id, sdp) => call<{ sdp: string }>('pi.voice', { id, sdp }),
   list: () => call<PiConversation[]>('pi.list'),
   snapshot: (id) => call<PiSnapshot>('pi.snapshot', { id }),
   send: (id, input) => call('pi.send', { id, ...input }),

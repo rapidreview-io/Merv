@@ -7,7 +7,7 @@ import type { PiSnapshot } from '@merv/pi/models';
 import { PLAN_SUBMIT, type CustomerService } from './service.js';
 
 const route =
-  /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})\/(session|chat)(?:\/(messages|stop|events))?$/;
+  /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})\/(session|chat)(?:\/(messages|stop|events|voice))?$/;
 const messageSchema = z
   .object({
     commandId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
@@ -108,6 +108,15 @@ export function chatHttp(service: CustomerService) {
     }
     if (action === 'messages' && method === 'POST')
       return service.message(record, await r.json(messageSchema, 40000));
+    if (action === 'voice' && method === 'POST') {
+      const { sdp } = await r.json(
+        z.object({ sdp: z.string().min(1).max(100_000) }).strict(),
+        110_000,
+      );
+      const { pi, caller, id: conversation } = await service.intake(record);
+      const answer = await pi.voice(caller, { id: conversation, sdp }, { allowProfile: true });
+      return { sdp: answer.sdp };
+    }
     if (action === 'stop' && method === 'POST') {
       const { pi, caller, id: conversation } = await service.intake(record);
       return customerChat(await pi.stop(caller, conversation));

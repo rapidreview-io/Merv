@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mount, requests, serve, settle, unmount } from './ui-render.js';
 
+const { toolTransport } = await import('../packages/ui/web/views/pi-transport.js');
 const { sayable, useVoice } = await import('../packages/ui/web/views/pi-voice.js');
 const { placeOf } = await import('../packages/ui/web/views/pi-screen.js');
 
@@ -85,7 +86,10 @@ test('a voice session ended or refused while the microphone is asked for opens n
   const { createElement } = await import('react');
   const { act } = await import('react-dom/test-utils');
   let voice!: ReturnType<typeof useVoice>;
-  const pi = { snapshot: { conversation: { id: 'conv_1' }, commands: [] } };
+  const pi = {
+    transport: toolTransport,
+    snapshot: { conversation: { id: 'conv_1' }, commands: [] },
+  };
   await mount(
     createElement(() => {
       voice = useVoice(pi as never);
@@ -160,6 +164,7 @@ test('a request is answered, and voice listens again, though another conversatio
   const { createElement, useState } = await import('react');
   const { act } = await import('react-dom/test-utils');
   const pi = (id: string) => ({
+    transport: toolTransport,
     selected: id,
     snapshot: { conversation: { id }, commands: [] },
     send: async () => true,

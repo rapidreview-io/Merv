@@ -260,3 +260,41 @@ test('Pi relay always supplies medium for Astra even when a worker asks for less
   assert.ok(payload);
   assert.deepEqual((payload as Record<string, unknown>).reasoning, { effort: 'medium' });
 });
+
+test('a trusted adapter can open profiled voice without changing the intake model or tools', async (t) => {
+  const keyEnv = 'MERV_TEST_CUSTOMER_VOICE_KEY';
+  const previous = process.env[keyEnv];
+  process.env[keyEnv] = 'fixture-only';
+  t.after(() => {
+    if (previous === undefined) delete process.env[keyEnv];
+    else process.env[keyEnv] = previous;
+  });
+  const f = await fixture(t, { pi: { models: [...models], modelApiKeyEnv: keyEnv } });
+  const unregister = f.pi.registerProfile(profile);
+  const conversation = await f.pi.createProfiled(f.operator, input);
+  let opened = 0;
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    opened++;
+    const body = JSON.parse(init.body as string);
+    assert.deepEqual(body.session.delegation, { type: 'client' });
+    return Response.json({ session: { id: 'voice-fixture' }, transport: { sdp: 'answer' } });
+  });
+  await assert.rejects(
+    f.pi.voice(f.operator, { id: conversation.id, sdp: 'offer' }),
+    code('pi_profile_fixed'),
+  );
+  assert.deepEqual(
+    await f.pi.voice(f.operator, { id: conversation.id, sdp: 'offer' }, { allowProfile: true }),
+    { sessionId: 'voice-fixture', sdp: 'answer' },
+  );
+  assert.equal(
+    (await f.pi.snapshot(f.operator, conversation.id)).conversation.model,
+    'gpt-6-astra',
+  );
+  unregister();
+  await assert.rejects(
+    f.pi.voice(f.operator, { id: conversation.id, sdp: 'offer' }, { allowProfile: true }),
+    code('pi_profile_unavailable'),
+  );
+  assert.equal(opened, 1);
+});

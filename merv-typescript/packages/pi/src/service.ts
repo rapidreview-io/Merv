@@ -605,17 +605,22 @@ export class PiService implements Pi {
 
   /** pi.voice {id, sdp}: a GPT-Live session for this conversation, opened here with the model
    *  key and seeded with its last turns; the browser gets back only the WebRTC answer. */
-  async voice(caller: Caller, input: unknown): Promise<{ sessionId: string; sdp: string }> {
+  async voice(
+    caller: Caller,
+    input: unknown,
+    options?: { allowProfile: boolean },
+  ): Promise<{ sessionId: string; sdp: string }> {
     this.core.ready();
     const { id, sdp } = parse(voiceInput, input);
     const { commands, userId } = await this.core.read(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       check(
-        !conversation.profile,
+        !conversation.profile || options?.allowProfile === true,
         'pi_profile_fixed',
         'This conversation role uses its fixed text model',
         403,
       );
+      if (conversation.profile) this.core.conversationModel(conversation);
       return { userId: conversation.userId, commands: await this.core.commands(tx, id) };
     });
     const key = process.env[this.config.modelApiKeyEnv];

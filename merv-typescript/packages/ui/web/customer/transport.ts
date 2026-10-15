@@ -14,6 +14,8 @@ const isSnapshot = (value: unknown): value is PiSnapshot =>
 export function customerTransport(): PiTransport {
   const snapshot = () => customerRequest<PiSnapshot>('/chat');
   return {
+    voice: (_id, sdp) =>
+      customerRequest<{ sdp: string }>('/chat/voice', { method: 'POST', body: { sdp } }),
     list: async () => [(await snapshot()).conversation] satisfies PiConversation[],
     snapshot: () => snapshot(),
     send: (_id, { commandId, text }) =>

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { MemoryRouter } from 'react-router-dom';
 import type { createClient } from '@supabase/supabase-js';
 import { Records } from '../navigation';
-import { Composer, Transcript } from '../views/pi';
+import { Speak, Transcript } from '../views/pi';
+import { Floating } from '../views/pi-dock';
+import { useVoice, type Voice } from '../views/pi-voice';
 import { useConversation, type Conversation } from '../views/pi-conversation';
 import { customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
@@ -165,7 +167,13 @@ function useView(): [View, (next: View) => void] {
 function Experiment() {
   const transport = useMemo(customerTransport, []);
   const pi = useConversation(transport);
-  const [view, go] = useView();
+  const voice = useVoice(pi);
+  const [hidden, setHidden] = useState(false);
+  const [view, navigate] = useView();
+  const go = (next: View) => {
+    setHidden(false);
+    navigate(next);
+  };
   const [plan, reloadPlan] = usePoll<Plan>('/plan', view === 'plan' ? 4000 : 10_000);
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
   const [request] = usePoll<{ state?: string }>('', 15_000);
@@ -201,6 +209,7 @@ function Experiment() {
       <Header home={view === 'arrive' ? undefined : home}>{nav}</Header>
       {view === 'arrive' && (
         <Arrive
+          voice={voice}
           pi={pi}
           size={files?.totalBytes ?? null}
           frozen={frozen}
@@ -212,7 +221,7 @@ function Experiment() {
           expand={() => go('chat')}
         />
       )}
-      {view === 'chat' && <Chat pi={pi} />}
+      {view === 'chat' && <Chat pi={pi} voice={voice} />}
       {view === 'plan' && (
         <div className="cx-plan-layout">
           <PlanEditor
@@ -223,19 +232,27 @@ function Experiment() {
               reloadPlan();
             }}
           />
-          <Chat pi={pi} docked />
         </div>
       )}
       {view === 'files' && <FileManager uploader={uploader} frozen={frozen} />}
+      {(view === 'plan' || view === 'files' || (voice.compact && voice.state !== 'off')) &&
+        (hidden && voice.state === 'off' ? (
+          <button className="btn cx-chat-reopen" onClick={() => setHidden(false)}>
+            Chat
+          </button>
+        ) : (
+          <Floating pi={pi} voice={voice} expand={() => go('chat')} hide={() => setHidden(true)} />
+        ))}
       <UploadTray uploader={uploader} />
     </div>
   );
 }
 
 /** The reused Pi transcript and composer, and how the conversation stands when it cannot. */
-function Chat({ pi, docked }: { pi: Conversation; docked?: boolean }) {
+function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
+  if (voice.compact && voice.state !== 'off') return null;
   return (
-    <section className={`cx-chat${docked ? ' cx-chat--docked' : ''}`} aria-label="Chat">
+    <section className="cx-chat" aria-label="Chat">
       {pi.listed ? (
         <Transcript pi={pi} />
       ) : (
@@ -265,7 +282,7 @@ function Chat({ pi, docked }: { pi: Conversation; docked?: boolean }) {
           Retry
         </button>
       )}
-      {pi.listed && <Composer pi={pi} rows={docked ? 2 : 3} />}
+      {pi.listed && <Speak pi={pi} voice={voice} rows={3} />}
     </section>
   );
 }
@@ -276,6 +293,7 @@ function Chat({ pi, docked }: { pi: Conversation; docked?: boolean }) {
  */
 function Arrive({
   pi,
+  voice,
   size,
   frozen,
   open,
@@ -283,6 +301,7 @@ function Arrive({
   expand,
 }: {
   pi: Conversation;
+  voice: Voice;
   size: number | null;
   frozen: boolean;
   open(): void;
@@ -327,7 +346,7 @@ function Arrive({
         <span>Drop datasets, papers, context</span>
         {size !== null && <span className="cx-chip mono">{formatBytes(size)}</span>}
       </button>
-      <Chat pi={pi} />
+      <Chat pi={pi} voice={voice} />
     </div>
   );
 }

@@ -11,7 +11,8 @@
   margin: 0 auto;
   padding: 0 var(--space-4) var(--space-4);
 }
-/* The chat and the plan fill the window; their own parts scroll. */
+/* Conversation views fill the window; the transcript scrolls above the composer. */
+.cx-page--arrive,
 .cx-page--chat,
 .cx-page--plan {
   height: 100dvh;
@@ -97,11 +98,13 @@ button.cx-brand {
 /* Arrive: the drop zone, then the chat under it. */
 .cx-arrive {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
 }
 .cx-drop {
+  flex: none;
   display: grid;
   justify-items: center;
   align-content: center;
@@ -132,10 +135,6 @@ button.cx-brand {
   font-size: var(--text-xs);
   font-weight: 400;
 }
-.cx-arrive .cx-chat {
-  height: max(360px, calc(100dvh - 56px - 180px - 2 * var(--space-4)));
-}
-
 /* The chat: the transcript scrolls between the header and the composer. */
 .cx-chat {
   flex: 1;
@@ -148,6 +147,9 @@ button.cx-brand {
   margin: 0;
   font-size: var(--text-sm);
 }
+.cx-chat .pi-compose {
+  flex: none;
+}
 .cx-chat .pi-compose .textarea {
   resize: none;
 }
@@ -157,7 +159,7 @@ button.cx-brand {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-5);
 }
 .cx-plan {
@@ -228,13 +230,13 @@ button.cx-brand {
 /* The plan in the report card's language (packages/reports/src/format/html.ts): paper, serif
    body, Geist labels, a two-half band, a rule, then blocks in three columns. */
 .plan-card {
-  --pc-ink: #111113;
-  --pc-text: #2b2b2e;
-  --pc-muted: #6b6b70;
+  --pc-ink: var(--text);
+  --pc-text: var(--text);
+  --pc-muted: var(--muted);
   container-type: inline-size;
   flex: none;
   padding: 36px 44px 44px;
-  background: #fff;
+  background: var(--bg-elev);
   color: var(--pc-text);
   border-radius: 6px;
   font-family: 'Source Serif 4', Georgia, serif;
@@ -358,7 +360,7 @@ button.cx-brand {
     0.86em 'Geist Mono',
     ui-monospace,
     monospace;
-  background: #f1f1ee;
+  background: var(--bg-soft);
   color: var(--pc-text);
   border-radius: 3px;
 }
@@ -882,4 +884,19 @@ button.cx-brand {
     right: 16px;
     width: auto;
   }
+}
+
+/* Use Pi's movable conversation window over the rendered plan and file browser. */
+.cx-page .pi-dock {
+  max-width: calc(100vw - 2 * var(--space-4));
+  max-height: calc(100dvh - 72px);
+}
+.cx-chat-reopen {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 4;
+}
+.cx-chat > .voice {
+  flex: none;
 }

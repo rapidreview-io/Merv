@@ -153,6 +153,15 @@ async function fixture(t: TestContext, options: { version?: number; identity?: b
       calls.push({ method: 'send', caller, id, input });
       return { id: 'command' };
     },
+    async voice(
+      caller: Caller,
+      input: { id: string; sdp: string },
+      options: { allowProfile: boolean },
+    ) {
+      assert.deepEqual(options, { allowProfile: true });
+      calls.push({ method: 'voice', caller, id: input.id, input });
+      return { sdp: 'answer', sessionId: 'private-session' };
+    },
     async stop(caller: Caller, id: string) {
       calls.push({ method: 'stop', caller, id });
       return sponsorSnapshot(id);
@@ -460,4 +469,22 @@ test('identity verifies anonymous users only for a caller that opts in', async (
   });
   const scope = await createService(new ProjectScope(state));
   await assert.rejects(scope.members.acceptVerifiedIdentity(verified), { status: 401 });
+});
+
+test('customer voice uses only the bound request conversation and requires customer identity', async (t) => {
+  const f = await fixture(t);
+  await f.send('/session', f.customer, 'alice', {});
+  const answer = await f.send('/chat/voice', f.customer, 'alice', { sdp: 'offer' });
+  assert.equal(answer.status, 200);
+  assert.deepEqual(answer.body, { sdp: 'answer' });
+  const call = f.calls.find((call) => call.method === 'voice')!;
+  assert.equal(call.id, 'pi_fixture');
+  assert.deepEqual(call.input, { id: 'pi_fixture', sdp: 'offer' });
+  assert.notEqual((await f.send('/chat/voice', f.customer, 'bob', { sdp: 'offer' })).status, 200);
+  assert.notEqual((await f.send('/chat/voice', f.agent, 'alice', { sdp: 'offer' })).status, 200);
+  assert.notEqual(
+    (await f.send('/chat/voice', f.customer, 'alice', { id: 'other', sdp: 'offer' })).status,
+    200,
+  );
+  assert.equal(f.calls.filter((call) => call.method === 'voice').length, 1);
 });

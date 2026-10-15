@@ -8,8 +8,8 @@
  * the app, and the floating window holds its panel away from the Agent page.
  */
 import { useEffect, useRef, useState } from 'react';
-import { call } from '../api';
 import type { PiCommand, PiSnapshot } from '@merv/pi/models';
+import { Icon } from '../icons';
 import type { Conversation } from './pi-conversation';
 
 /** How long a session may go without anyone speaking, and no answer pending, before it closes. */
@@ -89,6 +89,8 @@ const level = (analyser?: AnalyserNode) => {
 /** The voice session of one conversation: its state, its two captions, and its controls. */
 export function useVoice(pi: Conversation | null) {
   const [state, setState] = useState<VoiceState>('off');
+  const [compact, setCompact] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [heard, setHeard] = useState('');
   const [said, setSaid] = useState('');
   const [problem, setProblem] = useState('');
@@ -116,6 +118,8 @@ export function useVoice(pi: Conversation | null) {
       held.audio.srcObject = null;
       void held.context.close().catch(() => undefined);
     }
+    setPaused(false);
+    setCompact(false);
     setState('off');
     setMuted(false);
   };
@@ -202,7 +206,7 @@ export function useVoice(pi: Conversation | null) {
 
   const start = async () => {
     const id = pi?.snapshot?.conversation.id;
-    if (live.current || !pi || !id) return;
+    if (live.current || !pi || !id || !pi.transport.voice) return;
     setProblem('');
     setHeard('');
     setSaid('');
@@ -266,10 +270,7 @@ export function useVoice(pi: Conversation | null) {
           }
         });
       });
-      const answer = await call<{ sdp: string }>('pi.voice', {
-        id,
-        sdp: pc.localDescription!.sdp,
-      });
+      const answer = await pi.transport.voice(id, pc.localDescription!.sdp);
       if (live.current !== held) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
       // The machine starts now, so the first request does not wait for it.
@@ -313,7 +314,7 @@ export function useVoice(pi: Conversation | null) {
   const away = asked !== pi?.snapshot?.conversation.id && asked;
   useEffect(() => {
     if (!away) return;
-    const look = () => void call<PiSnapshot>('pi.snapshot', { id: away }).then(answered, () => {});
+    const look = () => void pi?.transport.snapshot(away).then(answered, () => {});
     look();
     const timer = setInterval(look, 5_000);
     return () => clearInterval(timer);
@@ -339,6 +340,18 @@ export function useVoice(pi: Conversation | null) {
   useEffect(() => () => teardown(), []);
 
   return {
+    compact,
+    setCompact,
+    paused,
+    pause: () => {
+      const held = live.current;
+      if (!held) return;
+      const next = !paused;
+      held.audio.muted = next;
+      for (const track of held.mic?.getAudioTracks() ?? []) track.enabled = !next && !muted;
+      send(next || muted ? 'session.input_audio.mute' : 'session.input_audio.unmute');
+      setPaused(next);
+    },
     state,
     heard,
     said,
@@ -350,8 +363,8 @@ export function useVoice(pi: Conversation | null) {
       const held = live.current;
       if (!held) return;
       const next = !muted;
-      for (const track of held.mic?.getAudioTracks() ?? []) track.enabled = !next;
-      send(next ? 'session.input_audio.mute' : 'session.input_audio.unmute');
+      for (const track of held.mic?.getAudioTracks() ?? []) track.enabled = !next && !paused;
+      send(next || paused ? 'session.input_audio.mute' : 'session.input_audio.unmute');
       setMuted(next);
     },
     /** How loud the person and the voice are right now, 0 to 1. */
@@ -372,12 +385,30 @@ const WORDS: Record<VoiceState, string> = {
 /** Where the composer stood while voice is on: the orb, what was last said, and two controls. */
 export function VoicePanel({ voice, progress }: { voice: Voice; progress?: string }) {
   const orb = useRef<HTMLDivElement>(null);
+  const clickTimer = useRef<ReturnType<typeof setTimeout>>();
+  const current = useRef(voice);
+  current.current = voice;
+  useEffect(() => () => clearTimeout(clickTimer.current), []);
+  const showChat = () => {
+    clearTimeout(clickTimer.current);
+    voice.setCompact(false);
+  };
+  const pause = () => {
+    clearTimeout(clickTimer.current);
+    voice.pause();
+  };
   const { state } = voice;
   useEffect(() => {
     let frame = 0;
     const draw = () => {
       const { input, output } = voice.levels();
-      const now = state === 'speaking' ? output : state === 'listening' && !voice.muted ? input : 0;
+      const now = voice.paused
+        ? 0
+        : state === 'speaking'
+          ? output
+          : state === 'listening' && !voice.muted
+            ? input
+            : 0;
       orb.current?.style.setProperty('--level', now.toFixed(3));
       frame = requestAnimationFrame(draw);
     };
@@ -390,26 +421,89 @@ export function VoicePanel({ voice, progress }: { voice: Voice; progress?: strin
       : state === 'working'
         ? voice.heard || progress || ''
         : voice.heard || voice.said;
+  if (voice.compact)
+    return (
+      <section
+        className="voice voice--sphere"
+        data-state={voice.paused ? 'paused' : state}
+        aria-label="Voice"
+      >
+        <button
+          className="voice-sphere-button"
+          aria-label={voice.paused ? 'Resume voice' : 'Pause voice'}
+          aria-pressed={voice.paused}
+          onClick={(event) => {
+            if (event.detail === 0) return pause();
+            clearTimeout(clickTimer.current);
+            if (event.detail === 1)
+              clickTimer.current = setTimeout(() => current.current.pause(), 320);
+          }}
+          onDoubleClick={showChat}
+        >
+          <div className="voice-orb" ref={orb} aria-hidden="true" />
+        </button>
+        <div className="voice-hover-controls" role="group" aria-label="Voice controls">
+          <button type="button" onClick={showChat} title="Show chat">
+            <Icon name="chat" size={18} />
+            <span className="sr-only">Chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={pause}
+            title={voice.paused ? 'Resume audio' : 'Pause audio'}
+          >
+            <Icon name={voice.paused ? 'play' : 'pause'} size={18} />
+            <span className="sr-only">{voice.paused ? 'Resume' : 'Pause'}</span>
+          </button>
+          <button
+            type="button"
+            title="End audio"
+            className="voice-close"
+            onClick={() => {
+              clearTimeout(clickTimer.current);
+              voice.stop();
+            }}
+          >
+            <Icon name="close" size={18} />
+            <span className="sr-only">Close</span>
+          </button>
+        </div>
+        <span className="sr-only" role="status">
+          {voice.paused ? 'Paused' : WORDS[state]}. {voice.problem || caption}
+        </span>
+      </section>
+    );
   return (
-    <section className="voice" data-state={state} aria-label="Voice">
+    <section
+      className={`voice${voice.compact ? ' voice--compact' : ''}`}
+      data-state={state}
+      aria-label="Voice"
+    >
       <button
         type="button"
         className="voice-control"
-        aria-pressed={voice.muted}
-        onClick={voice.mute}
+        aria-pressed={voice.paused || voice.muted}
+        onClick={voice.paused ? voice.pause : voice.mute}
         disabled={state === 'connecting' || state === 'closing'}
       >
-        {voice.muted ? 'Unmute' : 'Mute'}
+        {voice.paused ? 'Resume' : voice.muted ? 'Unmute' : 'Mute'}
       </button>
       <div className="voice-center">
         <div className="voice-orb" ref={orb} aria-hidden="true" />
         <p className="voice-state" role="status">
-          {voice.muted && state === 'listening' ? 'Muted' : WORDS[state]}
+          {voice.paused ? 'Paused' : voice.muted && state === 'listening' ? 'Muted' : WORDS[state]}
         </p>
         <p className="voice-caption" aria-live="polite">
           {voice.problem || caption}
         </p>
       </div>
+      <button
+        type="button"
+        className="voice-control voice-display"
+        onClick={() => voice.setCompact(!voice.compact)}
+      >
+        {voice.compact ? 'Show chat' : 'Collapse to voice'}
+      </button>
       <button type="button" className="voice-control voice-end" onClick={voice.stop}>
         End
       </button>

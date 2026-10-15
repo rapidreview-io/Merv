@@ -22,6 +22,7 @@ import { useMenu } from '../record-picker';
 import { useConversation, type Conversation } from './pi-conversation';
 import { useVoice, VoicePanel, type Voice } from './pi-voice';
 import { useScreenAnswer } from './pi-screen';
+import { Floating } from './pi-dock';
 
 /** Under a turn that ended early, and any words it had written: why, with the step after it.
  * Stopping it yourself needs only the word. */
@@ -331,7 +332,7 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
         }}
       />
       {/* Beside the box: voice mode over Send, which is Stop while an answer runs. A page that
-          gives no voice (the customer page) has no Audio. */}
+          gives no voice has no Audio. */}
       <div className="pi-compose-actions">
         {voice && (
           <button
@@ -369,7 +370,7 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
 }
 
 function PiConversationPage() {
-  const { pi, start } = useAgent()!;
+  const { pi, start, voice } = useAgent()!;
   const [params] = useSearchParams();
   const requested = params.get('conversation');
   const opened = useRef<string | null>(null);
@@ -389,6 +390,15 @@ function PiConversationPage() {
   if (!pi) return <Notice>Opening conversations…</Notice>;
   const { listed, error, streamError, unavailable, busy, blocked, snapshot, host, title } = pi;
   const { conversations, selected } = pi;
+  if (voice.compact && voice.state !== 'off')
+    return (
+      <Floating
+        pi={pi}
+        voice={voice}
+        expand={() => voice.setCompact(false)}
+        hide={() => voice.setCompact(false)}
+      />
+    );
   return (
     <div className="page-stage pi-page">
       {!listed && !error && <p role="status">Opening conversations…</p>}
@@ -517,8 +527,18 @@ function PiConversationPage() {
 }
 
 /** The page's composer, or, while voice is on, the voice panel in its place. */
-export function Speak({ pi, rows = 3 }: { pi: Conversation; rows?: number }) {
-  const { voice } = useAgent()!;
+export function Speak({
+  pi,
+  rows = 3,
+  voice: supplied,
+}: {
+  pi: Conversation;
+  rows?: number;
+  voice?: Voice;
+}) {
+  const agent = useAgent();
+  const voice = supplied ?? agent?.voice;
+  if (!voice) return <Composer pi={pi} rows={rows} />;
   return voice.state === 'off' ? (
     <>
       {voice.problem && (

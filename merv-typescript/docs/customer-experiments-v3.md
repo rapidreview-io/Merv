@@ -7,7 +7,7 @@ Requests on v1/v2 keep their current behaviour and page; nothing pinned changes.
 
 - **Chat is the existing Pi intake conversation.** The request already owns one Pi
   conversation (profile `customer-experiments-intake`, created by the sponsor caller in
-  `service.ts`). The customer reaches *that* conversation through a narrow adapter in
+  `service.ts`). The customer reaches _that_ conversation through a narrow adapter in
   customer-experiments that calls the existing `PiService` (`snapshot`, `send`, `stop`) and
   the existing Pi event stream as the sponsor caller. No second chat model, store or
   protocol. `@merv/pi` only gains a small exported seam so another plugin can serve the
@@ -16,7 +16,7 @@ Requests on v1/v2 keep their current behaviour and page; nothing pinned changes.
   `Composer`) and `pi-conversation.ts` (`useConversation`) gain a transport seam (how to
   snapshot, send, stop and open the event stream). The main app passes today's transport
   unchanged; the customer page passes one pointing at the adapter routes. Features the
-  customer must not have (model picker, machine, proposals, record links, voice) are turned
+  customer must not have (model picker, machine, proposals, record links) are turned
   off by props/absence, not forked.
 - **Storage is the existing per-request bucket** (`RequestBuckets` in `data.ts`, S3 API, R2
   in production), extended with multipart presigning, listing, rename, delete and expiry.
@@ -59,27 +59,27 @@ calls `supabase.auth.signInAnonymously()`; same Supabase project, anonymous sign
 
 Customer role = capability + bound identity unless noted.
 
-| Route | Who | Purpose |
-|---|---|---|
-| `GET /session` | capability only | `{ version, bound, login: { url, publishableKey } }` |
-| `POST /session` `{takeOver?}` | capability + identity | bind on first call; mismatch → 409 `bound_elsewhere` unless takeOver |
-| `GET /` | agent or customer | existing snapshot, plus v3 fields below |
-| `GET /chat` | customer | Pi snapshot of the intake conversation, sponsor-only fields removed |
-| `POST /chat/messages` `{commandId,text}` | customer | `PiService.send` |
-| `POST /chat/stop` | customer | `PiService.stop` (if Pi exposes it; else omit) |
-| `GET /chat/events` | customer | the same SSE stream `/pi/<id>/events` serves |
-| `GET /plan` | agent or customer | plan view (below) |
-| `PUT /plan` `{expectedRevision, document}` | customer | edit while `drafting` or `changes_requested` |
-| `POST /plan/submit` `{expectedRevision}` | customer | → `verifying`; posts a turn to the intake agent |
-| `POST /checkout` `{contractVersion}` | customer | v3: accept + Stripe checkout in one step, $10 |
-| `GET /files?prefix=&cursor=` | customer or agent | `{ folders:[{prefix,size,count}], files:[{key,size,uploaded}], cursor, totalBytes, limitBytes, deleteAt, deletionPolicy }` |
-| `POST /files/uploads` `{key,size,contentType}` | customer | multipart create; `{ uploadId, partSize, parts:[{partNumber,url}] }` (presigned PUT, browser → bucket directly) |
-| `POST /files/uploads/:uploadId/parts` `{key, partNumbers}` | customer | more presigned part URLs (resume) |
-| `POST /files/uploads/:uploadId/complete` `{key, parts:[{partNumber,etag}]}` | customer | complete |
-| `DELETE /files/uploads/:uploadId?key=` | customer | abort |
-| `POST /files/rename` `{from,to}` | customer | copy + delete (folders: every object under the prefix) |
-| `DELETE /files?key=` or `?prefix=` | customer | delete file or folder |
-| `GET /files/download?key=` | customer or agent | `{ url }` short-lived presigned GET |
+| Route                                                                       | Who                   | Purpose                                                                                                                    |
+| --------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GET /session`                                                              | capability only       | `{ version, bound, login: { url, publishableKey } }`                                                                       |
+| `POST /session` `{takeOver?}`                                               | capability + identity | bind on first call; mismatch → 409 `bound_elsewhere` unless takeOver                                                       |
+| `GET /`                                                                     | agent or customer     | existing snapshot, plus v3 fields below                                                                                    |
+| `GET /chat`                                                                 | customer              | Pi snapshot of the intake conversation, sponsor-only fields removed                                                        |
+| `POST /chat/messages` `{commandId,text}`                                    | customer              | `PiService.send`                                                                                                           |
+| `POST /chat/stop`                                                           | customer              | `PiService.stop` (if Pi exposes it; else omit)                                                                             |
+| `GET /chat/events`                                                          | customer              | the same SSE stream `/pi/<id>/events` serves                                                                               |
+| `GET /plan`                                                                 | agent or customer     | plan view (below)                                                                                                          |
+| `PUT /plan` `{expectedRevision, document}`                                  | customer              | edit while `drafting` or `changes_requested`                                                                               |
+| `POST /plan/submit` `{expectedRevision}`                                    | customer              | → `verifying`; posts a turn to the intake agent                                                                            |
+| `POST /checkout` `{contractVersion}`                                        | customer              | v3: accept + Stripe checkout in one step, $10                                                                              |
+| `GET /files?prefix=&cursor=`                                                | customer or agent     | `{ folders:[{prefix,size,count}], files:[{key,size,uploaded}], cursor, totalBytes, limitBytes, deleteAt, deletionPolicy }` |
+| `POST /files/uploads` `{key,size,contentType}`                              | customer              | multipart create; `{ uploadId, partSize, parts:[{partNumber,url}] }` (presigned PUT, browser → bucket directly)            |
+| `POST /files/uploads/:uploadId/parts` `{key, partNumbers}`                  | customer              | more presigned part URLs (resume)                                                                                          |
+| `POST /files/uploads/:uploadId/complete` `{key, parts:[{partNumber,etag}]}` | customer              | complete                                                                                                                   |
+| `DELETE /files/uploads/:uploadId?key=`                                      | customer              | abort                                                                                                                      |
+| `POST /files/rename` `{from,to}`                                            | customer              | copy + delete (folders: every object under the prefix)                                                                     |
+| `DELETE /files?key=` or `?prefix=`                                          | customer              | delete file or folder                                                                                                      |
+| `GET /files/download?key=`                                                  | customer or agent     | `{ url }` short-lived presigned GET                                                                                        |
 
 Files rules: any file type; keys are normalised relative paths (no `..`, no leading `/`,
 ≤ 1024 bytes); total per request ≤ 1 TB (enforced at upload create against listed size +
@@ -93,7 +93,7 @@ contract is accepted (the manifest is frozen into it), and after deletion.
   customer in the page, the intake agent with tools. Optimistic concurrency via
   `expectedRevision`. Statuses: `drafting` → `verifying` → `changes_requested` | `accepted`.
 - `GET /plan` → `{ revision, document, updatedBy: 'customer'|'agent', updatedAt, status,
-  feedback, contract: null | { version, priceCents, currency, limits } }`.
+feedback, contract: null | { version, priceCents, currency, limits } }`.
 - The agent signals "plan ready" by writing the document; the page shows the Plan nav dot
   once the document is non-empty.
 - `POST /plan/submit` sets `verifying` and sends a turn into the intake conversation
@@ -101,13 +101,13 @@ contract is accepted (the manifest is frozen into it), and after deletion.
   verifies: resources fit the limits (24 worker hours, 500M tokens, 2 attempts), scope is
   executable, the files it needs are present. It calls:
   - `customer_experiments.plan_read` / `customer_experiments.plan_write
-    {expectedRevision, document}` (agent edits while drafting), and
+{expectedRevision, document}` (agent edits while drafting), and
   - `customer_experiments.plan_verify { revision, decision: 'accept'|'changes_requested',
-    feedback, question, criteria[], limits{wallMinutes,maxTokens,maxAttempts} }`.
-  `changes_requested` returns the plan to the customer with the feedback shown in chat and
-  on the plan. `accept` freezes the contract: document + revision + the structured summary
-  (question, criteria, limits) + the file manifest (keys, sizes, etags) + price $10, and
-  moves the workflow to `ready`.
+feedback, question, criteria[], limits{wallMinutes,maxTokens,maxAttempts} }`.
+    `changes_requested` returns the plan to the customer with the feedback shown in chat and
+    on the plan. `accept` freezes the contract: document + revision + the structured summary
+    (question, criteria, limits) + the file manifest (keys, sizes, etags) + price $10, and
+    moves the workflow to `ready`.
 - Structure is relaxed: only `question`, `criteria` and `limits` are structured, filled by
   the agent at verification. Report prefill (`report-subject.ts`) uses those and the
   document; execution reads the document as its specification.
@@ -136,3 +136,21 @@ Served at `/customer-experiments/r/:id` for v3 requests (v1/v2 keep `customer-pa
 3. **Plan** — editable Markdown document (read-only while verifying/accepted), status,
    agent feedback, Submit; a docked chat panel; after acceptance "Pay $10" → Stripe.
 4. **Files** — the braziliano file manager, plus the deletion notice.
+
+## Pi conversation integration
+
+The customer uses Pi's existing conversation and voice controllers with the customer transport.
+Audio offers go through `POST /chat/voice`, authorized with the request capability and bound
+browser identity. The adapter selects the intake conversation server-side and opens Pi voice;
+voice delegates work to that same fixed-profile intake, with its existing model and tools.
+The normal `pi.voice` tool still refuses profiled conversations. No customer-supplied ID or
+profile override is accepted. Missing voice configuration is reported through Pi's voice UI.
+
+Opening the rendered plan or Files puts the same conversation in Pi's draggable floating
+window. Expand returns to full chat; Close hides the window and Chat reopens it. Drafts,
+streaming replies and audio remain owned above the views, so navigation does not restart them.
+
+During audio, **Collapse to voice** reduces the UI to a draggable 64px sphere. Hover or
+keyboard focus reveals Chat, Pause/Resume and Close; touch devices keep controls visible.
+A single click pauses/resumes the microphone and speaker; double-click restores chat without
+pausing. Chat restores the transcript without reconnecting audio. Close ends the call.
