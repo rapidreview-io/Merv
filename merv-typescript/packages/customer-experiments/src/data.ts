@@ -302,6 +302,36 @@ export class RequestBuckets implements DatasetStorage, RequestFileStorage {
       ExposeHeaders: ['ETag'],
       MaxAgeSeconds: 600,
     });
+    await this.corsApplied(id);
+  }
+  /**
+   * A new bucket's CORS rule takes effect seconds after it is set, and a browser upload sent before
+   * then is refused as a network error. Wait (at most a minute) until the bucket answers the page's
+   * preflight before handing out upload URLs.
+   */
+  private async corsApplied(id: string, deadline = Date.now() + 60_000) {
+    const url = `${this.options.endpoint}/${this.bucket(id)}/cors-check`;
+    for (;;) {
+      const allowed = await fetch(url, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: this.options.publicOrigin,
+          'Access-Control-Request-Method': 'PUT',
+          'Access-Control-Request-Headers': 'content-type',
+        },
+        signal: AbortSignal.timeout(10_000),
+      })
+        .then((r) => r.headers.get('access-control-allow-origin') === this.options.publicOrigin)
+        .catch(() => false);
+      if (allowed) return;
+      check(
+        Date.now() < deadline,
+        'files_unavailable',
+        'File storage is still being prepared. Try again in a minute.',
+        503,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   }
   private send<T>(command: { input: unknown }): Promise<T> {
     const send = this.files.send.bind(this.files) as (c: unknown, o: unknown) => Promise<unknown>;
