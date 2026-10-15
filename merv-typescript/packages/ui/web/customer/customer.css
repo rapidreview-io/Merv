@@ -927,3 +927,7 @@ button.cx-brand {
 .cx-chat > .voice {
   flex: none;
 }
+/* The customer page separates the composer from the conversation with space, not a rule. */
+.cx-page .pi-compose {
+  border-top: 0;
+}
