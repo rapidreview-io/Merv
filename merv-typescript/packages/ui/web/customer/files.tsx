@@ -546,6 +546,13 @@ export function UploadTray({ uploader }: { uploader: Uploader }) {
     window.addEventListener('beforeunload', leaving);
     return () => window.removeEventListener('beforeunload', leaving);
   }, [uploader]);
+  // A clean finish clears itself after a moment; a failure stays until it is dismissed.
+  const settled = view.items.length > 0 && !view.live && !view.failed;
+  useEffect(() => {
+    if (!settled) return;
+    const timer = setTimeout(() => uploader.clear(), 4000);
+    return () => clearTimeout(timer);
+  }, [settled, view.items.length, uploader]);
   if (!view.items.length) return null;
   const counted = view.items.filter((item) => item.state !== 'cancelled').length;
   return (
