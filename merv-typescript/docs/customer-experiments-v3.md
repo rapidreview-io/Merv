@@ -28,23 +28,32 @@ Requests on v1/v2 keep their current behaviour and page; nothing pinned changes.
 - UI copy rule: no helper or side text on these screens. Verbose copy only on money and
   destructive actions (payment, delete, the 48-hour deletion notice).
 
-## Identity: capability link + Supabase email code
+## Identity: capability link + Supabase anonymous user (no email)
+
+CHANGED 2026-10-14 (user): no emailing at all. Same pattern as Nisa
+(`Nisa/project/frontend/src/contexts/AuthContext.jsx`: when there is no Supabase session the page
+calls `supabase.auth.signInAnonymously()`; same Supabase project, anonymous sign-ins already on).
 
 - The link the agent gives the customer keeps its capability token in the URL fragment
   (unchanged). It alone no longer acts as the customer.
-- The page signs the person in with Supabase Auth email one-time code
-  (`supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } })` then
-  `verifyOtp({ email, token, type: 'email' })`). Supabase config comes from the identity
-  plugin (`identity.configuration().login`: url + publishable key).
-- First successful sign-in **binds** the request to that identity (issuer, subject, email).
-  Afterwards only that identity, plus the capability, acts as the customer. Binding is
-  stored in customer-experiments' own table (new migration; migrations are immutable, add a
-  new one).
+- The page creates/keeps an anonymous Supabase session automatically (persisted in
+  localStorage so the same browser stays the same person). No sign-in screen, no OTP.
+  Supabase config comes from the identity plugin (`identity.configuration().login`).
+- `@merv/identity`: `verify()` keeps refusing anonymous users by default; add an explicit
+  opt-in (e.g. `verify(token, { allowAnonymous: true })`) returning `anonymous: true`, used
+  only by customer-experiments. Read `is_anonymous` from the JWT claims.
+- First `POST /session` **binds** the request to that identity (issuer, subject). Afterwards
+  that identity plus the capability acts as the customer. Opening the link in another
+  browser shows "Open here instead"; confirming calls `POST /session {takeOver:true}`, which
+  rebinds to the new identity (capability required) and the old browser loses customer
+  access. Stored in customer-experiments' own table (new migration).
 - Every customer-role call carries both: `Authorization: Bearer <capability>` and
-  `X-Merv-Identity: <supabase access token>` (verified with `ctx.identity.verify`).
-  The `agent` capability (the customer's coding agent) stays capability-only and keeps its
-  current routes; it never gets chat-as-customer, plan edit, files write or payment.
-- The customer's email for receipts and results is the bound identity's email.
+  `X-Merv-Identity: <supabase access token>`. The `agent` capability (the customer's coding
+  agent) stays capability-only and keeps its current routes; it never gets chat-as-customer,
+  plan edit, files write or payment.
+- Email: none collected by the page. v3 checkout sends no email field; Stripe Checkout
+  collects it, and results delivery uses the email from the Stripe webhook
+  (`customer_details.email`).
 
 ## HTTP API (all under `/customer-experiments/requests/:id`)
 
@@ -52,8 +61,8 @@ Customer role = capability + bound identity unless noted.
 
 | Route | Who | Purpose |
 |---|---|---|
-| `GET /session` | capability only | `{ version, bound, emailHint, login: { url, publishableKey } }` |
-| `POST /session` | capability + identity | bind on first call, else must match; `{ email }` |
+| `GET /session` | capability only | `{ version, bound, login: { url, publishableKey } }` |
+| `POST /session` `{takeOver?}` | capability + identity | bind on first call; mismatch → 409 `bound_elsewhere` unless takeOver |
 | `GET /` | agent or customer | existing snapshot, plus v3 fields below |
 | `GET /chat` | customer | Pi snapshot of the intake conversation, sponsor-only fields removed |
 | `POST /chat/messages` `{commandId,text}` | customer | `PiService.send` |
@@ -119,7 +128,7 @@ contract is accepted (the manifest is frozen into it), and after deletion.
 
 Served at `/customer-experiments/r/:id` for v3 requests (v1/v2 keep `customer-page.ts`).
 
-1. **Arrive** — header "Merv | Experiment". Sign-in (email → code) if not bound. Then a drop
+1. **Arrive** — header "Merv | Experiment". Anonymous session created silently. A drop
    zone ("Drop datasets, papers, context") with the request's current size chip that opens
    the file manager; the chat below it.
 2. **Chat** — scrolling down makes the chat full screen; header gains "Files" and
