@@ -147,6 +147,13 @@ button.cx-brand {
   border-color: var(--muted);
   background: var(--hover);
 }
+.cx-chat-title {
+  flex: none;
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text);
+}
 .cx-chip {
   padding: 2px 10px;
   border: 1px solid var(--line);

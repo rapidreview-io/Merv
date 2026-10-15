@@ -253,7 +253,10 @@ function Experiment() {
 function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
   if (voice.compact && voice.state !== 'off') return null;
   return (
-    <section className="cx-chat" aria-label="Chat">
+    <section className="cx-chat" aria-labelledby="cx-chat-title">
+      <h2 className="cx-chat-title" id="cx-chat-title">
+        Chat
+      </h2>
       {pi.listed ? (
         <Transcript pi={pi} />
       ) : (
