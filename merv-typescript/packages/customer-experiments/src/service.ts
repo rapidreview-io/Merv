@@ -91,6 +91,18 @@ Verifying. Settle everything you can check yourself (files present and readable,
 - Returned: "Plan not approved." then a short bullet list of what needs more work, then, only if you need their input, at most two questions. Fix what you can in the plan yourself first, and say you did.
 Accepting freezes the plan and its files into the contract they pay for; only their payment releases execution. You cannot charge, execute or rent machines. Be honest about uncertainty and decline plans that cannot work rather than squeezing them into false claims.`;
 
+/** Intake profile 7: profile 6, which looks up the kind of thing the person names before
+ *  proposing any, and links what the plan names. */
+const researchedInstructions = leadInstructions
+  .replace(
+    'When something is ambiguous, look it up first and propose an answer;',
+    'When they name a kind of model, method, tool or dataset ("decision models", "reward models", "world models"), search the web for what that term means today and which releases it covers before proposing any; never substitute the nearest category you already know. When something else is ambiguous, look it up first and propose an answer;',
+  )
+  .replace(
+    'Link to every model, repository, dataset and paper by URL instead of describing it at length.',
+    'Write every model, repository, dataset and paper it names as a Markdown link to its page, e.g. [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), instead of describing it at length. Stay under 350 words.',
+  );
+
 export class CustomerService {
   /** Who a call acts as; index.ts gives it the identity plugin while one is installed. */
   readonly access = new CustomerAccess(this);
@@ -177,7 +189,7 @@ export class CustomerService {
         requestId: record.id,
         profile: {
           id: 'customer-experiments-intake',
-          version: plansDocument(exp.workflow.version) ? 6 : 1,
+          version: plansDocument(exp.workflow.version) ? 7 : 1,
           requestId: record.id,
         },
       });
@@ -587,6 +599,31 @@ export class CustomerService {
           version: 6,
           model: { id: 'gpt-6-astra', effort: 'medium' },
           instructions: leadInstructions,
+          shell: true,
+          tools: [
+            'customer_experiments.read',
+            'customer_experiments.compute_options',
+            'customer_experiments.plan_read',
+            'customer_experiments.plan_write',
+            'customer_experiments.plan_verify',
+            'customer_experiments.files',
+            'customer_experiments.file_read',
+            'customer_experiments.file_fetch',
+            'web.search',
+            'web.extract',
+            'nisa.search',
+            'nisa.semantic_search',
+            'nisa.paper',
+            'nisa.excerpts',
+          ],
+          ...scoped,
+        }),
+      () =>
+        this.pi.registerProfile({
+          id: 'customer-experiments-intake',
+          version: 7,
+          model: { id: 'gpt-6-astra', effort: 'medium' },
+          instructions: researchedInstructions,
           shell: true,
           tools: [
             'customer_experiments.read',

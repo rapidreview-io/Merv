@@ -1063,6 +1063,14 @@ button.cx-feature:hover {
   align-items: center;
   gap: 8px;
 }
+/* Reviewing is a state, not an unavailable action: it keeps its colour. */
+.cx-submit[aria-busy='true']:disabled {
+  opacity: 0.85;
+  color: #ffffff;
+  border-color: var(--active-fill);
+  background: var(--active-fill);
+  cursor: progress;
+}
 .cx-spinner {
   width: 12px;
   height: 12px;
