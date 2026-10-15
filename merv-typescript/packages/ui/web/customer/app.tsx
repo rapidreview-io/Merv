@@ -10,7 +10,7 @@ import { useConversation, type Conversation } from '../views/pi-conversation';
 import { customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
-import { Start, takePending } from './start';
+import { Start, takePending, takeVoice } from './start';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
 import { formatBytes, fromDrop, Uploader } from './uploads';
@@ -187,6 +187,14 @@ function Experiment() {
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
   const [request] = usePoll<{ state?: string }>('', 15_000);
   const uploader = useMemo(() => new Uploader({ onDone: reloadFiles }), [reloadFiles]);
+  // Audio pressed on /start opens voice as soon as the new conversation is there.
+  const wantsVoice = useRef(takeVoice());
+  useEffect(() => {
+    if (!wantsVoice.current || !pi.snapshot) return;
+    wantsVoice.current = false;
+    voice.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pi.snapshot]);
   // Files dropped on /start before the request existed go up now, in the files view.
   useEffect(() => {
     const dropped = takePending();
@@ -333,6 +341,7 @@ function Arrive({
 }) {
   const [over, setOver] = useState(false);
   const touch = useRef<number | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
   return (
     <div
       className="cx-arrive"
@@ -352,7 +361,7 @@ function Arrive({
       <button
         type="button"
         className={`cx-drop${over ? ' cx-drop--over' : ''}`}
-        onClick={open}
+        onClick={() => (frozen ? open() : picker.current?.click())}
         onDragOver={(event) => {
           if (frozen) return;
           event.preventDefault();
@@ -369,8 +378,38 @@ function Arrive({
         <span className="cx-drop-title">Chug anything</span>
         <Icon name="upload" size={20} className="cx-drop-icon" />
         <span className="cx-drop-kinds">datasets, papers, content files</span>
-        {size !== null && <span className="cx-chip cx-drop-size mono">{formatBytes(size)}</span>}
+        {size !== null && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="cx-chip cx-drop-size mono"
+            title="Your files"
+            onClick={(event) => {
+              event.stopPropagation();
+              open();
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              event.stopPropagation();
+              open();
+            }}
+          >
+            {formatBytes(size)}
+          </span>
+        )}
       </button>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])].map((file) => ({ file, path: file.name }));
+          event.target.value = '';
+          if (files.length) drop(files);
+        }}
+      />
       <Chat pi={pi} voice={voice} />
     </div>
   );

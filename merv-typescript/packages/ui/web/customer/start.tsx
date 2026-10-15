@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Icon } from '../icons';
 import { safely } from '../api';
 import { fromDrop } from './uploads';
@@ -17,6 +17,13 @@ export const takePending = () => {
   const files = pending;
   pending = [];
   return files;
+};
+/** Audio pressed on /start: voice opens once the request's conversation is there. */
+let voicePending = false;
+export const takeVoice = () => {
+  const wanted = voicePending;
+  voicePending = false;
+  return wanted;
 };
 
 /** The client request id, kept for this tab so a retried creation is the same request. */
@@ -70,13 +77,19 @@ export function Start({ opened }: { opened(id: string): void }) {
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState('');
-  const begin = async (message?: string, files: { file: File; path: string }[] = []) => {
+  const picker = useRef<HTMLInputElement>(null);
+  const begin = async (
+    message?: string,
+    files: { file: File; path: string }[] = [],
+    voice = false,
+  ) => {
     if (busy) return;
     setBusy(true);
     setError('');
     try {
       const id = await create(message);
       pending = files;
+      voicePending = voice;
       opened(id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Couldn’t start the experiment.');
@@ -88,12 +101,12 @@ export function Start({ opened }: { opened(id: string): void }) {
     if (text) void begin(text);
   };
   return (
-    <div className="cx-arrive">
+    <div className="cx-start">
       <button
         type="button"
         className={`cx-drop${over ? ' cx-drop--over' : ''}`}
         disabled={busy}
-        onClick={() => void begin()}
+        onClick={() => picker.current?.click()}
         onDragOver={(event) => {
           event.preventDefault();
           setOver(true);
@@ -109,51 +122,65 @@ export function Start({ opened }: { opened(id: string): void }) {
         <Icon name="upload" size={20} className="cx-drop-icon" />
         <span className="cx-drop-kinds">datasets, papers, content files</span>
       </button>
-      <section className="cx-chat" aria-labelledby="cx-chat-title">
-        <h2 className="cx-chat-title" id="cx-chat-title">
-          Chat
-        </h2>
-        <div className="cx-start-space" />
-        {error && (
-          <p className="pi-error" role="alert">
-            {error}
-          </p>
-        )}
-        <form
-          className="pi-compose"
-          onSubmit={(event) => {
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])].map((file) => ({ file, path: file.name }));
+          event.target.value = '';
+          if (files.length) void begin(undefined, files);
+        }}
+      />
+      <form
+        className="pi-compose cx-start-compose"
+        onSubmit={(event) => {
+          event.preventDefault();
+          send();
+        }}
+      >
+        <label htmlFor="cx-start-draft" className="sr-only">
+          What do you want to learn?
+        </label>
+        <textarea
+          id="cx-start-draft"
+          className="textarea"
+          rows={3}
+          maxLength={32_000}
+          value={draft}
+          readOnly={busy}
+          placeholder="What do you want to learn?"
+          onChange={(event) => setDraft(event.target.value)}
+          enterKeyHint="send"
+          onKeyDown={(event) => {
+            const { key, shiftKey, altKey, metaKey, ctrlKey, nativeEvent } = event;
+            if (key !== 'Enter' || shiftKey || altKey || metaKey || ctrlKey) return;
+            if (nativeEvent.isComposing) return;
             event.preventDefault();
             send();
           }}
-        >
-          <label htmlFor="cx-start-draft" className="sr-only">
-            What do you want to learn?
-          </label>
-          <textarea
-            id="cx-start-draft"
-            className="textarea"
-            rows={3}
-            maxLength={32_000}
-            value={draft}
-            readOnly={busy}
-            placeholder="What do you want to learn?"
-            onChange={(event) => setDraft(event.target.value)}
-            enterKeyHint="send"
-            onKeyDown={(event) => {
-              const { key, shiftKey, altKey, metaKey, ctrlKey, nativeEvent } = event;
-              if (key !== 'Enter' || shiftKey || altKey || metaKey || ctrlKey) return;
-              if (nativeEvent.isComposing) return;
-              event.preventDefault();
-              send();
-            }}
-          />
-          <div className="pi-compose-actions">
-            <button className="btn btn--primary" type="submit" disabled={busy || !draft.trim()}>
-              {busy ? 'Starting…' : 'Send'}
-            </button>
-          </div>
-        </form>
-      </section>
+        />
+        <div className="pi-compose-actions">
+          <button
+            className="btn"
+            type="button"
+            disabled={busy}
+            title="Talk with Merv"
+            onClick={() => void begin(undefined, [], true)}
+          >
+            Audio
+          </button>
+          <button className="btn btn--primary" type="submit" disabled={busy || !draft.trim()}>
+            {busy ? 'Starting…' : 'Send'}
+          </button>
+        </div>
+      </form>
+      {error && (
+        <p className="pi-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
