@@ -204,8 +204,11 @@ test('the customer page signs in silently, keeps the capability off the address 
   await settle(0);
   assert.equal(text().includes('Chug anything'), false);
   assert.match(text(), /Files/);
-  assert.match(text(), /Plan/);
-  assert.equal(document.querySelector('.cx-dot'), null);
+  // No plan yet: no Plan button.
+  assert.equal(
+    [...document.querySelectorAll('.cx-nav-button')].some((b) => b.textContent === 'Plan'),
+    false,
+  );
 });
 
 test('the plan is edited against its revision, submitted, and paid for once accepted', async (t) => {
@@ -240,8 +243,8 @@ test('the plan is edited against its revision, submitted, and paid for once acce
       .dispatchEvent(new window.WheelEvent('wheel', { deltaY: 40, bubbles: true }));
   });
   await settle(0);
-  // A written document lights the Plan button's dot.
-  assert.ok(document.querySelector('.cx-dot'));
+  // A written document brings the Plan button.
+  assert.ok([...document.querySelectorAll('.cx-nav-button')].some((b) => b.textContent === 'Plan'));
   await write('Keep this draft while I read the plan');
   await click('Plan');
   await settle(10);
