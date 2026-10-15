@@ -4,6 +4,7 @@ import type {} from '@merv/pi/types';
 import type {} from '@merv/sessions/types';
 import type {} from '@merv/code-work/types';
 import type {} from '@merv/sandboxes/sandbox-evidence';
+import type {} from '@merv/identity/types';
 import { z } from 'zod';
 import { check } from '@merv/contracts';
 import { CustomerExperiments } from './domain.js';
@@ -152,6 +153,15 @@ export const customerExperimentsPlugin = {
         { ...config, intakeKey: secret(config.intakeKeyEnv) },
         hostedCustomerCompute(ctx, config),
       );
+      // Optional: without identity, service_experiment@3 customers are refused with a 503.
+      ctx.inject(['identity'], (ctx) => {
+        ctx.effect(() => {
+          service.access.identity = ctx.identity;
+          return () => {
+            if (service.access.identity === ctx.identity) service.access.identity = undefined;
+          };
+        });
+      });
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain);
       yield ctx.api.mount('/customer-experiments', customerHttp(service), { public: true });

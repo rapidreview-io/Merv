@@ -116,7 +116,7 @@ function actorCaller(principal: Extract<Principal, { kind: 'actor' }>, projectId
 
 function checkIdentity(identity: VerifiedIdentity, time: string): void {
   check(
-    identityValid(identity, time),
+    identityValid(identity, time) && !identity.anonymous,
     'unauthorized',
     'Verified identity is invalid or expired',
     401,
