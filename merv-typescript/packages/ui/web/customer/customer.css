@@ -1,3 +1,20 @@
+/* The customer page stands on plain white: neutral greys replace the app's cool, tinted ones;
+   the primary control keeps its blue. Loaded only by customer.html, so the app keeps its own
+   palette. */
+:root {
+  --bg: #ffffff;
+  --bg-elev: #ffffff;
+  --bg-soft: #f5f5f4;
+  --text: #1c1917;
+  --muted: #57534e;
+  --faint: #6b6560;
+  --ghost: #a8a29e;
+  --line: #e7e5e4;
+  --line-soft: #f0efed;
+  --line-strong: #d6d3d1;
+  --hover: rgba(28, 25, 23, 0.04);
+  --select: rgba(28, 25, 23, 0.07);
+}
 /* The customer experiments page (customer/app.tsx), on the app's tokens (styles.css). One column
    with 16px gutters on a phone; the chat is the reused Pi transcript and composer. The file
    manager keeps the braziliano bucket UI's grid, rows, tray and dialog. */
@@ -19,7 +36,14 @@
   min-height: 0;
 }
 .cx-page--plan {
+  --cx-width: 1200px;
   width: min(1200px, 100%);
+}
+/* The floating chat is 380px wide, 16px from the window's edge: content stays left of it. */
+@media (min-width: 1000px) {
+  .cx-page--docked {
+    padding-right: max(var(--space-4), calc(412px - (100vw - var(--cx-width, 880px)) / 2));
+  }
 }
 .mono {
   font-family: var(--font-mono);

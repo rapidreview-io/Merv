@@ -222,8 +222,10 @@ function Experiment() {
     </>
   );
   const home = () => go(view === 'chat' ? 'arrive' : 'chat');
+  // The chat floats over the plan and the files; wide pages keep their content clear of it.
+  const floating = (view === 'plan' || view === 'files') && !(hidden && voice.state === 'off');
   return (
-    <div className={`cx-page cx-page--${view}`}>
+    <div className={`cx-page cx-page--${view}${floating ? ' cx-page--docked' : ''}`}>
       <Header home={view === 'arrive' ? undefined : home}>{nav}</Header>
       {view === 'arrive' && (
         <Arrive
