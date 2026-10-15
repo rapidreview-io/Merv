@@ -104,13 +104,16 @@ button.cx-brand {
   gap: var(--space-4);
 }
 .cx-drop {
+  position: relative;
   flex: none;
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: var(--space-3);
-  min-height: 180px;
-  padding: var(--space-5) var(--space-4);
+  gap: 6px;
+  width: min(100%, 440px);
+  min-height: 150px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
   background: none;
@@ -121,6 +124,23 @@ button.cx-brand {
   transition:
     border-color var(--motion-fast),
     background var(--motion-fast);
+}
+.cx-drop-title {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.cx-drop-icon {
+  color: var(--muted);
+}
+.cx-drop-kinds {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--muted);
+}
+.cx-drop-size {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
 }
 .cx-drop:hover,
 .cx-drop--over {

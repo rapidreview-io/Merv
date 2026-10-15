@@ -172,7 +172,7 @@ test('the customer page signs in silently, keeps the capability off the address 
 
   // Arrive: the drop zone with the request's size, the reused transcript and composer below.
   assert.match(text(), /Merv \| Experiment/);
-  assert.match(text(), /Drop datasets, papers, context/);
+  assert.match(text(), /Chug anything/);
   assert.match(text(), /48 MB/);
   assert.match(text(), /What do you want to test\? ce_abc_123/);
   assert.equal(text().includes('Audio'), true);
@@ -202,7 +202,7 @@ test('the customer page signs in silently, keeps the capability off the address 
       .dispatchEvent(new window.WheelEvent('wheel', { deltaY: 40, bubbles: true }));
   });
   await settle(0);
-  assert.equal(text().includes('Drop datasets'), false);
+  assert.equal(text().includes('Chug anything'), false);
   assert.match(text(), /Files/);
   assert.match(text(), /Plan/);
   assert.equal(document.querySelector('.cx-dot'), null);
@@ -418,7 +418,7 @@ test('the file manager lists folders with their sizes and deletes after confirmi
     return { body: { deleted: 1 } };
   });
   await open();
-  await click('Drop datasets');
+  await click('Chug anything');
   await settle(10);
   assert.match(text(), /images/);
   assert.match(text(), /3\.2 MB/);
@@ -451,7 +451,7 @@ test('a failure opening the page offers a retry; only a refused link is called i
   boot(state);
   await click('Retry');
   await settle(20);
-  assert.match(text(), /Drop datasets, papers, context/);
+  assert.match(text(), /Chug anything/);
 });
 
 test('a link the server refuses is not valid', async (t) => {

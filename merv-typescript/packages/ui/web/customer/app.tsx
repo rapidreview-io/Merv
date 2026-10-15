@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type { createClient } from '@supabase/supabase-js';
+import { Icon } from '../icons';
 import { Records } from '../navigation';
 import { Speak, Transcript } from '../views/pi';
 import { Floating } from '../views/pi-dock';
@@ -343,8 +344,10 @@ function Arrive({
           void fromDrop(event.dataTransfer).then(drop);
         }}
       >
-        <span>Drop datasets, papers, context</span>
-        {size !== null && <span className="cx-chip mono">{formatBytes(size)}</span>}
+        <span className="cx-drop-title">Chug anything</span>
+        <Icon name="upload" size={20} className="cx-drop-icon" />
+        <span className="cx-drop-kinds">datasets, papers, content files</span>
+        {size !== null && <span className="cx-chip cx-drop-size mono">{formatBytes(size)}</span>}
       </button>
       <Chat pi={pi} voice={voice} />
     </div>
