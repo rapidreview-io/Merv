@@ -173,35 +173,6 @@ export function PlanEditor({
   const paid = !!state && PAID.includes(state);
   return (
     <section className="cx-plan" aria-label="Plan">
-      <div className="cx-plan-bar">
-        {editable && (
-          <div className="cx-plan-actions">
-            <button
-              type="button"
-              className="btn btn--quiet"
-              aria-pressed={preview}
-              onClick={() => setPreview(!preview)}
-            >
-              {preview ? 'Edit' : 'Preview'}
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={!!busy || !!conflict || !draft.trim() || agentBusy}
-              onClick={() => void submit()}
-            >
-              {busy === 'submitting' ? 'Submitting…' : 'Submit'}
-            </button>
-          </div>
-        )}
-        {plan.status === 'verifying' && !agentBusy && (
-          <div className="cx-plan-actions">
-            <button type="button" className="btn" disabled={!!busy} onClick={() => void submit()}>
-              {busy === 'submitting' ? 'Sending…' : 'Resend'}
-            </button>
-          </div>
-        )}
-      </div>
       {plan.feedback && plan.status !== 'accepted' && (
         <div className="cx-feedback" role="note">
           <Markdown source={plan.feedback} />
@@ -259,6 +230,36 @@ export function PlanEditor({
           {...(plan.contract?.limits ? { limits: plan.contract.limits } : {})}
         />
       )}
+      {/* The plan's actions follow it, where the reader finishes it. */}
+      <div className="cx-plan-bar">
+        {editable && (
+          <div className="cx-plan-actions">
+            <button
+              type="button"
+              className="btn btn--quiet"
+              aria-pressed={preview}
+              onClick={() => setPreview(!preview)}
+            >
+              {preview ? 'Edit' : 'Preview'}
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!!busy || !!conflict || !draft.trim() || agentBusy}
+              onClick={() => void submit()}
+            >
+              {busy === 'submitting' ? 'Submitting…' : 'Submit'}
+            </button>
+          </div>
+        )}
+        {plan.status === 'verifying' && !agentBusy && (
+          <div className="cx-plan-actions">
+            <button type="button" className="btn" disabled={!!busy} onClick={() => void submit()}>
+              {busy === 'submitting' ? 'Sending…' : 'Resend'}
+            </button>
+          </div>
+        )}
+      </div>
       {error && (
         <p className="pi-error" role="alert">
           {error}

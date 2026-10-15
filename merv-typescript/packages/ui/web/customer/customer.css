@@ -1,3 +1,20 @@
+/* The customer page stands on plain white: neutral greys replace the app's cool, tinted ones;
+   the primary control keeps its blue. Loaded only by customer.html, so the app keeps its own
+   palette. */
+:root {
+  --bg: #ffffff;
+  --bg-elev: #ffffff;
+  --bg-soft: #f5f5f4;
+  --text: #1c1917;
+  --muted: #57534e;
+  --faint: #6b6560;
+  --ghost: #a8a29e;
+  --line: #e7e5e4;
+  --line-soft: #f0efed;
+  --line-strong: #d6d3d1;
+  --hover: rgba(28, 25, 23, 0.04);
+  --select: rgba(28, 25, 23, 0.07);
+}
 /* The customer experiments page (customer/app.tsx), on the app's tokens (styles.css). One column
    with 16px gutters on a phone; the chat is the reused Pi transcript and composer. The file
    manager keeps the braziliano bucket UI's grid, rows, tray and dialog. */
@@ -19,7 +36,14 @@
   min-height: 0;
 }
 .cx-page--plan {
+  --cx-width: 1200px;
   width: min(1200px, 100%);
+}
+/* The floating chat is 380px wide, 16px from the window's edge: content stays left of it. */
+@media (min-width: 1000px) {
+  .cx-page--docked {
+    padding-right: max(var(--space-4), calc(412px - (100vw - var(--cx-width, 880px)) / 2));
+  }
 }
 .mono {
   font-family: var(--font-mono);
@@ -104,13 +128,16 @@ button.cx-brand {
   gap: var(--space-4);
 }
 .cx-drop {
+  position: relative;
   flex: none;
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: var(--space-3);
-  min-height: 180px;
-  padding: var(--space-5) var(--space-4);
+  gap: 6px;
+  width: min(100%, 440px);
+  min-height: 150px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
   background: none;
@@ -122,10 +149,34 @@ button.cx-brand {
     border-color var(--motion-fast),
     background var(--motion-fast);
 }
+.cx-drop-title {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+.cx-drop-icon {
+  color: var(--muted);
+}
+.cx-drop-kinds {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--muted);
+}
+.cx-drop-size {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+}
 .cx-drop:hover,
 .cx-drop--over {
   border-color: var(--muted);
   background: var(--hover);
+}
+.cx-chat-title {
+  flex: none;
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
 }
 .cx-chip {
   padding: 2px 10px;
@@ -899,4 +950,13 @@ button.cx-brand {
 }
 .cx-chat > .voice {
   flex: none;
+}
+/* The customer page separates the composer from the conversation with space, not a rule. */
+.cx-page .pi-compose {
+  border-top: 0;
+}
+/* /start has no conversation yet: the composer sits at the foot of the chat's space. */
+.cx-start-space {
+  flex: 1;
+  min-height: var(--space-5);
 }

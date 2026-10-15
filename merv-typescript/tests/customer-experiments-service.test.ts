@@ -1336,3 +1336,25 @@ test('v2 requests keep the structured offer: no plan document, and their checkou
     conflict('plan_document_unavailable'),
   );
 });
+
+test('/start opens the customer app with public intake, and keeps the guide for agents', async () => {
+  const serve = async (publicIntake: boolean, path: string, accept = 'text/html') => {
+    const handler = startHttp(
+      { publicOrigin: 'https://merv.example', publicIntake, livePayments: false },
+      undefined,
+      async () => '<!doctype html><title>customer app</title>',
+    );
+    let body = '';
+    const res = { setHeader() {}, end: (text?: string) => void (body = text ?? '') };
+    await handler(
+      { method: 'GET', headers: { accept } } as never,
+      res as never,
+      { url: new URL('https://merv.example' + path) } as never,
+    );
+    return body;
+  };
+  assert.match(await serve(true, '/start'), /customer app/);
+  assert.doesNotMatch(await serve(false, '/start'), /customer app/);
+  assert.match(await serve(true, '/start/agent.md'), /# Merv experiment setup/);
+  assert.match(await serve(true, '/start', 'text/markdown'), /# Merv experiment setup/);
+});

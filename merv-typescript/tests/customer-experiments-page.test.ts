@@ -279,7 +279,18 @@ test('upload pins requirement and digest, excludes the customer token from stora
   const input = document.querySelector<HTMLInputElement>('input[type=file]')!;
   Object.defineProperty(input, 'files', { value: [file] });
   input.dispatchEvent(new page.window.Event('change'));
-  await settle();
+  // Hashing, the signed transfer and completion each take turns; under load they outlast one
+  // settle, so wait for the upload to finish and the page to say so.
+  for (
+    let i = 0;
+    i < 200 &&
+    !(
+      calls.some((call) => call.url.endsWith('/complete')) &&
+      /validating/.test(document.querySelector('#app')!.textContent!)
+    );
+    i++
+  )
+    await settle();
   const begin = calls.find((call) => call.url === base + '/uploads')!;
   assert.deepEqual(JSON.parse(begin.init.body as string), {
     requirementId: 'eval',

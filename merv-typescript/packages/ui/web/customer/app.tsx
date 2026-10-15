@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type { createClient } from '@supabase/supabase-js';
+import { Icon } from '../icons';
 import { Records } from '../navigation';
 import { Speak, Transcript } from '../views/pi';
 import { Floating } from '../views/pi-dock';
@@ -9,6 +10,7 @@ import { useConversation, type Conversation } from '../views/pi-conversation';
 import { customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
+import { Start, takePending } from './start';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
 import { formatBytes, fromDrop, Uploader } from './uploads';
@@ -23,12 +25,19 @@ type View = 'arrive' | 'chat' | 'plan' | 'files';
  * here.
  */
 export function CustomerApp({ client }: { client?: typeof createClient } = {}) {
-  const request = useMemo(() => requestOf(), []);
+  const [request, setRequest] = useState(() => requestOf());
+  // /start is the page before its request: it becomes that request's page once made.
+  const starting = !request && /^\/start\/?$/.test(location.pathname);
   const [session, controls] = useCustomerSession(request, { createClient: client });
   return (
     <Records.Provider value={false}>
       <MemoryRouter>
-        {session.phase === 'ready' ? (
+        {starting ? (
+          <div className="cx-page">
+            <Header />
+            <Start opened={setRequest} />
+          </div>
+        ) : session.phase === 'ready' ? (
           <Experiment />
         ) : (
           <div className="cx-page">
@@ -178,6 +187,15 @@ function Experiment() {
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
   const [request] = usePoll<{ state?: string }>('', 15_000);
   const uploader = useMemo(() => new Uploader({ onDone: reloadFiles }), [reloadFiles]);
+  // Files dropped on /start before the request existed go up now, in the files view.
+  useEffect(() => {
+    const dropped = takePending();
+    if (dropped.length) {
+      uploader.add(dropped, '');
+      go('files');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploader]);
   // Files hold still while the agent verifies a submitted plan, and once one is accepted.
   const frozen = !!plan && plan.status !== 'drafting' && plan.status !== 'changes_requested';
   const planned = !!plan?.document.trim();
@@ -204,8 +222,10 @@ function Experiment() {
     </>
   );
   const home = () => go(view === 'chat' ? 'arrive' : 'chat');
+  // The chat floats over the plan and the files; wide pages keep their content clear of it.
+  const floating = (view === 'plan' || view === 'files') && !(hidden && voice.state === 'off');
   return (
-    <div className={`cx-page cx-page--${view}`}>
+    <div className={`cx-page cx-page--${view}${floating ? ' cx-page--docked' : ''}`}>
       <Header home={view === 'arrive' ? undefined : home}>{nav}</Header>
       {view === 'arrive' && (
         <Arrive
@@ -252,7 +272,10 @@ function Experiment() {
 function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
   if (voice.compact && voice.state !== 'off') return null;
   return (
-    <section className="cx-chat" aria-label="Chat">
+    <section className="cx-chat" aria-labelledby="cx-chat-title">
+      <h2 className="cx-chat-title" id="cx-chat-title">
+        Chat
+      </h2>
       {pi.listed ? (
         <Transcript pi={pi} />
       ) : (
@@ -343,8 +366,10 @@ function Arrive({
           void fromDrop(event.dataTransfer).then(drop);
         }}
       >
-        <span>Drop datasets, papers, context</span>
-        {size !== null && <span className="cx-chip mono">{formatBytes(size)}</span>}
+        <span className="cx-drop-title">Chug anything</span>
+        <Icon name="upload" size={20} className="cx-drop-icon" />
+        <span className="cx-drop-kinds">datasets, papers, content files</span>
+        {size !== null && <span className="cx-chip cx-drop-size mono">{formatBytes(size)}</span>}
       </button>
       <Chat pi={pi} voice={voice} />
     </div>

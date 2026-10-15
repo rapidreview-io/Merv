@@ -193,6 +193,7 @@ export const customerExperimentsPlugin = {
             livePayments: config.stripe?.live ?? false,
           },
           service,
+          app,
         ),
         { public: true },
       );

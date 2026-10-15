@@ -41,7 +41,11 @@ const uploadSchema = z
   .strict();
 
 /** Public, credential-free documentation; request creation retains its own admission gate. */
-export function startHttp(options: StartPageOptions, service?: CustomerService): MountHandler {
+export function startHttp(
+  options: StartPageOptions,
+  service?: CustomerService,
+  app?: CustomerApp,
+): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
     if (path === '/start/requests' && req.method === 'POST' && options.publicIntake && service) {
@@ -55,6 +59,9 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
     )
       throw new MervError('not_found', 'Route not found', 404);
     const markdown = path === '/start/agent.md' || req.headers.accept?.includes('text/markdown');
+    // With public intake, a person who comes here opens the customer app, which makes their
+    // request on their first message or files; agents still read the Markdown guide.
+    const page = !markdown && options.publicIntake && app ? await app().catch(() => null) : null;
     res.setHeader(
       'Content-Type',
       markdown ? 'text/markdown; charset=utf-8' : 'text/html; charset=utf-8',
@@ -70,7 +77,7 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
         ? undefined
         : markdown
           ? agentInstructions(options)
-          : startPage(options),
+          : (page ?? startPage(options)),
     );
   };
 }
