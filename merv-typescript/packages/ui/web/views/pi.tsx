@@ -288,7 +288,18 @@ export function Transcript({ pi }: { pi: Conversation }) {
 }
 
 /** Where the next question is written: Enter sends it, and Stop ends an answer under way. */
-export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; voice?: Voice }) {
+export function Composer({
+  pi,
+  rows,
+  voice,
+  placeholder,
+}: {
+  pi: Conversation;
+  rows: number;
+  voice?: Voice;
+  /** What the empty box says, where the page asks for a first question. */
+  placeholder?: string;
+}) {
   const { draft, setDraft, busy, blocked, unavailable, active, send, stop, warmUp } = pi;
   return (
     <form
@@ -306,6 +317,7 @@ export function Composer({ pi, rows, voice }: { pi: Conversation; rows: number; 
         ref={pi.composer}
         className="textarea"
         rows={rows}
+        {...(placeholder ? { placeholder } : {})}
         maxLength={32_000}
         value={draft}
         // Read-only rather than disabled while sending, so the cursor stays where it was.
@@ -531,14 +543,17 @@ export function Speak({
   pi,
   rows = 3,
   voice: supplied,
+  placeholder,
 }: {
   pi: Conversation;
   rows?: number;
   voice?: Voice;
+  placeholder?: string;
 }) {
   const agent = useAgent();
   const voice = supplied ?? agent?.voice;
-  if (!voice) return <Composer pi={pi} rows={rows} />;
+  const hint = placeholder ? { placeholder } : {};
+  if (!voice) return <Composer pi={pi} rows={rows} {...hint} />;
   return voice.state === 'off' ? (
     <>
       {voice.problem && (
@@ -546,7 +561,7 @@ export function Speak({
           {voice.problem}
         </p>
       )}
-      <Composer pi={pi} rows={rows} voice={voice} />
+      <Composer pi={pi} rows={rows} voice={voice} {...hint} />
     </>
   ) : (
     <VoicePanel voice={voice} progress={pi.visible?.progress || pi.standing[0]} />

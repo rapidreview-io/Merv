@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { check } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
@@ -7,7 +8,7 @@ import type { PiSnapshot } from '@merv/pi/models';
 import { PLAN_SUBMIT, type CustomerService } from './service.js';
 
 const route =
-  /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})\/(session|chat)(?:\/(messages|stop|events|voice))?$/;
+  /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})\/(session|chat)(?:\/(messages|stop|events|voice|warm))?$/;
 const messageSchema = z
   .object({
     commandId: z.string().regex(/^[a-zA-Z0-9_-]{1,120}$/),
@@ -116,6 +117,13 @@ export function chatHttp(service: CustomerService) {
       const { pi, caller, id: conversation } = await service.intake(record);
       const answer = await pi.voice(caller, { id: conversation, sdp }, { allowProfile: true });
       return { sdp: answer.sdp };
+    }
+    // Starts the intake's machine as the page opens, so the first answer does not wait for it.
+    if (action === 'warm' && method === 'POST') {
+      const { pi, caller, id: conversation } = await service.intake(record);
+      return customerChat(
+        await pi.warm(caller, { requestId: randomUUID(), conversationId: conversation }),
+      );
     }
     if (action === 'stop' && method === 'POST') {
       const { pi, caller, id: conversation } = await service.intake(record);

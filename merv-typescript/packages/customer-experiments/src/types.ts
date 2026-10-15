@@ -1,5 +1,6 @@
 import type { ReviewRequest } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
+import type { RequestRecord } from './store.js';
 
 export const SERVICE_MODEL = { harness: 'codex', model: 'gpt-6-astra', effort: 'medium' } as const;
 export interface DataRequirement {
@@ -71,6 +72,10 @@ export interface RequestFiles {
   manifest(id: string): Promise<RequestFile[]>;
   /** True once the request's files were deleted: nothing may accept or pay against them. */
   deleted(id: string): Promise<boolean>;
+  /** Prepares the request's bucket ahead of its first upload (v3; no-op where there is none). */
+  warm?(record: RequestRecord): Promise<void>;
+  /** A window of one request file's text, for the intake agent (see FilesService.read). */
+  read?(id: string, key: string, offset?: number): Promise<unknown>;
 }
 /** service_experiment@3: the verified plan document is the specification. Only its summary
  *  (question, criteria, limits) is structured, filled by the intake agent at verification. */

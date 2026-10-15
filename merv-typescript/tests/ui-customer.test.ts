@@ -39,13 +39,28 @@ const turn = (id: string, messages: { role: string; text: string }[]) => ({
   expiresAt: '2026-10-14T01:00:00Z',
   completedAt: '2026-10-14T00:01:00Z',
 });
-// The customer's snapshot: the sponsor-only fields (host, models) removed.
-const snapshot = (commands: ReturnType<typeof turn>[] = []) => ({
+// The customer's snapshot (chat-http.ts customerChat): models removed, and of the machine only
+// whether it runs.
+const snapshot = (
+  commands: ReturnType<typeof turn>[] = [],
+  state: 'none' | 'starting' | 'ready' = 'none',
+) => ({
   stage: { name: 'idle', since: '2026-10-14T00:00:00Z' },
   now: new Date().toISOString(),
   available: true,
   conversation,
   commands,
+  host: {
+    machine: null,
+    preferred: '',
+    catalog: [],
+    state,
+    idleEndsAt: null,
+    idleSeconds: 600,
+    moving: null,
+    lastMove: null,
+  },
+  models: [],
   streamId: 'stream_1',
   sequence: commands.length,
   tail: [],
@@ -109,6 +124,8 @@ function boot(state: { plan: object; files: object; commands: ReturnType<typeof 
     },
   });
   serve(`${BASE}/chat`, () => ({ body: snapshot(state.commands) }));
+  // Opening the page starts the intake's machine.
+  serve(`${BASE}/chat/warm`, () => ({ body: snapshot(state.commands, 'starting') }));
   serve(`${BASE}/plan`, () => ({ body: state.plan }));
   serve(`${BASE}/files?prefix=`, () => ({ body: state.files }));
   serve(BASE, { body: { state: 'planning' } });
@@ -184,6 +201,14 @@ test('the customer page signs in silently, keeps the capability off the address 
   const stream = headers.seen.find((entry) => entry.request === `GET ${BASE}/chat/events`)!;
   assert.equal(stream.headers.get('authorization'), `Bearer ${CAPABILITY}`);
   assert.equal(stream.headers.get('x-merv-identity'), 'anon-token');
+  // Opening the page starts the agent's machine once, with the customer's credentials.
+  const warms = headers.seen.filter((entry) => entry.request === `POST ${BASE}/chat/warm`);
+  assert.equal(warms.length, 1);
+  assert.equal(warms[0].headers.get('authorization'), `Bearer ${CAPABILITY}`);
+  assert.equal(warms[0].headers.get('x-merv-identity'), 'anon-token');
+  // A conversation under way keeps its heading and has no first-question prompt.
+  assert.equal(document.querySelector('.cx-chat--empty'), null);
+  assert.ok(document.querySelector('#cx-chat-title'));
 
   await write('Does augmentation help?');
   await click('Send');
@@ -245,9 +270,12 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   await settle(0);
   // A written document brings the Plan button.
   assert.ok([...document.querySelectorAll('.cx-nav-button')].some((b) => b.textContent === 'Plan'));
+  // An unopened revision makes it pulse; opening the plan quiets it.
+  assert.ok(document.querySelector('.cx-nav-button--fresh'));
   await write('Keep this draft while I read the plan');
   await click('Plan');
   await settle(10);
+  assert.equal(document.querySelector('.cx-nav-button--fresh'), null);
   assert.ok(document.querySelector('.pi-dock'));
   assert.equal(
     document.querySelector<HTMLTextAreaElement>('#pi-draft')!.value,
@@ -475,6 +503,55 @@ test('a link the server refuses is not valid', async (t) => {
   assert.equal(text().includes('Retry'), false);
 });
 
+test('before the first question the chat has no heading and asks for one mid-page', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setCredentials(null);
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  await open();
+  assert.ok(document.querySelector('.cx-chat--empty'));
+  assert.equal(document.querySelector('#cx-chat-title'), null);
+  assert.equal(document.querySelector('.cx-chat')!.getAttribute('aria-label'), 'Chat');
+  assert.equal(document.querySelector('.pi-messages'), null);
+  assert.equal(
+    document.querySelector<HTMLTextAreaElement>('#pi-draft')!.placeholder,
+    'What do you want to learn?',
+  );
+  // The machine is already starting for that first question.
+  assert.equal(requests.filter((request) => request === `POST ${BASE}/chat/warm`).length, 1);
+});
+
+test('/start makes its request as it opens and becomes that request’s page', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setCredentials(null);
+  });
+  const made: Record<string, unknown>[] = [];
+  boot({ plan: plan(), files: listing(), commands: [] });
+  serve('/start/requests', (_call, body) => {
+    made.push(body);
+    return {
+      status: 201,
+      body: { id: ID, customerUrl: `/customer-experiments/r/${ID}#token=${CAPABILITY}` },
+    };
+  });
+  history.replaceState(null, '', '/start');
+  await mount(createElement(CustomerApp, { client: supabase([]) }));
+  await settle(20);
+  // Nothing was typed or dropped: the request is made with no message, once.
+  assert.equal(made.length, 1);
+  assert.equal(made[0].message, undefined);
+  assert.equal(made[0].title, 'New experiment');
+  assert.equal(typeof made[0].requestId, 'string');
+  // The page is the request's now, its capability off the address bar, its machine warming.
+  assert.equal(location.pathname, `/customer-experiments/r/${ID}`);
+  assert.equal(location.hash, '');
+  assert.match(text(), /Chug anything/);
+  assert.ok(document.querySelector('.cx-chat--empty'));
+  assert.equal(requests.filter((request) => request === `POST ${BASE}/chat/warm`).length, 1);
+});
+
 test('the plan card takes its title, question and sections from the free text', () => {
   const plan = splitPlan(
     '# Does it help?\n\nIntro line.\n\n## Question\nWhy ask.\n\n```\n## not a heading\n```\n\n## Method\n1. Train.\n\n## Empty\n',
@@ -555,7 +632,16 @@ test('customer audio uses its authenticated transport and survives moving into a
       }),
     },
   });
-  boot({ plan: plan({ document: '# Test plan' }), files: listing(), commands: [] });
+  boot({
+    plan: plan({ document: '# Test plan' }),
+    files: listing(),
+    commands: [
+      turn('c1', [
+        { role: 'user', text: 'Hello' },
+        { role: 'assistant', text: 'Hi there' },
+      ]),
+    ],
+  });
   serve(`${BASE}/chat/voice`, { body: { sdp: 'customer-answer' } });
   await open();
   await click('Audio');

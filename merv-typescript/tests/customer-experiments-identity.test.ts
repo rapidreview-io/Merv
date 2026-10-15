@@ -166,6 +166,10 @@ async function fixture(t: TestContext, options: { version?: number; identity?: b
       calls.push({ method: 'stop', caller, id });
       return sponsorSnapshot(id);
     },
+    async warm(caller: Caller, input: { requestId: string; conversationId: string }) {
+      calls.push({ method: 'warm', caller, id: input.conversationId, input });
+      return sponsorSnapshot(input.conversationId);
+    },
     async authorizeStream(caller: Caller, id: string) {
       calls.push({ method: 'authorizeStream', caller, id });
     },
@@ -299,7 +303,7 @@ test('v3 customer routes need the capability and the bound sign-in; the agent ke
   // The agent capability never chats as the customer, approves or pays, with or without a browser.
   for (const path of ['/chat', '/chat/events'])
     assert.equal((await f.send(path, f.agent, 'alice')).status, 401, path);
-  for (const path of ['/chat/messages', '/chat/stop', '/accept', '/checkout'])
+  for (const path of ['/chat/messages', '/chat/stop', '/chat/warm', '/accept', '/checkout'])
     assert.equal(
       (await f.send(path, f.agent, 'alice', { commandId: 'x', text: 'hi', contractVersion: 1 }))
         .status,
@@ -343,6 +347,13 @@ test('the chat adapter reaches the intake conversation as the sponsor, redacted'
     400,
   );
   assert.equal((await f.send('/chat/stop', f.customer, 'alice', {})).status, 200);
+  // Opening the page starts the intake's machine, under a request id of the server's own.
+  const warmed = await f.send('/chat/warm', f.customer, 'alice', {});
+  assert.equal(warmed.status, 200);
+  assert.deepEqual(warmed.body, customerChat(sponsorSnapshot('pi_fixture')));
+  const warm = f.calls.find((call) => call.method === 'warm')!;
+  assert.equal((warm.input as { conversationId: string }).conversationId, 'pi_fixture');
+  assert.match((warm.input as { requestId: string }).requestId, /^[0-9a-f-]{36}$/);
   const send = f.calls.find((call) => call.method === 'send')!;
   assert.deepEqual(send.input, { commandId: 'cmd-1', text: 'We need to pick a tokenizer' });
   for (const call of f.calls) {

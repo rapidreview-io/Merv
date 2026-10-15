@@ -976,3 +976,49 @@ button.cx-brand {
 .cx-start-middle > * {
   width: min(100%, 640px);
 }
+/* A request's first screen: no conversation yet, so no heading, and the composer waits in the
+   middle of the space under the drop zone, as on /start. */
+.cx-chat--empty {
+  justify-content: center;
+  align-items: center;
+  padding-bottom: 8vh;
+}
+.cx-chat--empty > * {
+  width: min(100%, 640px);
+}
+/* A plan the person has not opened yet: the Plan button breathes, softly, until they do. */
+.cx-nav-button--fresh {
+  position: relative;
+  color: var(--text);
+}
+.cx-nav-button--fresh::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+  animation: cx-breathe 2.4s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes cx-breathe {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(37, 99, 235, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cx-nav-button--fresh::after {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+  }
+}
+/* The conversation scrolls without showing a scroll bar. */
+.cx-page .pi-messages {
+  scrollbar-width: none;
+}
+.cx-page .pi-messages::-webkit-scrollbar {
+  display: none;
+}

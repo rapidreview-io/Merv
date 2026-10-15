@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import type { createClient } from '@supabase/supabase-js';
+import { safely } from '../api';
 import { Icon } from '../icons';
 import { Records } from '../navigation';
 import { Speak, Transcript } from '../views/pi';
 import { Floating } from '../views/pi-dock';
 import { useVoice, type Voice } from '../views/pi-voice';
 import { useConversation, type Conversation } from '../views/pi-conversation';
-import { customerRequest, requestOf } from './api';
+import { currentCredentials, customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
 import { Start, takePending, takeVoice } from './start';
@@ -204,6 +205,17 @@ function Experiment() {
   // Files hold still while the agent verifies a submitted plan, and once one is accepted.
   const frozen = !!plan && plan.status !== 'drafting' && plan.status !== 'changes_requested';
   const planned = !!plan?.document.trim();
+  // The Plan button pulses softly while there is a revision the person has not opened yet.
+  const seenKey = `merv:customer-plan-seen:${currentCredentials()?.request ?? ''}`;
+  const [seen, setSeen] = useState(() =>
+    Number(safely(() => localStorage.getItem(seenKey), null) ?? -1),
+  );
+  useEffect(() => {
+    if (view !== 'plan' || !plan) return;
+    setSeen(plan.revision);
+    safely(() => localStorage.setItem(seenKey, String(plan.revision)));
+  }, [view, plan?.revision, seenKey]);
+  const fresh = planned && !!plan && plan.revision > seen && view !== 'plan';
   // The chat is drawn in one place at a time, so the transcript and composer refs are its own.
   // The Plan button appears once there is a plan; the files are in the header off the arrival.
   const nav = (view !== 'arrive' || planned) && (
@@ -221,8 +233,9 @@ function Experiment() {
       {planned && (
         <button
           type="button"
-          className="cx-nav-button"
+          className={`cx-nav-button${fresh ? ' cx-nav-button--fresh' : ''}`}
           aria-current={view === 'plan' ? 'page' : undefined}
+          aria-label={fresh ? 'Plan, updated' : undefined}
           onClick={() => go('plan')}
         >
           Plan
@@ -278,12 +291,20 @@ function Experiment() {
 /** The reused Pi transcript and composer, and how the conversation stands when it cannot. */
 function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
   if (voice.compact && voice.state !== 'off') return null;
+  // Before the first question there is no conversation to head: the box waits mid-page.
+  const empty = pi.listed && !!pi.snapshot && !pi.snapshot.commands.length;
   return (
-    <section className="cx-chat" aria-labelledby="cx-chat-title">
-      <h2 className="cx-chat-title" id="cx-chat-title">
-        Chat
-      </h2>
-      {pi.listed ? (
+    <section
+      className={`cx-chat${empty ? ' cx-chat--empty' : ''}`}
+      aria-labelledby={empty ? undefined : 'cx-chat-title'}
+      aria-label={empty ? 'Chat' : undefined}
+    >
+      {!empty && (
+        <h2 className="cx-chat-title" id="cx-chat-title">
+          Chat
+        </h2>
+      )}
+      {empty ? null : pi.listed ? (
         <Transcript pi={pi} />
       ) : (
         !pi.error && (
@@ -312,7 +333,14 @@ function Chat({ pi, voice }: { pi: Conversation; voice: Voice }) {
           Retry
         </button>
       )}
-      {pi.listed && <Speak pi={pi} voice={voice} rows={3} />}
+      {pi.listed && (
+        <Speak
+          pi={pi}
+          voice={voice}
+          rows={3}
+          {...(empty ? { placeholder: 'What do you want to learn?' } : {})}
+        />
+      )}
     </section>
   );
 }

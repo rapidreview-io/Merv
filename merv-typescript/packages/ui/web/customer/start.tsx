@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../icons';
 import { safely } from '../api';
 import { fromDrop } from './uploads';
@@ -78,24 +78,33 @@ export function Start({ opened }: { opened(id: string): void }) {
   const [over, setOver] = useState(false);
   const [error, setError] = useState('');
   const picker = useRef<HTMLInputElement>(null);
+  // Opening /start makes the request at once, so its bucket and the agent's machine warm while
+  // the person reads; anything they do in that moment is carried over to the request's page.
+  const creating = useRef(false);
   const begin = async (
     message?: string,
     files: { file: File; path: string }[] = [],
     voice = false,
   ) => {
-    if (busy) return;
+    pending.push(...files);
+    voicePending ||= voice;
+    if (creating.current) return;
+    creating.current = true;
     setBusy(true);
     setError('');
     try {
       const id = await create(message);
-      pending = files;
-      voicePending = voice;
       opened(id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Couldn’t start the experiment.');
       setBusy(false);
+      creating.current = false;
     }
   };
+  useEffect(() => {
+    void begin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const send = () => {
     const text = draft.trim();
     if (text) void begin(text);
@@ -105,7 +114,6 @@ export function Start({ opened }: { opened(id: string): void }) {
       <button
         type="button"
         className={`cx-drop${over ? ' cx-drop--over' : ''}`}
-        disabled={busy}
         onClick={() => picker.current?.click()}
         onDragOver={(event) => {
           event.preventDefault();
@@ -166,7 +174,6 @@ export function Start({ opened }: { opened(id: string): void }) {
             <button
               className="btn"
               type="button"
-              disabled={busy}
               title="Talk with Merv"
               onClick={() => void begin(undefined, [], true)}
             >

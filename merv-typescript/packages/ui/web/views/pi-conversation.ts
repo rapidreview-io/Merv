@@ -155,7 +155,8 @@ export function useConversation(transport: PiTransport = toolTransport) {
     const warm = transport.warm;
     if (!warm || !id || warming.current || current?.conversation.id !== id || !current.available)
       return;
-    if (current.host.state !== 'none') return;
+    // A snapshot that says nothing of its machine (a reduced view) starts nothing.
+    if (current.host?.state !== 'none') return;
     warming.current = true;
     void warm(id, identifier()).then((next) => {
       warming.current = false;
