@@ -195,38 +195,39 @@ function Experiment() {
     voice.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pi.snapshot]);
-  // Files dropped on /start before the request existed go up now, in the files view.
+  // Files picked on /start before the request existed go up now; the tray shows them.
   useEffect(() => {
     const dropped = takePending();
-    if (dropped.length) {
-      uploader.add(dropped, '');
-      go('files');
-    }
+    if (dropped.length) uploader.add(dropped, '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploader]);
   // Files hold still while the agent verifies a submitted plan, and once one is accepted.
   const frozen = !!plan && plan.status !== 'drafting' && plan.status !== 'changes_requested';
   const planned = !!plan?.document.trim();
   // The chat is drawn in one place at a time, so the transcript and composer refs are its own.
-  const nav = view !== 'arrive' && (
+  // The Plan button appears once there is a plan; the files are in the header off the arrival.
+  const nav = (view !== 'arrive' || planned) && (
     <>
-      <button
-        type="button"
-        className="cx-nav-button"
-        aria-current={view === 'files' ? 'page' : undefined}
-        onClick={() => go('files')}
-      >
-        Files
-      </button>
-      <button
-        type="button"
-        className="cx-nav-button"
-        aria-current={view === 'plan' ? 'page' : undefined}
-        onClick={() => go('plan')}
-      >
-        Plan
-        {planned && <span className="cx-dot" aria-label="Plan ready" />}
-      </button>
+      {view !== 'arrive' && (
+        <button
+          type="button"
+          className="cx-nav-button"
+          aria-current={view === 'files' ? 'page' : undefined}
+          onClick={() => go('files')}
+        >
+          Files
+        </button>
+      )}
+      {planned && (
+        <button
+          type="button"
+          className="cx-nav-button"
+          aria-current={view === 'plan' ? 'page' : undefined}
+          onClick={() => go('plan')}
+        >
+          Plan
+        </button>
+      )}
     </>
   );
   const home = () => go(view === 'chat' ? 'arrive' : 'chat');
@@ -242,10 +243,8 @@ function Experiment() {
           size={files?.totalBytes ?? null}
           frozen={frozen}
           open={() => go('files')}
-          drop={(entries) => {
-            uploader.add(entries, '');
-            go('files');
-          }}
+          // Picked or dropped files upload where the person is; the tray shows their progress.
+          drop={(entries) => uploader.add(entries, '')}
           expand={() => go('chat')}
         />
       )}
