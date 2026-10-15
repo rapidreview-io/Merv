@@ -10,6 +10,7 @@ import { useConversation, type Conversation } from '../views/pi-conversation';
 import { customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
+import { Start, takePending } from './start';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
 import { formatBytes, fromDrop, Uploader } from './uploads';
@@ -24,12 +25,19 @@ type View = 'arrive' | 'chat' | 'plan' | 'files';
  * here.
  */
 export function CustomerApp({ client }: { client?: typeof createClient } = {}) {
-  const request = useMemo(() => requestOf(), []);
+  const [request, setRequest] = useState(() => requestOf());
+  // /start is the page before its request: it becomes that request's page once made.
+  const starting = !request && /^\/start\/?$/.test(location.pathname);
   const [session, controls] = useCustomerSession(request, { createClient: client });
   return (
     <Records.Provider value={false}>
       <MemoryRouter>
-        {session.phase === 'ready' ? (
+        {starting ? (
+          <div className="cx-page">
+            <Header />
+            <Start opened={setRequest} />
+          </div>
+        ) : session.phase === 'ready' ? (
           <Experiment />
         ) : (
           <div className="cx-page">
@@ -179,6 +187,15 @@ function Experiment() {
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
   const [request] = usePoll<{ state?: string }>('', 15_000);
   const uploader = useMemo(() => new Uploader({ onDone: reloadFiles }), [reloadFiles]);
+  // Files dropped on /start before the request existed go up now, in the files view.
+  useEffect(() => {
+    const dropped = takePending();
+    if (dropped.length) {
+      uploader.add(dropped, '');
+      go('files');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploader]);
   // Files hold still while the agent verifies a submitted plan, and once one is accepted.
   const frozen = !!plan && plan.status !== 'drafting' && plan.status !== 'changes_requested';
   const planned = !!plan?.document.trim();

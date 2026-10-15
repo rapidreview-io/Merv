@@ -150,7 +150,7 @@ button.cx-brand {
 .cx-chat-title {
   flex: none;
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text);
 }
@@ -930,4 +930,9 @@ button.cx-brand {
 /* The customer page separates the composer from the conversation with space, not a rule. */
 .cx-page .pi-compose {
   border-top: 0;
+}
+/* /start has no conversation yet: the composer sits at the foot of the chat's space. */
+.cx-start-space {
+  flex: 1;
+  min-height: var(--space-5);
 }
