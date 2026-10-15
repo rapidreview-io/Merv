@@ -1047,10 +1047,37 @@ button.cx-feature:hover {
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
   }
 }
-/* The conversation scrolls without showing a scroll bar. */
-.cx-page .pi-messages {
+/* The conversation and the plan scroll without showing a scroll bar. */
+.cx-page .pi-messages,
+.cx-page .cx-plan,
+.cx-page .cx-plan-text {
   scrollbar-width: none;
 }
-.cx-page .pi-messages::-webkit-scrollbar {
+.cx-page .pi-messages::-webkit-scrollbar,
+.cx-page .cx-plan::-webkit-scrollbar,
+.cx-page .cx-plan-text::-webkit-scrollbar {
   display: none;
+}
+.cx-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cx-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: cx-spin 0.8s linear infinite;
+}
+@keyframes cx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cx-spinner {
+    animation-duration: 2.4s;
+  }
 }

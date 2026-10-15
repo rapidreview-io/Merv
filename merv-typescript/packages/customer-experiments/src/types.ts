@@ -108,6 +108,8 @@ export interface PlanView {
   updatedAt: string | null;
   status: PlanStatus;
   feedback: string | null;
+  /** The revision last handed in for verification; it cannot be handed in again unchanged. */
+  submittedRevision: number | null;
   contract: null | {
     version: number;
     priceCents: number;
