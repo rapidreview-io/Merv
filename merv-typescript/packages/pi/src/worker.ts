@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { isOrigin } from '@merv/contracts/origins';
 import {
   calculateContextTokens,
@@ -21,7 +24,7 @@ import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
 import { messageChars } from './limits.js';
-import { piModelToolName } from './tool-names.js';
+import { piModelToolName, PI_SHELL_TOOLS } from './tool-names.js';
 import type {
   PiBootstrap,
   PiCompletion,
@@ -104,6 +107,14 @@ const resources = (instructions: string, notes: string[]): ResourceLoader => ({
   reload: async () => {},
 });
 
+/** A conversation's own working folder for its terminal, under the worker's home. */
+async function conversationFolder(conversationId: string): Promise<string> {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(conversationId)) throw new Error('Invalid conversation');
+  const folder = join(homedir(), 'conversations', conversationId);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  return folder;
+}
+
 function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
   if (
     work.command.hostId !== bootstrap.hostId ||
@@ -124,6 +135,7 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
     (work.context !== undefined &&
       (typeof work.context !== 'string' || work.context.length > 32_000)) ||
+    (work.shell !== undefined && work.shell !== true) ||
     !Array.isArray(work.tools) ||
     work.tools.length > 128 ||
     new Set(work.tools.map((tool) => tool.name)).size !== work.tools.length ||
@@ -562,14 +574,17 @@ async function executeTurn(
       return { content: [{ type: 'text', text: shown }], details: undefined };
     },
   }));
+  // A role with a terminal works in its conversation's own folder on this machine, with the
+  // library's own bash, read, write, ls and grep; every other role has none.
+  const cwd = work.shell ? await conversationFolder(work.command.conversationId) : '/pi-worker';
   const { session } = await createAgentSession({
-    cwd: '/pi-worker',
+    cwd,
     modelRuntime: runtime,
     model,
     scopedModels: [{ model, thinkingLevel: 'off' }],
     thinkingLevel: 'off',
     noTools: 'all',
-    tools: tools.map((tool) => tool.name),
+    tools: [...tools.map((tool) => tool.name), ...(work.shell ? PI_SHELL_TOOLS : [])],
     customTools: tools,
     resourceLoader: resources(instructions, work.notes),
     sessionManager: manager,

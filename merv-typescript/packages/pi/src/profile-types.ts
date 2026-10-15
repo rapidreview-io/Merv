@@ -8,6 +8,8 @@ export interface PiProfile {
   model: Pick<PiModelConfig, 'id' | 'effort'>;
   instructions: string;
   tools: readonly string[];
+  /** The role also has a terminal on its machine (PI_SHELL_TOOLS), in the conversation's folder. */
+  shell?: boolean;
   context?(input: { binding: PiProfileBinding; caller: Caller }): Promise<string>;
   /** Additional request-scope check, run for every allowed call before the tool is invoked. */
   authorizeTool?(input: {

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import v8 from 'node:v8';
 import vm from 'node:vm';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoint.js';
 import { readBootstrap } from '../packages/pi/src/worker-main.js';
 import { cause, runPiWorker } from '../packages/pi/src/worker.js';
@@ -94,6 +97,8 @@ async function fixture(
     pacedCall?: string[];
     /** One model call each, before the answer: a text and a tool call. */
     sections?: string[];
+    /** The turn's role has a terminal. */
+    shell?: boolean;
   } = {},
 ) {
   const controller = new AbortController();
@@ -143,13 +148,17 @@ async function fixture(
         assert.equal(auth, `Bearer ${relayToken}`);
         const parsed = piResponsesSchema.safeParse(body);
         assert.ok(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues));
-        assert.ok(validPiPayload(parsed.data, ['project_get']));
+        // A role without a terminal never sends one; with one, exactly the library's five.
+        const offered = options.shell
+          ? ['bash', 'grep', 'ls', 'project_get', 'read', 'write']
+          : ['project_get'];
+        assert.ok(validPiPayload(parsed.data, offered));
         assert.deepEqual(
-          (body.tools as { name: string }[]).map((tool) => tool.name),
-          ['project_get'],
+          (body.tools as { name: string }[]).map((tool) => tool.name).sort(),
+          offered,
         );
         assert.equal(parsed.data.prompt_cache_key, undefined);
-        assert.ok(!JSON.stringify(body).includes('bash'));
+        if (!options.shell) assert.ok(!JSON.stringify(body).includes('bash'));
         assert.ok(!JSON.stringify(body).includes('private-auth'));
         modelRequests.push(body);
         if (options.modelError) return json({ error: { message: 'private-auth' } }, 503);
@@ -304,6 +313,7 @@ async function fixture(
           notes: [],
           instructions: 'You are a test agent.',
           ...(options.context === undefined ? {} : { context: options.context }),
+          ...(options.shell ? { shell: true as const } : {}),
         };
         return json({ work });
       }
@@ -809,6 +819,28 @@ test('every tool is sent with strict false, so the model may leave an optional i
   const tools = app.modelRequests[0].tools as { name: string; strict?: unknown }[];
   assert.ok(tools.length);
   for (const tool of tools) assert.equal(tool.strict, false, tool.name);
+});
+
+test('only a role with a terminal is offered bash, read, write, ls and grep, in its own folder', async (t) => {
+  const plain = await fixture({});
+  await plain.run();
+  assert.deepEqual(plain.failures, []);
+  const named = (app: { modelRequests: Record<string, unknown>[] }) =>
+    (app.modelRequests[0].tools as { name: string }[]).map(({ name }) => name).sort();
+  assert.deepEqual(named(plain), ['project_get']);
+
+  const home = mkdtempSync(join(tmpdir(), 'pi-shell-home-'));
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => {
+    process.env.HOME = was;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const shell = await fixture({ shell: true });
+  await shell.run();
+  assert.deepEqual(shell.failures, []);
+  assert.deepEqual(named(shell), ['bash', 'grep', 'ls', 'project_get', 'read', 'write']);
+  assert.ok(statSync(join(home, 'conversations', 'conv_1')).isDirectory());
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {

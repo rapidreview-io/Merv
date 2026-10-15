@@ -777,3 +777,23 @@ test('the intake agent reads a file as text, a window at a time, and only the ty
     (e: { code?: string }) => e.code === 'not_found',
   );
 });
+
+test('the intake agent gets a short-lived link to one of its own request files, and only those', async () => {
+  const f = await fixture();
+  const r = await f.request();
+  await f.upload(r, 'data/train.csv', 32);
+  const link = await f.files.link(r.id, './data/train.csv');
+  assert.equal(link.key, 'data/train.csv');
+  assert.match(link.url, /data\/train\.csv/);
+  assert.ok(Date.parse(link.expiresAt));
+  await assert.rejects(f.files.link(r.id, '../other.csv'));
+  await assert.rejects(
+    f.files.link(r.id, 'missing.csv'),
+    (e: { code?: string }) => e.code === 'not_found',
+  );
+  const other = await f.request();
+  await assert.rejects(
+    f.files.link(other.id, 'data/train.csv'),
+    (e: { code?: string }) => e.code === 'not_found',
+  );
+});

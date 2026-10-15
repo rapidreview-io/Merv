@@ -94,6 +94,8 @@ test('trusted intake binds the request and exact Astra/medium model, offers only
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
   assert.equal(grant.model, 'gpt-6-astra');
   assert.deepEqual(grant.toolNames, ['customer_experiments_read']);
+  // A role without a terminal is offered none.
+  assert.equal(bound.work.shell, undefined);
   await f.pi.validateModel(grant);
   await f.pi.complete(bound.token, f.completion(bound.input));
   assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands[0].effort, 'medium');
@@ -297,4 +299,45 @@ test('a trusted adapter can open profiled voice without changing the intake mode
     code('pi_profile_unavailable'),
   );
   assert.equal(opened, 1);
+});
+
+test('a role with a terminal is told so, and its model may call the terminal tools', async (t) => {
+  const f = await fixture(t, { pi: { models: [...models] } });
+  f.tools.register({
+    name: 'customer_experiments.read',
+    conversationProfile: profile.id,
+    description: 'Read only this request',
+    readOnly: true,
+    inputSchema: z.object({ requestId: z.string() }).strict(),
+    handler: () => ({}),
+  });
+  f.pi.registerProfile({ ...profile, version: 2, shell: true });
+  // The flag is the role's: a public profile definition cannot carry anything but true.
+  assert.throws(
+    () => f.pi.registerProfile({ ...profile, version: 3, shell: false as unknown as true }),
+    code('pi_profile_invalid'),
+  );
+  const conversation = await f.pi.createProfiled(f.operator, {
+    ...input,
+    requestId: 'intake-create-shell',
+    profile: { ...input.profile, version: 2 },
+  });
+  const bound = await f.claimed(await f.send(conversation));
+  assert.equal(bound.work.shell, true);
+  await f.pi.begin(bound.token, bound.input);
+  // The library's own tools are not Merv tools: Main offers only its own, the worker adds them.
+  assert.deepEqual(
+    bound.work.tools.map(({ name }) => name),
+    ['customer_experiments.read'],
+  );
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  assert.deepEqual(grant.toolNames, [
+    'customer_experiments_read',
+    'bash',
+    'read',
+    'write',
+    'ls',
+    'grep',
+  ]);
+  await f.pi.validateModel(grant);
 });
