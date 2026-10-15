@@ -722,10 +722,11 @@ button.cx-brand {
   color: var(--faint);
 }
 
+/* Under the header at the right, clear of the composer at the foot and the chat window. */
 .cx-tray {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  top: 64px;
   z-index: 20;
   width: 380px;
   max-width: calc(100vw - 32px);
