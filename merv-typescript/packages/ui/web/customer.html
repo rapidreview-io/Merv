@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <title>Merv | Experiment</title>
+    <link rel="icon" href="data:," />
+    <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)" />
+    <script>
+      // The page wears the system's theme, as it changes; the app's chosen theme (merv:theme) too.
+      (function (system) {
+        system.onchange = function () {
+          try {
+            var t = localStorage.getItem('merv:theme');
+            if (t !== 'light' && t !== 'dark') t = system.matches ? 'dark' : 'light';
+            document.documentElement.dataset.theme = t;
+          } catch (e) {
+            document.documentElement.dataset.theme = system.matches ? 'dark' : 'light';
+          }
+        };
+        system.onchange();
+      })(window.matchMedia('(prefers-color-scheme: dark)'));
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./customer/main.tsx"></script>
+  </body>
+</html>

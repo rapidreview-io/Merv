@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react';
 import type { UiRowDescription, UiStateWords } from '@merv/ui/rows';
 import { useTool } from './api';
 import type { PluginState, ShellData } from './shell-types';
@@ -50,7 +51,14 @@ const NO_ROWS: UiRowDescription[] = [];
  * own read, shared, so asking for them costs no request of its own.
  */
 export const useRows = (): UiRowDescription[] =>
-  useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
+  useTool<ShellData>(useContext(Records) ? 'ui.shell' : null, {}, { every: 30000 }).data?.rows ??
+  NO_ROWS;
+
+/**
+ * Whether this page knows a project's records: false on a page with no account behind it (the
+ * customer page), where text is drawn as written, no id is named or linked and no row is read.
+ */
+export const Records = createContext(true);
 
 /**
  * What a state says beyond its word, read from the deployed programs and the rows that list

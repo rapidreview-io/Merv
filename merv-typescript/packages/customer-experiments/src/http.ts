@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { check, MervError } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
-import { customerPage } from './customer-page.js';
+import { customerDocument, type CustomerApp } from './customer-app.js';
 import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
 
@@ -71,7 +71,7 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
   };
 }
 
-export function customerHttp(service: CustomerService): MountHandler {
+export function customerHttp(service: CustomerService, app?: CustomerApp): MountHandler {
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -83,7 +83,7 @@ export function customerHttp(service: CustomerService): MountHandler {
     const page = /^\/customer-experiments\/r\/(ce_[a-f0-9]{32})$/.exec(path);
     if (page && method === 'GET') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(customerPage(page[1]!));
+      res.end(await customerDocument(service, page[1]!, app));
       return;
     }
     if (path === '/customer-experiments/stripe-webhook' && method === 'POST') {

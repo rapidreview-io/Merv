@@ -6,6 +6,8 @@ import { dirname, join, resolve, sep } from 'node:path';
 import type { Plugin } from 'vite';
 
 // The bundle is served by @merv/ui at <api>/ui; in development Vite proxies tool calls to a running server.
+// It has two pages: the app (index.html) and the customer experiments page (customer.html), which
+// customer-experiments serves at /customer-experiments/r/<id> through ui.document('customer').
 // The Host header is kept (no changeOrigin) so the API's same-origin check sees Origin === http://<host>.
 const api = process.env.MERV_API || 'http://127.0.0.1:3081';
 const proxy = Object.fromEntries(
@@ -21,6 +23,7 @@ const proxy = Object.fromEntries(
     '/sbx',
     '/code',
     '/pi',
+    '/customer-experiments',
   ].map((path) => [path, { target: api, ...(path === '/sbx' ? { ws: true } : {}) }]),
 );
 
@@ -54,7 +57,17 @@ export default defineConfig({
   root: 'web',
   base: '/ui/',
   plugins: [react(), excalidrawFonts()],
-  build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'web/index.html'),
+        customer: resolve(import.meta.dirname, 'web/customer.html'),
+      },
+    },
+  },
   // The worker loads each grammar as its own chunk, so it is a module, as the page starts it.
   // It has no DOM, so it decodes entities from their table, not through one.
   worker: {
