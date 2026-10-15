@@ -1395,3 +1395,33 @@ test('each intake turn opens with the request files and what changed since the a
   t.after(() => void (fileState.etag = ''));
   assert.match(await context(), /New or changed since your last turn: data\/train\.csv\./);
 });
+
+test('the intake agent may search the web and the literature: only its request tools name the request', async (t) => {
+  const f = await planFixture(t);
+  const record = await f.store.get(f.a.id);
+  const profile = f.profiles.find((p) => p.version === 4)!;
+  const caller = {
+    ...(await f.service.caller(record)),
+    conversation: { id: record.conversationId },
+  } as Caller;
+  const binding = { id: profile.id, version: 4, requestId: f.a.id };
+  // A web search carries no request id and is allowed.
+  await profile.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
+  await profile.authorizeTool!({ binding, caller, name: 'nisa.search', input: { query: 'x' } });
+  // The request's own tools still name exactly the bound request.
+  await profile.authorizeTool!({
+    binding,
+    caller,
+    name: 'customer_experiments.files',
+    input: { id: f.a.id },
+  });
+  await assert.rejects(
+    profile.authorizeTool!({
+      binding,
+      caller,
+      name: 'customer_experiments.files',
+      input: { id: 'ce_' + '0'.repeat(32) },
+    }),
+    (e: { code?: string }) => e.code === 'forbidden',
+  );
+});

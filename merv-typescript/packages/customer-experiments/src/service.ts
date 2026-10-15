@@ -422,8 +422,12 @@ export class CustomerService {
       authorizeTool: async ({
         binding,
         caller,
+        name,
         input,
       }: Parameters<NonNullable<PiProfile['authorizeTool']>>[0]) => {
+        // The request's own tools name it; open-world reads (web, literature) name none and touch
+        // no request data, so only the bound request is checked.
+        if (!name.startsWith('customer_experiments.')) return;
         check(
           input.id === binding.requestId,
           'forbidden',
