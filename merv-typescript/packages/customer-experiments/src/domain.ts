@@ -410,8 +410,13 @@ export class CustomerExperiments {
         'This request plans with its structured offer',
         409,
       );
-      const row = await tx.get<{ revision: number; status: PlanStatus; feedback: string | null }>(
-        'SELECT revision,status,feedback FROM customer_experiment_plans WHERE experiment_id=?',
+      const row = await tx.get<{
+        revision: number;
+        status: PlanStatus;
+        feedback: string | null;
+        submitted_revision: number | null;
+      }>(
+        'SELECT revision,status,feedback,submitted_revision FROM customer_experiment_plans WHERE experiment_id=?',
         id,
       );
       const current = row
@@ -430,6 +435,7 @@ export class CustomerExperiments {
         updatedAt: current?.created_at ?? null,
         status,
         feedback: row?.feedback ?? null,
+        submittedRevision: row?.submitted_revision == null ? null : Number(row.submitted_revision),
         contract:
           status === 'accepted' && c && isDocumentContract(c)
             ? {

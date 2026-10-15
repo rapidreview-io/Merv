@@ -522,7 +522,8 @@ test('before the first question the chat has no heading and asks for one mid-pag
   // The question types itself out: it starts empty and grows toward the full prompt.
   const placeholder = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!.placeholder;
   assert.ok('What do you want to learn?'.startsWith(placeholder().replace(/[\u258F ]$/, '')));
-  await settle(2500);
+  // Up to 26 characters at 55-110ms each after a 500ms pause: poll rather than guess.
+  for (let i = 0; i < 40 && !/\?[\u258F ]$/.test(placeholder()); i++) await settle(200);
   assert.match(placeholder(), /^What do you want to learn\?[\u258F ]$/);
   // The machine is already starting for that first question.
   assert.equal(requests.filter((request) => request === `POST ${BASE}/chat/warm`).length, 1);

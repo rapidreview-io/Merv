@@ -12,6 +12,8 @@ export interface Plan {
   updatedAt: string | null;
   status: 'drafting' | 'verifying' | 'changes_requested' | 'accepted';
   feedback: string | null;
+  /** The revision last handed in for verification; resubmitting it unchanged is refused. */
+  submittedRevision?: number | null;
   contract: null | {
     version: number;
     priceCents: number;
@@ -76,6 +78,10 @@ export function PlanEditor({
   const preview = chosen ?? !!(plan?.document ?? '').trim();
   const editable = !!plan && (plan.status === 'drafting' || plan.status === 'changes_requested');
   const dirty = !!synced.current && draft !== synced.current.document;
+  // A returned plan goes back only once it has changed since it was returned.
+  const unchanged =
+    plan?.status === 'changes_requested' && !dirty && plan.submittedRevision === plan.revision;
+  const reviewing = busy === 'submitting' || (plan?.status === 'verifying' && agentBusy);
 
   // A plan read anew is taken where nothing here is unsaved; over an unsaved edit it is a
   // conflict for the person to settle.
@@ -232,30 +238,35 @@ export function PlanEditor({
       )}
       {/* The plan's actions follow it, where the reader finishes it. */}
       <div className="cx-plan-bar">
-        {editable && (
+        {(editable || reviewing) && (
           <div className="cx-plan-actions">
             <button
               type="button"
               className="btn btn--quiet"
               aria-pressed={preview}
+              disabled={!editable}
               onClick={() => setPreview(!preview)}
             >
               {preview ? 'Edit' : 'Preview'}
             </button>
             <button
               type="button"
-              className="btn btn--primary"
-              disabled={!!busy || !!conflict || !draft.trim() || agentBusy}
+              className="btn btn--primary cx-submit"
+              aria-busy={reviewing}
+              disabled={
+                reviewing || !!busy || !!conflict || !draft.trim() || agentBusy || unchanged
+              }
               onClick={() => void submit()}
             >
-              {busy === 'submitting' ? 'Submitting…' : 'Submit'}
+              {reviewing && <span className="cx-spinner" aria-hidden="true" />}
+              {reviewing ? 'Reviewing' : 'Submit'}
             </button>
           </div>
         )}
-        {plan.status === 'verifying' && !agentBusy && (
+        {plan.status === 'verifying' && !reviewing && (
           <div className="cx-plan-actions">
             <button type="button" className="btn" disabled={!!busy} onClick={() => void submit()}>
-              {busy === 'submitting' ? 'Sending…' : 'Resend'}
+              Resend
             </button>
           </div>
         )}
