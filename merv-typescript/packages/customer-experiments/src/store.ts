@@ -35,6 +35,12 @@ export interface RequestRecord {
   };
   notifiedContract?: string;
 }
+/** The customer's browser sign-in, which service_experiment@3 requires beside the capability. */
+export interface IdentityBinding {
+  issuer: string;
+  subject: string;
+  boundAt: string;
+}
 export class RequestStore {
   constructor(
     readonly state: State,
@@ -52,6 +58,11 @@ export class RequestStore {
       1: `
       CREATE TABLE customer_experiment_requests(id TEXT PRIMARY KEY, client_request TEXT NOT NULL UNIQUE, data_json TEXT NOT NULL);
       CREATE TABLE customer_experiment_stripe_events(event_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES customer_experiment_requests(id), received_at TEXT NOT NULL);
+    `,
+      // service_experiment@3: the browser (a Supabase anonymous user) acting as the customer.
+      // POST /session binds it once; only an explicit take-over, with the capability, moves it.
+      2: `
+      CREATE TABLE customer_experiment_identities(request_id TEXT PRIMARY KEY REFERENCES customer_experiment_requests(id), issuer TEXT NOT NULL, subject TEXT NOT NULL, bound_at TEXT NOT NULL);
     `,
     });
   }
@@ -143,27 +154,58 @@ export class RequestStore {
     bearer: string,
     roles: ('agent' | 'customer')[],
   ): Promise<RequestRecord> {
+    return (await this.authorizeRole(id, bearer, roles)).record;
+  }
+  /** As authorize, also naming which capability the bearer is. */
+  async authorizeRole(
+    id: string,
+    bearer: string,
+    roles: ('agent' | 'customer')[],
+  ): Promise<{ record: RequestRecord; role: 'agent' | 'customer' }> {
     const record = await this.get(id);
     const supplied = Buffer.from(digest(bearer));
-    check(
-      roles.some((role) =>
-        timingSafeEqual(supplied, Buffer.from(digest(this.token(record, role)))),
-      ),
-      'unauthorized',
-      'This credential cannot access this experiment',
-      401,
+    const role = roles.find((role) =>
+      timingSafeEqual(supplied, Buffer.from(digest(this.token(record, role)))),
     );
+    check(role, 'unauthorized', 'This credential cannot access this experiment', 401);
     // Customer bookmarks remain usable to monitor the run and retrieve its results.
     // The external agent's capability still expires after the bounded intake period.
-    const customer =
-      roles.includes('customer') &&
-      timingSafeEqual(supplied, Buffer.from(digest(this.token(record, 'customer'))));
     check(
-      customer || Date.parse(record.expiresAt) > Date.now(),
+      role === 'customer' || Date.parse(record.expiresAt) > Date.now(),
       'access_expired',
       'Experiment agent access has expired',
       401,
     );
-    return record;
+    return { record, role };
+  }
+  async binding(id: string): Promise<IdentityBinding | null> {
+    const row = await this.state.read((sql) =>
+      sql.get<{ issuer: string; subject: string; bound_at: string }>(
+        'SELECT issuer,subject,bound_at FROM customer_experiment_identities WHERE request_id=?',
+        id,
+      ),
+    );
+    return row ? { issuer: row.issuer, subject: row.subject, boundAt: row.bound_at } : null;
+  }
+  /** Binds the request to `identity` unless one is bound already (or `takeOver` moves it there);
+   *  answers whichever is bound. */
+  async bind(
+    id: string,
+    identity: { issuer: string; subject: string },
+    takeOver = false,
+  ): Promise<IdentityBinding> {
+    await this.state.transaction((tx) =>
+      tx.run(
+        'INSERT INTO customer_experiment_identities(request_id,issuer,subject,bound_at) VALUES(?,?,?,?) ON CONFLICT(request_id) DO ' +
+          (takeOver
+            ? 'UPDATE SET issuer=excluded.issuer,subject=excluded.subject,bound_at=excluded.bound_at'
+            : 'NOTHING'),
+        id,
+        identity.issuer,
+        identity.subject,
+        new Date().toISOString(),
+      ),
+    );
+    return (await this.binding(id))!;
   }
 }

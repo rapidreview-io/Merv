@@ -4,6 +4,7 @@ import type { MountHandler } from '@merv/api/types';
 import { customerPage } from './customer-page.js';
 import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
+import { chatHttp } from './chat-http.js';
 
 // The invitation can be shared. Idempotency must be an unguessable client secret, not a title
 // or counter another invite holder could replay to recover this customer's capabilities.
@@ -72,6 +73,7 @@ export function startHttp(options: StartPageOptions, service?: CustomerService):
 }
 
 export function customerHttp(service: CustomerService): MountHandler {
+  const chat = chatHttp(service);
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -99,6 +101,8 @@ export function customerHttp(service: CustomerService): MountHandler {
     }
     if (path === '/customer-experiments/requests' && method === 'POST')
       return service.create(r.bearer(), await r.json(createSchema, 40000));
+    const routed = chat(req, res, r);
+    if (routed) return routed;
     const match =
       /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
         path,
@@ -106,9 +110,10 @@ export function customerHttp(service: CustomerService): MountHandler {
     if (!match) throw new MervError('not_found', 'Route not found', 404);
     const [, id, action, child, end] = match;
     const customerOnly = action === 'accept' || action === 'checkout';
-    const record = await service.store.authorize(
+    const { record } = await service.access.authorize(
       id!,
       r.bearer(),
+      req,
       customerOnly ? ['customer'] : ['agent', 'customer'],
     );
     if (!action && method === 'GET') return service.snapshot(record);

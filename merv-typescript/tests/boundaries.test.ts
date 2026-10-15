@@ -274,7 +274,7 @@ const sharedContract = (specifier: string) =>
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence, returns and history, the prerequisite guard, the paper's Problem, an
  * artifact as a context item, the retirement ledger text every retirement migration embeds, what
- * a runner advertises, the agent stream and its harness readers, the remote-row manifest, hosted Codex's profile and handoff
+ * a runner advertises, the agent stream and its harness readers, a Pi conversation's live view, the remote-row manifest, hosted Codex's profile and handoff
  * grace, the lease rows every leased step keeps, a record's Code unit, a unit's history as its
  * owner tells it on the Work page, and its Artifacts tab. */
 const pureRules = new Set([
@@ -304,6 +304,7 @@ const pureRules = new Set([
   '@merv/sessions/compute',
   '@merv/sessions/agent-stream',
   '@merv/ui/manifest',
+  '@merv/pi/live',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */
@@ -524,8 +525,10 @@ function assertComponentReferences(
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
       // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
+      // Customer experiments serves its request's intake conversation to the customer the same way.
       const events =
-        isAdapter && ['@merv/api/event-stream', '@merv/api/errors'].includes(specifier);
+        (isAdapter && ['@merv/api/event-stream', '@merv/api/errors'].includes(specifier)) ||
+        (owner === 'customer-experiments' && specifier === '@merv/api/event-stream');
       // The integration publishes its capture reader contract alongside its implementation.
       const captureTypes = typeOnly && specifier === '@merv/sandboxes/sandbox-evidence';
       // Pure rules (no service, see the test below) that any unit may run.
