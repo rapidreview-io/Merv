@@ -109,23 +109,29 @@ function usePoll<T>(path: string, every: number) {
   const [version, setVersion] = useState(0);
   useEffect(() => {
     let stopped = false;
+    let reading = false;
     let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      if (document.visibilityState !== 'hidden')
+    // One loop only: a read already in flight schedules the next one itself.
+    const read = async (first = false) => {
+      if (reading) return;
+      reading = true;
+      if (first || document.visibilityState !== 'hidden')
         await customerRequest<T>(path).then(
           (next) => !stopped && setData(next),
           () => {},
         );
+      reading = false;
       if (!stopped) timer = setTimeout(() => void read(), every);
     };
     // A tab shown again reads at once rather than at its next turn.
     const shown = () => {
-      if (document.visibilityState === 'hidden') return;
+      if (document.visibilityState === 'hidden' || reading) return;
       clearTimeout(timer);
       void read();
     };
     document.addEventListener('visibilitychange', shown);
-    void read();
+    // The first read happens even in a background tab, so the page is ready when shown.
+    void read(true);
     return () => {
       stopped = true;
       clearTimeout(timer);
