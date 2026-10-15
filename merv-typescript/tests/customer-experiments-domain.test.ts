@@ -87,6 +87,8 @@ async function fixture(
       compute,
     ),
   );
+  // These cover the structured offer: requests start on service_experiment@2.
+  service.startVersion = 2;
   const reports = legacyReports(state);
   service.bindReports(reports);
   const work = currentWork(managed, { directory: dir, source: caller });

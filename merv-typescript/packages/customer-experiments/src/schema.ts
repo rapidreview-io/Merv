@@ -46,6 +46,42 @@ export const planSchema = z
     feasibility: text,
   })
   .strict();
+export const limitsSchema = planSchema.shape.limits;
+/** A v3 plan document: free Markdown the customer and the intake agent co-edit. */
+export const planDocumentSchema = z.string().max(200_000);
+/** plan_verify's input: one object (tool inputs are objects), its fields required per decision. */
+export const planVerifySchema = z
+  .object({
+    id: z.string(),
+    revision: z.number().int().positive(),
+    decision: z.enum(['accept', 'changes_requested']),
+    feedback: text.optional(),
+    question: text.optional(),
+    criteria: z.array(text).min(1).max(20).optional(),
+    limits: limitsSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const required =
+      value.decision === 'accept' ? (['question', 'criteria', 'limits'] as const) : ['feedback'];
+    for (const field of required)
+      if (value[field as keyof typeof value] === undefined)
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `${field} is required to ${value.decision === 'accept' ? 'accept' : 'request changes'}`,
+        });
+  });
+export type PlanVerification =
+  | {
+      revision: number;
+      decision: 'accept';
+      feedback?: string;
+      question: string;
+      criteria: string[];
+      limits: ExperimentPlan['limits'];
+    }
+  | { revision: number; decision: 'changes_requested'; feedback: string };
 export const datasetSchema = z
   .object({
     requirementId: z.string().min(1),
@@ -168,5 +204,16 @@ CREATE TABLE customer_experiment_retained_outputs (
  submission_id TEXT PRIMARY KEY, artifact_ids TEXT NOT NULL, receipt_id TEXT NOT NULL
 );
 CREATE TRIGGER customer_retained_outputs_immutable BEFORE UPDATE OR DELETE ON customer_experiment_retained_outputs FOR EACH ROW EXECUTE FUNCTION customer_experiments_immutable();
+`,
+  3: `
+CREATE TABLE customer_experiment_plans (
+ experiment_id TEXT PRIMARY KEY, revision BIGINT NOT NULL, status TEXT NOT NULL, feedback TEXT,
+ submitted_revision BIGINT, updated_at TEXT NOT NULL
+);
+CREATE TABLE customer_experiment_plan_revisions (
+ experiment_id TEXT NOT NULL, revision BIGINT NOT NULL, document TEXT NOT NULL, updated_by TEXT NOT NULL,
+ created_at TEXT NOT NULL, PRIMARY KEY(experiment_id,revision)
+);
+CREATE TRIGGER customer_plan_revision_immutable BEFORE UPDATE OR DELETE ON customer_experiment_plan_revisions FOR EACH ROW EXECUTE FUNCTION customer_experiments_immutable();
 `,
 };

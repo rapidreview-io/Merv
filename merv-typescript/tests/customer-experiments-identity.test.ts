@@ -139,6 +139,9 @@ async function fixture(t: TestContext, options: { version?: number; identity?: b
         submission: null,
       };
     },
+    async plan() {
+      return { revision: 0, document: '', status: 'drafting', feedback: null, contract: null };
+    },
   } as unknown as CustomerExperiments;
   const calls: { method: string; caller: Caller; id: string; input?: unknown }[] = [];
   const pi = {
@@ -296,12 +299,12 @@ test('v3 customer routes need the capability and the bound sign-in; the agent ke
     );
   assert.equal((await f.send('', f.agent)).status, 200);
   assert.equal((await f.send('', f.customer, 'alice')).status, 200);
-  // Approval reaches the existing domain flow as the bound customer.
+  // Approval reaches the existing domain flow as the bound customer; v3 accepts with checkout.
   const accepted = await f.send('/accept', f.customer, 'alice', {
     contractVersion: 1,
     email: 'customer@example.com',
   });
-  assert.equal(accepted.body.error.code, 'stale_contract');
+  assert.equal(accepted.body.error.code, 'plan_document');
   assert.equal(
     (await f.send('/accept', f.customer, 'bob', { contractVersion: 1, email: 'c@example.com' }))
       .status,

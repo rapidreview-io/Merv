@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { check, MervError } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 import { customerPage } from './customer-page.js';
+import { planHttp, unhandled } from './plan-http.js';
 import { startPage, agentInstructions, type StartPageOptions } from './start-page.js';
 import type { CustomerService } from './service.js';
 import { chatHttp } from './chat-http.js';
@@ -103,6 +104,8 @@ export function customerHttp(service: CustomerService): MountHandler {
       return service.create(r.bearer(), await r.json(createSchema, 40000));
     const routed = chat(req, res, r);
     if (routed) return routed;
+    const planned = await planHttp(service, req, res, r);
+    if (planned !== unhandled) return planned;
     const match =
       /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
         path,

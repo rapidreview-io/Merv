@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { check } from '@merv/contracts';
-import type { ExperimentContract } from './types.js';
+import { contractTitle, type ExperimentContract } from './types.js';
 
 export interface PaidCheckout {
   eventId: string;
@@ -10,12 +10,15 @@ export interface PaidCheckout {
   paymentId: string;
   amountCents: number;
   currency: string;
+  /** The address the customer gave Stripe Checkout. */
+  email?: string;
 }
 export interface Payments {
   checkout(input: {
     requestId: string;
     contract: ExperimentContract;
-    email: string;
+    /** Null: Stripe Checkout collects the address (v3). */
+    email: string | null;
     generation: number;
     previousId?: string;
   }): Promise<{ id: string; url: string; expiresAt: number }>;
@@ -50,7 +53,7 @@ export class StripePayments implements Payments {
   async checkout(input: {
     requestId: string;
     contract: ExperimentContract;
-    email: string;
+    email: string | null;
     generation: number;
     previousId?: string;
   }) {
@@ -78,7 +81,7 @@ export class StripePayments implements Payments {
         mode: 'payment',
         managed_payments: { enabled: false },
         allowed_payment_method_types: ['card'],
-        customer_email: email,
+        ...(email ? { customer_email: email } : {}),
         client_reference_id: requestId,
         metadata: {
           product: 'merv-customer-experiment-v1',
@@ -93,7 +96,7 @@ export class StripePayments implements Payments {
               currency: contract.price.currency,
               unit_amount: contract.price.amountCents,
               product_data: {
-                name: contract.plan.title.slice(0, 250),
+                name: contractTitle(contract).slice(0, 250),
                 description: 'One bounded experiment under the accepted Merv plan',
               },
             },
@@ -154,6 +157,7 @@ export class StripePayments implements Payments {
       paymentId: session.payment_intent,
       amountCents: session.amount_total,
       currency: session.currency,
+      ...(session.customer_details?.email ? { email: session.customer_details.email } : {}),
     };
   }
 }

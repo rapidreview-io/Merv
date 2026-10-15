@@ -25,17 +25,40 @@ import { CheckedTransitions } from '@merv/workflows/rules';
 import { heldLease } from '@merv/workflows/lease-rows';
 import type { Reports } from '@merv/reports/types';
 import { customerReportSubject } from './report-subject.js';
-import { SERVICE_EXPERIMENT, SERVICE_VERSION, SERVICE_VERSIONS, writesReport } from './program.js';
+import {
+  SERVICE_EXPERIMENT,
+  SERVICE_VERSION,
+  SERVICE_VERSIONS,
+  plansDocument,
+  writesReport,
+} from './program.js';
 import { executionPolicy } from './execution.js';
-import { migrations, planSchema, submitResultsSchema, validateAgreement } from './schema.js';
+import {
+  migrations,
+  planDocumentSchema,
+  planSchema,
+  submitResultsSchema,
+  validateAgreement,
+  type PlanVerification,
+} from './schema.js';
 import {
   SERVICE_MODEL,
+  contractDatasets,
+  contractLimits,
+  isDocumentContract,
   type CustomerExperiment,
+  type DocumentContract,
   type ExperimentContract,
   type ExperimentPlan,
+  type PlanStatus,
+  type PlanView,
+  type RequestFile,
   type ResultSubmission,
   type ValidatedDataset,
 } from './types.js';
+
+const validEmail = (email: string) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
 
 interface Row {
   id: string;
@@ -57,6 +80,8 @@ export class CustomerExperiments {
   readonly checked = new CheckedTransitions();
   /** The version new requests start on. */
   handle?: Awaited<ReturnType<Workflows['register']>>;
+  /** Tests pin an earlier version to keep exercising requests started on it. */
+  startVersion: number = SERVICE_VERSION;
   readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   handleFor(version: number) {
     const handle = this.handles.get(version);
@@ -248,11 +273,11 @@ export class CustomerExperiments {
           409,
         );
         await this.code.ensureRepository(caller, tx);
-        const workflow = await this.handle!.start(
+        const workflow = await this.handleFor(this.startVersion).start(
           caller,
           {
             workflow: SERVICE_EXPERIMENT.name,
-            version: SERVICE_VERSION,
+            version: this.startVersion,
             requestId: childRequest(caller, 'customer-experiments', 'create', input.requestId),
             data: { name: input.title, workspace: 'git' },
           },
@@ -290,6 +315,12 @@ export class CustomerExperiments {
     return inTransaction(this.state, transaction, async (tx) =>
       this.command(caller, 'propose', input, tx, async () => {
         const exp = await this.mutable(caller, input.id, input.expectedRevision, tx);
+        check(
+          !plansDocument(exp.workflow.version),
+          'plan_document',
+          'This request is planned in its plan document',
+          409,
+        );
         check(
           ['planning', 'ready'].includes(exp.workflow.state),
           'fixed_contract',
@@ -369,6 +400,232 @@ export class CustomerExperiments {
       }),
     );
   }
+  /** service_experiment@3: the plan document, its status and, once accepted, its contract. */
+  async plan(caller: Caller, id: string, transaction?: Transaction): Promise<PlanView> {
+    return inTransaction(this.state, transaction, async (tx) => {
+      const exp = await this.get(caller, id, tx);
+      check(
+        plansDocument(exp.workflow.version),
+        'plan_document_unavailable',
+        'This request plans with its structured offer',
+        409,
+      );
+      const row = await tx.get<{ revision: number; status: PlanStatus; feedback: string | null }>(
+        'SELECT revision,status,feedback FROM customer_experiment_plans WHERE experiment_id=?',
+        id,
+      );
+      const current = row
+        ? await tx.get<{ document: string; updated_by: 'customer' | 'agent'; created_at: string }>(
+            'SELECT document,updated_by,created_at FROM customer_experiment_plan_revisions WHERE experiment_id=? AND revision=?',
+            id,
+            row.revision,
+          )
+        : undefined;
+      const status = row?.status ?? 'drafting';
+      const c = exp.contract;
+      return {
+        revision: Number(row?.revision ?? 0),
+        document: current?.document ?? '',
+        updatedBy: current?.updated_by ?? null,
+        updatedAt: current?.created_at ?? null,
+        status,
+        feedback: row?.feedback ?? null,
+        contract:
+          status === 'accepted' && c && isDocumentContract(c)
+            ? {
+                version: c.version,
+                priceCents: c.price.amountCents,
+                currency: c.price.currency,
+                limits: c.limits,
+              }
+            : null,
+      };
+    });
+  }
+  /** Either side saves a new revision of the plan document while it is open for editing. */
+  async writePlan(
+    caller: Caller,
+    input: { id: string; expectedRevision: number; document: string; by: 'customer' | 'agent' },
+    transaction?: Transaction,
+  ): Promise<PlanView> {
+    caller = structuredClone(caller);
+    input = plain(input);
+    const document = planDocumentSchema.parse(input.document);
+    return inTransaction(this.state, transaction, async (tx) => {
+      const plan = await this.openPlan(caller, input.id, input.expectedRevision, tx);
+      check(
+        ['drafting', 'changes_requested'].includes(plan.status),
+        'plan_locked',
+        plan.status === 'verifying'
+          ? 'The plan is being verified'
+          : 'The accepted plan cannot be edited',
+        409,
+      );
+      const revision = plan.revision + 1,
+        at = now();
+      await tx.run(
+        'INSERT INTO customer_experiment_plan_revisions(experiment_id,revision,document,updated_by,created_at) VALUES(?,?,?,?,?)',
+        input.id,
+        revision,
+        document,
+        input.by,
+        at,
+      );
+      await tx.run(
+        `INSERT INTO customer_experiment_plans(experiment_id,revision,status,feedback,updated_at) VALUES(?,?,?,?,?)
+         ON CONFLICT(experiment_id) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at`,
+        input.id,
+        revision,
+        plan.status,
+        plan.feedback,
+        at,
+      );
+      return this.plan(caller, input.id, tx);
+    });
+  }
+  /** The customer hands the exact revision they read to the intake agent for verification. */
+  async submitPlan(
+    caller: Caller,
+    input: { id: string; expectedRevision: number },
+    transaction?: Transaction,
+  ): Promise<PlanView> {
+    caller = structuredClone(caller);
+    input = plain(input);
+    return inTransaction(this.state, transaction, async (tx) => {
+      const plan = await this.openPlan(caller, input.id, input.expectedRevision, tx);
+      // A retried submit of the revision already under verification is the same request.
+      if (plan.status === 'verifying') return plan;
+      check(
+        plan.status !== 'accepted',
+        'plan_locked',
+        'The accepted plan cannot be submitted again',
+        409,
+      );
+      check(plan.document.trim(), 'plan_empty', 'Write the plan before submitting it', 409);
+      const returned = await tx.get<{ submitted_revision: number | null }>(
+        'SELECT submitted_revision FROM customer_experiment_plans WHERE experiment_id=?',
+        input.id,
+      );
+      check(
+        Number(returned?.submitted_revision ?? 0) !== plan.revision,
+        'plan_unchanged',
+        'Revise the plan before submitting it again',
+        409,
+      );
+      await this.setPlanStatus(input.id, 'verifying', plan.feedback, tx);
+      await tx.run(
+        'UPDATE customer_experiment_plans SET submitted_revision=? WHERE experiment_id=?',
+        plan.revision,
+        input.id,
+      );
+      await recorded(this.state, tx, caller, 'customer_experiment.plan_submitted', input.id, {
+        revision: plan.revision,
+      });
+      return this.plan(caller, input.id, tx);
+    });
+  }
+  /** The intake agent's verdict on the submitted revision. Accepting freezes the contract:
+   *  the document, its summary, the request's file manifest and the price. */
+  async verifyPlan(
+    caller: Caller,
+    input: PlanVerification & { id: string; files: RequestFile[] },
+    transaction?: Transaction,
+  ): Promise<PlanView> {
+    caller = structuredClone(caller);
+    input = plain(input);
+    return inTransaction(this.state, transaction, async (tx) => {
+      const plan = await this.openPlan(caller, input.id, input.revision, tx);
+      check(
+        plan.status === 'verifying',
+        'plan_not_submitted',
+        'Only a plan the customer submitted can be verified',
+        409,
+      );
+      if (input.decision === 'changes_requested') {
+        await this.setPlanStatus(input.id, 'changes_requested', input.feedback, tx);
+        await recorded(this.state, tx, caller, 'customer_experiment.plan_returned', input.id, {
+          revision: plan.revision,
+        });
+        return this.plan(caller, input.id, tx);
+      }
+      const exp = await this.get(caller, input.id, tx);
+      const version = (exp.contract?.version ?? 0) + 1;
+      const body: Omit<DocumentContract, 'hash'> = {
+        id: newId('contract'),
+        version,
+        document: plan.document,
+        revision: plan.revision,
+        question: input.question,
+        criteria: input.criteria,
+        limits: input.limits,
+        files: input.files.map((f) => ({ key: f.key, size: f.size, etag: f.etag })),
+        model: SERVICE_MODEL,
+        price: this.price,
+        createdAt: now(),
+      };
+      const contract: DocumentContract = { ...body, hash: digest(body) };
+      const artifact = await this.artifacts.create(
+        caller,
+        {
+          title: `Accepted offer ${version}: ${exp.title}`,
+          content: JSON.stringify(contract),
+          mediaType: 'application/json',
+        },
+        tx,
+      );
+      await tx.run(
+        'INSERT INTO customer_experiment_contracts(id,experiment_id,version,hash,artifact_id,record) VALUES(?,?,?,?,?,?)',
+        contract.id,
+        exp.id,
+        version,
+        contract.hash,
+        artifact.id,
+        JSON.stringify(contract),
+      );
+      await tx.run('UPDATE customer_experiments SET contract_id=? WHERE id=?', contract.id, exp.id);
+      await this.setPlanStatus(input.id, 'accepted', input.feedback ?? null, tx);
+      await this.move(caller, exp, 'propose', `plan-${plan.revision}`, tx);
+      return this.plan(caller, input.id, tx);
+    });
+  }
+  private async openPlan(
+    caller: Caller,
+    id: string,
+    revision: number,
+    tx: Transaction,
+  ): Promise<PlanView> {
+    this.open();
+    await this.scope.require(caller, 'write', tx);
+    const exp = await this.get(caller, id, tx);
+    const plan = await this.plan(caller, id, tx);
+    check(
+      exp.workflow.state === 'planning' || plan.status === 'accepted',
+      'fixed_contract',
+      'Planning is finished; the accepted contract is fixed',
+      409,
+    );
+    check(
+      plan.revision === revision,
+      'revision_conflict',
+      'The plan changed; reload the current revision',
+      409,
+    );
+    return plan;
+  }
+  private async setPlanStatus(
+    id: string,
+    status: PlanStatus,
+    feedback: string | null,
+    tx: Transaction,
+  ): Promise<void> {
+    await tx.run(
+      'UPDATE customer_experiment_plans SET status=?,feedback=?,updated_at=? WHERE experiment_id=?',
+      status,
+      feedback,
+      now(),
+      id,
+    );
+  }
   /** Trusted adapter only: the HTTP customer capability, never an intake/worker tool. */
   async approve(
     caller: Caller,
@@ -376,7 +633,8 @@ export class CustomerExperiments {
       id: string;
       expectedRevision: number;
       contractHash: string;
-      email: string;
+      /** Null for a v3 plan document: Stripe Checkout collects it, and payment records it. */
+      email: string | null;
       requestId: string;
     },
     transaction?: Transaction,
@@ -390,13 +648,20 @@ export class CustomerExperiments {
       403,
     );
     check(
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) && input.email.length <= 254,
+      input.email === null || validEmail(input.email),
       'invalid_email',
       'A results email is required',
     );
     return inTransaction(this.state, transaction, async (tx) =>
       this.command(caller, 'approve', input, tx, async () => {
         const exp = await this.mutable(caller, input.id, input.expectedRevision, tx);
+        check(
+          (input.email === null) === plansDocument(exp.workflow.version),
+          'invalid_email',
+          input.email === null
+            ? 'A results email is required'
+            : 'Checkout collects the results email for this plan',
+        );
         check(
           exp.workflow.state === 'ready' && exp.contract?.hash === input.contractHash,
           'stale_contract',
@@ -408,7 +673,7 @@ export class CustomerExperiments {
           'INSERT INTO customer_experiment_acceptances(contract_id,experiment_id,email,accepted_at) VALUES(?,?,?,?)',
           exp.contract.id,
           exp.id,
-          input.email,
+          input.email ?? '',
           acceptedAt,
         );
         await tx.run(
@@ -433,6 +698,8 @@ export class CustomerExperiments {
       amountCents: number;
       currency: string;
       requestId: string;
+      /** The address Stripe Checkout collected, for a v3 acceptance that recorded none. */
+      email?: string;
     },
     transaction?: Transaction,
   ): Promise<CustomerExperiment> {
@@ -443,6 +710,11 @@ export class CustomerExperiments {
       'forbidden',
       'Only the trusted payment adapter can release execution',
       403,
+    );
+    check(
+      input.email === undefined || validEmail(input.email),
+      'invalid_email',
+      'The paid checkout has no valid email',
     );
     return inTransaction(this.state, transaction, async (tx) =>
       this.command(caller, 'payment', input, tx, async () => {
@@ -514,16 +786,17 @@ export class CustomerExperiments {
           priorTokens,
         );
         await tx.run(
-          'UPDATE customer_experiments SET payment_id=?,attempts=1 WHERE id=?',
+          'UPDATE customer_experiments SET payment_id=?,attempts=1,email=COALESCE(email,?) WHERE id=?',
           input.paymentId,
+          input.email ?? null,
           exp.id,
         );
         await this.sessions.dispatch.setBudget(
           caller,
           {
             instanceId: exp.id,
-            maxWallMinutes: c.plan.limits.wallMinutes + Math.ceil(usage.totals.wallMs / 60000),
-            maxTokens: c.plan.limits.maxTokens + priorTokens,
+            maxWallMinutes: contractLimits(c).wallMinutes + Math.ceil(usage.totals.wallMs / 60000),
+            maxTokens: contractLimits(c).maxTokens + priorTokens,
           },
           tx,
         );
@@ -648,7 +921,7 @@ export class CustomerExperiments {
         // A visit still owns its full reservation until it has closed and reported its use.
         if (usage.liveSessions) return exp;
         const prior = await this.priorUsage(exp, tx);
-        const limit = exp.contract!.plan.limits;
+        const limit = contractLimits(exp.contract!);
         const reserve = exp.workflow.state === 'running' ? 0.2 : 0;
         const wallRemaining = limit.wallMinutes * 60 - (usage.totals.wallMs - prior.wallMs) / 1000;
         const tokensRemaining =
@@ -752,7 +1025,7 @@ export class CustomerExperiments {
       const pinned = [
         contractArtifact,
         receipt.id,
-        ...exp.contract!.datasets.map((d) => d.artifactId),
+        ...contractDatasets(exp.contract!).map((d) => d.artifactId),
         ...compute.artifactIds,
       ];
       const review = await this.reviews.request(
@@ -815,7 +1088,7 @@ export class CustomerExperiments {
               : 'repair_execution';
         if (action === 'repair_execution')
           check(
-            exp.attempts < exp.contract!.plan.limits.maxAttempts,
+            exp.attempts < contractLimits(exp.contract!).maxAttempts,
             'attempt_limit',
             'This contract has no repair attempts left; report failure or request a new scope',
             409,
@@ -824,11 +1097,20 @@ export class CustomerExperiments {
       await this.reviews.submit(caller, input, tx);
       if (action === 'repair_execution')
         await tx.run('UPDATE customer_experiments SET attempts=attempts+1 WHERE id=?', exp.id);
-      if (action === 'change_scope')
+      if (action === 'change_scope') {
         await tx.run(
           'UPDATE customer_experiments SET accepted_contract_id=NULL,accepted_at=NULL,payment_id=NULL WHERE id=?',
           exp.id,
         );
+        // A v3 plan document reopens for both sides to edit and verify again.
+        await tx.run(
+          'UPDATE customer_experiment_plans SET status=?,feedback=?,updated_at=? WHERE experiment_id=?',
+          'drafting',
+          'The results review found the scope must change; revise the plan and submit it again.',
+          now(),
+          exp.id,
+        );
+      }
       await this.move(
         caller,
         exp,
