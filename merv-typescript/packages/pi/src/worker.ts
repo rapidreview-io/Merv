@@ -1,3 +1,4 @@
+import { retryTransient, type RetryOptions } from './model-retry.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -96,6 +97,8 @@ export function reasonOf(error: unknown): string {
 export interface WorkerOptions {
   workerId?: string;
   fetchImpl?: typeof fetch;
+  /** Overrides for the retry of model calls the provider turns away; tests shorten its wait. */
+  modelRetry?: RetryOptions;
   signal?: AbortSignal;
   pollIntervalMs?: number;
 }
@@ -267,6 +270,7 @@ export async function runPiWorker(
         fetchImpl,
         controller.signal,
         options.pollIntervalMs ?? 1_000,
+        options.modelRetry,
       );
       // A save Main could not make yet, or an outage, is tried again, each time twice as late up to
       // 8 s; any other answer ends the turn rather than sending it all again.
@@ -372,6 +376,7 @@ async function executeTurn(
   fetchImpl: typeof fetch,
   signal: AbortSignal,
   pollIntervalMs: number,
+  modelRetry?: RetryOptions,
 ): Promise<PiCompletion & PiTurnInput> {
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
   const known = Object.hasOwn(OPENAI_MODELS, work.model)
@@ -605,18 +610,29 @@ async function executeTurn(
     const outgoing = new Request(input, init);
     if (outgoing.url !== modelEndpoint.href || outgoing.method !== 'POST')
       throw new Error('Forbidden model destination');
-    return fetchImpl(modelEndpoint, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        authorization: `Bearer ${work.modelToken}`,
-        'content-type': 'application/json',
-        accept: 'text/event-stream',
+    const body = await outgoing.text();
+    // A Request's own signal stops following its source once that Request is collected.
+    const signal = init?.signal ?? outgoing.signal;
+    return retryTransient(
+      () =>
+        fetchImpl(modelEndpoint, {
+          method: 'POST',
+          redirect: 'error',
+          headers: {
+            authorization: `Bearer ${work.modelToken}`,
+            'content-type': 'application/json',
+            accept: 'text/event-stream',
+          },
+          body,
+          signal,
+        }),
+      signal,
+      {
+        onRetry: (attempt, code) =>
+          process.stderr.write(`Pi worker model call retried (${attempt}): ${code}\n`),
+        ...modelRetry,
       },
-      body: await outgoing.text(),
-      // A Request's own signal stops following its source once that Request is collected.
-      signal: init?.signal ?? outgoing.signal,
-    });
+    );
   };
   session.agent.streamFunction = (_model, context, options) =>
     // Only a summary asks for a cap (80% of the room set aside for it), which it is sent.
