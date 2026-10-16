@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { createService, MervError, type Caller } from '@merv/contracts';
@@ -1176,4 +1177,20 @@ test('a machine whose agent never connects is replaced and the turn runs on the 
   assert.equal((await g.allocation(doomed.runtimeId)).error, 'runtime_not_ready');
   const ended = await command(g, doomed);
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_refused']);
+});
+
+test('a turn is offered at most 128 tools, however many plugins register', async (t) => {
+  const f = await fixture(t);
+  for (let i = 0; i < 140; i++)
+    f.tools.register({
+      name: `extra.tool_${String(i).padStart(3, '0')}`,
+      description: 'An extra tool',
+      readOnly: true,
+      inputSchema: z.object({}).strict(),
+      handler: async () => ({}),
+    });
+  const conversation = await f.create();
+  const command = await f.send(conversation);
+  const bound = await f.claimed(command);
+  assert.equal(bound.work.tools.length, 128);
 });
