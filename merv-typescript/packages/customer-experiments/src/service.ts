@@ -104,6 +104,13 @@ const researchedInstructions = leadInstructions
     'Write every model, repository, dataset and paper it names as a Markdown link to its page, e.g. [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), instead of describing it at length. Stay under 350 words.',
   );
 
+/** A paid run waiting on its worker's question is answered by the service this long after the
+ *  question (Pi's responder goes first), and at most this often per request. */
+const RESUME_AFTER_MS = 10 * 60_000;
+const RESUMES = 3;
+const RESUME_ANSWER =
+  "Automatic reply from Merv: this is a customer's run and no person is watching it, so carry on by yourself. Machines you asked to delete have had time to stop, and this experiment may hold two machines at once. Resume now from your recorded progress. If a machine is not ready within 10 minutes, delete it and rent on another provider, Modal first, then Lambda. Do not ask about compute again. If the accepted plan truly cannot run, explain why in the report and submit results.";
+
 export class CustomerService {
   /** Who a call acts as; index.ts gives it the identity plugin while one is installed. */
   readonly access = new CustomerAccess(this);
@@ -1266,12 +1273,55 @@ export class CustomerService {
       )) ?? null
     );
   }
+  /**
+   * External runs have no operator. When Pi's responder could not settle the worker's question
+   * (it is no longer investigating) and the pause has let released machines stop, the service
+   * answers as the sponsor and the dispatcher resumes the run. At most RESUMES per request.
+   */
+  private async resume(record: RequestRecord, caller: Caller, exp: CustomerExperiment) {
+    const question = await this.stalled(caller, exp);
+    if (!question || Date.now() - Date.parse(question.asked_at) < RESUME_AFTER_MS) return;
+    const resumed = record.resumed ?? [];
+    if (resumed.includes(question.id) || resumed.length >= RESUMES) return;
+    const investigating = await this.store.state.read((sql) =>
+      sql.get<{ state: string }>(
+        "SELECT state FROM session_question_responses WHERE question_id=? AND state='investigating'",
+        question.id,
+      ),
+    );
+    if (investigating) return;
+    await this.store.mutate(record.id, (r) => {
+      r.resumed = [...(r.resumed ?? []), question.id];
+    });
+    await this.domain.sessions.messaging.message(caller, {
+      threadId: question.thread_id,
+      requestId: `resume-${question.id}`,
+      body: RESUME_ANSWER,
+    });
+    process.stderr.write(
+      JSON.stringify({
+        event: 'customer_experiment.resumed',
+        requestId: record.id,
+        resume: resumed.length + 1,
+      }) + '\n',
+    );
+  }
   async reconcile() {
     for (const record of await this.store.list()) {
       if (!record.experimentId) continue;
       try {
         const caller = await this.caller(record);
         const exp = await this.domain.reconcile(caller, record.experimentId);
+        // A resume that cannot run now is tried on the next pass; it never blocks the rest.
+        await this.resume(record, caller, exp).catch((error: unknown) =>
+          process.stderr.write(
+            JSON.stringify({
+              event: 'customer_experiment.resume_wait',
+              requestId: record.id,
+              code: (error as { code?: string }).code ?? 'unavailable',
+            }) + '\n',
+          ),
+        );
         if (
           ['complete', 'failed'].includes(exp.workflow.state) &&
           exp.email &&
