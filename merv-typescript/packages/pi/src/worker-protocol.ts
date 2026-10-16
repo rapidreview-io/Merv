@@ -58,6 +58,9 @@ type Taken = {
 };
 
 /** The routes a host's worker calls: /next, /begin, /tool, /progress, /complete and /fail. */
+/** The most tools one turn is offered: the model API's and the worker's limit. */
+export const MAX_TOOLS = 128;
+
 export class PiWorkerProtocol {
   constructor(
     private readonly core: PiCore,
@@ -245,11 +248,22 @@ export class PiWorkerProtocol {
         const current = (await this.bound(token, turn, tx)).command;
         if (!current.tools || !current.notes) {
           const names = new Set<string>();
-          current.tools ??= [...(offered ? [offered] : []), ...described]
+          const all = [...(offered ? [offered] : []), ...described]
             .filter(
               ({ name }) => !names.has(piModelToolName(name)) && names.add(piModelToolName(name)),
             )
             .map(({ name }) => name);
+          // The model and the worker take at most MAX_TOOLS: past it every turn would fail, so
+          // the rest wait for a plugin to stop offering a tool, and the overflow is reported.
+          if (all.length > MAX_TOOLS)
+            process.stdout.write(
+              JSON.stringify({
+                event: 'pi_tools_over_limit',
+                offered: all.length,
+                dropped: all.slice(MAX_TOOLS),
+              }) + '\n',
+            );
+          current.tools ??= all.slice(0, MAX_TOOLS);
           current.notes ??= told;
           current.context ??= context;
           if (profile) current.instructions ??= this.core.instructions(conversation);
