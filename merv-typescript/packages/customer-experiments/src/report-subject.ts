@@ -41,20 +41,33 @@ const size = (bytes: number) =>
       ? `${Math.round(bytes / 1e5) / 10} MB`
       : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 
-/** Version 3: the verified summary, the plan document's opening paragraph and the files. */
+/** Version 3: the verified summary, why the plan says it was asked, and the files. */
 function documentFacts(exp: CustomerExperiment, contract: DocumentContract) {
-  const opening =
-    contract.document
-      .split(/\n\s*\n/)
-      .map((block) => block.trim())
-      .find((block) => block && !block.startsWith('#')) ?? '';
   return {
     id: exp.title,
     question: contract.question,
-    inquiry: opening.slice(0, 2000),
+    inquiry: inquiryOf(contract.document) || contract.question,
     constraints: [...contract.criteria, allowance(contract.limits)],
     data: contract.files.map((f) => ({ dataset: f.key, use: 'Request file', size: size(f.size) })),
   };
+}
+
+/** Why it was asked: the plan's hypothesis-and-decision section where it has one, else its first
+ *  paragraph of prose. Headings are dropped, wherever they sit in a block. */
+export function inquiryOf(document: string): string {
+  const sections: { heading: string; text: string }[] = [];
+  for (const line of document.split('\n')) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(line.trim());
+    if (heading) sections.push({ heading: heading[1]!.toLowerCase(), text: '' });
+    else if (sections.length) sections.at(-1)!.text += `${line}\n`;
+    else sections.push({ heading: '', text: `${line}\n` });
+  }
+  const prose = (text: string) => text.trim().replace(/\n{3,}/g, '\n\n');
+  const why = sections.find(
+    (s) => /hypothesis|decision|why|purpose/.test(s.heading) && prose(s.text),
+  );
+  const first = sections.find((s) => !/^question$/.test(s.heading) && prose(s.text));
+  return prose((why ?? first)?.text ?? '').slice(0, 2000);
 }
 
 function facts(exp: CustomerExperiment) {

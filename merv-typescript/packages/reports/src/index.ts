@@ -66,6 +66,9 @@ export function resultAnswer(report: Report): { answer: string; note: string | n
 }
 
 /** Report drafts that persist across submissions, and their final PDF renders. */
+/** A section the first draft left for the author: one `[[write: …]]` and nothing else. */
+const PLACEHOLDER = /^\[\[write:[^\]]*\]\]$/;
+
 export class ReportService implements Reports {
   private readonly subjects = new Map<string, ReportSubject>();
   private closed = false;
@@ -323,11 +326,18 @@ export class ReportService implements Reports {
     const base = splitReport(rev.base);
     const next = splitReport(source);
     for (const name of rev.locked) {
-      const same =
+      const was =
         name === 'title'
-          ? (base.title ?? '').trim() === (next.title ?? '').trim()
-          : base.sections.find((s) => s.name === name)?.body.trim() ===
-            next.sections.find((s) => s.name === name)?.body.trim();
+          ? (base.title ?? '').trim()
+          : (base.sections.find((s) => s.name === name)?.body.trim() ?? '');
+      // A plan that left a section empty approved nothing there: its placeholder is written
+      // like any other, or the report could never be finished.
+      if (PLACEHOLDER.test(was)) continue;
+      const same =
+        was ===
+        (name === 'title'
+          ? (next.title ?? '').trim()
+          : next.sections.find((s) => s.name === name)?.body.trim());
       check(
         same,
         'report_locked_section',
