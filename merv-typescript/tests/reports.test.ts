@@ -413,3 +413,33 @@ test('report tools present chart and page images to MCP clients', async () => {
   const open = (await tools.get('report.open')!.handler({} as Caller, {})) as { guide: string };
   assert.match(open.guide, /report\.review_visual/);
 });
+
+test('a locked section the plan left as a placeholder is written once, then stays', async (t) => {
+  const f = await fixture(t);
+  f.reports.registerSubject('customer_experiment', {
+    async authorize() {},
+    async prefill() {
+      return draftFromPlan({ ...PLAN, inquiry: '' }, '2026-10-14');
+    },
+  });
+  const subject = { subjectKind: 'customer_experiment' as const, subjectId: 'ce_1' };
+  const first = await f.reports.open(f.operator, subject);
+  assert.match(first.source, /\[\[write: why this was asked/);
+  const written = await f.reports.write(f.operator, {
+    ...subject,
+    expectedRevision: first.revision,
+    requestId: f.request(),
+    sections: [{ name: 'Inquiry', content: 'To shortlist models for a larger evaluation.' }],
+  });
+  assert.match(written.source, /To shortlist models for a larger evaluation\./);
+  // The sections the plan did fill stay locked.
+  await assert.rejects(
+    f.reports.write(f.operator, {
+      ...subject,
+      expectedRevision: written.revision,
+      requestId: f.request(),
+      sections: [{ name: 'title', content: 'Another question?' }],
+    }),
+    hasCode('report_locked_section'),
+  );
+});
