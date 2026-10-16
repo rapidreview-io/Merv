@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Markdown } from '../markdown';
+import { customerRequest } from './api';
 
 /** The `progress` the request snapshot carries once the experiment is paid for. */
 export interface Progress {
@@ -16,7 +18,84 @@ export interface Progress {
   activity: { at: string; text: string }[];
 }
 
+/** `result` on the request snapshot: the delivered summary, report pages and files. */
+export interface Delivered {
+  summary: string;
+  pages?: string[];
+  artifacts: { id: string; title: string }[];
+}
+
 const STAGES = ['planning', 'running', 'reviewing', 'complete'] as const;
+
+/** A delivered artifact's short-lived download address, read once it is wanted. */
+function useDownload(id: string | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let live = true;
+    customerRequest<{ download?: { url?: string } }>(`/artifacts/${encodeURIComponent(id)}`)
+      .then((got) => live && setUrl(got.download?.url ?? null))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  return url;
+}
+
+function Page({ id, index }: { id: string; index: number }) {
+  const url = useDownload(id);
+  return url ? (
+    <img className="cx-report-page" src={url} alt={`Report page ${index + 1}`} />
+  ) : (
+    <div className="cx-report-page cx-report-page--loading" aria-hidden="true" />
+  );
+}
+
+async function open(id: string) {
+  // Opened before the address is known, so the browser keeps it as the click's own window.
+  const tab = window.open('', '_blank');
+  try {
+    const got = await customerRequest<{ download?: { url?: string } }>(
+      `/artifacts/${encodeURIComponent(id)}`,
+    );
+    if (got.download?.url && tab) tab.location.href = got.download.url;
+    else tab?.close();
+  } catch {
+    tab?.close();
+  }
+}
+
+/** The finished experiment: its answer, the report as pages, and everything delivered. */
+function Results({ result }: { result: Delivered }) {
+  return (
+    <section className="cx-results-delivered" aria-label="Results">
+      {result.summary && (
+        <div className="cx-summary">
+          <Markdown source={result.summary} />
+        </div>
+      )}
+      {!!result.pages?.length && (
+        <div className="cx-report">
+          {result.pages.map((id, index) => (
+            <Page key={id} id={id} index={index} />
+          ))}
+        </div>
+      )}
+      {result.artifacts.length > 0 && (
+        <ul className="cx-deliverables">
+          {result.artifacts.map((artifact) => (
+            <li key={artifact.id}>
+              <button type="button" className="btn" onClick={() => void open(artifact.id)}>
+                {artifact.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 const WORD: Record<Progress['stage'], string> = {
   planning: 'Planning',
   running: 'Running',
@@ -51,7 +130,7 @@ function useNow(every = 30_000) {
  * Where a paid experiment stands: four stages, what it is doing now, time and compute against
  * their limits, scores as they finish, and what it has done. Nothing else.
  */
-export function Status({ progress }: { progress: Progress }) {
+export function Status({ progress, result }: { progress: Progress; result?: Delivered | null }) {
   const now = useNow();
   const at = progress.stage === 'failed' ? 3 : STAGES.indexOf(progress.stage);
   const started = progress.startedAt ? Date.parse(progress.startedAt) : null;
@@ -80,6 +159,8 @@ export function Status({ progress }: { progress: Progress }) {
           );
         })}
       </ol>
+
+      {progress.stage === 'complete' && result && <Results result={result} />}
 
       {progress.now && <p className="cx-now">{progress.now}</p>}
 

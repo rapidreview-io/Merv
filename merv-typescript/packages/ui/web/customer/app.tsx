@@ -11,7 +11,7 @@ import { useConversation, type Conversation } from '../views/pi-conversation';
 import { currentCredentials, customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
-import { Status, type Progress } from './status';
+import { Status, type Delivered, type Progress } from './status';
 import { Start, takePending, takeVoice } from './start';
 import { useTyped } from './typing';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
@@ -203,10 +203,11 @@ function Experiment() {
   };
   const [plan, reloadPlan] = usePoll<Plan>('/plan', view === 'plan' ? 4000 : 10_000);
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
-  const [request] = usePoll<{ state?: string; progress?: Progress | null }>(
-    '',
-    view === 'status' ? 5000 : 15_000,
-  );
+  const [request] = usePoll<{
+    state?: string;
+    progress?: Progress | null;
+    result?: Delivered | null;
+  }>('', view === 'status' ? 5000 : 15_000);
   const progress = request?.progress ?? null;
   // A paid experiment opens on its status, once, unless the person was somewhere else.
   const shown = useRef(false);
@@ -316,7 +317,7 @@ function Experiment() {
         </div>
       )}
       {view === 'files' && <FileManager uploader={uploader} frozen={frozen} />}
-      {view === 'status' && progress && <Status progress={progress} />}
+      {view === 'status' && progress && <Status progress={progress} result={request?.result} />}
       {(view === 'plan' ||
         view === 'files' ||
         view === 'status' ||
