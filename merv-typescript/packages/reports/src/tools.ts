@@ -36,16 +36,12 @@ export const reportsToolsPlugin = {
     });
     register({
       name: 'report.write',
-      // The executing worker's; a conversation reads reports with open and check.
-      conversation: 'never',
       description: `Edit the report draft at expectedRevision: replace section bodies by name (sections: [{name: "Result", content}]; name "title" sets the title), the front matter YAML (frontMatter), or the whole Markdown (source), and add or replace data files charts name (files: [{name: "x.csv", content}], content null removes one). Locked sections from the approved plan cannot change. Changing a chart's spec or data withdraws its approval. ${SUBJECT}`,
       inputSchema: writeSchema,
       handler: async (caller, input) => await reports.write(caller, input),
     });
     register({
       name: 'report.clear',
-      // The executing worker's; a conversation reads reports with open and check.
-      conversation: 'never',
       description: `Start the report over: return the draft to the approved plan's prefill, removing every written section, data file and chart approval. ${SUBJECT}`,
       inputSchema: clearSchema,
       handler: async (caller, input) => await reports.clear(caller, input),
@@ -59,8 +55,6 @@ export const reportsToolsPlugin = {
     });
     register({
       name: 'report.review_visual',
-      // The executing worker's; a conversation reads reports with open and check.
-      conversation: 'never',
       description: `Render one chart at its final size on the page and return its image, the image of its section on the page, and automatic checks (overlapping or cut-off labels, small text, colour and layer counts). Without chartId it reviews the next unapproved chart. Look at the images, judge them against the chart's message, fix the spec with report.write and review again before approving. ${SUBJECT}`,
       inputSchema: reviewVisualSchema,
       readOnly: true,
@@ -72,16 +66,12 @@ export const reportsToolsPlugin = {
     });
     register({
       name: 'report.approve_visual',
-      // The executing worker's; a conversation reads reports with open and check.
-      conversation: 'never',
       description: `Approve one chart at expectedRevision once its image is right. Refused while the chart has blocking checks. The approval covers the chart's spec and data as they are now. ${SUBJECT}`,
       inputSchema: approveVisualSchema,
       handler: async (caller, input) => await reports.approveVisual(caller, input),
     });
     register({
       name: 'report.render',
-      // The executing worker's; a conversation reads reports with open and check.
-      conversation: 'never',
       description: `Render the whole report. Without final it returns page images to check the page as a whole. With final: true (and a requestId) it requires no check errors and every chart approved, then stores the Markdown source, the PDF and page images as artifacts and returns their ids: submit sourceArtifactId as the report. ${SUBJECT}`,
       inputSchema: renderSchema,
       handler: async (caller, input) => await reports.render(caller, input),
