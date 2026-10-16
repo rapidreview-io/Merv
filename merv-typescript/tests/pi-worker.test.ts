@@ -80,6 +80,8 @@ async function fixture(
     lostBegin?: boolean;
     duplicate?: boolean;
     modelError?: boolean;
+    /** The provider is overloaded on the first call: it opens the response, then fails it. */
+    overloadedOnce?: boolean;
     slowTool?: boolean;
     startupFailures?: Array<number | 'network'>;
     nextAfterGrant?: number[];
@@ -162,6 +164,12 @@ async function fixture(
         assert.ok(!JSON.stringify(body).includes('private-auth'));
         modelRequests.push(body);
         if (options.modelError) return json({ error: { message: 'private-auth' } }, 503);
+        if (options.overloadedOnce && modelRequests.length === 1)
+          return new Response(
+            `data: ${JSON.stringify({ type: 'response.created', response: { id: 'resp_0' } })}\n\n` +
+              `event: error\ndata: ${JSON.stringify({ type: 'error', code: 'server_is_overloaded', message: 'The model provider failed this call' })}\n\n`,
+            { headers: { 'content-type': 'text/event-stream' } },
+          );
         if (options.pacedCall && modelRequests.length === 1) {
           const parts = options.pacedCall;
           const item = { ...call, arguments: parts.join('') };
@@ -398,6 +406,7 @@ async function fixture(
           signal: controller.signal,
           pollIntervalMs: 250,
           workerId: 'worker_1',
+          modelRetry: { sleep: async () => {} },
         });
       } finally {
         clearTimeout(timeout);
@@ -1166,6 +1175,14 @@ test('lost begin reply never replays prompt; duplicate assignment never invokes 
   assert.equal(duplicate.begins, 1);
   assert.equal(duplicate.modelRequests.length, 1);
   assert.deepEqual(duplicate.failures, ['cmd_1']);
+});
+
+test('a provider overloaded before it answers is asked again and the turn finishes', async () => {
+  const app = await fixture({ overloadedOnce: true });
+  const logged = await stderrOf(() => app.run());
+  assert.match(logged, /model call retried \(1\): server_is_overloaded/);
+  assert.equal(app.modelRequests.length, 2);
+  assert.deepEqual(app.failures, []);
 });
 
 test('provider error fails closed without automatic retry and logs its cause', async () => {
