@@ -713,3 +713,47 @@ test('customer audio uses its authenticated transport and survives moving into a
   assert.ok(document.querySelector('.pi-messages'));
   assert.match(text(), /Audio/);
 });
+
+test('a paid experiment opens on its status: four stages, now, figures, scores, activity', async (t) => {
+  t.after(async () => {
+    await unmount();
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  const paidAt = new Date(Date.now() - 72 * 60_000).toISOString();
+  serve(BASE, {
+    body: {
+      state: 'running',
+      progress: {
+        stage: 'running',
+        attempt: 1,
+        maxAttempts: 2,
+        startedAt: paidAt,
+        maxWallMs: 24 * 3600_000,
+        compute: { usd: 14, limitUsd: 1000 },
+        now: 'Benchmarking Clef-flash on 24 cases',
+        step: { done: 4, total: 8 },
+        results: [{ name: 'Clef', score: 17, total: 24 }],
+        activity: [{ at: new Date().toISOString(), text: 'Started Clef-flash' }],
+      },
+    },
+  });
+  await open();
+  await settle(50);
+  const status = document.querySelector('.cx-status')!;
+  assert.ok(status, 'the status view opens by itself');
+  assert.deepEqual(
+    [...status.querySelectorAll('.cx-stage-word')].map((n) => n.textContent),
+    ['Planning', 'Running', 'Reviewing', 'Complete'],
+  );
+  assert.equal(
+    status.querySelector('[aria-current="step"] .cx-stage-word')!.textContent,
+    'Running',
+  );
+  assert.equal(status.querySelector('.cx-now')!.textContent, 'Benchmarking Clef-flash on 24 cases');
+  assert.match(status.querySelector('.cx-meters')!.textContent!, /1h 12m of 24h/);
+  assert.match(status.querySelector('.cx-meters')!.textContent!, /\$14 of \$1,000/);
+  assert.match(status.querySelector('.cx-results')!.textContent!, /Clef17 \/ 24/);
+  assert.match(status.querySelector('.cx-activity')!.textContent!, /Started Clef-flash/);
+  // The chat waits behind its button rather than floating over the status.
+  assert.equal(document.querySelector('.cx-chat-reopen')!.textContent, 'Chat');
+});

@@ -4,7 +4,7 @@ import { check, type Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type { CustomerExperiments } from './domain.js';
 import type { FilesService } from './files.js';
-import { submitResultsSchema } from './schema.js';
+import { progressSchema, submitResultsSchema } from './schema.js';
 import { isDocumentContract } from './types.js';
 
 /** Deliberately no create/approve/payment tool: customer authority stays at the HTTP edge. */
@@ -43,6 +43,14 @@ export function registerWorkerTools(
         'Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.',
       inputSchema: submitResultsSchema,
       handler: async (caller: Caller, input: unknown) => service.submitResults(caller, input),
+    }),
+    tools.register({
+      name: 'customer_experiment.progress',
+      conversation: 'never',
+      description:
+        "Tell the customer how the run is going; their status page shows each line. Post a short plain sentence at each milestone (machine ready, files checked, each model or condition started or finished, results being written). With a finished item, pass result {name, score, total} (e.g. one model's correct answers out of the cases); pass step {done, total} for how many planned items are finished. No paths, IDs, hashes or internal detail.",
+      inputSchema: progressSchema,
+      handler: async (caller: Caller, input: unknown) => service.reportProgress(caller, input),
     }),
     tools.register({
       name: 'customer_experiment.files',

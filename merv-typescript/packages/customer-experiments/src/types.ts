@@ -146,3 +146,12 @@ export interface CustomerExperiment {
   review: ReviewRequest | null;
   createdAt: string;
 }
+
+/** One customer-visible progress line the executing worker reported. */
+export interface ProgressLine {
+  at: string;
+  attempt: number;
+  text: string;
+  result?: { name: string; score: number; total: number };
+  step?: { done: number; total: number };
+}

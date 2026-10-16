@@ -691,3 +691,29 @@ test('a full 24-hour, 500-million-token agreement fits both worker policies', ()
     assert.equal(policy.maxModelTokens, accepted.limits.maxTokens);
   }
 });
+
+test('only the running worker reports progress, and the customer reads it in order', async (t) => {
+  const f = await fixture(t);
+  const exp = await f.pay();
+  await assert.rejects(f.service.reportProgress(f.caller, { id: exp.id, text: 'Not the worker' }));
+  const producer = await f.offer();
+  await f.service.reportProgress(producer.worker, { id: exp.id, text: 'Rented a GPU' });
+  await f.service.reportProgress(producer.worker, {
+    id: exp.id,
+    text: 'Clef: 17 of 24 correct',
+    result: { name: 'Clef', score: 17, total: 24 },
+    step: { done: 1, total: 5 },
+  });
+  await assert.rejects(
+    f.service.reportProgress(producer.worker, { id: exp.id, text: 'x'.repeat(201) }),
+  );
+  const { paidAt, lines } = await f.service.progress(f.caller, exp.id);
+  assert.ok(paidAt);
+  assert.deepEqual(
+    lines.map((line) => line.text),
+    ['Rented a GPU', 'Clef: 17 of 24 correct'],
+  );
+  assert.deepEqual(lines[1]!.result, { name: 'Clef', score: 17, total: 24 });
+  assert.deepEqual(lines[1]!.step, { done: 1, total: 5 });
+  assert.equal(lines[0]!.attempt, 1);
+});

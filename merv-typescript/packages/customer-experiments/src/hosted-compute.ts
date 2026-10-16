@@ -20,6 +20,7 @@ export function hostedCustomerCompute(
     computeBudgetUsd: number | null;
   },
 ) {
+  const namespaceOf = (caller: Caller) => `customer-${digest(caller.projectId).slice(0, 32)}`;
   const source = async () => {
     const caller = await ctx.scope.caller(
       {
@@ -51,10 +52,18 @@ export function hostedCustomerCompute(
         );
         return { offers: catalogs.flatMap((catalog) => (catalog as { offers: unknown[] }).offers) };
       },
+      async spend(caller: Caller) {
+        await ctx.scope.require(caller, 'read');
+        const report = await ctx.sbxBilling.report(namespaceOf(caller));
+        const usd = report.accrued
+          .filter((money) => money.currency.toUpperCase() === 'USD')
+          .reduce((sum, money) => sum + Number(money.amount), 0);
+        return { usd, limitUsd: config.computeBudgetUsd };
+      },
       async enable(caller: Caller) {
         await ctx.scope.require(caller, 'admin');
         const { link } = await source();
-        const namespace = `customer-${digest(caller.projectId).slice(0, 32)}`;
+        const namespace = namespaceOf(caller);
         await ctx.sbxDb.transaction(async (q) => {
           await ctx.sbxAccounts.lock(q, link.account_id);
           await ctx.sbxAccounts.validateTargetsIn(

@@ -101,6 +101,29 @@ export const datasetSchema = z
     validatedAt: z.string().datetime(),
   })
   .strict();
+/** One customer-visible progress line from the executing worker. */
+export const progressSchema = z
+  .object({
+    id: z.string().min(1),
+    text: z.string().trim().min(1).max(200),
+    /** A finished item's score, e.g. one model's correct answers out of the cases. */
+    result: z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        score: z.number().finite(),
+        total: z.number().finite().positive(),
+      })
+      .strict()
+      .optional(),
+    /** How far through the planned items the run is. */
+    step: z
+      .object({ done: z.number().int().min(0), total: z.number().int().positive() })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type ProgressInput = z.infer<typeof progressSchema>;
+
 export const submitResultsSchema = z
   .object({
     id: z.string().min(1),
@@ -215,5 +238,13 @@ CREATE TABLE customer_experiment_plan_revisions (
  created_at TEXT NOT NULL, PRIMARY KEY(experiment_id,revision)
 );
 CREATE TRIGGER customer_plan_revision_immutable BEFORE UPDATE OR DELETE ON customer_experiment_plan_revisions FOR EACH ROW EXECUTE FUNCTION customer_experiments_immutable();
+`,
+  4: `
+CREATE TABLE customer_experiment_progress (
+ id TEXT PRIMARY KEY, experiment_id TEXT NOT NULL, attempt BIGINT NOT NULL, text TEXT NOT NULL,
+ result_name TEXT, result_score DOUBLE PRECISION, result_total DOUBLE PRECISION,
+ step_done BIGINT, step_total BIGINT, created_at TEXT NOT NULL
+);
+CREATE INDEX customer_experiment_progress_by_experiment ON customer_experiment_progress(experiment_id, created_at);
 `,
 };

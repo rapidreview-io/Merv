@@ -37,6 +37,7 @@ import {
   migrations,
   planDocumentSchema,
   planSchema,
+  progressSchema,
   submitResultsSchema,
   validateAgreement,
   type PlanVerification,
@@ -48,6 +49,7 @@ import {
   isDocumentContract,
   type CustomerExperiment,
   type DocumentContract,
+  type ProgressLine,
   type ExperimentContract,
   type ExperimentPlan,
   type PlanStatus,
@@ -57,6 +59,8 @@ import {
   type ValidatedDataset,
 } from './types.js';
 
+/** Progress lines one experiment may record, across its attempts. */
+const PROGRESS_LIMIT = 500;
 const validEmail = (email: string) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
 
@@ -401,6 +405,90 @@ export class CustomerExperiments {
     );
   }
   /** service_experiment@3: the plan document, its status and, once accepted, its contract. */
+  /** The executing worker reports a customer-visible step; only while it holds the run. */
+  async reportProgress(caller: Caller, value: unknown): Promise<{ recorded: true }> {
+    caller = structuredClone(caller);
+    const input = progressSchema.parse(value);
+    return this.state.transaction(async (tx) => {
+      const exp = await this.get(caller, input.id, tx);
+      check(
+        exp.workflow.state === 'running',
+        'invalid_state',
+        'Progress is reported while the experiment runs',
+        409,
+      );
+      await this.worker(caller, exp, tx);
+      const count = await tx.get<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM customer_experiment_progress WHERE experiment_id=?',
+        exp.id,
+      );
+      check(
+        Number(count?.n ?? 0) < PROGRESS_LIMIT,
+        'progress_limit',
+        'This experiment has reported as much progress as it can',
+        409,
+      );
+      await tx.run(
+        'INSERT INTO customer_experiment_progress(id,experiment_id,attempt,text,result_name,result_score,result_total,step_done,step_total,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        newId('progress'),
+        exp.id,
+        exp.attempts,
+        input.text,
+        input.result?.name ?? null,
+        input.result?.score ?? null,
+        input.result?.total ?? null,
+        input.step?.done ?? null,
+        input.step?.total ?? null,
+        now(),
+      );
+      return { recorded: true as const };
+    });
+  }
+  /** Progress lines, oldest first, and when payment started the run. */
+  async progress(
+    caller: Caller,
+    id: string,
+    transaction?: Transaction,
+  ): Promise<{ paidAt: string | null; lines: ProgressLine[] }> {
+    return inTransaction(this.state, transaction, async (tx) => {
+      const exp = await this.get(caller, id, tx);
+      const paid = await tx.get<{ created_at: string }>(
+        'SELECT created_at FROM customer_experiment_payments WHERE experiment_id=? ORDER BY created_at LIMIT 1',
+        exp.id,
+      );
+      const rows = await tx.all<{
+        attempt: number;
+        text: string;
+        result_name: string | null;
+        result_score: number | null;
+        result_total: number | null;
+        step_done: number | null;
+        step_total: number | null;
+        created_at: string;
+      }>(
+        'SELECT attempt,text,result_name,result_score,result_total,step_done,step_total,created_at FROM customer_experiment_progress WHERE experiment_id=? ORDER BY created_at, id',
+        exp.id,
+      );
+      const lines = rows.map((row) => ({
+        at: row.created_at,
+        attempt: Number(row.attempt),
+        text: row.text,
+        ...(row.result_name !== null
+          ? {
+              result: {
+                name: row.result_name,
+                score: Number(row.result_score),
+                total: Number(row.result_total),
+              },
+            }
+          : {}),
+        ...(row.step_done !== null
+          ? { step: { done: Number(row.step_done), total: Number(row.step_total) } }
+          : {}),
+      }));
+      return { paidAt: paid?.created_at ?? null, lines };
+    });
+  }
   async plan(caller: Caller, id: string, transaction?: Transaction): Promise<PlanView> {
     return inTransaction(this.state, transaction, async (tx) => {
       const exp = await this.get(caller, id, tx);
