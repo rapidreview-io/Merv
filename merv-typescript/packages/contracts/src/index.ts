@@ -904,10 +904,12 @@ export interface Artifacts {
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
   uploadResume(caller: Caller, uploadId: string): Promise<ArtifactUploadStatus>;
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact>;
+  /** `saveAs` names the downloaded file; it defaults to the artifact's title. */
   download(
     caller: Caller,
     artifactId: string,
     fileName?: string,
+    saveAs?: string,
   ): Promise<{
     artifact: Artifact;
     download: { url: string; expiresAt: string };

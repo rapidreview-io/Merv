@@ -1091,7 +1091,7 @@ button.cx-feature:hover {
 }
 
 /* Status: four stages, a line on what is happening, two or three figures, scores, activity. */
-.cx-status {
+.cx-run {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1100,8 +1100,10 @@ button.cx-feature:hover {
 }
 .cx-stages {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  margin: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
   padding: 0;
   list-style: none;
 }
@@ -1111,6 +1113,9 @@ button.cx-feature:hover {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  padding: 0 6px;
+  text-align: center;
   font-size: var(--text-sm);
   color: var(--muted);
 }
@@ -1259,9 +1264,6 @@ button.cx-feature:hover {
   max-width: 760px;
   margin: 0 auto;
 }
-.cx-summary {
-  font-size: var(--text-md);
-}
 .cx-report {
   display: flex;
   flex-direction: column;
@@ -1279,9 +1281,5 @@ button.cx-feature:hover {
 }
 .cx-deliverables {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  justify-content: flex-end;
 }
