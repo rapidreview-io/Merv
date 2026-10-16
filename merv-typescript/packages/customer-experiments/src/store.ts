@@ -36,6 +36,8 @@ export interface RequestRecord {
     expiresAt?: number;
   };
   notifiedContract?: string;
+  /** Worker questions the service answered to resume this request's paid run. */
+  resumed?: string[];
 }
 /** The customer's browser sign-in, which service_experiment@3 requires beside the capability. */
 export interface IdentityBinding {
