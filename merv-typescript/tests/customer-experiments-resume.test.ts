@@ -14,7 +14,15 @@ function harness(
     experimentId: 'wf_1',
     resumed: [] as string[],
   } as unknown as RequestRecord;
-  const sent: { threadId: string; body: string; requestId: string }[] = [];
+  const sent: { conversation: string; text: string; profile: string }[] = [];
+  const pi = {
+    async createProfiled(_caller: unknown, input: { requestId: string; profile: { id: string } }) {
+      return { id: `pic_${input.requestId}`, profile: input.profile.id };
+    },
+    async send(_caller: unknown, id: string, input: { text: string }) {
+      sent.push({ conversation: id, text: input.text, profile: 'customer-experiments-healer' });
+    },
+  };
   const store = {
     list: async () => [record],
     mutate: async (_id: string, change: (r: RequestRecord) => void) => change(record),
@@ -27,6 +35,7 @@ function harness(
                 ? { state: 'investigating' }
                 : undefined
               : question && {
+                  question: 'The report tool refuses to fill Inquiry.',
                   id: 'q_1',
                   thread_id: 'thr_1',
                   asked_at: new Date(Date.now() - question.askedMinutesAgo * 60_000).toISOString(),
@@ -39,9 +48,6 @@ function harness(
     reconcile: async () => exp,
     sessions: {
       usage: async () => ({ liveSessions: live, budgets: [] }),
-      messaging: {
-        message: async (_caller: unknown, input: (typeof sent)[number]) => sent.push(input),
-      },
     },
   };
   const service = new CustomerService(
@@ -49,7 +55,7 @@ function harness(
     domain as never,
     { caller: async () => ({ projectId: 'project_1' }) } as never,
     {} as never,
-    {} as never,
+    pi as never,
     undefined,
     undefined,
     undefined,
@@ -58,7 +64,7 @@ function harness(
   return { service, sent, record, exp };
 }
 
-test('the service resumes a stalled external run once Pi has stopped investigating', async () => {
+test('a stalled external run gets a healer once Pi has stopped investigating', async () => {
   const early = harness({ askedMinutesAgo: 3 });
   await early.service.reconcile();
   assert.equal(early.sent.length, 0, 'released machines get time to stop first');
@@ -70,10 +76,11 @@ test('the service resumes a stalled external run once Pi has stopped investigati
   const due = harness({ askedMinutesAgo: 12 });
   await due.service.reconcile();
   await due.service.reconcile();
-  assert.equal(due.sent.length, 1, 'one answer per question');
-  assert.equal(due.sent[0]!.threadId, 'thr_1');
-  assert.match(due.sent[0]!.body, /carry on by yourself/);
-  assert.match(due.sent[0]!.body, /Modal first, then Lambda/);
+  assert.equal(due.sent.length, 1, 'one healer per question');
+  // A healer agent gets the real question and the thread to answer on.
+  assert.equal(due.sent[0]!.conversation, 'pic_heal-q_1');
+  assert.match(due.sent[0]!.text, /Thread: thr_1/);
+  assert.match(due.sent[0]!.text, /The report tool refuses to fill Inquiry\./);
   assert.deepEqual(due.record.resumed, ['q_1']);
 
   const spent = harness({ askedMinutesAgo: 30 });
