@@ -25,6 +25,7 @@ import {
 import { plansDocument } from './program.js';
 import {
   isDocumentContract,
+  type CustomerExperiment,
   type ExperimentPlan,
   type RequestFile,
   type RequestFiles,
@@ -219,6 +220,49 @@ export class CustomerService {
       expiresAt: record.expiresAt,
     };
   }
+  /** The status page: the customer's four stages, time and compute against their limits, and
+   *  what the executing worker reported. Nothing internal (sessions, leases, reviews). */
+  private async progress(
+    caller: Caller,
+    exp: CustomerExperiment,
+    usage: { budgets: { scopeId: string; maxWallMs: number | null }[] } | null,
+  ) {
+    const { paidAt, lines } = await this.domain.progress(caller, exp.id, this.store.state.ambient);
+    const state = exp.workflow.state;
+    const stage =
+      state === 'complete'
+        ? 'complete'
+        : state === 'failed'
+          ? 'failed'
+          : state === 'results_review'
+            ? 'reviewing'
+            : state === 'running' || state === 'finalizing'
+              ? 'running'
+              : 'planning';
+    const current = lines.filter((line) => line.attempt === exp.attempts);
+    const results = new Map<string, { name: string; score: number; total: number }>();
+    for (const line of current) if (line.result) results.set(line.result.name, line.result);
+    const step = current.findLast((line) => line.step)?.step ?? null;
+    const limits =
+      exp.contract && isDocumentContract(exp.contract) ? exp.contract.limits : undefined;
+    return {
+      stage,
+      attempt: Math.max(1, exp.attempts),
+      maxAttempts: limits?.maxAttempts ?? 2,
+      startedAt: paidAt,
+      maxWallMs:
+        usage?.budgets.find((b) => b.scopeId === exp.id)?.maxWallMs ??
+        (limits?.wallMinutes ? limits.wallMinutes * 60_000 : null),
+      compute: (await this.compute?.spend?.(caller)) ?? null,
+      now: stage === 'running' ? (current.at(-1)?.text ?? null) : null,
+      step,
+      results: [...results.values()],
+      activity: lines
+        .slice(-30)
+        .reverse()
+        .map((line) => ({ at: line.at, text: line.text })),
+    };
+  }
   async snapshot(record: RequestRecord, includeConversation = true) {
     const caller = await this.caller(record);
     check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
@@ -235,8 +279,9 @@ export class CustomerService {
       typeof exp.workflow.data.failureReason === 'string'
         ? exp.workflow.data.failureReason
         : undefined;
+    let usage: Awaited<ReturnType<typeof this.domain.sessions.usage>> | null = null;
     if (['running', 'results_review'].includes(state)) {
-      const usage = await this.domain.sessions.usage(caller, {
+      usage = await this.domain.sessions.usage(caller, {
         instanceId: exp.id,
         includeDependencies: false,
       });
@@ -279,10 +324,15 @@ export class CustomerService {
               : [],
         }
       : undefined;
+    const progress =
+      plansDocument(exp.workflow.version) && exp.paymentId
+        ? await this.progress(caller, exp, usage)
+        : null;
     return {
       ...exp,
       state,
       statusMessage,
+      progress,
       id: record.id,
       experimentId: exp.id,
       plan,

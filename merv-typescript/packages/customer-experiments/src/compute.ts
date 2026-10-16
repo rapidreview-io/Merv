@@ -12,7 +12,13 @@ export interface ComputeProvisioning {
   managedCompute?: {
     options(caller: Caller): Promise<unknown>;
     enable(caller: Caller): Promise<ComputeFundingStatus>;
+    /** Compute the request has spent and the most it may, in US dollars. */
+    spend?(caller: Caller): Promise<ComputeSpend | null>;
   };
+}
+export interface ComputeSpend {
+  usd: number;
+  limitUsd: number | null;
 }
 
 const name = z.string().min(1).max(255);
@@ -51,6 +57,8 @@ export interface CustomerCompute {
   options(caller: Caller): Promise<ComputeOptions>;
   /** Server-only funding preflight for checkout/release. Issues no assignment or rental. */
   prepareExecution(caller: Caller): Promise<void>;
+  /** What the request's private compute namespace has spent; null where it is not known. */
+  spend?(caller: Caller): Promise<ComputeSpend | null>;
 }
 
 const allowanceSchema = z.object({
@@ -149,5 +157,13 @@ export class ManagedCustomerCompute implements CustomerCompute {
 
   async prepareExecution(caller: Caller): Promise<void> {
     funded(await this.capability().enable(caller));
+  }
+
+  async spend(caller: Caller): Promise<ComputeSpend | null> {
+    try {
+      return (await this.sandboxes.managedCompute?.spend?.(caller)) ?? null;
+    } catch {
+      return null;
+    }
   }
 }

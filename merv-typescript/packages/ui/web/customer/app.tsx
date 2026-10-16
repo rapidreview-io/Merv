@@ -11,13 +11,14 @@ import { useConversation, type Conversation } from '../views/pi-conversation';
 import { currentCredentials, customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
+import { Status, type Progress } from './status';
 import { Start, takePending, takeVoice } from './start';
 import { useTyped } from './typing';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
 import { formatBytes, fromDrop, Uploader } from './uploads';
 
-type View = 'arrive' | 'chat' | 'plan' | 'files';
+type View = 'arrive' | 'chat' | 'plan' | 'files' | 'status';
 
 /**
  * The customer experiments page (service_experiment@3), served at /customer-experiments/r/<id>.
@@ -195,13 +196,26 @@ function Experiment() {
   const voice = useVoice(pi);
   const [hidden, setHidden] = useState(false);
   const [view, navigate] = useView();
+  // The status page is read alone: its chat waits behind the Chat button.
   const go = (next: View) => {
-    setHidden(false);
+    setHidden(next === 'status');
     navigate(next);
   };
   const [plan, reloadPlan] = usePoll<Plan>('/plan', view === 'plan' ? 4000 : 10_000);
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
-  const [request] = usePoll<{ state?: string }>('', 15_000);
+  const [request] = usePoll<{ state?: string; progress?: Progress | null }>(
+    '',
+    view === 'status' ? 5000 : 15_000,
+  );
+  const progress = request?.progress ?? null;
+  // A paid experiment opens on its status, once, unless the person was somewhere else.
+  const shown = useRef(false);
+  useEffect(() => {
+    if (!progress || shown.current) return;
+    shown.current = true;
+    if (view === 'arrive' || view === 'chat') go('status');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!progress]);
   const uploader = useMemo(() => new Uploader({ onDone: reloadFiles }), [reloadFiles]);
   // Audio pressed on /start opens voice as soon as the new conversation is there.
   const wantsVoice = useRef(takeVoice());
@@ -233,8 +247,18 @@ function Experiment() {
   const fresh = planned && !!plan && plan.revision > seen && view !== 'plan';
   // The chat is drawn in one place at a time, so the transcript and composer refs are its own.
   // The Plan button appears once there is a plan; the files are in the header off the arrival.
-  const nav = (view !== 'arrive' || planned) && (
+  const nav = (view !== 'arrive' || planned || !!progress) && (
     <>
+      {progress && (
+        <button
+          type="button"
+          className="cx-nav-button"
+          aria-current={view === 'status' ? 'page' : undefined}
+          onClick={() => go('status')}
+        >
+          Status
+        </button>
+      )}
       {view !== 'arrive' && (
         <button
           type="button"
@@ -260,7 +284,9 @@ function Experiment() {
   );
   const home = () => go(view === 'chat' ? 'arrive' : 'chat');
   // The chat floats over the plan and the files; wide pages keep their content clear of it.
-  const floating = (view === 'plan' || view === 'files') && !(hidden && voice.state === 'off');
+  const floating =
+    (view === 'plan' || view === 'files' || view === 'status') &&
+    !(hidden && voice.state === 'off');
   return (
     <div className={`cx-page cx-page--${view}${floating ? ' cx-page--docked' : ''}`}>
       <Header home={view === 'arrive' ? undefined : home}>{nav}</Header>
@@ -290,7 +316,11 @@ function Experiment() {
         </div>
       )}
       {view === 'files' && <FileManager uploader={uploader} frozen={frozen} />}
-      {(view === 'plan' || view === 'files' || (voice.compact && voice.state !== 'off')) &&
+      {view === 'status' && progress && <Status progress={progress} />}
+      {(view === 'plan' ||
+        view === 'files' ||
+        view === 'status' ||
+        (voice.compact && voice.state !== 'off')) &&
         (hidden && voice.state === 'off' ? (
           <button className="btn cx-chat-reopen" onClick={() => setHidden(false)}>
             Chat

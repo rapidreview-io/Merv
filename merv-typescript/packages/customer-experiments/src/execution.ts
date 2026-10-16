@@ -32,7 +32,7 @@ const reportInstruction =
 /** Version 3's executor: the accepted plan document is the specification. */
 const documentInstruction = reportInstruction.replace(
   'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use.',
-  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with: list them with customer_experiment.files and fetch each through customer_experiment.file_download. Check every downloaded request file against its manifest size and ETag before use.",
+  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with: list them with customer_experiment.files and fetch each through customer_experiment.file_download. Check every downloaded request file against its manifest size and ETag before use. The customer watches a status page: post progress with customer_experiment.progress at each milestone (machine ready, files checked, each model or condition started and finished with its score, results being written), a short plain sentence each time.",
 );
 
 export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
