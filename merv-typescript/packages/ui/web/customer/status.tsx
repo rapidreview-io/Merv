@@ -66,13 +66,17 @@ async function open(id: string) {
   }
 }
 
-/** The finished experiment: its answer, the report as pages, and everything delivered. */
+/** The finished experiment: the report as its pages, and the report to keep as a PDF. The
+ *  executor's own handoff summary is for Merv's reviewer, not shown here. */
 function Results({ result }: { result: Delivered }) {
+  const pdf = result.artifacts.find((artifact) => artifact.title === 'Report (PDF)');
   return (
     <section className="cx-results-delivered" aria-label="Results">
-      {result.summary && (
-        <div className="cx-summary">
-          <Markdown source={result.summary} />
+      {pdf && (
+        <div className="cx-deliverables">
+          <button type="button" className="btn btn--primary" onClick={() => void open(pdf.id)}>
+            Download PDF
+          </button>
         </div>
       )}
       {!!result.pages?.length && (
@@ -82,20 +86,10 @@ function Results({ result }: { result: Delivered }) {
           ))}
         </div>
       )}
-      {result.artifacts.length > 0 && (
-        <ul className="cx-deliverables">
-          {result.artifacts.map((artifact) => (
-            <li key={artifact.id}>
-              <button type="button" className="btn" onClick={() => void open(artifact.id)}>
-                {artifact.title}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }
+
 const WORD: Record<Progress['stage'], string> = {
   planning: 'Planning',
   running: 'Running',
@@ -128,7 +122,7 @@ function useNow(every = 30_000) {
 
 /**
  * Where a paid experiment stands: four stages, what it is doing now, time and compute against
- * their limits, scores as they finish, and what it has done. Nothing else.
+ * their limits, scores as they finish, and what it has done; once complete, its report.
  */
 export function Status({ progress, result }: { progress: Progress; result?: Delivered | null }) {
   const now = useNow();
@@ -137,7 +131,7 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
   const elapsed = started ? now - started : null;
   const live = progress.stage === 'running' || progress.stage === 'reviewing';
   return (
-    <section className="cx-status" aria-label="Status">
+    <section className="cx-run" aria-label="Status">
       <ol className="cx-stages">
         {STAGES.map((stage, index) => {
           const failed = progress.stage === 'failed' && index === 3;

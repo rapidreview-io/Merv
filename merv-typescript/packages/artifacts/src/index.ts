@@ -296,7 +296,8 @@ export class ArtifactStore implements Artifacts {
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
     return fromRow(await this.row(structuredClone(caller), artifactId, tx));
   }
-  async download(caller: Caller, artifactId: string, fileName?: string) {
+  /** `saveAs` names the downloaded file; it defaults to the artifact's title. */
+  async download(caller: Caller, artifactId: string, fileName?: string, saveAs?: string) {
     caller = structuredClone(caller);
     if (fileName !== undefined) {
       check(collectionPath(fileName), 'invalid_artifact', 'Invalid collection file name');
@@ -324,7 +325,12 @@ export class ArtifactStore implements Artifacts {
       501,
     );
     const sign = () =>
-      this.blobs.download!(caller.projectId, artifact.hash, artifact.size, artifact.title);
+      this.blobs.download!(
+        caller.projectId,
+        artifact.hash,
+        artifact.size,
+        saveAs ?? artifact.title,
+      );
     try {
       return { artifact, download: await sign() };
     } catch (error) {

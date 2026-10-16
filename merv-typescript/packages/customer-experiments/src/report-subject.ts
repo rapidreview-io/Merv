@@ -47,7 +47,8 @@ function documentFacts(exp: CustomerExperiment, contract: DocumentContract) {
     id: exp.title,
     question: contract.question,
     inquiry: inquiryOf(contract.document) || contract.question,
-    constraints: [...contract.criteria, allowance(contract.limits)],
+    // What the person agreed success means; Merv's own limits are not theirs to read.
+    constraints: contract.criteria,
     data: contract.files.map((f) => ({ dataset: f.key, use: 'Request file', size: size(f.size) })),
   };
 }

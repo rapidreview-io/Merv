@@ -739,7 +739,7 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
   });
   await open();
   await settle(50);
-  const status = document.querySelector('.cx-status')!;
+  const status = document.querySelector('.cx-run')!;
   assert.ok(status, 'the status view opens by itself');
   assert.deepEqual(
     [...status.querySelectorAll('.cx-stage-word')].map((n) => n.textContent),
@@ -790,15 +790,16 @@ test('a complete experiment shows its answer, the report pages and its files', a
   });
   await open();
   await settle(80);
-  const status = document.querySelector('.cx-status')!;
+  const status = document.querySelector('.cx-run')!;
   assert.equal(
     status.querySelector('[aria-current="step"] .cx-stage-word')!.textContent,
     'Complete',
   );
-  assert.match(status.querySelector('.cx-summary')!.textContent!, /Clef was most accurate/);
+  // The executor's handoff summary is the reviewer's, not the customer's.
+  assert.equal(status.querySelector('.cx-summary'), null);
   assert.equal(
     status.querySelector<HTMLImageElement>('.cx-report-page')!.getAttribute('src'),
     'https://r2.test/page1.png',
   );
-  assert.equal(status.querySelector('.cx-deliverables button')!.textContent, 'Report (PDF)');
+  assert.equal(status.querySelector('.cx-deliverables button')!.textContent, 'Download PDF');
 });
