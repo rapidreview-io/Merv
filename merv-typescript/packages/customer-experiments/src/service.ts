@@ -245,8 +245,10 @@ export class CustomerService {
     const step = current.findLast((line) => line.step)?.step ?? null;
     const limits =
       exp.contract && isDocumentContract(exp.contract) ? exp.contract.limits : undefined;
+    const waiting = stage === 'running' && !!(await this.stalled(caller, exp));
     return {
       stage,
+      waiting,
       attempt: Math.max(1, exp.attempts),
       maxAttempts: limits?.maxAttempts ?? 2,
       startedAt: paidAt,
@@ -254,7 +256,11 @@ export class CustomerService {
         usage?.budgets.find((b) => b.scopeId === exp.id)?.maxWallMs ??
         (limits?.wallMinutes ? limits.wallMinutes * 60_000 : null),
       compute: (await this.compute?.spend?.(caller)) ?? null,
-      now: stage === 'running' ? (current.at(-1)?.text ?? null) : null,
+      now: waiting
+        ? 'Waiting to resume'
+        : stage === 'running'
+          ? (current.at(-1)?.text ?? null)
+          : null,
       step,
       results: [...results.values()],
       activity: lines
@@ -1241,6 +1247,24 @@ export class CustomerService {
       404,
     );
     return this.artifacts.download(caller, id, fileName);
+  }
+  /** The question a paid run's worker left unanswered when it ended, if the run waits on it:
+   *  no live session, still running. Pi's question responder works on it meanwhile. */
+  private async stalled(caller: Caller, exp: CustomerExperiment) {
+    if (!plansDocument(exp.workflow.version) || exp.workflow.state !== 'running') return null;
+    const usage = await this.domain.sessions.usage(caller, {
+      instanceId: exp.id,
+      includeDependencies: false,
+    });
+    if (usage.liveSessions) return null;
+    return (
+      (await this.store.state.read((sql) =>
+        sql.get<{ id: string; thread_id: string; asked_at: string }>(
+          'SELECT id,thread_id,asked_at FROM session_questions WHERE instance_id=? AND answered_at IS NULL ORDER BY asked_at DESC LIMIT 1',
+          exp.id,
+        ),
+      )) ?? null
+    );
   }
   async reconcile() {
     for (const record of await this.store.list()) {

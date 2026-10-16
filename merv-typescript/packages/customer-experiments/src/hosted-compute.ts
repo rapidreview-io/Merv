@@ -104,7 +104,8 @@ export function hostedCustomerCompute(
           target: namespace,
           provider: null,
           source: null,
-          max_concurrent: 1,
+          // Two, so a machine still being torn down never blocks its replacement.
+          max_concurrent: 2,
           max_lifetime_seconds: 86_400,
           max_hourly_price: null,
         });

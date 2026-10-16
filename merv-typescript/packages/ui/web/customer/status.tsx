@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 /** The `progress` the request snapshot carries once the experiment is paid for. */
 export interface Progress {
   stage: 'planning' | 'running' | 'reviewing' | 'complete' | 'failed';
+  /** The run stopped and resumes by itself shortly. */
+  waiting?: boolean;
   attempt: number;
   maxAttempts: number;
   startedAt: string | null;

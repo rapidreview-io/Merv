@@ -90,3 +90,45 @@ test('a question with a character across its 100th unit still reaches Pi', async
   const { conversation } = await f.pi.snapshot(f.operator, reference!.id);
   assert.equal(conversation.title, `Worker question: ${'Is the bound '.padEnd(99, '.')}`);
 });
+
+test('an investigation whose turn dies carries on twice, then hands the question back', async (t) => {
+  const f = await fixture(t);
+  const source = await f.scope.delegationSource(f.operator);
+  const responder = questionResponder(f.pi, f.scope);
+  let reference: { id: string; route: string } | undefined;
+  await responder.start({
+    question: { ...question, id: 'question_retry' },
+    source,
+    attach: async (ref) => {
+      reference = ref;
+      return true;
+    },
+  });
+  let credential = '';
+  const die = async () => {
+    const commands = (await f.pi.snapshot(f.operator, reference!.id)).commands;
+    let input: { conversationId: string; commandId: string; workerId: string };
+    if (!credential) {
+      const bound = await f.claimed(commands.at(-1)!);
+      credential = bound.token;
+      input = bound.input;
+    } else {
+      const { work } = await f.pi.next(credential, { workerId: 'worker_1' });
+      assert.ok(work);
+      input = { conversationId: reference!.id, commandId: work.command.id, workerId: 'worker_1' };
+    }
+    await f.pi.begin(credential, input);
+    await f.pi.fail(credential, { ...input, reason: 'lost' });
+  };
+  await die();
+  assert.equal(await responder.inspect(source, reference!), null, 'it carries on');
+  let commands = (await f.pi.snapshot(f.operator, reference!.id)).commands;
+  assert.equal(commands.length, 2);
+  assert.match(commands[1]!.messages[0]!.text, /interrupted/);
+  await die();
+  assert.equal(await responder.inspect(source, reference!), null);
+  await die();
+  assert.match((await responder.inspect(source, reference!))!, /finished without resolving/);
+  commands = (await f.pi.snapshot(f.operator, reference!.id)).commands;
+  assert.equal(commands.length, 3);
+});

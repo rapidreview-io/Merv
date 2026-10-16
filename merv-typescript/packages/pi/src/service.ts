@@ -96,6 +96,9 @@ const publicConversation = ({
 
 /** The person's conversations. It composes Pi's shared records (core), each person's host and its
  * Fleet machines (hosts), and the routes the host's worker calls (protocol). */
+/** Interrupted turns a question investigation carries on after. */
+const QUESTION_RETRIES = 2;
+
 export class PiService implements Pi {
   private readonly core: PiCore;
   private readonly hosts: PiHosts;
@@ -294,11 +297,24 @@ export class PiService implements Pi {
    * that ends, however it ends, clears the conversation's active turn in the same write. */
   async questionStatus(caller: Caller, id: string): Promise<string | null> {
     this.core.ready();
-    return await this.core.read(async (tx) =>
-      (await this.owned(caller, id, tx)).activeCommandId
-        ? null
-        : 'Pi finished without resolving the question. Continue its conversation or answer the worker directly.',
-    );
+    const { active, commands } = await this.core.read(async (tx) => ({
+      active: !!(await this.owned(caller, id, tx)).activeCommandId,
+      commands: await this.core.commands(tx, id),
+    }));
+    if (active) return null;
+    // A turn that died under the investigation is not an answer: it carries on, twice at most.
+    // A person's Stop is theirs to keep.
+    const died = (command?: { status: string; error?: string | null }) =>
+      command?.status === 'interrupted' && command.error !== 'cancelled';
+    const interrupted = commands.filter(died).length;
+    if (died(commands.at(-1)) && interrupted <= QUESTION_RETRIES) {
+      await this.send(caller, id, {
+        commandId: `${commands[0]?.id ?? 'question'}_retry_${interrupted}`,
+        text: 'Your previous turn was interrupted before it finished. Carry on investigating and resolve the question.',
+      });
+      return null;
+    }
+    return 'Pi finished without resolving the question. Continue its conversation or answer the worker directly.';
   }
 
   async snapshot(caller: Caller, id: string): Promise<PiSnapshot> {
