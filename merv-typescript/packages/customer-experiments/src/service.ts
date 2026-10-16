@@ -323,6 +323,9 @@ export class CustomerService {
     const result = exp.submission
       ? {
           summary: exp.submission.summary,
+          /** The report's pages, as images, once the experiment is complete. */
+          pages:
+            exp.workflow.state === 'complete' ? (exp.submission.report?.pageArtifactIds ?? []) : [],
           artifacts:
             exp.workflow.state === 'complete'
               ? await Promise.all(
@@ -1302,8 +1305,14 @@ export class CustomerService {
   async artifact(record: RequestRecord, id: string, fileName?: string) {
     const caller = await this.caller(record),
       exp = await this.domain.get(caller, record.experimentId!);
+    // What the customer is shown: the report's PDF and its page images, and the other results.
     check(
-      exp.workflow.state === 'complete' && exp.submission?.artifactIds.includes(id),
+      exp.workflow.state === 'complete' &&
+        !!exp.submission &&
+        [
+          ...shownResults(exp.submission),
+          ...(exp.submission.report?.pageArtifactIds ?? []),
+        ].includes(id),
       'not_found',
       'Delivered artifact not found',
       404,

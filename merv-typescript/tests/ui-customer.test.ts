@@ -757,3 +757,48 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
   // The chat waits behind its button rather than floating over the status.
   assert.equal(document.querySelector('.cx-chat-reopen')!.textContent, 'Chat');
 });
+
+test('a complete experiment shows its answer, the report pages and its files', async (t) => {
+  t.after(async () => {
+    await unmount();
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  serve(`${BASE}/artifacts/art_page1`, {
+    body: { download: { url: 'https://r2.test/page1.png' } },
+  });
+  serve(BASE, {
+    body: {
+      state: 'complete',
+      progress: {
+        stage: 'complete',
+        attempt: 1,
+        maxAttempts: 2,
+        startedAt: new Date(Date.now() - 3600_000).toISOString(),
+        maxWallMs: 24 * 3600_000,
+        compute: { usd: 2.48, limitUsd: 1000 },
+        now: null,
+        step: null,
+        results: [],
+        activity: [],
+      },
+      result: {
+        summary: 'Clef was most accurate on the 24 cases.',
+        pages: ['art_page1'],
+        artifacts: [{ id: 'art_pdf', title: 'Report (PDF)' }],
+      },
+    },
+  });
+  await open();
+  await settle(80);
+  const status = document.querySelector('.cx-status')!;
+  assert.equal(
+    status.querySelector('[aria-current="step"] .cx-stage-word')!.textContent,
+    'Complete',
+  );
+  assert.match(status.querySelector('.cx-summary')!.textContent!, /Clef was most accurate/);
+  assert.equal(
+    status.querySelector<HTMLImageElement>('.cx-report-page')!.getAttribute('src'),
+    'https://r2.test/page1.png',
+  );
+  assert.equal(status.querySelector('.cx-deliverables button')!.textContent, 'Report (PDF)');
+});
