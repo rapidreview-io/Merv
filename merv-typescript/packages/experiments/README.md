@@ -99,8 +99,7 @@ and exit guidance share the same document/exhibit gates; guidance creates
 no evidence or events. The generated exhibit and sealed review selections are
 immutable.
 
-Sessions consumes the program's generic lease hooks, so Experiments has no
-direct dependency on Sessions or Runner. A lease freezes context, the Project Introduction, recovery associations, figures,
+Sessions consumes the program's generic lease hooks. Experiments registers its continuity key with Sessions and has no direct Runner dependency. A lease freezes context, the Project Introduction, recovery associations, figures,
 prior assessments and artifact grants. The replacement
 worker may reuse exact retained result inputs, but must author its own
 verified plan or report. Ordinary owner production is blocked while a worker
@@ -144,3 +143,26 @@ implementation work.
 This program does not publish code.
 
 New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). From `experiment@41`, planning and design review read a read-only checkout of the experiment's pinned base, project main with its accepted prerequisites' code, which the planner's lease pins (on `experiment@40` they use scratch space and are told to read the prerequisites' delivery evidence instead); execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.
+
+
+### Producer continuity (experiment@44)
+
+New experiments use one producer thread across planning, execution, rejected-design rework,
+execution repair and later attempts. Versions 40–43 keep their separate planning/execution
+keys; existing conversations are never merged. Each visit gets a new lease, credential,
+frozen grants and stage-specific workspace. Planning stays read-only; execution gets its own
+writable checkout. Reviewers remain separate, with a fresh thread per review round.
+
+Execution's current assignment names the exact approved submission and review, includes the
+approval findings, and instructs the producer to follow the pinned plan, feasibility limits,
+current workspace and deliverables. Current authoritative records supersede earlier conversation.
+The UI attributes each visit to its actual stage even when the producer spans both stages.
+
+A transition can close the session before the runner saves its conversation. Experiment
+producer offers wait up to 60 seconds after an attached visit closes for its latest snapshot
+upload; this is an uncounted retry, not a dispatch failure. After that bound the existing
+fallback applies: use the last available snapshot, or start fresh if none exists. Restoration
+is best-effort and harness-specific (Claude/Codex); a changed harness, failed upload/download,
+invalid snapshot, changed delegation source, or a dormant thread expired after 14 days can
+prevent resumption. This preserves history when available, not a guarantee of process or
+model identity. The runner still captures after process exit and before resetting its home.

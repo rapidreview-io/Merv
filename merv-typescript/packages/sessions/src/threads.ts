@@ -1,5 +1,6 @@
 import {
   check,
+  MervError,
   clip,
   newId,
   type Blobs,
@@ -107,7 +108,7 @@ const UNREAD = `(t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages 
   AND m.acknowledged_at IS NULL AND m.inquiry_role IS NULL))`;
 
 /**
- * Threads: the worker that owns one stage of one work item for one role. A session is one visit
+ * Threads: continuing workers for one role, optionally spanning stages through a provider. A session is one visit
  * by its thread, with its own lease and credential; the thread holds the attribution actor every
  * visit acts as, the conversation they kept and whether it is open, dormant or retired.
  *
@@ -126,6 +127,7 @@ export class SessionThreads {
   /** How many threads waiting for an answer one sweep pass reads, and where the last stopped. */
   askingPage = 100;
   private askingAfter = 0;
+  private readonly conversationGrace = new Map<string, number>();
   private readonly providers = new Map<string, ContinuityProvider>();
   constructor(
     private state: State,
@@ -154,7 +156,11 @@ export class SessionThreads {
       available(): void;
     },
   ) {}
-  register(workflow: string, provider: ContinuityProvider): () => void {
+  register(
+    workflow: string,
+    provider: ContinuityProvider,
+    options?: { conversationGraceMs: number },
+  ): () => void {
     this.host.available();
     check(
       !this.providers.has(workflow),
@@ -162,9 +168,19 @@ export class SessionThreads {
       'This workflow already has a continuity provider',
       409,
     );
+    const grace = options?.conversationGraceMs ?? 0;
+    check(
+      Number.isSafeInteger(grace) && grace >= 0 && grace <= 300_000,
+      'invalid_conversation_grace',
+      'Conversation handoff grace must be 0–300000 milliseconds',
+    );
     this.providers.set(workflow, provider);
+    this.conversationGrace.set(workflow, grace);
     return () => {
-      if (this.providers.get(workflow) === provider) this.providers.delete(workflow);
+      if (this.providers.get(workflow) === provider) {
+        this.providers.delete(workflow);
+        this.conversationGrace.delete(workflow);
+      }
     };
   }
   key(unit: ContinuityUnit): string | null {
@@ -211,6 +227,40 @@ export class SessionThreads {
         "SELECT owner_hash,bool_or(status IN ('offered','active')) AS live FROM worker_sessions WHERE thread_id=? AND kind='work' GROUP BY owner_hash",
         held.id,
       );
+      // Transitions close visits before their runner can save the harness conversation. Give
+      // an attached visit a bounded opportunity to deliver it, rather than superseding it or
+      // freezing an older snapshot into the next offer. A dead runner cannot block forever.
+      const grace = this.conversationGrace.get(unit.workflow) ?? 0;
+      if (
+        grace &&
+        unit.role !== 'reviewer' &&
+        visits.length === 1 &&
+        visits[0]!.owner_hash === owner.hash &&
+        !visits[0]!.live
+      ) {
+        const last = await tx.get<{
+          id: string;
+          closed_at: string | null;
+          host_ref: string | null;
+        }>(
+          "SELECT id,closed_at,host_ref FROM worker_sessions WHERE thread_id=? AND kind='work' ORDER BY _merv_rowid DESC LIMIT 1",
+          held.id,
+        );
+        if (
+          last?.host_ref &&
+          last.closed_at &&
+          this.clock() < Date.parse(last.closed_at) + grace &&
+          (held.latest_session_id !== last.id || held.uploaded_at === null)
+        ) {
+          const waiting = new MervError(
+            'conversation_pending',
+            'The previous visit is saving its conversation; retry shortly',
+            409,
+          );
+          waiting.wait = true;
+          throw waiting;
+        }
+      }
       // Sessions' choice, not the runner's: the thread may have run anywhere.
       if (
         held.sha256 !== null &&
@@ -755,6 +805,7 @@ export class SessionThreads {
       close_reason: string | null;
       outcome: string | null;
       resumed: boolean;
+      state: string | null;
       harness: string | null;
       streamed: boolean;
       transcript: boolean;
@@ -764,7 +815,7 @@ export class SessionThreads {
     }>(
       // The columns kept beside each visit's JSON (sessions@23): the pages that list threads poll.
       `SELECT s.id,s.thread_id,s.status,s.runner_id,s.kind,s.created_at,s.activated_at,s.expires_at,s.hard_deadline,
-          s.closed_at,s.close_reason,s.work_name AS name,s.workflow,s.outcome,s.resume_harness IS NOT NULL AS resumed,
+          s.closed_at,s.close_reason,s.work_name AS name,s.workflow,s.outcome,s.execution_state AS state,s.resume_harness IS NOT NULL AS resumed,
           COALESCE(d.platform_json::jsonb->>'harness',u.harness,s.resume_harness) AS harness,
           EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) AS streamed,
           EXISTS (SELECT 1 FROM session_transcripts t WHERE t.session_id=s.id AND t.uploaded_at IS NOT NULL) AS transcript
@@ -775,6 +826,7 @@ export class SessionThreads {
     return rows.map((row) => {
       const view: VisitView = {
         sessionId: row.id,
+        ...(row.state && { state: row.state }),
         status: row.status,
         offeredAt: row.created_at,
         ...(row.activated_at && { startedAt: row.activated_at }),

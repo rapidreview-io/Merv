@@ -1,3 +1,4 @@
+import { experimentContinuity } from './continuity.js';
 import { absent, mapAsync } from '@merv/contracts';
 import { unitFiles } from '@merv/artifacts/unit-files';
 import { recordUnit } from '@merv/code-work/record-unit';
@@ -687,6 +688,7 @@ export const experimentsPlugin = {
     'contextBuilder',
     'codeWork',
     'paper',
+    'sessions',
   ],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
@@ -703,6 +705,9 @@ export const experimentsPlugin = {
         ),
       );
       yield () => experiments.close();
+      yield ctx.sessions.threads.register('experiment', experimentContinuity, {
+        conversationGraceMs: 60_000,
+      });
       ctx.inject(['sandboxEvidence'], (ctx) => {
         ctx.effect(() => experiments.bindCaptureEvidence(ctx.sandboxEvidence));
       });

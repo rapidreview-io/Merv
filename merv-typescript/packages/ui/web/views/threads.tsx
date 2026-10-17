@@ -37,9 +37,9 @@ import { namesOf } from './people';
 import { valueText } from './running-phrase';
 
 /**
- * Who worked each stage of a record: Sessions' threads, each drawn on the stage whose state
- * it names, and opened in a dialog that reads what it said and every visit it made. Nothing
- * here knows a workflow: a thread stands on the stage with its own `state` string, and its
+ * Who worked each stage of a record: Sessions' threads, drawn on every stage their visits
+ * name, and opened in a dialog that reads what it said and every visit it made. Nothing
+ * here knows a workflow: a thread stands on the stages its visits name, and its
  * role is said in the workflow's own words.
  */
 
@@ -78,7 +78,9 @@ function visitNames(visits: readonly VisitView[]): Map<string, string> {
         ? 'Launch failed'
         : visit.inquiry
           ? 'Answering a question'
-          : [`Visit ${++ran}`, visit.resumed && 'resumed'].filter(Boolean).join(' · '),
+          : [`Visit ${++ran}`, visit.state && words(visit.state), visit.resumed && 'resumed']
+              .filter(Boolean)
+              .join(' · '),
     ]),
   );
 }
@@ -107,11 +109,20 @@ export const lastActive = (thread: ThreadView) =>
     .at(-1);
 
 /**
- * The threads of `thread`'s stage in its role, oldest first: a reviewer is a new thread each
- * visit, and a producer's superseded thread stays beside the one that replaced it.
+ * Threads sharing a visited stage and role, oldest first. A continuing producer's prior
+ * planning threads remain reachable after it moves to execution; reviewers stay by stage.
  */
 export const groupOf = (threads: readonly ThreadView[], thread: ThreadView) => {
-  const here = threads.filter((item) => item.state === thread.state && item.role === thread.role);
+  const stages = new Set([
+    thread.state,
+    ...thread.visits.map((visit) => visit.state ?? thread.state),
+  ]);
+  const here = threads.filter(
+    (item) =>
+      item.role === thread.role &&
+      (stages.has(item.state) ||
+        item.visits.some((visit) => stages.has(visit.state ?? item.state))),
+  );
   return here.includes(thread) ? here : [thread];
 };
 /** The thread a group opens on: the live one, else the newest whose agent ran, else the newest. */
@@ -142,9 +153,12 @@ export function threadFor(
   threads: readonly ThreadView[],
   { stage, role, at }: { stage: string; role: string; at?: string },
 ): ThreadView | undefined {
-  const began = (thread: ThreadView) => thread.visits[0]?.offeredAt ?? '';
+  const began = (thread: ThreadView) =>
+    thread.visits.find((visit) => (visit.state ?? thread.state) === stage)?.offeredAt ?? '';
+  const visited = (thread: ThreadView) =>
+    thread.visits.some((visit) => (visit.state ?? thread.state) === stage);
   const here = threads
-    .filter((thread) => thread.state === stage && thread.role === role)
+    .filter((thread) => visited(thread) && thread.role === role)
     .sort((a, b) => began(a).localeCompare(began(b)));
   if (!at) return here.at(-1);
   return here.filter((thread) => began(thread) <= at).at(-1) ?? here[0];
@@ -781,7 +795,23 @@ export function StageThreads({
 }) {
   const now = clock(undefined, loadedAt, Date.now(), 20_000);
   const aside = (state: string) => {
-    const here = threads.filter((item) => item.state === state);
+    const here = threads.flatMap((thread) => {
+      const visits = thread.visits.filter((visit) => (visit.state ?? thread.state) === state);
+      return visits.length
+        ? [
+            {
+              ...thread,
+              state,
+              visits,
+              status: visits.some((visit) => leased(visit) && !visit.inquiry)
+                ? ('live' as const)
+                : thread.status === 'retired'
+                  ? ('retired' as const)
+                  : ('dormant' as const),
+            },
+          ]
+        : [];
+    });
     return [...new Set(here.map((item) => item.role))].map((role) => {
       const group = here.filter((item) => item.role === role);
       return (

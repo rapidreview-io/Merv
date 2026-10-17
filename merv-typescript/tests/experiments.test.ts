@@ -1041,7 +1041,7 @@ test('native experiments fence compute by attempt and state and retain service c
   const native = captureEvidenceFixture();
   t.after(f.experiments.bindCaptureEvidence(native.service));
   let experiment = await f.create('Native');
-  assert.equal(experiment.workflow.version, 43);
+  assert.equal(experiment.workflow.version, 44);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
   assert.ok(!planning.execution.tools.some((tool) => tool.name.startsWith('compute.')));
@@ -1403,7 +1403,7 @@ test(
     t.after(async () => await reports.close());
     f.experiments.bindReports(reports);
     let e = await f.create();
-    assert.equal(e.workflow.version, 43);
+    assert.equal(e.workflow.version, 44);
     await f.attach(e, 'plan', REPORTED_PLAN);
     e = await f.transition(e, 'submit_design');
     e = await f.execute(await f.submitReview(e));

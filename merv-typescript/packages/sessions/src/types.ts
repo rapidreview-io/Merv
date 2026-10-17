@@ -184,6 +184,8 @@ export interface SessionContinuity {
 }
 /** What a continuity provider is shown of the work a session is offered. */
 export interface ContinuityUnit {
+  /** Immutable workflow contract, for version-scoped continuity rollouts. */
+  version: number;
   instanceId: string;
   workflow: string;
   state: string;
@@ -369,8 +371,13 @@ export interface Sessions {
   };
   /** The workers of each stage: continuity, and the threads a work item's page reads. */
   readonly threads: {
-    /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
-    register(workflow: string, provider: ContinuityProvider): () => void;
+    /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed.
+     * Optional bounded grace (0–300000ms) waits for an attached producer's latest snapshot. */
+    register(
+      workflow: string,
+      provider: ContinuityProvider,
+      options?: { conversationGraceMs: number },
+    ): () => void;
     /**
      * Every thread with a visit on the work item, or on any of up to 100 of them, oldest first,
      * for anyone who may read each; never a worker.

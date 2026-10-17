@@ -1091,6 +1091,7 @@ export class LeasedSessions implements Sessions {
       {
         instanceId: unit.id,
         workflow: unit.workflow,
+        version: unit.version,
         state: unit.state,
         revision: unit.revision,
         data: unit.data,

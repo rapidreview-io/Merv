@@ -16,7 +16,8 @@ const { createElement } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
-const { ThreadDialog, ThreadStages } = await import('../packages/ui/web/views/threads.js');
+const { ThreadDialog, ThreadStages, threadFor, groupOf } =
+  await import('../packages/ui/web/views/threads.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { Reading } = await import('../packages/ui/web/views/running-phrase.js');
 const { useTool } = await import('../packages/ui/web/api.js');
@@ -745,4 +746,45 @@ test('a live thread’s dialog, ticking each second, leaves its conversation as 
   Object.defineProperty(timeline, 'scrollTop', { get: () => 0, set: () => void writes++ });
   await settle(2200);
   assert.equal(writes, 0, 'nothing it draws was drawn again');
+});
+
+test('one continuing producer is attributed to both stages, with only execution live', async (t) => {
+  t.after(unmount);
+  const producer = {
+    ...threads[0]!,
+    id: 'thr_run',
+    state: 'running',
+    status: 'live',
+    visits: [
+      visit('ses_plan', { state: 'planned' }),
+      visit('ses_exec', {
+        state: 'running',
+        offeredAt: at(10),
+        startedAt: at(10),
+        endedAt: undefined,
+        status: 'active',
+        liveness: { verdict: 'active', tone: 'ok', rest: [{ since: at(10) }] },
+        resumed: true,
+      }),
+    ],
+  };
+  assert.equal(groupOf([threads[0]!, producer] as never, producer as never).length, 2);
+  await open('reader', [producer]);
+  assert.deepEqual(chips('planned'), ['PProducer']);
+  assert.deepEqual(chips('running'), ['PProducer']);
+  assert.ok(!chip('planned').querySelector('.live-dot--live'));
+  assert.ok(chip('running').querySelector('.live-dot--live'));
+  assert.equal(
+    threadFor([producer] as never, { stage: 'planned', role: 'producer', at: at(5) })?.id,
+    'thr_run',
+  );
+  assert.equal(
+    threadFor([producer] as never, { stage: 'running', role: 'producer', at: at(11) })?.id,
+    'thr_run',
+  );
+  await press(chip('planned'));
+  await details();
+  assert.match(dialogText(), /planned/i);
+  assert.match(dialogText(), /running/i);
+  assert.equal(document.querySelectorAll('dialog .ruled-row').length, 2);
 });

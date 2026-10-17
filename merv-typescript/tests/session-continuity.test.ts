@@ -667,6 +667,7 @@ test('research keys: a lens by wave and perspective across restarts, an experime
     threads.key({
       instanceId,
       workflow: 'reflection.lens',
+      version: 4,
       state: 'reflecting',
       revision: 3,
       data: { reflectionId: 'wave', attempt, perspective },
@@ -681,17 +682,28 @@ test('research keys: a lens by wave and perspective across restarts, an experime
     JSON.stringify(['lens-1', 'reflecting', 'reviewer', 3]),
   );
   // A design revision starts a new attempt of the same experiment: the planner continues.
-  const experiment = (attempt: number, state: string, role: 'producer' | 'reviewer') =>
+  const experiment = (
+    attempt: number,
+    state: string,
+    role: 'producer' | 'reviewer',
+    version = 44,
+  ) =>
     threads.key({
       instanceId: 'experiment',
       workflow: 'experiment',
+      version,
       state,
       revision: attempt,
       data: { attempt },
       role,
     });
   assert.equal(experiment(1, 'planned', 'producer'), experiment(2, 'planned', 'producer'));
-  assert.notEqual(experiment(1, 'running', 'producer'), experiment(1, 'planned', 'producer'));
+  assert.equal(experiment(1, 'running', 'producer'), experiment(1, 'planned', 'producer'));
+  assert.notEqual(
+    experiment(1, 'running', 'producer', 43),
+    experiment(1, 'planned', 'producer', 43),
+  );
+  assert.notEqual(experiment(1, 'planned', 'producer', 43), experiment(1, 'planned', 'producer'));
   assert.notEqual(
     experiment(1, 'design_review', 'reviewer'),
     experiment(2, 'design_review', 'reviewer'),
@@ -1939,4 +1951,37 @@ test('the sweep reads a bounded page of waiting questions a pass, and every one 
     [await status(open.threadId), await status(ended.threadId)],
     ['dormant', 'retired'],
   );
+});
+
+test('conversation handoff waits for the newest attached visit and expires without counting a failure', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.sessions.threads.register(
+      'continuity-test',
+      ({ instanceId, role }) => JSON.stringify([instanceId, role]),
+      { conversationGraceMs: 1000 },
+    ),
+  );
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.release(first.session);
+  await assert.rejects(f.offer(unit.id), { code: 'conversation_pending', wait: true });
+  const saved = await f.keep(first.session, first.control, 'FIRST_HISTORY');
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.threadId, first.session.threadId);
+  await f.release(second.session);
+  // Even a prior delivered conversation is not frozen while this newer visit is settling.
+  await assert.rejects(f.offer(unit.id), { code: 'conversation_pending', wait: true });
+  await delay(1050);
+  const fallback = await f.offer(unit.id);
+  assert.equal(fallback.session.continuity?.resume?.sha256, saved.facts.sha256);
+  assert.equal(fallback.session.threadId, first.session.threadId);
+  const noSnapshot = await f.start();
+  const lost = await f.offer(noSnapshot.id);
+  await f.release(lost.session);
+  await assert.rejects(f.offer(noSnapshot.id), { code: 'conversation_pending', wait: true });
+  await delay(1050);
+  const fresh = await f.offer(noSnapshot.id);
+  assert.notEqual(fresh.session.threadId, lost.session.threadId);
+  assert.equal(fresh.session.continuity?.resume, undefined);
 });

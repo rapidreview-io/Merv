@@ -811,4 +811,8 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   ADD COLUMN workflow TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,workflow}') STORED,
   ADD COLUMN workspace_mode TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,policy,workspace,mode}') STORED,
   ADD COLUMN resume_harness TEXT GENERATED ALWAYS AS (session_json::jsonb#>>'{continuity,resume,harness}') STORED;`,
+  // Stage attribution is per visit: continuing producers span stages. Keep polling off JSON.
+  // As with migration 23, this stored scalar rewrites worker_sessions on upgrade.
+  24: `ALTER TABLE worker_sessions ADD COLUMN execution_state TEXT
+    GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,state}') STORED;`,
 };

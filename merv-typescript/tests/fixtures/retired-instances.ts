@@ -396,7 +396,7 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 
 /**
  * sessions@18 (inquiry visits), @19 (their usage rows), @20 (a thread's delivered conversation)
- * @21 (every inquiry row names its kind, data only), @22 (optional question responders) and @23
+ * @21 (every inquiry row names its kind, data only), @22 (optional question responders), @24 (visit stage) and @23
  * (the columns polls read beside a session's JSON) undone, back to the release before them:
  * no inquiries, no session or usage kinds (the live indexes and the usage guard as they were),
  * and messages guarded as sessions@14 left them.
@@ -404,9 +404,11 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 export function rewindInquiries(): string {
   const threads = sessionMigrations[14]!;
   const usage = sessionMigrations[4]!;
-  const added = [...sessionMigrations[23]!.matchAll(/ADD COLUMN (\w+)/g)];
+  const added = [
+    ...(sessionMigrations[23]! + sessionMigrations[24]!).matchAll(/ADD COLUMN (\w+)/g),
+  ];
   return `ALTER TABLE worker_sessions ${added.map(([, column]) => `DROP COLUMN ${column}`).join(',')};
-DELETE FROM component_migrations WHERE component='sessions' AND version=23;
+DELETE FROM component_migrations WHERE component='sessions' AND version IN (23,24);
 DROP TABLE session_question_responses;
 DELETE FROM component_migrations WHERE component='sessions' AND version=22;
 DELETE FROM component_migrations WHERE component='sessions' AND version=21;

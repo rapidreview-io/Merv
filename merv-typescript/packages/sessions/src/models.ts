@@ -260,7 +260,7 @@ export interface ThreadCalls {
 }
 
 /**
- * The worker that owns one stage of one work item for one role: its continuity key's holder, with
+ * The continuing worker for one role, on the stages selected by its workflow provider: its continuity key's holder, with
  * the attribution actor and saved conversation. `live` while a visit holds its lease, `dormant`
  * while it waits for its work to come back, `retired` once superseded, swept or closed for good.
  */
@@ -285,6 +285,8 @@ export interface ThreadView {
 /** One session of a thread: its lease, credential and launch. */
 export interface VisitView {
   sessionId: string;
+  /** Stage of this visit; a continuing producer can visit more than one stage. */
+  state?: string;
   status: 'offered' | 'active' | 'released' | 'expired';
   offeredAt: string;
   startedAt?: string;

@@ -7,7 +7,7 @@ import { captureEvidenceFixture } from './fixtures/capture-evidence.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,7 +16,9 @@ import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts'
 import type { ReviewHistory } from '@merv/reviews/rules';
 
 import { ProjectScope } from '@merv/scope';
-import { DiskBlobs } from '@merv/blobs';
+import { s3Blobs } from './fixtures/s3-blobs.js';
+import { experimentContinuity } from '@merv/experiments/continuity';
+import { S3Blobs, DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
@@ -483,7 +485,7 @@ test('a design and its review read the accepted code they depend on in a read-on
     requestId: f.request(),
   });
   const experiment = await f.create([prerequisite.id]);
-  assert.equal(experiment.workflow.version, 43);
+  assert.equal(experiment.workflow.version, 44);
   const preparation = await f.work.lease(prerequisite);
   const proof = await f.artifacts.create(preparation.worker, {
     title: 'Preparation receipt',
@@ -1598,7 +1600,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 43);
+  assert.equal(created.workflow.version, 44);
   assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 
@@ -2036,7 +2038,7 @@ test('a resumed visit submits results its cut visit retained before attaching th
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
   const f = await fixture(t);
   let experiment = await f.running();
-  assert.equal(experiment.workflow.version, 43);
+  assert.equal(experiment.workflow.version, 44);
   // Attempt 1 runs, commits its implementation, and submits.
   const r1 = await f.work.lease(experiment);
   await f.work.commit(r1, { 'attempt1_impl.py': 'print("attempt 1")\n' });
@@ -2149,4 +2151,204 @@ test('the card says starting for each visit until its own worker takes it up', a
   assert.notEqual(between, JSON.stringify([['Running · starting']]), 'no visit, nothing starting');
   assert.equal(firstLine, JSON.stringify([['Running · starting']]));
   assert.equal(second, JSON.stringify([['Running · starting']]), 'a second visit not yet begun');
+});
+
+test('v44 keeps the designer through rejected design and execution with fresh authority and separate reviewers', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.sessions.threads.register('experiment', experimentContinuity, {
+      conversationGraceMs: 60_000,
+    }),
+  );
+  const s3 = await s3Blobs(t);
+  const blobs = new S3Blobs({
+    bucket: 'merv-artifacts',
+    endpoint: s3.server.endpoint,
+    accessKeyId: 'fixture-access-key',
+    secretAccessKey: 'fixture-secret-key',
+    allowHttpLoopbackForTests: true,
+  });
+  t.after(() => blobs.close());
+  f.sessions.threads.blobs = blobs;
+  type Held = Awaited<ReturnType<typeof f.work.lease>>;
+  const keep = async (held: Held, text: string) => {
+    const bytes = Buffer.from(JSON.stringify({ type: 'user', text }) + '\n');
+    const facts = {
+      ...held.control,
+      harness: 'codex' as const,
+      conversationId: randomUUID(),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+    };
+    await f.sessions.conversation(f.source, facts);
+    const pending = await f.sessions.conversation(f.source, { ...facts, deliver: true });
+    assert.ok(pending.upload);
+    const put = await fetch(pending.upload.url, {
+      method: 'PUT',
+      headers: pending.upload.headers,
+      body: new Uint8Array(bytes),
+    });
+    assert.equal(put.status, 200);
+    await f.sessions.conversation(f.source, { ...facts, deliver: true });
+    return { bytes, facts };
+  };
+  let experiment = await f.create();
+  assert.equal(experiment.workflow.version, 44);
+  const submitDesign = async (held: Held) => {
+    for (const [role, content, mediaType] of [
+      ['plan', plan, 'text/markdown'],
+      ['feasibility', feasibilityStatement(), 'application/json'],
+    ] as const) {
+      const artifact = await f.work.run(
+        held,
+        'artifact.create',
+        { title: role, content, mediaType },
+        (caller, input) => f.artifacts.create(caller, input as never),
+      );
+      await f.work.run(
+        held,
+        'experiment.attach',
+        {
+          artifactId: artifact.id,
+          role,
+          path: role,
+          attemptIndex: experiment.attempt.index,
+          requestId: f.request(),
+        },
+        (caller, input) => f.experiments.attach(caller, input as never),
+      );
+    }
+    experiment = await f.work.run(
+      held,
+      'experiment.transition',
+      { transition: 'submit_design', requestId: f.request() },
+      (caller, input) => f.experiments.transition(caller, input as never),
+    );
+    await f.work.release(held);
+  };
+  const reviewSource = await f.issue('operator');
+  const review = async (verdict: 'needs_changes' | 'pass') => {
+    const held = await f.work.lease(experiment, reviewSource);
+    const record = await f.reviews.get(held.worker, experiment.reviewId!);
+    experiment = await f.work.run(
+      held,
+      'review.submit',
+      {
+        ...reviewedFindings(record),
+        verdict,
+        ...(verdict === 'needs_changes' ? { returnTo: 'planned' } : {}),
+        notes: 'REVIEW_FINDINGS_approved_scope',
+        requestId: f.request(),
+      } as Data,
+      (caller, input) => f.experiments.submitReview(caller, input as never),
+    );
+    await f.work.release(held);
+    return held;
+  };
+  const design = await f.work.lease(experiment);
+  await submitDesign(design);
+  const firstReview = await review('needs_changes');
+  // The workflow is already back, but the ended harness has not saved its conversation yet.
+  await assert.rejects(f.work.lease(experiment), { code: 'conversation_pending', wait: true });
+  const first = await keep(design, 'DESIGN_HISTORY_1');
+  const rework = await f.work.lease(experiment);
+  assert.equal(rework.session.threadId, design.session.threadId);
+  assert.equal(rework.session.actorId, design.session.actorId);
+  assert.equal(rework.session.continuity?.resume?.sha256, first.facts.sha256);
+  await submitDesign(rework);
+  const secondReview = await review('pass');
+  assert.notEqual(firstReview.session.threadId, secondReview.session.threadId);
+  for (const reviewer of [firstReview, secondReview]) {
+    assert.notEqual(reviewer.session.threadId, design.session.threadId);
+    assert.equal(reviewer.session.continuity?.resume, undefined);
+  }
+  await assert.rejects(f.work.lease(experiment), { code: 'conversation_pending', wait: true });
+  const saved = await keep(rework, 'DESIGN_HISTORY_1_AND_REWORK_2');
+  const executor = await f.work.lease(experiment);
+  assert.equal(executor.session.threadId, design.session.threadId);
+  assert.equal(executor.session.actorId, design.session.actorId);
+  assert.notEqual(executor.session.id, rework.session.id);
+  assert.notEqual(executor.token, rework.token);
+  assert.notEqual(executor.workspace.path, rework.workspace.path);
+  assert.equal(design.session.execution.policy.readOnly, true);
+  assert.equal(executor.session.execution.policy.readOnly, false);
+  assert.ok(!design.session.execution.policy.tools.some((tool) => tool.name === 'report.write'));
+  assert.ok(executor.session.execution.policy.tools.some((tool) => tool.name === 'report.write'));
+  assert.equal(executor.session.continuity?.resume?.sha256, saved.facts.sha256);
+  const download = await f.sessions.resume(f.source, executor.control);
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), saved.bytes);
+  await assert.rejects(
+    f.sessions.invocations.prepare(rework.worker, 'artifact.create', {
+      title: 'stale',
+      content: 'no',
+    }),
+    { code: 'session_completed' },
+  );
+  assert.match(executor.session.assignment.brief, /Current stage: execution/);
+  assert.ok(executor.session.assignment.brief.includes(experiment.attempt.approvedSubmissionId!));
+  assert.ok(executor.session.assignment.brief.includes(experiment.attempt.approvedReviewId!));
+  assert.match(executor.session.assignment.context!.prompt, /REVIEW_FINDINGS_approved_scope/);
+  const threads = await f.sessions.threads.list(f.source, experiment.id);
+  assert.deepEqual(
+    threads
+      .find((thread) => thread.id === design.session.threadId)!
+      .visits.map((visit) => visit.state),
+    ['planned', 'planned', 'running'],
+  );
+  await keep(executor, 'DESIGN_AND_EXECUTION');
+  experiment = await f.work.run(
+    executor,
+    'experiment.transition',
+    {
+      transition: 'retry_running',
+      evidence: { reason: 'Retry the approved execution after interruption.' },
+      requestId: f.request(),
+    },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  await f.work.release(executor);
+  const repair = await f.work.lease(experiment);
+  assert.equal(repair.session.threadId, design.session.threadId);
+  assert.equal(repair.session.continuity?.resume?.sessionId, executor.session.id);
+  for (const [role, content] of [
+    ['result', 'Matched observations.'],
+    ['report', report],
+  ] as const) {
+    const artifact = await f.work.run(
+      repair,
+      'artifact.create',
+      { title: role, content, mediaType: 'text/markdown' },
+      (caller, input) => f.artifacts.create(caller, input as never),
+    );
+    await f.work.run(
+      repair,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  experiment = await f.work.run(
+    repair,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  await f.work.release(repair);
+  await keep(repair, 'DESIGN_EXECUTION_AND_REPAIR_HISTORY');
+  const resultsReviewer = await review('needs_changes');
+  assert.notEqual(resultsReviewer.session.threadId, design.session.threadId);
+  assert.equal(experiment.attempt.index, 3);
+  const replanner = await f.work.lease(experiment);
+  assert.equal(replanner.session.threadId, design.session.threadId);
+  assert.equal(replanner.session.execution.policy.readOnly, true);
+  assert.equal(replanner.session.continuity?.resume?.sessionId, repair.session.id);
+  assert.ok(!replanner.session.execution.policy.tools.some((tool) => tool.name === 'report.write'));
+  await f.work.release(replanner);
 });

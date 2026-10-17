@@ -21,6 +21,7 @@ import {
   currentEvidence,
   approvedSubmission,
   designCheckout,
+  continuousProducer,
 } from './program.js';
 import { readsOnly } from './execution-policy.js';
 import {
@@ -193,6 +194,15 @@ export async function inputsOf(
         ? { earlierInterruptions: experiment.attempt.feedback.length - FEEDBACK_KEPT }
         : {}),
       previousReviews: feedbackReviews,
+      ...(continuousProducer(experiment.workflow.version) && experiment.attempt.approvedReviewId
+        ? {
+            approvedDesignReview: await ctx.reviews.get(
+              caller,
+              experiment.attempt.approvedReviewId,
+              tx,
+            ),
+          }
+        : {}),
       ...(historicalReferences.length ? { artifactReferences: historicalReferences } : {}),
       ...(history.rounds.length ? { history } : {}),
       recovery: review?.recovery ?? null,
@@ -454,6 +464,14 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       : state === 'running'
         ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
         : '';
+  const approved =
+    state === 'running' && continuousProducer(context.snapshot.version)
+      ? approvedSubmission(experiment)
+      : undefined;
+  const continuation =
+    continuousProducer(context.snapshot.version) && !reviewing(state)
+      ? `\n\nCurrent stage: ${state === 'running' ? 'execution (running), after independent design approval' : 'design (planned)'}. This is a fresh visit with a new lease, credential, execution policy and workspace. The current assignment, authoritative experiment record and frozen inputs supersede all earlier conversation, plans and permissions. Use only this visit's granted tools, limits and configured workspace; old credentials and paths are not authority.${state === 'running' ? ` Execute only the exact approved design submission ${experiment.attempt.approvedSubmissionId} (revision ${approved!.subjectRevision}, round ${approved!.round}, manifest ${approved!.manifestHash}), approved by review ${experiment.attempt.approvedReviewId}, for attempt ${experiment.attempt.index}. Read the pinned approvedPlan artifacts and feasibility limits, and the reviewer findings in feedback before executing; if feedback is omitted for space, call review.get for the approved review above. Follow the approved scope; if it needs changing, use the declared interruption/replanning route. Retain the required results and final report and submit them for independent review.` : ' Read current reviewer findings and recovery references before revising the design; execution requires a new independent design approval.'}`
+      : '';
   const preview = await recipe.preview(
     context.caller,
     {
@@ -470,7 +488,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}\n\n${sourceVerification}`,
+    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}\n\n${sourceVerification}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({
