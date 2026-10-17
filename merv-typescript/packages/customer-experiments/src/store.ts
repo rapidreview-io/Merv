@@ -36,6 +36,11 @@ export interface RequestRecord {
     expiresAt?: number;
   };
   notifiedContract?: string;
+  /** Queued transactionally with payment; retried until the submission email is sent. */
+  submissionEmailPending?: boolean;
+  email?: string;
+  submissionKey?: string;
+  notifiedSubmission?: string;
   /** Worker questions the service answered to resume this request's paid run. */
   resumed?: string[];
 }

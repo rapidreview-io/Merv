@@ -319,9 +319,19 @@ test('the plan is edited against its revision, submitted, and paid for once acce
     area.dispatchEvent(new window.Event('input', { bubbles: true }));
   });
   await click('Submit');
+  assert.equal(submitted.length, 0);
+  await act(async () => {
+    const input = document.querySelector<HTMLInputElement>('.cx-email input')!;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(
+      input,
+      'customer@example.com',
+    );
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await click('Continue');
   await settle(20);
   assert.deepEqual(saved, [{ expectedRevision: 1, document: '# Plan\n\nTrain three times.' }]);
-  assert.deepEqual(submitted, [{ expectedRevision: 2 }]);
+  assert.deepEqual(submitted, [{ expectedRevision: 2, email: 'customer@example.com' }]);
   assert.match(text(), /Verifying/);
   // Read-only while it is verified: no editor, no Submit.
   assert.equal(document.querySelector('.cx-plan-text'), null);
@@ -329,7 +339,10 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   // With the agent idle, the verification turn can be sent again for the same revision.
   await click('Resend');
   await settle(20);
-  assert.deepEqual(submitted, [{ expectedRevision: 2 }, { expectedRevision: 2 }]);
+  assert.deepEqual(submitted, [
+    { expectedRevision: 2, email: 'customer@example.com' },
+    { expectedRevision: 2, email: 'customer@example.com' },
+  ]);
 
   state.plan = {
     ...state.plan,
@@ -343,10 +356,10 @@ test('the plan is edited against its revision, submitted, and paid for once acce
   });
   await settle(4100);
   assert.match(text(), /Accepted/);
-  assert.match(text(), /Payment is taken once, securely, by Stripe/);
+  assert.match(text(), /Pay \$10/);
   await click('Pay $10');
   // v3 checkout names the accepted contract and sends no email.
-  assert.deepEqual(checkouts, [{ contractVersion: 4 }]);
+  assert.deepEqual(checkouts, [{ contractVersion: 4, email: 'customer@example.com' }]);
 });
 
 test('uploads go to the presigned part URLs, sign missing or expired parts again, and complete with ETags', async (t) => {
@@ -529,7 +542,7 @@ test('before the first question the chat has no heading and asks for one mid-pag
   assert.equal(requests.filter((request) => request === `POST ${BASE}/chat/warm`).length, 1);
 });
 
-test('/start makes its request as it opens and becomes that request’s page', async (t) => {
+test('/start requires an explicit name before creating the request', async (t) => {
   t.after(async () => {
     await unmount();
     setCredentials(null);
@@ -546,10 +559,23 @@ test('/start makes its request as it opens and becomes that request’s page', a
   history.replaceState(null, '', '/start');
   await mount(createElement(CustomerApp, { client: supabase([]) }));
   await settle(20);
-  // Nothing was typed or dropped: the request is made with no message, once.
+  assert.equal(made.length, 0);
+  await click('Audio');
+  assert.equal(made.length, 0);
+  assert.match(text(), /Give your experiment a name/);
+  const name = document.querySelector<HTMLInputElement>('#cx-experiment-name')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(
+      name,
+      '  My experiment  ',
+    );
+    name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await click('Start experiment');
+  await settle(20);
   assert.equal(made.length, 1);
   assert.equal(made[0].message, undefined);
-  assert.equal(made[0].title, 'New experiment');
+  assert.equal(made[0].title, 'My experiment');
   assert.equal(typeof made[0].requestId, 'string');
   // The page is the request's now, its capability off the address bar, its machine warming.
   assert.equal(location.pathname, `/customer-experiments/r/${ID}`);
@@ -723,6 +749,7 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
   serve(BASE, {
     body: {
       state: 'running',
+      submissionEmailSent: true,
       progress: {
         stage: 'running',
         attempt: 1,
@@ -741,6 +768,12 @@ test('a paid experiment opens on its status: four stages, now, figures, scores, 
   await settle(50);
   const status = document.querySelector('.cx-run')!;
   assert.ok(status, 'the status view opens by itself');
+  assert.match(text(), /Link sent to your email/);
+  assert.equal(
+    new URL(document.querySelector<HTMLInputElement>('.cx-experiment-link--submitted input')!.value)
+      .hash,
+    `#token=${CAPABILITY}`,
+  );
   assert.deepEqual(
     [...status.querySelectorAll('.cx-stage-word')].map((n) => n.textContent),
     ['Planning', 'Running', 'Reviewing', 'Complete'],
@@ -802,4 +835,29 @@ test('a complete experiment shows its answer, the report pages and its files', a
     'https://r2.test/page1.png',
   );
   assert.equal(status.querySelector('.cx-deliverables button')!.textContent, 'Download PDF');
+});
+
+test('experiment URL remains copyable with its private capability after sign-in', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setCredentials(null);
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  await open();
+  assert.equal(location.hash, '');
+  const link = document.querySelector<HTMLInputElement>('.cx-experiment-link input')!;
+  assert.equal(new URL(link.value).hash, `#token=${CAPABILITY}`);
+  let copied = '';
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async (value: string) => {
+        copied = value;
+      },
+    },
+  });
+  await click('Copy URL');
+  assert.equal(copied, link.value);
+  assert.match(text(), /Copied/);
+  delete (navigator as unknown as { clipboard?: unknown }).clipboard;
 });

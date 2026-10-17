@@ -64,6 +64,8 @@ export function PlanEditor({
   agentBusy?: boolean;
   reload(): void;
 }) {
+  const [askEmail, setAskEmail] = useState(false);
+  const [email, setEmail] = useState('');
   const [draft, setDraft] = useState(plan?.document ?? '');
   // The card is the plan's face; the text editor opens on Edit, or by itself for an empty plan.
   const [chosen, setPreview] = useState<boolean | null>(null);
@@ -148,9 +150,10 @@ export function PlanEditor({
     try {
       await customerRequest('/plan/submit', {
         method: 'POST',
-        body: { expectedRevision: editable ? synced.current!.revision : plan.revision },
+        body: { expectedRevision: editable ? synced.current!.revision : plan.revision, email },
       });
       setError('');
+      setAskEmail(false);
     } catch (cause) {
       setError(said(cause, 'Could not submit the plan.'));
     } finally {
@@ -164,13 +167,19 @@ export function PlanEditor({
     try {
       const checkout = await customerRequest<{ url?: string; checkoutUrl?: string }>('/checkout', {
         method: 'POST',
-        body: { contractVersion: plan.contract.version },
+        body: {
+          contractVersion: plan.contract.version,
+          ...(email.trim() ? { email: email.trim() } : {}),
+        },
       });
       const url = new URL(checkout.url ?? checkout.checkoutUrl ?? '', location.origin);
       if (url.protocol !== 'https:') throw new Error('invalid');
       location.assign(url.href);
     } catch (cause) {
-      setError(said(cause, 'Checkout is unavailable. Try again.'));
+      if (cause instanceof ApiError && cause.code === 'email_required') {
+        setAskEmail(true);
+        setError('');
+      } else setError(said(cause, 'Checkout is unavailable. Try again.'));
       setBusy('');
     }
   };
@@ -256,7 +265,7 @@ export function PlanEditor({
               disabled={
                 reviewing || !!busy || !!conflict || !draft.trim() || agentBusy || unchanged
               }
-              onClick={() => void submit()}
+              onClick={() => setAskEmail(true)}
             >
               {reviewing && <span className="cx-spinner" aria-hidden="true" />}
               {reviewing ? 'Reviewing' : 'Submit'}
@@ -271,6 +280,31 @@ export function PlanEditor({
           </div>
         )}
       </div>
+      {askEmail && (
+        <form
+          className="cx-email"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void (plan.status === 'accepted' ? pay() : submit());
+          }}
+        >
+          <label>
+            Email
+            <input
+              className="input"
+              type="email"
+              required
+              maxLength={254}
+              autoFocus
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </label>
+          <button className="btn btn--primary" disabled={!!busy} type="submit">
+            Continue
+          </button>
+        </form>
+      )}
       {error && (
         <p className="pi-error" role="alert">
           {error}
@@ -278,11 +312,6 @@ export function PlanEditor({
       )}
       {plan.status === 'accepted' && plan.contract && !paid && (
         <div className="cx-pay">
-          <p>
-            Your plan is accepted. Paying {price(plan.contract)} starts the experiment: Merv runs
-            this plan within its accepted limits and emails the results to you. Payment is taken
-            once, securely, by Stripe.
-          </p>
           <button
             type="button"
             className="btn btn--primary"

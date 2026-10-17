@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Icon } from '../icons';
 import { safely } from '../api';
 import { useTyped } from './typing';
@@ -37,13 +37,8 @@ const clientRequest = () => {
   return made;
 };
 
-const clip = (text: string) => {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return line.length > 80 ? `${line.slice(0, 79).trimEnd()}…` : line;
-};
-
 /** Makes the request, and answers its id once its link is this page's address. */
-async function create(message?: string): Promise<string> {
+async function create(title: string, message?: string): Promise<string> {
   const response = await fetch('/start/requests', {
     method: 'POST',
     credentials: 'omit',
@@ -51,7 +46,7 @@ async function create(message?: string): Promise<string> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       requestId: clientRequest(),
-      title: message ? clip(message) : 'New experiment',
+      title,
       ...(message ? { message } : {}),
     }),
   });
@@ -76,18 +71,24 @@ async function create(message?: string): Promise<string> {
 export function Start({ opened }: { opened(id: string): void }) {
   const typed = useTyped('What do you want to learn?');
   const [draft, setDraft] = useState('');
+  const [name, setName] = useState('');
+  const nameInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const [error, setError] = useState('');
   const picker = useRef<HTMLInputElement>(null);
-  // Opening /start makes the request at once, so its bucket and the agent's machine warm while
-  // the person reads; anything they do in that moment is carried over to the request's page.
+  // Create only after the customer has supplied an experiment name.
   const creating = useRef(false);
   const begin = async (
     message?: string,
     files: { file: File; path: string }[] = [],
     voice = false,
   ) => {
+    if (!name.trim()) {
+      setError('Give your experiment a name before continuing.');
+      nameInput.current?.focus();
+      return;
+    }
     pending.push(...files);
     voicePending ||= voice;
     if (creating.current) return;
@@ -95,7 +96,7 @@ export function Start({ opened }: { opened(id: string): void }) {
     setBusy(true);
     setError('');
     try {
-      const id = await create(message);
+      const id = await create(name.trim(), message);
       opened(id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Couldn’t start the experiment.');
@@ -103,16 +104,26 @@ export function Start({ opened }: { opened(id: string): void }) {
       creating.current = false;
     }
   };
-  useEffect(() => {
-    void begin();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const send = () => {
     const text = draft.trim();
-    if (text) void begin(text);
+    void begin(text || undefined);
   };
   return (
     <div className="cx-start">
+      <label className="cx-experiment-name" htmlFor="cx-experiment-name">
+        Experiment name
+        <input
+          id="cx-experiment-name"
+          ref={nameInput}
+          className="input"
+          required
+          maxLength={160}
+          value={name}
+          disabled={busy}
+          placeholder="Name your experiment"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
       <button
         type="button"
         className={`cx-drop${over ? ' cx-drop--over' : ''}`}
@@ -181,8 +192,8 @@ export function Start({ opened }: { opened(id: string): void }) {
             >
               Audio
             </button>
-            <button className="btn btn--primary" type="submit" disabled={busy || !draft.trim()}>
-              {busy ? 'Starting…' : 'Send'}
+            <button className="btn btn--primary" type="submit" disabled={busy || !name.trim()}>
+              {busy ? 'Starting…' : 'Start experiment'}
             </button>
           </div>
         </form>

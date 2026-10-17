@@ -160,3 +160,26 @@ test('only authentic paid same-mode checkout events can release the exact refere
     /payment mode/,
   );
 });
+
+test('submission email includes the return URL and its own idempotency key', async (t) => {
+  const { ResendResultMailer } = await import('../packages/customer-experiments/src/payment.js');
+  let sent: { subject: string; text: string; to: string[] } | undefined;
+  let key: string | null = null;
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    sent = JSON.parse(String(init.body));
+    key = new Headers(init.headers).get('Idempotency-Key');
+    return new Response('{}', { status: 200 });
+  });
+  await new ResendResultMailer('fixture-key', 'Merv <merv@example.com>').send({
+    to: 'customer@example.com',
+    title: 'My experiment',
+    url: 'https://merv.example/r/1#token=private',
+    kind: 'submitted',
+    idempotencyKey: 'request-submitted-payment',
+  });
+  assert.equal(sent!.subject, 'Experiment submitted: My experiment');
+  assert.match(sent!.text, /Your experiment link/);
+  assert.match(sent!.text, /https:\/\/merv.example\/r\/1#token=private/);
+  assert.deepEqual(sent!.to, ['customer@example.com']);
+  assert.equal(key, 'request-submitted-payment');
+});

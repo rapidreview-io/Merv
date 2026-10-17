@@ -12,6 +12,7 @@ import { currentCredentials, customerRequest, requestOf } from './api';
 import { FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
 import { Status, type Delivered, type Progress } from './status';
+import { ExperimentLink } from './experiment-link';
 import { Start, takePending, takeVoice } from './start';
 import { useTyped } from './typing';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
@@ -203,8 +204,9 @@ function Experiment() {
   };
   const [plan, reloadPlan] = usePoll<Plan>('/plan', view === 'plan' ? 4000 : 10_000);
   const [files, reloadFiles] = usePoll<Listing>('/files?prefix=', 15_000);
-  const [request] = usePoll<{
+  const [request, reloadRequest] = usePoll<{
     state?: string;
+    submissionEmailSent?: boolean;
     progress?: Progress | null;
     result?: Delivered | null;
   }>('', view === 'status' ? 5000 : 15_000);
@@ -291,6 +293,10 @@ function Experiment() {
   return (
     <div className={`cx-page cx-page--${view}${floating ? ' cx-page--docked' : ''}`}>
       <Header home={view === 'arrive' ? undefined : home}>{nav}</Header>
+      <ExperimentLink
+        submitted={!!progress || !!request?.submissionEmailSent}
+        sent={request?.submissionEmailSent}
+      />
       {view === 'arrive' && (
         <Arrive
           voice={voice}
@@ -312,6 +318,7 @@ function Experiment() {
             agentBusy={pi.active}
             reload={() => {
               reloadPlan();
+              reloadRequest();
             }}
           />
         </div>

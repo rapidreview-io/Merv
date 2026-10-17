@@ -378,6 +378,7 @@ export class CustomerService {
       conversation,
       intakeStatus,
       result,
+      submissionEmailSent: !!record.notifiedSubmission && !record.submissionEmailPending,
       checkoutAvailable: !!this.payments,
       uploadAvailable: !!this.storage,
       version: exp.workflow.version,
@@ -422,13 +423,26 @@ export class CustomerService {
    *  conversation (`plan-submit-<revision>-<attempt>`, an ID only the server sends). A submit
    *  while verifying sends the turn again unless one is under way: a turn stopped, refused or
    *  ended without a verdict is retried this way. A turn that cannot be sent reopens the plan. */
-  async submitPlan(record: RequestRecord, input: { expectedRevision: number }) {
+  async submitPlan(record: RequestRecord, input: { expectedRevision: number; email?: string }) {
     check(record.conversationId, 'request_initializing', 'Intake is initializing', 409);
     const caller = await this.caller(record),
       id = record.experimentId!,
       conversation = record.conversationId;
+    const email = input.email ?? record.email;
+    check(email, 'email_required', 'Enter your email', 400);
     const before = await this.domain.plan(caller, id);
-    const plan = await this.domain.submitPlan(caller, { id, ...input });
+    const plan = await this.domain.submitPlan(caller, {
+      id,
+      expectedRevision: input.expectedRevision,
+    });
+    await this.store.mutate(record.id, (r) => {
+      if (r.email !== email || !r.submissionKey) {
+        r.email = email;
+        r.submissionKey = `plan-${plan.revision}-${Date.now()}`;
+        r.submissionEmailPending = true;
+      }
+    });
+    await this.notifySubmitted(await this.store.get(record.id));
     try {
       const prefix = `${PLAN_SUBMIT}${plan.revision}-`;
       const snapshot = await this.pi.snapshot(caller, conversation);
@@ -448,9 +462,8 @@ export class CustomerService {
     }
     return plan;
   }
-  /** v3: acceptance and Stripe checkout are one step. The page collects no email: Stripe
-   *  Checkout does, and its paid event records it for the results. */
-  async checkoutPlan(record: RequestRecord, input: { contractVersion: number }) {
+  /** v3 uses the email the customer supplied when submitting the plan. */
+  async checkoutPlan(record: RequestRecord, input: { contractVersion: number; email?: string }) {
     check(
       await this.plansDocument(record),
       'plan_document_unavailable',
@@ -486,8 +499,19 @@ export class CustomerService {
         }
       }
     }
-    await this.approveContract(record, { ...input, email: null });
-    return this.checkout(record, { ...input, email: null });
+    // Existing accepted plans may predate the explicit email step.
+    if (!record.email && input.email) {
+      await this.store.mutate(record.id, (r) => {
+        r.email = input.email;
+        r.submissionKey = `plan-${input.contractVersion}-${Date.now()}`;
+        r.submissionEmailPending = true;
+      });
+      record = await this.store.get(record.id);
+      await this.notifySubmitted(record);
+    }
+    check(record.email, 'email_required', 'Enter your email', 400);
+    await this.approveContract(record, { ...input, email: record.email });
+    return this.checkout(record, { ...input, email: record.email });
   }
   private async intakeRecord(caller: Caller, id: string, tx?: Transaction) {
     const record = await this.store.get(id, tx);
@@ -1318,7 +1342,8 @@ export class CustomerService {
           paymentId: paid.paymentId,
           amountCents: paid.amountCents,
           currency: paid.currency,
-          requestId: `stripe-${paid.paymentId}`,
+          // Each Stripe event has its own receipt; the domain deduplicates payment IDs.
+          requestId: `stripe-event-${paid.eventId}`,
           // v3 collects the results address in Stripe Checkout, not at acceptance.
           ...(paid.email && !(await this.domain.get(caller, r.experimentId!, tx)).email
             ? { email: paid.email }
@@ -1326,6 +1351,8 @@ export class CustomerService {
         },
         tx,
       );
+      if (!r.submissionKey && r.notifiedSubmission !== paid.paymentId)
+        r.submissionEmailPending = true;
       await tx.run(
         'INSERT INTO customer_experiment_stripe_events(event_id,request_id,received_at) VALUES(?,?,?)',
         paid.eventId,
@@ -1333,6 +1360,36 @@ export class CustomerService {
         new Date().toISOString(),
       );
     });
+    // Email failure must not undo payment or stop execution. Reconciliation retries it.
+    await this.notifySubmitted(await this.store.get(record.id));
+  }
+  private async notifySubmitted(record: RequestRecord, experiment?: CustomerExperiment) {
+    if (!record.submissionEmailPending || !this.mailer) return;
+    const exp =
+      experiment ?? (await this.domain.get(await this.caller(record), record.experimentId!));
+    const key = record.submissionKey ?? exp.paymentId;
+    const email = record.email ?? exp.email;
+    if (!key || !email || record.notifiedSubmission === key) return;
+    try {
+      await this.mailer.send({
+        to: email,
+        title: record.title,
+        url: this.link(record),
+        kind: 'submitted',
+        idempotencyKey: `${record.id}-submitted-${key}`,
+      });
+      await this.store.mutate(record.id, (r) => {
+        r.notifiedSubmission = key;
+        r.submissionEmailPending = false;
+      });
+    } catch {
+      process.stderr.write(
+        JSON.stringify({
+          event: 'customer_experiment.submission_email_wait',
+          requestId: record.id,
+        }) + '\n',
+      );
+    }
   }
   async artifact(record: RequestRecord, id: string, fileName?: string) {
     const caller = await this.caller(record),
@@ -1421,6 +1478,7 @@ export class CustomerService {
       try {
         const caller = await this.caller(record);
         const exp = await this.domain.reconcile(caller, record.experimentId);
+        await this.notifySubmitted(record, exp);
         // A resume that cannot run now is tried on the next pass; it never blocks the rest.
         await this.resume(record, caller, exp).catch((error: unknown) =>
           process.stderr.write(

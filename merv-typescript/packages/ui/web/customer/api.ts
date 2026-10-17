@@ -17,7 +17,7 @@ const capabilityKey = (id: string) => `merv:customer-experiment:${id}`;
 
 /**
  * The capability the link carries in its fragment (`#token=` or the bare token), kept for this
- * tab and taken off the address bar so it is never shared, bookmarked or sent as a referrer.
+ * tab and taken off the address bar. The explicit Copy URL control restores it for return links.
  */
 export function takeCapability(id: string): string | null {
   const fragment = location.hash.slice(1);

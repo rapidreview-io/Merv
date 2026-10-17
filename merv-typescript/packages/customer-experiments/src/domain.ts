@@ -778,7 +778,7 @@ export class CustomerExperiments {
       id: string;
       expectedRevision: number;
       contractHash: string;
-      /** Null for a v3 plan document: Stripe Checkout collects it, and payment records it. */
+      /** Explicit customer address; null remains supported for older v3 checkouts. */
       email: string | null;
       requestId: string;
     },
@@ -801,11 +801,9 @@ export class CustomerExperiments {
       this.command(caller, 'approve', input, tx, async () => {
         const exp = await this.mutable(caller, input.id, input.expectedRevision, tx);
         check(
-          (input.email === null) === plansDocument(exp.workflow.version),
+          input.email !== null || plansDocument(exp.workflow.version),
           'invalid_email',
-          input.email === null
-            ? 'A results email is required'
-            : 'Checkout collects the results email for this plan',
+          'A results email is required',
         );
         check(
           exp.workflow.state === 'ready' && exp.contract?.hash === input.contractHash,

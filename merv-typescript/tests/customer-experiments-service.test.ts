@@ -26,7 +26,11 @@ import type {
   StructuredContract,
 } from '../packages/customer-experiments/src/types.js';
 import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
-import type { PaidCheckout, Payments } from '../packages/customer-experiments/src/payment.js';
+import type {
+  PaidCheckout,
+  Payments,
+  ResultMailer,
+} from '../packages/customer-experiments/src/payment.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
 
@@ -212,6 +216,14 @@ async function fixture(
       return JSON.parse(bytes.toString()) as PaidCheckout;
     },
   };
+  const emails: Parameters<ResultMailer['send']>[0][] = [];
+  const delivery = { fail: false };
+  const mailer: ResultMailer = {
+    async send(input) {
+      if (delivery.fail) throw new Error('Mail temporarily unavailable');
+      emails.push(input);
+    },
+  };
   const service = new CustomerService(
     store,
     domain,
@@ -220,7 +232,7 @@ async function fixture(
     runtime,
     storage,
     payments,
-    undefined,
+    mailer,
     { publicOrigin: 'https://merv.example', sponsor, intakeKey, publicIntake, maxRequestsPerDay },
     compute,
     files,
@@ -319,6 +331,8 @@ async function fixture(
     bytes,
     provisioned,
     checkoutCalls,
+    emails,
+    delivery,
     payments,
     compute,
     computeReads,
@@ -338,6 +352,9 @@ test('request HTTP capabilities isolate customers, forbid agent approval, and ke
     (await f.send(base, intakeKey, { requestId: 'predictable', title: plan.title })).status,
     400,
   );
+  for (const title of [undefined, '', '   ', 'x'.repeat(161)]) {
+    assert.equal((await f.send(base, intakeKey, { requestId: randomUUID(), title })).status, 400);
+  }
   const a = await f.create();
   const replay = await f.create();
   const b = await f.create('second');
@@ -437,7 +454,11 @@ test('a ready contract needs customer acceptance and a matching verified payment
   const newerCheckout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
   assert.equal(newerCheckout.status, 200);
   assert.notEqual(newerCheckout.body.id, checkout.body.id);
+  assert.equal(f.emails.length, 0);
   assert.equal((await webhook(paid)).status, 200);
+  assert.equal(f.emails.length, 1);
+  assert.equal(f.emails[0].kind, 'submitted');
+  assert.equal(f.emails[0].url, a.customerUrl);
   exp = await f.experiment(a.id);
   assert.equal(exp.workflow.state, 'running');
   const revision = exp.workflow.revision;
@@ -1100,7 +1121,10 @@ test('the customer and the intake agent co-edit the plan under optimistic revisi
 test('submit hands the exact revision to the intake agent, which returns it or freezes its contract', async (t) => {
   const f = await planFixture(t);
   const submit = (expectedRevision: number) =>
-    f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision });
+    f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+      expectedRevision,
+      email: 'customer@example.com',
+    });
   assert.equal((await submit(0)).status, 409);
   await f.put({ expectedRevision: 0, document: '# Plan\n\nTrain on everything for a month.' });
   const verifying = await submit(1);
@@ -1218,6 +1242,7 @@ test('a submit the intake cannot take reopens the plan; it never stays verifying
   await f.put({ expectedRevision: 0, document: '# Plan' });
   f.pi.refuse = new MervError('pi_turn_busy', 'This conversation already has an active turn', 409);
   const busy = await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    email: 'customer@example.com',
     expectedRevision: 1,
   });
   assert.equal(busy.body.error.code, 'pi_turn_busy');
@@ -1225,6 +1250,7 @@ test('a submit the intake cannot take reopens the plan; it never stays verifying
   assert.equal((await f.put({ expectedRevision: 1, document: '# Plan\n\nMore.' })).status, 200);
   f.pi.refuse = null;
   const sent = await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    email: 'customer@example.com',
     expectedRevision: 2,
   });
   assert.equal(sent.body.status, 'verifying');
@@ -1239,7 +1265,10 @@ test('v3 checkout refuses files that changed after acceptance and returns the pl
     limits: { wallMinutes: 60, maxTokens: 1_000_000, maxAttempts: 1 },
   };
   await f.put({ expectedRevision: 0, document: '# Plan' });
-  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision: 1 });
+  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    expectedRevision: 1,
+    email: 'customer@example.com',
+  });
   await f.tool('plan_verify', { revision: 1, decision: 'accept', ...accept });
   fileState.etag = '-changed';
   t.after(() => (fileState.etag = ''));
@@ -1253,7 +1282,10 @@ test('v3 checkout refuses files that changed after acceptance and returns the pl
   assert.equal(reopened.status, 'changes_requested');
   assert.match(reopened.feedback, /files changed/);
   // The same revision may be submitted again, and its new contract carries the files as they are.
-  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision: 1 });
+  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    expectedRevision: 1,
+    email: 'customer@example.com',
+  });
   fileState.deleted = true;
   t.after(() => (fileState.deleted = false));
   await assert.rejects(
@@ -1268,10 +1300,14 @@ test('v3 checkout refuses files that changed after acceptance and returns the pl
   assert.equal(opened.status, 200, JSON.stringify(opened.body));
 });
 
-test('v3 checkout accepts the frozen contract and opens a $10 Stripe checkout that collects the email', async (t) => {
+test('v3 uses the explicitly submitted email, retries link delivery, and ignores Stripe email', async (t) => {
   const f = await planFixture(t);
+  f.delivery.fail = true;
   await f.put({ expectedRevision: 0, document: '# Plan\n\nScore both rules.\n\nMore detail.' });
-  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, { expectedRevision: 1 });
+  await f.send(base + '/' + f.a.id + '/plan/submit', f.a.customerToken, {
+    expectedRevision: 1,
+    email: 'customer@example.com',
+  });
   const limits = { wallMinutes: 60, maxTokens: 1_000_000, maxAttempts: 1 };
   await f.tool('plan_verify', {
     revision: 1,
@@ -1301,10 +1337,10 @@ test('v3 checkout accepts the frozen contract and opens a $10 Stripe checkout th
   assert.equal(f.checkoutCalls.length, 1);
   assert.equal(f.checkoutCalls[0].contract.price.amountCents, 1000);
   assert.equal(f.checkoutCalls[0].contract.price.currency, 'usd');
-  assert.equal(f.checkoutCalls[0].email, null);
+  assert.equal(f.checkoutCalls[0].email, 'customer@example.com');
   let exp = await f.experiment(f.a.id);
   assert.equal(exp.workflow.state, 'awaiting_payment');
-  assert.equal(exp.email, null);
+  assert.equal(exp.email, 'customer@example.com');
   // Repeating checkout reuses the acceptance.
   assert.equal((await checkout(1)).status, 200);
   assert.equal(
@@ -1319,8 +1355,9 @@ test('v3 checkout accepts the frozen contract and opens a $10 Stripe checkout th
     paymentId: 'pi_v3',
     amountCents: 1000,
     currency: 'usd',
-    email: 'customer@example.com',
+    email: 'stripe-billing@example.com',
   };
+  f.delivery.fail = true;
   const webhook = await f.send('/customer-experiments/stripe-webhook', undefined, paid, {
     'Stripe-Signature': 'fixture-valid-signature',
   });
@@ -1328,6 +1365,20 @@ test('v3 checkout accepts the frozen contract and opens a $10 Stripe checkout th
   exp = await f.experiment(f.a.id);
   assert.equal(exp.workflow.state, 'running');
   assert.equal(exp.email, 'customer@example.com');
+  assert.equal(f.emails.length, 0);
+  assert.equal((await f.store.get(f.a.id)).submissionEmailPending, true);
+  f.delivery.fail = false;
+  await f.service.reconcile();
+  assert.equal(f.emails.length, 1);
+  assert.equal(f.emails[0].kind, 'submitted');
+  assert.equal(f.emails[0].to, 'customer@example.com');
+  assert.equal(f.emails[0].url, f.a.customerUrl);
+  assert.equal((await f.store.get(f.a.id)).submissionEmailPending, false);
+  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).submissionEmailSent, true);
+  await f.service.paid(paid);
+  await f.service.paid({ ...paid, eventId: 'evt_v3_retry' });
+  await f.service.reconcile();
+  assert.equal(f.emails.length, 1);
   const { customerReportSubject } =
     await import('../packages/customer-experiments/src/report-subject.js');
   const caller = await f.service.caller(f.record);
@@ -1437,4 +1488,26 @@ test('the intake agent may search the web and the literature: only its request t
     }),
     (e: { code?: string }) => e.code === 'forbidden',
   );
+});
+
+test('submitting a plan requires an explicit email and sends its link before checkout', async (t) => {
+  const f = await planFixture(t);
+  await f.put({ expectedRevision: 0, document: '# Plan\n\nCompare both rules.' });
+  const path = base + '/' + f.a.id + '/plan/submit';
+  assert.equal((await f.send(path, f.a.customerToken, { expectedRevision: 1 })).status, 400);
+  assert.equal(
+    (await f.send(path, f.a.customerToken, { expectedRevision: 1, email: 'invalid' })).status,
+    400,
+  );
+  assert.equal(f.emails.length, 0);
+  assert.equal(
+    (await f.send(path, f.a.customerToken, { expectedRevision: 1, email: 'owner@example.com' }))
+      .status,
+    200,
+  );
+  assert.equal(f.emails.length, 1);
+  assert.equal(f.emails[0].to, 'owner@example.com');
+  assert.equal(f.emails[0].url, f.a.customerUrl);
+  assert.equal(f.checkoutCalls.length, 0);
+  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).submissionEmailSent, true);
 });

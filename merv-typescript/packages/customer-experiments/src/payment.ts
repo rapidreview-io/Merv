@@ -163,7 +163,13 @@ export class StripePayments implements Payments {
 }
 
 export interface ResultMailer {
-  send(input: { to: string; title: string; url: string; idempotencyKey: string }): Promise<void>;
+  send(input: {
+    to: string;
+    title: string;
+    url: string;
+    idempotencyKey: string;
+    kind?: 'submitted' | 'result';
+  }): Promise<void>;
 }
 /** Resend's transactional API. Only an approved request's email receives its private result link. */
 export class ResendResultMailer implements ResultMailer {
@@ -171,7 +177,13 @@ export class ResendResultMailer implements ResultMailer {
     private key: string,
     private from: string,
   ) {}
-  async send(input: { to: string; title: string; url: string; idempotencyKey: string }) {
+  async send(input: {
+    to: string;
+    title: string;
+    url: string;
+    idempotencyKey: string;
+    kind?: 'submitted' | 'result';
+  }) {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       signal: AbortSignal.timeout(20000),
@@ -183,8 +195,14 @@ export class ResendResultMailer implements ResultMailer {
       body: JSON.stringify({
         from: this.from,
         to: [input.to],
-        subject: `Your Merv experiment: ${input.title}`,
-        text: `Your experiment has finished. Open your private page to see the result, evidence, and review:\n\n${input.url}`,
+        subject:
+          input.kind === 'submitted'
+            ? `Experiment submitted: ${input.title}`
+            : `Your Merv experiment: ${input.title}`,
+        text:
+          input.kind === 'submitted'
+            ? `Your experiment link:\n\n${input.url}`
+            : `Your experiment has finished. Open your private page to see the result, evidence, and review:\n\n${input.url}`,
       }),
     });
     check(response.ok, 'email_unavailable', 'Result email could not be delivered yet', 503);

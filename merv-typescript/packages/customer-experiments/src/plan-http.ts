@@ -8,8 +8,15 @@ export const unhandled = Symbol('unhandled');
 
 const revision = z.number().int().nonnegative();
 const writeSchema = z.object({ expectedRevision: revision, document: planDocumentSchema }).strict();
-const submitSchema = z.object({ expectedRevision: revision }).strict();
-const checkoutSchema = z.object({ contractVersion: z.number().int().positive() }).strict();
+const submitSchema = z
+  .object({ expectedRevision: revision, email: z.string().trim().email().max(254).optional() })
+  .strict();
+const checkoutSchema = z
+  .object({
+    contractVersion: z.number().int().positive(),
+    email: z.string().trim().email().max(254).optional(),
+  })
+  .strict();
 
 /** service_experiment@3's plan document and one-step checkout. */
 export async function planHttp(
