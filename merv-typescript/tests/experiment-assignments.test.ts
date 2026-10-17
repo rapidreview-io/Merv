@@ -13,7 +13,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
 import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts';
-import type { ReviewHistory } from '@merv/reviews/rules';
 
 import { ProjectScope } from '@merv/scope';
 import { s3Blobs } from './fixtures/s3-blobs.js';
@@ -441,7 +440,7 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, true);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
-  assert.match(planned.brief, /reviewers must independently verify pivotal claims/);
+  assert.match(planned.brief, /Investigate uncertain assumptions with primary sources/);
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
@@ -604,6 +603,29 @@ test('an experiment assignment refuses a reader and the other role', async (t) =
     });
 });
 
+test('planner context references draft artifacts without reading them and keeps its submission contract', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.create();
+  const draft = await f.attach(experiment, 'plan', `${plan}\nPLANNER_DRAFT_BODY_8192`);
+  const read = t.mock.method(f.artifacts, 'read', () => {
+    assert.fail('Planner context must not load artifact contents');
+  });
+  const packet = await f.workflows.assignment(f.source, experiment.id);
+  read.mock.restore();
+  assert.equal(packet.context!.typeVersion, 13);
+  assert.doesNotMatch(packet.context!.prompt, /PLANNER_DRAFT_BODY_8192/);
+  assert.match(packet.context!.prompt, new RegExp(draft.artifact.id));
+  assert.match(packet.context!.prompt, /paper.read/);
+  assert.match(packet.context!.prompt, /project.records/);
+  assert.match(packet.context!.prompt, /review.get/);
+  assert.match(packet.context!.prompt, /"feasibilityFormat":/);
+  assert.match(packet.handoff.instruction, /submit_design/);
+  assert.equal(
+    (await f.artifacts.read(f.source, draft.artifact.id)).content,
+    `${plan}\nPLANNER_DRAFT_BODY_8192`,
+  );
+});
+
 test('both reviewers receive navigation and pinned references without paper or artifact bodies', async (t) => {
   const f = await fixture(t);
   const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
@@ -763,7 +785,8 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
     ),
   );
   const offered = await f.offer(experiment);
-  assert.match(offered.session.assignment.context!.prompt, /INCOMPLETE_DRAFT_KEEP_WORKING/);
+  assert.doesNotMatch(offered.session.assignment.context!.prompt, /INCOMPLETE_DRAFT_KEEP_WORKING/);
+  assert.match(offered.session.assignment.context!.prompt, /artifact.read/);
   assert.equal(offered.session.assignment.workStart, null);
   t.mock.method(f.artifacts, 'bytes', () => {
     assert.fail('Activation and admission must not read artifact bytes');
@@ -857,7 +880,8 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   const inherited = await f.attach(experiment, 'plan', plan + '\nINHERITED_PLAN_4382\n');
   const offered = await f.offer(experiment);
   const worker = await f.sessions.authenticate(offered.secret);
-  assert.match(offered.session.assignment.context!.prompt, /INHERITED_PLAN_4382/);
+  assert.doesNotMatch(offered.session.assignment.context!.prompt, /INHERITED_PLAN_4382/);
+  assert.match(offered.session.assignment.context!.prompt, new RegExp(inherited.artifact.id));
   const foreign = await f.artifacts.create(f.source, {
     title: 'Unrelated content',
     content: 'LATE_FOREIGN_BODY_87013',
@@ -989,17 +1013,18 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
       .artifactId,
     own.id,
   );
-  assert.match(
-    (await f.workflows.assignment(worker, experiment.id)).context!.prompt,
-    /NEW_WORKER_PLAN_2391/,
-  );
+  const refreshedPlan = (await f.workflows.assignment(worker, experiment.id)).context!.prompt;
+  assert.doesNotMatch(refreshedPlan, /NEW_WORKER_PLAN_2391/);
+  assert.match(refreshedPlan, new RegExp(own.id));
+  assert.match((await f.artifacts.read(worker, own.id)).content, /NEW_WORKER_PLAN_2391/);
   assert.equal(
     (await f.artifacts.get(f.source, inherited.artifact.id)).createdBy,
     f.source.actorId,
   );
   await f.release(offered.session.id);
   const successor = await f.offer(experiment);
-  assert.match(successor.session.assignment.context!.prompt, /NEW_WORKER_PLAN_2391/);
+  assert.doesNotMatch(successor.session.assignment.context!.prompt, /NEW_WORKER_PLAN_2391/);
+  assert.match(successor.session.assignment.context!.prompt, new RegExp(own.id));
   assert.ok((successor.session.execution.references.artifacts as string[]).includes(own.id));
   assert.notEqual(successor.session.actorId, worker.actorId);
   // The successor's manifest holds only worker output; the review still excludes the owner
@@ -1231,31 +1256,11 @@ test('a design rejected three times gives the fourth attempt every earlier round
     if (round < 3) experiment = (await f.design(experiment)).experiment;
   }
   const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
-  const feedback = JSON.parse(
-    prompt.slice(prompt.indexOf('{"interruptions":')).split('\n')[0]!,
-  ) as { previousReviews: { id: string }[]; history: ReviewHistory };
-  assert.deepEqual(
-    feedback.previousReviews.map((review) => review.id),
-    [rejected[2]],
-  );
-  assert.equal(feedback.history.omittedRounds, 0);
-  assert.deepEqual(
-    feedback.history.rounds.map(({ round, reviewId, label, verdict, returnTo }) => ({
-      round,
-      reviewId,
-      label,
-      verdict,
-      returnTo,
-    })),
-    rejected.map((reviewId, index) => ({
-      round: index + 1,
-      reviewId,
-      label: `design attempt ${index + 1} round 1`,
-      verdict: 'needs_changes',
-      returnTo: 'planned',
-    })),
-  );
-  assert.ok(!JSON.stringify(feedback.history).includes(f.reviewer.actorId));
+  for (const reviewId of rejected) {
+    assert.ok(prompt.includes(`retrieve: review.get {"reviewId":"${reviewId}"}`));
+    assert.equal((await f.reviews.get(f.source, reviewId)).verdict, 'needs_changes');
+  }
+  assert.doesNotMatch(prompt, /"findings":|"synopsis":/);
   const leased = await f.offer(experiment);
   const references = leased.session.execution.references;
   assert.ok(rejected.every((id) => (references.reviews as string[]).includes(id)));
@@ -1298,7 +1303,14 @@ test('successors receive exact rejected findings and manifests across both retur
     assert.deepEqual(returned.attempt.feedbackReviewIds, [review.id]);
     const offered = await f.offer(returned);
     const worker = await f.sessions.authenticate(offered.secret);
-    assert.match(offered.session.assignment.context!.prompt, new RegExp(marker));
+    if (destination === 'planned') {
+      assert.doesNotMatch(offered.session.assignment.context!.prompt, new RegExp(marker));
+      assert.match(offered.session.assignment.context!.prompt, new RegExp(review.id));
+      assert.match(
+        JSON.stringify((await f.reviews.get(worker, review.id)).findings),
+        new RegExp(marker),
+      );
+    } else assert.match(offered.session.assignment.context!.prompt, new RegExp(marker));
     assert.ok(
       review.artifactIds.every((id) =>
         (offered.session.execution.references.artifacts as string[]).includes(id),
@@ -1465,10 +1477,10 @@ test('declared producer terminal actions and owner cancellation close active wor
   );
 });
 
-test('a lease freezes the Problem, carried once, without changing the registered recipe', async (t) => {
+test('a planner references the paper across lease refresh and restart without embedding its body', async (t) => {
   const f = await fixture(t);
   const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
-  // Paper writes the Introduction from the Problem, so the Problem reaches the prompt once.
+  // Paper remains available through its read tool instead of being copied into the prompt.
   const problem = async (content: string, expectedRevision: number) =>
     await paper.patch(f.source, {
       kind: 'problem',
@@ -1480,7 +1492,8 @@ test('a lease freezes the Problem, carried once, without changing the registered
   const experiment = await f.create();
   const offered = await f.offer(experiment);
   const prompt = offered.session.assignment.context!.prompt;
-  assert.equal(prompt.split('ORIGINAL_PROJECT_INTRO_723').length, 2);
+  assert.doesNotMatch(prompt, /ORIGINAL_PROJECT_INTRO_723/);
+  assert.match(prompt, /retrieve: paper.read/);
   const worker = await f.sessions.authenticate(offered.secret);
   await problem('CHANGED_PROJECT_INTRO_840', 1);
   // A leased worker's paper is the one its lease froze: the current paper is not read.
@@ -1488,16 +1501,17 @@ test('a lease freezes the Problem, carried once, without changing the registered
   const refreshed = await f.workflows.assignment(worker, experiment.id);
   assert.equal(reads.mock.callCount(), 0);
   reads.mock.restore();
-  assert.match(refreshed.context!.prompt, /ORIGINAL_PROJECT_INTRO_723/);
+  assert.doesNotMatch(refreshed.context!.prompt, /ORIGINAL_PROJECT_INTRO_723/);
   assert.doesNotMatch(refreshed.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
   await f.reload();
-  assert.match(
+  assert.doesNotMatch(
     (await f.workflows.assignment(worker, experiment.id)).context!.prompt,
     /ORIGINAL_PROJECT_INTRO_723/,
   );
   await f.release(offered.session.id);
   const successor = await f.offer(experiment);
-  assert.match(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
+  assert.doesNotMatch(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
+  assert.match(JSON.stringify(await paper.read(f.source)), /CHANGED_PROJECT_INTRO_840/);
 });
 
 test('historical observations stay project-scoped and pure after source revocation', async (t) => {

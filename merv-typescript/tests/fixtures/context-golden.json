@@ -288,14 +288,14 @@
         "error": "blob_not_found"
       }
     },
-    "experiment.design@12": {
+    "experiment.design@13": {
       "items/text": {
-        "prompt": "2089ef0663515678b18e618fa17a9cf38eda3630508a179482b6fd873cdbd08f",
+        "prompt": "4c01da42e288b12b39969e5aa99c3d432baf9a79de7f380b13547a70066f0323",
         "omitted": [],
         "sources": []
       },
       "items/artifacts": {
-        "prompt": "992889bb630b67790133869c7668e6960b446b81d19a54fd41e43869d3312e2e",
+        "prompt": "aba638147d6eef96f1ff1cdd2aed53903b5cc2ae969dd2df41bbbb18d55b0b64",
         "omitted": [],
         "sources": [
           "artifact_golden_text",
@@ -305,20 +305,18 @@
         ]
       },
       "items/duplicate": {
-        "prompt": "d4e5f0f6837748128d094f243f0424573ee9f71433a47ffabd85d7811e3fb94a",
+        "prompt": "cbd8908e73e65e0d69b306f8e3142e0e3db22f30cab135e820acf227e3454063",
         "omitted": [],
         "sources": []
       },
       "items/not-fit": {
-        "prompt": "a561ad5fac7a4734f022aa2a48ce909dc3ed9efb7c28dce5e20e7d109e46f25e",
+        "prompt": "07ba1f1b708d4168d7764fad40fe4a1569425b430ea95c5860f2062f6fe6618f",
         "omitted": ["experiment:long"],
         "sources": []
       },
       "items/overflow": {
-        "prompt": "6c92f412360363dc55f7687af8eb502db0d1bdba835defa96dc85b5ac0759358",
+        "prompt": "eb35beea9ddff52d370adb3794fe703989c68506168a0dd2ebf54ebc24051493",
         "omitted": [
-          "experiment:many:968",
-          "experiment:many:969",
           "experiment:many:970",
           "experiment:many:971",
           "experiment:many:972",
@@ -420,7 +418,7 @@
         "sources": []
       },
       "items/line-breaks": {
-        "prompt": "1ce89c5da5962fe9f562cc8ed2bf199caca119473d944152d4009235ace4f67a",
+        "prompt": "d86b3dfcc321fb66120a8c205b1c470c9d63a7b7d52ee927d9dbdc772c97d05c",
         "omitted": [],
         "sources": []
       },
@@ -2103,6 +2101,149 @@
       },
       "items/line-breaks": {
         "prompt": "387aad89c63c219ea9358dad48817dd8dd056210c8add2cce6c093497c2f37b5",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "experiment.design@12": {
+      "items/text": {
+        "prompt": "2089ef0663515678b18e618fa17a9cf38eda3630508a179482b6fd873cdbd08f",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "992889bb630b67790133869c7668e6960b446b81d19a54fd41e43869d3312e2e",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "d4e5f0f6837748128d094f243f0424573ee9f71433a47ffabd85d7811e3fb94a",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "a561ad5fac7a4734f022aa2a48ce909dc3ed9efb7c28dce5e20e7d109e46f25e",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "6c92f412360363dc55f7687af8eb502db0d1bdba835defa96dc85b5ac0759358",
+        "omitted": [
+          "experiment:many:968",
+          "experiment:many:969",
+          "experiment:many:970",
+          "experiment:many:971",
+          "experiment:many:972",
+          "experiment:many:973",
+          "experiment:many:974",
+          "experiment:many:975",
+          "experiment:many:976",
+          "experiment:many:977",
+          "experiment:many:978",
+          "experiment:many:979",
+          "experiment:many:980",
+          "experiment:many:981",
+          "experiment:many:982",
+          "experiment:many:983",
+          "experiment:many:984",
+          "experiment:many:985",
+          "experiment:many:986",
+          "experiment:many:987",
+          "experiment:many:988",
+          "experiment:many:989",
+          "experiment:many:990",
+          "experiment:many:991",
+          "experiment:many:992",
+          "experiment:many:993",
+          "experiment:many:994",
+          "experiment:many:995",
+          "experiment:many:996",
+          "experiment:many:997",
+          "experiment:many:998",
+          "experiment:many:999",
+          "experiment:many:1000",
+          "experiment:many:1001",
+          "experiment:many:1002",
+          "experiment:many:1003",
+          "experiment:many:1004",
+          "experiment:many:1005",
+          "experiment:many:1006",
+          "experiment:many:1007",
+          "experiment:many:1008",
+          "experiment:many:1009",
+          "experiment:many:1010",
+          "experiment:many:1011",
+          "experiment:many:1012",
+          "experiment:many:1013",
+          "experiment:many:1014",
+          "experiment:many:1015",
+          "experiment:many:1016",
+          "experiment:many:1017",
+          "experiment:many:1018",
+          "experiment:many:1019",
+          "experiment:many:1020",
+          "experiment:many:1021",
+          "experiment:many:1022",
+          "experiment:many:1023",
+          "experiment:many:1024",
+          "experiment:many:1025",
+          "experiment:many:1026",
+          "experiment:many:1027",
+          "experiment:many:1028",
+          "experiment:many:1029",
+          "experiment:many:1030",
+          "experiment:many:1031",
+          "experiment:many:1032",
+          "experiment:many:1033",
+          "experiment:many:1034",
+          "experiment:many:1035",
+          "experiment:many:1036",
+          "experiment:many:1037",
+          "experiment:many:1038",
+          "experiment:many:1039",
+          "experiment:many:1040",
+          "experiment:many:1041",
+          "experiment:many:1042",
+          "experiment:many:1043",
+          "experiment:many:1044",
+          "experiment:many:1045",
+          "experiment:many:1046",
+          "experiment:many:1047",
+          "experiment:many:1048",
+          "experiment:many:1049",
+          "experiment:many:1050",
+          "experiment:many:1051",
+          "experiment:many:1052",
+          "experiment:many:1053",
+          "experiment:many:1054",
+          "experiment:many:1055",
+          "experiment:many:1056",
+          "experiment:many:1057",
+          "experiment:many:1058",
+          "experiment:many:1059",
+          "experiment:many:1060",
+          "experiment:many:1061",
+          "experiment:many:1062",
+          "experiment:many:1063",
+          "experiment:many:1064",
+          "experiment:many:1065",
+          "experiment:many:1066"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "1ce89c5da5962fe9f562cc8ed2bf199caca119473d944152d4009235ace4f67a",
         "omitted": [],
         "sources": []
       },

@@ -15,7 +15,7 @@ export const recipeNames: Record<ActiveState, string> = {
 
 export const instructions: Record<ActiveState, string> = {
   planned:
-    'Design an experiment that can test its stated question as one step toward the project paper’s Problem, scope and goals. It need not achieve the whole project goal alone. Read any abbreviated paper sections with paper.read and distinguish established findings from the hypothesis. Preserve source-specified methods when the question calls for reproduction; identify each deliberate departure and limit the conclusion accordingly. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
+    'Design a credible, feasible experiment that answers the stated question and advances the project. Read the project paper and relevant prior work; learn from earlier results and reviewer feedback. Investigate uncertain assumptions with primary sources, research tools and bounded feasibility probes. Choose the simplest design that yields useful evidence, make its limits clear, and submit it for independent approval before execution.',
   design_review:
     'You are the independent, adversarial reviewer of this experiment’s design. Challenge whether its reasoning and methods can produce credible evidence for the stated question—not merely whether the plan is complete. Read relevant prior project work and check that the plan learns from it. Use research and web tools to investigate questionable assumptions or methodological choices. Focus on consequential flaws. Be rigorous without demanding unnecessary work or imposing your preferred approach. Explain why each blocking concern matters and what would resolve it.',
   running:
@@ -140,11 +140,14 @@ const reading =
 export const reviewerNavigation =
   ' Review only the pinned submission below. Use project.get for project metadata and paper.read for the project’s problem, scope, goals, constraints, Methods and Results. Discover prior work with project.records; inspect experiments with experiment.get_state and tasks with task.get. Use review.get for the pinned criteria, earlier verdicts and review requirements. artifact.get returns metadata; artifact.read opens retained contents. Inspect the provided checkout directly. Tool descriptions explain their arguments; use available research and web tools when useful. These references are starting points, not the boundary of your investigation.';
 
+const plannerNavigation =
+  ' Use project.get for project metadata and paper.read for the problem, scope, goals, constraints, Methods and Results. Find prior work with project.records; use experiment.get_state for this experiment’s full brief, dependencies and attempt history, task.get for prerequisite deliveries, and review.get for prior verdicts. Open artifact references with artifact.read; artifact.get returns metadata. Inspect the provided checkout and verify assumptions with available research and web tools. Tool descriptions explain their arguments. Read existing work before revising or repeating it; references are starting points, not an investigation boundary.';
+
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
  * Published versions and recipe bytes are immutable; only their construction is shared. The
  * design and execute recipes are at 12 for the plan and report templates (2026-10-06). */
 const recipeVersions: Record<ActiveState, number> = {
-  planned: 12,
+  planned: 13,
   design_review: 12,
   running: 12,
   experiment_review: 13,
@@ -162,8 +165,10 @@ export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((s
       instructions[state] +
       (reviewing(state)
         ? reviewerNavigation
-        : reading +
-          ' Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.'),
+        : state === 'planned'
+          ? plannerNavigation
+          : reading +
+            ' Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.'),
     outputInstructions:
       handoffs[state] +
       (gatedHandoffs[state]

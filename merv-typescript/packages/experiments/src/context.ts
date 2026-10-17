@@ -1,5 +1,5 @@
 import type { CodeCapture } from '@merv/code-work/types';
-import { reviewHistory } from '@merv/reviews/rules';
+import { reviewHistory, type ReviewHistory } from '@merv/reviews/rules';
 import {
   check,
   clip,
@@ -123,10 +123,8 @@ export async function inputsOf(
   const feedbackReviews = await feedbackOf(ctx, caller, experiment, tx);
   // Authors only: a reviewer already reads the current attempt's rejections in previousReviews
   // and judges this submission, not the verdicts earlier attempts received.
-  const history = reviewHistory(
-    reviewing(state) ? [] : await rejectedRounds(ctx, caller, experiment, tx),
-    REVIEW_HISTORY_CHARS,
-  );
+  const rejected = reviewing(state) ? [] : await rejectedRounds(ctx, caller, experiment, tx);
+  const history = reviewHistory(rejected, REVIEW_HISTORY_CHARS);
   const selected = reviewing(state)
     ? review!.artifactIds
     : eligibleRecovery(experiment).flatMap((evidence) => [
@@ -194,6 +192,9 @@ export async function inputsOf(
         ? { earlierInterruptions: experiment.attempt.feedback.length - FEEDBACK_KEPT }
         : {}),
       previousReviews: feedbackReviews,
+      ...(state === 'planned'
+        ? { priorReviewReferences: rejected.map(({ review, label }) => ({ id: review.id, label })) }
+        : {}),
       ...(continuousProducer(experiment.workflow.version) && experiment.attempt.approvedReviewId
         ? {
             approvedDesignReview: await ctx.reviews.get(
@@ -342,6 +343,7 @@ function reviewerCodeContext(experiment: Data): Data {
 export async function build(ctx: ExperimentsContext, context: WorkflowCheckContext) {
   const { experiment, review } = await admit(ctx, context);
   const state = context.snapshot.state as ActiveState;
+  const referenceOnly = state !== 'running';
   let inputs: FrozenInputs;
   if (context.caller.session) {
     // The lease's frozen inputs are read, never written: the worker's own recovery joins a copy.
@@ -389,9 +391,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       const record = records.get(id);
       return artifactItem(artifact, {
         priority,
-        ...(reviewing(state) || figures.has(id) || id === exhibit
-          ? { embed: 'never' as const }
-          : {}),
+        ...(referenceOnly || figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
         ...(record
           ? { note: `${record.role} ${record.path}` }
           : figures.has(id)
@@ -401,6 +401,21 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     });
   const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
   const evidence = inputs.evidenceArtifacts.filter((id) => id !== exhibit);
+  const priorReviews = [
+    ...(inputs.feedback.previousReviews as unknown as ReviewRequest[]),
+    ...(inputs.feedback.approvedDesignReview
+      ? [inputs.feedback.approvedDesignReview as unknown as ReviewRequest]
+      : []),
+    ...(state === 'planned'
+      ? ((inputs.feedback.priorReviewReferences as unknown as
+          { id: string; label: string }[] | undefined) ??
+        (inputs.feedback.history as unknown as ReviewHistory | undefined)?.rounds.map((round) => ({
+          id: round.reviewId,
+          label: round.label,
+        })) ??
+        [])
+      : []),
+  ];
   const sources: Record<string, ContextInput> = {
     experiment: {
       items: [
@@ -408,13 +423,20 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
           `experiment:${experiment.id}`,
           experiment.name,
           JSON.stringify(
-            reviewing(state)
+            referenceOnly
               ? {
                   id: experiment.id,
                   name: experiment.name,
                   project: inputs.experiment.project,
                   attemptIndex: experiment.attempt.index,
                   expectedRevision: experiment.workflow.revision,
+                  ...(state === 'planned'
+                    ? {
+                        intent: inputs.experiment.intent,
+                        feasibilityFormat: inputs.experiment.feasibilityFormat,
+                        computeAccess: inputs.experiment.computeAccess,
+                      }
+                    : {}),
                   ...(state === 'experiment_review'
                     ? { code: reviewerCodeContext(inputs.experiment).code }
                     : {}),
@@ -428,7 +450,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         ),
       ],
     },
-    projectPaper: reviewing(state)
+    projectPaper: referenceOnly
       ? {
           items: [
             textItem('project-paper', 'Project paper', '', {
@@ -439,19 +461,19 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         }
       : inputs.paper,
     feedback: {
-      items: reviewing(state)
-        ? [
-            ...(inputs.feedback.previousReviews as unknown as ReviewRequest[]),
-            ...(inputs.feedback.approvedDesignReview
-              ? [inputs.feedback.approvedDesignReview as unknown as ReviewRequest]
-              : []),
-          ]
+      items: referenceOnly
+        ? priorReviews
             .filter((prior, index, all) => all.findIndex((item) => item.id === prior.id) === index)
             .map((prior) =>
-              textItem(`review:${prior.id}`, 'Prior review', '', {
-                embed: 'never',
-                refs: [{ tool: 'review.get', input: { reviewId: prior.id } }],
-              }),
+              textItem(
+                `review:${prior.id}`,
+                'label' in prior ? (prior.label ?? 'Prior review') : 'Prior review',
+                '',
+                {
+                  embed: 'never',
+                  refs: [{ tool: 'review.get', input: { reviewId: prior.id } }],
+                },
+              ),
             )
         : [
             textItem(
@@ -505,6 +527,20 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         }
       : {}),
   };
+  if (state === 'planned') {
+    sources.feedback!.items.push(...(await artifactItems(inputs.historicalArtifacts, 700)));
+    const interruptions = inputs.feedback.interruptions;
+    if (Array.isArray(interruptions) && interruptions.length) {
+      sources.feedback!.items.push(
+        textItem(
+          `interruptions:${experiment.id}`,
+          'Current interruption notes',
+          JSON.stringify(interruptions),
+          { refs: [stateRef] },
+        ),
+      );
+    }
+  }
   const recipe = ctx.contexts.get(recipeKey(state, context.snapshot.version));
   check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);
   const gitInstruction =
@@ -549,7 +585,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}${reviewing(state) ? '' : `\n\n${sourceVerification}`}`,
+    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}${referenceOnly ? '' : `\n\n${sourceVerification}`}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({
