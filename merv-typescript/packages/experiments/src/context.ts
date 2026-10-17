@@ -29,7 +29,6 @@ import {
   recipeNames,
   instructions,
   handoff,
-  sourceVerification,
   presentationAt,
   handoffAt,
   recipeKey,
@@ -135,7 +134,7 @@ export async function inputsOf(
     state === 'running' || state === 'experiment_review' ? approvedPlan(experiment) : [];
   const approvedIds = new Set(approvedArtifacts);
   // Keep the exact artifact selections frozen; reviewers receive retrieval references only.
-  // Producers still receive the approved design and their current work inline.
+  // All stages open retained contents explicitly through their artifact references.
   const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
   const evidenceArtifacts = [
     ...new Set(
@@ -192,7 +191,7 @@ export async function inputsOf(
         ? { earlierInterruptions: experiment.attempt.feedback.length - FEEDBACK_KEPT }
         : {}),
       previousReviews: feedbackReviews,
-      ...(state === 'planned'
+      ...(!reviewing(state)
         ? { priorReviewReferences: rejected.map(({ review, label }) => ({ id: review.id, label })) }
         : {}),
       ...(continuousProducer(experiment.workflow.version) && experiment.attempt.approvedReviewId
@@ -343,7 +342,6 @@ function reviewerCodeContext(experiment: Data): Data {
 export async function build(ctx: ExperimentsContext, context: WorkflowCheckContext) {
   const { experiment, review } = await admit(ctx, context);
   const state = context.snapshot.state as ActiveState;
-  const referenceOnly = state !== 'running';
   let inputs: FrozenInputs;
   if (context.caller.session) {
     // The lease's frozen inputs are read, never written: the worker's own recovery joins a copy.
@@ -391,7 +389,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       const record = records.get(id);
       return artifactItem(artifact, {
         priority,
-        ...(referenceOnly || figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
+        embed: 'never',
         ...(record
           ? { note: `${record.role} ${record.path}` }
           : figures.has(id)
@@ -406,7 +404,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     ...(inputs.feedback.approvedDesignReview
       ? [inputs.feedback.approvedDesignReview as unknown as ReviewRequest]
       : []),
-    ...(state === 'planned'
+    ...(!reviewing(state)
       ? ((inputs.feedback.priorReviewReferences as unknown as
           { id: string; label: string }[] | undefined) ??
         (inputs.feedback.history as unknown as ReviewHistory | undefined)?.rounds.map((round) => ({
@@ -422,27 +420,30 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         textItem(
           `experiment:${experiment.id}`,
           experiment.name,
-          JSON.stringify(
-            referenceOnly
+          JSON.stringify({
+            id: experiment.id,
+            name: experiment.name,
+            project: inputs.experiment.project,
+            attemptIndex: experiment.attempt.index,
+            expectedRevision: experiment.workflow.revision,
+            ...(state === 'planned'
               ? {
-                  id: experiment.id,
-                  name: experiment.name,
-                  project: inputs.experiment.project,
-                  attemptIndex: experiment.attempt.index,
-                  expectedRevision: experiment.workflow.revision,
-                  ...(state === 'planned'
-                    ? {
-                        intent: inputs.experiment.intent,
-                        feasibilityFormat: inputs.experiment.feasibilityFormat,
-                        computeAccess: inputs.experiment.computeAccess,
-                      }
-                    : {}),
-                  ...(state === 'experiment_review'
-                    ? { code: reviewerCodeContext(inputs.experiment).code }
-                    : {}),
+                  intent: inputs.experiment.intent,
+                  feasibilityFormat: inputs.experiment.feasibilityFormat,
+                  computeAccess: inputs.experiment.computeAccess,
                 }
-              : inputs.experiment,
-          ),
+              : {}),
+            ...(state === 'running'
+              ? {
+                  intent: inputs.experiment.intent,
+                  approvedSubmissionId: experiment.attempt.approvedSubmissionId,
+                  approvedReviewId: experiment.attempt.approvedReviewId,
+                }
+              : {}),
+            ...(state === 'experiment_review'
+              ? { code: reviewerCodeContext(inputs.experiment).code }
+              : {}),
+          }),
           {
             embed: 'always',
             refs: [stateRef],
@@ -450,39 +451,28 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         ),
       ],
     },
-    projectPaper: referenceOnly
-      ? {
-          items: [
-            textItem('project-paper', 'Project paper', '', {
-              embed: 'never',
-              refs: [{ tool: 'paper.read', input: {} }],
-            }),
-          ],
-        }
-      : inputs.paper,
+    projectPaper: {
+      items: [
+        textItem('project-paper', 'Project paper', '', {
+          embed: 'never',
+          refs: [{ tool: 'paper.read', input: {} }],
+        }),
+      ],
+    },
     feedback: {
-      items: referenceOnly
-        ? priorReviews
-            .filter((prior, index, all) => all.findIndex((item) => item.id === prior.id) === index)
-            .map((prior) =>
-              textItem(
-                `review:${prior.id}`,
-                'label' in prior ? (prior.label ?? 'Prior review') : 'Prior review',
-                '',
-                {
-                  embed: 'never',
-                  refs: [{ tool: 'review.get', input: { reviewId: prior.id } }],
-                },
-              ),
-            )
-        : [
-            textItem(
-              `feedback:${experiment.id}`,
-              'Previous reviews, interruptions and recovery',
-              JSON.stringify(inputs.feedback),
-              { priority: 700, refs: [stateRef] },
-            ),
-          ],
+      items: priorReviews
+        .filter((prior, index, all) => all.findIndex((item) => item.id === prior.id) === index)
+        .map((prior) =>
+          textItem(
+            `review:${prior.id}`,
+            'label' in prior ? (prior.label ?? 'Prior review') : 'Prior review',
+            '',
+            {
+              embed: 'never',
+              refs: [{ tool: 'review.get', input: { reviewId: prior.id } }],
+            },
+          ),
+        ),
     },
     ...(inputs.approvedArtifacts.length
       ? { approvedPlan: { items: await artifactItems(inputs.approvedArtifacts, 900) } }
@@ -527,7 +517,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         }
       : {}),
   };
-  if (state === 'planned') {
+  if (!reviewing(state)) {
     sources.feedback!.items.push(...(await artifactItems(inputs.historicalArtifacts, 700)));
     const interruptions = inputs.feedback.interruptions;
     if (Array.isArray(interruptions) && interruptions.length) {
@@ -535,7 +525,12 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         textItem(
           `interruptions:${experiment.id}`,
           'Current interruption notes',
-          JSON.stringify(interruptions),
+          JSON.stringify({
+            interruptions,
+            ...(inputs.feedback.earlierInterruptions
+              ? { earlierInterruptions: inputs.feedback.earlierInterruptions }
+              : {}),
+          }),
           { refs: [stateRef] },
         ),
       );
@@ -585,7 +580,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}${referenceOnly ? '' : `\n\n${sourceVerification}`}`,
+    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

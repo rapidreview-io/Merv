@@ -19,7 +19,7 @@ export const instructions: Record<ActiveState, string> = {
   design_review:
     'You are the independent, adversarial reviewer of this experiment’s design. Challenge whether its reasoning and methods can produce credible evidence for the stated question—not merely whether the plan is complete. Read relevant prior project work and check that the plan learns from it. Use research and web tools to investigate questionable assumptions or methodological choices. Focus on consequential flaws. Be rigorous without demanding unnecessary work or imposing your preferred approach. Explain why each blocking concern matters and what would resolve it.',
   running:
-    'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
+    'Execute the exact approved design. Read its pinned plan, feasibility limits and review before starting; recover existing work before rerunning it. Retain the evidence, failed runs and deviations needed to judge the results. Draw conclusions supported by what happened, including negative findings, and submit the results for independent review.',
   experiment_review:
     'You are the independent, adversarial reviewer of this experiment’s results. Judge whether execution followed the approved plan and whether the evidence supports the conclusions—not merely whether the report is convincing. Inspect the underlying evidence and code. Use relevant project work, research, and web tools to investigate questionable claims. A negative result can be a successful experiment. Focus on consequential flaws. Distinguish what you verified from what remains uncertain, and explain what would resolve each blocking concern.',
 };
@@ -134,14 +134,14 @@ export const feasibilityFormat: FeasibilityStatement = {
  * one project, 22 of 22 task and experiment workers made no project-level read, while every
  * worker whose recipe named these tools used them.
  */
-const reading =
-  ' Everything this project holds is readable from this assignment, whether or not it is named below: project.records, task.get, experiment.get_state, paper.read, review.get and artifact.read answer for anything in this project — the other experiments and their plans and results, the tasks and their deliveries, the reviews and the feed. Read the project before you settle anything it may already have settled, and say what you reused and what you chose yourself.';
-
 export const reviewerNavigation =
   ' Review only the pinned submission below. Use project.get for project metadata and paper.read for the project’s problem, scope, goals, constraints, Methods and Results. Discover prior work with project.records; inspect experiments with experiment.get_state and tasks with task.get. Use review.get for the pinned criteria, earlier verdicts and review requirements. artifact.get returns metadata; artifact.read opens retained contents. Inspect the provided checkout directly. Tool descriptions explain their arguments; use available research and web tools when useful. These references are starting points, not the boundary of your investigation.';
 
 const plannerNavigation =
   ' Use project.get for project metadata and paper.read for the problem, scope, goals, constraints, Methods and Results. Find prior work with project.records; use experiment.get_state for this experiment’s full brief, dependencies and attempt history, task.get for prerequisite deliveries, and review.get for prior verdicts. Open artifact references with artifact.read; artifact.get returns metadata. Inspect the provided checkout and verify assumptions with available research and web tools. Tool descriptions explain their arguments. Read existing work before revising or repeating it; references are starting points, not an investigation boundary.';
+
+const executorNavigation =
+  ' Open the exact approvedPlan references with artifact.read; artifact.get returns metadata. review.get provides the approval and any repair feedback. experiment.get_state provides the full brief, current attempt and recovery history. Use paper.read for project goals and accumulated findings, project.records to discover other work, and task.get for prerequisite deliveries. Inspect and work in the provided checkout. Tool descriptions explain their arguments. References are starting points; the approved scope remains the authority for execution.';
 
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
  * Published versions and recipe bytes are immutable; only their construction is shared. The
@@ -149,7 +149,7 @@ const plannerNavigation =
 const recipeVersions: Record<ActiveState, number> = {
   planned: 13,
   design_review: 12,
-  running: 12,
+  running: 14,
   experiment_review: 13,
 };
 
@@ -167,8 +167,7 @@ export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((s
         ? reviewerNavigation
         : state === 'planned'
           ? plannerNavigation
-          : reading +
-            ' Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.'),
+          : executorNavigation),
     outputInstructions:
       handoffs[state] +
       (gatedHandoffs[state]
@@ -257,10 +256,10 @@ export const reportedResultsCriteria = [
 ];
 
 const runningRecipe = EXPERIMENT_RECIPES.find((r) => r.name === recipeNames.running)!;
-/** experiment.execute@13: the running recipe of experiment@43, with the report tools' handoff. */
+/** experiment.execute@15: reference-only running context for experiment@43+, with the report tools' handoff. */
 export const REPORTED_EXECUTE_RECIPE: ContextRecipeDefinition = {
   ...runningRecipe,
-  version: 13,
+  version: 15,
   recipe: { ...runningRecipe.recipe, outputInstructions: reportHandoff },
 };
 

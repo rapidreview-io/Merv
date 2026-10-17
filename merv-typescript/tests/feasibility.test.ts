@@ -333,8 +333,11 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   );
   assert.equal(running.workflow.state, 'running');
   // The admitted statement travels with the approved plan into execution.
+  const execution = (await f.app.ctx.workflows.assignment(f.owner, e.id)).context!.prompt;
+  assert.doesNotMatch(execution, /FEASIBILITY_BASIS_7731/);
+  assert.match(execution, new RegExp(attached.artifactId));
   assert.match(
-    (await f.app.ctx.workflows.assignment(f.owner, e.id)).context!.prompt,
+    (await f.app.ctx.artifacts.read(f.owner, attached.artifactId)).content,
     /FEASIBILITY_BASIS_7731/,
   );
 });

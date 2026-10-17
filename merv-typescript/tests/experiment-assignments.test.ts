@@ -603,6 +603,37 @@ test('an experiment assignment refuses a reader and the other role', async (t) =
     });
 });
 
+test('execution opens the pinned design by reference while retaining approval and submission authority', async (t) => {
+  const f = await fixture(t);
+  const running = await f.running();
+  const read = t.mock.method(f.artifacts, 'read', () => {
+    assert.fail('Execution context must not read retained artifact bodies');
+  });
+  const packet = await f.workflows.assignment(f.source, running.id);
+  read.mock.restore();
+  assert.equal(packet.context!.typeVersion, 15);
+  assert.doesNotMatch(
+    packet.context!.prompt,
+    /same held-out examples|"findings":|"selectedEvidence":/,
+  );
+  assert.match(packet.context!.prompt, /artifact.read/);
+  assert.match(packet.context!.prompt, /paper.read/);
+  assert.match(packet.brief, /execution \(running\), after independent design approval/);
+  assert.match(packet.brief, new RegExp(running.attempt.approvedSubmissionId!));
+  assert.match(packet.context!.prompt, new RegExp(running.attempt.approvedReviewId!));
+  assert.match(packet.handoff.instruction, /submit_results/);
+  assert.equal(packet.execution.readOnly, false);
+  const submission = running.submissions.find(
+    (item) => item.id === running.attempt.approvedSubmissionId,
+  )!;
+  for (const evidence of submission.evidence) {
+    assert.ok(
+      packet.references.some((ref) => ref.kind === 'artifact' && ref.id === evidence.artifactId),
+    );
+    assert.ok((await f.artifacts.read(f.source, evidence.artifactId)).content.length > 0);
+  }
+});
+
 test('planner context references draft artifacts without reading them and keeps its submission contract', async (t) => {
   const f = await fixture(t);
   const experiment = await f.create();
@@ -1303,14 +1334,14 @@ test('successors receive exact rejected findings and manifests across both retur
     assert.deepEqual(returned.attempt.feedbackReviewIds, [review.id]);
     const offered = await f.offer(returned);
     const worker = await f.sessions.authenticate(offered.secret);
-    if (destination === 'planned') {
+    {
       assert.doesNotMatch(offered.session.assignment.context!.prompt, new RegExp(marker));
       assert.match(offered.session.assignment.context!.prompt, new RegExp(review.id));
       assert.match(
         JSON.stringify((await f.reviews.get(worker, review.id)).findings),
         new RegExp(marker),
       );
-    } else assert.match(offered.session.assignment.context!.prompt, new RegExp(marker));
+    }
     assert.ok(
       review.artifactIds.every((id) =>
         (offered.session.execution.references.artifacts as string[]).includes(id),
@@ -1379,7 +1410,8 @@ test('a returned execution references prior result bodies while retaining the pi
   const offer = await f.offer(returned);
   const prompt = offer.session.assignment.context!.prompt;
   assert.doesNotMatch(prompt, /PRIOR_ROUND_RESULT_BODY_73982/);
-  assert.match(prompt, /Compare two methods/);
+  assert.doesNotMatch(prompt, /Compare two methods/);
+  assert.match(prompt, /Exact approved plan/);
   assert.match(prompt, new RegExp(prior.artifact.id));
   assert.match(prompt, new RegExp(prior.artifact.hash));
   assert.ok(
