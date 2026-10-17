@@ -1,3 +1,4 @@
+import type { CodeCapture } from '@merv/code-work/types';
 import { reviewHistory } from '@merv/reviews/rules';
 import {
   check,
@@ -135,9 +136,8 @@ export async function inputsOf(
   const approvedArtifacts =
     state === 'running' || state === 'experiment_review' ? approvedPlan(experiment) : [];
   const approvedIds = new Set(approvedArtifacts);
-  // Current review evidence remains inline. Feedback artifacts and producing recovery from a
-  // previous round stay available through artifact.read, without quoting their old bodies.
-  // A results review pins the approved design again; its body already appears in approvedPlan.
+  // Keep the exact artifact selections frozen; reviewers receive retrieval references only.
+  // Producers still receive the approved design and their current work inline.
   const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
   const evidenceArtifacts = [
     ...new Set(
@@ -322,6 +322,23 @@ export async function references(
   };
 }
 
+/** Project a validated capture for the model; keep the full record in frozen server inputs. */
+function reviewerCodeContext(experiment: Data): Data {
+  const { codeCapture, ...rest } = experiment;
+  const capture = codeCapture as unknown as CodeCapture | null | undefined;
+  return {
+    ...rest,
+    ...(capture?.workspace
+      ? {
+          code: {
+            submittedCommit: capture.workspace.headOid,
+            startingCommit: capture.attachedBaseOid ?? capture.workspace.baseOid,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function build(ctx: ExperimentsContext, context: WorkflowCheckContext) {
   const { experiment, review } = await admit(ctx, context);
   const state = context.snapshot.state as ActiveState;
@@ -372,7 +389,9 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       const record = records.get(id);
       return artifactItem(artifact, {
         priority,
-        ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
+        ...(reviewing(state) || figures.has(id) || id === exhibit
+          ? { embed: 'never' as const }
+          : {}),
         ...(record
           ? { note: `${record.role} ${record.path}` }
           : figures.has(id)
@@ -388,7 +407,20 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         textItem(
           `experiment:${experiment.id}`,
           experiment.name,
-          JSON.stringify(inputs.experiment),
+          JSON.stringify(
+            reviewing(state)
+              ? {
+                  id: experiment.id,
+                  name: experiment.name,
+                  project: inputs.experiment.project,
+                  attemptIndex: experiment.attempt.index,
+                  expectedRevision: experiment.workflow.revision,
+                  ...(state === 'experiment_review'
+                    ? { code: reviewerCodeContext(inputs.experiment).code }
+                    : {}),
+                }
+              : inputs.experiment,
+          ),
           {
             embed: 'always',
             refs: [stateRef],
@@ -396,16 +428,39 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         ),
       ],
     },
-    projectPaper: inputs.paper,
+    projectPaper: reviewing(state)
+      ? {
+          items: [
+            textItem('project-paper', 'Project paper', '', {
+              embed: 'never',
+              refs: [{ tool: 'paper.read', input: {} }],
+            }),
+          ],
+        }
+      : inputs.paper,
     feedback: {
-      items: [
-        textItem(
-          `feedback:${experiment.id}`,
-          'Previous reviews, interruptions and recovery',
-          JSON.stringify(inputs.feedback),
-          { priority: 700, refs: [stateRef] },
-        ),
-      ],
+      items: reviewing(state)
+        ? [
+            ...(inputs.feedback.previousReviews as unknown as ReviewRequest[]),
+            ...(inputs.feedback.approvedDesignReview
+              ? [inputs.feedback.approvedDesignReview as unknown as ReviewRequest]
+              : []),
+          ]
+            .filter((prior, index, all) => all.findIndex((item) => item.id === prior.id) === index)
+            .map((prior) =>
+              textItem(`review:${prior.id}`, 'Prior review', '', {
+                embed: 'never',
+                refs: [{ tool: 'review.get', input: { reviewId: prior.id } }],
+              }),
+            )
+        : [
+            textItem(
+              `feedback:${experiment.id}`,
+              'Previous reviews, interruptions and recovery',
+              JSON.stringify(inputs.feedback),
+              { priority: 700, refs: [stateRef] },
+            ),
+          ],
     },
     ...(inputs.approvedArtifacts.length
       ? { approvedPlan: { items: await artifactItems(inputs.approvedArtifacts, 900) } }
@@ -432,8 +487,14 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
             items: [
               textItem(
                 `review:${inputs.review.id}`,
-                'Pinned review and numbered criteria',
-                JSON.stringify(inputs.review),
+                'Pinned review (open review.get for criteria and requirements)',
+                JSON.stringify({
+                  reviewId: inputs.review.id,
+                  subjectRevision: inputs.review.subjectRevision,
+                  snapshotHash: inputs.review.snapshotHash,
+                  claimId: inputs.review.claimId,
+                  status: inputs.review.status,
+                }),
                 {
                   embed: 'always',
                   refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
@@ -450,7 +511,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     state === 'running'
       ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
       : state === 'experiment_review'
-        ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
+        ? '\nInspect the provided read-only checkout at code.submittedCommit against the approved plan and retained results. code.startingCommit identifies the starting point for comparison. Do not substitute another branch or a newer head.'
         : designCheckout(context.snapshot.version)
           ? '\nThe read-only checkout holds the code execution will start from: this experiment’s pinned base (project main with the accepted code of the tasks it depends on) and, after an earlier attempt, that attempt’s commits on it. Inspect it to write or judge the design against that code; nothing changed there is kept. Execution resumes in a configured private Git workspace from the same commit.'
           : '\nThis experiment will execute in a configured private Git workspace on its pinned base; planning and design review have no checkout. Read the accepted code’s delivery evidence (task.get, artifact.read) instead, design against what it reports, and leave verifying the code itself to execution, which starts from that base.';
@@ -488,7 +549,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}\n\n${sourceVerification}`,
+    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}${reviewing(state) ? '' : `\n\n${sourceVerification}`}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

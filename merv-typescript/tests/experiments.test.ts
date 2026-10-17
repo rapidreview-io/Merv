@@ -427,7 +427,7 @@ test('a passing results review states the conclusion as evidence.outcome, or the
   }
 });
 
-test('results review embeds approved design bodies once while retaining every pinned evidence reference', async (t) => {
+test('results review references approved design and evidence without embedding their bodies', async (t) => {
   const f = await fixture(t);
   const submitted = await f.results(await f.running());
   const review = await f.reviews.get(f.reviewer, submitted.reviewId!);
@@ -444,12 +444,16 @@ test('results review embeds approved design bodies once while retaining every pi
 
   assert.ok(review.artifactIds.includes(planId));
   assert.ok(review.artifactIds.includes(feasibilityId));
-  assert.ok(approved.includes(plan));
-  assert.ok(approved.includes(feasibility));
+  assert.ok(!approved.includes(plan));
+  assert.ok(approved.includes(planId));
+  assert.ok(!approved.includes(feasibility));
+  assert.ok(approved.includes(feasibilityId));
   assert.ok(!evidence.includes(plan));
   assert.ok(!evidence.includes(feasibility));
-  assert.ok(evidence.includes(report), 'current result and report evidence remains inline');
-  assert.ok(prompt.includes(review.criteria[0]!));
+  assert.ok(!evidence.includes(report), 'current result and report evidence is referenced');
+  assert.ok(!prompt.includes(review.criteria[0]!));
+  assert.ok(prompt.includes(review.id));
+  assert.ok(prompt.includes('review.get'));
   assert.deepEqual(
     new Set(assignment.context!.sources.map((artifact) => artifact.id)),
     new Set(review.artifactIds),

@@ -1288,3 +1288,12 @@ test('a further server’s bearer is redacted from the output whatever its varia
     else await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]');
 });
+
+test('experiment results reviewer gets its actual checkout path', () => {
+  const input = request(true);
+  input.session.execution.workflow = 'experiment';
+  input.session.execution.state = 'experiment_review';
+  const prompt = buildLaunch(codex, input, safeEnv).stdin;
+  assert.ok(prompt.includes(`Review checkout: ${input.cwd}`));
+  assert.doesNotMatch(buildLaunch(codex, request(true), safeEnv).stdin, /Review checkout:/);
+});

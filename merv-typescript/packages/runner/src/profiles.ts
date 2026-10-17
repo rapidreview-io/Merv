@@ -416,6 +416,10 @@ export function buildLaunch(
           ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
           : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(parts.note && !inquiry ? [parts.note] : []),
+    ...(session.execution.workflow === 'experiment' &&
+    session.execution.state === 'experiment_review'
+      ? [`Review checkout: ${request.cwd}`]
+      : []),
     'Frozen assignment:',
     JSON.stringify(session.assignment),
     '',

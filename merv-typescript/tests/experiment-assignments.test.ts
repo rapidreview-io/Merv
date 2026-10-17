@@ -473,7 +473,8 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(packet.context!.type, 'experiment.attempt_review');
   assert.equal(packet.execution.readOnly, true);
   assert.match(packet.context!.prompt, /returnTo planned.*running/s);
-  assert.match(packet.context!.prompt, /same held-out examples/);
+  assert.doesNotMatch(packet.context!.prompt, /same held-out examples/);
+  assert.match(packet.context!.prompt, /artifact.read/);
 });
 
 test('a design and its review read the accepted code they depend on in a read-only checkout of the pinned base', async (t) => {
@@ -603,6 +604,46 @@ test('an experiment assignment refuses a reader and the other role', async (t) =
     });
 });
 
+test('both reviewers receive navigation and pinned references without paper or artifact bodies', async (t) => {
+  const f = await fixture(t);
+  const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
+  await paper.patch(f.source, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'problem', content: 'PRIVATE_PAPER_BODY_4182' }],
+  });
+  let pending = (await f.design()).experiment;
+  for (const stage of ['design_review', 'experiment_review']) {
+    const read = t.mock.method(f.artifacts, 'read', () => {
+      assert.fail('Reviewer packet must not read artifact bodies');
+    });
+    const packet = await f.workflows.assignment(f.reviewer, pending.id);
+    read.mock.restore();
+    const prompt = packet.context!.prompt;
+    assert.doesNotMatch(prompt, /PRIVATE_PAPER_BODY_4182|same held-out examples/);
+    for (const tool of [
+      'project.get',
+      'paper.read',
+      'project.records',
+      'experiment.get_state',
+      'task.get',
+      'review.get',
+      'artifact.get',
+      'artifact.read',
+    ])
+      assert.ok(prompt.includes(tool));
+    assert.match(prompt, /independent, adversarial reviewer/);
+    assert.match(prompt, new RegExp(pending.reviewId!));
+    const review = await f.reviews.get(f.reviewer, pending.reviewId!);
+    for (const id of review.artifactIds) {
+      assert.ok(packet.references.some((ref) => ref.kind === 'artifact' && ref.id === id));
+      assert.ok((await f.artifacts.read(f.reviewer, id)).content.length > 0);
+    }
+    if (stage === 'design_review') pending = await f.results(await f.verdict(pending, 'pass'));
+  }
+});
+
 test('a results review whose evidence outgrows the recipe lists it for the reviewer to read', async (t) => {
   const f = await fixture(t);
   const running = await f.verdict((await f.design(await f.create())).experiment, 'pass');
@@ -624,14 +665,12 @@ test('a results review whose evidence outgrows the recipe lists it for the revie
   const context = packet.context!;
   assert.equal(context.type, 'experiment.attempt_review');
   assert.ok(context.prompt.length <= 160_000);
-  // What fits is embedded whole; every other result keeps one line naming how to read it.
-  assert.match(context.prompt, /row,value/);
-  const listed = context.omitted.filter((id) => id.startsWith('artifact:'));
-  assert.ok(listed.length > 0);
-  for (const id of listed)
-    assert.ok(
-      context.prompt.includes(`\n- ${id} — result (artifact ${id.slice('artifact:'.length)}, `),
-    );
+  // Every result is referenced, regardless of size.
+  assert.doesNotMatch(context.prompt, /row,value/);
+  const listed = context.sources.filter((source) => source.title === 'result');
+  assert.equal(listed.length, 12);
+  for (const { id } of listed)
+    assert.ok(context.prompt.includes(`retrieve: artifact.read {"artifactId":"${id}"}`));
 });
 
 test('a figure in the evidence is listed on a live render and its bytes are never read', async (t) => {
@@ -658,8 +697,7 @@ test('a figure in the evidence is listed on a live render and its bytes are neve
     return await read(...args);
   });
   const context = (await f.workflows.assignment(f.reviewer, assessment.id)).context!;
-  assert.ok(reads.length > 0, 'the report itself is read');
-  assert.ok(!reads.includes(figure.id));
+  assert.deepEqual(reads, [], 'review context never reads artifact bodies');
   assert.ok(
     context.prompt.includes(
       `\n- artifact:${figure.id} — Retained comparison (artifact ${figure.id}, image/png, `,
@@ -668,7 +706,7 @@ test('a figure in the evidence is listed on a live render and its bytes are neve
   assert.ok(context.sources.some((source) => source.id === figure.id));
 });
 
-test('results review keeps JSON observations inline and lists the generated exhibit without reading it', async (t) => {
+test('results review references JSON observations and the generated exhibit without embedding either', async (t) => {
   const f = await fixture(t);
   const running = await f.verdict((await f.design(await f.create())).experiment, 'pass');
   await f.workflows.begin(f.source, {
@@ -696,8 +734,8 @@ test('results review keeps JSON observations inline and lists the generated exhi
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
   const exhibit = assessment.evidence.find((item) => item.role === 'exhibit')!;
   const exhibitRead = await f.artifacts.read(f.reviewer, exhibit.artifactId);
-  assert.equal(packet.context!.typeVersion, 12);
-  assert.match(packet.context!.prompt, /"coverage":0\.9/);
+  assert.equal(packet.context!.typeVersion, 13);
+  assert.doesNotMatch(packet.context!.prompt, /"coverage":0\.9/);
   assert.match(packet.context!.prompt, /## Metrics exhibit \(read the retained artifact/);
   assert.ok(
     packet.context!.prompt.includes(
@@ -1043,7 +1081,9 @@ test('review leases claim before freezing, recover exactly once, and claim as th
   const replacement = await f.sessions.authenticate(next.secret);
   const current = await f.reviews.get(replacement, pending.reviewId!);
   assert.notEqual(current.claimId, claimed.claimId);
-  assert.match(next.session.assignment.context!.prompt, /previousClaimId/);
+  assert.doesNotMatch(next.session.assignment.context!.prompt, /previousClaimId/);
+  assert.match(next.session.assignment.context!.prompt, new RegExp(pending.reviewId!));
+  assert.ok((await f.reviews.get(replacement, pending.reviewId!)).recovery?.previousClaimId);
   await f.workflows.releaseLease(offered.session.lease, { reason: 'Repeated stale cleanup' });
   assert.equal((await f.reviews.get(replacement, pending.reviewId!)).claimId, current.claimId);
   await assert.rejects(
@@ -1064,7 +1104,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
     leases: await sql.all('SELECT id FROM wf_leases'),
     head: await f.state.eventHead(),
   }));
-  const read = t.mock.method(f.artifacts, 'read', () => {
+  const read = t.mock.method(f.artifacts, 'getAll', () => {
     throw new Error('Injected recipe read failure');
   });
   await assert.rejects(async () => await f.offer(pending, lead), /Injected recipe read failure/);
@@ -1169,7 +1209,9 @@ test('revoking the source fences its live reviewer before recovery and an author
   assert.notEqual(next.session.actorId, worker.actorId);
   assert.notEqual((await f.reviews.get(replacement, pending.reviewId!)).claimId, claim.claimId);
   assert.equal(next.session.source.actorId, replacementSource.actorId);
-  assert.match(next.session.assignment.context!.prompt, /previousClaimId/);
+  assert.doesNotMatch(next.session.assignment.context!.prompt, /previousClaimId/);
+  assert.match(next.session.assignment.context!.prompt, new RegExp(pending.reviewId!));
+  assert.ok((await f.reviews.get(replacement, pending.reviewId!)).recovery?.previousClaimId);
 });
 
 test('a design rejected three times gives the fourth attempt every earlier round while the attempt names only the latest', async (t) => {
@@ -1317,7 +1359,7 @@ test('a returned execution references prior result bodies while retaining the pi
   await f.attach(running, 'report', report);
   const pending = await f.transition(running, 'submit_results');
   // The current reviewer still receives the exact selected submission.
-  assert.match(
+  assert.doesNotMatch(
     (await f.workflows.assignment(f.reviewer, pending.id)).context!.prompt,
     /PRIOR_ROUND_RESULT_BODY_73982/,
   );
@@ -1352,7 +1394,7 @@ test('a new planning round and its next design review reference earlier plan bod
   const oldBody = `${plan}\n${'PRIOR_ROUND_PLAN_BODY_73982 '.repeat(1200)}`;
   const prior = await f.attach(first, 'plan', oldBody);
   const pending = await f.transition(first, 'submit_design');
-  assert.match(
+  assert.doesNotMatch(
     (await f.workflows.assignment(f.reviewer, pending.id)).context!.prompt,
     /PRIOR_ROUND_PLAN_BODY_73982/,
   );
@@ -1378,7 +1420,8 @@ test('a new planning round and its next design review reference earlier plan bod
   await f.attach(returned, 'plan', `${plan}\nCURRENT_PLAN_4872`);
   const nextReview = await f.transition(returned, 'submit_design');
   const prompt = (await f.workflows.assignment(f.reviewer, nextReview.id)).context!.prompt;
-  assert.match(prompt, /CURRENT_PLAN_4872/);
+  assert.doesNotMatch(prompt, /CURRENT_PLAN_4872/);
+  assert.match(prompt, /artifact.read/);
   assert.doesNotMatch(prompt, /PRIOR_ROUND_PLAN_BODY_73982/);
 });
 
@@ -1778,8 +1821,15 @@ test('a results review whose final capture never landed takes the last admitted 
   const offered = await f.offer(pending, await f.issue('operator'));
   assert.equal(offered.session.execution.references.code, unit.canonicalHead);
   assert.ok(
-    offered.session.assignment.context!.prompt.includes(`"headOid":"${unit.canonicalHead}"`),
+    offered.session.assignment.context!.prompt.includes(
+      `"submittedCommit":"${unit.canonicalHead}"`,
+    ),
   );
+  assert.doesNotMatch(
+    offered.session.assignment.context!.prompt,
+    /"codeCapture":|"attachedBaseOid":|"observedAt":/,
+  );
+  assert.match(offered.session.assignment.context!.prompt, /"startingCommit":/);
   // The pass accepts exactly that admitted commit.
   const worker = await f.sessions.authenticate(offered.secret);
   const review = await f.reviews.get(worker, pending.reviewId!);
@@ -1919,7 +1969,7 @@ test('a results review whose session admitted no commit reviews the head its bra
   const head = unit.base!.reference;
   const offered = await f.offer(pending, await f.issue('operator'));
   assert.equal(offered.session.execution.references.code, head);
-  assert.ok(offered.session.assignment.context!.prompt.includes(`"headOid":"${head}"`));
+  assert.ok(offered.session.assignment.context!.prompt.includes(`"submittedCommit":"${head}"`));
   // The pass accepts exactly that base.
   const worker = await f.sessions.authenticate(offered.secret);
   const review = await f.reviews.get(worker, pending.reviewId!);

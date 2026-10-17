@@ -301,7 +301,10 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   const review = await f.app.ctx.reviews.start(f.reviewer, pending.reviewId!);
   const reviewing = await f.app.ctx.workflows.assignment(f.reviewer, e.id);
   assert.match(reviewing.brief, /Criterion 4 is required/);
-  assert.match(reviewing.context!.prompt, /"requiredCriteria":\[4\]/);
+  assert.deepEqual(review.requiredCriteria, [4]);
+  assert.match(reviewing.context!.prompt, new RegExp(review.id));
+  assert.match(reviewing.context!.prompt, /review.get/);
+  assert.doesNotMatch(reviewing.context!.prompt, /FEASIBILITY_BASIS_7731/);
   const plans = [review.artifactIds[0]!];
   assert.notEqual(plans[0], attached.artifactId);
 
