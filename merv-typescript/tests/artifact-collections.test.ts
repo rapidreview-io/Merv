@@ -14,6 +14,7 @@ import {
 import { ArtifactStore } from '@merv/artifacts';
 import { artifactToolsPlugin } from '@merv/artifacts/tools';
 import { DiskBlobs } from '@merv/blobs';
+import type { z } from 'zod';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
 
@@ -464,4 +465,98 @@ test('artifact.list gives an agent each collection’s member count, and a perso
   ])
     assert.deepEqual(await list(agent), [{ ...named, fileCount: 1, downloadAvailable: true }]);
   assert.deepEqual(await list({}), [{ ...collection, downloadAvailable: true }]);
+});
+
+test('artifact.get gives an agent a collection’s members a page at a time, by prefix', async () => {
+  const member = (name: string) => ({
+    name,
+    size: 142_310,
+    hash: 'b'.repeat(64),
+    provider: 'sandboxes-native',
+  });
+  // Shaped like the 940-member capture whose every get was 174,060 characters.
+  const files = [
+    ...Array.from({ length: 900 }, (_, i) => member(`pilot-a2-complete/shards/${i}/MANIFEST.json`)),
+    ...Array.from({ length: 40 }, (_, i) => member(`pilot-a2-complete/metrics/${i}.json`)),
+  ];
+  const collection = {
+    id: 'art_capture',
+    projectId: 'project_1',
+    createdBy: 'actor_1',
+    title: 'Capture',
+    mediaType: 'application/vnd.merv.collection+json',
+    hash: 'a'.repeat(64),
+    size: 10,
+    createdAt: '2026-10-18T00:00:00.000Z',
+    files,
+    metadata: { captureState: 'succeeded' },
+  };
+  const plain = { ...collection, id: 'art_notes', mediaType: 'text/markdown', files: undefined };
+  delete plain.files;
+  const tools = new Map<
+    string,
+    { handler: (caller: Caller, input: object) => unknown; inputSchema: z.ZodTypeAny }
+  >();
+  artifactToolsPlugin.apply({
+    artifacts: {
+      get: async (_: Caller, id: string) => (id === plain.id ? plain : collection),
+      downloadAvailable: true,
+    },
+    tools: { register: (tool: { name: string }) => void tools.set(tool.name, tool as never) },
+    effect: (fn: () => unknown) => fn(),
+  } as never);
+  const tool = tools.get('artifact.get')!;
+  const agent: Caller = { actorId: 'actor_1', projectId: 'project_1', session: { id: 's' } };
+  const person: Caller = { actorId: 'actor_1', projectId: 'project_1' };
+  type Answer = Artifact & { fileCount?: number; matchCount?: number; nextOffset?: number };
+  const get = async (caller: Caller, input: object = {}) =>
+    (await tool.handler(
+      caller,
+      tool.inputSchema.parse({ artifactId: collection.id, ...input }),
+    )) as Answer;
+  const names = (answer: Answer) => answer.files!.map((file) => file.name);
+
+  // Unasked, an agent gets the first 100 members, how many there are, and where the next start.
+  const first = await get(agent);
+  assert.deepEqual(names(first), names({ files: files.slice(0, 100) } as Answer));
+  assert.equal(first.fileCount, 940);
+  assert.equal(first.nextOffset, 100);
+  assert.equal(first.matchCount, undefined);
+  assert.deepEqual(first.metadata, collection.metadata);
+  assert.equal((first as { downloadAvailable?: boolean }).downloadAvailable, true);
+  assert.ok(JSON.stringify(first).length < 25_000, String(JSON.stringify(first).length));
+  // The pages tile the collection in its own order.
+  const pages: string[] = [];
+  for (let offset: number | undefined = 0; offset !== undefined;) {
+    const page = await get(agent, { offset, limit: 300 });
+    pages.push(...names(page));
+    offset = page.nextOffset;
+  }
+  assert.deepEqual(pages, names(collection as Answer));
+  // A prefix keeps the members under a path and says how many there are.
+  const metrics = await get(agent, { prefix: 'pilot-a2-complete/metrics/' });
+  assert.deepEqual(names(metrics), names({ files: files.slice(900) } as Answer));
+  assert.deepEqual(
+    [metrics.matchCount, metrics.nextOffset, metrics.fileCount],
+    [40, undefined, 940],
+  );
+  const late = await get(agent, { prefix: 'pilot-a2-complete/shards/', offset: 850 });
+  assert.deepEqual([late.files!.length, late.matchCount, late.nextOffset], [50, 900, undefined]);
+  assert.deepEqual((await get(agent, { prefix: 'nothing/' })).files, []);
+  assert.deepEqual((await get(agent, { offset: 5_000 })).files, []);
+  // A person's Files page still gets every member unless it asks for a page.
+  const whole = await get(person);
+  assert.deepEqual(whole.files, files);
+  assert.deepEqual([whole.fileCount, whole.nextOffset], [940, undefined]);
+  assert.deepEqual(
+    names(await get(person, { limit: 2 })),
+    names({ files: files.slice(0, 2) } as Answer),
+  );
+  // A file that is not a collection is its record, whatever the paging asks.
+  assert.deepEqual(await tool.handler(agent, { artifactId: plain.id, limit: 5 }), {
+    ...plain,
+    downloadAvailable: true,
+  });
+  for (const input of [{ limit: 0 }, { limit: 1_001 }, { offset: -1 }, { prefix: '' }])
+    assert.equal(tool.inputSchema.safeParse({ artifactId: 'a', ...input }).success, false);
 });

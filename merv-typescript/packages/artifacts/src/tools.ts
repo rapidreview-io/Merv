@@ -1,19 +1,37 @@
 import type { Context } from 'cordis';
 import type { ToolAct } from '@merv/api/types';
 import { check, MervError, MAX_OBJECT_BYTES, type Artifact, type Caller } from '@merv/contracts';
+import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { z } from 'zod';
 import { MAX_STORED_READ_BYTES } from './content.js';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
 const workerInlineBytes = 64_000;
 const workerRangeCharacters = 8_192;
-/** A collection's record without its member list, which artifact.get gives: an answer about
+/** A collection's record without its member list, which artifact.get pages: an answer about
  * one member, or a listing, should not repeat every member of it. */
 const brief = (artifact: Artifact) => {
   if (!artifact.files) return artifact;
   const { files, ...rest } = artifact;
   return { ...rest, fileCount: files.length };
 };
+/** The members artifact.get gives an agent that names no limit: a capture can hold thousands. */
+const agentMembers = 100;
+/** One page of a collection's members: those under `prefix`, from `offset`, at most `limit`. */
+function membersPage(
+  files: ArtifactFile[],
+  { prefix, offset = 0, limit }: { prefix?: string; offset?: number; limit?: number },
+) {
+  const matching =
+    prefix === undefined ? files : files.filter((file) => file.name.startsWith(prefix));
+  const end = limit === undefined ? matching.length : Math.min(matching.length, offset + limit);
+  return {
+    files: matching.slice(offset, end),
+    fileCount: files.length,
+    ...(prefix === undefined ? {} : { matchCount: matching.length }),
+    ...(end < matching.length ? { nextOffset: end } : {}),
+  };
+}
 /** Service errors name no tools; the tool adds how to go on after a refusal with this code. */
 async function hinted<T>(
   run: () => Promise<T>,
@@ -116,11 +134,24 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.get',
-      'Read immutable artifact metadata; for a collection, files names every member with its size and SHA-256.',
-      z.object({ artifactId: z.string().min(1) }).strict(),
+      'Read immutable artifact metadata. For a collection, files lists its members (name, size and SHA-256) in the collection’s order, and fileCount says how many it has. An agent gets 100 members unless it gives a limit (1-1,000); offset skips that many, and when more follow, nextOffset is the offset of the next page. prefix keeps only the members whose names start with it, such as "run-a/", and matchCount says how many do.',
+      z
+        .object({
+          artifactId: z.string().min(1),
+          prefix: z.string().min(1).max(4096).optional(),
+          offset: z.number().int().min(0).optional(),
+          limit: z.number().int().min(1).max(1000).optional(),
+        })
+        .strict(),
       async (c, i) => {
         const artifact = await ctx.artifacts.get(c, i.artifactId);
-        return { ...artifact, downloadAvailable: ctx.artifacts.downloadAvailable };
+        // An agent's context holds the whole answer; a person's Files page shows every member.
+        const limit = i.limit ?? (c.session || c.conversation ? agentMembers : undefined);
+        return {
+          ...artifact,
+          ...(artifact.files ? membersPage(artifact.files, { ...i, limit }) : {}),
+          downloadAvailable: ctx.artifacts.downloadAvailable,
+        };
       },
       true,
     );
@@ -219,7 +250,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.list',
-      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them.',
+      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them a page at a time.',
       z
         .object({
           before: z.string().min(1).optional(),
