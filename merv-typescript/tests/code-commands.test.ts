@@ -375,7 +375,7 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
   // no second checkpoint is made.
   await assert.rejects(async () => await f.code.commit(worker.caller, input()), {
     code: 'code_command_pending',
-    message: `The session already has an outstanding code command, ${checkpoint.id} (“Checkpoint: Fold both sweeps”). Poll code.operation with that commandId and request this commit again once it has ended.`,
+    message: `The runner's automatic checkpoint ${checkpoint.id} of this checkout is still running: call code.commit again in a few seconds, with the same input, and it lands on top of that checkpoint`,
   });
   assert.equal((await f.code.operation(worker.caller, checkpoint.id)).status, 'dispatched');
   assert.deepEqual(await asked('checkpoint-2'), checkpoint);
@@ -436,7 +436,9 @@ test('an agent commit on the head runner checkpoints moved past lands on them; o
   // An outstanding command of the agent's own is named too.
   await assert.rejects(async () => await f.code.commit(worker.caller, input('another')), {
     code: 'code_command_pending',
-    message: new RegExp(`outstanding code command, ${own.command.id}:`),
+    message: new RegExp(
+      `outstanding code command, ${own.command.id} \\(“Capture an independently reviewable implementation”\\): poll code\\.operation`,
+    ),
   });
   const dispatched = (await f.code.nextCommand(f.source, worker.control))!;
   await f.code.completeCommand(f.source, {
