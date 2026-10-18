@@ -11,6 +11,7 @@ import {
   sized,
   sleep,
   Slots,
+  visible,
   type Caller,
 } from '@merv/contracts';
 import { webConfig, type WebSettings } from './input.js';
@@ -252,7 +253,8 @@ export class WebService implements Web {
           throw this.failure(error, 'Tavily');
         }
         const page = record(Array.isArray(data.results) ? data.results[0] : undefined);
-        if (page && cleanText(page.raw_content || page.content, 1).trim()) return { page };
+        if (page && visible(cleanText(page.raw_content || page.content, Number.MAX_SAFE_INTEGER)))
+          return { page };
         const failed = Array.isArray(data.failed_results) ? data.failed_results : [];
         return { error: pageError(record(failed[0])?.error) };
       };

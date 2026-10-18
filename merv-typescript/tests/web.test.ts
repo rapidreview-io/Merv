@@ -419,7 +419,18 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   const astral = `${'😀'.repeat(200)}x## Methods ## Resultsy${'😀'.repeat(200)}`;
   extracted = { body: { results: [{ url, raw_content: astral }] } };
   const cut = await read({ url, start_text: '## Methods', end_text: '## Results' });
+  assert.equal(cut.status, 'success');
+  assert.equal(cut.section, true);
   assert.ok(!/\p{Surrogate}/u.test(cut.content), 'a cut split a character');
+  // A page that starts with a line break or an emoji was read: one request, not two.
+  for (const raw_content of ['\n# Title\n\nBody text.', '😀 emoji first']) {
+    extracted = { body: { results: [{ url, raw_content }] } };
+    const before = tavily.seen.length;
+    const opened = await read({ url });
+    assert.equal(opened.status, 'success', JSON.stringify(raw_content));
+    assert.equal(opened.content, raw_content);
+    assert.equal(tavily.seen.length, before + 1);
+  }
 
   extracted = { body: { results: [], failed_results: [{ url, error: 'Blocked by robots.txt' }] } };
   const tries = tavily.seen.length;
