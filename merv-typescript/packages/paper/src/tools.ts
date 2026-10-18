@@ -52,7 +52,7 @@ function unrepeated(document: PaperDocument) {
   };
 }
 /** A paper.read answer as an agent is shown it: whole, but each document `unrepeated`. */
-export function withoutRepeats(result: unknown): unknown {
+function withoutRepeats(result: unknown): unknown {
   if (!result || typeof result !== 'object') return result;
   if ('documents' in result) {
     const { documents } = result as { documents: Record<string, PaperDocument> };
