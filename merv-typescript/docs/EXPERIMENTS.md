@@ -182,7 +182,10 @@ checked at attachment (`invalid_experiment_evidence`) and again at submission.
 `available` below `required`, any dependency with `present: false` and any
 listed blocker refuses the submission with `experiment_infeasible` (409) and
 names each shortfall; `workflow.status_and_next` shows the same blocker. The way
-forward is a smaller design or ending the experiment with the reason.
+forward is a smaller design or ending the experiment with the reason; a blocker
+only the owner can remove (a spending approval, connecting compute, a workspace
+fault) is asked of them with `session.ask_owner`, and the work waits for the
+answer.
 
 The server does not measure anything, so an overstated figure or an omitted
 requirement passes this check. That is what the required review criterion is

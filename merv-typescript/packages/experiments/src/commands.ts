@@ -594,12 +594,13 @@ async function prepareSubmission(
     const statement = parseFeasibility(
       await evidenceText(ctx, caller, one(evidence, 'feasibility').artifactId, tx),
     );
-    // The cheap check: a design whose own figures fall short never reaches a reviewer.
+    // The cheap check: a design whose own figures fall short never reaches a reviewer. A blocker
+    // only the owner can lift is asked of them: "shrink or end" left such waits unannounced.
     const shortfalls = feasibilityShortfalls(statement);
     check(
       shortfalls.length === 0,
       'experiment_infeasible',
-      `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason`,
+      `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason. Where only the owner can remove a blocker (a spending approval, connecting compute or a provider, fixing the workspace), ask with session.ask_owner and wait for the answer instead`,
       409,
     );
   } else {

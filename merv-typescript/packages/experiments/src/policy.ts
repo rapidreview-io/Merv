@@ -408,6 +408,14 @@ export async function admit(
   return { experiment, review };
 }
 
+/**
+ * Ending cannot be undone. A planner without the compute its brief asked it to measure with
+ * marked its project's only experiment failed within a minute (2026-09-30); such an obstacle is
+ * the owner's to remove.
+ */
+const OWNER_FIRST =
+  'A worker stopped by what only the owner can change (compute or a provider not connected, a spending approval, a workspace fault) asks with session.ask_owner instead of ending the experiment.';
+
 export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy {
   const action = (
     name: string,
@@ -540,12 +548,12 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
       action(
         'abandon',
         [...activeStates],
-        'End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained.',
+        `End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained. ${OWNER_FIRST}`,
       ),
       action(
         'mark_failed',
         [...activeStates],
-        'End this experiment as failed with a specific reason; do not confuse this owner action with a reviewer returning work for correction.',
+        `End this experiment as failed with a specific reason; do not confuse this owner action with a reviewer returning work for correction. ${OWNER_FIRST}`,
       ),
       ...(['design_review', 'experiment_review'] as const).flatMap((state) =>
         reviewActions<WorkflowCheckContext>({
