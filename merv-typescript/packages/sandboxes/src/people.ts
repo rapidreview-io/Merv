@@ -47,7 +47,6 @@ export class SandboxesPeople implements People {
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
         const id = `welcome:${provider}:${key}`;
-        if (granted.has(id)) continue;
         // CreditService refuses credits no operator connection can spend.
         if (!connected.has(provider)) {
           if (!this.#unconnected.has(provider))
@@ -55,9 +54,11 @@ export class SandboxesPeople implements People {
           this.#unconnected.add(provider);
           continue;
         }
-        // Fixed terms, so a concurrent ensure of this person grants the same grant.
-        await this.#credit(accountId, provider, true, () =>
-          credits.grant({
+        // Fixed terms, so a concurrent ensure of this person grants the same grant; granted
+        // before, its access is given again, where giving it failed then.
+        await this.#credit(accountId, provider, true, async () => {
+          if (granted.has(id)) return;
+          await credits.grant({
             id,
             accountId,
             provider,
@@ -65,8 +66,8 @@ export class SandboxesPeople implements People {
             validFrom: person.created_at,
             expiresAt: null,
             reason: 'Welcome credits',
-          }),
-        );
+          });
+        });
       }
       return { accountId };
     });
@@ -96,20 +97,24 @@ export class SandboxesPeople implements People {
   }
 
   /** The credit write, then the account's access to the provider's operator connections where
-   *  no operator decided it yet. */
+   *  no operator decided it yet. The credit stands once written: access that fails is logged. */
   #credit(accountId: string, provider: string, entitle: boolean, write: () => Promise<void>) {
     return refusals.call(async () => {
       await write();
       if (!entitle) return;
       const { connections } = this.sbx.providers;
-      const decided = new Set(
-        (await connections.listEntitlements({ accountId }))
-          .filter((entitled) => entitled.scope === 'account')
-          .map((entitled) => entitled.connection_id),
-      );
-      for (const { id, plugin } of await connections.list())
-        if (plugin === provider && !decided.has(id))
-          await connections.setEntitlement({ connectionId: id, accountId, enabled: true });
+      try {
+        const decided = new Set(
+          (await connections.listEntitlements({ accountId }))
+            .filter((entitled) => entitled.scope === 'account')
+            .map((entitled) => entitled.connection_id),
+        );
+        for (const { id, plugin } of await connections.list())
+          if (plugin === provider && !decided.has(id))
+            await connections.setEntitlement({ connectionId: id, accountId, enabled: true });
+      } catch (error) {
+        log({ event: 'sandboxes.people.access_failed', accountId, provider, cause: cause(error) });
+      }
     });
   }
 

@@ -101,6 +101,13 @@ test('ensure is idempotent: one person, their own account with them its admin, o
     first.accountId,
   );
   assert.deepEqual(await f.grants(first.accountId), [[welcome('fake', 'alice'), '10']]);
+  // Welcome credit comes with access to spend it.
+  assert.deepEqual(
+    (await f.ctx.sbxProviders.connections.listEntitlements({ accountId: first.accountId })).map(
+      (e) => [e.connection_id, e.enabled],
+    ),
+    [['cloud', true]],
+  );
   const [grant] = (await f.ctx.sbxBilling.credits.report(first.accountId)).grants;
   assert.deepEqual([grant!.valid_from, grant!.expires_at], [person.created_at.toJSON(), null]);
   // Another person is another account, even when their first two ensures race.

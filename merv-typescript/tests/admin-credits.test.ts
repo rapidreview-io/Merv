@@ -412,9 +412,11 @@ test('a person’s own limits are set and cleared in their owners, each recorded
     f.refused('not_found', 404),
   );
   assert.equal(set.length, 4);
+  // Four writes may share a millisecond, which orders the log no further.
+  const sorted = (rows: unknown[]) => rows.map((row) => JSON.stringify(row)).sort();
   assert.deepEqual(
-    (await f.audit()).map((row) => [row.action, row.target, JSON.parse(row.detail_json)]),
-    bodies.map((body) => ['credits.limit', `${issuer}|dana`, body]),
+    sorted((await f.audit()).map((row) => [row.action, row.target, JSON.parse(row.detail_json)])),
+    sorted(bodies.map((body) => ['credits.limit', `${issuer}|dana`, body])),
   );
 });
 

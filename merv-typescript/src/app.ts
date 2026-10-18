@@ -32,6 +32,8 @@ const FIXED = new Set([...FIRST, '@merv/identity', '@merv/sandboxes/host']);
  *  replaced, everything it sealed or signed stops working. */
 const issued = (purpose: string) => /· (encryption key|signing secret)$/.test(purpose);
 
+const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
+
 /** The `.describe()` a zod config schema gives the field at `path`, through its wrappers,
  *  unions, arrays and records. */
 function describedAt(schema: unknown, path: readonly string[]): string | undefined {
@@ -191,16 +193,31 @@ export async function createApp(options: ConfigurationOptions) {
           await toggle(ids, true);
           return [...ids, ...(await then())];
         };
+        /** Each step of putting the previous value back is tried; one that fails is logged by
+         *  its kind alone, since its words may carry a value. */
+        const restore = async () => {
+          setEnv(env, previous);
+          for (const step of [() => toggle(ids, false), () => toggle(ids, true), then])
+            await step().catch((error) =>
+              log({ event: 'composition.restore_failed', env, cause: error?.code ?? error?.name }),
+            );
+        };
+        let reloaded: string[];
         try {
-          const reloaded = await apply(value);
-          await secrets.setPlatformSecret(env, value, by);
-          return reloaded;
+          reloaded = await apply(value);
         } catch (error) {
-          await apply(previous).catch(() => undefined);
+          await restore();
           // A refusal names the problem; a plugin that failed with the value names nothing of it.
           if (error instanceof MervError && error.code !== 'plugin_unavailable') throw error;
           throw new MervError('credential_rejected', 'The new value did not load', 422);
         }
+        try {
+          await secrets.setPlatformSecret(env, value, by);
+        } catch (error) {
+          await restore();
+          throw error;
+        }
+        return reloaded;
       });
     // Plugins read lifecycle state from this report, never by recomputing it from the loader.
     ctx.provide('composition', { status, environment, override });
@@ -213,8 +230,13 @@ export async function createApp(options: ConfigurationOptions) {
     const first = new Set(environment().map((ref) => ref.env));
     const secrets = ctx.get('secrets');
     for (const { env } of (await secrets?.platformSecrets()) ?? []) {
+      if (first.has(env)) continue;
       // A value that no longer opens (the store's key replaced) leaves the deployment's.
-      const value = first.has(env) ? null : await secrets!.platformSecret(env).catch(() => null);
+      const value = await secrets!.platformSecret(env).catch((error) => {
+        if (!(error instanceof MervError && error.code === 'secrets_unavailable')) throw error;
+        log({ event: 'secrets.platform_unopened', env });
+        return null;
+      });
       if (value !== null) process.env[env] = value;
     }
     await loader.root.update(entries);
