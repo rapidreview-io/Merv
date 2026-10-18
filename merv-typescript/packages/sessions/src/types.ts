@@ -10,6 +10,7 @@ import type {
   RunningMark,
   RunningNodes,
   RunningPanelPart,
+  RunningPhrase,
   RunningSummary,
   SessionToolPolicy,
   SessionUsageReport,
@@ -558,7 +559,8 @@ export interface SessionsPlatformWork {
   visit: {
     role: SessionRole;
     status: LeaseLiveness['verdict'];
-    need: LeaseNeed | null;
+    /** What it needs a person for, as the Running page says it. */
+    need: { code: LeaseNeed; says: RunningPhrase } | null;
     /** Its newest Merv call or agent event. */
     lastActivity: string | null;
     /** The Fleet allocation it runs on. */

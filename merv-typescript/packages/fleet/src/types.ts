@@ -233,22 +233,20 @@ export interface ModelRelayConfig<
     reserved: R,
   ) => void | Promise<void>;
 }
-/** One day of a model relay's calls on one provider key and model (`Fleet.relayOutcomes`). */
+/** A model relay's latest call the provider answered and latest it failed, on one provider key
+ *  and model (`Fleet.relayOutcomes`). */
 export interface RelayOutcome {
   relay: string;
   /** The environment variable the relay's provider key is read from. */
   keyEnv: string;
   model: string;
-  day: string;
-  /** Calls the provider answered, and their input and output tokens. */
-  ok: number;
-  tokens: number;
-  /** Calls the provider failed (`upstream_failed`); one that failed after usage counts in both. */
-  failed: number;
   lastOkAt: string | null;
+  /** Its latest `upstream_failed` call. */
   lastFailureAt: string | null;
   lastFailureStatus: number | null;
   lastFailureCode: string | null;
+  /** That failure was the provider refusing the key itself. */
+  rejected: boolean;
 }
 /** A model relay: its HTTP handler, which answers 404 off its one route and authenticates its own
  *  bearers, so its owner mounts it public; and close(), which ends the calls it is streaming. */
@@ -286,9 +284,9 @@ export interface Fleet {
   listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;
   /** Platform admin read, never exposed through a tool, an owner or a machine key: every open
    * allocation in every project, with its profile's key and provider while this deployment
-   * keeps that profile. */
+   * keeps that profile, and the unit of work it was rented for. */
   platformAllocations(): Promise<
-    (FleetAllocation & { profile: string | null; provider: string | null })[]
+    (FleetAllocation & { profile: string | null; provider: string | null; work: string | null })[]
   >;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
@@ -312,8 +310,8 @@ export interface Fleet {
   ): ModelRelayHandle;
   /** For the platform admin only, never a tool: each of `persons`' day so far. */
   peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]>;
-  /** Every relay's outcomes of the last 7 UTC days, newest first: the platform admin's read,
-   *  never a tool's. */
+  /** Every relay's latest outcomes per provider key and model: the platform admin's read, never
+   *  a tool's. */
   relayOutcomes(): Promise<RelayOutcome[]>;
 }
 declare module 'cordis' {

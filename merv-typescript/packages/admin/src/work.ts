@@ -1,7 +1,6 @@
 import type { Context } from 'cordis';
-import type { DelegationSource } from '@merv/contracts';
-import type { AdminEnv, AdminRoutes } from './index.js';
-import type { AdminIdentity } from './models.js';
+import type { DelegationSource, RunningPhrase } from '@merv/contracts';
+import { loaded, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
 
 /**
  * The work table: every unit of work running anywhere, and every unit that ended in the last
@@ -14,10 +13,7 @@ import type { AdminIdentity } from './models.js';
 
 /** What the table calls each workflow's units; any other workflow keeps its own name. */
 const KINDS: Record<string, string> = {
-  task: 'task',
-  experiment: 'experiment',
   service_experiment: 'standalone experiment',
-  reflection: 'reflection',
   'reflection.lens': 'reflection lens',
   research: 'research cycle',
 };
@@ -26,9 +22,6 @@ const SAYS: Record<string, string> = {
   allowance: 'Waits for an admin to allow another round',
   approval: 'Waits for the customer to approve the plan',
   payment: 'Waits for the customer to pay',
-  key_revoked: 'The key its machine registered with can no longer read the project',
-  machine_offline: 'Its machine stopped reporting',
-  quiet: 'Its agent has made no Merv call for a while',
 };
 const said = (reason: AdminAttention['reason'], code: string | null | undefined) =>
   code ? [{ reason, code, message: SAYS[code] ?? SAYS[reason]! }] : [];
@@ -39,7 +32,8 @@ export interface AdminAttention {
   /** The blocker's publisher. */
   provider?: string;
   code: string;
-  message: string;
+  /** The owner's words: an agent's need is a phrase Sessions writes, as the Running page shows. */
+  message: string | RunningPhrase;
 }
 export interface AdminPerson {
   /** `issuer|subject` for a signed-in identity, else `email:` or `guest:`. */
@@ -100,9 +94,7 @@ export async function adminWork(
 ): Promise<AdminWork> {
   const at = new Date().toISOString();
   const since = new Date(Date.parse(at) - 86_400_000).toISOString();
-  const unavailable: string[] = [];
-  const get = <K extends keyof Context & string>(name: K): Context[K] | undefined =>
-    ctx.get(name) ?? void unavailable.push(name);
+  const { get, unavailable } = loaded(ctx);
   const [workflows, sessions, fleet, pi, tasks, reflections, customers, scope] = [
     get('workflows'),
     get('sessions'),
@@ -114,19 +106,19 @@ export async function adminWork(
     get('scope'),
   ] as const;
   const work = (await workflows?.platformWork(since)) ?? [];
-  const of = (workflow: string) => work.filter((unit) => unit.workflow === workflow);
-  const ids = (workflow: string) => of(workflow).map(({ id }) => id);
+  const all = work.map(({ id }) => id);
   const turns = (await pi?.platformTurns(since)) ?? [];
   const visits = await sessions?.running.platform(work);
   const machines = new Map(
+    // By its id, and by the unit it serves: a unit Sessions has no visit on yet still has one.
     ((await fleet?.platformAllocations()) ?? []).flatMap((a) => [
       [a.id, a],
-      [`${a.owner.kind}:${a.owner.id}`, a],
+      [a.work ?? a.id, a],
     ]),
   );
-  const types = await tasks?.platformTypes(ids('task'));
-  const lenses = await reflections?.platformLensNames(ids('reflection.lens'));
-  const standalone = await customers?.customers(of('service_experiment'));
+  const types = await tasks?.platformTypes(all);
+  const lenses = await reflections?.platformLensNames(all);
+  const standalone = await customers?.customers(work);
   const { people: members, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
   const names = new Map(projects.map(({ id, name }) => [id, name]));
 
@@ -179,7 +171,7 @@ export async function adminWork(
   const rows: AdminWorkRow[] = [
     ...work.map((unit) => {
       const { visit = null, usage = null } = visits?.get(unit.id) ?? {};
-      const owner = unit.workflow === 'service_experiment' ? customer(unit) : starter(unit);
+      const owner = customer(unit);
       return {
         id: unit.id,
         kind: KINDS[unit.workflow] ?? unit.workflow,
@@ -198,12 +190,12 @@ export async function adminWork(
           })),
           ...said('allowance', unit.allowance ? unit.state : null),
           ...said('customer', standalone?.get(unit.id)?.waits),
-          ...said('agent', visit?.need),
+          ...(visit?.need
+            ? [{ reason: 'agent' as const, code: visit.need.code, message: visit.need.says }]
+            : []),
         ],
         agent: visit && { role: visit.role, status: visit.status },
-        machine: machine(
-          machines.get(visit?.allocationId ?? '') ?? machines.get(`workflow:work:${unit.id}`),
-        ),
+        machine: machine(machines.get(visit?.allocationId ?? '') ?? machines.get(unit.id)),
         lastActivity: visit?.lastActivity ?? unit.updatedAt,
         createdAt: unit.createdAt,
         updatedAt: unit.updatedAt,

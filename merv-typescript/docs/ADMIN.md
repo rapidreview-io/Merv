@@ -13,30 +13,35 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Platform read authority (`caller.platform`) | `@merv/scope` slot, `@merv/admin` installs it | read-only, synthetic actor, never delegates |
 | Platform caller tool rules | `@merv/api` registry `platform` kind, `@merv/admin` installs them | read tools only |
 | Work state | `@merv/workflows` (instances, definitions, blockers) | terminal states per version |
-| Fleet spend, model-token ledgers, relay outcomes | `@merv/fleet` | a read method per ledger |
+| Fleet spend, model-token ledgers, relay outcomes | `@merv/fleet` | a read method per ledger; each relay's latest success and failure per key and model, and whether the provider rejected the key |
 | Pi model-token ledger | `@merv/pi` | a read method |
-| Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService` |
-| Secret names per plugin | composition root (`composition.environment()`) | env names from each plugin's `*Env` config fields |
+| Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService`, which refuses a provider without an operator connection |
+| Secret names per plugin | composition root (`composition.environment()`), Sandboxes (`credential_env`) | env names from each plugin's `*Env` config fields; a host provider's from its credential reference |
 
 `@merv/admin` composes these reads. It owns no copy of another plugin's rules: terminal states
-come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes.
+come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes. Each read
+names an owner not loaded here in `unavailable`.
 
-## Routes (all `requireAdmin`, `Cache-Control: private, no-store`)
+## Routes (all `adminOf`; the API answers each `Cache-Control: no-store`)
 
 - `GET /admin/work` — every nonterminal unit of work across projects, plus units ended in the
   last 24 hours: kind, title, project, person, state, attention, agent, machine, last activity,
   age, cost so far. Joined from each owner's platform read: `workflows.platformWork`,
   `sessions.running.platform`, `fleet.platformAllocations`, `pi.platformTurns`,
   `tasks.platformTypes`, `reflections.platformLensNames`, `customerExperiments.customers` and
-  `scope.directory`; an owner not loaded is named in `unavailable`.
+  `scope.directory`. An agent's need is Sessions' own phrase; a machine is found by its
+  allocation id or by the unit Fleet says it serves.
 - `GET /admin/credits` — per person → sandbox account → provider: granted, used, reserved,
   available; schedules; budget caps; Fleet daily spend and model tokens.
 - `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
   `POST /admin/credits/grants/:id/revoke` — credit assignment through `CreditService`, each
-  recorded in the admin audit log.
+  recorded in the admin audit log. A grant names its `validFrom`, so a retry repeats its terms
+  exactly and replays; it answers `{ id }`. The admin checks only the body's shape: Sandboxes
+  refuses the values (`sandbox_validation`).
 - `GET /admin/credentials` — by purpose (Pi agents, Fleet agents, Fleet machines, sandbox
   providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, first
-  seen, last success and last failure, live provider health. Never a value.
+  seen, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
+  with no success or change since, live provider health. Never a value.
 - `GET /admin/projects` — every project, newest first, for the drill-in picker:
   `{ projects: [{ id, name, createdAt }] }`.
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
@@ -69,6 +74,7 @@ lose their rows and routes, the dock is not mounted, and `Submit`, `ConfirmActio
 `ResearchCommand`, a list's creation control, a running panel's act and the file upload draw
 nothing. The server is the control.
 The caller acts as `PLATFORM_ACTOR`, a reader no actor row backs; it never delegates, so it starts
-no session, conversation or lease. Any other principal sending the header, and every MCP request
-with it, is refused `403 platform_forbidden`. The first read of a project in an hour records
-`project.read` in the admin audit log.
+no session, conversation or lease. Web refuses it (`403 web_forbidden`), so a drill-in spends no
+project's web budget. Any other principal sending the header, and every MCP request with it, is
+refused `403 platform_forbidden`. The first read of a project in an hour records `project.read` in
+the admin audit log.

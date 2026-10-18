@@ -26,6 +26,7 @@ import {
 } from './runtime.js';
 import { migration, migrationV2, migrationV3, migrationV4, migrationV5 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
+import { rentedWork } from './running.js';
 import type {
   Fleet,
   FleetAllocation,
@@ -441,7 +442,8 @@ export class FleetService implements Fleet {
   async platformAllocations() {
     return (await this.state.read((sql) => this.all(sql))).map((a) => {
       const profile = this.profiles.find(({ id }) => id === a.profileId);
-      return { ...a, profile: profile?.key ?? null, provider: profile?.provider ?? null };
+      const { key, provider } = profile ?? {};
+      return { ...a, profile: key ?? null, provider: provider ?? null, work: rentedWork(a) };
     });
   }
   async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
@@ -687,48 +689,43 @@ export class FleetService implements Fleet {
     config: ModelRelayConfig<G, N, R>,
     keyEnv: string,
   ): ModelRelayHandle {
-    // One upsert into the day's row per call the provider answered or failed.
-    const keep = (model: string, tokens: number, failure?: { status?: number; code?: string }) => {
-      const at = new Date(this.clock()).toISOString();
-      return this.state.transaction((tx) =>
+    // One upsert per call the provider answered or failed: the latest of each.
+    const keep = (model: string, failure?: { status?: number; code?: string }) =>
+      this.state.transaction((tx) =>
         tx.run(
           failure
-            ? 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,day,tokens,failed,last_failure_at,last_failure_status,last_failure_code) VALUES(?,?,?,?,?,1,?,?,?) ON CONFLICT(relay,key_env,model,day) DO UPDATE SET failed=fleet_relay_outcomes.failed+1,last_failure_at=excluded.last_failure_at,last_failure_status=excluded.last_failure_status,last_failure_code=excluded.last_failure_code'
-            : 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,day,tokens,ok,last_ok_at) VALUES(?,?,?,?,?,1,?) ON CONFLICT(relay,key_env,model,day) DO UPDATE SET ok=fleet_relay_outcomes.ok+1,tokens=fleet_relay_outcomes.tokens+excluded.tokens,last_ok_at=excluded.last_ok_at',
+            ? 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,last_failure_at,last_failure_status,last_failure_code) VALUES(?,?,?,?,?,?) ON CONFLICT(relay,key_env,model) DO UPDATE SET last_failure_at=excluded.last_failure_at,last_failure_status=excluded.last_failure_status,last_failure_code=excluded.last_failure_code'
+            : 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,last_ok_at) VALUES(?,?,?,?) ON CONFLICT(relay,key_env,model) DO UPDATE SET last_ok_at=excluded.last_ok_at',
           config.name,
           keyEnv,
           model,
-          at.slice(0, 10),
-          tokens,
-          at,
+          new Date(this.clock()).toISOString(),
           ...(failure ? [failure.status ?? null, failure.code ?? null] : []),
         ),
       );
-    };
     return new ModelRelay({
       ...config,
       // Only what the provider did says whether its key works: a refunded call was never sent.
       onUsage: async (record, grant, reserved) => {
         await Promise.all([
           config.onUsage?.(record, grant, reserved),
-          record.refund || keep(record.model, record.inputTokens + record.outputTokens),
+          record.refund || keep(record.model),
         ]);
       },
       onFailure: async (record, grant) => {
         await Promise.all([
           config.onFailure?.(record, grant),
           record.code === 'upstream_failed' &&
-            keep(record.model, 0, { status: record.upstreamHttpStatus, code: record.providerCode }),
+            keep(record.model, { status: record.upstreamHttpStatus, code: record.providerCode }),
         ]);
       },
     });
   }
   async relayOutcomes(): Promise<RelayOutcome[]> {
-    const since = new Date(this.clock() - 6 * 86_400_000).toISOString().slice(0, 10);
+    // The Responses API refuses a key itself with 401 or `invalid_api_key`.
     return await this.state.read((sql) =>
       sql.all<RelayOutcome>(
-        'SELECT relay,key_env AS "keyEnv",model,day,ok,tokens,failed,last_ok_at AS "lastOkAt",last_failure_at AS "lastFailureAt",last_failure_status AS "lastFailureStatus",last_failure_code AS "lastFailureCode" FROM fleet_relay_outcomes WHERE day>=? ORDER BY day DESC,relay,key_env,model',
-        since,
+        `SELECT relay,key_env AS "keyEnv",model,last_ok_at AS "lastOkAt",last_failure_at AS "lastFailureAt",last_failure_status AS "lastFailureStatus",last_failure_code AS "lastFailureCode",COALESCE(last_failure_status=401 OR last_failure_code='invalid_api_key',false) AS rejected FROM fleet_relay_outcomes ORDER BY relay,key_env,model`,
       ),
     );
   }

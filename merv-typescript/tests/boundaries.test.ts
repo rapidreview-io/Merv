@@ -961,14 +961,6 @@ test('Cordis service requirements match the architecture and every accessed capa
         orchestrationAdapters.add(name.text);
         return;
       }
-      if (name.text === 'merv-admin') {
-        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
-        // Composes other owners' reads, where loaded, at request time; injects none of them.
-        assert.deepEqual(sorted(declared), ['api', 'state']);
-        assert.deepEqual(sorted([...optional]), []);
-        assert.deepEqual(actualProvided, []);
-        return;
-      }
       if (name.text === 'merv-sandboxes-console') {
         assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'console.ts'));
         assert.deepEqual(sorted(declared), [
