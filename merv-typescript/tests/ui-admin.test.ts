@@ -345,7 +345,7 @@ const credentials = {
       owner: 'sessions',
       kind: 'session-execution',
       live: '8',
-      soonestExpiry: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+      soonestExpiry: new Date(Date.now() + 3.5 * 3_600_000).toISOString(),
       revokedLastDay: '0',
       newestIssued: ago(1),
     },
