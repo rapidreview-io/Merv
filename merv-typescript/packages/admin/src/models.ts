@@ -3,6 +3,7 @@
  * they are composed from, so the browser reads the same ones (`@merv/admin/models`).
  */
 import type { RunningPhrase } from '@merv/contracts/running';
+import type { UsageTotals } from '@merv/sessions/models';
 
 /** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
 export interface AdminAttention {
@@ -36,13 +37,7 @@ export interface AdminWorkRow {
   lastActivity: string;
   createdAt: string;
   /** Its closed work visits; runners report tokens unverified, and no visit reports a price. */
-  cost?: {
-    sessions: number;
-    reportedSessions: number;
-    wallMs: number;
-    inputTokens: number;
-    outputTokens: number;
-  } | null;
+  cost?: Omit<UsageTotals, 'toolCalls' | 'toolPayloadTokensEstimate'> | null;
   /** A standalone experiment's request, which its customer's page is opened by. */
   requestId?: string;
 }
