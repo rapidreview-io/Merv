@@ -217,7 +217,8 @@ function bearer(req: IncomingMessage): string {
 export class ApiServer {
   private server?: HttpServer;
   private stopping = false;
-  /** Set once stop() has drained the requests in flight when it began: later ones are refused. */
+  /** Set once stop() has drained the requests in flight when it began, or at drainMs: later
+   *  ones are refused. */
   private refusing = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
