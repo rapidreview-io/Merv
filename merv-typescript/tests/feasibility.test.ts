@@ -264,12 +264,16 @@ test('a design cannot be submitted without a feasibility statement that admits i
     await assert.rejects(f.submit(e), { code: 'experiment_infeasible', message });
     assert.equal((await experiments.get(f.owner, e.id)).workflow.state, 'planned');
   }
-  // A blocker only the owner can lift is asked of them, rather than ending the experiment.
+  // A blocker only the owner can lift is asked of them, rather than ending the experiment. The
+  // two ending actions are listed together, so it is said once, on mark_failed.
   const decision = await f.app.ctx.workflows.evaluate(f.owner, e.id);
   const action = (name: string) => decision.actions.find((item) => item.action === name)!;
   assert.match(action('submit_design').blockers[0]!.message, /ask with session\.ask_owner/);
-  for (const name of ['abandon', 'mark_failed'])
-    assert.match(action(name).instruction, /session\.ask_owner instead of ending the experiment/);
+  assert.match(
+    action('mark_failed').instruction,
+    /session\.ask_owner instead of ending the experiment/,
+  );
+  assert.doesNotMatch(action('abandon').instruction, /session\.ask_owner/);
 
   // A statement at another path replaces the refused one, so exactly one is current.
   const admitted = await f.attach(

@@ -413,7 +413,7 @@ export async function admit(
 /**
  * Ending cannot be undone. A planner without the compute its brief asked it to measure with
  * marked its project's only experiment failed within a minute (2026-09-30); such an obstacle is
- * the owner's to remove.
+ * the owner's to remove. Said once, on mark_failed: abandon is listed beside it in every state.
  */
 const OWNER_FIRST =
   'A worker stopped by what only the owner can change (compute or a provider not connected, a spending approval, a workspace fault) asks with session.ask_owner instead of ending the experiment.';
@@ -550,7 +550,7 @@ export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy
       action(
         'abandon',
         [...activeStates],
-        `End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained. ${OWNER_FIRST}`,
+        'End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained.',
       ),
       action(
         'mark_failed',
