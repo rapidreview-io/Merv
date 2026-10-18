@@ -730,6 +730,30 @@ export function useDismiss(
 }
 
 /**
+ * Where Escape is already someone else's: a guard's Cancel, the Agent's window (another
+ * conversation), a menu or a dialog that shuts itself with it, a field being typed in.
+ */
+const OWN_ESCAPE =
+  '.guard, .pi-dock, [role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], ' +
+  '[role="alertdialog"], dialog, input, textarea, select, [contenteditable="true"]';
+/** A sidebar beside the page (the Work map's, the admin's drawer) shuts on Escape anywhere else. */
+export function useSidebarEscape(open: boolean, shut: () => void) {
+  const closing = useRef(shut);
+  closing.current = shut;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if ((event.target as Element | null)?.closest?.(OWN_ESCAPE)) return;
+      event.preventDefault();
+      closing.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+}
+
+/**
  * A page's ⋯ menu: `menu(items)` is the control and the panel it opens, shut by Escape or a
  * press away (`claims` keeps that Escape from also leaving the record), and `item` one entry.
  */
@@ -819,7 +843,16 @@ export const Submit = ({
  * secure origin; without it nothing is drawn, and the text is still there to
  * select or to read from its hover title.
  */
-export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+export function CopyButton({
+  text,
+  label = 'Copy',
+  word,
+}: {
+  text: string;
+  label?: string;
+  /** The label itself, a quiet word, where the page draws no glyph. */
+  word?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -831,8 +864,8 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   return (
     <button
       type="button"
-      className="btn-icon btn-icon--inline"
-      aria-label={label}
+      className={word ? 'btn-text' : 'btn-icon btn-icon--inline'}
+      aria-label={word ? undefined : label}
       title={copied ? 'Copied' : label}
       onClick={() =>
         void clipboard.writeText(text).then(
@@ -841,7 +874,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
         )
       }
     >
-      {copied ? <Icon name="check" size={14} /> : <Icon name="copy" size={14} />}
+      {!word ? <Icon name={copied ? 'check' : 'copy'} size={14} /> : copied ? 'Copied' : label}
     </button>
   );
 }
