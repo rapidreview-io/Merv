@@ -14,7 +14,11 @@ import { pendingMerge, pinMerge, verifyResolution } from '../packages/code/src/p
 import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 
-async function fixture(t: TestContext, unrelated = false) {
+async function fixture(
+  t: TestContext,
+  unrelated = false,
+  files: { left?: Record<string, string>; right?: Record<string, string> } = {},
+) {
   // The writer lock is covered by the repository suite. Everything after that lock is real.
   t.mock.method(
     CodeRepositories.prototype as unknown as { acquire(): Promise<void> },
@@ -22,11 +26,11 @@ async function fixture(t: TestContext, unrelated = false) {
     async () => {},
   );
   const f = await writerFixture(t);
-  const left = f.source.commit({ 'README.md': 'left\n' });
+  const left = f.source.commit({ 'README.md': 'left\n', ...files.left });
   assert.equal((await f.deliver(f.source.bundle(left, [f.root]))).status, 'completed');
   if (unrelated) f.source.git('checkout', '--orphan', 'unrelated');
   else f.source.git('checkout', '--detach', f.root);
-  const right = f.source.commit({ 'README.md': 'right\n' });
+  const right = f.source.commit({ 'README.md': 'right\n', ...files.right });
   assert.equal(
     (await f.deliver(f.source.bundle(right, unrelated ? [] : [f.root]))).status,
     'completed',
@@ -223,6 +227,35 @@ test('pending second parent survives a handoff and the first merge joins the sav
       ),
     ),
     { code: 'state_constraint' },
+  );
+});
+
+test('completing keeps the incoming files the first parent ignores, and a commit keeps a forced path', async (t) => {
+  const f = await fixture(t, false, {
+    left: { '.gitignore': '.review/\n*.log\n' },
+    right: { '.review/exhibit.json': '{"kept":true}\n' },
+  });
+  await f.lease('ignored');
+  const machine = f.machine();
+  const work = await machine.prepare('ignored');
+  await f.event('session.workspace_attached', 'ignored');
+  await machine.command('ignored', f.left, 'start');
+  assert.equal(readFileSync(join(work.path, '.review/exhibit.json'), 'utf8'), '{"kept":true}\n');
+  writeFileSync(join(work.path, 'README.md'), 'Resolved both sides\n');
+  const completed = await machine.command('ignored', f.left, 'complete');
+  // The merge carries everything the second parent tracks; only the resolved file differs.
+  assert.equal(
+    git(work.path, ['diff', '--name-status', f.right, completed.receipt.headOid]),
+    'A\t.gitignore\nM\tREADME.md',
+  );
+  // A path the agent staged though ignored is committed, as `git commit` would.
+  writeFileSync(join(work.path, 'run.log'), 'evidence\n');
+  git(work.path, ['add', '-f', 'run.log']);
+  writeFileSync(join(work.path, 'other.log'), 'not staged\n');
+  const forced = await machine.command('ignored', completed.receipt.headOid);
+  assert.equal(
+    git(work.path, ['diff', '--name-status', completed.receipt.headOid, forced.receipt.headOid]),
+    'A\trun.log',
   );
 });
 
