@@ -143,7 +143,7 @@ export const sessionsToolsPlugin = {
         name: 'session.messages',
         conversation: 'never' as const,
         description:
-          "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; it takes no arguments. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
+          "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; call it without sessionId. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
         inputSchema: z
           .object({
