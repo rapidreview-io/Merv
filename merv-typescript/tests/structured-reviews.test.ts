@@ -248,15 +248,16 @@ test('findings that cite unpinned or repeated ids are refused naming every one, 
     const spliced = f.proof.id.slice(0, 20) + f.extra.id.slice(20);
     const [one, two] = [...valid.findings!].sort((a, b) => a.criterionNumber - b.criterionNumber);
     // Listed out of order, as a reviewer may; the refusal names them by criterion.
+    // Something other than an id is shown cut, as a long id is: never whole.
     const findings = [
-      { ...two!, evidenceIds: [spliced, 42] },
+      { ...two!, evidenceIds: [spliced, 42, { id: 'x'.repeat(5000) }] },
       { ...one!, evidenceIds: [f.proof.id, f.proof.id] },
     ];
     await assert.rejects(
       async () => await f.reviews.submit(f.reviewer, { ...valid, findings } as ReviewSubmit),
       {
         code: 'invalid_findings',
-        message: `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): criterion 1 cites "${f.proof.id}" twice; criterion 2 cites "${spliced}", which is not pinned, cites 42, which is not pinned`,
+        message: `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): criterion 1 cites "${f.proof.id}" twice; criterion 2 cites "${spliced}", which is not pinned, cites 42, which is not pinned, cites {"id":"${'x'.repeat(72)}…, which is not pinned`,
       },
     );
   } finally {
