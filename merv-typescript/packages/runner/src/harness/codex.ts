@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import { check } from '@merv/contracts';
 import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
-import { codexEvents } from '@merv/sessions/agent-stream';
+import { codexEvents, readLine } from '@merv/sessions/agent-stream';
 import type { SessionUsageReport } from '@merv/sessions/types';
 import type { RunnerProfile } from '../profiles.js';
 import {
@@ -43,6 +43,7 @@ export const codex: Harness = {
   lines: codexEvents,
   usage: (output, model) => spent(output, 'turn.completed', model),
   recorded: recordedTotal,
+  held: heldPrompts,
   conversationId: (output) =>
     firstId(
       output,
@@ -90,6 +91,31 @@ function recordedTotal(conversation: string, model?: string) {
     if (event.type === 'event_msg' && event.payload?.type === 'token_count')
       usage = counted(event.payload.info?.total_token_usage, [], model) ?? usage;
   return usage;
+}
+
+/**
+ * A rollout's user prompts (`response_item` messages) since its last `compacted` record: a
+ * compaction's replacement history keeps only a cut copy of each earlier prompt.
+ */
+function heldPrompts(conversation: string): string[] {
+  let prompts: string[] = [];
+  for (const line of conversation.split('\n')) {
+    if (!line.includes('"compacted"') && !line.includes('"role":"user"')) continue;
+    const event = readLine(line);
+    if (event?.type === 'compacted') prompts = [];
+    else if (
+      event?.type === 'response_item' &&
+      event.payload?.type === 'message' &&
+      event.payload.role === 'user' &&
+      Array.isArray(event.payload.content)
+    )
+      prompts.push(
+        event.payload.content
+          .map((part: { text?: unknown }) => (typeof part?.text === 'string' ? part.text : ''))
+          .join(''),
+      );
+  }
+  return prompts;
 }
 
 /** Before a local Codex launch: its own `CODEX_HOME`, holding a link to the machine's login. */

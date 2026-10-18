@@ -105,6 +105,12 @@ export interface Harness {
    * output reported anything had spent by its last model call.
    */
   recorded?(conversation: string, model?: string): SessionUsageReport | undefined;
+  /**
+   * The prompts a conversation file still holds whole, oldest first: those sent since its last
+   * compaction, which leaves the model a summary and cut copies of what came before. A harness
+   * without it is sent its frozen assignment whole on every visit.
+   */
+  held?(conversation: string): string[];
   /** The conversation id it printed first. */
   conversationId(output: string): string | undefined;
   /** What it prints when it finds no conversation to resume. */

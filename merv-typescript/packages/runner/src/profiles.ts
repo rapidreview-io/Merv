@@ -5,7 +5,14 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
+import {
+  canonical,
+  check,
+  effectiveWorkspace,
+  MervError,
+  sessionSecretPattern,
+  type WorkflowAssignment,
+} from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { label, live, platformName } from '@merv/sessions/rules';
 import { launcherOf } from './harness/index.js';
@@ -118,6 +125,8 @@ export interface LaunchRequest {
   shellEnvFile?: string;
   /** The conversation this launch continues, already restored where its harness finds it. */
   resume?: string;
+  /** The last whole copy of a frozen assignment that conversation still holds, as it was sent. */
+  held?: string;
 }
 
 /**
@@ -318,6 +327,82 @@ const searching = (web: boolean): string =>
 const workHost =
   'Your shell has git, curl, ssh, unzip, python3 (Debian’s 3.11, with pip and venv; python is the same), python3.12 and uv. A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit. Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>), which marks them ignored; list any other environment in .gitignore. /tmp is yours for temporary files and sockets (TMPDIR; put SSH ControlPath sockets there, since the workspace path is too long for one), and caches such as pip’s and Hugging Face’s go to /tmp/cache; /tmp is emptied when this visit ends. Keep /tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset and loses what no commit holds yet, so put environments, clones and unpacked data in an ignored workspace directory instead. Every visit to this work on this machine runs in this same directory, so it may hold files an earlier agent left, in no commit until one takes them in. If the work moves to another machine, only what was committed moves with it: environments, downloads, keys and other ignored files stay behind.';
 
+/** The line a whole copy of the frozen assignment follows. */
+const FROZEN = 'Frozen assignment:';
+const continued =
+  'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).';
+/** What a context block a resumed conversation holds unchanged is sent in place of its body. */
+const UNCHANGED = '(unchanged: as in the copy of this assignment earlier in this conversation)';
+/** An item Context Builder embeds: a `###` heading over a body fenced longer than any run in it. */
+const contextBlock = /\n### ([^\n]*)\n(~{3,})\n([\s\S]*?)\n\2\n/g;
+
+/** The last whole copy of a frozen assignment these prompts hold: the line after its header. */
+export function heldAssignment(prompts: readonly string[]): string | undefined {
+  for (const prompt of [...prompts].reverse()) {
+    const at = prompt.lastIndexOf(`\n${FROZEN}\n`);
+    if (at < 0) continue;
+    const start = at + FROZEN.length + 2,
+      end = prompt.indexOf('\n', start);
+    return prompt.slice(start, end < 0 ? undefined : end);
+  }
+  return undefined;
+}
+/** An assignment as visits compare it: without the registration generation, an opaque fence
+ *  each deploy renews that no worker reads. */
+const comparable = (assignment: WorkflowAssignment) =>
+  canonical({
+    ...assignment,
+    execution: { ...assignment.execution, registrationId: undefined },
+  });
+/**
+ * What a launch is sent of its frozen assignment, and the line a resumed one starts with. Every
+ * visit was sent it whole, though its conversation held it already: 20–135K characters, often
+ * the same bytes, that started visits near the window and were compacted away with the feedback
+ * they brought. Where the conversation still holds a whole copy (`held`), an assignment that has
+ * not changed is said to be the same, and a changed one is sent with each context block that
+ * copy holds as it is cut to a line. Anything else is sent whole.
+ */
+function frozen(assignment: WorkflowAssignment, held?: string): { first: string; text: string[] } {
+  const whole = { first: continued, text: [FROZEN, JSON.stringify(assignment)] };
+  let earlier: WorkflowAssignment;
+  try {
+    earlier = JSON.parse(held ?? '') as WorkflowAssignment;
+    if (!earlier || typeof earlier !== 'object' || Array.isArray(earlier)) return whole;
+    if (comparable(earlier) === comparable(assignment))
+      return {
+        first:
+          'You are continuing your earlier work on this unit, under the same assignment: nothing in it has changed since the copy earlier in this conversation.',
+        text: [
+          `${FROZEN} unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands. workflow.assignment returns it whole.`,
+        ],
+      };
+  } catch {
+    return whole;
+  }
+  const prompt = assignment.context?.prompt,
+    before = earlier.context?.prompt;
+  if (typeof prompt !== 'string' || typeof before !== 'string') return whole;
+  const kept = new Set<string>();
+  for (const [, heading, , body] of before.matchAll(contextBlock)) kept.add(`${heading}\n${body}`);
+  let cut = 0;
+  const changed = prompt.replace(
+    contextBlock,
+    (block, heading: string, fence: string, body: string) => {
+      if (body.length <= UNCHANGED.length || !kept.has(`${heading}\n${body}`)) return block;
+      cut++;
+      return `\n### ${heading}\n${fence}\n${UNCHANGED}\n${fence}\n`;
+    },
+  );
+  if (!cut) return whole;
+  return {
+    first: continued,
+    text: [
+      `Frozen assignment, as it stands now: each context block whose body reads only "${UNCHANGED}" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy. workflow.assignment returns it whole.`,
+      JSON.stringify({ ...assignment, context: { ...assignment.context!, prompt: changed } }),
+    ],
+  };
+}
+
 /** How long a launch whose own handoff closed its session may take to end by itself. */
 export const handoffGraceMs = (profile: RunnerProfile) => launcherOf(profile).handoffGraceMs;
 
@@ -394,13 +479,11 @@ export function buildLaunch(
     'invalid_runner_launch',
     'An inquiry visit runs only on the conversation it asks',
   );
+  // An inquiry visit's own prompt, Sessions', says what it is, and it is sent its question whole.
+  const resumed = request.resume !== undefined && !inquiry;
+  const assignment = frozen(session.assignment, resumed ? request.held : undefined);
   const stdin = [
-    // An inquiry visit's own prompt, Sessions', says what it is.
-    ...(request.resume && !inquiry
-      ? [
-          'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
-        ]
-      : []),
+    ...(resumed ? [assignment.first] : []),
     request.prompt,
     ...(session.kind === 'work' &&
     request.connections?.some((connection) => connection.name === 'sandboxes')
@@ -429,8 +512,7 @@ export function buildLaunch(
     session.execution.state === 'experiment_review'
       ? [`Review checkout: ${request.cwd}`]
       : []),
-    'Frozen assignment:',
-    JSON.stringify(session.assignment),
+    ...assignment.text,
     '',
   ].join('\n');
   // Bearers travel by name, from the runner's own environment, never as an argument.

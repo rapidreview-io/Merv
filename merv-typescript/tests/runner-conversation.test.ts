@@ -30,7 +30,11 @@ import { launchCodexHome } from '../packages/runner/src/harness/codex.js';
 import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
 import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
 import { since } from '../packages/runner/src/harness/shared.js';
-import { buildLaunch, type RunnerProfile } from '../packages/runner/src/profiles.js';
+import {
+  buildLaunch,
+  heldAssignment,
+  type RunnerProfile,
+} from '../packages/runner/src/profiles.js';
 import {
   launchId,
   machine,
@@ -272,9 +276,10 @@ fs.appendFileSync(file, JSON.stringify({ type: 'user', first: input.split('\\n')
   return path;
 };
 /**
- * A stand-in `codex exec --json`: resumes the named thread's rollout or starts one, spends 1000
- * input and 10 output tokens, records the thread's running total there as Codex does, and prints
- * it on `turn.completed`, unless `stop-mid-turn` says its lease ran out first.
+ * A stand-in `codex exec --json`: resumes the named thread's rollout or starts one, records its
+ * prompt there and in `prompts.jsonl`, spends 1000 input and 10 output tokens, records the
+ * thread's running total there as Codex does, and prints it on `turn.completed`, unless
+ * `stop-mid-turn` says its lease ran out first.
  */
 const codexHarnessScript = (root: string) => {
   const path = join(root, 'codex-stand-in.cjs');
@@ -283,7 +288,8 @@ const codexHarnessScript = (root: string) => {
     `#!${process.execPath}
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const args = process.argv.slice(2), at = args.indexOf('resume'), home = process.env.CODEX_HOME;
-fs.readFileSync(0, 'utf8');
+const input = fs.readFileSync(0, 'utf8');
+fs.appendFileSync(${JSON.stringify(join(root, 'prompts.jsonl'))}, JSON.stringify(input) + '\\n');
 const find = (dir, depth, id) => {
   for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
     const full = path.join(dir, entry.name);
@@ -305,6 +311,7 @@ if (at >= 0) {
 }
 console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
 console.log(JSON.stringify({ type: 'turn.started' }));
+fs.appendFileSync(file, JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: input }] } }) + '\\n');
 total = { input_tokens: total.input_tokens + 1000, cached_input_tokens: total.cached_input_tokens + 900, output_tokens: total.output_tokens + 10 };
 fs.appendFileSync(file, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: total } } }) + '\\n');
 if (fs.existsSync(${JSON.stringify(join(root, 'stop-mid-turn'))})) process.exit(0);
@@ -583,4 +590,157 @@ test('a Codex launch stopped mid-turn reports what its conversation recorded by 
       sessionId,
     );
   assert.equal(settled(f, 'session_fresh').carried, undefined);
+});
+
+/** A context as Context Builder renders one: sections, and items embedded under fences. */
+const rendered = (feedback: string) => {
+  const block = (heading: string, body: string) => `\n### ${heading}\n~~~\n${body}\n~~~\n`;
+  return `Do the work.\n\nAssignment: {"id":"instance_argv"}\n\n## Paper${block('paper:methods — Methods (text, 600 characters)', 'M'.repeat(600))}${block('paper:empty — Empty (text, 0 characters)', '')}\n## Previous reviews${block('feedback:instance_argv — Previous reviews (text)', feedback)}\n## Expected output\nSay what changed.\n`;
+};
+const visit = (feedback: string, registrationId: string) => {
+  const base = offer('argv');
+  return {
+    ...base,
+    continuity: { key: 'key' },
+    assignment: {
+      ...base.assignment,
+      execution: { readOnly: false, registrationId, tools: [] },
+      context: { hash: 'h', prompt: rendered(feedback), sources: [], omitted: [] },
+    },
+  } as unknown as Session;
+};
+const sent = (session: Session, held?: string, resume: string | null = id) =>
+  buildLaunch(
+    codex,
+    {
+      session,
+      prompt: 'Worker prompt.',
+      secret: bearer,
+      mcpUrl: 'http://127.0.0.1:9/mcp',
+      cwd: '/tmp',
+      shellEnvFile: '/tmp/shell-env.sh',
+      ...(resume && { resume }),
+      ...(held !== undefined && { held }),
+    },
+    { PATH: '/usr/bin' },
+  ).stdin;
+
+test('a resumed launch is sent only what changed of the assignment its conversation holds whole', () => {
+  // Prod 2026-10-06..13: every resume sent the whole frozen assignment again, 20-135K characters
+  // and often the same bytes, into a conversation that held it already.
+  const earlier = visit('Round one: spell out RLCD.', 'execution_a');
+  const fresh = sent(earlier, undefined, null);
+  const copy = heldAssignment([fresh])!;
+  assert.equal(copy, JSON.stringify(earlier.assignment));
+  // The same assignment, but for the registration a deploy renewed: a line, not the assignment.
+  const same = sent(visit('Round one: spell out RLCD.', 'execution_b'), copy);
+  assert.ok(
+    same.startsWith(
+      'You are continuing your earlier work on this unit, under the same assignment: nothing in it has changed since the copy earlier in this conversation.\nWorker prompt.',
+    ),
+  );
+  assert.match(
+    same,
+    /\nFrozen assignment: unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands\. workflow\.assignment returns it whole\.\n$/,
+  );
+  assert.ok(!same.includes('MMMM') && !same.includes('Round one'));
+  assert.ok(same.length < 2_000, `${same.length} characters`);
+  // Returned with new feedback: what the conversation holds as it is is cut to a line.
+  const returned = visit('Round two: also cite the source.', 'execution_b');
+  const changed = sent(returned, copy);
+  assert.ok(changed.startsWith(`${continued}\nWorker prompt.`));
+  const [header, json] = changed.slice(changed.indexOf('\nFrozen assignment, ') + 1).split('\n');
+  assert.match(
+    header!,
+    /^Frozen assignment, as it stands now: each context block whose body reads only "\(unchanged: as in the copy of this assignment earlier in this conversation\)" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy\./,
+  );
+  const now = JSON.parse(json!);
+  assert.deepEqual({ ...now, context: null }, { ...returned.assignment, context: null });
+  assert.equal(
+    now.context.prompt,
+    rendered('Round two: also cite the source.').replace(
+      'M'.repeat(600),
+      '(unchanged: as in the copy of this assignment earlier in this conversation)',
+    ),
+  );
+  // Neither is a whole copy, so a later visit is compared with the one the conversation holds.
+  assert.equal(heldAssignment([fresh, same, changed]), copy);
+  // Whole, as before: nothing held, a copy that does not read, nothing it holds unchanged, or
+  // a launch that resumes nothing.
+  const whole = `\nFrozen assignment:\n${JSON.stringify(returned.assignment)}\n`;
+  const other = { ...returned, assignment: { ...returned.assignment, context: null } } as Session;
+  for (const launch of [
+    sent(returned),
+    sent(returned, 'not json'),
+    sent(returned, JSON.stringify(other.assignment)),
+    sent(returned, copy, null),
+  ])
+    assert.ok(launch.endsWith(whole));
+  assert.ok(sent(returned).startsWith(`${continued}\n`));
+});
+
+test('a Codex rollout holds whole only the prompts sent since its last compaction', () => {
+  const user = (text: string) =>
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+  const rollout = [
+    user('first'),
+    // A compaction keeps cut copies of earlier prompts in its replacement history.
+    JSON.stringify({
+      type: 'compacted',
+      payload: {
+        message: 'summary',
+        replacement_history: [{ type: 'message', role: 'user', content: [{ text: 'fir' }] }],
+      },
+    }),
+    user('second'),
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ text: '"role":"user"' }] },
+    }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'second' } }),
+    user('third'),
+  ].join('\n');
+  assert.deepEqual(codexHarness.held!(rollout), ['second', 'third']);
+  assert.deepEqual(codexHarness.held!(`${user('only')}\n`), ['only']);
+  // Claude Code's compaction is not read: its launches are sent the assignment whole.
+  assert.equal(claudeHarness.held, undefined);
+});
+
+test('a resumed Codex launch whose assignment has not changed is told so, unless a compaction came since', async (t) => {
+  const prompt = (text: string) =>
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+  const assignment = JSON.stringify(offer('continued').assignment);
+  const earlier = `${prompt(`Worker prompt.\nFrozen assignment:\n${assignment}\n`)}\n`;
+  for (const [conversation, unchanged] of [
+    [earlier, true],
+    [
+      `${earlier}${JSON.stringify({ type: 'compacted', payload: { message: 'summary' } })}\n`,
+      false,
+    ],
+  ] as const) {
+    const { f, work, root } = continuing(
+      t,
+      Buffer.from(conversation),
+      undefined,
+      true,
+      ['continued'],
+      'codex',
+    );
+    const runner = f.make();
+    await runner.start();
+    await until(runner, () => settled(f, work.id).conversation?.state === 'uploaded', 'delivery');
+    const [stdin] = readFileSync(join(root, 'prompts.jsonl'), 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as string);
+    assert.equal(/\nFrozen assignment:\n\{.*"brief":"Do the work\."/.test(stdin!), !unchanged);
+    assert.equal(stdin!.includes('\nFrozen assignment: unchanged since the copy'), unchanged);
+    await runner.stop();
+  }
 });

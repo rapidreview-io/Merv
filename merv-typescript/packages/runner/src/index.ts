@@ -54,6 +54,7 @@ import { claudeLogUsage, claudeTally, type ClaudeTally } from './harness/claude.
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
+  heldAssignment,
   sealed,
   inquiring,
   collectRepositorySkillPaths,
@@ -756,7 +757,7 @@ export class MachineRunner implements Runner {
               ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
               : {}),
             shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
-            ...(resume && { resume }),
+            ...(resume && { resume: resume.id, ...(resume.held && { held: resume.held }) }),
           },
           home ? { ...process.env, ...home } : process.env,
         );
@@ -1087,7 +1088,7 @@ export class MachineRunner implements Runner {
     profile: RunnerProfile,
     session: Session,
     cwd: string,
-  ): Promise<string | undefined> {
+  ): Promise<{ id: string; held?: string } | undefined> {
     const resume = session.continuity?.resume;
     if (!resume) return undefined;
     try {
@@ -1111,12 +1112,22 @@ export class MachineRunner implements Runner {
         bytes.subarray(-recordedTail).toString('utf8'),
       );
       this.save(id, { resumed: resume.conversationId, ...(carried && { carried }) });
-      return resume.conversationId;
+      return { id: resume.conversationId, held: this.held(profile, session, bytes) };
     } catch (error) {
       const code = diagnostic(error);
       this.save(id, { resumed: { unavailable: code } });
       this.lastError = 'resume_unavailable';
       process.stderr.write(`merv-runner: launch ${id} resume unavailable: ${code}\n`);
+      return undefined;
+    }
+  }
+  /** What a restored conversation still holds of a frozen assignment, so a resumed launch is
+   *  sent only what changed; nothing, and it is sent whole, where that cannot be read. */
+  private held(profile: RunnerProfile, session: Session, bytes: Buffer): string | undefined {
+    if (inquiring(session)) return undefined;
+    try {
+      return heldAssignment(harnessOf(profile)?.held?.(bytes.toString('utf8')) ?? []);
+    } catch {
       return undefined;
     }
   }
