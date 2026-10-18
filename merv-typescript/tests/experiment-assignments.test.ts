@@ -804,6 +804,11 @@ test('results review references JSON observations and the generated exhibit with
     ),
   );
   assert.doesNotMatch(packet.context!.prompt, /"resultFiles":/);
+  // It says what the exhibit holds, so a reviewer checks its sources instead of paging it whole.
+  assert.match(
+    packet.context!.prompt,
+    /exhibit experiments\/[^ ]+\/metrics_exhibit\.json: each JSON result's data exactly as attached, in path order, with its artifactId and sha256 under source/,
+  );
   assert.ok(packet.context!.sources.some((artifact) => artifact.id === exhibit.artifactId));
   assert.equal(JSON.parse(exhibitRead.content).resultFiles[0].data.coverage, 0.9);
 });

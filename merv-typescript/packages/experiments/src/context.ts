@@ -360,7 +360,14 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         priority,
         embed: 'never',
         ...(record
-          ? { note: `${record.role} ${record.path}` }
+          ? {
+              // A large exhibit repeats every result's data; a reviewer paged one of 795 KB
+              // in 98 reads (2026-10-13) to check what its sources already say.
+              note:
+                id === exhibit
+                  ? `${record.role} ${record.path}: each JSON result's data exactly as attached, in path order, with its artifactId and sha256 under source; check that mapping against the result evidence rather than reading this file whole`
+                  : `${record.role} ${record.path}`,
+            }
           : figures.has(id)
             ? { note: 'figure' }
             : {}),
