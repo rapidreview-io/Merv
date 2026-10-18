@@ -78,7 +78,7 @@ export const artifactToolsPlugin = {
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Give a requestId of your own (1-128 characters) so a retry after an uncertain result, such as a timeout or an HTTP 502, is safe: the same call with the same requestId returns the artifact already stored instead of a second copy, and other title, mediaType or content under it is refused.',
+      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Pass a requestId so a retry after an uncertain result (a timeout, an HTTP 502) is safe: the same call returns the artifact already stored.',
       z
         .object({
           title: z.string().min(1).max(300),
@@ -135,7 +135,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.get',
-      'Read immutable artifact metadata. For a collection, files lists its members (name, size and SHA-256) in the collection’s order, and fileCount says how many it has. An agent gets 100 members unless it gives a limit (1-1,000); offset skips that many, and when more follow, nextOffset is the offset of the next page. prefix keeps only the members whose names start with it, such as "run-a/", and matchCount says how many do.',
+      'Read immutable artifact metadata. For a collection, files lists its members (name, size, SHA-256) in order: limit of them (default 100 for an agent) from offset; fileCount is the total and nextOffset is set when more follow. prefix keeps names starting with it, such as "run-a/"; matchCount counts them.',
       z
         .object({
           artifactId: z.string().min(1),
