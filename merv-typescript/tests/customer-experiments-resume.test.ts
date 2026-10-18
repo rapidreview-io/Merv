@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CustomerService } from '../packages/customer-experiments/src/service.js';
 import type { RequestRecord } from '../packages/customer-experiments/src/store.js';
+import type { PiProfile } from '@merv/pi/types';
 
 /** A paid external run whose worker stopped to ask; Pi's responder may still be on it. */
 function harness(
@@ -15,9 +16,19 @@ function harness(
     resumed: [] as string[],
   } as unknown as RequestRecord;
   const sent: { conversation: string; text: string; profile: string }[] = [];
+  const bound: { id: string; version: number }[] = [];
+  const profiles: PiProfile[] = [];
   const pi = {
-    async createProfiled(_caller: unknown, input: { requestId: string; profile: { id: string } }) {
+    async createProfiled(
+      _caller: unknown,
+      input: { requestId: string; profile: { id: string; version: number } },
+    ) {
+      bound.push(input.profile);
       return { id: `pic_${input.requestId}`, profile: input.profile.id };
+    },
+    registerProfile(profile: PiProfile) {
+      profiles.push(profile);
+      return () => {};
     },
     async send(_caller: unknown, id: string, input: { text: string }) {
       sent.push({ conversation: id, text: input.text, profile: 'customer-experiments-healer' });
@@ -54,14 +65,14 @@ function harness(
     store as never,
     domain as never,
     { caller: async () => ({ projectId: 'project_1' }) } as never,
-    {} as never,
+    { registerFileProvider: () => () => {} } as never,
     pi as never,
     undefined,
     undefined,
     undefined,
     { publicOrigin: 'https://merv.example', sponsor: { issuer: 'i', subject: 's' } } as never,
   );
-  return { service, sent, record, exp };
+  return { service, sent, record, exp, bound, profiles };
 }
 
 test('a stalled external run gets a healer once Pi has stopped investigating', async () => {
@@ -82,6 +93,10 @@ test('a stalled external run gets a healer once Pi has stopped investigating', a
   assert.match(due.sent[0]!.text, /Thread: thr_1/);
   assert.match(due.sent[0]!.text, /The report tool refuses to fill Inquiry\./);
   assert.deepEqual(due.record.resumed, ['q_1']);
+  assert.deepEqual(
+    due.bound.map((p) => [p.id, p.version]),
+    [['customer-experiments-healer', 2]],
+  );
 
   const spent = harness({ askedMinutesAgo: 30 });
   spent.record.resumed = ['a', 'b', 'c'];
@@ -100,4 +115,26 @@ test('a stalled external run gets a healer once Pi has stopped investigating', a
   const quiet = harness(null);
   await quiet.service.reconcile();
   assert.equal(quiet.sent.length, 0);
+});
+
+test('a healer leaves a Merv defect that blocks the results open for an operator', async () => {
+  const { service, profiles } = harness(null);
+  await service.registerIntake({ register: () => () => {} } as never);
+  const healers = profiles.filter((p) => p.id === 'customer-experiments-healer');
+  assert.deepEqual(
+    healers.map((p) => p.version),
+    [1, 2],
+  );
+  const [first, current] = healers;
+  // Version 1 stays as its conversations were bound to it.
+  assert.match(first!.instructions, /rent on Modal first, then Lambda/);
+  assert.doesNotMatch(first!.instructions, /leave the question open/);
+  // The current healer names no fixed provider order and has a way out it lacked: a defect in
+  // Merv that blocks the results waits on Needs you instead of a workaround that cannot work.
+  assert.doesNotMatch(current!.instructions, /Modal first/);
+  assert.match(current!.instructions, /maximum lifetime/);
+  assert.match(current!.instructions, /do not answer: leave the question open/);
+  assert.match(current!.instructions, /Needs you/);
+  assert.match(current!.instructions, /\[\[write: …\]\] placeholder is the worker's to write/);
+  assert.deepEqual(current!.tools, first!.tools);
 });
