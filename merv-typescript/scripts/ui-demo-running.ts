@@ -135,7 +135,7 @@ export function mcp(url: string, token: string): Tool {
 }
 
 /** A runner's own request, made with the key it was registered under. */
-async function post(url: string, token: string, path: string, body: unknown): Promise<void> {
+export async function post(url: string, token: string, path: string, body: unknown): Promise<void> {
   const response = await fetch(`${url}${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -635,9 +635,9 @@ export async function seedRunning(
       '| Mid | 1.0 |',
       '| High | 3.0 |',
       '',
-      '**Measure:** the step where validation accuracy crosses 95%.',
-      '**Success:** the step falls monotonically with decay.',
-      '**Budget:** 3 GPU-hours.',
+      '- Primary measure: the step where validation accuracy crosses 95%.',
+      '- Success: the step falls monotonically with decay.',
+      '- Budget: 3 GPU-hours.',
     ].join('\n'),
     mediaType: 'text/markdown',
   });
@@ -725,48 +725,74 @@ export async function seedRunning(
     JSON.stringify({ grokking_step: { '0.3': 14200, '1.0': 9810, '3.0': 6050 } }),
     'application/json',
   );
-  const decayReport = await made(
-    'Report: decay-sweep-p97',
-    [
-      '# Summary',
-      'Yes: the grokking step falls as weight decay grows, from 14,200 at 0.3 to 6,050 at 3.0.',
-      'The fall is monotonic, so stronger decay makes the network grok sooner at p = 97.',
-      '',
-      '# Results',
-      '| Arm | Weight decay | Grokking step | 95% interval |',
-      '|---|---:|---:|---:|',
-      '| Low | 0.3 | 14,200 | ± 900 |',
-      '| Mid | 1.0 | 9,810 | ± 700 |',
-      '| High | 3.0 | 6,050 | ± 500 |',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  D[p = 97 table] --> A[decay 0.3: 14,200]',
-      '  D --> B[decay 1.0: 9,810]',
-      '  D --> C[decay 3.0: 6,050]',
-      '  A & B & C --> X{Falls with decay? Yes}',
-      '```',
-      '',
-      'Evidence: metrics_exhibit.json, results.json.',
-      '',
-      '# Deviations from plan',
-      'None.',
-      '',
-      '# Conclusion',
-      '- Stronger decay brings grokking forward.',
-      '- One seed per arm: the intervals are run-to-run estimates.',
-    ].join('\n'),
-    'text/markdown',
+  // The report is written with the report tools and rendered final, as the executor's handoff
+  // says; the rendered Markdown source is what the attempt attaches as its report.
+  const reports = ctx.reports!;
+  const subject = { subjectKind: 'experiment' as const, subjectId: decay.id };
+  const draft = await work.run(decayRun, 'report.open', subject, (caller, input) =>
+    reports.open(caller, input),
   );
-  for (const [role, artifact, path] of [
-    ['result', decayResult, 'results.json'],
-    ['report', decayReport, 'report.md'],
+  const written = await work.run(
+    decayRun,
+    'report.write',
+    {
+      ...subject,
+      expectedRevision: draft.revision,
+      requestId: 'demo-running-decay-report-write',
+      frontMatter:
+        'id: "decay-sweep-p97"\ndate: "2026-10-16"\ncriteria:\n  - {metric: "Step at decay 0.3", bar: 20000}\n  - {metric: "Step at decay 1.0", bar: 20000}\n  - {metric: "Step at decay 3.0", bar: 20000}',
+      sections: [
+        {
+          name: 'Result',
+          content:
+            'Yes: the grokking step falls with decay, from 14,200 to 6,050.\n\n```chart\n{"id": "results", "message": "Stronger decay groks sooner.", "data": {"values": [{"metric": "Step at decay 0.3", "delta": 14200, "lo": 13300, "hi": 15100, "status": "met", "bar": 20000}, {"metric": "Step at decay 1.0", "delta": 9810, "lo": 9110, "hi": 10510, "status": "met", "bar": 20000}, {"metric": "Step at decay 3.0", "delta": 6050, "lo": 5550, "hi": 6550, "status": "met", "bar": 20000}]}, "y": {"field": "metric"}, "x": {"title": "Grokking step (bar: grokked within 20k)", "domain": [0, 20000]}, "layer": [{"mark": "rule", "x": "lo", "x2": "hi", "size": "l", "emphasis": "low", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "point", "x": "delta", "size": "l", "color": {"field": "status", "map": {"met": "result", "not met": "warn"}}}, {"mark": "tick", "x": "bar", "style": "dashed", "size": "s"}]}\n```',
+        },
+        {
+          name: 'Method',
+          content:
+            'One-layer transformer on modular addition at p = 97, three weight decays, one seed each; the grokking step is the first with held-out accuracy at or over 95%.',
+        },
+        { name: 'Execution', content: 'Three runs on lab-gpu-01 in 1 h 40 m: 1.7 GPU-hours.' },
+        {
+          name: 'Data',
+          content:
+            '| Dataset | Use | Train / test |\n|---|---|---|\n| (a + b) mod 97 | all arms | 4.7k / 4.7k |',
+        },
+        { name: 'Verification', content: 'Crossing steps were recomputed from the run logs.' },
+        {
+          name: 'Limitations',
+          content: '- One seed per arm: the intervals are run-to-run estimates.',
+        },
+      ],
+    },
+    (caller, input) => reports.write(caller, input as never),
+  );
+  await work.run(
+    decayRun,
+    'report.approve_visual',
+    {
+      ...subject,
+      chartId: 'results',
+      expectedRevision: written.revision,
+      requestId: 'demo-running-decay-report-approve',
+    },
+    (caller, input) => reports.approveVisual(caller, input),
+  );
+  const rendered = await work.run(
+    decayRun,
+    'report.render',
+    { ...subject, final: true, requestId: 'demo-running-decay-report-render' },
+    (caller, input) => reports.render(caller, input),
+  );
+  for (const [role, artifactId, path] of [
+    ['result', decayResult.id, 'results.json'],
+    ['report', rendered.final!.sourceArtifactId, 'report.md'],
   ] as const)
     await work.run(
       decayRun,
       'experiment.attach',
       {
-        artifactId: artifact.id,
+        artifactId,
         role,
         path,
         attemptIndex: decay.attempt.index,

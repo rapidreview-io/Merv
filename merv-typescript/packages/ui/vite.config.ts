@@ -10,6 +10,9 @@ import type { Plugin } from 'vite';
 // customer-experiments serves at /customer-experiments/r/<id> through ui.document('customer').
 // The Host header is kept (no changeOrigin) so the API's same-origin check sees Origin === http://<host>.
 const api = process.env.MERV_API || 'http://127.0.0.1:3081';
+// A remote API behind TLS (MERV_API=https://…) needs its own host name on the wire, and then the
+// Origin it checks is its own: Vite rewrites both, so the dev UI can read a hosted server.
+const remote = api.startsWith('https:') ? { changeOrigin: true, headers: { origin: api } } : {};
 const proxy = Object.fromEntries(
   [
     '/tools',
@@ -24,7 +27,7 @@ const proxy = Object.fromEntries(
     '/code',
     '/pi',
     '/customer-experiments',
-  ].map((path) => [path, { target: api, ...(path === '/sbx' ? { ws: true } : {}) }]),
+  ].map((path) => [path, { target: api, ...remote, ...(path === '/sbx' ? { ws: true } : {}) }]),
 );
 
 /**

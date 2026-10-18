@@ -352,31 +352,10 @@ function Conversation({
     const first = kept.data;
     if (!first?.next) return;
     const parts: ThreadConversation[] = [];
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const read = (next: string, failures: number): void =>
-      void accountRequest<ThreadConversation>(`${path}?before=${encodeURIComponent(next)}`, {
-        scoped: true,
-      }).then(
-        (part) => {
-          if (stopped) return;
-          parts.push(part);
-          setOlder({ first, parts: [...parts] });
-          if (part.next) read(part.next, 0);
-        },
-        ({ status }: ApiError) => {
-          if (!stopped && (status === 0 || status === 429 || status >= 500))
-            timer = setTimeout(
-              () => read(next, failures + 1),
-              Math.min(30_000, 1000 * 2 ** failures),
-            );
-        },
-      );
-    read(first.next, 0);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
+    return readParts(path, first.next, (part) => {
+      parts.push(part);
+      setOlder({ first, parts: [...parts] });
+    });
   }, [kept.data, path]);
   const parts = useMemo(
     () => (kept.data ? [kept.data, ...(older?.first === kept.data ? older.parts : [])] : []),
@@ -420,6 +399,44 @@ function Conversation({
       empty={reads ? 'Nothing said yet.' : ''}
     />
   );
+}
+
+/**
+ * Reads a conversation part after part from `from` (its first part with none), each handed to
+ * `onPart` as it comes. A part the server did not answer (away, failing or busy) is asked again
+ * from there, 1 s later doubling to 30 s; any other refusal ends the reading. The returned
+ * function stops it.
+ */
+export function readParts(
+  path: string,
+  from: string | undefined,
+  onPart: (part: ThreadConversation) => void,
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = (next: string | undefined, failures: number): void =>
+    void accountRequest<ThreadConversation>(
+      next === undefined ? path : `${path}?before=${encodeURIComponent(next)}`,
+      { scoped: true },
+    ).then(
+      (part) => {
+        if (stopped) return;
+        onPart(part);
+        if (part.next) read(part.next, 0);
+      },
+      ({ status }: ApiError) => {
+        if (!stopped && (status === 0 || status === 429 || status >= 500))
+          timer = setTimeout(
+            () => read(next, failures + 1),
+            Math.min(30_000, 1000 * 2 ** failures),
+          );
+      },
+    );
+  read(from, 0);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
 }
 
 const count = (value: number) => value.toLocaleString();

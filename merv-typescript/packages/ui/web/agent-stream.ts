@@ -13,6 +13,8 @@ import { useEventStream } from './event-stream';
 interface Written {
   key: string;
   at: string;
+  /** When its last piece, or its result, arrived. */
+  until: string;
   text: string;
   done: boolean;
   cut: number;
@@ -24,6 +26,7 @@ export type AgentBlock =
       kind: 'tool';
       key: string;
       at: string;
+      until: string;
       /** Absent where only the result arrived: its call came before what the stream kept. */
       name?: string;
       input?: string;
@@ -63,21 +66,24 @@ export function mergeEvents(timeline: AgentTimeline, events: AgentStreamEvent[])
       const was =
         before?.kind === event.kind
           ? before
-          : { kind: event.kind, key, at, text: '', done: false, cut: 0 };
+          : { kind: event.kind, key, at, until: at, text: '', done: false, cut: 0 };
       next = {
         ...was,
+        until: at,
         text: was.text + event.delta,
         done: was.done || !!event.done,
         cut: was.cut + (event.cut ?? 0),
       };
     } else if (event.kind === 'status') next = { kind: 'status', key, at, text: event.text };
     else {
-      const tool = before?.kind === 'tool' ? before : { kind: 'tool' as const, key, at, cut: 0 };
+      const tool =
+        before?.kind === 'tool' ? before : { kind: 'tool' as const, key, at, until: at, cut: 0 };
       next =
         event.kind === 'tool_call'
           ? { ...tool, name: event.name, input: event.input, cut: event.cut ?? 0 }
           : {
               ...tool,
+              until: at,
               result: { output: event.output, error: !!event.error, cut: event.cut ?? 0 },
             };
     }
