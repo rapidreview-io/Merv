@@ -170,6 +170,7 @@ const capabilities: Record<string, readonly string[]> = {
     'sbxObjects',
     'sbxAccounts',
     'sbxJobs',
+    'sbxRegistry',
   ],
   // Each verified person's own Sandboxes account, which Sandboxes keeps with its credits.
   sandboxesPeople: ['scope', 'sbxAuth', 'sbxAccounts', 'sbxBilling', 'sbxProviders'],

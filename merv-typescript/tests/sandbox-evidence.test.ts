@@ -509,6 +509,7 @@ test('the integration projection backfills startup and reconciles an interval pa
   } as unknown as Context['domainEvents']);
   ctx.provide('sessions', {
     registerLaunchConnections: () => () => {},
+    computeWaits: { register: () => () => {} },
   } as unknown as Context['sessions']);
   ctx.provide('sbxMerv', {} as Context['sbxMerv']);
   ctx.provide('sbxPipelines', f.pipelines as Context['sbxPipelines']);
@@ -517,6 +518,7 @@ test('the integration projection backfills startup and reconciles an interval pa
   ctx.provide('sbxJobs', {
     listPage: async () => ({ jobs: [], next: null }),
   } as unknown as Context['sbxJobs']);
+  ctx.provide('sbxRegistry', {} as Context['sbxRegistry']);
   const plugin = ctx.plugin(sandboxIntegrationPlugin);
   try {
     await plugin.await();

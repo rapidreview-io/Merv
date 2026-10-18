@@ -261,6 +261,33 @@ test('returning to an epoch retires only the old run and preserves its successor
   );
 });
 
+test('a visit that ends to wait for its compute retires only its own connection: its attempt, jobs and machines go on', async (t) => {
+  const f = await fixture(t);
+  const waiting = await f.session();
+  await f.runs.launchConnections(waiting);
+  // Its close (awaited_compute) is a session.closed like any other, and its work stays at its
+  // revision and attempt while it waits.
+  await f.close(waiting.id);
+  await f.runs.reconcile();
+  assert.deepEqual(
+    await f.state.read((sql) => sql.all('SELECT run_ref,target,retired FROM sandbox_run_intents')),
+    [{ run_ref: waiting.id, target: 1, retired: 1 }],
+  );
+  assert.deepEqual(
+    f.retired.map((call) => call.kind),
+    ['run'],
+  );
+  // The visit it wakes takes a connection of its own to the same attempt.
+  const woken = await f.session('run-2');
+  await f.runs.launchConnections(woken);
+  await f.runs.reconcile();
+  assert.deepEqual(
+    [...f.tokens.values()].map((run) => [run.runRef, run.attemptRef]),
+    [[woken.id, 'attempt-1']],
+  );
+  assert.equal(f.retired.length, 1);
+});
+
 test('crash recovery cleans the recorded scope after relinking and retries work finalization', async (t) => {
   const f = await fixture(t);
   const session = await f.session();
@@ -369,6 +396,7 @@ test('Sandboxes integration issues connections and follows committed session and
   ctx.provide('sbxJobs', {
     listPage: async () => ({ jobs: [], next: null }),
   } as unknown as Context['sbxJobs']);
+  ctx.provide('sbxRegistry', { list: async () => [] } as unknown as Context['sbxRegistry']);
   await ctx.plugin(sandboxIntegrationPlugin);
   const boot = await scope.credentials.bootstrap({ projectName: 'Runs', actorName: 'Owner' });
   const caller = {
@@ -433,6 +461,10 @@ test('Sandboxes integration issues connections and follows committed session and
   await ctx.sessions.attach(caller, input);
   const connection = await ctx.sessions.launchConnections(caller, input);
   assert.equal(connection.connections[0]?.name, 'sandboxes');
+  // It is the one waiter Sessions asks where a visit's compute stands (session.await_compute).
+  assert.throws(() => ctx.sessions.computeWaits.register({} as never), {
+    code: 'compute_waiter_registered',
+  });
   await ctx.sessions.release(caller, { sessionId: session.id, runnerId: 'runner' });
   await events.drain();
   const waitFor = async (check: () => boolean) => {

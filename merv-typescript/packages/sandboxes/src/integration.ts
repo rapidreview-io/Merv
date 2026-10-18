@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxRuns, sandboxRunMigrations } from './sandbox-runs.js';
 import { SandboxEvidence } from './sandbox-evidence.js';
+import { SandboxComputeWaits } from './compute-waits.js';
 import { historicalEvidenceDownloads } from './historical-evidence.js';
 import { sandboxesPeoplePlugin } from './people.js';
 
@@ -33,6 +34,7 @@ export const sandboxIntegrationPlugin = {
     'sbxObjects',
     'sbxAccounts',
     'sbxJobs',
+    'sbxRegistry',
   ],
   Config,
   async apply(ctx: Context, config: z.output<typeof Config> = Config.parse({})) {
@@ -77,6 +79,17 @@ export const sandboxIntegrationPlugin = {
         await evidence.close();
       };
       yield ctx.sessions.registerLaunchConnections((session) => runs.launchConnections(session));
+      // Where a waiting visit's jobs and workflows stand, which Sessions asks (session.await_compute).
+      yield ctx.sessions.computeWaits.register(
+        new SandboxComputeWaits(
+          ctx.state,
+          ctx.sbxMerv,
+          ctx.sbxJobs,
+          ctx.sbxPipelines,
+          ctx.sbxRegistry,
+          evidence,
+        ),
+      );
     });
   },
 };

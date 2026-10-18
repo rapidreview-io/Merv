@@ -13,7 +13,7 @@ import {
 } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { CaptureSummary, SbxPipelines, WorkflowRecord } from '@sandboxes/pipelines';
-import { workflowTerminal } from '@sandboxes/pipelines/graph';
+import { nodeTerminal, workflowTerminal } from '@sandboxes/pipelines/graph';
 import type { SbxJobs } from '@sandboxes/jobs';
 import type { SbxObjects } from '@sandboxes/storage';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
@@ -216,6 +216,36 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     );
   }
 
+  /**
+   * Whether a workflow's captures have settled, as the evidence pass and the compute waiter both
+   * read it: once it has finished and each capture node that ended is registered or refused for
+   * good, `refused` when any was refused, else `registered`. A stalled capture is still retried,
+   * so it has not settled. Null until then.
+   */
+  async workflowSettled(
+    projectId: string,
+    workflow: WorkflowRecord,
+  ): Promise<'registered' | 'refused' | null> {
+    if (!workflowTerminal(workflow.state)) return null;
+    const rows = await this.state.read((sql) =>
+      sql.all<{ node_id: string; error: string | null; stalled: boolean }>(
+        'SELECT node_id,error,stalled FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
+        projectId,
+        workflow.namespace,
+        workflow.id,
+      ),
+    );
+    const settled = new Map(
+      rows.filter((row) => !row.stalled).map((row) => [row.node_id, row.error !== null]),
+    );
+    const captures = workflow.request.nodes.filter(
+      (node) =>
+        node.kind === 'capture' && nodeTerminal(workflow.nodes[node.id]?.state ?? 'pending'),
+    );
+    if (!captures.every((node) => settled.has(node.id))) return null;
+    return captures.some((node) => settled.get(node.id)) ? 'refused' : 'registered';
+  }
+
   private async jobsDone(work: Work) {
     const page = await this.jobs!.listPage({
       namespace: work.namespace,
@@ -270,7 +300,6 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     // A running workflow is read again only when another of its captures has succeeded.
     if (!finished && succeeded.every((node) => indexed.has(node))) return false;
     let after: string | null = null;
-    let pending = false;
     do {
       const page = await this.pipelines.captures(work.namespace, workflow.id, {
         after,
@@ -283,15 +312,15 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           await this.register(work, workflow, node);
           this.failing.delete(failing);
         } catch (error) {
-          const refused = await this.refuse(work, workflow, node.id, error, stalled.has(node.id));
-          pending = !refused || pending;
+          await this.refuse(work, workflow, node.id, error, stalled.has(node.id));
         }
       }
       after = page.next;
     } while (after !== null);
     if (!finished) return false;
-    if (!pending) this.doneWorkflows.add(key);
-    return !pending;
+    const done = (await this.workflowSettled(work.project_id, workflow)) !== null;
+    if (done) this.doneWorkflows.add(key);
+    return done;
   }
 
   private async held(namespace: string, objectId: string) {
@@ -381,9 +410,9 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     });
   }
 
-  /** Whether the capture is refused for good. A failure that may pass (an outage, a busy or
-   *  unknown error) is retried every pass; once it has lasted CAPTURE_STALL_MS it is also shown as
-   *  refused, so nobody waits on it unseen, until it registers. */
+  /** A capture's failure to register: one that may pass (an outage, a busy or unknown error) is
+   *  retried every pass, and once it has lasted CAPTURE_STALL_MS it is also shown as refused, so
+   *  nobody waits on it unseen, until it registers; any other refuses it for good. */
   private async refuse(
     work: Work,
     workflow: WorkflowRecord,
@@ -398,7 +427,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     if (lasting) {
       const since = this.failing.get(failing) ?? this.clock();
       this.failing.set(failing, since);
-      if (shown || this.clock() - since < CAPTURE_STALL_MS) return false;
+      if (shown || this.clock() - since < CAPTURE_STALL_MS) return;
       detail = `Not registered after ${CAPTURE_STALL_MS / 60_000} minutes of failures; Merv keeps retrying: ${detail}`;
     } else this.failing.delete(failing);
     const { id: workflowId, attempt_ref: attempt } = workflow;
@@ -427,7 +456,6 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           { workflowId, captureNode: node, attempt, error: detail },
         );
     });
-    return !lasting;
   }
 
   async download(_projectId: string, reference: string) {

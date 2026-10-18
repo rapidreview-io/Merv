@@ -25,6 +25,14 @@ its held output objects, which a later workflow of the project stages directly. 
 deterministic refusal is final. A failure that may pass is retried every pass, and after
 ten minutes it is also listed as refused, marked `retrying`, until it registers.
 
+The integration is the compute waiter Sessions asks for `session.await_compute`, read for the
+waiting visit's own work and attempt from its run intent (another's job or workflow is unknown):
+where each job and workflow stands, a workflow running until it has finished and its captures
+have settled (`workflowSettled`, the evidence pass's own reading); the earliest lease end of a
+machine an unfinished one needs; the latest deadline of what runs; and the attempt's other live
+machines, which would bill idle while the visit is away. Every read is outside Merv's
+transactions, and a project is served only where it is linked.
+
 `@merv/sandboxes/console` mounts the authenticated console-session endpoint, proxies
 `/sbx/ui/*` and `/sbx/v1/*` (including Terminal WebSockets), and contributes hardware to
 Running. The host registers the permanent Sandboxes view and tools.
@@ -39,5 +47,5 @@ The native ownership tables remain read-only history; their migrations are retir
 `legacyCaptures.namespace: 'merv-ml'` locates the six retained bare-object references.
 
 Focused coverage lives in `sandboxes-host.test.ts`, `sandboxes-people.test.ts`, `sandbox-runs.test.ts`,
-`sandbox-evidence.test.ts`, `sandboxes-historical-evidence.test.ts`,
+`sandbox-evidence.test.ts`, `sandbox-compute-waits.test.ts`, `sandboxes-historical-evidence.test.ts`,
 `ui-sandboxes-host.test.ts` and `ui-sandboxes-server.test.ts` under `tests/`.
