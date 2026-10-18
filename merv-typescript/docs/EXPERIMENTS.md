@@ -140,7 +140,9 @@ qualitative result: it is referenced without being read, so a checkpoint, an
 archive or a capture collection of any retained size is attached that way. Logical
 paths are bounded relative labels: no absolute paths, traversal, empty segments,
 backslashes or URL syntax. They do not direct filesystem writes. Role and path
-form the replaceable slot within an attempt. Public attachment is refused during
+form the replaceable slot within an attempt; a plan, feasibility statement or
+report at another path replaces the attempt's current one too, and the attach
+response lists what it displaced under `replaced`. Public attachment is refused during
 review and after termination.
 
 ### Feasibility statement

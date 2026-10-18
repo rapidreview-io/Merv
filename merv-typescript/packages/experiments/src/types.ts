@@ -14,6 +14,7 @@ import type { PaperChanges } from '@merv/paper/types';
 import type {
   Experiment,
   ExperimentAttach,
+  ExperimentAttached,
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
@@ -44,7 +45,7 @@ export interface Experiments {
    * (experiment_limit). Reads only.
    */
   admits(caller: Caller, names: readonly string[], tx?: Transaction): Promise<void>;
-  attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;
+  attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentAttached>;
   transition(caller: Caller, input: ExperimentTransition, tx?: Transaction): Promise<Experiment>;
   /**
    * Abandons an experiment of this project that nobody started (still planned, no work

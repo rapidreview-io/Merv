@@ -29,6 +29,7 @@ import { check, MervError, type Blobs, type Caller, type ReviewApplication } fro
 import type {
   Experiment,
   ExperimentAttach,
+  ExperimentAttached,
   ExperimentEvidence,
   ExperimentReview,
   ExperimentTransition,
@@ -158,7 +159,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     role: ExperimentAttach['role'],
     content: string,
     extra: Partial<ExperimentAttach> = {},
-  ): Promise<ExperimentEvidence> => {
+  ): Promise<ExperimentAttached> => {
     const author = active.get(experiment.id)?.worker ?? producer;
     const artifact = await artifacts.create(author, {
       title: role,
@@ -1336,6 +1337,29 @@ test('a large or binary output is attached as a qualitative result by reference 
   experiment = await f.transition(experiment, 'submit_results');
   const review = await f.reviews.get(f.producer, experiment.reviewId!);
   assert.ok(review.artifactIds.includes(archive.id) && review.artifactIds.includes(shard.id));
+});
+
+test('an attach names the current evidence it displaces from the selection', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const main = await f.attach(experiment, 'report', report, { path: 'admission-report.md' });
+  assert.equal(main.replaced, undefined);
+  // A second report is not an addendum: it replaces the first, and says so.
+  const closeout = await f.attach(experiment, 'report', report, { path: 'closeout.md' });
+  assert.deepEqual(closeout.replaced, [
+    { path: 'admission-report.md', artifactId: main.artifactId },
+  ]);
+  const first = await f.attach(experiment, 'result', '{"seed":1}', { path: 'seeds/1.json' });
+  assert.equal(
+    (await f.attach(experiment, 'result', '{"seed":2}', { path: 'seeds/2.json' })).replaced,
+    undefined,
+    'a result at another path displaces nothing',
+  );
+  assert.deepEqual(
+    (await f.attach(experiment, 'result', '{"seed":1,"rerun":true}', { path: 'seeds/1.json' }))
+      .replaced,
+    [{ path: 'seeds/1.json', artifactId: first.artifactId }],
+  );
 });
 
 test('an attempt refuses its 101st result file when it is attached', async (t) => {

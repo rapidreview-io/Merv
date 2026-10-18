@@ -19,6 +19,7 @@ import type { CodeCaptureRef } from '@merv/code-work/types';
 import type {
   Experiment,
   ExperimentAttach,
+  ExperimentAttached,
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
@@ -180,7 +181,7 @@ export async function attach(
   caller: Caller,
   value: ExperimentAttach,
   transaction?: Transaction,
-): Promise<ExperimentEvidence> {
+): Promise<ExperimentAttached> {
   ctx.open();
   caller = structuredClone(caller);
   const input = parseExperimentInput(experimentAttachSchema, value);
@@ -257,6 +258,13 @@ export async function attach(
       const figureIds = ['plan', 'report'].includes(input.role)
         ? await figures(ctx, caller, text, experiment, tx)
         : [];
+      // An attempt holds one plan, feasibility statement and report, and one result per path.
+      // The response names what this displaces: an executor that attached a supplement as a
+      // second report was never told its full report had left the submission (2026-10-06).
+      const replaced = currentEvidence(experiment, [input.role])
+        .filter((e) => input.role !== 'result' || e.path === input.path)
+        .filter((e) => e.path !== input.path || e.artifactId !== artifact.id)
+        .map(({ path, artifactId }) => ({ path, artifactId }));
       const association = await saveEvidence(
         caller,
         experiment,
@@ -275,7 +283,7 @@ export async function attach(
         path: input.path,
         attemptIndex: input.attemptIndex,
       });
-      return association;
+      return replaced.length ? { ...association, replaced } : association;
     });
   });
 }

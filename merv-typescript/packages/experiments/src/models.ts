@@ -47,6 +47,10 @@ export interface ExperimentEvidence {
   resultFormat?: 'json' | 'qualitative';
   systemGenerated: boolean;
 }
+/** What an attach returns: the association, and the current evidence it displaced, where any. */
+export interface ExperimentAttached extends ExperimentEvidence {
+  replaced?: { path: string; artifactId: string }[];
+}
 export interface ExperimentSubmission {
   id: string;
   experimentId: string;
