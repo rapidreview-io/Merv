@@ -1,4 +1,4 @@
-import { ellipsis, recorded, mapAsync, parsed } from '@merv/contracts';
+import { quoted, recorded, mapAsync, parsed } from '@merv/contracts';
 import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
@@ -321,7 +321,7 @@ export class PaperService implements Paper {
         check(
           false,
           'invalid_paper_input',
-          `Edit ${content.edit + 1} of section ${change.id} finds ${JSON.stringify(ellipsis(find, 80))} ${content.repeated ? 'more than once' : 'nowhere'} in ${input.kind} revision ${before.revision}${content.edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once in the section as paper.read with kind ${input.kind} and section ${change.id} returns it${content.repeated ? ', so quote more of the text around it' : ''}`,
+          `Edit ${content.edit + 1} of section ${change.id} finds ${quoted(find, 80)} ${content.repeated ? 'more than once' : 'nowhere'} in ${input.kind} revision ${before.revision}${content.edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once in the section as paper.read with kind ${input.kind} and section ${change.id} returns it${content.repeated ? ', so quote more of the text around it' : ''}`,
         );
       }
       // Edits keep a section within the length its whole content may have, so it can be resent.

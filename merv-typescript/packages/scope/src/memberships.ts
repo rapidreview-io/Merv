@@ -1,4 +1,4 @@
-import { clip, ellipsis, visible } from '@merv/contracts';
+import { clip, quoted, visible } from '@merv/contracts';
 import {
   check,
   digest,
@@ -104,7 +104,7 @@ function actorCaller(principal: Extract<Principal, { kind: 'actor' }>, projectId
   check(
     projectId === undefined || projectId === principal.actor.projectId,
     'forbidden',
-    `Actor credentials are bound to their original project ${principal.actor.projectId}, not ${JSON.stringify(ellipsis(String(projectId), 100))}: omit projectId, or pass exactly that id`,
+    `Actor credentials are bound to their original project ${principal.actor.projectId}, not ${quoted(String(projectId), 100)}: omit projectId, or pass exactly that id`,
     403,
   );
   return {

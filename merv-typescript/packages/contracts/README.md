@@ -4,7 +4,7 @@ Contracts is the shared types and helpers package, not a plugin: it provides no 
 
 It owns no table and no migration: the retirement ledger it once held is Workflows' (`@merv/workflows/retired-instances`). What runtime it carries is shared by several plugins and owned by none:
 
-- Errors, checks and input: `MervError`, `check`, `requiredEnv`, `envName`, `plain`, `parsed`, `RESERVED_KEYS`, `pathSegment`, and text helpers (`visible`, `clip`, `visibleMarkdown`, `markdownSection`).
+- Errors, checks and input: `MervError`, `check`, `requiredEnv`, `envName`, `plain`, `parsed`, `RESERVED_KEYS`, `pathSegment`, and text helpers (`visible`, `clip`, `quoted`, `visibleMarkdown`, `markdownSection`).
 - Hashing: `canonical`, `digest`, `sha256Hex`, `newId`.
 - Transaction placement: `within`, `forRead`, `inTransaction`.
 - Helpers that run SQL on the caller's own table, in the caller's transaction: the command receipts (`receipted`, `replayed`) and `withoutTriggers`, which builds migration text. Lease rows belong to Workflows (`@merv/workflows/lease-rows`).

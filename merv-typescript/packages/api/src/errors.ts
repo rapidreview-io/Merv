@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { ellipsis, MervError } from '@merv/contracts';
+import { MervError, quoted } from '@merv/contracts';
 
 /** What every HTTP adapter answers for a path or method it does not serve. */
 export const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
@@ -26,7 +26,7 @@ export function projectSelection(...selections: unknown[]): string | undefined {
   if (other !== undefined)
     throw new MervError(
       'invalid_input',
-      `Conflicting Merv project selections: ${[supplied[0], other].map((id) => JSON.stringify(ellipsis(id as string, 100))).join(' and ')}. A request works in one project, and a session, actor token or project key already selects its own: omit projectId, or pass exactly that id`,
+      `Conflicting Merv project selections: ${[supplied[0], other].map((id) => quoted(id, 100)).join(' and ')}. A request works in one project, and a session, actor token or project key already selects its own: omit projectId, or pass exactly that id`,
     );
   return supplied[0] as string | undefined;
 }

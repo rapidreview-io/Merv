@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, ellipsis, folded, idSchema, ordered, parsed, visible } from '@merv/contracts';
+import { check, folded, idSchema, ordered, parsed, quoted, visible } from '@merv/contracts';
 import {
   EXPERIMENT_NAME_RULE,
   experimentName,
@@ -38,7 +38,7 @@ const name = z.string().superRefine((value, ctx) => {
   if (!experimentName().safeParse(value).success)
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: `${JSON.stringify(ellipsis(value, 60))} (${value.length} characters) is not an experiment name: use ${EXPERIMENT_NAME_RULE} and with no spaces, such as schema-control-evaluation`,
+      message: `${quoted(value, 60)} (${value.length} characters) is not an experiment name: use ${EXPERIMENT_NAME_RULE} and with no spaces, such as schema-control-evaluation`,
     });
 });
 const dependsOn = z.array(key).max(CHANGE_SPEC_LIMITS.items);

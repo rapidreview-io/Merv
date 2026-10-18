@@ -1,4 +1,4 @@
-import { clip, ellipsis, visible } from '@merv/contracts/text';
+import { clip, quoted, visible } from '@merv/contracts/text';
 import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/types';
 
 // Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them,
@@ -213,10 +213,7 @@ function miscited(finding: { evidenceIds?: unknown }, pinned: string[]): string[
   if (!Array.isArray(finding.evidenceIds)) return ['gives no evidenceIds array'];
   const seen = new Set<unknown>();
   const wrong = finding.evidenceIds.flatMap((id: unknown) => {
-    const shown =
-      typeof id === 'string'
-        ? JSON.stringify(ellipsis(id, 80))
-        : ellipsis(JSON.stringify(id) ?? String(id), 80);
+    const shown = quoted(id, 80);
     const problem =
       typeof id !== 'string' || !pinned.includes(id)
         ? [`cites ${shown}, which is not pinned`]

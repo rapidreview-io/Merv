@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cleanText, clip, ellipsis, markdownSection, plain } from '@merv/contracts';
+import { cleanText, clip, ellipsis, markdownSection, plain, quoted } from '@merv/contracts';
 
 test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
   const refused = (value: unknown, limits = {}) =>
@@ -93,4 +93,10 @@ test('ellipsis() ends cut text in one ellipsis within max, and cleanText() keeps
   assert.equal(cleanText('aaa😀b', 4), 'aaa');
   assert.equal(cleanText('a\uD800b\uDC00c😀', 100), 'abc😀', 'half pairs go, whole ones stay');
   assert.equal(cleanText(42, 10), '');
+});
+
+test('quoted() quotes a string cut within max, and anything else as its JSON', () => {
+  assert.equal(quoted('abcdefg', 6), '"abcde…"');
+  assert.equal(quoted({ id: 'abcdefgh' }, 10), '{"id":"ab…');
+  assert.equal(quoted(undefined, 80), 'undefined');
 });
