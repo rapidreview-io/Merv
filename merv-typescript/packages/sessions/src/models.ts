@@ -282,6 +282,11 @@ export interface ThreadView {
   /** Oldest first. */
   visits: VisitView[];
 }
+/** A leased worker's own work item's threads and their visits (system.status). */
+export interface WorkerLineage {
+  instanceId: string;
+  threads: Omit<ThreadView, 'takesMessage' | 'asks'>[];
+}
 /** One session of a thread: its lease, credential and launch. */
 export interface VisitView {
   sessionId: string;

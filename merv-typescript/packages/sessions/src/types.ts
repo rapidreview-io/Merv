@@ -54,6 +54,7 @@ import type {
   UsageRollup,
   UsageTotals,
   WorkerQueue,
+  WorkerLineage,
   LeaseLiveness,
   OwnerAnswer,
   SessionPlatform,
@@ -96,6 +97,7 @@ export type {
   UsageRollup,
   UsageTotals,
   VisitView,
+  WorkerLineage,
   WorkerQueue,
 } from './models.js';
 export type {
@@ -388,6 +390,8 @@ export interface Sessions {
      * for anyone who may read each; never a worker.
      */
     list(caller: Caller, instanceIds: string | readonly string[]): Promise<ThreadView[]>;
+    /** A leased worker's own work item's threads and visits, never another item's. */
+    lineage(caller: Caller): Promise<WorkerLineage>;
     /**
      * The project's threads that want attention, then its newest others, older than `before`, a
      * page at a time.

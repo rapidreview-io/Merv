@@ -26,6 +26,8 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
         closeReason: session.closeReason,
         outcome: session.outcome ?? null,
       },
+      // Which visits its work item had, on which runners: lineage a reviewer may cite.
+      lineage: await sessions.threads.lineage(caller),
       ...(await sessions.statusSections(caller, null)),
     };
   }

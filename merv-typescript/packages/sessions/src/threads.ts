@@ -50,6 +50,7 @@ import type {
   ThreadCounts,
   ThreadView,
   VisitView,
+  WorkerLineage,
 } from './types.js';
 
 type Row = {
@@ -578,6 +579,42 @@ export class SessionThreads {
       return (await this.viewed(tx, threads, standing)).map(
         ({ name: _name, workflow: _workflow, ...view }) => view,
       );
+    });
+  }
+  /**
+   * A leased worker's lineage: the threads of its own work item, its own included, with each
+   * visit's status, times, outcome, harness and runner, as session.threads gives a person them;
+   * never another item's. A reviewer cites it for which machine each stage ran on.
+   */
+  async lineage(caller: Caller): Promise<WorkerLineage> {
+    ordinary(caller);
+    this.host.available();
+    check(caller.session, 'session_required', 'Only a leased worker reads its lineage', 403);
+    caller = structuredClone(caller);
+    return await this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const own = await tx.get<{ instance_id: string }>(
+        'SELECT instance_id FROM worker_sessions WHERE id=? AND project_id=? AND actor_id=?',
+        caller.session!.id,
+        caller.projectId,
+        caller.actorId,
+      );
+      check(own, 'session_not_found', 'Session not found', 404);
+      const threads = await tx.all<Row>(
+        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id=?) ORDER BY _merv_rowid',
+        caller.projectId,
+        caller.projectId,
+        own.instance_id,
+      );
+      const standing = await this.standingOf(tx, caller.projectId, threads);
+      // Whether a person may message or ask a thread is theirs to read, not its worker's.
+      return {
+        instanceId: own.instance_id,
+        threads: (await this.viewed(tx, threads, standing)).map(
+          ({ name: _name, workflow: _workflow, takesMessage: _takes, asks: _asks, ...view }) =>
+            view,
+        ),
+      };
     });
   }
   /**

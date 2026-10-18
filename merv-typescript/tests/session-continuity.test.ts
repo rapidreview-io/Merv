@@ -32,6 +32,7 @@ import type {
   ThreadQuestion,
   ThreadView,
   VisitView,
+  WorkerLineage,
   WorkerQueue,
 } from '../packages/sessions/src/types.js';
 import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
@@ -1567,6 +1568,31 @@ test('every later visit to the work, its reviewer’s too, is offered what its o
     await f.app.ctx.tools.invoke('workflow.assignment', reviewer, { instanceId: unit.id })
   ).value as Session['assignment'];
   assert.deepEqual(answered(read), expected);
+});
+
+test('a reviewer reads its work item’s lineage in system.status: each stage’s visits and their runners', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const work = await f.offer(unit.id, 'runner-a');
+  await f.release(work.session);
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-b');
+  const reviewer = await f.sessions.authenticate(review.input.secret);
+  const { lineage } = (await f.app.ctx.tools.invoke('system.status', reviewer, {})).value as {
+    lineage: WorkerLineage;
+  };
+  assert.equal(lineage.instanceId, unit.id);
+  assert.deepEqual(
+    lineage.threads.map((thread) => [
+      thread.id,
+      thread.role,
+      thread.visits.map((visit) => [visit.sessionId, visit.status, visit.runnerId]),
+    ]),
+    [
+      [work.session.threadId, 'producer', [[work.session.id, 'released', 'runner-a']]],
+      [review.session.threadId, 'reviewer', [[review.session.id, 'active', 'runner-b']]],
+    ],
+  );
 });
 
 test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {

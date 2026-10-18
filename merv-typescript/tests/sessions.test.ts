@@ -24,6 +24,7 @@ import type { NisaPaper } from '../packages/nisa/src/types.js';
 import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import type { WebSearch } from '../packages/web/src/types.js';
+import type { WorkerLineage } from '../packages/sessions/src/types.js';
 import { deferred } from './fixtures/deferred.js';
 import { rewindInquiries } from './fixtures/retired-instances.js';
 import { openState } from './fixtures/state.js';
@@ -956,6 +957,23 @@ test('system.status gives a leased worker only its authenticated session', async
     (result as { session: { instanceId: string } }).session.instanceId,
     session.instanceId,
   );
+  // Its work item's lineage: each thread with its visits and the runner each ran on.
+  const { lineage } = result as { lineage: WorkerLineage };
+  assert.equal(lineage.instanceId, session.instanceId);
+  assert.deepEqual(
+    lineage.threads.map((thread) => [
+      thread.id,
+      thread.role,
+      thread.visits.map((visit) => [visit.sessionId, visit.runnerId]),
+    ]),
+    [[session.threadId, session.role, [[session.id, session.runnerId]]]],
+  );
+  assert.equal(JSON.stringify(lineage).includes('takesMessage'), false);
+  // Only its own: a person's read of threads still refuses it.
+  await assert.rejects(f.sessions.threads.list(worker, session.instanceId), {
+    code: 'session_forbidden',
+  });
+  await assert.rejects(f.sessions.threads.lineage(f.owner), { code: 'session_required' });
   const serialized = JSON.stringify(result);
   for (const field of [
     'dispatch',
