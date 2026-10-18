@@ -73,6 +73,25 @@ async function fixture(t: TestContext) {
     assert.equal(typeof stamped.uploadedAt, 'string');
     return { bytes, facts };
   };
+  // The message that answered each thread's last question, which its next visit acknowledges.
+  const answers = new Map<string, string>();
+  /** A visit to the work whose agent asks its owner, and the owner's answer to its thread. */
+  const asked = async (instanceId: string, question: string, answer: string) => {
+    const visit = await offer(instanceId);
+    const worker = await sessions.authenticate(visit.input.secret);
+    const pending = answers.get(visit.session.threadId!);
+    if (pending)
+      await app.ctx.tools.invoke('session.message.ack', worker, {
+        messageId: pending,
+        requestId: randomUUID(),
+      });
+    await app.ctx.tools.invoke('session.ask_owner', worker, { question });
+    await keep(visit.session, visit.control);
+    await release(visit.session);
+    const path = `/sessions/threads/${visit.session.threadId}/messages`;
+    const sent = await ok('POST', path, token, { body: answer, requestId: randomUUID() });
+    answers.set(visit.session.threadId!, (sent.message as SessionMessage).id);
+  };
   // A thread is active until it retires, live or dormant.
   const agent = async (id: string) => {
     const thread = (await sessions.threads.project(owner)).threads.find((item) => item.id === id)!;
@@ -90,6 +109,7 @@ async function fixture(t: TestContext) {
     release,
     move,
     keep,
+    asked,
     agent,
     start,
     /** The owner's move on the work, as its gate answers Needs you. */
@@ -1635,31 +1655,8 @@ test('every later visit to the work, its reviewer’s too, is offered what its o
 test('an owner’s answers fit the assignment’s 512 KiB, the oldest left out first, and never refuse its work’s offers', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();
-  let pending: string | undefined;
-  const ask = async (question: string, answer: string) => {
-    const visit = await f.offer(unit.id);
-    const worker = await f.sessions.authenticate(visit.input.secret);
-    if (pending)
-      await f.app.ctx.tools.invoke('session.message.ack', worker, {
-        messageId: pending,
-        requestId: randomUUID(),
-      });
-    await f.app.ctx.tools.invoke('session.ask_owner', worker, { question });
-    await f.keep(visit.session, visit.control);
-    await f.release(visit.session);
-    const sent = await f.ok(
-      'POST',
-      `/sessions/threads/${visit.session.threadId}/messages`,
-      f.token,
-      {
-        body: answer,
-        requestId: randomUUID(),
-      },
-    );
-    pending = (sent.message as SessionMessage).id;
-  };
-  await ask('Which suite?', 'x'.repeat(8000));
-  await ask('Which seed?', 'Seed 7.');
+  await f.asked(unit.id, 'Which suite?', 'x'.repeat(8000));
+  await f.asked(unit.id, 'Which seed?', 'Seed 7.');
   // An assignment that fits alone, with room for the short answer and not for the long one too.
   const { workflows } = f.app.ctx;
   const offerLease = workflows.offerLease.bind(workflows);
@@ -1677,11 +1674,32 @@ test('an owner’s answers fit the assignment’s 512 KiB, the oldest left out f
   assert.ok(Buffer.byteLength(JSON.stringify(next.session.assignment)) <= 524_288);
 });
 
+test('a work item is offered its own ten newest answers, oldest first, never another item’s', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const other = await f.start();
+  await f.asked(other.id, 'Which cohort elsewhere?', 'The 2025 cohort.');
+  for (let n = 1; n <= 11; n++) await f.asked(unit.id, `Question ${n}?`, `Answer ${n}.`);
+  const next = await f.offer(unit.id);
+  assert.deepEqual(
+    next.session.assignment.ownerAnswers?.map((item) => [item.question, item.answer]),
+    Array.from({ length: 10 }, (_, i) => [`Question ${i + 2}?`, `Answer ${i + 2}.`]),
+  );
+  const elsewhere = await f.offer(other.id);
+  assert.deepEqual(
+    elsewhere.session.assignment.ownerAnswers?.map((item) => item.question),
+    ['Which cohort elsewhere?'],
+  );
+});
+
 test('a reviewer reads its work item’s lineage in system.status: each stage’s visits and their runners', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();
   const work = await f.offer(unit.id, 'runner-a');
   await f.release(work.session);
+  // Another work item's thread is never in this one's lineage.
+  const other = await f.offer((await f.start()).id, 'runner-c');
+  await f.release(other.session);
   await f.move(unit.id, 'submit');
   const review = await f.offer(unit.id, 'runner-b');
   const reviewer = await f.sessions.authenticate(review.input.secret);
