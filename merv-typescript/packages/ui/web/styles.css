@@ -7861,11 +7861,8 @@ html.modal-open {
   display: inline;
   margin-right: var(--space-2);
 }
+/* A row's name, which opens what it names. */
 .admin-name {
-  font-weight: 500;
-  color: var(--text);
-}
-button.admin-name {
   padding: 0;
   border: 0;
   background: none;
@@ -7884,12 +7881,10 @@ button.admin-name {
 .admin-part > [role='cell']:first-child {
   padding-left: 24px;
 }
-.admin-ended,
-.admin-ended .admin-name {
+.admin-ended {
   color: var(--faint);
 }
 .admin-left {
-  color: var(--text);
   font-weight: 600;
 }
 /* What a unit needs, a small line under its name: the owner's word, then its own words. */
@@ -7907,12 +7902,6 @@ button.admin-name {
     text-overflow: ellipsis;
   }
 }
-.admin-attn-code {
-  color: var(--qualifies);
-}
-.admin-attn--bad .admin-attn-code {
-  color: var(--refutes);
-}
 /* A person unfolded: their accounts, then the word that grants, under the person's row. */
 .admin-holding {
   padding: var(--space-4) 0 var(--space-5);
@@ -7926,7 +7915,10 @@ button.admin-name {
 .admin-purpose ~ .admin-purpose .ruled-head {
   display: none;
 }
-/* A row's act waits behind ⋯, drawn as the pointer reaches the row. */
+/* A row's act waits behind ⋯, drawn as the pointer reaches the row; its guard opens under it. */
+.ruled > .guard {
+  margin-block: var(--space-3);
+}
 @media (hover: hover) {
   .ruled-row:not(:hover) > * > .admin-more:not([aria-expanded='true'], :focus-visible) {
     opacity: 0;

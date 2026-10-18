@@ -124,11 +124,12 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
   assert.match(rows()[0]!.textContent!, /Its agent asked its owner/, 'the phrase, read as words');
   assert.match(rows()[0]!.textContent!, /1\.3M/, 'tokens counted');
   assert.match(rows()[0]!.textContent!, /\$0\.80\/h/);
+  // Under the app's /ui base: a drill-in is loaded whole, as an app of its own.
   const link = rows()[0]!.querySelector('a')!;
-  assert.equal(link.getAttribute('href'), '/ui/admin/p/project_a/experiments/wf_held');
+  assert.equal(link.getAttribute('href'), '/admin/p/project_a/experiments/wf_held');
   assert.equal(
     rows()[1]!.querySelector('a')!.getAttribute('href'),
-    '/ui/admin/p/project_a/tasks/wf_quiet',
+    '/admin/p/project_a/tasks/wf_quiet',
   );
   // A standalone experiment opens as its customer sees it, which takes its request.
   const alone = rows().find((row) => /Customer study/.test(row.textContent!))!;
@@ -245,7 +246,7 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
   const mira = document.querySelector('[aria-label="Credits"] .ruled-row')!;
   assert.match(mira.textContent!, /\$95\.05 of\s\$100\.00/);
   assert.match(mira.textContent!, /\$3\.20 of\s\$25\.00/);
-  assert.match(mira.textContent!, /120k of\s2M/);
+  assert.match(mira.textContent!, /120K of\s2M/);
   assert.match(text(), /merv-lab/, 'an account nobody belongs to is still a row');
   assert.ok(!requests.some((r) => r.includes('/admin/work')), 'the rail reads no work table');
   assert.doesNotMatch(text(), /Design partner pilot/);

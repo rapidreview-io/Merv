@@ -20,38 +20,32 @@ const PLACES = [
   { to: '/admin/credentials', label: 'Credentials', icon: 'key' },
 ];
 
-function Rail({ onHide }: { onHide(): void }) {
-  const { pathname } = useLocation();
-  const session = useAccount();
-  // A standalone experiment is opened from Work, so Work holds it.
-  const here = (to: string) =>
-    to === '/admin'
-      ? !PLACES.some((p) => p.to !== to && pathname.startsWith(p.to))
-      : pathname.startsWith(to);
-  return (
-    <aside className="sidebar admin-rail" aria-label="Primary">
-      <RailHead onHide={onHide} />
-      <nav className="rail-nav">
-        {PLACES.map((place) => (
-          <RailRow key={place.to} {...place} active={here(place.to)} />
-        ))}
-      </nav>
-      <div className="sidebar-foot">
-        {session && <AccountMenu who={signedInEmail()} role="admin" signOut={session.signOut} />}
-      </div>
-    </aside>
-  );
-}
-
 export function AdminApp() {
   const [open, setOpen] = useRailOpen();
   const { pathname } = useLocation();
+  const session = useAccount();
+  // The last place the address is in: a standalone experiment is opened from Work, so Work holds it.
+  const here = PLACES.filter((place) => pathname.startsWith(place.to)).at(-1);
   return (
     <ShellFrame
       name="Admin"
       open={open}
       onShow={() => setOpen(true)}
-      sidebar={<Rail onHide={() => setOpen(false)} />}
+      sidebar={
+        <aside className="sidebar admin-rail" aria-label="Primary">
+          <RailHead onHide={() => setOpen(false)} />
+          <nav className="rail-nav">
+            {PLACES.map((place) => (
+              <RailRow key={place.to} {...place} active={place === here} />
+            ))}
+          </nav>
+          <div className="sidebar-foot">
+            {session && (
+              <AccountMenu who={signedInEmail()} role="admin" signOut={session.signOut} />
+            )}
+          </div>
+        </aside>
+      }
     >
       <ErrorBoundary reset={pathname}>
         <Routes>

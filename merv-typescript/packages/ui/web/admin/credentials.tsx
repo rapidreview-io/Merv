@@ -1,8 +1,9 @@
 import { Fragment } from 'react';
 import type { AdminCredential, AdminCredentials } from '@merv/admin/models';
 import { useTool } from '../api';
-import { Ago, KV, LoadState, PageHeader, Ruled, Word, col, cx, toneOf, words } from '../components';
-import { Facts, In, None, fig } from './parts';
+import { Ago, KV, LoadState, Ruled, Word, col, cx, stamp, toneOf, words } from '../components';
+import { elapsed } from '../liveness';
+import { Head, None, fact, fig } from './parts';
 
 /** An env name, which may break after an underscore and nowhere inside a word. */
 const Env = ({ name }: { name: string }) => (
@@ -15,46 +16,43 @@ const Env = ({ name }: { name: string }) => (
     ))}
   </span>
 );
+/** Set, missing, or dead: a state a row is in, in its colour. */
+const state = (set: boolean | null, dead = false) =>
+  set === null ? (
+    <None />
+  ) : (
+    <Word tone={set && !dead ? 'ok' : 'bad'} value={dead ? 'dead' : set ? 'set' : 'missing'} />
+  );
 
 const COLUMNS = [
   col<AdminCredential>('env', 'Credential', (c) => <Env name={c.env} />),
   col<AdminCredential>('plugin', 'Used by', (c) => (
     <span title={`${c.plugin} · ${c.field}`}>{c.plugin}</span>
   )),
-  col<AdminCredential>('state', 'State', (c) => (
-    <Word
-      tone={c.set && !c.dead ? 'ok' : 'bad'}
-      value={c.dead ? 'dead' : c.set ? 'set' : 'missing'}
-    />
-  )),
-  col<AdminCredential>('fingerprint', 'Fingerprint', (c) => {
-    // Another name that holds the same value; the same name read by another plugin is no news.
-    const others = c.sharedWith.filter((o) => o.env !== c.env);
-    return c.fingerprint ? (
+  col<AdminCredential>('state', 'State', (c) => state(c.set, c.dead)),
+  // Another name that holds the same value; the same name read by another plugin is no news.
+  fact<AdminCredential>('fingerprint', 'Fingerprint', (c) =>
+    c.fingerprint ? (
       <span>
         <span className="mono">{c.fingerprint}</span>
-        {others.map((o) => (
-          <span key={o.env} className="faint">
-            {' = '}
-            <Env name={o.env} />
-          </span>
-        ))}
+        {c.sharedWith
+          .filter((other) => other.env !== c.env)
+          .map((other) => (
+            <span key={other.env} className="faint">
+              {' = '}
+              <Env name={other.env} />
+            </span>
+          ))}
       </span>
-    ) : (
-      <None />
-    );
-  }),
-  fig<AdminCredential>('changed', 'Changed', (c) =>
-    c.lastChanged ? <Ago at={c.lastChanged} /> : <None />,
+    ) : null,
   ),
-  fig<AdminCredential>('ok', 'Last ok', ({ lastOk }) =>
-    lastOk ? (
-      <span title={`${lastOk.relay} · ${lastOk.model}`}>
-        <Ago at={lastOk.at} />
+  fig<AdminCredential>('changed', 'Changed', (c) => c.lastChanged && <Ago at={c.lastChanged} />),
+  fig<AdminCredential>('ok', 'Last ok', ({ lastOk: ok }) =>
+    ok ? (
+      <span title={`${ok.relay} · ${ok.model}`}>
+        <Ago at={ok.at} />
       </span>
-    ) : (
-      <None />
-    ),
+    ) : null,
   ),
   fig<AdminCredential>('failure', 'Last failure', ({ lastFailure: failed }) =>
     failed ? (
@@ -64,35 +62,41 @@ const COLUMNS = [
       >
         {failed.code ?? failed.status} <Ago at={failed.at} />
       </span>
-    ) : (
-      <None />
-    ),
+    ) : null,
   ),
 ];
-const TEMPLATE = 'minmax(0, 2fr) minmax(0, 0.8fr) 84px minmax(0, 2fr) 76px 76px minmax(0, 1fr)';
 type Minted = AdminCredentials['minted'][number];
+const MINTED = [
+  col<Minted>('owner', 'Minted by', (m) => m.owner),
+  col<Minted>('kind', 'Kind', (m) => words(m.kind)),
+  fig<Minted>('live', 'Live', (m) => m.live),
+  fig<Minted>('expiry', 'Next expiry', ({ soonestExpiry: at }) =>
+    at ? (
+      <time dateTime={at} title={stamp(at)}>
+        in {elapsed(Date.parse(at) - Date.now())}
+      </time>
+    ) : null,
+  ),
+  fig<Minted>('revoked', 'Revoked 24h', (m) => Number(m.revokedLastDay) || null),
+  fig<Minted>('issued', 'Last issued', (m) => <Ago at={m.newestIssued} />),
+];
 
 export function CredentialsView() {
   const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
-  const data = read.data;
-  const groups = data?.groups ?? [];
+  const groups = read.data?.groups ?? [];
   const all = groups.flatMap((g) => g.credentials);
   const missing = all.filter((c) => !c.set).length;
   const dead = all.filter((c) => c.dead).length;
   return (
     <div className="page-stage stack stack--lg">
-      <PageHeader
+      <Head
         title="Credentials"
-        summary={
-          data && (
-            <Facts
-              facts={[
-                [all.length - missing, 'set'],
-                missing > 0 && [missing, 'missing', true],
-                dead > 0 && [dead, 'dead', true],
-              ]}
-            />
-          )
+        facts={
+          read.data && [
+            [all.length - missing, 'set'],
+            missing > 0 && [missing, 'missing', true],
+            dead > 0 && [dead, 'dead', true],
+          ]
         }
       />
       <LoadState {...read} columns={6} />
@@ -124,7 +128,7 @@ export function CredentialsView() {
           {credentials.length > 0 && (
             <Ruled
               label={p?.name ?? purpose}
-              template={TEMPLATE}
+              template="minmax(0, 2fr) minmax(0, 0.8fr) 84px minmax(0, 2fr) 76px 76px minmax(0, 1fr)"
               columns={COLUMNS}
               rows={credentials}
               keyOf={(c) => `${c.env}:${c.field}`}
@@ -133,42 +137,19 @@ export function CredentialsView() {
           )}
           {/* A provider whose key is sealed in its row says which fields it holds. */}
           {p && !credentials.length && (
-            <KV
-              rows={p.fields.map((field) => [
-                field.name,
-                field.present === null ? (
-                  <None />
-                ) : (
-                  <Word
-                    tone={field.present ? 'ok' : 'bad'}
-                    value={field.present ? 'set' : 'missing'}
-                  />
-                ),
-              ])}
-            />
+            <KV rows={p.fields.map((field) => [field.name, state(field.present)])} />
           )}
         </section>
       ))}
-      {!!data?.minted.length && (
+      {!!read.data?.minted.length && (
         <section className="stack">
           <h2 className="section-title">Minted</h2>
           <Ruled
             label="Minted credentials"
             template="minmax(0, 1fr) minmax(0, 1.4fr) 64px 104px 104px 104px"
-            rows={data.minted}
+            rows={read.data.minted}
             keyOf={(m) => `${m.owner}:${m.kind}`}
-            columns={[
-              col<Minted>('owner', 'Minted by', (m) => m.owner),
-              col<Minted>('kind', 'Kind', (m) => words(m.kind)),
-              fig<Minted>('live', 'Live', (m) => m.live),
-              fig<Minted>('expiry', 'Next expiry', (m) =>
-                m.soonestExpiry ? <In at={m.soonestExpiry} /> : <None />,
-              ),
-              fig<Minted>('revoked', 'Revoked 24h', (m) =>
-                Number(m.revokedLastDay) ? m.revokedLastDay : <None />,
-              ),
-              fig<Minted>('issued', 'Last issued', (m) => <Ago at={m.newestIssued} />),
-            ]}
+            columns={MINTED}
           />
         </section>
       )}

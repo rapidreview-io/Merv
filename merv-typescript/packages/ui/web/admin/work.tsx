@@ -1,23 +1,12 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { AdminWork, AdminWorkRow } from '@merv/admin/models';
 import { useTool } from '../api';
-import {
-  Ago,
-  PageHeader,
-  Ruled,
-  Word,
-  col,
-  cx,
-  kindStyle,
-  stamp,
-  toneOf,
-  useNow,
-  words,
-} from '../components';
+import { Ago, Ruled, Word, col, cx, kindStyle, stamp, toneOf, useNow, words } from '../components';
 import { Chips, ListPage, openRow, useListFilter } from '../list-filters';
 import { clockOf, duration, elapsed } from '../liveness';
 import { valueText } from '../views/running-phrase';
-import { Facts, Go, None, count, fig, usd } from './parts';
+import { Head, count, fact, fig, usd } from './parts';
 
 /** Each workflow the table names: the record kind it wears the colour of, its word, its path. */
 const KINDS: Record<string, [kind: string, label: string, path?: string]> = {
@@ -40,7 +29,7 @@ function opens(row: AdminWorkRow): string | undefined {
   if (row.kind === 'service_experiment')
     return row.requestId && `/admin/standalone/${part(row.requestId)}`;
   const path = kindOf(row.kind)[2];
-  return `/ui/admin/p/${part(row.project.id)}/${path ? `${path}/${part(row.id)}` : ''}`;
+  return `/admin/p/${part(row.project.id)}/${path ? `${path}/${part(row.id)}` : ''}`;
 }
 
 const said = (message: AdminWorkRow['attention'][number]['message']) =>
@@ -55,30 +44,37 @@ const COLUMNS = [
     const [kind, label] = kindOf(row.kind);
     const to = opens(row);
     const [first] = row.terminal ? [] : row.attention;
+    const says = first ? said(first.message) : '';
+    // The owner's code, unless its own words already say it, then those words.
+    const code = first && !says.toLowerCase().startsWith(words(first.code).toLowerCase());
     return (
       <>
         {/* A part stands under the unit it is part of, by its own name alone. */}
         {!row.parent && (
-          <span className="kind admin-kind" style={kindStyle(kind)} title={row.type ?? undefined}>
+          <span className="kind admin-kind" style={kindStyle(kind)} title={row.type}>
             {label}
           </span>
         )}
-        {to ? <Go to={to}>{row.title}</Go> : row.title}
-        {/* What it needs, under its name: the owner's word, then the owner's own, if any. */}
+        {/* A drill-in is an app of its own, loaded whole; a page of this one is routed. */}
+        {to ? (
+          <Link className="admin-name" to={to} reloadDocument={to.startsWith('/admin/p/')}>
+            {row.title}
+          </Link>
+        ) : (
+          row.title
+        )}
+        {/* What it needs, under its name. */}
         {first && (
           <div
-            className={cx('admin-attn', first.reason === 'allowance' && 'admin-attn--bad')}
+            className="admin-attn"
             title={row.attention.map((item) => said(item.message)).join('\n') || undefined}
           >
-            {/* The owner's code, unless its own words already say it, then those words. */}
-            {said(first.message).toLowerCase().startsWith(words(first.code).toLowerCase()) ? (
-              <span className="admin-attn-code">{said(first.message)}</span>
-            ) : (
-              <>
-                <span className="admin-attn-code">{words(first.code)} </span>
-                {first.message && <span className="faint">{said(first.message)}</span>}
-              </>
-            )}
+            <span
+              className={`admin-attn-code status--${first.reason === 'allowance' ? 'bad' : 'warn'}`}
+            >
+              {code ? `${words(first.code)} ` : says}
+            </span>
+            {code && <span className="faint">{says}</span>}
           </div>
         )}
       </>
@@ -93,10 +89,8 @@ const COLUMNS = [
       value={row.state}
     />
   )),
-  col<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine }) =>
-    !agent && !machine ? (
-      <None />
-    ) : (
+  fact<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine }) =>
+    agent || machine ? (
       <span>
         {agent && (
           <>
@@ -114,7 +108,7 @@ const COLUMNS = [
           </span>
         )}
       </span>
-    ),
+    ) : null,
   ),
   fig<AdminWorkRow>('activity', 'Activity', (row) => (
     <Ago at={row.lastActivity} className="countdown" />
@@ -134,9 +128,7 @@ const COLUMNS = [
       >
         {figures.filter(Boolean).join(' · ')}
       </span>
-    ) : (
-      <None />
-    );
+    ) : null;
   }),
 ];
 
@@ -150,32 +142,29 @@ export function WorkView() {
   const [ended, setEnded] = useState(false);
   const [kind, setKind] = useState('');
   const all = work.data?.rows ?? [];
+  const shown = (row: AdminWorkRow) => ended || !row.terminal;
   const filter = useListFilter(all, {
     stateOf: (row) => row.state,
     labels: (row) => [row.title, row.project.name, row.person, kindOf(row.kind)[1]],
     ids: (row) => [row.id],
-    also: (row) => (ended || !row.terminal) && (!kind || row.kind === kind),
+    also: (row) => shown(row) && (!kind || row.kind === kind),
   });
   // Each part right under its unit, where that unit is listed too: the unit ranks by its most
   // pressing part and sorts by the latest activity among them.
   const listed = new Set(filter.rows.map((row) => row.id));
-  const parts = (unit: AdminWorkRow) => filter.rows.filter((row) => row.parent === unit.id);
-  const key = (unit: AdminWorkRow) => {
-    const all = [unit, ...parts(unit)];
-    return [
-      Math.min(...all.map(rank)),
-      all
-        .map((row) => row.lastActivity)
-        .sort()
-        .at(-1)!,
-    ] as const;
-  };
+  const part = (row: AdminWorkRow) => !!row.parent && listed.has(row.parent);
+  const family = (unit: AdminWorkRow) => [unit, ...filter.rows.filter((r) => r.parent === unit.id)];
+  const rankOf = (unit: AdminWorkRow) => Math.min(...family(unit).map(rank));
+  const latest = (unit: AdminWorkRow) =>
+    Math.max(...family(unit).map((row) => Date.parse(row.lastActivity)));
   const rows = filter.rows
-    .filter((row) => !row.parent || !listed.has(row.parent))
-    .sort((a, b) => key(a)[0] - key(b)[0] || key(b)[1].localeCompare(key(a)[1]))
-    .flatMap((unit) => [unit, ...parts(unit)]);
+    .filter((row) => !part(row))
+    .sort((a, b) => rankOf(a) - rankOf(b) || latest(b) - latest(a))
+    .flatMap(family);
   const live = all.filter((row) => !row.terminal);
+  const needs = live.filter((row) => row.attention.length).length;
   const kinds = [...new Set(all.map((row) => row.kind))].sort();
+  const narrowed = filter.filtering || kind || ended;
   const clear = () => {
     filter.clear();
     setKind('');
@@ -189,25 +178,13 @@ export function WorkView() {
       filter={{ ...filter, clear }}
       rows={rows}
       lede={(ends) => (
-        <PageHeader
+        <Head
           title="Work"
-          summary={
-            work.data && (
-              <Facts
-                facts={[
-                  [live.length, 'running'],
-                  live.some((row) => row.attention.length) && [
-                    live.filter((row) => row.attention.length).length,
-                    'need attention',
-                  ],
-                ]}
-              />
-            )
-          }
-          actions={ends}
+          ends={ends}
+          facts={work.data && [[live.length, 'running'], needs > 0 && [needs, 'need attention']]}
         />
       )}
-      reset={filter.filtering || kind || ended ? clear : undefined}
+      reset={narrowed ? clear : undefined}
       narrow={
         <>
           {kinds.length > 1 && (
@@ -216,7 +193,7 @@ export function WorkView() {
               options={kinds.map((value) => ({
                 value,
                 label: kindOf(value)[1],
-                count: all.filter((row) => (ended || !row.terminal) && row.kind === value).length,
+                count: all.filter((row) => shown(row) && row.kind === value).length,
               }))}
               value={kind}
               onChange={(value) => setKind(kind === value ? '' : value)}
@@ -246,7 +223,7 @@ export function WorkView() {
                 'admin-line',
                 opens(row) && 'admin-opens',
                 row.terminal && 'admin-ended',
-                row.parent && listed.has(row.parent) && 'admin-part',
+                part(row) && 'admin-part',
               ),
               onClick: (event) => openRow(event, 'a'),
             })}
