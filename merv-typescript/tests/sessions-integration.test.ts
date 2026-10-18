@@ -358,6 +358,56 @@ test('leased workers must deliberately range-read or download large artifacts', 
     [content.slice(100, 100 + 8192), 100, content.length],
   );
 
+  // A collection member of the same bytes is held to its own size, not the manifest's, and
+  // its provider's link is always there to download it.
+  const memberUrl = 'https://storage.example/run/predictions.json';
+  f.app.ctx.artifacts.registerFileProvider('test-files', {
+    download: async () => ({ url: memberUrl, expiresAt: new Date().toISOString() }),
+  });
+  const realFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (url: string | URL | Request, init?: RequestInit) =>
+    String(url) === memberUrl ? Promise.resolve(new Response(content)) : realFetch(url, init),
+  );
+  const collection = await f.app.ctx.artifacts.createCollection(source, {
+    title: 'Prediction capture',
+    sourceKey: 'predictions',
+    files: [
+      {
+        name: 'run/predictions.json',
+        size: artifact.size,
+        hash: artifact.hash,
+        provider: 'test-files',
+        reference: 'predictions',
+      },
+    ],
+  });
+  assert.ok(collection.size < 64_000);
+  const member = { artifactId: collection.id, fileName: 'run/predictions.json' };
+  const unranged = await worker.callTool({ name: 'artifact.read', arguments: member });
+  assert.equal(unranged.isError, true);
+  const memberError = JSON.parse((unranged.content as { text: string }[])[0]!.text).error;
+  assert.equal(memberError.code, 'artifact_read_requires_range');
+  assert.match(
+    memberError.message,
+    /^Collection file is \d+ bytes; .*, or use artifact\.read mode download/,
+  );
+  assert.deepEqual(memberError.details, {
+    ...member,
+    size: artifact.size,
+    sha256: artifact.hash,
+    downloadAvailable: true,
+    maxRangeCharacters: 8192,
+  });
+  const memberWide = await f.call<{ content: string; offset: number; total: number }>(
+    worker,
+    'artifact.read',
+    { ...member, offset: 100, length: 16_000 },
+  );
+  assert.deepEqual(
+    [memberWide.content, memberWide.offset, memberWide.total],
+    [content.slice(100, 100 + 8192), 100, content.length],
+  );
+
   assert.equal((await f.app.ctx.artifacts.read(source, artifact.id)).content, content);
   assert.equal(
     (
