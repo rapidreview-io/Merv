@@ -1,7 +1,7 @@
 import type { Context } from 'cordis';
 import type { DelegationSource } from '@merv/contracts';
 import type { AdminWork, AdminWorkRow } from './models.js';
-import { loaded, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
+import { personLabel, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
 
 /**
  * The work table: every unit of work running anywhere, and every unit that ended in the last
@@ -11,26 +11,21 @@ import { loaded, type AdminEnv, type AdminIdentity, type AdminRoutes } from './i
  * Experiments', an agent's need is Sessions'. Intentionally global: never expose it through
  * project-scoped tools or machine keys.
  */
-
-/** A name that is an identifier (a UUID, a minted id's hex) names nobody. */
-const opaque = (name: string) => /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}/i.test(name);
-
 export async function adminWork(
-  ctx: Pick<Context, 'get'>,
+  ctx: Context,
   admins: readonly AdminIdentity[],
 ): Promise<AdminWork> {
   const at = new Date().toISOString();
   const since = new Date(Date.parse(at) - 86_400_000).toISOString();
-  const { get, unavailable } = loaded(ctx);
   const [workflows, sessions, fleet, pi, tasks, reflections, customers, scope] = [
-    get('workflows'),
-    get('sessions'),
-    get('fleet'),
-    get('pi'),
-    get('tasks'),
-    get('reflections'),
-    get('customerExperiments'),
-    get('scope'),
+    ctx.get('workflows'),
+    ctx.get('sessions'),
+    ctx.get('fleet'),
+    ctx.get('pi'),
+    ctx.get('tasks'),
+    ctx.get('reflections'),
+    ctx.get('customerExperiments'),
+    ctx.get('scope'),
   ] as const;
   const work = (await workflows?.platformWork(since)) ?? [];
   const all = work.map(({ id }) => id);
@@ -49,19 +44,12 @@ export async function adminWork(
   const { people, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
   const names = new Map(projects.map(({ id, name }) => [id, name]));
 
-  // A person's label: the one configured for an admin, else a name one of their project actors
-  // goes by.
   const labels = new Map<string, string>();
   const byActor = new Map<string, string>();
-  for (const { issuer, subject, actors } of people) {
-    const key = `${issuer}|${subject}`;
-    labels.set(
-      key,
-      admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ??
-        actors.find(({ name }) => name !== subject && !opaque(name))?.name ??
-        'Unnamed',
-    );
-    for (const { actorId } of actors) byActor.set(actorId, key);
+  for (const person of people) {
+    const key = `${person.issuer}|${person.subject}`;
+    labels.set(key, personLabel(admins, person) ?? 'Unnamed');
+    for (const { actorId } of person.actors) byActor.set(actorId, key);
   }
   // Work an agent or a service started, or whose starter is no member, is its project owner's.
   const identity = (source: DelegationSource) =>
@@ -80,7 +68,6 @@ export async function adminWork(
           phase: a.phase,
           profile: a.profile,
           provider: a.provider,
-          sandboxId: a.runtime?.sandboxId ?? null,
           usdPerHour: a.usdPerHour ?? null,
         }
       : null;
@@ -122,41 +109,30 @@ export async function adminWork(
         machine: machine(machines.get(visit?.allocationId ?? '') ?? machines.get(unit.id)),
         lastActivity: visit?.lastActivity ?? unit.updatedAt,
         createdAt: unit.createdAt,
-        updatedAt: unit.updatedAt,
         cost: usage,
         requestId: found?.requestId,
       };
     }),
-    ...turns.map((turn) => {
-      const moved = turn.completedAt ?? turn.startedAt ?? turn.createdAt;
-      return {
-        id: turn.id,
-        kind: 'pi',
-        type: null,
-        title: turn.title,
-        parent: null,
-        project: project(turn.projectId),
-        person: member(identity(turn.source) ?? byActor.get(turn.source.actorId), turn.projectId),
-        state: turn.status,
-        terminal: !turn.live,
-        attention: [],
-        agent: null,
-        machine: machine(machines.get(turn.runtimeId)),
-        lastActivity: moved,
-        createdAt: turn.createdAt,
-        updatedAt: moved,
-        cost: null,
-      };
-    }),
+    ...turns.map((turn) => ({
+      id: turn.id,
+      kind: 'pi',
+      type: null,
+      title: turn.title,
+      parent: null,
+      project: project(turn.projectId),
+      person: member(identity(turn.source) ?? byActor.get(turn.source.actorId), turn.projectId),
+      state: turn.status,
+      terminal: !turn.live,
+      attention: [],
+      agent: null,
+      machine: machine(machines.get(turn.runtimeId)),
+      lastActivity: turn.completedAt ?? turn.startedAt ?? turn.createdAt,
+      createdAt: turn.createdAt,
+      cost: null,
+    })),
   ];
-  return {
-    rows: rows.sort(
-      (a, b) =>
-        Number(a.terminal) - Number(b.terminal) || b.lastActivity.localeCompare(a.lastActivity),
-    ),
-    at,
-    unavailable,
-  };
+  // Unordered: the page puts what needs someone first.
+  return { rows, at };
 }
 
 export const workRoutes = (env: AdminEnv): AdminRoutes => ({

@@ -19,8 +19,8 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Secret names per plugin | composition root (`composition.environment()`), Sandboxes (`credential_env`) | env names from each plugin's `*Env` config fields; a host provider's from its credential reference |
 
 `@merv/admin` composes these reads. It owns no copy of another plugin's rules: terminal states
-come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes. Each read
-names an owner not loaded here in `unavailable`.
+come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes. An owner not
+loaded here leaves its facts out.
 
 ## Routes (all `adminOf`; the API answers each `Cache-Control: no-store`)
 
@@ -29,7 +29,7 @@ names an owner not loaded here in `unavailable`.
   attention (each owner's code, and its words where it has any), agent, machine, last activity,
   age, cost so far, and a standalone experiment's request. Joined from each owner's platform
   read: `workflows.platformWork`, `sessions.running.platform`, `fleet.platformAllocations`,
-  `pi.platformTurns`, `tasks.platformTypes`, `reflections.platformLensNames`,
+  `pi.platformTurns`, `tasks.platformTypes`, `reflections.platformLenses`,
   `customerExperiments.customers` and `scope.directory`. An agent's need is Sessions' own
   phrase; a machine is found by its allocation id or by the unit Fleet says it serves.
 - `GET /admin/credits` — per person → sandbox account → provider: granted, used, reserved,
@@ -40,8 +40,8 @@ names an owner not loaded here in `unavailable`.
   exactly and replays; it answers `{ id }`. The admin checks only the body's shape: Sandboxes
   refuses the values (`sandbox_validation`).
 - `GET /admin/credentials` — by purpose (Pi agents, Fleet agents, Fleet machines, sandbox
-  providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, first
-  seen, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
+  providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, last
+  change, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
   with no success or change since, live provider health. Never a value.
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
   experiments' own snapshot, without the customer's token); 503 where it is not installed. The
@@ -73,7 +73,8 @@ without membership; one line above the shell reads `← Admin  <project>`. One f
 hides the verbs: the pages that are only verbs (Agent chat, boards, Settings, the sandbox console)
 lose their rows and routes, the dock is not mounted, and `Submit`, `ConfirmAction`,
 `ResearchCommand`, a review's controls, a list's creation control, a running panel's act and the
-file upload draw nothing. The server is the control. A refused drill-in keeps the sign-in.
+file upload draw nothing. The server is the control. A refused drill-in keeps the sign-in: it
+says why, with the way back to `/ui/admin`.
 The caller acts as `PLATFORM_ACTOR`, a reader no actor row backs; it never delegates, so it starts
 no session, conversation or lease. Web refuses it (`403 web_forbidden`), so a drill-in spends no
 project's web budget. Any other principal sending the header, and every MCP request with it, is

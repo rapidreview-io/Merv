@@ -11,7 +11,7 @@ import { personKey } from '@merv/fleet/model-ledger';
 import type {} from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
 import type { AdminCredits, CreditAccount } from './models.js';
-import { loaded, type AdminEnv, type AdminRoutes } from './index.js';
+import { personLabel, type AdminEnv, type AdminRoutes } from './index.js';
 
 const refusals = mervRefusals(MervError);
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
@@ -65,9 +65,7 @@ const plugins = async (sbx: Sandboxes) =>
 
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
-  const { get, unavailable } = loaded(env.ctx);
-  const [fleet, pi] = [get('fleet'), get('pi')];
-  const { people } = await env.ctx.scope.directory();
+  const { people, projects } = await env.ctx.scope.directory();
   const persons = await Promise.all(
     people.map((p) => sbx.auth.persons.byIdentity(p.issuer, p.subject)),
   );
@@ -75,9 +73,7 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
     persons.map(async (p) => (p ? await sbx.accounts.accountsOf(p.id) : [])),
   );
   const links = new Map<string, CreditAccount['projects']>();
-  for (const { projectId, name } of new Map(
-    people.flatMap((p) => p.projects).map((p) => [p.projectId, p]),
-  ).values()) {
+  for (const { id: projectId, name } of projects) {
     const link = await sbx.accounts.linked(projectId);
     if (link)
       links.set(link.account_id, [...(links.get(link.account_id) ?? []), { projectId, name }]);
@@ -114,25 +110,22 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   }
   // Fleet and Pi key a person by their sign-in; the actor names only callers without one.
   const keys = people.map((p) => personKey(p, { projectId: '', actorId: '' }));
-  const days = await fleet?.peopleToday(keys);
-  const tokens = await pi?.tokensToday(keys);
+  const days = await env.ctx.get('fleet')?.peopleToday(keys);
+  const tokens = await env.ctx.get('pi')?.tokensToday(keys);
   return {
     at: new Date().toISOString(),
     providers: await plugins(sbx),
-    people: people.map(({ issuer, subject }, i) => ({
+    people: people.map((person, i) => ({
       label:
-        env.admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ||
-        persons[i]?.display_name ||
-        persons[i]?.email ||
-        'Unnamed',
-      issuer,
-      subject,
+        personLabel(env.admins, person) ??
+        (persons[i]?.display_name || persons[i]?.email || 'Unnamed'),
+      issuer: person.issuer,
+      subject: person.subject,
       accounts: memberships[i]!.map((a) => ({ accountId: a.id, role: a.role })),
       fleet: days?.[i] ?? null,
       pi: tokens?.[i] ?? null,
     })),
     accounts,
-    unavailable,
   };
 }
 

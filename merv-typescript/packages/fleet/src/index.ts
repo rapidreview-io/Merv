@@ -325,7 +325,6 @@ export class FleetService implements Fleet {
       const days: FleetPersonDay[] = [];
       for (const person of persons)
         days.push({
-          person,
           usd: usd.get(person) ?? 0,
           usdCap: this.config.dailyUsdPerPerson ?? null,
           tokens: (await meter?.modelTokens!(person, sql)) ?? null,

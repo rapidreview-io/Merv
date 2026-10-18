@@ -1,5 +1,9 @@
 /** Text with something to read: not only whitespace and invisible format characters. */
 export const visible = (text: string) => /[^\s\p{Cf}]/u.test(text);
+/** A name nobody wrote is not one: an identifier (a UUID, a minted id's hex, a sign-in key)
+ *  names nobody. */
+export const personName = (name: string | undefined) =>
+  name && !/[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/.test(name) ? name : undefined;
 /** At most `max` UTF-16 units, never ending in half a surrogate pair. */
 export const clip = (text: string, max: number) =>
   text.length > max ? text.slice(0, max).replace(/\p{Surrogate}$/u, '') : text;

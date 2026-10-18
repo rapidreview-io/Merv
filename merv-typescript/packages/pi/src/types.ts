@@ -279,7 +279,7 @@ export interface PiRuntime extends Pi {
    *  public and closes it with the mount. */
   modelRelay(): ModelRelayHandle;
   /** For the platform admin only, never a tool: each of `persons`' Agent tokens today (UTC). */
-  tokensToday(persons: readonly string[]): Promise<(ModelTokens & { person: string })[]>;
+  tokensToday(persons: readonly string[]): Promise<ModelTokens[]>;
 }
 declare module 'cordis' {
   interface Context {

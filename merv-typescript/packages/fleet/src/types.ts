@@ -125,9 +125,8 @@ export interface ModelTokens {
   used: number;
   limit: number;
 }
-/** A person's Fleet day so far (UTC), keyed as `personKey` keys them. */
+/** A person's Fleet day so far (UTC). */
 export interface FleetPersonDay {
-  person: string;
   /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. */
   usd: number;
   usdCap: number | null;
@@ -308,7 +307,7 @@ export interface Fleet {
     config: ModelRelayConfig<G, N, R>,
     keyEnv: string,
   ): ModelRelayHandle;
-  /** For the platform admin only, never a tool: each of `persons`' day so far. */
+  /** For the platform admin only, never a tool: each of `persons`' day so far, in order. */
   peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]>;
   /** Every relay's latest outcomes per provider key and model: the platform admin's read, never
    *  a tool's. */

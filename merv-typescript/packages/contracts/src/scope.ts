@@ -171,7 +171,7 @@ export interface Scope {
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** Platform admin read, never exposed through a tool or a key: every project, newest first, and
-   * every signed-in person with the project actors they are and their active memberships. */
+   * every signed-in person with the project actors they are. */
   directory(tx?: Transaction): Promise<PlatformDirectory>;
   /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
    * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
@@ -251,6 +251,5 @@ export interface PlatformDirectory {
     issuer: string;
     subject: string;
     actors: { actorId: string; name: string }[];
-    projects: { projectId: string; name: string; role: Role }[];
   }[];
 }

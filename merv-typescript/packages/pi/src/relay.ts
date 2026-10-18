@@ -47,7 +47,7 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
     const delta = usage.inputTokens + usage.outputTokens - reserved.tokens;
     await state.transaction((tx) => piLedger.settle(tx, grant.userId, reserved.day, delta));
   },
-  async today(persons: readonly string[]): Promise<(ModelTokens & { person: string })[]> {
+  async today(persons: readonly string[]): Promise<ModelTokens[]> {
     const rows = await state.read((sql) =>
       sql.all<{ person: string; tokens: number | string }>(
         `SELECT person,tokens FROM pi_model_usage WHERE day=? AND person IN (${persons.map(() => '?').join(',') || 'NULL'})`,
@@ -56,7 +56,7 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
       ),
     );
     const used = new Map(rows.map((row) => [row.person, Number(row.tokens)]));
-    return persons.map((person) => ({ person, used: used.get(person) ?? 0, limit: ceiling }));
+    return persons.map((person) => ({ used: used.get(person) ?? 0, limit: ceiling }));
   },
 });
 

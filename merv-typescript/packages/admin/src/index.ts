@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, type State } from '@merv/contracts';
+import { check, MervError, type PlatformDirectory, type State } from '@merv/contracts';
+import { personName } from '@merv/contracts/text';
 import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
 import { adminCredentials, credentialMigrations } from './credentials.js';
@@ -26,6 +27,14 @@ export function adminOf(
   const { issuer, subject } = principal.user;
   return admins.find((a) => a.issuer === issuer && a.subject === subject);
 }
+/** A person's name on every admin page: their configured admin label, else a name one of their
+ *  project actors goes by that is neither their subject nor an identifier. */
+export const personLabel = (
+  admins: readonly AdminIdentity[],
+  { issuer, subject, actors }: PlatformDirectory['people'][number],
+) =>
+  admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ??
+  actors.find(({ name }) => name !== subject && personName(name))?.name;
 
 /** What every admin route reads with: the plugin's context, its state, audit and admins. */
 export interface AdminEnv {
@@ -33,13 +42,6 @@ export interface AdminEnv {
   state: State;
   audit: AdminAudit;
   admins: readonly AdminIdentity[];
-}
-/** `ctx.get` for each owner a read composes, listing in `unavailable` each one not loaded. */
-export function loaded(ctx: Pick<Context, 'get'>) {
-  const unavailable: string[] = [];
-  const get = <K extends keyof Context & string>(name: K): Context[K] | undefined =>
-    ctx.get(name) ?? void unavailable.push(name);
-  return { get, unavailable };
 }
 /** One admin route, answering for the verified admin `who`. */
 export type AdminRoute = (r: ApiRequest, who: AdminIdentity) => Promise<unknown>;

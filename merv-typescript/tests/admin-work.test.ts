@@ -165,13 +165,9 @@ test('the work table reads every project’s open and recent work through its ow
 
   const view = await adminWork({ get } as never, [{ issuer, subject: 'ada', label: 'Ada L.' }]);
   const row = (id: string) => view.rows.find((item) => item.id === id)!;
-  assert.deepEqual(view.unavailable, ['fleet', 'pi']);
   assert.equal(row(old.id), undefined, 'ended more than a day ago');
   assert.equal(row(shipped.id).terminal, true);
   assert.equal(row(open.id).terminal, false);
-  assert.ok(
-    view.rows.findIndex((item) => item.terminal) > view.rows.findIndex((item) => !item.terminal),
-  );
   assert.deepEqual(row(open.id).attention, [
     {
       reason: 'blocker',
@@ -235,13 +231,6 @@ test('Pi turns are rows of the table, with the Fleet machine their host slot run
   const command = await f.send(await f.create());
   const get = (name: string) => ({ pi: f.pi, fleet: f.fleet, scope: f.scope })[name as 'pi'];
   const view = await adminWork({ get } as never, []);
-  assert.deepEqual(view.unavailable, [
-    'workflows',
-    'sessions',
-    'tasks',
-    'reflections',
-    'customerExperiments',
-  ]);
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
   assert.equal(turn!.id, command.id);
@@ -255,7 +244,6 @@ test('Pi turns are rows of the table, with the Fleet machine their host slot run
     phase: allocation.phase,
     profile: 'standard',
     provider: 'fake',
-    sandboxId: null,
     usdPerHour: null,
   });
 });

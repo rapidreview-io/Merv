@@ -271,22 +271,21 @@ test('GET /admin/credentials says which credential serves which purpose and neve
 
   const first = await adminCredentials(env);
   const fingerprint = (value: string) => sha256Hex(value).slice(0, 8);
-  assert.deepEqual(first.unavailable, []);
   assert.deepEqual(
     first.groups.map((group) => [group.purpose, group.provider?.name ?? null]),
     [
       ['Pi agents', null],
       ['Fleet agents', null],
       ['Fleet machines', null],
-      ['Platform services', null],
       ['Sandbox provider', 'cf'],
       ['Sandbox provider', 'mine'],
+      ['Platform services', null],
     ],
   );
-  const [pi, agents, machines, services_, cf, mine] = first.groups;
+  const [pi, agents, machines, cf, mine, services_] = first.groups;
   const [shared] = agents!.credentials;
   assert.deepEqual(
-    { ...shared, firstSeen: !!shared!.firstSeen, lastOk: shared!.lastOk?.relay },
+    { ...shared, lastOk: shared!.lastOk?.relay },
     {
       plugin: 'fleet-workflow',
       field: 'modelApiKeyEnv',
@@ -295,7 +294,6 @@ test('GET /admin/credentials says which credential serves which purpose and neve
       fingerprint: fingerprint(openai),
       // The same key under another name, and the same name in another plugin.
       sharedWith: [named[0], named[3]],
-      firstSeen: true,
       lastChanged: null,
       lastOk: 'codex',
       lastFailure: {
@@ -377,8 +375,8 @@ test('GET /admin/credentials says which credential serves which purpose and neve
   const second = await adminCredentials(env);
   const [again] = second.groups[1]!.credentials;
   assert.deepEqual(
-    [again!.fingerprint, again!.firstSeen, again!.lastChanged, again!.sharedWith, again!.dead],
-    [fingerprint(rotated), shared!.firstSeen, second.at, [], false],
+    [again!.fingerprint, again!.lastChanged, again!.sharedWith, again!.dead],
+    [fingerprint(rotated), second.at, [], false],
   );
   assert.deepEqual(second.groups[0]!.credentials[0]!.sharedWith, [named[3]]);
   // Host health is reused within the minute: Cloudflare was asked once per token path.

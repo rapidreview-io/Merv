@@ -168,7 +168,7 @@ export class ProjectScope implements Scope {
           )
         ).map(({ issuer, subject }) => [
           issuer + '|' + subject,
-          { issuer, subject, actors: [], projects: [] } as PlatformDirectory['people'][number],
+          { issuer, subject, actors: [] } as PlatformDirectory['people'][number],
         ]),
       );
       for (const { issuer, subject, ...actor } of await sql.all<{
@@ -180,17 +180,6 @@ export class ProjectScope implements Scope {
         'SELECT m.issuer,m.subject,m.actor_id AS "actorId",a.name FROM member_actors m JOIN actors a ON a.id=m.actor_id ORDER BY a.id',
       ))
         people.get(issuer + '|' + subject)?.actors.push(actor);
-      for (const { issuer, subject, ...membership } of await sql.all<{
-        issuer: string;
-        subject: string;
-        projectId: string;
-        name: string;
-        role: Role;
-      }>(
-        `SELECT m.issuer,m.subject,m.project_id AS "projectId",p.name,m.role FROM project_memberships m
-         JOIN projects p ON p.id=m.project_id WHERE m.active=1 ORDER BY m.created_at,m.id`,
-      ))
-        people.get(issuer + '|' + subject)?.projects.push(membership);
       const projects = await sql.all<Project>(
         'SELECT id,name,created_at AS "createdAt" FROM projects ORDER BY created_at DESC,id',
       );

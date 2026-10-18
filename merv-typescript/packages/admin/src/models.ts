@@ -33,13 +33,10 @@ export interface AdminWorkRow {
     phase: string;
     profile: string | null;
     provider: string | null;
-    sandboxId: string | null;
     usdPerHour: number | null;
   } | null;
   lastActivity: string;
   createdAt: string;
-  /** Its last transition. */
-  updatedAt: string;
   /** Its closed work visits; runners report tokens unverified, and no visit reports a price. */
   cost: {
     sessions: number;
@@ -54,8 +51,6 @@ export interface AdminWorkRow {
 export interface AdminWork {
   rows: AdminWorkRow[];
   at: string;
-  /** The owners not loaded here, whose facts the table lacks. */
-  unavailable: string[];
 }
 
 interface Tokens {
@@ -70,8 +65,6 @@ export interface AdminCredits {
   people: CreditPerson[];
   /** Every account a person belongs to, a project pays from, or credits are held in, once. */
   accounts: CreditAccount[];
-  /** Owners not loaded here, whose figures are left out: `fleet`, `pi`. */
-  unavailable: string[];
 }
 export interface CreditPerson {
   label: string;
@@ -80,9 +73,9 @@ export interface CreditPerson {
   /** The Sandboxes accounts they are a member of. */
   accounts: { accountId: string; role: 'admin' | 'member' }[];
   /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
-  fleet: { person: string; usd: number; usdCap: number | null; tokens: Tokens | null } | null;
+  fleet: { usd: number; usdCap: number | null; tokens: Tokens | null } | null;
   /** Today (UTC): their Agent chat model tokens. */
-  pi: (Tokens & { person: string }) | null;
+  pi: Tokens | null;
 }
 /** One account's credits per provider, as Sandboxes computes them, and its budget caps beside. */
 export interface CreditAccount {
@@ -143,7 +136,6 @@ export interface AdminCredential {
   fingerprint: string | null;
   /** Every other name and field that holds the same value. */
   sharedWith: { plugin: string; field: string; env: string }[];
-  firstSeen: string | null;
   /** When the value last changed, once this page has seen it change. */
   lastChanged: string | null;
   lastOk: { at: string; relay: string; model: string } | null;
@@ -170,7 +162,6 @@ export interface AdminCredentialGroup {
     credential_env: string | null;
     fields: readonly { name: string; present: boolean | null }[];
     verified_at: string | null;
-    updated_at: string | null;
     health: { status: string; message: string } | null;
     health_reason: string | null;
   };
@@ -188,6 +179,4 @@ export interface AdminCredentials {
     revokedLastDay: number | string;
     newestIssued: string;
   }[];
-  /** The owners not loaded here, or whose read failed. */
-  unavailable: string[];
 }

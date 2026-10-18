@@ -3,7 +3,7 @@ import type {} from '@merv/fleet/types';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@sandboxes/providers';
 import type { AdminCredential, AdminCredentialGroup, AdminCredentials } from './models.js';
-import { loaded, type AdminEnv } from './index.js';
+import type { AdminEnv } from './index.js';
 
 /** Published migrations: production pins each text by its digest, never edit one. */
 export const credentialMigrations = {
@@ -29,18 +29,13 @@ const purposes: Record<string, string> = {
  *  relay outcomes, Identity's ledger and Sandboxes' providers, composed here and nowhere else. */
 export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials> {
   const at = new Date().toISOString();
-  const { get, unavailable } = loaded(env.ctx);
-  const read = async <T>(owner: string, fn: () => Promise<T> | undefined) => {
-    try {
-      return await fn();
-    } catch {
-      unavailable.push(owner);
-    }
-  };
-  const composition = get('composition');
-  const providers = (await read('sbxProviders', () => get('sbxProviders')?.inventory())) ?? [];
-  const outcomes = (await read('fleet', () => get('fleet')?.relayOutcomes())) ?? [];
-  const minted = (await read('identity', () => new CredentialStore(env.state).summary())) ?? [];
+  const composition = env.ctx.get('composition');
+  const sandboxes = env.ctx.get('sbxProviders');
+  const fleet = env.ctx.get('fleet');
+  // A read that fails leaves its facts out.
+  const providers = (await sandboxes?.inventory().catch(() => [])) ?? [];
+  const outcomes = (await fleet?.relayOutcomes().catch(() => [])) ?? [];
+  const minted = await new CredentialStore(env.state).summary().catch(() => []);
 
   const groups: AdminCredentialGroup[] = [...new Set(Object.values(purposes)), services].map(
     (purpose) => ({ purpose, credentials: [] }),
@@ -53,13 +48,21 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
     const group = {
       purpose: 'Sandbox provider',
       provider: {
-        ...provider,
+        name: provider.name,
+        plugin: provider.plugin,
+        source: provider.source,
+        namespaces: provider.namespaces,
+        enabled: provider.enabled,
+        credential_env: provider.credential_env,
+        fields: provider.fields,
         verified_at: provider.verified_at?.toJSON() ?? null,
-        updated_at: provider.updated_at?.toJSON() ?? null,
+        health: provider.health,
+        health_reason: provider.health_reason,
       },
       credentials: [],
     };
-    groups.push(group);
+    // In reading order: before the platform services, which come last.
+    groups.splice(-1, 0, group);
     const { plugin, name, credential_env: key } = provider;
     if (key)
       named.push({ ref: { plugin, field: `providers.${name}.credential`, env: key }, group });
@@ -104,7 +107,6 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
             .map((n) => n.ref)
             .filter((other) => other !== ref && digests.get(other.env) === digest)
         : [],
-      firstSeen: history[0]?.first_seen ?? null,
       lastChanged,
       lastOk: ok ? { at: ok.lastOkAt!, relay: ok.relay, model: ok.model } : null,
       lastFailure: failed
@@ -127,6 +129,5 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
     at,
     groups: groups.filter((g) => g.provider || g.credentials.length),
     minted,
-    unavailable,
   };
 }

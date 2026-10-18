@@ -2912,8 +2912,8 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   );
   // The platform admin's read: today's tokens against the ceiling, nothing for a person without.
   assert.deepEqual(await f.pi.tokensToday([grant.userId, 'nobody']), [
-    { person: grant.userId, used: 50 + charged.tokens, limit: 1_000 },
-    { person: 'nobody', used: 0, limit: 1_000 },
+    { used: 50 + charged.tokens, limit: 1_000 },
+    { used: 0, limit: 1_000 },
   ]);
 });
 

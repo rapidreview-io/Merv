@@ -151,10 +151,11 @@ test('credits read per person, account and provider, as report() computes them, 
     provider: 'fake',
     source: null,
   });
-  // Fleet reports each person by the key it charges them under; Pi is not loaded here.
+  // Fleet is asked for each person by the key it charges them under; Pi is not loaded here.
+  const key = personKey({ issuer, subject: 'alice' }, { projectId: '', actorId: '' });
   f.ctx.provide('fleet', {
     peopleToday: async (keys: string[]) =>
-      keys.map((key) => ({ person: key, usd: 1.5, usdCap: 20, tokens: { used: 3, limit: 9 } })),
+      keys.map((k) => ({ usd: k === key ? 1.5 : 0, usdCap: 20, tokens: { used: 3, limit: 9 } })),
   });
   const issued = () => f.ctx.sbxDb.get('SELECT count(*)::int AS n FROM infra_credit_grants');
   const before = await issued();
@@ -165,19 +166,16 @@ test('credits read per person, account and provider, as report() computes them, 
   })) as AdminCredits;
   assert.deepEqual(await issued(), before);
   assert.deepEqual(view.providers, ['fake']);
-  assert.deepEqual(view.unavailable, ['pi']);
-  const [listed] = view.people;
-  assert.deepEqual(
-    { ...listed, fleet: listed!.fleet?.person },
+  assert.deepEqual(view.people, [
     {
       label: 'Alice',
       issuer,
       subject: 'alice',
       accounts: [{ accountId: own!.id, role: 'admin' }],
-      fleet: personKey({ issuer, subject: 'alice' }, { projectId: '', actorId: '' }),
+      fleet: { usd: 1.5, usdCap: 20, tokens: { used: 3, limit: 9 } },
       pi: null,
     },
-  );
+  ]);
   const account = (id: string) => view.accounts.find((a) => a.accountId === id)!;
   assert.deepEqual(
     account(payer.account_id).budgets.map((b) => [b.id, b.window, b.cap, b.provider]),
