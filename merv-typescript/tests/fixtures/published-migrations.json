@@ -964,6 +964,12 @@
       "published": true
     },
     {
+      "component": "secrets",
+      "version": 2,
+      "hash": "ba06a9394e639df2584271ca884bb2c5a5d0431d716f19f69ac41bdb9de25113",
+      "published": false
+    },
+    {
       "component": "sandboxes-native",
       "version": 1,
       "hash": "20bb7afa2dc67ad965818904e24c1c2d1f7e508d8988aa757772a8cafcd692cb",

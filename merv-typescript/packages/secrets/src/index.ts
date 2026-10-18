@@ -12,7 +12,13 @@ import {
   type HumanPrincipal,
   type State,
 } from '@merv/contracts';
-import type { AccountIdentity, HuggingFaceStatus, HuggingFaceGrant, Secrets } from './types.js';
+import type {
+  AccountIdentity,
+  HuggingFaceStatus,
+  HuggingFaceGrant,
+  PlatformSecretRecord,
+  Secrets,
+} from './types.js';
 
 const grantSchema = z
   .object({ binding: z.string().min(1).max(2048), exp: z.number().int().safe().positive() })
@@ -29,6 +35,16 @@ const migrations = [
     PRIMARY KEY (issuer, subject)
   );`,
   },
+  {
+    version: 2,
+    sql: `CREATE TABLE platform_secrets (
+    env TEXT PRIMARY KEY,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_issuer TEXT NOT NULL,
+    updated_subject TEXT NOT NULL
+  );`,
+  },
 ];
 
 /** A canonical base64url encoding of 32 random bytes, supplied only through deployment env. */
@@ -38,10 +54,31 @@ function encryptionKey(value: string | undefined): Uint8Array | undefined {
   return bytes.length === 32 && bytes.toString('base64url') === value ? bytes : undefined;
 }
 const binding = ({ issuer, subject }: AccountIdentity) => digest(['huggingface', issuer, subject]);
-const unavailable = () =>
-  new MervError('secrets_unavailable', 'Hugging Face token storage is unavailable', 503);
+const unavailable = (what = 'Hugging Face token storage') =>
+  new MervError('secrets_unavailable', `${what} is unavailable`, 503);
 /** Direct A256GCM encryption: how both a stored token and a grant are sealed. */
 const DIR = { keyManagementAlgorithms: ['dir'], contentEncryptionAlgorithms: ['A256GCM'] };
+/** A stored value, its authenticated `kid` binding it to one owner: an account, an env name. */
+const seal = (key: Uint8Array, value: string, kid: string) =>
+  new CompactEncrypt(new TextEncoder().encode(value))
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM', kid })
+    .encrypt(key);
+/** What `seal` sealed for `kid`; null for another owner's, another key's or altered text. */
+async function open(key: Uint8Array, ciphertext: string, kid: string): Promise<string | null> {
+  try {
+    const { plaintext, protectedHeader } = await compactDecrypt(ciphertext, key, DIR);
+    return protectedHeader.kid === kid ? new TextDecoder().decode(plaintext) : null;
+  } catch {
+    return null;
+  }
+}
+const platformBinding = (env: string) => digest(['platform-secret', env]);
+/** An env value: process.env holds no NUL, and 64 KiB holds any key file a provider issues. */
+const platformValue = z
+  .string()
+  .min(1)
+  .max(65_536)
+  .refine((value) => !value.includes('\0'));
 export const huggingFaceToken = z
   .string()
   .min(1)
@@ -145,9 +182,7 @@ export class AccountSecrets implements Secrets {
       'invalid_input',
       'Enter a valid Hugging Face token',
     );
-    const ciphertext = await new CompactEncrypt(new TextEncoder().encode(token))
-      .setProtectedHeader({ alg: 'dir', enc: 'A256GCM', kid: binding(identity) })
-      .encrypt(this.#key);
+    const ciphertext = await seal(this.#key, token, binding(identity));
     await this.state.transaction(async (tx) => {
       await tx.run(
         `INSERT INTO account_huggingface_secrets(issuer,subject,ciphertext,updated_at) VALUES (?,?,?,?)
@@ -184,18 +219,57 @@ export class AccountSecrets implements Secrets {
       ),
     );
     if (!row) return null;
-    try {
-      const { plaintext, protectedHeader } = await compactDecrypt(row.ciphertext, this.#key, DIR);
-      if (protectedHeader.kid !== binding(identity)) throw unavailable();
-      return new TextDecoder().decode(plaintext);
-    } catch {
-      throw unavailable();
-    }
+    const token = await open(this.#key, row.ciphertext, binding(identity));
+    if (token === null) throw unavailable();
+    return token;
+  }
+  /** Platform secrets an admin stored, which replace the env values of the same names: names
+   *  and times only. */
+  async platformSecrets(): Promise<PlatformSecretRecord[]> {
+    return await this.state.read((sql) =>
+      sql.all<PlatformSecretRecord>(
+        'SELECT env,updated_at AS "updatedAt" FROM platform_secrets ORDER BY env',
+      ),
+    );
+  }
+  /** The stored value of `env`, decrypted; null with none stored, or without the key. */
+  async platformSecret(env: string): Promise<string | null> {
+    if (!this.#key) return null;
+    const row = await this.state.read((sql) =>
+      sql.get<{ ciphertext: string }>('SELECT ciphertext FROM platform_secrets WHERE env=?', env),
+    );
+    if (!row) return null;
+    const value = await open(this.#key, row.ciphertext, platformBinding(env));
+    if (value === null) throw unavailable('Stored platform secrets');
+    return value;
+  }
+  /** Stores `value` for `env`, sealed to that name. The caller authorizes `by`. */
+  async setPlatformSecret(env: string, value: string, by: AccountIdentity) {
+    if (!this.#key) throw unavailable('Stored platform secrets');
+    // The refusals carry no submitted value.
+    check(envName.safeParse(env).success, 'invalid_input', 'Name an environment variable');
+    check(platformValue.safeParse(value).success, 'invalid_input', 'Enter a secret value');
+    const ciphertext = await seal(this.#key, value, platformBinding(env));
+    await this.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO platform_secrets(env,ciphertext,updated_at,updated_issuer,updated_subject)
+         VALUES (?,?,?,?,?) ON CONFLICT (env) DO UPDATE SET ciphertext=EXCLUDED.ciphertext,
+         updated_at=EXCLUDED.updated_at,updated_issuer=EXCLUDED.updated_issuer,
+         updated_subject=EXCLUDED.updated_subject`,
+        env,
+        ciphertext,
+        new Date(this.clock()).toISOString(),
+        by.issuer,
+        by.subject,
+      ),
+    );
   }
 }
 const Config = z
   .object({
-    encryptionKeyEnv: envName.default('MERV_SECRETS_ENCRYPTION_KEY'),
+    encryptionKeyEnv: envName
+      .describe('Stored secrets · encryption key')
+      .default('MERV_SECRETS_ENCRYPTION_KEY'),
     huggingFaceEndpoint: z
       .string()
       .url()
