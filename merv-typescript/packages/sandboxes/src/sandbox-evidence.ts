@@ -12,7 +12,7 @@ import {
 } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { CaptureSummary, SbxPipelines, WorkflowRecord } from '@sandboxes/pipelines';
-import { nodeTerminal, workflowTerminal } from '@sandboxes/pipelines/graph';
+import { workflowTerminal } from '@sandboxes/pipelines/graph';
 import type { SbxJobs } from '@sandboxes/jobs';
 import type { SbxObjects } from '@sandboxes/storage';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
@@ -237,22 +237,21 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
   }
 
   /** Whether every capture of a finished workflow has settled, registering those not yet. A
-   *  capture node is final once it ends, so it registers then, while the rest of its workflow
-   *  still runs: its agent need not wait for the whole pipeline to find its evidence. */
+   *  succeeded capture is final, so it registers while the rest of its workflow still runs; one
+   *  that did not succeed waits for the workflow, whose cleanup may still recover its files. */
   private async workflow(work: Work, workflow: WorkflowRecord) {
     if (!workflow.attempt_ref) return false;
     const finished = workflowTerminal(workflow.state);
     const key = JSON.stringify([work.namespace, workflow.id]);
     if (this.doneWorkflows.has(key)) return true;
-    const ended = finished
+    const succeeded = finished
       ? []
       : workflow.request.nodes
           .filter(
-            (node) =>
-              node.kind === 'capture' && nodeTerminal(workflow.nodes[node.id]?.state ?? 'pending'),
+            (node) => node.kind === 'capture' && workflow.nodes[node.id]?.state === 'succeeded',
           )
           .map((node) => node.id);
-    if (!finished && !ended.length) return false;
+    if (!finished && !succeeded.length) return false;
     const rows = await this.state.read((sql) =>
       sql.all<{ node_id: string; stalled: boolean }>(
         'SELECT node_id,stalled FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
@@ -263,8 +262,8 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     );
     const indexed = new Set(rows.filter((row) => !row.stalled).map((row) => row.node_id));
     const stalled = new Set(rows.filter((row) => row.stalled).map((row) => row.node_id));
-    // A running workflow is read again only when another of its captures has ended.
-    if (!finished && ended.every((node) => indexed.has(node))) return false;
+    // A running workflow is read again only when another of its captures has succeeded.
+    if (!finished && succeeded.every((node) => indexed.has(node))) return false;
     let after: string | null = null;
     let pending = false;
     do {
@@ -273,7 +272,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         limit: 128,
       });
       for (const node of page.captures) {
-        if (indexed.has(node.id)) continue;
+        if (indexed.has(node.id) || (!finished && node.state !== 'succeeded')) continue;
         const failing = JSON.stringify([work.namespace, workflow.id, node.id]);
         try {
           await this.register(work, workflow, node);

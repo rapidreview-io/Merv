@@ -70,6 +70,10 @@ test('every profile says how captures register and how inputs reach a machine', 
     const text = computeGuidance(profile);
     // Sandboxes' capture registration titles each collection with these ids first.
     assert.match(text, /titled "Compute capture <workflow id> \/ <node id>"/);
+    assert.match(
+      text,
+      /a successful one shortly after it ends and any other once its workflow finishes/,
+    );
     assert.match(text, /never by recency/);
     assert.match(text, /job logs included/);
     assert.match(text, /after ten minutes, ask the owner/);

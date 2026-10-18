@@ -313,6 +313,35 @@ test('a capture registers once its node ends, while the rest of its workflow sti
   assert.equal((await f.artifacts.list(f.caller)).length, 1);
 });
 
+test('a capture that did not succeed waits for its workflow, whose cleanup may still recover its files', async (t) => {
+  const f = await fixture(t);
+  const original = f.workflow();
+  f.captures.set(original.id, [
+    { id: 'output', state: 'failed', result: { outputs: {}, output_state: 'partial' } },
+  ]);
+  f.files.set(`${original.id}/output`, []);
+  for (const state of ['running', 'cleaning_up']) {
+    f.workflows.set(original.id, {
+      ...original,
+      state,
+      nodes: { output: { state: 'failed' } },
+    } as unknown as WorkflowRecord);
+    await f.evidence.reconcile();
+    assert.deepEqual(await f.artifacts.list(f.caller), [], state);
+  }
+  // Cleanup recovered a file that was published but not yet marked committed.
+  f.files.set(`${original.id}/output`, [{ name: 'metrics.json', object_id: 'object' }]);
+  f.workflows.set(original.id, {
+    ...original,
+    state: 'failed',
+    nodes: { output: { state: 'failed' } },
+  } as unknown as WorkflowRecord);
+  await f.evidence.reconcile();
+  const [collection, ...rest] = await f.artifacts.list(f.caller);
+  assert.equal(rest.length, 0);
+  assert.equal(collection!.files!.length, 1);
+});
+
 test('bulk receipts retain both epochs and select only the requested attempts', async (t) => {
   const f = await fixture(t);
   f.workflow();
