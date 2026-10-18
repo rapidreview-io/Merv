@@ -284,9 +284,9 @@ export interface Fleet {
   listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;
   /** Platform admin read, never exposed through a tool, an owner or a machine key: every open
    * allocation in every project, with its profile's key and provider while this deployment
-   * keeps that profile. */
+   * keeps that profile, and the unit of work it was rented for. */
   platformAllocations(): Promise<
-    (FleetAllocation & { profile: string | null; provider: string | null })[]
+    (FleetAllocation & { profile: string | null; provider: string | null; work: string | null })[]
   >;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;

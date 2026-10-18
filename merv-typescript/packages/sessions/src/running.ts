@@ -611,20 +611,23 @@ export class SessionRunning {
         true,
       );
       const visits = new Map(
-        leases.map((lease) => [
-          lease.instanceId,
-          {
-            role: lease.role,
-            status: leaseLiveness(lease, now).verdict,
-            need: face(lease, now, this.thresholds.idleNoticeSeconds).need ?? null,
-            lastActivity:
-              [lease.calls.lastAt, lease.doing?.at]
-                .filter((at) => !!at)
-                .sort()
-                .at(-1) ?? null,
-            allocationId: lease.fleet,
-          },
-        ]),
+        leases.map((lease) => {
+          const { need, attention } = face(lease, now, this.thresholds.idleNoticeSeconds);
+          return [
+            lease.instanceId,
+            {
+              role: lease.role,
+              status: leaseLiveness(lease, now).verdict,
+              need: need && attention ? { code: need, says: attention.says } : null,
+              lastActivity:
+                [lease.calls.lastAt, lease.doing?.at]
+                  .filter((at) => !!at)
+                  .sort()
+                  .at(-1) ?? null,
+              allocationId: lease.fleet,
+            },
+          ];
+        }),
       );
       const used = new Map<string, SessionsPlatformWork['usage']>();
       for (const projectId of new Set(work.map((item) => item.projectId))) {

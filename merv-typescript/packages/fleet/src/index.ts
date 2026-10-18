@@ -26,6 +26,7 @@ import {
 } from './runtime.js';
 import { migration, migrationV2, migrationV3, migrationV4, migrationV5 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
+import { rentedWork } from './running.js';
 import type {
   Fleet,
   FleetAllocation,
@@ -441,7 +442,8 @@ export class FleetService implements Fleet {
   async platformAllocations() {
     return (await this.state.read((sql) => this.all(sql))).map((a) => {
       const profile = this.profiles.find(({ id }) => id === a.profileId);
-      return { ...a, profile: profile?.key ?? null, provider: profile?.provider ?? null };
+      const { key, provider } = profile ?? {};
+      return { ...a, profile: key ?? null, provider: provider ?? null, work: rentedWork(a) };
     });
   }
   async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
