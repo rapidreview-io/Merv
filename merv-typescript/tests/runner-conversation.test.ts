@@ -642,7 +642,7 @@ test('a resumed launch is sent only what changed of the assignment its conversat
   );
   assert.match(
     same,
-    /\nFrozen assignment: unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands\. workflow\.assignment returns it whole\.\n$/,
+    /\nFrozen assignment: unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands\. If that copy is gone from this conversation, read context\.prompt from workflow\.assignment in parts: a long output is cut\.\n$/,
   );
   assert.ok(!same.includes('MMMM') && !same.includes('Round one'));
   assert.ok(same.length < 2_000, `${same.length} characters`);
@@ -653,7 +653,7 @@ test('a resumed launch is sent only what changed of the assignment its conversat
   const [header, json] = changed.slice(changed.indexOf('\nFrozen assignment, ') + 1).split('\n');
   assert.match(
     header!,
-    /^Frozen assignment, as it stands now: each context block whose body reads only "\(unchanged: as in the copy of this assignment earlier in this conversation\)" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy\./,
+    /^Frozen assignment, as it stands now: each context block whose body reads only "\(unchanged: as in the copy of this assignment earlier in this conversation\)" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy\. If that copy is gone from this conversation, read context\.prompt from workflow\.assignment in parts: a long output is cut\.$/,
   );
   const now = JSON.parse(json!);
   assert.deepEqual({ ...now, context: null }, { ...returned.assignment, context: null });

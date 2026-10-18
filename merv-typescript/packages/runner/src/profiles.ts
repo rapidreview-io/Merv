@@ -358,6 +358,9 @@ const FROZEN = 'Frozen assignment:';
 const CHANGED = 'Frozen assignment, as it stands now:';
 const continued =
   'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).';
+/** How an agent reads again a copy a compaction took away: its harness cuts a long output. */
+const RECOVER =
+  'If that copy is gone from this conversation, read context.prompt from workflow.assignment in parts: a long output is cut.';
 /** What a context block a resumed conversation holds unchanged is sent in place of its body. */
 const UNCHANGED = '(unchanged: as in the copy of this assignment earlier in this conversation)';
 /** An item Context Builder embeds: a `###` heading over a body fenced longer than any run in it. */
@@ -410,7 +413,7 @@ function frozen(
         first:
           'You are continuing your earlier work on this unit, under the same assignment: nothing in it has changed since the copy earlier in this conversation.',
         text: [
-          `${FROZEN} unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands. workflow.assignment returns it whole.`,
+          `${FROZEN} unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands. ${RECOVER}`,
         ],
       };
   } catch {
@@ -434,7 +437,7 @@ function frozen(
   return {
     first: continued,
     text: [
-      `${CHANGED} each context block whose body reads only "${UNCHANGED}" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy. workflow.assignment returns it whole.`,
+      `${CHANGED} each context block whose body reads only "${UNCHANGED}" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy. ${RECOVER}`,
       JSON.stringify({ ...assignment, context: { ...assignment.context!, prompt: changed } }),
     ],
   };
