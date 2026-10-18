@@ -708,9 +708,9 @@ export interface Blobs {
   get(namespace: string, hash: string): Promise<Buffer>;
   /**
    * Signed GET valid 1 h, served as identity-encoded application/octet-stream whatever the
-   * uploader sent, saved as `filename` (default: the hash): `blob_not_found` when nothing is
-   * stored, `blob_corrupt` when the stored size is not expectedSize. Never expands the inline
-   * content limit.
+   * uploader sent, saved as `filename` (default: the hash; past 100 characters, its start and
+   * extension): `blob_not_found` when nothing is stored, `blob_corrupt` when the stored size is
+   * not expectedSize. Never expands the inline content limit.
    */
   download?(
     namespace: string,

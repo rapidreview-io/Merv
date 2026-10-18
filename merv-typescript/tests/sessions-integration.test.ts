@@ -371,7 +371,11 @@ test('leased workers must deliberately range-read or download large artifacts', 
   // Download mode remains callable by the authenticated worker and returns its private URL.
   const url = 'https://storage.example/predictions?signature=test';
   const blobs = f.app.ctx.blobs;
-  blobs.download = async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const names: (string | undefined)[] = [];
+  blobs.download = async (_namespace, _hash, _size, name) => {
+    names.push(name);
+    return { url, expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  };
   t.after(() => delete blobs.download);
   const link = await f.call<{ artifact: Artifact; download: { url: string } }>(
     worker,
@@ -380,6 +384,10 @@ test('leased workers must deliberately range-read or download large artifacts', 
   );
   assert.equal(link.artifact.id, artifact.id);
   assert.equal(link.download.url, url);
+  // The worker saves it under a name of its own, so its link carries a short plain one; a
+  // person's carries the title.
+  await f.app.ctx.artifacts.download(source, artifact.id);
+  assert.deepEqual(names, ['Prediction_arrays', 'Prediction arrays']);
 });
 
 test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces; the application retains their work and reflection metadata across restart', async (t) => {

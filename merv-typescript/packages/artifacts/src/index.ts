@@ -519,13 +519,13 @@ export class ArtifactStore implements Artifacts {
       'This storage provider does not support direct downloads',
       501,
     );
-    const sign = () =>
-      this.blobs.download!(
-        caller.projectId,
-        artifact.hash,
-        artifact.size,
-        saveAs ?? artifact.title,
-      );
+    // A leased worker saves the file under a name of its own (curl -o), so its link names it by
+    // the title's plain form: one short signed parameter, not the whole title encoded twice.
+    const short = artifact.title.replace(/[^A-Za-z0-9._-]+/g, '_');
+    const name =
+      saveAs ??
+      (!caller.session ? artifact.title : /[A-Za-z0-9]/.test(short) ? short : artifact.id);
+    const sign = () => this.blobs.download!(caller.projectId, artifact.hash, artifact.size, name);
     try {
       return { artifact, download: await sign() };
     } catch (error) {

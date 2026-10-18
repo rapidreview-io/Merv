@@ -240,7 +240,7 @@ test('a file over the inline limit stays in blobs and downloads through a signed
   const response = await fetch(download.url);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), large.bytes);
   // Saved under the artifact's title.
-  assert.match(response.headers.get('content-disposition')!, /^attachment; filename="Rows\.csv";/);
+  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="Rows.csv"');
   // Stored bytes that are not the retained ones are never returned.
   f.server.objects.set(f.key(f.owner.projectId, artifact.hash), Buffer.alloc(2_000_001, 'X'));
   await assert.rejects(
