@@ -882,7 +882,7 @@ export class MachineRunner implements Runner {
    * release: a session's close ends its writer generation, and Code admits nothing begun after
    * it), its release, owed Code receipts, workspace result, closed checkout and last the
    * transcript itself; true once nothing is. One whose driver is gone is released and waits; one
-   * held by a local failure delivers its transcript and conversation meanwhile.
+   * held by a local failure or a final refusal delivers its transcript and conversation meanwhile.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
     this.tallies.delete(record.id); // only a running launch's budget reads on
@@ -930,11 +930,12 @@ export class MachineRunner implements Runner {
         await driver.close(record);
       }
     } catch (error) {
-      // A step that fails on this machine (a capture, a checkout that will not close) is tried
-      // again each tick and may never succeed, holding the release with it until the session
-      // lapses. What the agent printed and the conversation it kept still go, so the work's next
-      // visit continues from this one and not from an older one. A server away is waited for.
-      if (!(error instanceof RunnerControlError)) await this.deliverOwed(record.id);
+      // A step that fails on this machine (a capture, a checkout that will not close) or that Code
+      // refuses for good is tried again each tick and may never succeed, holding the release with
+      // it until the session lapses. What the agent printed and the conversation it kept still
+      // go, so the work's next visit continues from this one and not from an older one. Only a
+      // server's temporary refusal is waited for.
+      if (!(error instanceof RunnerControlError) || error.final) await this.deliverOwed(record.id);
       throw error;
     }
     return await this.finishAssignment(record);
