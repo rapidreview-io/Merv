@@ -86,7 +86,7 @@ function Output({
 }
 
 /** What a step opens to: a thought read whole, or a call's raw input and its answer. */
-function StepBody({ block }: { block: AgentBlock }) {
+export function StepBody({ block }: { block: AgentBlock }) {
   if (block.kind === 'thinking' || block.kind === 'text')
     return (
       <div className="agent-step-body agent-step-thought">

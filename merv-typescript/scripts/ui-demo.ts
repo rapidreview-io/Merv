@@ -13,6 +13,7 @@ import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
+import { seedTrajectory } from './ui-demo-trajectory.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
@@ -287,6 +288,11 @@ async function main() {
     title: 'Demo sweep checkpoint',
     content: 'The four weight-decay settings and output locations are recorded for the demo.',
   });
+  // `--trajectory`: one experiment walked through every stage by four sessions, each with a
+  // whole conversation, for the record page's Agents tab (scripts/ui-demo-trajectory.ts).
+  // It goes before the Running seed, whose open reflection wave pauses new experiments.
+  if (process.argv.includes('--trajectory'))
+    await seedTrajectory(app, { url, token: boot.token, work, producerCaller, reviewerCaller });
   const git = seedsGit ? await seedGit(app, owner) : undefined;
   const {
     machines,

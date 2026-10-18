@@ -14,15 +14,14 @@ import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
 import { clock } from '../liveness';
 import { Markdown } from '../markdown';
-import { stagesOfGraph } from '../process';
 import { Thread, historyEntries, type Handed, type Mark } from '../thread';
 import { ArtifactBody, bytes, fileType } from './artifacts';
 import { Act } from './running-panel';
 import { Reading, Target } from './running-phrase';
+import { Trajectory } from './trajectory';
 import {
   RoleMark,
   StageThreads,
-  ThreadCard,
   ThreadDialog,
   groupOf,
   ThreadReading,
@@ -216,19 +215,19 @@ function Ask({ attention }: { attention: RunningAttention }) {
   );
 }
 
-/** Each stage's threads under it, in the program's order, one opened in place on a press. */
+/**
+ * The unit's trajectory: every session on every stage, as one line of time, a thread's
+ * conversation opened in place on a press.
+ */
 function Agents({
+  graph,
   threads,
-  names = {},
-  order,
   loadedAt,
   opened,
   onOpen,
 }: {
+  graph: ProcessGraph;
   threads: readonly ThreadView[];
-  /** What the owner calls each record inside the unit, by its id. */
-  names?: Readonly<Record<string, string>>;
-  order: readonly string[];
   loadedAt?: string;
   opened?: string;
   onOpen(id: string | undefined): void;
@@ -248,32 +247,9 @@ function Agents({
         <ThreadReading key={thread.id} thread={thread} loadedAt={loadedAt} />
       </div>
     );
-  const rank = (state: string) => {
-    const at = order.indexOf(state);
-    return at < 0 ? order.length : at;
-  };
-  const stages = [...new Set(threads.map((item) => item.state))].sort((a, b) => rank(a) - rank(b));
   return (
     <div className="unit-tab-body">
-      {stages.map((stage) => (
-        <section key={stage} className="unit-group" aria-label={capital(words(stage))}>
-          <h3 className="unit-group-head">{capital(words(stage))}</h3>
-          <ul className="agent-list">
-            {threads
-              .filter((item) => item.state === stage)
-              .map((item) => (
-                <li key={item.id}>
-                  <ThreadCard
-                    thread={item}
-                    title={names[item.instanceId] ?? capital(words(item.role))}
-                    subtitle={`${words(stage)} · ${item.status}`}
-                    onOpen={() => onOpen(item.id)}
-                  />
-                </li>
-              ))}
-          </ul>
-        </section>
-      ))}
+      <Trajectory graph={graph} threads={threads} onOpen={onOpen} />
     </div>
   );
 }
@@ -419,7 +395,6 @@ export function UnitView({
     agents: agents.length,
     artifacts: files?.length,
   };
-  const order = graph ? stagesOfGraph(graph).map((step) => step.state) : [];
   return (
     <>
       {graph && (
@@ -459,9 +434,8 @@ export function UnitView({
           )}
           {tab === 'agents' ? (
             <Agents
+              graph={graph!}
               threads={agents}
-              names={unit.names}
-              order={order}
               loadedAt={loadedAt}
               opened={agent}
               onOpen={setAgent}
