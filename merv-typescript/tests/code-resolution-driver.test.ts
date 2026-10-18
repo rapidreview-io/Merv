@@ -259,6 +259,38 @@ test('completing keeps the incoming files the first parent ignores, and a commit
   );
 });
 
+test('a commit whose checkout index cannot be read or copied starts from its expected head', async (t) => {
+  const f = await fixture(t, false, { left: { '.gitignore': '*.log\n' } });
+  await f.lease('unread');
+  const machine = f.machine();
+  const work = await machine.prepare('unread');
+  await f.event('session.workspace_attached', 'unread');
+  type Run = (args: string[], input?: object) => Promise<{ code: number }>;
+  const driverGit = (machine.driver as unknown as { git: { run: Run } }).git;
+  const run = driverGit.run.bind(driverGit);
+  let failing = 'update-index';
+  const calls = t.mock.method(driverGit, 'run', (args: string[], input?: object) =>
+    args[0] === failing && args.includes(failing === 'ls-files' ? '--stage' : '--index-info')
+      ? Promise.resolve({ code: 128, stdout: '', stderr: 'fatal: refused', timedOut: false })
+      : run(args, input),
+  );
+  let head = f.left;
+  for (const step of ['update-index', 'ls-files']) {
+    failing = step;
+    writeFileSync(join(work.path, 'README.md'), `edited while ${step} fails\n`);
+    // The forced path lives only in the checkout's index, which this commit cannot use.
+    writeFileSync(join(work.path, `${step}.log`), 'evidence\n');
+    git(work.path, ['add', '-f', `${step}.log`]);
+    const committed = await machine.command('unread', head);
+    assert.equal(
+      git(work.path, ['diff', '--name-status', head, committed.receipt.headOid]),
+      'M\tREADME.md',
+    );
+    assert.ok(calls.mock.calls.some((call) => call.arguments[0][0] === step));
+    head = committed.receipt.headOid;
+  }
+});
+
 test('start requires a clean checkout and admission refuses the wrong second parent', async (t) => {
   const f = await fixture(t);
   await f.lease('dirty');
