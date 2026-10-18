@@ -14,7 +14,7 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { MervError, plain, type Caller, type Principal, type Scope } from '@merv/contracts';
+import { MervError, plain, sleep, type Caller, type Principal, type Scope } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
   ApiCredential,
@@ -41,6 +41,11 @@ export interface HttpOptions {
    *  below the deployment's 60 s stop grace period). */
   drainMs?: number;
 }
+
+/** What a request that reaches a stopping server after its drain is told: it never ran. */
+const restarting = 'Merv is restarting and did not run this request; retry it in a minute';
+/** How long a request admitted during the drain may still finish once admission ends. */
+const lateMs = 1000;
 
 function errorBody(error: unknown) {
   if (error instanceof MervError)
@@ -212,6 +217,8 @@ function bearer(req: IncomingMessage): string {
 export class ApiServer {
   private server?: HttpServer;
   private stopping = false;
+  /** Set once stop() has drained the requests in flight when it began: later ones are refused. */
+  private refusing = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
   private readonly requests = new Set<Promise<unknown>>();
@@ -258,7 +265,7 @@ export class ApiServer {
   start(): Promise<string> {
     if (this.server || this.starting || this.closing)
       return Promise.reject(new MervError('already_started', 'API server is already started', 409));
-    this.stopping = false;
+    this.stopping = this.refusing = false;
     const starting = (this.starting = this.listen());
     const settled = () => void (this.starting = undefined);
     void starting.then(settled, settled);
@@ -342,15 +349,29 @@ export class ApiServer {
   private async shutdown(starting?: Promise<string>): Promise<void> {
     // Closing a not-yet-listening Node server can prevent its listen callback from ever
     // firing. Finish (or fail) startup before closing, while admission stays withdrawn.
-    if (starting) await starting.catch(() => undefined);
+    if (starting) {
+      this.refusing = true;
+      await starting.catch(() => undefined);
+    }
     if (!this.server) return;
     const server = this.server;
     for (const socket of this.upgrades) socket.destroy();
-    // Admission is already withdrawn: every new request is answered 503. Responses get drainMs
-    // to finish; cutting their sockets then ends every stream still open, since each one ends
-    // when its response closes. Existing responses and handlers retain their providers.
+    // Responses get drainMs to finish; cutting their sockets then ends every stream still open,
+    // since each one ends when its response closes. Existing responses and handlers retain their
+    // providers. While the requests in flight at the stop finish, new ones are still served: a
+    // drain that refused them failed every caller for its whole length on top of the restart,
+    // longer than hosted Codex retries a model call (about 6 s), so live workers' turns ended.
     const cut = setTimeout(() => server.closeAllConnections(), this.drainMs);
     await Promise.allSettled([...this.requests]);
+    // Admission ends: every later request is answered 503, unrun. One admitted during the drain
+    // has lateMs more to finish; a stream still open then is cut below with the rest.
+    this.refusing = true;
+    const late = new AbortController();
+    await Promise.race([
+      Promise.allSettled([...this.requests]),
+      sleep(lateMs, late.signal).catch(() => undefined),
+    ]);
+    late.abort();
     clearTimeout(cut);
     // Only now: close() also ends every connection whose response has ended, even while its
     // bytes are still reaching a slow reader.
@@ -358,7 +379,7 @@ export class ApiServer {
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await Promise.allSettled([...this.calls]);
-    // Only idle keep-alive connections remain.
+    // Only idle keep-alive connections, and streams admitted late, remain.
     server.closeAllConnections();
     await closed;
     this.server = undefined;
@@ -501,8 +522,8 @@ export class ApiServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (this.stopping) {
-      json(res, 503, { error: { code: 'unavailable', message: 'Server is stopping' } });
+    if (this.refusing) {
+      json(res, 503, { error: { code: 'unavailable', message: restarting } });
       return;
     }
     this.checkOrigin(req);

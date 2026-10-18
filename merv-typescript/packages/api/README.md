@@ -41,5 +41,5 @@ People and agents reach Merv only through the API: Identity verifies a browser's
 ## Surface
 
 - HTTP: `/health` and `/auth/config` (public), `/tools`, and the MCP endpoint `/mcp`.
-- `ctx.api`: `mount(prefix, handler)`, `credential(namespace, …)`, `start`, `stop`.
+- `ctx.api`: `mount(prefix, handler)`, `credential(namespace, …)`, `start`, `stop`. `stop` keeps serving while the requests in flight when it began finish (up to `drainMs`, 45 s), so a restart fails callers only for as long as the process is down; it then answers every new request 503 `unavailable` ("Merv is restarting and did not run this request; retry it in a minute") and cuts, a second later, whatever is still open.
 - `ctx.tools`: `register`, `list`, `call`, `invoke`, `registerSessionPolicy`, `registerCallerRules`, `contributeInstructions`, `contributeContext`.
