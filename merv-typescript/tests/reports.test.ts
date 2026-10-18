@@ -501,3 +501,33 @@ test('a plan that set no numeric bar charts its measured results with criteria: 
     [],
   );
 });
+
+test('a drawing failure no check foresaw names the chart and the reason, not internal_error', async (t) => {
+  const renderer = new ReportRenderer(browser);
+  t.after(() => renderer.close());
+  // What Playwright throws when the page cannot capture a chart: a plain Error, not a MervError.
+  (renderer as unknown as { renderNow: () => Promise<never> }).renderNow = async () => {
+    throw new Error('locator.screenshot: Timeout 30000ms exceeded.\nCall log: waiting for element');
+  };
+  const report = parseReport('---\nid: X\ndate: Y\n---\n# Q?\n');
+  await assert.rejects(
+    renderer.render(report, new Map(), { visual: 'common-timing' }),
+    (error: MervError) =>
+      error.code === 'report_render_failed' &&
+      error.status === 422 &&
+      error.message.startsWith(
+        'Merv could not draw chart common-timing: locator.screenshot: Timeout 30000ms exceeded.',
+      ) &&
+      /smaller height/.test(error.message) &&
+      !error.message.includes('Call log') &&
+      JSON.stringify(error.details) === JSON.stringify({ chart: 'common-timing' }),
+  );
+  // A refusal the renderer already typed passes through unchanged, and the queue keeps going.
+  (renderer as unknown as { renderNow: () => Promise<never> }).renderNow = async () => {
+    throw new MervError('report_chart_failed', 'Chart x could not be drawn: bad spec', 422);
+  };
+  await assert.rejects(
+    renderer.render(report, new Map(), { pages: true }),
+    hasCode('report_chart_failed'),
+  );
+});
