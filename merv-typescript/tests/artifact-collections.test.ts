@@ -11,6 +11,7 @@ import {
   type Blobs,
   type Caller,
 } from '@merv/contracts';
+import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { ArtifactStore } from '@merv/artifacts';
 import { artifactToolsPlugin } from '@merv/artifacts/tools';
 import { DiskBlobs } from '@merv/blobs';
@@ -435,25 +436,38 @@ test('artifact.read reads a member inline or links members, naming the collectio
   );
 });
 
-test('artifact.list gives an agent each collection’s member count, and a person its members', async () => {
-  const collection = {
-    id: 'art_capture',
-    projectId: 'project_1',
-    createdBy: 'actor_1',
-    title: 'Capture',
-    mediaType: 'application/vnd.merv.collection+json',
-    hash: 'a'.repeat(64),
-    size: 10,
-    createdAt: '2026-10-18T00:00:00.000Z',
-    files: [{ name: 'run/metrics.json', size: 2, hash: 'b'.repeat(64), provider: 'compute' }],
-    metadata: { captureState: 'succeeded' },
-  };
-  const tools = new Map<string, { handler: (caller: Caller, input: object) => unknown }>();
+/** A succeeded capture's collection record, holding `files`. */
+const capture = (files: ArtifactFile[]) => ({
+  id: 'art_capture',
+  projectId: 'project_1',
+  createdBy: 'actor_1',
+  title: 'Capture',
+  mediaType: 'application/vnd.merv.collection+json',
+  hash: 'a'.repeat(64),
+  size: 10,
+  createdAt: '2026-10-18T00:00:00.000Z',
+  files,
+  metadata: { captureState: 'succeeded' },
+});
+/** The artifact tools by name, registered over a stub of the artifacts service. */
+function toolsOver(artifacts: object) {
+  const tools = new Map<
+    string,
+    { handler: (caller: Caller, input: object) => unknown; inputSchema: z.ZodTypeAny }
+  >();
   artifactToolsPlugin.apply({
-    artifacts: { list: async () => [collection], downloadAvailable: true },
+    artifacts,
     tools: { register: (tool: { name: string }) => void tools.set(tool.name, tool as never) },
     effect: (fn: () => unknown) => fn(),
   } as never);
+  return tools;
+}
+
+test('artifact.list gives an agent each collection’s member count, and a person its members', async () => {
+  const collection = capture([
+    { name: 'run/metrics.json', size: 2, hash: 'b'.repeat(64), provider: 'compute' },
+  ]);
+  const tools = toolsOver({ list: async () => [collection], downloadAvailable: true });
   const list = (caller: Partial<Caller>) =>
     tools
       .get('artifact.list')!
@@ -479,33 +493,13 @@ test('artifact.get gives an agent a collection’s members a page at a time, by 
     ...Array.from({ length: 900 }, (_, i) => member(`pilot-a2-complete/shards/${i}/MANIFEST.json`)),
     ...Array.from({ length: 40 }, (_, i) => member(`pilot-a2-complete/metrics/${i}.json`)),
   ];
-  const collection = {
-    id: 'art_capture',
-    projectId: 'project_1',
-    createdBy: 'actor_1',
-    title: 'Capture',
-    mediaType: 'application/vnd.merv.collection+json',
-    hash: 'a'.repeat(64),
-    size: 10,
-    createdAt: '2026-10-18T00:00:00.000Z',
-    files,
-    metadata: { captureState: 'succeeded' },
-  };
-  const plain = { ...collection, id: 'art_notes', mediaType: 'text/markdown', files: undefined };
-  delete plain.files;
-  const tools = new Map<
-    string,
-    { handler: (caller: Caller, input: object) => unknown; inputSchema: z.ZodTypeAny }
-  >();
-  artifactToolsPlugin.apply({
-    artifacts: {
-      get: async (_: Caller, id: string) => (id === plain.id ? plain : collection),
-      downloadAvailable: true,
-    },
-    tools: { register: (tool: { name: string }) => void tools.set(tool.name, tool as never) },
-    effect: (fn: () => unknown) => fn(),
-  } as never);
-  const tool = tools.get('artifact.get')!;
+  const collection = capture(files);
+  const { files: _, ...rest } = collection;
+  const plain = { ...rest, id: 'art_notes', mediaType: 'text/markdown' };
+  const tool = toolsOver({
+    get: async (_: Caller, id: string) => (id === plain.id ? plain : collection),
+    downloadAvailable: true,
+  }).get('artifact.get')!;
   const agent: Caller = { actorId: 'actor_1', projectId: 'project_1', session: { id: 's' } };
   const person: Caller = { actorId: 'actor_1', projectId: 'project_1' };
   type Answer = Artifact & { fileCount?: number; matchCount?: number; nextOffset?: number };
@@ -514,14 +508,14 @@ test('artifact.get gives an agent a collection’s members a page at a time, by 
       caller,
       tool.inputSchema.parse({ artifactId: collection.id, ...input }),
     )) as Answer;
-  const names = (answer: Answer) => answer.files!.map((file) => file.name);
+  const names = (members?: ArtifactFile[]) => members!.map((file) => file.name);
 
   // Unasked, a session's or Pi conversation's agent gets the first 100 members, how many there
   // are, and where the next start.
   const conversation = { id: 'c', epoch: 1, commandId: 'k', runtimeId: 'r' };
   for (const caller of [agent, { ...person, conversation }]) {
     const first = await get(caller);
-    assert.deepEqual(names(first), names({ files: files.slice(0, 100) } as Answer));
+    assert.deepEqual(names(first.files), names(files.slice(0, 100)));
     assert.equal(first.fileCount, 940);
     assert.equal(first.nextOffset, 100);
     assert.equal(first.matchCount, undefined);
@@ -533,13 +527,13 @@ test('artifact.get gives an agent a collection’s members a page at a time, by 
   const pages: string[] = [];
   for (let offset: number | undefined = 0; offset !== undefined;) {
     const page = await get(agent, { offset, limit: 300 });
-    pages.push(...names(page));
+    pages.push(...names(page.files));
     offset = page.nextOffset;
   }
-  assert.deepEqual(pages, names(collection as Answer));
+  assert.deepEqual(pages, names(files));
   // A prefix keeps the members under a path and says how many there are.
   const metrics = await get(agent, { prefix: 'pilot-a2-complete/metrics/' });
-  assert.deepEqual(names(metrics), names({ files: files.slice(900) } as Answer));
+  assert.deepEqual(names(metrics.files), names(files.slice(900)));
   assert.deepEqual(
     [metrics.matchCount, metrics.nextOffset, metrics.fileCount],
     [40, undefined, 940],
@@ -552,10 +546,7 @@ test('artifact.get gives an agent a collection’s members a page at a time, by 
   const whole = await get(person);
   assert.deepEqual(whole.files, files);
   assert.deepEqual([whole.fileCount, whole.nextOffset], [940, undefined]);
-  assert.deepEqual(
-    names(await get(person, { limit: 2 })),
-    names({ files: files.slice(0, 2) } as Answer),
-  );
+  assert.deepEqual(names((await get(person, { limit: 2 })).files), names(files.slice(0, 2)));
   // A file that is not a collection is its record, whatever the paging asks.
   assert.deepEqual(await tool.handler(agent, { artifactId: plain.id, limit: 5 }), {
     ...plain,
