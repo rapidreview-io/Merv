@@ -111,16 +111,18 @@ const PAPER_RANK = -1000;
  * section is embedded only while it holds at most PAPER_SECTION_CHARS and the distinct sections
  * embedded hold at most PAPER_CHARS, highest priority first; every other one is listed by its
  * line, which gives its size and the paper.read that returns it. A conflict resolution embeds
- * none: its work is in the conflicting files.
+ * none: its work is in the conflicting files. A copy of a section, such as its published
+ * revision, costs only its line, which names the section it copies.
  */
 export function taskPaper(paper: ContextInput, resolution: boolean): ContextInput {
   let room = resolution ? 0 : PAPER_CHARS;
   const texts = new Set<string>(),
-    embedded = new Set<ContextItem>();
+    embedded = new Set<ContextItem>(),
+    firsts = new Map<string, ContextItem>();
   for (const item of [...paper.items].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))) {
     if (!('text' in item.body)) continue;
     const { text } = item.body;
-    // A copy of an embedded section costs only its line: the builder names whose it is.
+    if (!firsts.has(text)) firsts.set(text, item);
     if (!texts.has(text)) {
       if (text.length > Math.min(PAPER_SECTION_CHARS, room)) continue;
       room -= text.length;
@@ -129,11 +131,22 @@ export function taskPaper(paper: ContextInput, resolution: boolean): ContextInpu
     embedded.add(item);
   }
   return {
-    items: paper.items.map((item) => ({
-      ...item,
-      priority: (item.priority ?? 0) + PAPER_RANK,
-      ...(embedded.has(item) ? {} : { embed: 'never' as const }),
-    })),
+    items: paper.items.map((item) => {
+      // The builder names whose an embedded copy is; a listed one says so in its note, first so
+      // the note's length limit cannot cut it.
+      const first = 'text' in item.body ? firsts.get(item.body.text) : undefined;
+      const copy = first && first !== item ? `same content as ${first.id}` : null;
+      return {
+        ...item,
+        priority: (item.priority ?? 0) + PAPER_RANK,
+        ...(embedded.has(item)
+          ? {}
+          : {
+              embed: 'never' as const,
+              ...(copy ? { note: item.note ? `${copy}; ${item.note}` : copy } : {}),
+            }),
+      };
+    }),
   };
 }
 

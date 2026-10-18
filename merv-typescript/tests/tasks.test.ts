@@ -370,18 +370,38 @@ test('a conflict resolution lists the paper by section and a task embeds at most
       section('results', 8001, 600),
       section('literature', 7500, 600),
       { ...section('methods-published', 7000, 250), body: { text: 'm'.repeat(7000) } },
+      { ...section('results-published', 8001, 250), note: 'results/published revision 1' },
     ],
   };
   const shown = (input: ReturnType<typeof taskPaper>) =>
     input.items.filter((item) => item.embed !== 'never').map((item) => item.id);
+  const notes = (input: ReturnType<typeof taskPaper>) =>
+    Object.fromEntries(input.items.map((item) => [item.id, item.note]));
   // Highest priority first: past 8,000 characters a section is listed, and past 16,000 in all
   // the rest are; a published copy of an embedded section costs only its line.
   assert.deepEqual(shown(taskPaper(paper, false)), ['problem', 'methods', 'methods-published']);
   assert.deepEqual(shown(taskPaper(paper, true)), []);
+  // A listed copy says whose it is, since the builder names that only for embedded ones.
+  assert.deepEqual(notes(taskPaper(paper, false)), {
+    problem: undefined,
+    methods: undefined,
+    results: undefined,
+    literature: undefined,
+    'methods-published': undefined,
+    'results-published': 'same content as results; results/published revision 1',
+  });
+  assert.deepEqual(notes(taskPaper(paper, true)), {
+    problem: undefined,
+    methods: undefined,
+    results: undefined,
+    literature: undefined,
+    'methods-published': 'same content as methods',
+    'results-published': 'same content as results; results/published revision 1',
+  });
   // Every paper item ranks below every item of the task's own, in the paper's order.
   assert.deepEqual(
     taskPaper(paper, false).items.map((item) => item.priority),
-    [-150, -400, -400, -400, -750],
+    [-150, -400, -400, -400, -750, -750],
   );
 });
 
