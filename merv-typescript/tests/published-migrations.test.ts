@@ -11,6 +11,8 @@ import { initializeLegacyHistory } from '@merv/legacy-history/history';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { piMigrations } from '../packages/pi/src/schema.js';
+import { auditMigrations } from '../packages/admin/src/audit.js';
+import { credentialMigrations } from '../packages/admin/src/credentials.js';
 
 interface Row {
   component: string;
@@ -83,6 +85,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
     () => recorder.migrate('fleet_workflow', modelMigrations),
     // Pi's own tables; the shared credential ledger is the identity plugin's.
     () => recorder.migrate('pi', piMigrations),
+    // The admin's own tables, which it migrates only where admins are configured.
+    () => recorder.migrate('admin', { ...auditMigrations, ...credentialMigrations }),
     () => initializeLegacyHistory(recorder),
   ]) {
     try {
