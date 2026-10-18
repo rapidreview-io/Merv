@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { RunningUnitEntry } from '@merv/contracts/running';
 import { Link } from 'react-router-dom';
 import { Ago, Evidence, StatusPill, cx, useArtifacts } from './components';
-import { ArrowRightIcon, Icon } from './icons';
+import { Icon } from './icons';
 import { pathOf, useRows } from './navigation';
 import { initials } from './views/people';
 
@@ -104,7 +104,7 @@ function OpenReview({ id }: { id: string }) {
   const reviews = pathOf(useRows(), 'reviews');
   return reviews ? (
     <Link className="cluster hit" to={`${reviews}/${id}`}>
-      Open the review <ArrowRightIcon size={14} />
+      Open the review <Icon name="arrow-right" size={14} />
     </Link>
   ) : null;
 }

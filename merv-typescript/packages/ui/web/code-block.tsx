@@ -17,7 +17,7 @@ import {
   type Language,
   type Piece,
 } from './highlight';
-import { WrapIcon } from './icons';
+import { Icon } from './icons';
 import { offThread } from './off-thread';
 
 /**
@@ -184,7 +184,7 @@ export function CodeBlock({
           title="Wrap long lines"
           onClick={() => setWrap(!wrap)}
         >
-          <WrapIcon size={14} />
+          <Icon name="wrap" size={14} />
         </button>
       </CodeHead>
       <pre

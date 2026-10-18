@@ -14,7 +14,7 @@ import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { readOnly, safely, useTool, type Account } from './api';
 import { useSession } from './session';
 import { cx } from './components';
-import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
+import { Icon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
 import { initials } from './views/people';
@@ -24,7 +24,6 @@ import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
 
 import type { ShellData } from './shell-types';
-export type { PluginState, ShellData, WorkflowShape } from './shell-types';
 
 const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 
@@ -74,7 +73,7 @@ export function RailRow({
       }
       title={sick?.status.detail}
     >
-      <RowIcon name={icon} />
+      <Icon name={icon} className="rail-icon" />
       <span className="rail-row-label">{label}</span>
       {counted && <span className="rail-count">{count}</span>}
       {!counted && badge && (
@@ -122,7 +121,7 @@ export const RailHead = ({ onHide }: { onHide(): void }) => (
       title={`Hide sidebar (${SIDEBAR_KB})`}
       aria-label="Hide sidebar"
     >
-      <SidebarIcon size={18} />
+      <Icon name="sidebar" size={18} />
     </button>
   </div>
 );
@@ -173,7 +172,7 @@ export function AccountMenu({
           <span className="account-name">{name}</span>
           {role && <span className="account-role">{role}</span>}
         </span>
-        <ChevronsIcon className="account-caret" />
+        <Icon name="chevrons" className="account-caret" />
       </button>
       {open && (
         // The row it opens from already says whose menu this is, so the menu does not.
@@ -263,7 +262,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           title="Switch project"
         >
           <span className="rail-project-name">{project.name}</span>
-          <ChevronsIcon className="rail-project-caret" />
+          <Icon name="chevrons" className="rail-project-caret" />
         </button>
       ) : (
         <div className="rail-project">
@@ -538,7 +537,7 @@ export function ShellFrame({
           aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           onClick={() => setMobileOpen((v) => !v)}
         >
-          <SidebarIcon size={18} />
+          <Icon name="sidebar" size={18} />
         </button>
         <span className="topbar-title">{name}</span>
       </header>
@@ -584,7 +583,7 @@ export function ShellFrame({
           aria-label="Show sidebar"
         >
           <span className="sb-edge-glyph">
-            <SidebarIcon size={18} />
+            <Icon name="sidebar" size={18} />
           </span>
         </button>
       )}

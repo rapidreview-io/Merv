@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { KindLabel, StatusPill, cx, kindOf, words } from './components';
-import { CheckIcon, CloseIcon } from './icons';
+import { Icon } from './icons';
 import { matches } from './list-filters';
 import { RecordLink } from './markdown';
 
@@ -93,7 +93,6 @@ export function RecordPicker({
   value,
   onChange,
   loading,
-  none = 'Nothing to choose yet',
 }: {
   label: string;
   options: Pickable[];
@@ -102,8 +101,6 @@ export function RecordPicker({
   onChange(ids: string[]): void;
   /** True while the lists the options come from are still being read. */
   loading?: boolean;
-  /** What the list says while there is nothing to choose from at all. */
-  none?: string;
 }) {
   const uid = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -208,7 +205,7 @@ export function RecordPicker({
                   input.current?.focus();
                 }}
               >
-                <CloseIcon size={12} />
+                <Icon name="close" size={12} />
               </button>
             </span>
           );
@@ -258,7 +255,7 @@ export function RecordPicker({
                   setQuery('');
                 }}
               >
-                {chosen ? <CheckIcon size={14} /> : <span />}
+                {chosen ? <Icon name="check" size={14} /> : <span />}
                 <span className="picker-option-name">
                   {mixed && <KindLabel kind={option.kind} />}
                   <span>{option.name}</span>
@@ -270,7 +267,7 @@ export function RecordPicker({
           {/* Nothing to choose from and nothing a search kept are two causes, said apart. */}
           {!shown.length && (
             <li className="picker-none" role="presentation">
-              {loading ? 'Loading…' : options.length ? 'No matches' : none}
+              {loading ? 'Loading…' : options.length ? 'No matches' : 'Nothing to choose yet'}
             </li>
           )}
         </ul>

@@ -106,27 +106,6 @@ export const Icon = ({ name, size = 16, className }: IconProps & { name: string 
   </svg>
 );
 
-/** A place in the rail, named by view kind. */
-export const RowIcon = ({ name }: { name: string }) => <Icon name={name} className="rail-icon" />;
-
-/** The same glyphs by their own names, for a control that always draws the same one. */
-const named = (name: IconName) => (props: IconProps) => <Icon name={name} {...props} />;
-export const EditIcon = named('edit');
-export const PlusIcon = named('plus');
-export const CloseIcon = named('close');
-export const ExpandIcon = named('expand');
-export const RestoreIcon = named('restore');
-export const CheckIcon = named('check');
-export const ChevronRightIcon = named('chevron-right');
-export const ChevronLeftIcon = named('chevron-left');
-export const ChevronsIcon = named('chevrons');
-export const ArrowRightIcon = named('arrow-right');
-export const ExternalIcon = named('external');
-export const CopyIcon = named('copy');
-export const SourceIcon = named('source');
-export const SidebarIcon = named('sidebar');
-export const WrapIcon = named('wrap');
-
 const CODE =
   /\.(m?[jt]sx?|py|rs|go|java|kt|swift|rb|php|c|h|cc|cpp|hpp|cs|sh|bash|zsh|sql|css|html?|xml|toml|ya?ml|ipynb|diff|patch)$/i;
 const DATA = /\.(csv|tsv|jsonl?|ndjson|parquet|xlsx?|arrow|npy|npz)$/i;

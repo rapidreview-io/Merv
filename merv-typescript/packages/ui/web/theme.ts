@@ -25,3 +25,5 @@ export const media = (query: string) => {
   };
   return () => useSyncExternalStore(watch, () => list.matches);
 };
+/** Whether the window is wider than a phone held upright. */
+export const useRoomy = media('(min-width: 640px)');

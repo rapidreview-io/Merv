@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { customerRequest, said } from './api';
+import { Icon } from '../icons';
 import { formatBytes, fromDrop, LIVE, type Uploader } from './uploads';
 
 /**
@@ -638,5 +639,61 @@ export function UploadTray({ uploader }: { uploader: Uploader }) {
         </ul>
       )}
     </aside>
+  );
+}
+
+/**
+ * The drop zone a request's page and /start draw: files dropped on it or picked through it go to
+ * `onFiles`. While `frozen` it takes none, and a click calls `onFrozen` instead.
+ */
+export function DropZone({
+  onFiles,
+  frozen = false,
+  onFrozen,
+  children,
+}: {
+  onFiles(files: { file: File; path: string }[]): void;
+  frozen?: boolean;
+  onFrozen?(): void;
+  children?: ReactNode;
+}) {
+  const [over, setOver] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className={`cx-drop${over ? ' cx-drop--over' : ''}`}
+        onClick={() => (frozen ? onFrozen?.() : picker.current?.click())}
+        onDragOver={(event) => {
+          if (frozen) return;
+          event.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          if (frozen) return;
+          event.preventDefault();
+          setOver(false);
+          void fromDrop(event.dataTransfer).then(onFiles);
+        }}
+      >
+        <span className="cx-drop-title">Chug anything</span>
+        <Icon name="upload" size={20} className="cx-drop-icon" />
+        <span className="cx-drop-kinds">datasets, papers, content files</span>
+        {children}
+      </button>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])].map((file) => ({ file, path: file.name }));
+          event.target.value = '';
+          if (files.length) onFiles(files);
+        }}
+      />
+    </>
   );
 }

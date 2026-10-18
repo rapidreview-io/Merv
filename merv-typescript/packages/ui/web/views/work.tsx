@@ -13,7 +13,7 @@ import { currentReview } from '@merv/reviews/rules';
 import { OPEN, ThreeStates, reviewClause } from '../states';
 import type { ShellData, WorkflowShape } from '../shell-types';
 import { Dependency, StageMark, ended } from '../process';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { ResearchCommand } from '../components';
 import { useActorNames } from './people';
@@ -706,7 +706,7 @@ export function CycleMove({
   const moves = answer?.moves.map((item) =>
     item.row ? (
       <Link key={item.label} className="btn" to={row(item.row)!.path}>
-        {item.label} <ArrowRightIcon size={14} />
+        {item.label} <Icon name="arrow-right" size={14} />
       </Link>
     ) : (
       move(item.label, item.input, false, item.tool)

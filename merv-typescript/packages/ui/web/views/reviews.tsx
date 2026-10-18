@@ -17,7 +17,7 @@ import {
   useArtifacts,
   words,
 } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown';
 import { homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
@@ -104,7 +104,7 @@ export function ReviewSummary({
         <StatusPill value={review.verdict ?? review.status} />
         {reviews && (
           <Link className="cluster hit" to={`${reviews}/${review.id}`}>
-            Open the review <ArrowRightIcon size={14} />
+            Open the review <Icon name="arrow-right" size={14} />
           </Link>
         )}
       </div>

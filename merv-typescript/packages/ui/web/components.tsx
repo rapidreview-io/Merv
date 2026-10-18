@@ -14,7 +14,7 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { readOnly, useTool, type ApiError } from './api';
-import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
+import { Icon } from './icons';
 import {
   capital,
   clockOf,
@@ -314,7 +314,7 @@ export function ConfirmAction({
  */
 export const Summary = ({ children, ...rest }: HTMLAttributes<HTMLElement>) => (
   <summary {...rest}>
-    <ChevronRightIcon size={12} className="caret" />
+    <Icon name="chevron-right" size={12} className="caret" />
     {children}
   </summary>
 );
@@ -841,7 +841,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
         )
       }
     >
-      {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+      {copied ? <Icon name="check" size={14} /> : <Icon name="copy" size={14} />}
     </button>
   );
 }

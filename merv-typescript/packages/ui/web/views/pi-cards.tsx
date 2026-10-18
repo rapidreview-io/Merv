@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { call } from '../api';
 import { cx, KV, Summary, useNow, type KVRow } from '../components';
-import { ChevronsIcon } from '../icons';
+import { Icon } from '../icons';
 import { hasAnsi } from '../ansi';
 import { AnsiText } from '../code-block';
 import { JsonView, readJson } from '../json-view';
@@ -279,7 +279,7 @@ export function Machine({
             </>
           )}
         </span>
-        <ChevronsIcon />
+        <Icon name="chevrons" />
       </button>
       {menu && (
         <div
@@ -362,7 +362,7 @@ export function Model({
           <span className="sr-only">Model: </span>
           {models.find(({ id }) => id === model)?.label ?? model}
         </span>
-        <ChevronsIcon />
+        <Icon name="chevrons" />
       </button>
       {open && (
         <div className="pi-menu" role="menu" aria-label="Model">

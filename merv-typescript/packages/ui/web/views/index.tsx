@@ -2,7 +2,7 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import type { ComponentType } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
-import type { ShellData } from '../shell';
+import type { ShellData } from '../shell-types';
 import { ArtifactsView } from './artifacts';
 import { BoardsView } from './board';
 import { CodeView } from './code';

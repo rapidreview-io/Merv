@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { CodeHead } from './code-block';
-import { SourceIcon } from './icons';
+import { Icon } from './icons';
 import { onWorn, worn } from './theme';
 
 /**
@@ -69,7 +69,7 @@ export function Mermaid({ source }: { source: string }) {
             title="View source"
             onClick={() => setRaw(!raw)}
           >
-            <SourceIcon size={14} />
+            <Icon name="source" size={14} />
           </button>
         )}
       </CodeHead>
