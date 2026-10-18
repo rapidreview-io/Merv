@@ -1199,6 +1199,33 @@ test('right after Sessions starts, and once failing sweeps recover, a silent run
       'host_failed',
     ]);
   });
+  await t.test('a pass whose read began before another failed', async (subtest) => {
+    let now = Date.now();
+    const f = await takenUp(subtest, () => now);
+    // The runner's presence went unrecorded for twenty minutes, the database away.
+    now += 20 * 60_000;
+    const outage = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+    const snapshot = f.state.snapshot.bind(f.state);
+    let fail!: () => void, recover!: () => void;
+    const failed = new Promise<void>((resolve) => (fail = resolve));
+    const recovered = new Promise<void>((resolve) => (recover = resolve));
+    let calls = 0;
+    subtest.mock.method(f.state, 'snapshot', (async (fn: () => Promise<unknown>) => {
+      calls += 1;
+      if (calls === 1) return await failed.then(() => Promise.reject(outage));
+      if (calls === 2) await recovered;
+      return await snapshot(fn);
+    }) as typeof f.state.snapshot);
+    // One pass's read fails while another's, begun before that, still waits for the database.
+    const first = f.sessions.sweep();
+    const second = f.sessions.sweep();
+    fail();
+    await assert.rejects(first, outage);
+    recover();
+    await second;
+    // Its silence counts from that recovery, as it does after any failing pass.
+    assert.equal((await f.sessions.get(f.source, f.session.id)).status, 'active');
+  });
 });
 
 test('a silent runner closes no offer its agent never took up, and no visit whose handoff landed', async (t) => {

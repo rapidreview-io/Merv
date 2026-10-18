@@ -1956,9 +1956,6 @@ export class LeasedSessions implements Sessions {
       this.checkedAt = this.clock();
       this.failing.clear();
     }
-    // After a pass that could not read (the database away) runners may have gone unheard too:
-    // their silence counts from now, or every hosted visit would be lost at once.
-    if (this.deaf) this.managed.heard();
     const { sessions, threads } = await this.reading(async (tx) => ({
       sessions: await this.live(tx, !full),
       threads: full
@@ -1971,6 +1968,10 @@ export class LeasedSessions implements Sessions {
       this.deaf = true;
       throw error;
     });
+    // After a pass that could not read (the database away) runners may have gone unheard too:
+    // their silence counts from now, or every hosted visit would be lost at once. Said once a
+    // read succeeds, so a concurrent pass's read that began before the failure cannot skip it.
+    if (this.deaf) this.managed.heard();
     this.deaf = false;
     // A session that failed is retried by the next full pass, not by every tick and lease.
     for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
