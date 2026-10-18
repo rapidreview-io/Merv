@@ -471,18 +471,22 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   const spaced = await read({ url, start_text: 'Licensing & Personal Information' });
   assert.equal(spaced.section, true);
   assert.match(spaced.content, /The data is public\.$/);
-  // A backslash is matched with or without its escape, alone or before a mark; and a long
-  // marker of backslashes and marks that misses answers at once: each backslash on the page
-  // can be taken by one part of the marker only, so nothing backtracks without end.
+  // A mark the agent escaped matches the page's plain one; a backslash is matched with or
+  // without its escape, alone or before a mark; and a long marker of backslashes and marks that
+  // misses answers at once: each backslash on the page can be taken by one part of the marker
+  // only, so nothing backtracks without end.
   const slashes = '\\\\_'.repeat(30);
   extracted = {
     body: {
       results: [
-        { url, raw_content: `$\\\\alpha\\_t$ C:\\\\\\_tmp ${slashes}x ${'\\'.repeat(60)}x` },
+        {
+          url,
+          raw_content: `def soft_ce_loss() $\\\\alpha\\_t$ C:\\\\\\_tmp ${slashes}x ${'\\'.repeat(60)}x`,
+        },
       ],
     },
   };
-  for (const start_text of ['\\alpha_t', 'C:\\\\_tmp'])
+  for (const start_text of ['def soft\\_ce\\_loss', '\\alpha_t', 'C:\\\\_tmp'])
     assert.equal((await read({ url, start_text })).section, true, start_text);
   for (const start_text of [`${slashes}y`, `${'\\'.repeat(60)}y`]) {
     const began = performance.now();
@@ -532,6 +536,8 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(cut.status, 'success');
   assert.equal(cut.section, true);
   assert.ok(!/\p{Surrogate}/u.test(cut.content), 'a cut split a character');
+  // So does an offset inside a character: the text starts after it.
+  assert.equal((await read({ url, offset: 1 })).content, astral.slice(2));
   // A page that starts with a line break or an emoji was read: one request, not two.
   for (const raw_content of ['\n# Title\n\nBody text.', '😀 emoji first']) {
     extracted = { body: { results: [{ url, raw_content }] } };
