@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 
-interface InventoryPlugin {
+export interface InventoryPlugin {
   plugin: string;
   source: string;
   provides: string[];
