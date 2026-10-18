@@ -44,7 +44,9 @@ No automated test uses a real GitHub. Before release, verify read-only import to
    unit whose owner declared before its first lease that it publishes, and no agent or runner can move it.
    **Amended 2026-10-11:** in a project with no linked GitHub repository `main` is all accepted work. The server
    lands each accepted unit with code on it, oldest acceptance first, through the base merge path; a conflict is
-   the one resolution task any base gets (Code Work `landing.ts`, switch `MERV_CODE_MAIN_LANDING`). Landing never
+   the one resolution task any base gets (Code Work `landing.ts`, switch `MERV_CODE_MAIN_LANDING`). A unit that a
+   dependent's base already merges on top of main lands through that base, so main follows the dependents' merges
+   rather than resolving the same conflicts a second time. Landing never
    blocks a lease, review or acceptance, and dependents still base on their dependencies' accepted commits.
    Projects with GitHub linked are unchanged.
 2. A unit gets its code by branching from its dependencies' accepted commits, derived automatically.
