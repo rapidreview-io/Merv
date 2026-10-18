@@ -140,6 +140,8 @@ function SignIn({
   const googleSignIn = async () => {
     if (!client) return;
     begin('shared');
+    // The callback is the app's root: main.tsx brings the person back to this page from there.
+    safely(() => sessionStorage.setItem('merv:return', window.location.pathname));
     try {
       const { error } = await client.auth.signInWithOAuth({
         provider: 'google',
