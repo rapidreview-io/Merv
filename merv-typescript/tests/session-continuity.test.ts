@@ -1632,6 +1632,51 @@ test('every later visit to the work, its reviewer’s too, is offered what its o
   assert.deepEqual(answered(read), expected);
 });
 
+test('an owner’s answers fit the assignment’s 512 KiB, the oldest left out first, and never refuse its work’s offers', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  let pending: string | undefined;
+  const ask = async (question: string, answer: string) => {
+    const visit = await f.offer(unit.id);
+    const worker = await f.sessions.authenticate(visit.input.secret);
+    if (pending)
+      await f.app.ctx.tools.invoke('session.message.ack', worker, {
+        messageId: pending,
+        requestId: randomUUID(),
+      });
+    await f.app.ctx.tools.invoke('session.ask_owner', worker, { question });
+    await f.keep(visit.session, visit.control);
+    await f.release(visit.session);
+    const sent = await f.ok(
+      'POST',
+      `/sessions/threads/${visit.session.threadId}/messages`,
+      f.token,
+      {
+        body: answer,
+        requestId: randomUUID(),
+      },
+    );
+    pending = (sent.message as SessionMessage).id;
+  };
+  await ask('Which suite?', 'x'.repeat(8000));
+  await ask('Which seed?', 'Seed 7.');
+  // An assignment that fits alone, with room for the short answer and not for the long one too.
+  const { workflows } = f.app.ctx;
+  const offerLease = workflows.offerLease.bind(workflows);
+  t.mock.method(workflows, 'offerLease', async (...args: Parameters<typeof offerLease>) => {
+    const offered = await offerLease(...args);
+    const room = 524_288 - Buffer.byteLength(JSON.stringify(offered.assignment)) - 4_000;
+    const brief = offered.assignment.brief + 'b'.repeat(room);
+    return { ...offered, assignment: { ...offered.assignment, brief } };
+  });
+  const next = await f.offer(unit.id);
+  assert.deepEqual(
+    next.session.assignment.ownerAnswers?.map((item) => item.question),
+    ['Which seed?'],
+  );
+  assert.ok(Buffer.byteLength(JSON.stringify(next.session.assignment)) <= 524_288);
+});
+
 test('a reviewer reads its work item’s lineage in system.status: each stage’s visits and their runners', async (t) => {
   const f = await fixture(t);
   const unit = await f.start();

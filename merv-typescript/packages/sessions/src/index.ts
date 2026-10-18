@@ -1127,25 +1127,32 @@ export class LeasedSessions implements Sessions {
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
     if (!dispatched && workspace.mode !== 'none')
       await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx);
-    // What the owner answered on this work, from any of its threads, travels with the assignment:
-    // a reviewer or a later stage reads the decisions that bind it, not the asker's copy of them.
-    const ownerAnswers = await this.messaging.ownerAnswers(tx, caller.projectId, input.instanceId);
-    const assignment = ownerAnswers.length
-      ? { ...frozen.assignment, ownerAnswers }
-      : frozen.assignment;
+    // The review standards travel in the assignment text, and a task review carries its
+    // delivery, so a packet of a real task runs past 64 KiB.
+    const fits = (packet: unknown) => Buffer.byteLength(JSON.stringify(packet)) <= 524_288;
     for (const packet of [
-      assignment,
+      frozen.assignment,
       frozen.execution.policy,
       frozen.execution.references,
       frozen.lease.receipt,
     ])
-      // The review standards travel in the assignment text, and a task review carries
-      // its delivery, so a packet of a real task runs past 64 KiB.
       check(
-        Buffer.byteLength(JSON.stringify(packet)) <= 524_288,
+        fits(packet),
         'session_packet_large',
         'Each frozen assignment, policy, reference set and receipt must fit 512 KiB',
       );
+    // What the owner answered on this work, from any of its threads, travels with the assignment:
+    // a reviewer or a later stage reads the decisions that bind it, not the asker's copy of them.
+    // They share its 512 KiB, the oldest left out first: an answer never refuses an offer.
+    const ownerAnswers = await this.messaging.ownerAnswers(tx, caller.projectId, input.instanceId);
+    let assignment: WorkSession['assignment'] = frozen.assignment;
+    for (let from = 0; from < ownerAnswers.length; from++) {
+      const answered = { ...frozen.assignment, ownerAnswers: ownerAnswers.slice(from) };
+      if (fits(answered)) {
+        assignment = answered;
+        break;
+      }
+    }
     const limits = frozen.lease.receipt.sessionLimits as
       { durationSeconds?: number; modelTokens?: number } | undefined;
     for (const limit of [limits?.durationSeconds, limits?.modelTokens])

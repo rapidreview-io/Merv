@@ -240,9 +240,10 @@ key is `null`) is not offered the tool, nor told of it; a reviewer keeps its rou
 
 Every later offer of that work item, on any of its threads, carries what its owner answered in
 its frozen assignment as `ownerAnswers`: the ten newest answered questions, each with the stage
-it was asked in, the asking thread's role, the question, the answering message and when. A reviewer, or a later
-stage that starts afresh, reads no other thread's messages, so this is how it learns the
-decisions that bind the work from Merv rather than from the asker's own copy.
+it was asked in, the asking thread's role, the question, the answering message and when. They
+share the assignment's 512 KiB, the oldest left out first, so answers never refuse an offer. A
+reviewer, or a later stage that starts afresh, reads no other thread's messages, so this is how
+it learns the decisions that bind the work from Merv rather than from the asker's own copy.
 
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then
