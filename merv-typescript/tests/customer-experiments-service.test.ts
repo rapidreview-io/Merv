@@ -943,6 +943,11 @@ test('platform admin projection shows standalone state without private capabilit
     assert.ok(!json.includes(secret));
   assert.ok(!json.includes('clientRequest'));
   assert.ok(!json.includes('checkout'));
+  // The admin's drill-in is the customer's own snapshot, which carries no capability either.
+  const snapshot = JSON.stringify(await f.service.snapshot(await f.store.get(created.id)));
+  assert.ok(snapshot.includes(created.id));
+  for (const secret of [created.agentToken, created.customerToken, intakeKey, 'clientRequest'])
+    assert.ok(!snapshot.includes(secret));
 });
 
 const fileState = { deleted: false, etag: '' };

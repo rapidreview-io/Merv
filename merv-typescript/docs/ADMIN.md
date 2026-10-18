@@ -34,6 +34,10 @@ come from workflow definitions, spend from Fleet, credit arithmetic from Sandbox
 - `GET /admin/credentials` — by purpose (Pi agents, Fleet agents, Fleet machines, sandbox
   providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, first
   seen, last success and last failure, live provider health. Never a value.
+- `GET /admin/projects` — every project, newest first, for the drill-in picker:
+  `{ projects: [{ id, name, createdAt }] }`.
+- `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
+  experiments' own snapshot, without the customer's token); 503 where it is not installed.
 - Tool calls with `x-merv-platform: read` — the user UI's own record pages for any project,
   read-only.
 
@@ -44,3 +48,7 @@ call carries `x-merv-platform: read`; the API asks Scope for a platform caller, 
 installed platform authority (the admin plugin) to vouch for the verified identity, and allows
 `read` only. The registry refuses every tool that is not read-only for platform callers before
 its handler runs. The shell hides verbs when the session is read-only; the server is the control.
+The caller acts as `PLATFORM_ACTOR`, a reader no actor row backs; it never delegates, so it starts
+no session, conversation or lease. Any other principal sending the header, and every MCP request
+with it, is refused `403 platform_forbidden`. The first read of a project in an hour records
+`project.read` in the admin audit log.
