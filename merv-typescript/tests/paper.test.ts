@@ -1089,3 +1089,24 @@ test('a section changes in part by edits, each find quoted once, also past the e
     /Approved\.\n\nClosing\.$/,
   );
 });
+
+test('edits keep a section within the 100,000 characters its whole content may have', async (t) => {
+  const f = await fixture(t);
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'results',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  await patch(0, [{ id: 'long', title: 'Long', content: `${'a'.repeat(99_986)}End.` }]);
+  await assert.rejects(
+    patch(1, [{ id: 'long', edits: [{ find: 'End.', replace: 'End. One sentence more.' }] }]),
+    (error: MervError) =>
+      error.code === 'paper_too_large' &&
+      error.message ===
+        'Section long would hold 100009 characters after its edits, and a section holds at most 100,000: put the rest in a section of its own',
+  );
+  const kept = await patch(1, [{ id: 'long', edits: [{ find: 'End.', replace: 'End. Ten.' }] }]);
+  assert.equal(kept.sections[0].content.length, 99_995);
+});
