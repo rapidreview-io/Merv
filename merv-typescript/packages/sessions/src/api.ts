@@ -63,6 +63,11 @@ export const workerPrompt = (session: Session) =>
         // and its successor rebuilt what it knew: the deadline is said, with what to keep.
         `This visit's lease ends at ${session.hardDeadline}, ${leaseMinutes(session)} minutes after it was offered. Merv then closes the visit, mid-turn if need be, and a remote job still running does not extend it. Long work outlives a visit: as you go, keep in the project what the next visit needs to go on (the ids of jobs and workflows still running, checkpoints, what is left)${session.continuity ? '; the next visit continues this conversation.' : '; the next visit starts afresh from those records.'}`,
         'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
+        // A successor resumed a conversation ten hours old as though it were the latest, and
+        // rebuilt from the machine what the visit whose conversation never arrived had done.
+        ...(session.continuity?.resume?.missed
+          ? [missedVisits(session.continuity.resume.missed)]
+          : []),
         // Agents blocked on a person ended their turn and were re-offered the same work, again
         // and again: a stop is no way to wait, so they are told what it does and what does wait.
         `Do not end your turn without the handoff${session.continuity ? ' or session.ask_owner' : ''}. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.`,
@@ -77,6 +82,11 @@ export const workerPrompt = (session: Session) =>
           : []),
         'A person may send a message to your thread while you work. Until you acknowledge it, every Merv call but session.messages and session.message.ack is refused with session_message_pending, which carries the message: acknowledge it at once with session.message.ack, a stable requestId and a concise reply about what you will do (you may still check things after), then send the refused call again, as it was unless the message changes what it should do. Before each handoff, call session.messages (without sessionId) and address every message still waiting. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
       ].join('\n');
+/** What a visit is told of the visits its conversation lacks: those that kept none Merv got. */
+const missedVisits = ({ visits, from, to }: { visits: number; from: string; to: string }) => {
+  const one = visits === 1;
+  return `${one ? 'This work’s last visit' : `This work’s last ${visits} visits`}, from ${from} to ${to}, kept no conversation that reached Merv: any conversation you continue ends before ${one ? 'it' : 'them'}, and nothing ${one ? 'it' : 'they'} did is in it. Before you go on, read what ${one ? 'it' : 'they'} left in the project: its records, artifacts and commits, and the machines and jobs still running.`;
+};
 /** A lease's length as its worker is told it, in whole minutes from its offer. */
 const leaseMinutes = (session: Session) =>
   Math.max(

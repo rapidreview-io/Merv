@@ -183,6 +183,11 @@ export interface SessionResume {
   conversationId: string;
   sha256: string;
   size: number;
+  /**
+   * The visits after `sessionId` that ran their agent and whose conversation never reached Merv
+   * (from the first one's activation to the last one's close): what they did is not in this one.
+   */
+  missed?: { visits: number; from: string; to: string };
 }
 /** Which earlier work a session continues: an opaque key, and the conversation it resumes. */
 export interface SessionContinuity {

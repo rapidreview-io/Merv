@@ -226,6 +226,63 @@ test('a conversation declared and never delivered leaves the last delivered one 
   });
 });
 
+test('a successor whose conversation lacks the visits after it is told so, from when to when', async (t) => {
+  // Prod 2026-10-16: a visit's conversation was declared and never delivered; the next visit
+  // took up the one ten hours older as though it were the latest and rebuilt from the machine.
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.sessions.authenticate(first.input.secret);
+  await f.release(first.session);
+  const kept = await f.keep(first.session, first.control);
+  // The second visit's agent ran; its conversation is declared and never arrives.
+  const second = await f.offer(unit.id);
+  await f.sessions.authenticate(second.input.secret);
+  await f.release(second.session);
+  const bytes = Buffer.from('{"type":"user","text":"never delivered"}\n');
+  await f.ok('POST', `/sessions/${second.session.id}/conversation`, f.token, {
+    ...second.control,
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555777',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  });
+  // A third that fails before its agent runs did nothing the conversation lacks.
+  const third = await f.offer(unit.id);
+  await f.ok('POST', `/sessions/${third.session.id}/release`, f.token, {
+    runnerId: third.session.runnerId,
+    outcome: 'launch_failed',
+  });
+  const ran = await f.sessions.get(f.owner, second.session.id);
+  const fourth = await f.offer(unit.id);
+  assert.deepEqual(fourth.session.continuity?.resume, {
+    sessionId: first.session.id,
+    ...kept.facts,
+    missed: { visits: 1, from: ran.activatedAt, to: ran.closedAt },
+  });
+  const { prompt } = await f.ok('POST', `/sessions/${fourth.session.id}/attach`, f.token, {
+    ...fourth.control,
+  });
+  assert.ok(
+    prompt.includes(
+      `This work’s last visit, from ${ran.activatedAt} to ${ran.closedAt}, kept no conversation that reached Merv: any conversation you continue ends before it, and nothing it did is in it. Before you go on, read what it left in the project`,
+    ),
+  );
+  // Once the newest visit delivers its conversation, nothing is missed.
+  await f.sessions.authenticate(fourth.input.secret);
+  await f.release(fourth.session);
+  const newer = await f.keep(fourth.session, fourth.control);
+  const fifth = await f.offer(unit.id);
+  assert.deepEqual(fifth.session.continuity?.resume, {
+    sessionId: fourth.session.id,
+    ...newer.facts,
+  });
+  const reply = await f.ok('POST', `/sessions/${fifth.session.id}/attach`, f.token, {
+    ...fifth.control,
+  });
+  assert.doesNotMatch(reply.prompt, /kept no conversation that reached Merv/);
+});
+
 test('a cut reviewer resumes its own conversation within its round; a new round starts fresh', async (t) => {
   // Audit 15: a results review cut by its step limit, a lost host or a release came back as a new
   // agent with no notes, and a review needing more than one visit could start over for ever.

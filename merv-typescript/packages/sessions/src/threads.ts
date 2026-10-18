@@ -278,10 +278,12 @@ export class SessionThreads {
           at,
           held.id,
         );
+        const resume = resumeOf(held),
+          missed = await this.missed(held.id, resume.sessionId, tx);
         return {
           id: held.id,
           actorId: held.actor_id,
-          continuity: { key: key!, resume: resumeOf(held) },
+          continuity: { key: key!, resume: { ...resume, ...(missed && { missed }) } },
         };
       }
       await this.retire(held, 'superseded', tx);
@@ -322,6 +324,29 @@ export class SessionThreads {
       data: { threadId: id, workerActorId: actor.id },
     });
     return { id, actorId: actor.id, ...(key !== null && { continuity: { key } }) };
+  }
+  /**
+   * The work visits after the one whose conversation a resume takes up that ran their agent: a
+   * runner that died, or never got its conversation delivered, left what they did out of it, and
+   * the successor is told so rather than taking up a conversation hours old as its latest.
+   */
+  private async missed(
+    threadId: string,
+    sessionId: string,
+    tx: Transaction,
+  ): Promise<SessionResume['missed']> {
+    const row = await tx.get<{ n: number | string; since: string | null; until: string | null }>(
+      `SELECT count(*) AS n,min(s.activated_at) AS since,max(s.closed_at) AS until FROM worker_sessions s
+        WHERE s.thread_id=? AND s.kind='work' AND s.activated_at IS NOT NULL AND s.closed_at IS NOT NULL
+          AND COALESCE(s.outcome,'') NOT IN ('launch_failed','workspace_failed','preparation_deferred')
+          AND s._merv_rowid>(SELECT r._merv_rowid FROM worker_sessions r WHERE r.id=?)`,
+      threadId,
+      sessionId,
+    );
+    const visits = Number(row?.n ?? 0);
+    return visits > 0 && row?.since && row.until
+      ? { visits, from: row.since, to: row.until }
+      : undefined;
   }
   /** Its actor goes with it, unless a visit still holds it: that visit's close retires it. */
   private async retire(thread: Row, reason: string, tx: Transaction): Promise<void> {
