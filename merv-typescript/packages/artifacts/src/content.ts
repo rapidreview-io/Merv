@@ -18,6 +18,10 @@ import {
 const MEDIA = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
+/** The largest file a range is read from when its bytes are not in the row: each read fetches
+ * and verifies the whole file. */
+export const MAX_STORED_READ_BYTES = 16 * 1024 * 1024;
+
 /** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
 export const META =
   'id,project_id,created_by,title,media_type,hash,size,created_at,files_json,metadata_json';

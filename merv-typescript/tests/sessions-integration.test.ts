@@ -347,14 +347,15 @@ test('leased workers must deliberately range-read or download large artifacts', 
   assert.equal(ranged.content, content.slice(-10));
   assert.equal(ranged.offset, content.length - 10);
   assert.equal(ranged.total, content.length);
-  const oversizedRange = await worker.callTool({
-    name: 'artifact.read',
-    arguments: { artifactId: artifact.id, length: 8193 },
-  });
-  assert.equal(oversizedRange.isError, true);
-  assert.equal(
-    JSON.parse((oversizedRange.content as { text: string }[])[0]!.text).error.code,
-    'artifact_read_requires_range',
+  // A wider range is cut to the most a worker reads at once, not refused.
+  const wide = await f.call<{ content: string; offset: number; total: number }>(
+    worker,
+    'artifact.read',
+    { artifactId: artifact.id, offset: 100, length: 16_000 },
+  );
+  assert.deepEqual(
+    [wide.content, wide.offset, wide.total],
+    [content.slice(100, 100 + 8192), 100, content.length],
   );
 
   assert.equal((await f.app.ctx.artifacts.read(source, artifact.id)).content, content);

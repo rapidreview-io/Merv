@@ -929,6 +929,25 @@ export interface Artifacts {
     artifact: Artifact;
     download: { url: string; expiresAt: string };
   }>;
+  /** Fresh links to 1-100 distinct members of a collection, from one read of it: each member's
+   * name, size and hash beside its link, in the order named. */
+  downloadFiles(
+    caller: Caller,
+    artifactId: string,
+    fileNames: readonly string[],
+  ): Promise<{
+    artifact: Artifact;
+    downloads: (Omit<ArtifactFile, 'provider'> & { url: string; expiresAt: string })[];
+  }>;
+  /** `read`, and what lives outside the row, so never inside a transaction: a collection
+   * member by `fileName`, fetched from its provider, and a range (a length is required) of a
+   * file above the inline limit, up to 16 MiB, fetched from blobs. Either is refused unless its
+   * bytes match the retained size and SHA-256. */
+  readStored(
+    caller: Caller,
+    artifactId: string,
+    range?: { fileName?: string; offset?: number; length?: number },
+  ): Promise<ArtifactContent & { fileName?: string }>;
   /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
    * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;

@@ -3,8 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createService, MervError, sha256Hex, type Blobs, type Caller } from '@merv/contracts';
+import {
+  createService,
+  MervError,
+  sha256Hex,
+  type Artifact,
+  type Blobs,
+  type Caller,
+} from '@merv/contracts';
 import { ArtifactStore } from '@merv/artifacts';
+import { artifactToolsPlugin } from '@merv/artifacts/tools';
 import { DiskBlobs } from '@merv/blobs';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
@@ -258,7 +266,7 @@ test('a manifest above the inline blob limit is mirrored by signed upload and do
   assert.equal(download.url, `https://bucket.invalid/${many.hash}`);
 });
 
-test('artifact.read selects a collection member only in download mode', async (t) => {
+test('artifact.read reads a member inline or links members, naming the collection without them', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'merv-collections-tool-'));
   const { createApp } = await import('./fixtures/app.js');
   const { stateConfig } = await import('./fixtures/state.js');
@@ -284,46 +292,176 @@ test('artifact.read selects a collection member only in download mode', async (t
     actorName: 'Owner',
   });
   const caller: Caller = { projectId: boot.project.id, actorId: boot.actor.id };
+  // What each member's provider link serves.
+  const bytes = new Map([
+    ['stored-ref', Buffer.from('{"accuracy": 0.91}\n')],
+    ['model-ref', Buffer.from([0, 1, 2, 3, 4])],
+  ]);
+  const long = `output/${'d'.repeat(200)}/${'n'.repeat(100)}.pt`;
   const artifact = await app.ctx.artifacts.createCollection(caller, {
     title: 'Capture',
     sourceKey: 'run',
     files: [
-      {
-        name: `output/${'d'.repeat(200)}/${'n'.repeat(100)}.pt`,
-        size: 5,
+      ...[
+        ['run-a/metrics.json', 'stored-ref'],
+        [long, 'model-ref'],
+      ].map(([name, reference]) => ({
+        name: name!,
+        size: bytes.get(reference!)!.length,
+        hash: sha256Hex(bytes.get(reference!)!),
+        provider: 'compute',
+        reference: reference!,
+      })),
+      ...Array.from({ length: 50 }, (_, i) => ({
+        name: `run-a/logs/${i}.txt`,
+        size: 1,
         hash: 'a'.repeat(64),
         provider: 'compute',
-        reference: 'stored-ref',
-      },
+        reference: 'log-ref',
+      })),
     ],
   });
   const seen: string[] = [];
   app.ctx.artifacts.registerFileProvider('compute', {
     async download(projectId, reference) {
       seen.push(`${projectId}:${reference}`);
-      return { url: 'https://example.invalid/file', expiresAt: '2026-09-30T13:00:00Z' };
+      return { url: `https://example.invalid/${reference}`, expiresAt: '2026-09-30T13:00:00Z' };
     },
   });
-  const result = (await app.ctx.tools.call('artifact.read', caller, {
-    artifactId: artifact.id,
+  const served = new Map(bytes);
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    const body = served.get(new URL(url).pathname.slice(1));
+    return body ? new Response(new Uint8Array(body)) : new Response(null, { status: 404 });
+  });
+  const read = (input: Record<string, unknown>) =>
+    app.ctx.tools.call('artifact.read', caller, { artifactId: artifact.id, ...input }) as Promise<
+      Record<string, unknown> & { artifact: Record<string, unknown> }
+    >;
+  // Every answer names the collection and how many members it has, never all of them.
+  const named = { ...artifact, files: undefined, fileCount: 52 };
+  delete named.files;
+
+  // A member reads inline, whole or by range, as text or base64.
+  assert.deepEqual(await read({ fileName: 'run-a/metrics.json' }), {
+    artifact: named,
+    content: '{"accuracy": 0.91}\n',
+    encoding: 'utf8',
+    fileName: 'run-a/metrics.json',
+  });
+  assert.deepEqual(await read({ fileName: 'run-a/metrics.json', offset: 2, length: 8 }), {
+    artifact: named,
+    content: 'accuracy',
+    encoding: 'utf8',
+    offset: 2,
+    total: 19,
+    fileName: 'run-a/metrics.json',
+  });
+  assert.equal((await read({ fileName: long })).content, 'AAECAwQ=');
+  // Bytes other than the retained ones are refused, not shown.
+  served.set('stored-ref', Buffer.from('{"accuracy": 0.99}\n'));
+  await assert.rejects(read({ fileName: 'run-a/metrics.json' }), { code: 'blob_corrupt' });
+  served.delete('stored-ref');
+  await assert.rejects(read({ fileName: 'run-a/metrics.json' }), { code: 'blob_unavailable' });
+
+  // One member's link, or many at once in the order named, each with its size and hash.
+  seen.length = 0;
+  const one = await read({ mode: 'download', fileName: long });
+  assert.deepEqual(one, {
+    artifact: named,
+    download: { url: 'https://example.invalid/model-ref', expiresAt: '2026-09-30T13:00:00Z' },
+  });
+  const many = await read({
     mode: 'download',
-    fileName: artifact.files![0]!.name,
-  })) as { download: { url: string } };
-  assert.equal(result.download.url, 'https://example.invalid/file');
-  assert.deepEqual(seen, [`${caller.projectId}:stored-ref`]);
-  await assert.rejects(
-    app.ctx.tools.call('artifact.read', caller, {
-      artifactId: artifact.id,
-      fileName: artifact.files![0]!.name,
-    }),
-    { code: 'invalid_artifact' },
+    fileNames: [long, 'run-a/metrics.json', 'run-a/logs/7.txt'],
+  });
+  assert.deepEqual(many.artifact, named);
+  assert.deepEqual(
+    (many.downloads as { name: string; url: string }[]).map(({ name, url }) => [name, url]),
+    [
+      [long, 'https://example.invalid/model-ref'],
+      ['run-a/metrics.json', 'https://example.invalid/stored-ref'],
+      ['run-a/logs/7.txt', 'https://example.invalid/log-ref'],
+    ],
   );
+  assert.deepEqual((many.downloads as Record<string, unknown>[])[1], {
+    name: 'run-a/metrics.json',
+    size: 19,
+    hash: sha256Hex(bytes.get('stored-ref')!),
+    url: 'https://example.invalid/stored-ref',
+    expiresAt: '2026-09-30T13:00:00Z',
+  });
+  assert.deepEqual(seen, [
+    `${caller.projectId}:model-ref`,
+    ...['model-ref', 'stored-ref', 'log-ref'].map((r) => `${caller.projectId}:${r}`),
+  ]);
+  for (const input of [
+    { fileNames: ['run-a/metrics.json'] },
+    { mode: 'download', fileName: long, fileNames: [long] },
+    { mode: 'download', fileNames: [long, long] },
+  ])
+    await assert.rejects(read(input), { code: 'invalid_artifact' });
   await assert.rejects(
-    app.ctx.tools.call('artifact.read', caller, {
-      artifactId: artifact.id,
+    read({
       mode: 'download',
-      fileName: 'other.pt',
+      fileNames: Array.from({ length: 101 }, (_, i) => `run-a/logs/${i}.txt`),
     }),
-    { code: 'not_found' },
+    { code: 'invalid_input' },
   );
+
+  // A name that is not a member says which members were likely meant.
+  await assert.rejects(read({ mode: 'download', fileName: 'metrics.json' }), {
+    code: 'not_found',
+    message: 'Collection file "metrics.json" not found; did you mean "run-a/metrics.json"?',
+    details: { fileName: 'metrics.json', fileCount: 52, candidates: ['run-a/metrics.json'] },
+  });
+  await assert.rejects(read({ fileName: 'other.pt' }), {
+    code: 'not_found',
+    message:
+      /^Collection file "other\.pt" not found; members are named by their whole path in the collection, such as "/,
+  });
+  const plain = await app.ctx.artifacts.create(caller, { title: 'Notes', content: 'text' });
+  await assert.rejects(
+    app.ctx.tools.call('artifact.read', caller, { artifactId: plain.id, fileName: 'notes.md' }),
+    { code: 'invalid_artifact', message: /not a collection/ },
+  );
+
+  // The manifest and the collection's own record still name every member.
+  assert.deepEqual(JSON.parse((await read({})).content as string).files, artifact.files);
+  assert.deepEqual(
+    ((await app.ctx.tools.call('artifact.get', caller, { artifactId: artifact.id })) as Artifact)
+      .files,
+    artifact.files,
+  );
+});
+
+test('artifact.list gives an agent each collection’s member count, and a person its members', async () => {
+  const collection = {
+    id: 'art_capture',
+    projectId: 'project_1',
+    createdBy: 'actor_1',
+    title: 'Capture',
+    mediaType: 'application/vnd.merv.collection+json',
+    hash: 'a'.repeat(64),
+    size: 10,
+    createdAt: '2026-10-18T00:00:00.000Z',
+    files: [{ name: 'run/metrics.json', size: 2, hash: 'b'.repeat(64), provider: 'compute' }],
+    metadata: { captureState: 'succeeded' },
+  };
+  const tools = new Map<string, { handler: (caller: Caller, input: object) => unknown }>();
+  artifactToolsPlugin.apply({
+    artifacts: { list: async () => [collection], downloadAvailable: true },
+    tools: { register: (tool: { name: string }) => void tools.set(tool.name, tool as never) },
+    effect: (fn: () => unknown) => fn(),
+  } as never);
+  const list = (caller: Partial<Caller>) =>
+    tools
+      .get('artifact.list')!
+      .handler({ actorId: 'actor_1', projectId: 'project_1', ...caller }, {});
+  const { files: _, ...named } = collection;
+  for (const agent of [
+    { session: { id: 'session_1' } },
+    { conversation: { id: 'c', epoch: 1, commandId: 'k', runtimeId: 'r' } },
+  ])
+    assert.deepEqual(await list(agent), [{ ...named, fileCount: 1, downloadAvailable: true }]);
+  assert.deepEqual(await list({}), [{ ...collection, downloadAvailable: true }]);
 });

@@ -207,7 +207,20 @@ test('a file over the inline limit stays in blobs and downloads through a signed
   });
   await assert.rejects(
     f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id }),
-    { code: 'artifact_size', message: /; use artifact\.read with mode download$/ },
+    {
+      code: 'artifact_size',
+      message:
+        /; give a length to read a range of it; artifact\.read with mode download fetches it whole$/,
+    },
+  );
+  // A range of it is read from storage, verified whole first.
+  assert.deepEqual(
+    await f.app.ctx.tools.call('artifact.read', f.owner, {
+      artifactId: artifact.id,
+      offset: 1_999_990,
+      length: 20,
+    }),
+    { artifact, content: 'L'.repeat(11), encoding: 'utf8', offset: 1_999_990, total: 2_000_001 },
   );
   const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
     name: 'Reviewer',
@@ -222,6 +235,12 @@ test('a file over the inline limit stays in blobs and downloads through a signed
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), large.bytes);
   // Saved under the artifact's title.
   assert.match(response.headers.get('content-disposition')!, /^attachment; filename="Rows\.csv";/);
+  // Stored bytes that are not the retained ones are never returned.
+  f.server.objects.set(f.key(f.owner.projectId, artifact.hash), Buffer.alloc(2_000_001, 'X'));
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
+    { code: 'blob_corrupt' },
+  );
   await assert.rejects(
     f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
     { code: 'forbidden' },
