@@ -60,7 +60,7 @@ export const artifactToolsPlugin = {
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
+      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
       z
         .object({
           title: z.string().min(1).max(300),
