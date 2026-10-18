@@ -728,9 +728,11 @@ export class ManagedRunnerBindings {
     const before = this.clock() - lostAfterMs;
     if (!validator || this.hearingSince >= before) return false;
     const row = await tx.get<ManagedBindingRow>(
-      `SELECT m.* FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id
-        JOIN session_runners r ON r.project_id=m.project_id AND r.runner_id=m.runner_id
-        WHERE a.session_id=? AND r.last_seen_at<?`,
+      // The presence the session was leased from, found by its unique key.
+      `SELECT m.* FROM worker_sessions s JOIN session_managed_assignments a ON a.session_id=s.id
+        JOIN session_managed_runners m ON m.allocation_id=a.allocation_id
+        JOIN session_runners r ON r.owner_hash=s.owner_hash AND r.runner_id=s.runner_id
+        WHERE s.id=? AND r.last_seen_at<?`,
       sessionId,
       new Date(before).toISOString(),
     );
