@@ -184,6 +184,28 @@ test('a resolution title names the contributing work on an intermediate union wi
   );
 });
 
+test('a merge that builds on a resolution names the work it merged, never the resolution’s own title', async (t) => {
+  const f = await fixture(t);
+  await f.waiter();
+  await f.bases.work(f.admin.projectId);
+  const first = (await f.record())!.resolutionTaskId!;
+  const resolved = await f.resolveCommit();
+  await f.acceptResolution(resolved);
+  // E clashes with the resolved f.txt, and work that needs the resolution and E waits on both.
+  f.source.git('checkout', '--detach', f.main);
+  const e = f.source.commit({ 'f.txt': 'E\n' });
+  f.source.git('push', f.bare, `${e}:refs/heads/e`);
+  const fifth = await f.input('E', e);
+  await f.waiter([{ id: first } as typeof fifth, fifth]);
+  await f.bases.work(f.admin.projectId);
+  const base = (await f.record([resolved, e]))!;
+  assert.equal(base.state, 'awaiting_resolution');
+  const task = await f.tasks.get(f.admin, base.resolutionTaskId!);
+  assert.ok(!task.title.includes('Merge ‘Merge'), task.title);
+  assert.match(task.title, /^Merge ‘(?:A|C|E)’(?: and 1 more)? with ‘(?:A|C|E)’(?: and 1 more)?$/);
+  assert.match(task.goal, new RegExp(`${resolved}: (?:A|C) \\(wf_[0-9a-f]+\\); (?:A|C) \\(wf_`));
+});
+
 test('an open conflict and unchanged reconciles queue no work or prerequisite writes', async (t) => {
   const f = await fixture(t);
   let replaced = 0;

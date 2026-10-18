@@ -245,11 +245,16 @@ export interface CodeRunning {
   /** The Code section of each `work:<id>` key that has a unit; nothing for the rest. */
   runningCode(caller: Caller, keys: readonly string[]): Promise<RunningSection[]>;
 }
-/** One accepted commit of a resolution input, and the units accepted with it. */
+/**
+ * One accepted commit of a resolution input, and the work in it: the units accepted with it, or
+ * for a resolution's commit the units its base merged.
+ */
 export interface ResolutionInput {
   commit: string;
   /** `name` is null where the unit's work is gone. */
   units: { id: string; name: string | null }[];
+  /** No unit was accepted with this commit: it is main, merged in to land or publish. */
+  main?: true;
 }
 /**
  * What the reviewed work Code asks for has to achieve, as facts; its owner words the brief.

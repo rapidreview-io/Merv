@@ -471,7 +471,7 @@ async function siblings(t: TestContext) {
     }
   };
   const main = async () => (await f.code.status(f.admin)).project!.main.oid;
-  const tasks = () =>
+  const resolutions = () =>
     f.state.read((sql) =>
       sql.all<{ base_key: string; members_json: string; state: string }>(
         'SELECT base_key,members_json,state FROM code_bases WHERE resolution_task_id IS NOT NULL ORDER BY base_key',
@@ -487,14 +487,14 @@ async function siblings(t: TestContext) {
   await drive();
   await f.acceptResolution(await f.resolveCommit());
   await drive();
-  return { ...f, landing, project, drive, main, tasks, e, fifth };
+  return { ...f, landing, project, drive, main, resolutions, e, fifth };
 }
 
 test('work a dependent’s base already merges on top of main lands through it, so no conflict is resolved twice', async (t) => {
   const f = await siblings(t);
   // D and E land through that work's base: E's clash is one task, for the work and main alike.
-  const open = (await f.tasks()).filter((task) => task.state === 'awaiting_resolution');
-  assert.equal((await f.tasks()).length, 2);
+  const open = (await f.resolutions()).filter((task) => task.state === 'awaiting_resolution');
+  assert.equal((await f.resolutions()).length, 2);
   assert.equal(open.length, 1);
   const members = JSON.parse(open[0]!.members_json) as string[];
   // One side of this step is a server merge, which only the project's repository holds.
@@ -513,14 +513,14 @@ test('work a dependent’s base already merges on top of main lands through it, 
   ]);
   await f.acceptResolution(resolved, members);
   await f.drive();
-  assert.equal((await f.tasks()).length, 2);
+  assert.equal((await f.resolutions()).length, 2);
   assert.equal(await f.main(), (await f.record([f.a, f.c, f.d, f.e]))!.result!.commit);
 });
 
 test('a landing whose joined base is cancelled is offered again and lands on its own', async (t) => {
   const f = await siblings(t);
   t.mock.method(f.landing, 'soon', () => {});
-  const open = (await f.tasks()).find((task) => task.state === 'awaiting_resolution')!;
+  const open = (await f.resolutions()).find((task) => task.state === 'awaiting_resolution')!;
   const current = (await f.code.status(f.admin)).landing!.current!;
   assert.notEqual(current.baseKey, baseKey([current.mainOid, current.headOid]));
   await f.code.controlBase(f.admin, {
@@ -538,6 +538,9 @@ test('a landing whose joined base is cancelled is offered again and lands on its
   const again = status.current!;
   assert.equal(again.unitId, current.unitId);
   assert.equal(again.baseKey, baseKey([again.mainOid, again.headOid]));
+  // Its resolution names main and the work main holds, never a nested merge title.
+  const { title } = await f.tasks.get(f.admin, again.resolutionTaskId!);
+  assert.ok(!/Accepted work|Merge ‘Merge/.test(title), title);
 });
 
 test('history says which work each commit came from, though Git carries no record names', async (t) => {
