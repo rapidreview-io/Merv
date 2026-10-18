@@ -40,7 +40,7 @@ export function registerWorkerTools(
       name: 'customer_experiment.submit_results',
       conversation: 'never',
       description:
-        "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures, and an earlier session's or attempt's artifact is refused, so cite those by id in the report or in an evidence artifact you write in this session. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.",
+        "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures; cite any other by id in the report. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.",
       inputSchema: submitResultsSchema,
       handler: async (caller: Caller, input: unknown) => service.submitResults(caller, input),
     }),
