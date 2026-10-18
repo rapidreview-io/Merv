@@ -125,13 +125,14 @@ Then answer exactly once with session.message on the worker's threadId: what you
  *  Merv defect that blocks the results is left open for an operator, not answered with a
  *  workaround that cannot work (2026-10-16, a locked report section blocked submission). */
 const escalatingHealerInstructions = healerInstructions
+  .replace('and no person is watching this run.', 'and no person is watching it live.')
   .replace(
     'for report trouble read the report with report.open and report.check.',
     "for report trouble read the report with report.open and report.check, and its guide for what the report tools accept (a locked section that still holds only its [[write: …]] placeholder is the worker's to write with report.write).",
   )
   .replace(
     '(for example, rent on Modal first, then Lambda; or that a tool limitation is fixed and how to proceed)',
-    "(for example, which machine to rent instead and why, judged by each offer's price and maximum lifetime against the job; or that a tool limitation is fixed and how to proceed)",
+    '(for example, choose its next machine from sandboxes.sandbox_options by price and by maximum lifetime against the job; or that a tool limitation is fixed and how to proceed)',
   )
   .replace(
     'or report the limitation in its results and submit them.',

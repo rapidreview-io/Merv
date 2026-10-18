@@ -132,7 +132,15 @@ test('a healer leaves a Merv defect that blocks the results open for an operator
   // The current healer names no fixed provider order and has a way out it lacked: a defect in
   // Merv that blocks the results waits on Needs you instead of a workaround that cannot work.
   assert.doesNotMatch(current!.instructions, /Modal first/);
-  assert.match(current!.instructions, /maximum lifetime/);
+  // The healer's tools show no offers, so it points the worker at the worker's own offer tool.
+  assert.match(
+    current!.instructions,
+    /choose its next machine from sandboxes\.sandbox_options by price and by maximum lifetime/,
+  );
+  assert.doesNotMatch(current!.instructions, /judged by each offer/);
+  // An operator may answer on Needs you, so the healer is not told nobody ever looks.
+  assert.doesNotMatch(current!.instructions, /no person is watching this run/);
+  assert.match(current!.instructions, /no person is watching it live/);
   assert.match(current!.instructions, /do not answer: leave the question open/);
   assert.match(current!.instructions, /Needs you/);
   assert.match(current!.instructions, /\[\[write: …\]\] placeholder is the worker's to write/);
