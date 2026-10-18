@@ -1,7 +1,8 @@
+import { Fragment } from 'react';
+import type { AdminCredential, AdminCredentials } from '@merv/admin/models';
 import { useTool } from '../api';
-import { Ago, cx, toneOf, words } from '../components';
-import { In, Lede, Loading, None, Refresh, Tone } from './parts';
-import type { AdminCredential, AdminCredentials } from './types';
+import { Ago, KV, LoadState, PageHeader, Ruled, Word, col, cx, toneOf, words } from '../components';
+import { Facts, In, None, fig } from './parts';
 
 /** The sections in the order a credential's purpose is read: agents, machines, then the rest. */
 const ORDER = [
@@ -13,204 +14,174 @@ const ORDER = [
 ];
 const place = (purpose: string) => (ORDER.indexOf(purpose) + ORDER.length + 1) % (ORDER.length + 1);
 
-function Credential({ c }: { c: AdminCredential }) {
-  const failed = c.lastFailure;
-  // Another name for the same value, or the same name read by another plugin.
-  const shared =
-    c.sharedWith.length > 0 &&
-    `same as ${c.sharedWith.map((o) => (o.env === c.env ? `${o.plugin} ${o.field}` : o.env)).join(', ')}`;
-  return (
-    <tr className={cx(c.dead && 'admin-dead')}>
-      <td className="mono admin-env">{c.env}</td>
-      <td className="admin-fill admin-used" title={`${c.plugin} · ${c.field}`}>
-        {c.plugin} <span className="mono faint">{c.field}</span>
-      </td>
-      <td>
-        {c.dead ? (
-          <Tone tone="bad">dead</Tone>
-        ) : (
-          <Tone tone={c.set ? 'ok' : 'bad'}>{c.set ? 'set' : 'missing'}</Tone>
-        )}
-      </td>
-      <td className="admin-fill admin-used" title={shared || undefined}>
-        {c.fingerprint ? <span className="mono">{c.fingerprint}</span> : <None />}
-        {shared && <span className="faint"> {shared}</span>}
-      </td>
-      <td className="num">{c.lastChanged ? <Ago at={c.lastChanged} /> : <None />}</td>
-      <td className="num" title={c.lastOk ? `${c.lastOk.relay} · ${c.lastOk.model}` : undefined}>
-        {c.lastOk ? <Ago at={c.lastOk.at} /> : <None />}
-      </td>
-      <td
-        className="num admin-clip"
-        title={
-          failed
-            ? `${failed.status ?? ''} ${failed.code ?? ''} · ${failed.relay} · ${failed.model}`
-            : undefined
-        }
-      >
-        {failed ? (
-          <span className="status--bad">
-            {failed.code ?? failed.status} <Ago at={failed.at} />
-          </span>
-        ) : (
-          <None />
-        )}
-      </td>
-    </tr>
-  );
-}
+/** An env name, which may break after an underscore and nowhere inside a word. */
+const Env = ({ name }: { name: string }) => (
+  <span className="mono">
+    {name.split(/(?<=_)/).map((part, at) => (
+      <Fragment key={at}>
+        {at > 0 && <wbr />}
+        {part}
+      </Fragment>
+    ))}
+  </span>
+);
 
-const HEAD = [
-  'Credential',
-  'Used by',
-  'State',
-  'Fingerprint',
-  'Changed',
-  'Last ok',
-  'Last failure',
+const COLUMNS = [
+  col<AdminCredential>('env', 'Credential', (c) => <Env name={c.env} />),
+  col<AdminCredential>('plugin', 'Used by', (c) => (
+    <span title={`${c.plugin} · ${c.field}`}>{c.plugin}</span>
+  )),
+  col<AdminCredential>('state', 'State', (c) => (
+    <Word
+      tone={c.set && !c.dead ? 'ok' : 'bad'}
+      value={c.dead ? 'dead' : c.set ? 'set' : 'missing'}
+    />
+  )),
+  col<AdminCredential>('fingerprint', 'Fingerprint', (c) => {
+    // Another name that holds the same value; the same name read by another plugin is no news.
+    const others = c.sharedWith.filter((o) => o.env !== c.env);
+    return c.fingerprint ? (
+      <span>
+        <span className="mono">{c.fingerprint}</span>
+        {others.map((o) => (
+          <span key={o.env} className="faint">
+            {' = '}
+            <Env name={o.env} />
+          </span>
+        ))}
+      </span>
+    ) : (
+      <None />
+    );
+  }),
+  fig<AdminCredential>('changed', 'Changed', (c) =>
+    c.lastChanged ? <Ago at={c.lastChanged} /> : <None />,
+  ),
+  fig<AdminCredential>('ok', 'Last ok', ({ lastOk }) =>
+    lastOk ? (
+      <span title={`${lastOk.relay} · ${lastOk.model}`}>
+        <Ago at={lastOk.at} />
+      </span>
+    ) : (
+      <None />
+    ),
+  ),
+  fig<AdminCredential>('failure', 'Last failure', ({ lastFailure: failed }) =>
+    failed ? (
+      <span
+        className="status--bad"
+        title={`${failed.status ?? ''} ${failed.code ?? ''} · ${failed.relay} · ${failed.model}`}
+      >
+        {failed.code ?? failed.status} <Ago at={failed.at} />
+      </span>
+    ) : (
+      <None />
+    ),
+  ),
 ];
+const TEMPLATE = 'minmax(0, 2fr) minmax(0, 0.8fr) 84px minmax(0, 2fr) 76px 76px minmax(0, 1fr)';
+type Minted = AdminCredentials['minted'][number];
 
 export function CredentialsView() {
-  const read = useTool<AdminCredentials>('/admin/credentials');
+  const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
   const data = read.data;
   const groups = [...(data?.groups ?? [])].sort((a, b) => place(a.purpose) - place(b.purpose));
   const all = groups.flatMap((g) => g.credentials);
+  const missing = all.filter((c) => !c.set).length;
+  const dead = all.filter((c) => c.dead).length;
   return (
-    <div className="admin-page">
-      <Lede
+    <div className="page-stage stack stack--lg">
+      <PageHeader
         title="Credentials"
-        facts={
+        summary={
           data && (
-            <>
-              <span>
-                <b>{all.filter((c) => c.set).length}</b> set
-              </span>
-              {all.some((c) => !c.set) && (
-                <span className="status--bad">
-                  <b>{all.filter((c) => !c.set).length}</b> missing
-                </span>
-              )}
-              {all.some((c) => c.dead) && (
-                <span className="status--bad">
-                  <b>{all.filter((c) => c.dead).length}</b> dead
-                </span>
-              )}
-            </>
+            <Facts
+              facts={[
+                [all.length - missing, 'set'],
+                missing > 0 && [missing, 'missing', true],
+                dead > 0 && [dead, 'dead', true],
+              ]}
+            />
           )
         }
-      >
-        <Refresh read={read} />
-      </Lede>
-      <div className="page-stage stack stack--lg">
-        <Loading read={read} columns={6} />
-        {data && (
-          <div className="admin-surface">
-            <table className="admin-table" aria-label="Credentials">
-              <thead>
-                <tr>
-                  {HEAD.map((label, at) => (
-                    <th key={label} className={at > 3 ? 'num' : undefined}>
-                      {label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              {groups.map((group) => {
-                const p = group.provider;
-                return (
-                  <tbody key={p ? `provider:${p.name}` : group.purpose}>
-                    <tr className="admin-group">
-                      <th colSpan={HEAD.length} scope="rowgroup">
-                        {p ? (
-                          <>
-                            {p.name} <span className="faint">{p.plugin}</span>{' '}
-                            {p.health && (
-                              <Tone
-                                tone={toneOf(p.health.status)}
-                                title={[p.health.message, p.health_reason]
-                                  .filter(Boolean)
-                                  .join(' · ')}
-                              >
-                                {words(p.health.status)}
-                              </Tone>
-                            )}
-                            {!p.enabled && <Tone tone="dim">disabled</Tone>}
-                            {p.verified_at && (
-                              <span className="faint">
-                                {' '}
-                                verified <Ago at={p.verified_at} />
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          group.purpose
-                        )}
-                      </th>
-                    </tr>
-                    {group.credentials.map((c) => (
-                      <Credential key={`${c.env}:${c.field}`} c={c} />
-                    ))}
-                    {/* A provider whose key is sealed in its row says which fields it holds. */}
-                    {p &&
-                      !group.credentials.length &&
-                      p.fields.map((field) => (
-                        <tr key={field.name}>
-                          <td className="mono admin-env">{p.credential_env ?? <None />}</td>
-                          <td>
-                            {p.plugin} <span className="mono faint">{field.name}</span>
-                          </td>
-                          <td colSpan={HEAD.length - 2}>
-                            {field.present === null ? (
-                              <None />
-                            ) : (
-                              <Tone tone={field.present ? 'ok' : 'bad'}>
-                                {field.present ? 'set' : 'missing'}
-                              </Tone>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                );
-              })}
-            </table>
-          </div>
-        )}
-        {data && data.minted.length > 0 && (
-          <div className="admin-surface">
-            <table className="admin-table" aria-label="Minted credentials">
-              <thead>
-                <tr>
-                  <th>Minted by</th>
-                  <th>Kind</th>
-                  <th className="num">Live</th>
-                  <th className="num">Next expiry</th>
-                  <th className="num">Revoked 24h</th>
-                  <th className="num">Last issued</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.minted.map((m) => (
-                  <tr key={`${m.owner}:${m.kind}`}>
-                    <td>{m.owner}</td>
-                    <td>{words(m.kind)}</td>
-                    <td className="num">{m.live}</td>
-                    <td className="num">
-                      {m.soonestExpiry ? <In at={m.soonestExpiry} /> : <None />}
-                    </td>
-                    <td className="num">
-                      {Number(m.revokedLastDay) ? m.revokedLastDay : <None />}
-                    </td>
-                    <td className="num">
-                      <Ago at={m.newestIssued} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      />
+      <LoadState {...read} columns={6} />
+      {groups.map(({ purpose, provider: p, credentials }) => (
+        <section className="stack admin-purpose" key={p ? `provider:${p.name}` : purpose}>
+          <h2 className="section-title admin-group">
+            {p ? (
+              <>
+                {p.name}{' '}
+                {p.health && (
+                  <Word
+                    tone={toneOf(p.health.status)}
+                    value={p.health.status}
+                    title={[p.health.message, p.health_reason].filter(Boolean).join(' · ')}
+                  />
+                )}{' '}
+                {!p.enabled && <Word tone="dim" value="disabled" />}
+                {p.verified_at && (
+                  <span className="faint">
+                    {' '}
+                    verified <Ago at={p.verified_at} />
+                  </span>
+                )}
+              </>
+            ) : (
+              purpose
+            )}
+          </h2>
+          {credentials.length > 0 && (
+            <Ruled
+              label={p?.name ?? purpose}
+              template={TEMPLATE}
+              columns={COLUMNS}
+              rows={credentials}
+              keyOf={(c) => `${c.env}:${c.field}`}
+              row={(c) => ({ className: cx(c.dead && 'admin-dead') })}
+            />
+          )}
+          {/* A provider whose key is sealed in its row says which fields it holds. */}
+          {p && !credentials.length && (
+            <KV
+              rows={p.fields.map((field) => [
+                field.name,
+                field.present === null ? (
+                  <None />
+                ) : (
+                  <Word
+                    tone={field.present ? 'ok' : 'bad'}
+                    value={field.present ? 'set' : 'missing'}
+                  />
+                ),
+              ])}
+            />
+          )}
+        </section>
+      ))}
+      {!!data?.minted.length && (
+        <section className="stack">
+          <h2 className="section-title">Minted</h2>
+          <Ruled
+            label="Minted credentials"
+            template="minmax(0, 1fr) minmax(0, 1.4fr) 64px 104px 104px 104px"
+            rows={data.minted}
+            keyOf={(m) => `${m.owner}:${m.kind}`}
+            columns={[
+              col<Minted>('owner', 'Minted by', (m) => m.owner),
+              col<Minted>('kind', 'Kind', (m) => words(m.kind)),
+              fig<Minted>('live', 'Live', (m) => m.live),
+              fig<Minted>('expiry', 'Next expiry', (m) =>
+                m.soonestExpiry ? <In at={m.soonestExpiry} /> : <None />,
+              ),
+              fig<Minted>('revoked', 'Revoked 24h', (m) =>
+                Number(m.revokedLastDay) ? m.revokedLastDay : <None />,
+              ),
+              fig<Minted>('issued', 'Last issued', (m) => <Ago at={m.newestIssued} />),
+            ]}
+          />
+        </section>
+      )}
     </div>
   );
 }

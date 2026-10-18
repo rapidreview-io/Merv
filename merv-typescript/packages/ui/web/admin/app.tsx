@@ -5,16 +5,13 @@
  * (/ui/admin/p/<project>/…, the member Workspace in platform mode; see app.tsx).
  */
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useTool } from '../api';
 import { signedInEmail } from '../auth';
 import { ErrorBoundary } from '../components';
-import { SidebarIcon } from '../icons';
 import { useAccount } from '../session';
-import { AccountMenu, RailRow, ShellFrame, useRailOpen } from '../shell';
+import { AccountMenu, RailHead, RailRow, ShellFrame, useRailOpen } from '../shell';
 import { CredentialsView } from './credentials';
 import { CreditsView } from './credits';
 import { StandaloneView } from './standalone';
-import type { AdminWork } from './types';
 import { WorkView } from './work';
 
 const PLACES = [
@@ -26,11 +23,6 @@ const PLACES = [
 function Rail({ onHide }: { onHide(): void }) {
   const { pathname } = useLocation();
   const session = useAccount();
-  // The admin's own label is the one the work table names them by.
-  const people = useTool<AdminWork>('/admin/work').data?.people;
-  const account = session?.account;
-  const key = account?.kind === 'user' ? `${account.user.issuer}|${account.user.subject}` : '';
-  const name = people?.find((person) => person.key === key)?.label ?? signedInEmail() ?? undefined;
   // A standalone experiment is opened from Work, so Work holds it.
   const here = (to: string) =>
     to === '/admin'
@@ -38,25 +30,14 @@ function Rail({ onHide }: { onHide(): void }) {
       : pathname.startsWith(to);
   return (
     <aside className="sidebar admin-rail" aria-label="Primary">
-      <div className="rail-util">
-        <span className="rail-wordmark">merv</span>
-        <button
-          type="button"
-          className="sidebar-hide"
-          onClick={onHide}
-          title="Hide sidebar"
-          aria-label="Hide sidebar"
-        >
-          <SidebarIcon size={18} />
-        </button>
-      </div>
+      <RailHead onHide={onHide} />
       <nav className="rail-nav">
         {PLACES.map((place) => (
           <RailRow key={place.to} {...place} active={here(place.to)} />
         ))}
       </nav>
       <div className="sidebar-foot">
-        {session && <AccountMenu who={name} role="admin" signOut={session.signOut} />}
+        {session && <AccountMenu who={signedInEmail()} role="admin" signOut={session.signOut} />}
       </div>
     </aside>
   );

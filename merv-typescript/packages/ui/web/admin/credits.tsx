@@ -1,25 +1,36 @@
-import { Fragment, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import type { AdminCredits, CreditAccount, CreditPerson } from '@merv/admin/models';
 import { accountRequest, useTool } from '../api';
-import { ConfirmAction, Failure, SearchField, Submit, cx, stamp, words } from '../components';
-import { Narrowing, matches } from '../list-filters';
+import {
+  ConfirmAction,
+  Failure,
+  Field,
+  OpenedForm,
+  PageHeader,
+  Ruled,
+  Submit,
+  Word,
+  col,
+  cx,
+  stamp,
+  type Column,
+} from '../components';
+import { ListPage, useListFilter } from '../list-filters';
 import { useCommand } from '../mutations';
-import { Lede, Loading, None, Of, Refresh, Tone, count, usd } from './parts';
-import type { AdminCredits, CreditAccount } from './types';
+import { day } from '../session';
+import { Facts, None, Of, count, fig, usd } from './parts';
 
 /** Whoever holds credit: a person and the accounts they belong to, or an account nobody does. */
-interface Holder {
-  key: string;
-  label: string;
+interface Holder extends Pick<CreditPerson, 'label' | 'fleet' | 'pi'> {
+  id: string;
   accounts: { account: CreditAccount; role?: string }[];
-  fleet: AdminCredits['people'][number]['fleet'];
-  pi: AdminCredits['people'][number]['pi'];
 }
 function holders(data: AdminCredits): Holder[] {
   const byId = new Map(data.accounts.map((account) => [account.accountId, account]));
   const held = new Set(data.people.flatMap((p) => p.accounts.map((a) => a.accountId)));
   return [
     ...data.people.map((p) => ({
-      key: `${p.issuer}|${p.subject}`,
+      id: `${p.issuer}|${p.subject}`,
       label: p.label,
       accounts: p.accounts.flatMap(({ accountId, role }) =>
         byId.has(accountId) ? [{ account: byId.get(accountId)!, role }] : [],
@@ -30,7 +41,7 @@ function holders(data: AdminCredits): Holder[] {
     ...data.accounts
       .filter((account) => !held.has(account.accountId))
       .map((account) => ({
-        key: account.accountId,
+        id: account.accountId,
         label: account.name,
         accounts: [{ account }],
         fleet: null,
@@ -48,36 +59,14 @@ const pooled = (holder: Holder, provider: string) => {
 };
 
 /** A day, with its minute in the hover title. */
-const Day = ({ at }: { at: string | null }) => {
-  if (!at) return <None />;
-  const on = new Date(at);
-  const year = on.getFullYear() === new Date().getFullYear() ? undefined : 'numeric';
-  return (
+const Day = ({ at }: { at: string | null }) =>
+  at ? (
     <time dateTime={at} title={stamp(at)}>
-      {on.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year })}
+      {day(at)}
     </time>
+  ) : (
+    <None />
   );
-};
-
-/** The columns of a holding's tables that are words; every other after the first is a figure. */
-const WORDS = new Set(['Reason', 'State', '']);
-/** A table inside a holding, its first column naming each row. */
-function Inner({ name, head, children }: { name: string; head: string[]; children: ReactNode }) {
-  return (
-    <table className="admin-table admin-table--inner" aria-label={name}>
-      <thead>
-        <tr>
-          {head.map((label, at) => (
-            <th key={label + at} className={at && !WORDS.has(label) ? 'num' : undefined}>
-              {label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  );
-}
 
 /** One POST to an /admin route, behind the guard that names it; done, the page is read again. */
 function Guarded({
@@ -129,7 +118,7 @@ function Guarded({
 const More = ({ open, label, onClick }: { open: boolean; label: string; onClick(): void }) => (
   <button
     type="button"
-    className="btn-icon admin-more"
+    className="btn-icon btn-icon--inline file-menu-open admin-more"
     aria-label={label}
     title={label}
     aria-expanded={open}
@@ -138,6 +127,9 @@ const More = ({ open, label, onClick }: { open: boolean; label: string; onClick(
     ⋯
   </button>
 );
+
+type Grant = CreditAccount['grants'][number];
+type Schedule = CreditAccount['schedules'][number];
 
 function Account({
   account,
@@ -151,192 +143,131 @@ function Account({
   const [acting, setActing] = useState<string>();
   const close = () => setActing(undefined);
   const now = new Date().toISOString();
-  const guard = (id: string, node: ReactNode, span: number) =>
-    acting === id && (
-      <tr className="admin-guard">
-        <td colSpan={span}>{node}</td>
-      </tr>
-    );
+  const over = (grant: Grant) =>
+    grant.revoked_at
+      ? 'revoked'
+      : grant.expires_at && grant.expires_at < now
+        ? 'expired'
+        : undefined;
+  const more = (id: string, label: string) => (
+    <More
+      open={acting === id}
+      label={label}
+      onClick={() => setActing(acting === id ? undefined : id)}
+    />
+  );
+  // What the account holds of each provider, and every cap beside it, said on its head.
+  const clauses = [
+    role,
+    ...account.projects.map((p) => p.name),
+    ...account.pools.map(
+      (pool) => `${pool.provider} ${usd(pool.available)} of ${usd(pool.granted)}`,
+    ),
+    ...account.budgets.map(
+      (b) =>
+        b.cap !== null &&
+        `cap ${b.metric === 'money' ? usd(b.cap) : `${b.cap} h`} ${b.window === 'all_time' ? 'in all' : `a ${b.window}`}${b.provider ? ` ${b.provider}` : ''}`,
+    ),
+  ].filter(Boolean);
+  const grant = account.grants.find((g) => g.id === acting);
+  const schedule = account.schedules.find((s) => s.id === acting);
+  const grants: Column<Grant>[] = [
+    col('grant', 'Grant', (g) => (
+      <>
+        <span className="tabular">{usd(g.amount)}</span> {g.provider}
+        {g.schedule_id && <span className="faint"> · scheduled</span>}
+      </>
+    )),
+    fig('used', 'Used', (g) => usd(g.used)),
+    fig('left', 'Left', (g) => <span className="admin-left">{usd(g.available)}</span>),
+    fig('reserved', 'Reserved', (g) => usd(g.reserved)),
+    fig('from', 'From', (g) => <Day at={g.valid_from} />),
+    fig('expires', 'Expires', (g) =>
+      over(g) ? <Word tone="dim" value={over(g)!} /> : <Day at={g.expires_at} />,
+    ),
+    col('reason', 'Reason', (g) => g.reason),
+    fig('more', '', (g) => !over(g) && more(g.id, 'Revoke grant')),
+  ];
+  const schedules: Column<Schedule>[] = [
+    col('schedule', 'Schedule', (s) => (
+      <>
+        <span className="tabular">{usd(s.amount)}</span> {s.provider}
+      </>
+    )),
+    fig('every', 'Every', (s) => s.cadence),
+    fig('starts', 'Starts', (s) => <Day at={s.starts_at} />),
+    fig('ends', 'Ends', (s) => <Day at={s.ends_at} />),
+    fig('lasts', 'Lasts', ({ validity_periods: n }) =>
+      n === null ? 'rolls over' : `${n} ${n === 1 ? 'period' : 'periods'}`,
+    ),
+    col('state', 'State', (s) => (
+      <Word tone={s.enabled ? 'ok' : 'dim'} value={s.enabled ? 'on' : 'paused'} />
+    )),
+    fig('more', '', (s) => more(s.id, s.enabled ? 'Pause schedule' : 'Resume schedule')),
+  ];
   return (
     <section className="admin-account stack" aria-label={account.name}>
       <h3 className="admin-account-head">
         {account.name}
-        {role && <span className="faint"> · {role}</span>}
-        {account.projects.map((p) => (
-          <span key={p.projectId} className="faint">
-            {' '}
-            · {p.name}
-          </span>
-        ))}
+        <span className="faint">{clauses.map((clause) => ` · ${clause}`)}</span>
       </h3>
-      {account.pools.length > 0 && (
-        <Inner
-          name="Providers"
-          head={['Provider', 'Granted', 'Used', 'Reserved', 'Left', 'Expired', 'Revoked']}
-        >
-          {account.pools.map((pool) => (
-            <tr key={pool.provider}>
-              <td>{pool.provider}</td>
-              <td className="num">{usd(pool.granted)}</td>
-              <td className="num">{usd(pool.used)}</td>
-              <td className="num">{usd(pool.reserved)}</td>
-              <td className="num admin-left">{usd(pool.available)}</td>
-              <td className="num faint">{usd(pool.expired)}</td>
-              <td className="num faint">{usd(pool.revoked)}</td>
-            </tr>
-          ))}
-        </Inner>
-      )}
       {account.grants.length > 0 && (
-        <Inner
-          name="Grants"
-          head={['Grant', 'Used', 'Left', 'Reserved', 'From', 'Expires', 'Reason', '']}
-        >
-          {account.grants.map((grant) => {
-            const over = grant.revoked_at
-              ? 'revoked'
-              : grant.expires_at && grant.expires_at < now
-                ? 'expired'
-                : null;
-            return (
-              <Fragment key={grant.id}>
-                <tr className={cx(over && 'admin-ended')}>
-                  <td>
-                    <span className="tabular">{usd(grant.amount)}</span> {grant.provider}
-                    {grant.schedule_id && <span className="faint"> · scheduled</span>}
-                  </td>
-                  <td className="num">{usd(grant.used)}</td>
-                  <td className="num admin-left">{usd(grant.available)}</td>
-                  <td className="num">{usd(grant.reserved)}</td>
-                  <td className="num">
-                    <Day at={grant.valid_from} />
-                  </td>
-                  <td className="num">
-                    {over ? <Tone tone="dim">{over}</Tone> : <Day at={grant.expires_at} />}
-                  </td>
-                  <td className="admin-clip admin-reason" title={grant.reason}>
-                    {grant.reason}
-                  </td>
-                  <td className="admin-end">
-                    {!over && (
-                      <More
-                        open={acting === grant.id}
-                        label="Revoke grant"
-                        onClick={() => setActing(acting === grant.id ? undefined : grant.id)}
-                      />
-                    )}
-                  </td>
-                </tr>
-                {guard(
-                  grant.id,
-                  <Guarded
-                    title="Revoke grant?"
-                    confirm="Revoke grant"
-                    danger
-                    path={`/admin/credits/grants/${encodeURIComponent(grant.id)}/revoke`}
-                    body={{}}
-                    close={close}
-                    done={reload}
-                  >
-                    <p>
-                      {usd(grant.available)} left of {usd(grant.amount)} {grant.provider} ·{' '}
-                      {account.name}
-                    </p>
-                  </Guarded>,
-                  8,
-                )}
-              </Fragment>
-            );
-          })}
-        </Inner>
+        <Ruled
+          label="Grants"
+          template="minmax(0, 1.4fr) repeat(3, 80px) 72px 80px minmax(0, 2fr) 32px"
+          columns={grants}
+          rows={account.grants}
+          keyOf={(g) => g.id}
+        />
       )}
       {account.schedules.length > 0 && (
-        <Inner
-          name="Schedules"
-          head={['Schedule', 'Every', 'Starts', 'Ends', 'Lasts', 'State', '']}
-        >
-          {account.schedules.map((schedule) => (
-            <Fragment key={schedule.id}>
-              <tr>
-                <td>
-                  <span className="tabular">{usd(schedule.amount)}</span> {schedule.provider}
-                </td>
-                <td className="num">{schedule.cadence}</td>
-                <td className="num">
-                  <Day at={schedule.starts_at} />
-                </td>
-                <td className="num">
-                  <Day at={schedule.ends_at} />
-                </td>
-                <td className="num">
-                  {schedule.validity_periods === null
-                    ? 'rolls over'
-                    : `${schedule.validity_periods} ${schedule.validity_periods === 1 ? 'period' : 'periods'}`}
-                </td>
-                <td>
-                  <Tone tone={schedule.enabled ? 'ok' : 'dim'}>
-                    {schedule.enabled ? 'on' : 'paused'}
-                  </Tone>
-                </td>
-                <td className="admin-end">
-                  <More
-                    open={acting === schedule.id}
-                    label={schedule.enabled ? 'Pause schedule' : 'Resume schedule'}
-                    onClick={() => setActing(acting === schedule.id ? undefined : schedule.id)}
-                  />
-                </td>
-              </tr>
-              {guard(
-                schedule.id,
-                <Guarded
-                  title={schedule.enabled ? 'Pause schedule?' : 'Resume schedule?'}
-                  confirm={schedule.enabled ? 'Pause schedule' : 'Resume schedule'}
-                  path="/admin/credits/schedules"
-                  // The same id with the same terms only switches a schedule on or off.
-                  body={{
-                    id: schedule.id,
-                    accountId: account.accountId,
-                    provider: schedule.provider,
-                    amount: schedule.amount,
-                    cadence: schedule.cadence,
-                    startsAt: schedule.starts_at,
-                    validityPeriods: schedule.validity_periods,
-                    endsAt: schedule.ends_at,
-                    enabled: !schedule.enabled,
-                  }}
-                  close={close}
-                  done={reload}
-                >
-                  <p>
-                    {usd(schedule.amount)} {schedule.provider} {schedule.cadence} · {account.name}
-                  </p>
-                </Guarded>,
-                7,
-              )}
-            </Fragment>
-          ))}
-        </Inner>
+        <Ruled
+          label="Schedules"
+          template="minmax(0, 1.4fr) repeat(4, 96px) minmax(0, 2fr) 32px"
+          columns={schedules}
+          rows={account.schedules}
+          keyOf={(s) => s.id}
+        />
       )}
-      {account.budgets.length > 0 && (
-        <Inner name="Budget caps" head={['Budget cap', 'Window', 'Measures', 'Provider']}>
-          {account.budgets.map((budget) => (
-            <tr key={budget.id}>
-              <td>
-                <span className="tabular">
-                  {budget.cap === null
-                    ? 'No cap'
-                    : budget.metric === 'money'
-                      ? usd(budget.cap)
-                      : `${budget.cap} h`}
-                </span>{' '}
-                {words(budget.scope)}
-              </td>
-              <td className="num">{words(budget.window)}</td>
-              <td className="num">{words(budget.metric)}</td>
-              <td className="num">{budget.provider ?? 'all'}</td>
-            </tr>
-          ))}
-        </Inner>
+      {grant && (
+        <Guarded
+          title="Revoke grant?"
+          confirm="Revoke grant"
+          danger
+          path={`/admin/credits/grants/${encodeURIComponent(grant.id)}/revoke`}
+          body={{}}
+          close={close}
+          done={reload}
+        >
+          <p>
+            {usd(grant.available)} left of {usd(grant.amount)} {grant.provider} · {account.name}
+          </p>
+        </Guarded>
+      )}
+      {schedule && (
+        <Guarded
+          title={schedule.enabled ? 'Pause schedule?' : 'Resume schedule?'}
+          confirm={schedule.enabled ? 'Pause schedule' : 'Resume schedule'}
+          path="/admin/credits/schedules"
+          // The same id with the same terms only switches a schedule on or off.
+          body={{
+            id: schedule.id,
+            accountId: account.accountId,
+            provider: schedule.provider,
+            amount: schedule.amount,
+            cadence: schedule.cadence,
+            startsAt: schedule.starts_at,
+            validityPeriods: schedule.validity_periods,
+            endsAt: schedule.ends_at,
+            enabled: !schedule.enabled,
+          }}
+          close={close}
+          done={reload}
+        >
+          <p>
+            {usd(schedule.amount)} {schedule.provider} {schedule.cadence} · {account.name}
+          </p>
+        </Guarded>
       )}
     </section>
   );
@@ -345,17 +276,19 @@ function Account({
 const CADENCES = ['once', 'daily', 'weekly', 'monthly'] as const;
 
 /** One form assigns credit: a grant now, or a schedule that grants on every period. */
-function Grant({
+function GrantForm({
   holder,
   providers,
   reload,
+  close,
 }: {
   holder: Holder;
   providers: string[];
   reload(): void;
+  close(): void;
 }) {
-  const [accountId, setAccount] = useState(holder.accounts[0]?.account.accountId ?? '');
-  const [provider, setProvider] = useState(providers[0] ?? '');
+  const [accountId, setAccount] = useState(holder.accounts[0]!.account.accountId);
+  const [provider, setProvider] = useState(providers[0]!);
   const [amount, setAmount] = useState('');
   const [cadence, setCadence] = useState<(typeof CADENCES)[number]>('once');
   const [until, setUntil] = useState('');
@@ -372,49 +305,26 @@ function Grant({
       }),
     validate: (result) => typeof result?.id === 'string',
     onSuccess: () => {
-      setAmount('');
-      setUntil('');
-      setReason('');
+      close();
       reload();
     },
   });
-  if (!holder.accounts.length || !providers.length) return null;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const id = crypto.randomUUID();
+    const terms = { id: crypto.randomUUID(), accountId, provider, amount: amount.trim() };
     const at = new Date().toISOString();
     const end = until ? new Date(until).toISOString() : null;
     void command.submit(
       once
-        ? { id, accountId, provider, amount, validFrom: at, ...(end && { expiresAt: end }), reason }
-        : {
-            id,
-            accountId,
-            provider,
-            amount,
-            cadence,
-            startsAt: at,
-            validityPeriods: 1,
-            endsAt: end,
-            enabled: true,
-          },
+        ? { ...terms, validFrom: at, ...(end && { expiresAt: end }), reason }
+        : { ...terms, cadence, startsAt: at, validityPeriods: 1, endsAt: end, enabled: true },
     );
   };
-  const choose = (
-    label: string,
-    value: string,
-    set: (v: string) => void,
-    options: [string, string][],
-  ) => (
+  const choose = (label: string, value: string, set: (v: string) => void, options: string[][]) => (
     <label>
       {label}
-      <select
-        className="input"
-        value={value}
-        disabled={command.locked}
-        onChange={(event) => set(event.target.value)}
-      >
-        {options.map(([v, l]) => (
+      <select value={value} onChange={(event) => set(event.target.value)}>
+        {options.map(([v, l = v]) => (
           <option key={v} value={v}>
             {l}
           </option>
@@ -423,7 +333,13 @@ function Grant({
     </label>
   );
   return (
-    <form className="admin-grant" onSubmit={submit} aria-label={`Grant credits to ${holder.label}`}>
+    <OpenedForm
+      className="stack entry-form"
+      onClose={close}
+      locked={command.locked}
+      onSubmit={submit}
+      aria-label={`Grant credits to ${holder.label}`}
+    >
       <fieldset disabled={command.locked}>
         {holder.accounts.length > 1 &&
           choose(
@@ -436,209 +352,171 @@ function Grant({
           'Provider',
           provider,
           setProvider,
-          providers.map((p) => [p, p]),
+          providers.map((p) => [p]),
         )}
-        <label>
-          Amount
-          <input
-            className="input tabular admin-amount"
-            inputMode="decimal"
-            required
-            pattern="\d+(\.\d{1,6})?"
-            placeholder="0.00"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value.trim())}
-          />
-        </label>
+        <Field
+          label="Amount"
+          className="tabular"
+          inputMode="decimal"
+          required
+          pattern="\s*\d+(\.\d{1,6})?\s*"
+          placeholder="0.00"
+          value={amount}
+          onChange={setAmount}
+        />
         {choose(
           'Repeats',
           cadence,
           (v) => setCadence(v as typeof cadence),
-          CADENCES.map((c) => [c, c]),
+          CADENCES.map((c) => [c]),
         )}
-        <label>
-          {once ? 'Expires' : 'Ends'}
-          <input
-            className="input"
-            type="datetime-local"
-            value={until}
-            onChange={(event) => setUntil(event.target.value)}
-          />
-        </label>
+        <Field
+          label={once ? 'Expires' : 'Ends'}
+          type="datetime-local"
+          value={until}
+          onChange={setUntil}
+        />
         {once && (
-          <label className="admin-grant-reason">
-            Reason
-            <input
-              className="input"
-              required
-              maxLength={2000}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-            />
-          </label>
+          <Field label="Reason" required maxLength={2000} value={reason} onChange={setReason} />
         )}
       </fieldset>
       {/* Outside the fields it locks, so a request kept for a retry can be sent again. */}
-      <Submit label="Grant" busy={command.busy} retry={command.retry} saving="Granting…" />
+      <div>
+        <Submit label="Grant" busy={command.busy} retry={command.retry} saving="Granting…" />
+      </div>
       <Failure message={command.error} />
-    </form>
+    </OpenedForm>
+  );
+}
+
+/** A person unfolded: their accounts, and the quiet word that opens the grant form. */
+function Holding({
+  holder,
+  providers,
+  reload,
+}: {
+  holder: Holder;
+  providers: string[];
+  reload(): void;
+}) {
+  const [granting, setGranting] = useState(false);
+  return (
+    <div className="admin-holding stack stack--lg">
+      {holder.accounts.map(({ account, role }) => (
+        <Account key={account.accountId} account={account} role={role} reload={reload} />
+      ))}
+      {granting ? (
+        <GrantForm
+          holder={holder}
+          providers={providers}
+          reload={reload}
+          close={() => setGranting(false)}
+        />
+      ) : (
+        holder.accounts.length > 0 &&
+        providers.length > 0 && (
+          <div>
+            <button type="button" className="btn-text" onClick={() => setGranting(true)}>
+              Grant
+            </button>
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
 export function CreditsView() {
-  const credits = useTool<AdminCredits>('/admin/credits');
+  const credits = useTool<AdminCredits>('/admin/credits', {}, { every: 60_000 });
   const [open, setOpen] = useState<string>();
-  const [query, setQuery] = useState('');
   const data = credits.data;
   const providers = data?.providers ?? [];
-  const all = data ? holders(data) : [];
-  const search = query.trim().toLowerCase();
-  const shown = all.filter((holder) =>
-    matches(search, [holder.label, ...holder.accounts.map(({ account }) => account.name)]),
-  );
-  const span = providers.length + 4;
-  return (
-    <div className="admin-page">
-      <Lede
-        title="Credits"
-        facts={
-          data && (
-            <>
-              <span>
-                <b>{data.people.length}</b> {data.people.length === 1 ? 'person' : 'people'}
-              </span>
-              <span>
-                <b>{data.accounts.length}</b> {data.accounts.length === 1 ? 'account' : 'accounts'}
-              </span>
-            </>
-          )
-        }
+  const filter = useListFilter(data && holders(data), {
+    labels: (holder) => [holder.label, ...holder.accounts.map(({ account }) => account.name)],
+  });
+  const columns: Column<Holder>[] = [
+    col('person', 'Person', (holder) => (
+      <button
+        type="button"
+        className="admin-name"
+        aria-expanded={open === holder.id}
+        onClick={() => setOpen(open === holder.id ? undefined : holder.id)}
       >
-        {all.length > 0 && (
-          <Narrowing reset={query ? () => setQuery('') : undefined}>
-            <SearchField label="Search people" value={query} onChange={setQuery} />
-          </Narrowing>
-        )}
-        <Refresh read={credits} />
-      </Lede>
-      <div className="page-stage">
-        <Loading read={credits} columns={5} />
-        {data && (
-          <div className="admin-surface">
-            <table className="admin-table" aria-label="Credits">
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  {providers.map((provider) => (
-                    <th key={provider} className="num">
-                      {provider}
-                    </th>
-                  ))}
-                  <th className="num">Fleet today</th>
-                  <th className="num">Fleet tokens</th>
-                  <th className="num">Agent tokens</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((holder) => {
-                  const unfolded = open === holder.key;
-                  const fleet = holder.fleet;
-                  const capped = !!fleet?.usdCap && fleet.usd >= fleet.usdCap;
-                  return (
-                    <Fragment key={holder.key}>
-                      <tr
-                        className={cx('admin-opens', unfolded && 'admin-unfolded')}
-                        onClick={() => setOpen(unfolded ? undefined : holder.key)}
-                      >
-                        <td>
-                          <button
-                            type="button"
-                            className="admin-name admin-toggle"
-                            aria-expanded={unfolded}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setOpen(unfolded ? undefined : holder.key);
-                            }}
-                          >
-                            {holder.label}
-                          </button>
-                        </td>
-                        {providers.map((provider) => {
-                          const pool = pooled(holder, provider);
-                          return (
-                            <td key={provider} className="num">
-                              {pool ? (
-                                <Of
-                                  used={<span className="admin-left">{usd(pool.left)}</span>}
-                                  of={usd(pool.granted)}
-                                />
-                              ) : (
-                                <None />
-                              )}
-                            </td>
-                          );
-                        })}
-                        <td className={cx('num', capped && 'status--bad')}>
-                          {fleet ? (
-                            <Of
-                              used={usd(fleet.usd)}
-                              of={fleet.usdCap === null ? undefined : usd(fleet.usdCap)}
-                            />
-                          ) : (
-                            <None />
-                          )}
-                        </td>
-                        <td className="num">
-                          {fleet?.tokens ? (
-                            <Of used={count(fleet.tokens.used)} of={count(fleet.tokens.limit)} />
-                          ) : (
-                            <None />
-                          )}
-                        </td>
-                        <td className="num">
-                          {holder.pi ? (
-                            <Of used={count(holder.pi.used)} of={count(holder.pi.limit)} />
-                          ) : (
-                            <None />
-                          )}
-                        </td>
-                      </tr>
-                      {unfolded && (
-                        <tr className="admin-holding">
-                          <td colSpan={span}>
-                            <div className="stack stack--lg">
-                              {holder.accounts.map(({ account, role }) => (
-                                <Account
-                                  key={account.accountId}
-                                  account={account}
-                                  role={role}
-                                  reload={credits.reload}
-                                />
-                              ))}
-                              <Grant
-                                holder={holder}
-                                providers={providers}
-                                reload={credits.reload}
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-                {!shown.length && (
-                  <tr>
-                    <td colSpan={span} className="faint">
-                      {query ? 'Nothing matches' : 'No one holds credit'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+        {holder.label}
+      </button>
+    )),
+    ...providers.map((provider) =>
+      fig<Holder>(provider, provider, (holder) => {
+        const pool = pooled(holder, provider);
+        return pool ? (
+          <Of used={<span className="admin-left">{usd(pool.left)}</span>} of={usd(pool.granted)} />
+        ) : (
+          <None />
+        );
+      }),
+    ),
+    fig('fleet', 'Fleet today', ({ fleet }) =>
+      fleet ? (
+        <span className={cx(!!fleet.usdCap && fleet.usd >= fleet.usdCap && 'status--bad')}>
+          <Of used={usd(fleet.usd)} of={fleet.usdCap === null ? undefined : usd(fleet.usdCap)} />
+        </span>
+      ) : (
+        <None />
+      ),
+    ),
+    fig('tokens', 'Fleet tokens', ({ fleet }) =>
+      fleet?.tokens ? (
+        <Of used={count(fleet.tokens.used)} of={count(fleet.tokens.limit)} />
+      ) : (
+        <None />
+      ),
+    ),
+    fig('agent', 'Agent tokens', ({ pi }) =>
+      pi ? <Of used={count(pi.used)} of={count(pi.limit)} /> : <None />,
+    ),
+  ];
+  return (
+    <ListPage
+      load={credits}
+      noun="people"
+      kind=""
+      filter={filter}
+      lede={(ends) => (
+        <PageHeader
+          title="Credits"
+          summary={
+            data && (
+              <Facts
+                facts={[
+                  [data.people.length, data.people.length === 1 ? 'person' : 'people'],
+                  [data.accounts.length, data.accounts.length === 1 ? 'account' : 'accounts'],
+                ]}
+              />
+            )
+          }
+          actions={ends}
+        />
+      )}
+      listed={false}
+      drawn={
+        filter.rows.length > 0 && (
+          <Ruled
+            label="Credits"
+            template={`minmax(0, 1.4fr) repeat(${providers.length + 3}, minmax(0, 1fr))`}
+            columns={columns}
+            rows={filter.rows}
+            keyOf={(holder) => holder.id}
+            row={(holder) => ({ className: cx(open === holder.id && 'admin-unfolded') })}
+            under={(holder) =>
+              open === holder.id && (
+                <Holding holder={holder} providers={providers} reload={credits.reload} />
+              )
+            }
+          />
+        )
+      }
+      emptyTitle="No one holds credit"
+      columns={5}
+    />
   );
 }

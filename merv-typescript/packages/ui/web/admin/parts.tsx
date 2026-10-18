@@ -1,56 +1,7 @@
-import type { MouseEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { Loaded } from '../api';
-import { Ago, LoadState, cx, stamp } from '../components';
+import { col, stamp, type Column } from '../components';
 import { elapsed } from '../liveness';
-
-/** A page's title line: its name, what it counted, and the controls it opens at the end. */
-export function Lede({
-  title,
-  facts,
-  children,
-}: {
-  title: ReactNode;
-  facts?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <header className="page-lede admin-lede">
-      <h1 className="lede-line">
-        <span className="lede-here">{title}</span>
-      </h1>
-      {facts && <p className="lede-facts">{facts}</p>}
-      {children && <div className="admin-lede-end">{children}</div>}
-    </header>
-  );
-}
-
-/**
- * Where a read stands when it has nothing to draw, or failed to refresh what it drew: the
- * skeleton, the server's refusal, or one faint line saying when the shown data arrived.
- */
-export function Loading({ read, columns }: { read: Loaded<unknown>; columns: number }) {
-  if (read.error && read.data !== undefined)
-    return (
-      <p className="faint admin-stale" title={`${read.error.message} (${read.error.code})`}>
-        Could not refresh · {read.loadedAt ? <Ago at={read.loadedAt} /> : 'earlier'}
-      </p>
-    );
-  if (read.error)
-    return (
-      <p className="error-message" role="alert">
-        {read.error.message} <span className="mono">({read.error.code})</span>
-      </p>
-    );
-  return <LoadState loading={read.loading} columns={columns} />;
-}
-
-/** The quiet control that reads a page again, for the pages that do not poll. */
-export const Refresh = ({ read }: { read: Loaded<unknown> }) => (
-  <button type="button" className="btn btn--quiet" onClick={read.reload}>
-    Refresh
-  </button>
-);
 
 /** Dollars as a table states them: two places, more where a sub-dime amount would read 0. */
 export function usd(value: string | number | null | undefined): string {
@@ -70,26 +21,35 @@ export function count(n: number): string {
   const v = n / div;
   return `${unit && v < 100 ? +v.toFixed(1) : Math.round(v)}${unit}`;
 }
+/** A column of figures. */
+export const fig = <T,>(key: string, label: string, render: (row: T) => ReactNode): Column<T> => ({
+  ...col(key, label, render),
+  num: true,
+});
+/** What a page counted, under its title: `3 running`, the count in ink, a bad one in red. */
+export const Facts = ({ facts }: { facts: (false | [number, string, boolean?])[] }) => (
+  <span className="lede-facts">
+    {facts.map(
+      (fact) =>
+        fact && (
+          <span key={fact[1]} className={fact[2] ? 'status--bad' : undefined}>
+            <b>{fact[0]}</b> {fact[1]}
+          </span>
+        ),
+    )}
+  </span>
+);
 /** `used of limit`, the limit faint. */
 export const Of = ({ used, of }: { used: ReactNode; of?: ReactNode }) => (
-  <>
+  <span>
     {used}
-    {of !== undefined && of !== null && <span className="faint"> of {of}</span>}
-  </>
-);
-/** A state word in its tone, with the dot every state word wears. */
-export const Tone = ({
-  tone,
-  children,
-  title,
-}: {
-  tone: string;
-  children: ReactNode;
-  title?: string;
-}) => (
-  <span className={cx('status', `status--${tone}`)} title={title}>
-    <span className="status-dot" aria-hidden="true" />
-    {children}
+    {of !== undefined && of !== null && (
+      <span className="faint">
+        {' '}
+        of{'\u00a0'}
+        {of}
+      </span>
+    )}
   </span>
 );
 /** A time still to come, as a row reads it: in 3h. */
@@ -112,10 +72,3 @@ export const Go = ({ to, children }: { to: string; children: ReactNode }) =>
       {children}
     </Link>
   );
-/** A press anywhere on a row that is not on a control of its own is a press on its link. */
-export function openRow(event: MouseEvent<HTMLElement>) {
-  const pressed = event.target as HTMLElement;
-  if (pressed.closest('a, button, input, select, summary') || window.getSelection()?.toString())
-    return;
-  event.currentTarget.querySelector<HTMLElement>('a.admin-name')?.click();
-}

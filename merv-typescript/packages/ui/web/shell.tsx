@@ -110,6 +110,22 @@ function AccountFoot() {
   );
 }
 
+/** The rail's head: the wordmark, and the control that hides the rail. */
+export const RailHead = ({ onHide }: { onHide(): void }) => (
+  <div className="rail-util">
+    <span className="rail-wordmark">merv</span>
+    <button
+      type="button"
+      className="sidebar-hide"
+      onClick={onHide}
+      title={`Hide sidebar (${SIDEBAR_KB})`}
+      aria-label="Hide sidebar"
+    >
+      <SidebarIcon size={18} />
+    </button>
+  </div>
+);
+
 /** Who is signed in, at the rail's foot, and the menu it opens: the theme, and the way out. */
 export function AccountMenu({
   who,
@@ -235,18 +251,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
     );
   return (
     <aside className="sidebar" aria-label="Primary">
-      <div className="rail-util">
-        <span className="rail-wordmark">merv</span>
-        <button
-          type="button"
-          className="sidebar-hide"
-          onClick={onHide}
-          title={`Hide sidebar (${SIDEBAR_KB})`}
-          aria-label="Hide sidebar"
-        >
-          <SidebarIcon size={18} />
-        </button>
-      </div>
+      <RailHead onHide={onHide} />
       {/* The drill-in names the project in its own line above the shell. */}
       {readOnly() ? null : switchable(account) ? (
         // The project's name is the switch, so where to change it is where it is named.

@@ -1,21 +1,33 @@
 import { useState } from 'react';
+import type { AdminWork, AdminWorkRow } from '@merv/admin/models';
 import { useTool } from '../api';
-import { Ago, SearchField, cx, kindStyle, stamp, toneOf, useNow, words } from '../components';
-import { Chips, Narrowing, useListFilter } from '../list-filters';
+import {
+  Ago,
+  PageHeader,
+  Ruled,
+  Word,
+  col,
+  cx,
+  kindStyle,
+  stamp,
+  toneOf,
+  useNow,
+  words,
+} from '../components';
+import { Chips, ListPage, openRow, useListFilter } from '../list-filters';
 import { clockOf, duration, elapsed } from '../liveness';
 import { steadyText } from '../views/running-phrase';
-import { Go, Lede, Loading, None, Tone, count, openRow, usd } from './parts';
-import type { AdminWorkRow, AdminWork } from './types';
+import { Facts, Go, None, count, fig, usd } from './parts';
 
-/** Each kind the table names: the record kind it wears the colour of, its word, its row's path. */
+/** Each workflow the table names: the record kind it wears the colour of, its word, its path. */
 const KINDS: Record<string, [kind: string, label: string, path?: string]> = {
   task: ['tasks', 'Task', 'tasks'],
   experiment: ['experiments', 'Experiment', 'experiments'],
-  'standalone experiment': ['experiments', 'Standalone'],
+  service_experiment: ['experiments', 'Standalone'],
   reflection: ['reflections', 'Reflection', 'reflections'],
-  'reflection lens': ['reflections', 'Lens', 'reflections'],
-  'research cycle': ['research', 'Cycle', 'research'],
-  'pi turn': ['sessions', 'Agent'],
+  'reflection.lens': ['reflections', 'Lens', 'reflections'],
+  research: ['research', 'Cycle', 'research'],
+  pi: ['sessions', 'Agent'],
 };
 const kindOf = (kind: string) => KINDS[kind] ?? ['', words(kind)];
 
@@ -25,7 +37,7 @@ const kindOf = (kind: string) => KINDS[kind] ?? ['', words(kind)];
  */
 function opens(row: AdminWorkRow): string | undefined {
   const part = encodeURIComponent;
-  if (row.kind === 'standalone experiment')
+  if (row.kind === 'service_experiment')
     return row.requestId && `/admin/standalone/${part(row.requestId)}`;
   const path = kindOf(row.kind)[2];
   return `/ui/admin/p/${part(row.project.id)}/${path ? `${path}/${part(row.id)}` : ''}`;
@@ -36,46 +48,44 @@ const said = (message: AdminWorkRow['attention'][number]['message']) =>
     ? message
     : steadyText(message, { now: clockOf(Date.now()), nameOf: () => undefined });
 
-function Line({ row }: { row: AdminWorkRow }) {
-  const [kind, label] = kindOf(row.kind);
-  const to = opens(row);
-  const [first] = row.terminal ? [] : row.attention;
-  const { agent, machine, cost } = row;
-  return (
-    <tr className={cx(to && 'admin-opens', row.terminal && 'admin-ended')} onClick={openRow}>
-      <td className="admin-fill">
-        <div className="admin-line">
-          <span className="kind admin-kind" style={kindStyle(kind)} title={row.type ?? undefined}>
-            {label}
-          </span>
-          {to ? <Go to={to}>{row.title}</Go> : row.title}
-        </div>
-        {/* What it needs, under its name: the owner's word, then the owner's sentence. */}
+const COLUMNS = [
+  col<AdminWorkRow>('title', 'Title', (row) => {
+    const [kind, label] = kindOf(row.kind);
+    const to = opens(row);
+    const [first] = row.terminal ? [] : row.attention;
+    return (
+      <>
+        <span className="kind admin-kind" style={kindStyle(kind)} title={row.type ?? undefined}>
+          {label}
+        </span>
+        {to ? <Go to={to}>{row.title}</Go> : row.title}
+        {/* What it needs, under its name: the owner's word, then the owner's own, if any. */}
         {first && (
           <div
-            className={cx(
-              'admin-line admin-attn',
-              first.reason === 'allowance' && 'admin-attn--bad',
-            )}
-            title={row.attention.map((item) => said(item.message)).join('\n')}
+            className={cx('admin-attn', first.reason === 'allowance' && 'admin-attn--bad')}
+            title={row.attention.map((item) => said(item.message)).join('\n') || undefined}
           >
-            <span className="admin-attn-code">{words(first.code)}</span>{' '}
-            <span className="faint">{said(first.message)}</span>
+            <span className="admin-attn-code">{words(first.code)}</span>
+            {first.message && <span className="faint"> {said(first.message)}</span>}
           </div>
         )}
-      </td>
-      <td className="admin-clip">{row.project.name}</td>
-      <td className="admin-clip admin-person">{row.person.label}</td>
-      <td>
-        {/* A state no word table knows is work under way until its unit has ended. */}
-        <Tone tone={toneOf(row.state).replace('neutral', row.terminal ? 'dim' : 'warn')}>
-          {words(row.state)}
-        </Tone>
-      </td>
-      <td
-        className="admin-clip"
-        title={machine?.sandboxId ? undefined : (machine?.provider ?? undefined)}
-      >
+      </>
+    );
+  }),
+  col<AdminWorkRow>('project', 'Project', (row) => row.project.name),
+  col<AdminWorkRow>('person', 'Person', (row) => row.person),
+  col<AdminWorkRow>('state', 'State', (row) => (
+    // A state no word table knows is work under way until its unit has ended.
+    <Word
+      tone={toneOf(row.state).replace('neutral', row.terminal ? 'dim' : 'warn')}
+      value={row.state}
+    />
+  )),
+  col<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine }) =>
+    !agent && !machine ? (
+      <None />
+    ) : (
+      <span>
         {agent && (
           <>
             {words(agent.role)}{' '}
@@ -91,34 +101,32 @@ function Line({ row }: { row: AdminWorkRow }) {
             )}
           </span>
         )}
-        {!agent && !machine && <None />}
-      </td>
-      <td className="num admin-when">
-        <Ago at={row.lastActivity} />
-      </td>
-      <td className="num faint" title={stamp(row.createdAt)}>
-        {elapsed(Date.now() - Date.parse(row.createdAt))}
-      </td>
-      <td
-        className="num"
-        title={
-          cost
-            ? `${cost.reportedSessions} of ${cost.sessions} sessions reported · ${count(cost.inputTokens)} in · ${count(cost.outputTokens)} out · ${duration(cost.wallMs)}`
-            : undefined
-        }
+      </span>
+    ),
+  ),
+  fig<AdminWorkRow>('activity', 'Activity', (row) => (
+    <Ago at={row.lastActivity} className="countdown" />
+  )),
+  fig<AdminWorkRow>('age', 'Age', (row) => (
+    <span className="faint" title={stamp(row.createdAt)}>
+      {elapsed(Date.now() - Date.parse(row.createdAt))}
+    </span>
+  )),
+  // What its closed visits measured, each figure only where it is not zero.
+  fig<AdminWorkRow>('cost', 'Cost', ({ cost: c }) => {
+    const tokens = c ? c.inputTokens + c.outputTokens : 0;
+    const figures = [tokens > 0 && count(tokens), c && c.wallMs >= 1000 && elapsed(c.wallMs)];
+    return c && figures.some(Boolean) ? (
+      <span
+        title={`${c.reportedSessions} of ${c.sessions} sessions reported · ${count(c.inputTokens)} in · ${count(c.outputTokens)} out · ${duration(c.wallMs)}`}
       >
-        {cost ? (
-          <>
-            {count(cost.inputTokens + cost.outputTokens)}
-            <span className="faint"> · {elapsed(cost.wallMs)}</span>
-          </>
-        ) : (
-          <None />
-        )}
-      </td>
-    </tr>
-  );
-}
+        {figures.filter(Boolean).join(' · ')}
+      </span>
+    ) : (
+      <None />
+    );
+  }),
+];
 
 /** Live units that need someone first, then by their last activity; what ended, after them. */
 const rank = (row: AdminWorkRow) => (row.terminal ? 2 : row.attention.length ? 0 : 1);
@@ -129,153 +137,96 @@ export function WorkView() {
   useNow(30_000);
   const [ended, setEnded] = useState(false);
   const [kind, setKind] = useState('');
-  const [project, setProject] = useState('');
-  const [person, setPerson] = useState('');
   const all = work.data?.rows ?? [];
-  const seen = all.filter((row) => ended || !row.terminal);
-  const filter = useListFilter(seen, {
+  const filter = useListFilter(all, {
     stateOf: (row) => row.state,
-    labels: (row) => [row.title, row.project.name, row.person.label, row.kind],
+    labels: (row) => [row.title, row.project.name, row.person, kindOf(row.kind)[1]],
     ids: (row) => [row.id],
-    also: (row) =>
-      (!kind || row.kind === kind) &&
-      (!project || row.project.id === project) &&
-      (!person || row.person.key === person),
+    also: (row) => (ended || !row.terminal) && (!kind || row.kind === kind),
   });
   const rows = [...filter.rows].sort(
     (a, b) => rank(a) - rank(b) || b.lastActivity.localeCompare(a.lastActivity),
   );
   const live = all.filter((row) => !row.terminal);
-  const kinds = [...new Set(seen.map((row) => row.kind))].sort();
-  const projects = [...new Map(seen.map((row) => [row.project.id, row.project.name]))];
-  const people = [...new Map(seen.map((row) => [row.person.key, row.person.label]))];
-  const narrowed = filter.filtering || !!(kind || project || person);
-  const pick = (
-    name: string,
-    value: string,
-    set: (v: string) => void,
-    options: [string, string][],
-  ) =>
-    options.length > 1 && (
-      <label className="admin-pick">
-        {name}
-        <select className="input" value={value} onChange={(event) => set(event.target.value)}>
-          <option value="">All</option>
-          {options
-            .sort((a, b) => a[1].localeCompare(b[1]))
-            .map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-        </select>
-      </label>
-    );
+  const kinds = [...new Set(all.map((row) => row.kind))].sort();
+  const clear = () => {
+    filter.clear();
+    setKind('');
+    setEnded(false);
+  };
   return (
-    <div className="admin-page">
-      <Lede
-        title="Work"
-        facts={
-          work.data && (
-            <>
-              <span>
-                <b>{live.length}</b> running
-              </span>
-              {live.some((row) => row.attention.length) && (
-                <span>
-                  <b>{live.filter((row) => row.attention.length).length}</b> need attention
-                </span>
-              )}
-            </>
-          )
-        }
-      >
-        {all.length > live.length && (
-          <button
-            type="button"
-            className={cx('btn btn--quiet', ended && 'btn--on')}
-            aria-pressed={ended}
-            onClick={() => setEnded(!ended)}
-          >
-            Ended today <span className="state-n">{all.length - live.length}</span>
-          </button>
-        )}
-        {all.length > 0 && (
-          <Narrowing
-            reset={
-              narrowed
-                ? () => {
-                    filter.clear();
-                    setKind('');
-                    setProject('');
-                    setPerson('');
-                  }
-                : undefined
-            }
-          >
-            <SearchField label="Search work" value={filter.query} onChange={filter.setQuery} />
-            {kinds.length > 1 && (
-              <Chips
-                label="Kind"
-                options={kinds.map((value) => ({
-                  value,
-                  label: kindOf(value)[1],
-                  count: seen.filter((row) => row.kind === value).length,
-                }))}
-                value={kind}
-                onChange={(value) => setKind(kind === value ? '' : value)}
+    <ListPage
+      load={work}
+      noun="work"
+      kind=""
+      filter={{ ...filter, clear }}
+      rows={rows}
+      lede={(ends) => (
+        <PageHeader
+          title="Work"
+          summary={
+            work.data && (
+              <Facts
+                facts={[
+                  [live.length, 'running'],
+                  live.some((row) => row.attention.length) && [
+                    live.filter((row) => row.attention.length).length,
+                    'need attention',
+                  ],
+                ]}
               />
-            )}
-            {filter.states.length > 1 && (
-              <Chips
-                label="State"
-                options={filter.states.map(({ value, count }) => ({
-                  value,
-                  label: words(value),
-                  count,
-                }))}
-                value={filter.state}
-                onChange={(value) => filter.setState(filter.state === value ? '' : value)}
-              />
-            )}
-            {pick('Project', project, setProject, projects)}
-            {pick('Person', person, setPerson, people)}
-          </Narrowing>
-        )}
-      </Lede>
-      <div className="page-stage">
-        <Loading read={work} columns={6} />
-        {work.data && (
-          <div className="admin-surface">
-            <table className="admin-table" aria-label="Work">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Project</th>
-                  <th>Person</th>
-                  <th>State</th>
-                  <th>Agent · Machine</th>
-                  <th className="num">Activity</th>
-                  <th className="num">Age</th>
-                  <th className="num">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <Line key={row.id} row={row} />
-                ))}
-                {!rows.length && (
-                  <tr>
-                    <td colSpan={8} className="faint">
-                      {narrowed ? 'Nothing matches' : 'Nothing running'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+            )
+          }
+          actions={ends}
+        />
+      )}
+      reset={filter.filtering || kind || ended ? clear : undefined}
+      narrow={
+        <>
+          {kinds.length > 1 && (
+            <Chips
+              label="Kind"
+              options={kinds.map((value) => ({
+                value,
+                label: kindOf(value)[1],
+                count: all.filter((row) => (ended || !row.terminal) && row.kind === value).length,
+              }))}
+              value={kind}
+              onChange={(value) => setKind(kind === value ? '' : value)}
+            />
+          )}
+          {all.length > live.length && (
+            <Chips
+              label="Ended"
+              options={[{ value: 'ended', label: 'Ended today', count: all.length - live.length }]}
+              value={ended ? 'ended' : ''}
+              onChange={() => setEnded(!ended)}
+            />
+          )}
+        </>
+      }
+      listed={false}
+      drawn={
+        rows.length > 0 && (
+          <Ruled
+            label="Work"
+            template="minmax(0, 3fr) minmax(0, 1fr) minmax(0, 0.8fr) 112px minmax(0, 1.2fr) 72px 40px 56px"
+            columns={COLUMNS}
+            rows={rows}
+            keyOf={(row) => row.id}
+            row={(row) => ({
+              className: cx(
+                'admin-line',
+                opens(row) && 'admin-opens',
+                row.terminal && 'admin-ended',
+              ),
+              onClick: (event) => openRow(event, 'a'),
+            })}
+          />
+        )
+      }
+      emptyTitle="Nothing running"
+      columns={6}
+    />
   );
 }

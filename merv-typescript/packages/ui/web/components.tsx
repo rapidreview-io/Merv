@@ -1,5 +1,6 @@
 import {
   Component,
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -158,8 +159,8 @@ export const toneOf = (value: string, states?: StateWords) =>
   TONE_OF.get(value) ?? (states?.working.has(value) ? 'warn' : 'neutral');
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
-const Word = ({ tone, value }: { tone: string; value: string }) => (
-  <span className={cx('status', `status--${tone}`)}>
+export const Word = ({ tone, value, title }: { tone: string; value: string; title?: string }) => (
+  <span className={cx('status', `status--${tone}`)} title={title}>
     <span className="status-dot" aria-hidden="true" />
     {words(value)}
   </span>
@@ -940,12 +941,13 @@ export const timeRows = (createdAt?: string | null, updatedAt?: string | null): 
     (!createdAt || stamp(updatedAt) !== stamp(createdAt)) && ['Updated', <Stamp at={updatedAt} />],
 ];
 
-/** One column declared once: its key, its heading, and what a row says in it. */
+/** One column declared once: its key, its heading, and what a row says in it; `num` a figure. */
 export interface Column<T> {
   key: string;
   label: string;
   render(row: T): ReactNode;
   width?: string;
+  num?: boolean;
 }
 export const col = <T,>(
   key: string,
@@ -1006,12 +1008,17 @@ export function Ruled<T>({
   columns,
   rows,
   keyOf,
+  row,
+  under,
 }: {
   label: string;
   template: string;
   columns: Column<T>[];
   rows: T[];
   keyOf(row: T): string;
+  /** A row's own class and press, and what it unfolds under itself. */
+  row?(row: T): HTMLAttributes<HTMLDivElement>;
+  under?(row: T): ReactNode;
 }) {
   return (
     <div
@@ -1022,21 +1029,32 @@ export function Ruled<T>({
     >
       <div className="ruled-head" role="row">
         {columns.map((column) => (
-          <span className="label" role="columnheader" key={column.key}>
+          <span className={cx('label', column.num && 'num')} role="columnheader" key={column.key}>
             {column.label}
           </span>
         ))}
       </div>
-      {rows.map((row) => (
-        <div className="ruled-row" role="row" key={keyOf(row)}>
-          {columns.map((column, at) => (
-            // The first fact is the row's own name; the rest say which fact they are.
-            <div role="cell" key={column.key} data-label={at ? column.label : undefined}>
-              {column.render(row)}
+      {rows.map((item) => {
+        const own = row?.(item);
+        return (
+          <Fragment key={keyOf(item)}>
+            <div {...own} className={cx('ruled-row', own?.className)} role="row">
+              {columns.map((column, at) => (
+                // The first fact is the row's own name; the rest say which fact they are.
+                <div
+                  role="cell"
+                  key={column.key}
+                  className={column.num ? 'num' : undefined}
+                  data-label={at ? column.label : undefined}
+                >
+                  {column.render(item)}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ))}
+            {under?.(item)}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

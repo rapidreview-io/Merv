@@ -360,11 +360,11 @@ function Opened({
  * still one thing to press: a press anywhere on it that is not on a control of its
  * own, and is not the end of a selection being dragged, is a press on its name.
  */
-function openRow(event: MouseEvent<HTMLLIElement>) {
+export function openRow(event: MouseEvent<HTMLElement>, link = '.row-name > .row-link') {
   const pressed = event.target as HTMLElement;
   if (pressed.closest('a, button, input, select, summary') || window.getSelection()?.toString())
     return;
-  event.currentTarget.querySelector<HTMLElement>('.row-name > .row-link')?.click();
+  event.currentTarget.querySelector<HTMLElement>(link)?.click();
 }
 
 /**
@@ -652,7 +652,7 @@ const Staged = ({ staged, children }: { staged: boolean; children: ReactNode }) 
  * list is narrowed away from how it opens the word is lit and `Reset` stands beside it.
  * `/` anywhere but in a field opens it with the cursor in its search.
  */
-export function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
+function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const seek = useRef(false);

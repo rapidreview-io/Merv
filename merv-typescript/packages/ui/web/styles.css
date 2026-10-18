@@ -971,7 +971,6 @@ details.stack > summary {
 .status,
 .ev-role,
 .table th,
-.admin-table th,
 .admin-attn-code,
 .rail-group-head,
 .flag,
@@ -4246,6 +4245,11 @@ a.states-clause {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* A column of figures: right-aligned, in tabular numbers; narrow, it stands under its name. */
+.ruled .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .lease {
   border-bottom: 1px solid var(--line);
 }
@@ -4337,6 +4341,7 @@ a.states-clause {
     grid-template-columns: 104px minmax(0, 1fr);
     gap: var(--space-3);
     align-items: baseline;
+    text-align: left;
   }
   .ruled-row > [data-label]::before {
     content: attr(data-label);
@@ -7849,83 +7854,8 @@ html.modal-open {
 }
 
 /* Platform admin (/ui/admin) ---------------------------------------------- */
-/* Its pages are tables: one white surface each on the ground, a hairline between
-   rows, one line a row, the figures right-aligned in tabular numbers. */
 .admin-rail .rail-nav {
   margin-top: var(--space-2);
-}
-.admin-lede-end {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-left: auto;
-}
-.admin-surface {
-  overflow-x: auto;
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-.admin-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-.admin-surface > .admin-table {
-  min-width: 920px;
-}
-.admin-table th {
-  padding: 9px 8px;
-  border-bottom: 1px solid var(--line);
-  color: var(--faint);
-  text-align: left;
-  white-space: nowrap;
-}
-.admin-table td {
-  padding: 8px 8px;
-  border-top: 1px solid var(--line-soft);
-  vertical-align: baseline;
-  white-space: nowrap;
-}
-.admin-table tbody > tr:first-child > td {
-  border-top: 0;
-}
-.admin-table :is(th, td):first-child {
-  padding-left: 14px;
-}
-.admin-table :is(th, td):last-child {
-  padding-right: 14px;
-}
-/* A state word sits on the row's baseline, its dot beside it. */
-.admin-table .status {
-  display: inline;
-}
-.admin-table .status-dot {
-  display: inline-block;
-  margin-right: 5px;
-  vertical-align: 1px;
-}
-.admin-table .num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-/* The title takes what the other columns leave, and ends in an ellipsis before it wraps. */
-.admin-fill {
-  width: 100%;
-  min-width: 13em;
-  max-width: 0;
-}
-.admin-line,
-.admin-clip,
-.admin-used {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.admin-clip {
-  max-width: 12em;
-}
-.admin-person {
-  max-width: 9em;
 }
 .admin-kind {
   display: inline;
@@ -7941,31 +7871,38 @@ button.admin-name {
   background: none;
   font: inherit;
   font-weight: 500;
+  text-align: left;
   cursor: pointer;
 }
 .admin-opens {
   cursor: pointer;
 }
-.admin-opens:hover > td,
-.admin-unfolded > td {
+.admin-opens:hover,
+.admin-unfolded {
   background: var(--hover);
 }
-.admin-ended > td,
+.admin-ended,
 .admin-ended .admin-name {
   color: var(--faint);
-}
-/* Time a person acts on reads at the page's own size, in ink. */
-.admin-when {
-  color: var(--text);
-  font-size: var(--text-base);
 }
 .admin-left {
   color: var(--text);
   font-weight: 600;
 }
-/* What a unit needs, a faint line under its name: the owner's word, then its sentence. */
+/* What a unit needs, a small line under its name: the owner's word, then its own words. */
 .admin-attn {
+  overflow: hidden;
   font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Wide, a row of work is one line a fact beside a title that wraps; narrow, the facts stack. */
+@media (min-width: 721px) {
+  .admin-line > :not(:first-child) {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 .admin-attn-code {
   color: var(--qualifies);
@@ -7973,114 +7910,24 @@ button.admin-name {
 .admin-attn--bad .admin-attn-code {
   color: var(--refutes);
 }
-.admin-stale {
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
-}
-.admin-pick {
-  display: grid;
-  gap: var(--space-1);
-  color: var(--faint);
-  font-size: var(--text-xs);
-}
-/* A person unfolded: their accounts and the form that grants, on the soft ground. */
-.admin-holding > td {
-  padding: var(--space-4) 14px var(--space-5);
-  background: var(--bg-soft);
-  white-space: normal;
+/* A person unfolded: their accounts, then the word that grants, under the person's row. */
+.admin-holding {
+  padding: var(--space-4) 0 var(--space-5);
+  border-bottom: 1px solid var(--line);
 }
 .admin-account-head {
   font-size: var(--text-sm);
   font-weight: 600;
 }
-/* A holding's tables keep their own width: figures stay beside what they count. */
-.admin-table--inner {
-  align-self: flex-start;
-  width: auto;
-  min-width: min(100%, 640px);
-}
-.admin-table--inner :is(th, td),
-.admin-table--inner :is(th, td):first-child {
-  padding: 5px var(--space-5) 5px 0;
-  background: none;
-}
-.admin-table--inner th {
-  border-bottom-color: var(--line-strong);
-}
-.admin-table--inner td {
-  border-top-color: var(--line);
-}
-.admin-reason {
-  max-width: 28em;
-}
-.admin-end {
-  text-align: right;
-}
-.admin-more {
-  height: 22px;
-  font-size: var(--text-lg);
-  line-height: 1;
+/* The purposes share one grid, which the first names. */
+.admin-purpose ~ .admin-purpose .ruled-head {
+  display: none;
 }
 /* A row's act waits behind ⋯, drawn as the pointer reaches the row. */
 @media (hover: hover) {
-  .admin-table tr:not(:hover) .admin-more:not([aria-expanded='true'], :focus-visible) {
+  .ruled-row:not(:hover) > * > .admin-more:not([aria-expanded='true'], :focus-visible) {
     opacity: 0;
   }
-}
-.admin-guard > td {
-  padding: var(--space-2) 0 var(--space-3);
-  white-space: normal;
-}
-.admin-grant,
-.admin-grant fieldset {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-3);
-  border: 0;
-}
-.admin-grant fieldset {
-  flex: 1 1 0;
-  min-width: 0;
-}
-.admin-grant > .error-message {
-  flex-basis: 100%;
-}
-.admin-grant label {
-  display: grid;
-  gap: var(--space-1);
-  color: var(--faint);
-  font-size: var(--text-xs);
-}
-.admin-amount {
-  width: 9em;
-}
-.admin-grant-reason {
-  flex: 1 1 14em;
-}
-/* Credentials: one table, a section of rows per purpose under its own name. */
-.admin-group > th {
-  padding-top: var(--space-5);
-  color: var(--text);
-  font-size: var(--text-sm);
-  letter-spacing: 0;
-  text-transform: none;
-}
-tbody:first-of-type > .admin-group > th {
-  padding-top: var(--space-3);
-}
-.admin-env {
-  font-size: 12px;
-}
-.admin-used {
-  min-width: 8em;
-}
-.admin-said {
-  display: grid;
-  gap: var(--space-1);
-}
-.admin-list {
-  padding-left: 18px;
 }
 /* The drill-in: one thin line above the member shell, which stands below it. */
 :root {
@@ -8117,15 +7964,6 @@ tbody:first-of-type > .admin-group > th {
   height: calc(100dvh - var(--drill-h));
 }
 @media (max-width: 880px) {
-  /* A person unfolded on a phone stays in view while the table scrolls beside it. */
-  .admin-holding > td > * {
-    position: sticky;
-    left: 14px;
-    width: calc(100vw - 62px);
-  }
-  .admin-account {
-    overflow-x: auto;
-  }
   /* The phone's bar names the project under it. */
   .admin-drill-name {
     display: none;

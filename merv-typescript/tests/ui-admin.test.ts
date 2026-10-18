@@ -26,7 +26,7 @@ const unit = (id: string, over: Record<string, unknown> = {}) => ({
   type: 'task.work',
   title: `Unit ${id.slice(3)}`,
   project: { id: 'project_a', name: 'Grokking replication' },
-  person: { key: 'https://auth.example|mira', label: 'Mira Chen' },
+  person: 'Mira Chen',
   state: 'in_progress',
   terminal: false,
   attention: [],
@@ -68,10 +68,15 @@ const work = {
         outputTokens: 250_000,
       },
     }),
-    unit('wf_alone', { kind: 'standalone experiment', title: 'Customer study' }),
+    unit('wf_alone', {
+      kind: 'service_experiment',
+      title: 'Customer study',
+      requestId: 'ce_request',
+      // A closed visit that reported nothing measured nothing.
+      cost: { sessions: 1, reportedSessions: 0, wallMs: 0, inputTokens: 0, outputTokens: 0 },
+    }),
     unit('wf_done', { state: 'done', terminal: true, title: 'Finished task' }),
   ],
-  people: [{ key: `${user.issuer}|${user.subject}`, label: 'The Founder', active: 0, total: 0 }],
   at: new Date().toISOString(),
   unavailable: ['fleet'],
 };
@@ -84,7 +89,7 @@ const open = async (path: string) => {
   await mount(createElement(MemoryRouter, { initialEntries: [path] }, createElement(App)));
   await settle(20);
 };
-const rows = () => [...document.querySelectorAll('table[aria-label="Work"] tbody tr')];
+const rows = () => [...document.querySelectorAll('[aria-label="Work"] .ruled-row')];
 
 test('work: attention first, links into the drill-in, no ids, nothing ended until asked', async (t) => {
   t.after(async () => await unmount());
@@ -106,21 +111,23 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
     '/ui/admin/p/project_a/tasks/wf_quiet',
   );
   // A standalone experiment opens as its customer sees it, which takes its request.
-  assert.equal(
-    rows()
-      .find((row) => /Customer study/.test(row.textContent!))!
-      .querySelector('a'),
-    null,
+  const alone = rows().find((row) => /Customer study/.test(row.textContent!))!;
+  assert.equal(alone.querySelector('a')!.getAttribute('href'), '/admin/standalone/ce_request');
+  assert.doesNotMatch(alone.textContent!, /\b0 · 0s|\b0s\b/, 'no cost where nothing was measured');
+  assert.doesNotMatch(
+    text(),
+    /wf_|project_a|sbx_1|ce_request/,
+    'ids live in routes and titles only',
   );
-  assert.doesNotMatch(text(), /wf_|project_a|sbx_1/, 'ids live in routes and titles only');
   assert.doesNotMatch(text(), /Finished task/);
+  await click('Filter');
   await click('Ended today');
   assert.match(text(), /Finished task/);
   assert.match(rows().at(-1)!.textContent!, /Finished task/, 'what ended comes last');
   // An admin page has no project: nothing asks for one.
   assert.ok(!requests.some((r) => r.includes('/tools/')), requests.join('\n'));
-  // Its own label names the admin at the foot of the rail.
-  assert.equal(document.querySelector('.account-name')!.textContent, 'The Founder');
+  // The foot of the rail names the signed-in admin.
+  assert.equal(document.querySelector('.account-name')!.textContent, 'Admin');
 });
 
 test('work: / opens the filter with the cursor in its search, and a search narrows the rows', async (t) => {
@@ -174,17 +181,7 @@ const account = (accountId: string, name: string, over: Record<string, unknown> 
     },
   ],
   schedules: [],
-  budgets: [
-    {
-      id: 'cap_1',
-      scope: 'namespace',
-      window: 'month',
-      metric: 'money',
-      currency: 'USD',
-      cap: '75',
-      provider: null,
-    },
-  ],
+  budgets: [{ id: 'cap_1', window: 'month', metric: 'money', cap: '75', provider: null }],
   ...over,
 });
 const credits = {
@@ -211,7 +208,6 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
   t.after(async () => await unmount());
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/work', { body: work });
   serve('/admin/credits', { body: credits });
   const sent: Record<string, unknown>[] = [];
   serve('/admin/credits/grants', (call, body) => {
@@ -220,7 +216,7 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
     return call === 1 ? { status: 502, body: null } : { body: { id: body.id } };
   });
   await open('/admin/credits');
-  const head = [...document.querySelectorAll('table[aria-label="Credits"] thead th')].map(
+  const head = [...document.querySelectorAll('[aria-label="Credits"] .ruled-head > *')].map(
     (th) => th.textContent,
   );
   assert.deepEqual(head, [
@@ -231,18 +227,22 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
     'Fleet tokens',
     'Agent tokens',
   ]);
-  const mira = document.querySelector('table[aria-label="Credits"] tbody tr')!;
-  assert.match(mira.textContent!, /\$95\.05 of \$100\.00/);
-  assert.match(mira.textContent!, /\$3\.20 of \$25\.00/);
-  assert.match(mira.textContent!, /120k of 2M/);
+  const mira = document.querySelector('[aria-label="Credits"] .ruled-row')!;
+  assert.match(mira.textContent!, /\$95\.05 of\s\$100\.00/);
+  assert.match(mira.textContent!, /\$3\.20 of\s\$25\.00/);
+  assert.match(mira.textContent!, /120k of\s2M/);
   assert.match(text(), /merv-lab/, 'an account nobody belongs to is still a row');
+  assert.ok(!requests.some((r) => r.includes('/admin/work')), 'the rail reads no work table');
   assert.doesNotMatch(text(), /Design partner pilot/);
   await click('Mira Chen');
   assert.match(text(), /Design partner pilot/);
-  assert.match(text(), /\$75\.00 namespace/, 'its budget cap, apart from the credits');
-  assert.doesNotMatch(text(), /acct_|grant_pilot/);
-
-  const form = document.querySelector<HTMLFormElement>('form.admin-grant')!;
+  assert.match(text(), /modal \$95\.05 of \$100\.00 · cap \$75\.00 a month/, 'pools, then caps');
+  assert.doesNotMatch(text(), /acct_|grant_pilot|namespace|money/);
+  assert.equal(document.querySelector('form'), null, 'the grant form waits for its word');
+  await click('Grant');
+  const form = document.querySelector<HTMLFormElement>(
+    'form[aria-label="Grant credits to Mira Chen"]',
+  )!;
   const fill = async (label: string, value: string) => {
     const input = [...form.querySelectorAll('label')]
       .find((l) => l.textContent!.startsWith(label))!
@@ -259,7 +259,7 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
     });
   };
   await fill('Provider', 'modal');
-  await fill('Amount', '25');
+  await fill('Amount', ' 25 ');
   await fill('Reason', 'Burst for the sweep');
   await act(async () => {
     form.requestSubmit();
@@ -275,13 +275,13 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
   assert.equal(sent[0]!.amount, '25');
   assert.equal(typeof sent[0]!.id, 'string');
   assert.ok(!Number.isNaN(Date.parse(String(sent[0]!.validFrom))), 'validFrom is always sent');
+  assert.equal(document.querySelector('form'), null, 'granted, the form closes');
 });
 
 test('credits: ⋯ on a grant opens its guard, which revokes it', async (t) => {
   t.after(async () => await unmount());
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/work', { body: work });
   serve('/admin/credits', { body: credits });
   serve('/admin/credits/grants/grant_pilot/revoke', { body: { id: 'grant_pilot', revoked: true } });
   await open('/admin/credits');
@@ -316,7 +316,6 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
   });
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/work', { body: work });
   serve('/admin/credentials', {
     body: {
       at: new Date().toISOString(),
@@ -379,10 +378,11 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
   await open('/admin/credentials');
   const groups = [...document.querySelectorAll('.admin-group')].map((row) => row.textContent);
   assert.deepEqual(
-    groups.map((g) => g!.replace(/ modal.*/, '')),
+    groups.map((g) => g!.replace(/ degraded.*/, '')),
     ['Pi agents', 'Fleet agents', 'modal-main', 'Platform services'],
   );
-  assert.match(text(), /a1b2c3d4 same as FLEET_OPENAI_KEY/);
+  assert.match(text(), /a1b2c3d4 = FLEET_OPENAI_KEY/);
+  assert.doesNotMatch(text(), /model\.keyEnv|same as/, 'a config path is a hover title');
   const dead = document.querySelector('.admin-dead')!;
   assert.match(dead.textContent!, /dead/);
   assert.match(dead.textContent!, /invalid_api_key/);

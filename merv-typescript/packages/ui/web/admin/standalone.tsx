@@ -1,8 +1,9 @@
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { KV, PageLoad, RecordPage, timeRows, toneOf, words, type KVRow } from '../components';
+import { KV, PageLoad, RecordPage, StatusPill, timeRows } from '../components';
+import type { Delivered, Progress } from '../customer/status';
 import { Markdown } from '../markdown';
-import { Tone, usd } from './parts';
+import { usd } from './parts';
 
 /** What a standalone experiment's customer is shown (Customer experiments' snapshot), as read here. */
 interface Snapshot {
@@ -14,35 +15,17 @@ interface Snapshot {
   workflow?: { updatedAt?: string };
   planStatus?: string;
   contractSummary?: { priceCents: number; currency: string } | null;
-  plan?: {
-    question?: string;
-    hypothesis?: string;
-    metric?: string;
-    baseline?: string;
-    method?: string[];
-    successCriteria?: string[];
-    deliverables?: string[];
-    turnaround?: string;
-  } | null;
-  progress?: {
-    stage: string;
-    attempt: number;
-    maxAttempts: number;
-    compute: { usd: number; limitUsd: number | null } | null;
-    now: string | null;
-  } | null;
+  plan?: Partial<
+    Record<'question' | 'hypothesis' | 'metric' | 'baseline' | 'turnaround', string> &
+      Record<'method' | 'successCriteria' | 'deliverables', string[]>
+  > | null;
+  progress?: Progress | null;
   conversation?: { role: string; text: string }[];
-  result?: { summary: string; artifacts: { id: string; title: string }[] } | null;
+  result?: Delivered | null;
 }
 
 const list = (items?: string[]) =>
-  items?.length ? (
-    <ul className="admin-list">
-      {items.map((item, at) => (
-        <li key={at}>{item}</li>
-      ))}
-    </ul>
-  ) : undefined;
+  items?.length ? <Markdown source={items.map((item) => `- ${item}`).join('\n')} /> : undefined;
 
 /** A standalone experiment as its customer sees it, read-only: no token, no checkout, no chat. */
 export function StandaloneView() {
@@ -52,35 +35,18 @@ export function StandaloneView() {
     {},
     { every: 15_000 },
   );
-  const back = <Link to="/admin">← Work</Link>;
   const s = read.data;
   if (!s)
     return (
       <PageLoad loading={read.loading} error={read.error} back={{ to: '/admin', label: 'Work' }} />
     );
-  const plan = s.plan;
-  const p = s.progress;
-  const rows: KVRow[] = [
-    !!s.planStatus && ['Plan', s.planStatus.replaceAll('_', ' ')],
-    !!s.contractSummary && [
-      'Price',
-      usd(s.contractSummary.priceCents / 100) +
-        (s.contractSummary.currency === 'usd' ? '' : ` ${s.contractSummary.currency}`),
-    ],
-    !!p && ['Stage', `${p.stage} · attempt ${p.attempt} of ${p.maxAttempts}`],
-    !!p?.compute && [
-      'Compute',
-      `${usd(p.compute.usd)}${p.compute.limitUsd === null ? '' : ` of ${usd(p.compute.limitUsd)}`}`,
-    ],
-    !!p?.now && ['Now', p.now],
-    ...timeRows(s.createdAt, s.workflow?.updatedAt),
-  ];
+  const { plan, progress: p, contractSummary: price } = s;
   return (
     <RecordPage
-      back={back}
+      back={<Link to="/admin">← Work</Link>}
       kind="experiments"
       name={s.name ?? plan?.question ?? 'Standalone experiment'}
-      state={<Tone tone={toneOf(s.state)}>{words(s.state)}</Tone>}
+      state={<StatusPill value={s.state} />}
       standing={
         (s.intent || s.statusMessage) && (
           <>
@@ -94,14 +60,14 @@ export function StandaloneView() {
         plan && (
           <KV
             rows={[
-              !!plan.question && ['Question', plan.question],
-              !!plan.hypothesis && ['Hypothesis', plan.hypothesis],
-              !!plan.metric && ['Metric', plan.metric],
-              !!plan.baseline && ['Baseline', plan.baseline],
-              !!plan.method?.length && ['Method', list(plan.method)],
-              !!plan.successCriteria?.length && ['Success', list(plan.successCriteria)],
-              !!plan.deliverables?.length && ['Deliverables', list(plan.deliverables)],
-              !!plan.turnaround && ['Turnaround', plan.turnaround],
+              ['Question', plan.question],
+              ['Hypothesis', plan.hypothesis],
+              ['Metric', plan.metric],
+              ['Baseline', plan.baseline],
+              ['Method', list(plan.method)],
+              ['Success', list(plan.successCriteria)],
+              ['Deliverables', list(plan.deliverables)],
+              ['Turnaround', plan.turnaround],
             ]}
           />
         )
@@ -116,7 +82,7 @@ export function StandaloneView() {
               </p>
             ))}
             {s.conversation?.map((message, at) => (
-              <div key={at} className="admin-said">
+              <div key={at} className="stack">
                 <span className="label">{message.role}</span>
                 <Markdown source={message.text} />
               </div>
@@ -124,7 +90,24 @@ export function StandaloneView() {
           </>
         ) : undefined
       }
-      details={<KV rows={rows} />}
+      details={
+        <KV
+          rows={[
+            ['Plan', s.planStatus?.replaceAll('_', ' ')],
+            !!price && [
+              'Price',
+              usd(price.priceCents / 100) + (price.currency === 'usd' ? '' : ` ${price.currency}`),
+            ],
+            !!p && ['Stage', `${p.stage} · attempt ${p.attempt} of ${p.maxAttempts}`],
+            !!p?.compute && [
+              'Compute',
+              `${usd(p.compute.usd)}${p.compute.limitUsd === null ? '' : ` of ${usd(p.compute.limitUsd)}`}`,
+            ],
+            ['Now', p?.now],
+            ...timeRows(s.createdAt, s.workflow?.updatedAt),
+          ]}
+        />
+      }
     />
   );
 }

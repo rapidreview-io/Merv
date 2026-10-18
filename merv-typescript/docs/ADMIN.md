@@ -15,7 +15,7 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Work state | `@merv/workflows` (instances, definitions, blockers) | terminal states per version |
 | Fleet spend, model-token ledgers, relay outcomes | `@merv/fleet` | a read method per ledger; each relay's latest success and failure per key and model, and whether the provider rejected the key |
 | Pi model-token ledger | `@merv/pi` | a read method |
-| Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService`, which refuses a provider without an operator connection |
+| Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService`, which refuses new credit for a provider without an operator connection |
 | Secret names per plugin | composition root (`composition.environment()`), Sandboxes (`credential_env`) | env names from each plugin's `*Env` config fields; a host provider's from its credential reference |
 
 `@merv/admin` composes these reads. It owns no copy of another plugin's rules: terminal states
@@ -25,12 +25,13 @@ names an owner not loaded here in `unavailable`.
 ## Routes (all `adminOf`; the API answers each `Cache-Control: no-store`)
 
 - `GET /admin/work` — every nonterminal unit of work across projects, plus units ended in the
-  last 24 hours: kind, title, project, person, state, attention, agent, machine, last activity,
-  age, cost so far. Joined from each owner's platform read: `workflows.platformWork`,
-  `sessions.running.platform`, `fleet.platformAllocations`, `pi.platformTurns`,
-  `tasks.platformTypes`, `reflections.platformLensNames`, `customerExperiments.customers` and
-  `scope.directory`. An agent's need is Sessions' own phrase; a machine is found by its
-  allocation id or by the unit Fleet says it serves.
+  last 24 hours: its workflow's name (`pi` for an Agent turn), title, project, person, state,
+  attention (each owner's code, and its words where it has any), agent, machine, last activity,
+  age, cost so far, and a standalone experiment's request. Joined from each owner's platform
+  read: `workflows.platformWork`, `sessions.running.platform`, `fleet.platformAllocations`,
+  `pi.platformTurns`, `tasks.platformTypes`, `reflections.platformLensNames`,
+  `customerExperiments.customers` and `scope.directory`. An agent's need is Sessions' own
+  phrase; a machine is found by its allocation id or by the unit Fleet says it serves.
 - `GET /admin/credits` — per person → sandbox account → provider: granted, used, reserved,
   available; schedules; budget caps; Fleet daily spend and model tokens.
 - `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
@@ -42,23 +43,23 @@ names an owner not loaded here in `unavailable`.
   providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, first
   seen, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
   with no success or change since, live provider health. Never a value.
-- `GET /admin/projects` — every project, newest first, for the drill-in picker:
-  `{ projects: [{ id, name, createdAt }] }`.
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
-  experiments' own snapshot, without the customer's token); 503 where it is not installed.
+  experiments' own snapshot, without the customer's token); 503 where it is not installed. The
+  first read of a request in an hour records `standalone.read` in the admin audit log.
 - Tool calls with `x-merv-platform: read` — the user UI's own record pages for any project,
   read-only.
 
 ## Pages (`packages/ui/web/admin/`)
 
 `/ui/admin` is an app of its own beside the projects (`AdminApp`, no project selected): a rail
-with Work, Credits and Credentials and the admin's label at its foot. Work polls `/admin/work`
-every 15 s into one table, attention first, with `Ended today` and the narrowing behind `Filter`
-(`/` opens it); a row opens its record in the drill-in, a standalone experiment its customer
-snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials read on load and on
-`Refresh`; a person's row unfolds their accounts, grants (⋯ revokes), schedules (⋯ pauses or
-resumes), budget caps and the one form that grants or schedules credit. The response types the
-pages read are mirrored in `admin/types.ts`, since the server's own sit beside its composition.
+with Work, Credits and Credentials and the signed-in admin at its foot. Work polls `/admin/work`
+every 15 s into one ruled list, attention first, with kind, state and `Ended today` behind
+`Filter` (`/` opens it); a row opens its record in the drill-in, a standalone experiment its
+customer snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials poll every 60 s;
+a person's row unfolds their accounts, each headed by what it holds per provider and its budget
+caps, then its grants (⋯ revokes) and schedules (⋯ pauses or resumes), and the quiet `Grant`
+word that opens the one form that grants or schedules credit. The pages read the routes' types
+from `@merv/admin/models`; on a phone each row's facts stand under their names.
 
 ## Drill-in
 
@@ -71,8 +72,8 @@ not read-only for platform callers before its handler runs. The session opens th
 without membership; one line above the shell reads `← Admin  <project>`. One flag, `readOnly()`,
 hides the verbs: the pages that are only verbs (Agent chat, boards, Settings, the sandbox console)
 lose their rows and routes, the dock is not mounted, and `Submit`, `ConfirmAction`,
-`ResearchCommand`, a list's creation control, a running panel's act and the file upload draw
-nothing. The server is the control.
+`ResearchCommand`, a review's controls, a list's creation control, a running panel's act and the
+file upload draw nothing. The server is the control. A refused drill-in keeps the sign-in.
 The caller acts as `PLATFORM_ACTOR`, a reader no actor row backs; it never delegates, so it starts
 no session, conversation or lease. Web refuses it (`403 web_forbidden`), so a drill-in spends no
 project's web budget. Any other principal sending the header, and every MCP request with it, is
