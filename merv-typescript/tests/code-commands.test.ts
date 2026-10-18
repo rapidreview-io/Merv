@@ -393,6 +393,67 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
   );
 });
 
+test('an agent commit on the head runner checkpoints moved past lands on them; one running is named', async (t) => {
+  // Prod, 2026-10-13..16: an agent read HEAD, a checkpoint moved it, and its code.commit failed
+  // with a bare code_command_pending or, once queued, with workspace_head_conflict.
+  const f = await fixture(t),
+    worker = await f.ready();
+  const checkpoint = async (requestId: string, parent: string, head: string) => {
+    const command = (await f.code.nextCommand(f.source, {
+      ...worker.control,
+      checkpoint: { expectedHead: parent, requestId },
+    }))!;
+    await assert.rejects(
+      async () => await f.code.commit(worker.caller, input()),
+      (error: any) => {
+        assert.equal(error.code, 'code_command_pending');
+        assert.match(
+          error.message,
+          new RegExp(`automatic checkpoint ${command.id} .*call code.commit again`),
+        );
+        assert.deepEqual(error.details, { commandId: command.id, automatic: true });
+        return true;
+      },
+    );
+    await f.code.completeCommand(f.source, {
+      ...worker.control,
+      commandId: command.id,
+      receipt: { ...receipt(command), headOid: head },
+    });
+  };
+  await checkpoint('checkpoint-1', oid('a'), oid('b'));
+  await checkpoint('checkpoint-2', oid('b'), oid('d'));
+  // The head the agent read before both: its commit follows the newest checkpoint.
+  const own = await f.code.commit(worker.caller, input());
+  assert.equal(own.command.expectedHead, oid('d'));
+  assert.equal((await f.code.commit(worker.caller, input())).command.id, own.command.id);
+  // An outstanding command of the agent's own is named too.
+  await assert.rejects(async () => await f.code.commit(worker.caller, input('another')), {
+    code: 'code_command_pending',
+    message: new RegExp(`outstanding code command, ${own.command.id}:`),
+  });
+  const dispatched = (await f.code.nextCommand(f.source, worker.control))!;
+  await f.code.completeCommand(f.source, {
+    ...worker.control,
+    commandId: dispatched.id,
+    receipt: { ...receipt(dispatched), headOid: oid('e') },
+  });
+  // A head no checkpoint moved past, the agent's own stale one included, is kept as named.
+  for (const [requestId, head] of [
+    ['own-stale', oid('d')],
+    ['unknown', oid('9')],
+  ] as const) {
+    const named = await f.code.commit(worker.caller, { ...input(requestId), expectedHead: head });
+    assert.equal(named.command.expectedHead, head);
+    const next = (await f.code.nextCommand(f.source, worker.control))!;
+    await f.code.completeCommand(f.source, {
+      ...worker.control,
+      commandId: next.id,
+      error: 'workspace_head_conflict',
+    });
+  }
+});
+
 test('a checkpoint message is one the runner accepts, whatever the title it names holds', async (t) => {
   // A title may hold control characters, and the cut at 200 may fall inside a surrogate pair.
   const f = await fixture(t, { name: `Parse \u001b[0m ${'x'.repeat(177)}\u{1F680}` }),

@@ -55,7 +55,7 @@ The step must grant both tools, declare a writable Git workspace, and belong to 
 }
 ```
 
-Inspect `code.operation` with the returned `command.id` until the result is terminal. Keep files stable while the checkpoint is pending: the Runner captures their contents when it processes the request. Repeating the same request ID and input returns the same operation; changing that input conflicts. A session can have only one queued or dispatched operation at a time. A later checkpoint uses a new request ID and the new current HEAD.
+Inspect `code.operation` with the returned `command.id` until the result is terminal. Keep files stable while the checkpoint is pending: the Runner captures their contents when it processes the request. Repeating the same request ID and input returns the same operation; changing that input conflicts. A session can have only one queued or dispatched operation at a time; a request made beside one is refused with `code_command_pending`, naming it. A later checkpoint uses a new request ID and the new current HEAD. The runner's own periodic checkpoints (`Checkpoint: <work name>`) move HEAD without the worker knowing, so an `expectedHead` that only this session's admitted checkpoints have moved past is queued on the newest of them: its tree is the checkout's either way.
 
 Workers can read only their own current session's operations. Authorized project readers can inspect project operations, including after a worker closes. The Git page lists the latest 100; it does not imply a complete history count.
 

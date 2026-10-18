@@ -86,7 +86,7 @@ export const codeToolsPlugin = {
         name: 'code.commit',
         conversation: 'never' as const,
         description:
-          'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.',
+          'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused. The runner also commits this checkout by itself every five minutes ("Checkpoint: …"), which moves HEAD: an expectedHead that only those checkpoints have moved past is taken as the newest of them, so the commit lands on top of them. While one is running, code.commit is refused with code_command_pending; call it again in a few seconds. An operation that failed with workspace_head_conflict means HEAD moved after you read it: read it again and commit under a new requestId.',
         inputSchema: codeCommitInputSchema,
         handler: async (caller: Caller, input: CodeCommitInput) =>
           await ctx.codeWork.commit(caller, input),
@@ -103,7 +103,7 @@ export const codeToolsPlugin = {
       {
         name: 'code.operation',
         description:
-          'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.',
+          'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication. command.workspace is the checkout as it was attached at launch: its headOid is where the session began, not the current HEAD.',
         inputSchema: z.object({ commandId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { commandId: string }) =>

@@ -17,7 +17,9 @@ import {
   type CodeCommandRecord,
   type CodeCommitCommand,
   type CodeCommitInput,
+  type CodeCommitReceipt,
   type Data,
+  MervError,
   type Scope,
   type Sql,
   type State,
@@ -62,6 +64,10 @@ const nextInputSchema = codeCommandControlSchema
 /** Whose work a checkpoint saves, as a valid message; the name never changes, so a retry is the same. */
 const checkpointMessage = (name: string | undefined) =>
   name ? cleanText(`Checkpoint: ${name}`, 200) : 'Checkpoint: work in progress';
+/** Whether a command is one of the runner's periodic checkpoints, as `checkpoint` queues them. */
+const automatic = (row: Row) =>
+  /^checkpoint-\d+$/.test(row.request_id) &&
+  (JSON.parse(row.command_json) as CodeCommitCommand).message.startsWith('Checkpoint: ');
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
 
@@ -285,24 +291,55 @@ export class CodeCommandService implements CodeCommands {
           'The planned merge is already complete; later rounds use code.commit',
           409,
         );
-      check(
-        !(await tx.get(
-          "SELECT id FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
-          session.id,
-        )),
-        'code_command_pending',
-        'The session already has an outstanding code command',
-        409,
+      const outstanding = await tx.get<Row>(
+        "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
+        session.id,
       );
+      if (outstanding)
+        throw new MervError(
+          'code_command_pending',
+          automatic(outstanding)
+            ? `The runner's automatic checkpoint ${outstanding.id} of this checkout is still running: call code.commit again in a few seconds, with the same input, and it lands on top of that checkpoint`
+            : `The session already has an outstanding code command, ${outstanding.id}: call code.commit again once code.operation reports that it ended`,
+          409,
+          { commandId: outstanding.id, automatic: automatic(outstanding) },
+        );
       check(
         input.expectedHead.length === session.workspace!.attachment.baseOid.length,
         'code_object_format',
         'The expected head must use the workspace Git object format',
       );
-      const { expectedHead, message } = input;
+      const { message } = input;
+      // A merge starts and completes on exactly the head named: no checkpoint runs beside one.
+      const expectedHead = merge
+        ? input.expectedHead
+        : await this.pastCheckpoints(tx, session.id, input.expectedHead);
       const commit = { ...(merge ? { merge } : {}), expectedHead, message };
       return this.decode(await this.queue(tx, session, input.requestId, hash, commit));
     });
+  }
+  /**
+   * Where an agent's commit lands. The runner's periodic checkpoints commit this session's
+   * checkout and move its HEAD without the agent knowing: a head that only they have moved past
+   * stands for the newest of them, so a commit on the head the agent last read follows them
+   * instead of failing with workspace_head_conflict. Its tree is the checkout's either way.
+   */
+  private async pastCheckpoints(tx: Transaction, sessionId: string, head: string) {
+    const moved = new Map<string, string>();
+    for (const row of await tx.all<Row>(
+      "SELECT * FROM code_commands WHERE session_id=? AND status='succeeded' ORDER BY _merv_rowid",
+      sessionId,
+    ))
+      if (automatic(row)) {
+        const receipt = JSON.parse(row.receipt_json!) as CodeCommitReceipt;
+        moved.set(receipt.parentOid, receipt.headOid);
+      }
+    const seen = new Set<string>();
+    while (moved.has(head) && !seen.has(head)) {
+      seen.add(head);
+      head = moved.get(head)!;
+    }
+    return head;
   }
   /** Queues a commit of the session's checkout, its agent's or a checkpoint, for its runner. */
   private async queue(
