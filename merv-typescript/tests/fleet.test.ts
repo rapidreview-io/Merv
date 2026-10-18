@@ -1025,6 +1025,20 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   await host.close();
 });
 
+test('a machine asked about before the first full pass is described, from one shared read', async (t) => {
+  const f = await fixture(t);
+  const machine = { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074016 };
+  let asked = 0;
+  f.runtimes.describe = async (_projectId, key) => (asked++, key === 'standard' ? machine : null);
+  // No pass has run yet: the first asks read the project's offers once, and share that read.
+  const [first, second] = await Promise.all([
+    f.fleet.describe(f.caller.projectId, 'standard'),
+    f.fleet.describe(f.caller.projectId, 'standard'),
+  ]);
+  assert.deepEqual([first, second], [machine, machine]);
+  assert.equal(asked, profiles.length);
+});
+
 /** A fixture whose owner names the person each request is for: `a_1` is for `person_a`. */
 async function capped(t: TestContext, limits: Partial<FleetConfig> = {}) {
   const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2, ...limits });

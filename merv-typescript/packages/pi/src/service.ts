@@ -156,6 +156,9 @@ export class PiService implements Pi {
       }),
       this.core.tools.registerCallerRules('conversation', conversationRules),
     );
+    // Fleet reads the host project's offers on their first ask: ask outside any transaction, so
+    // no machine chosen inside one waits on that read or falls back for want of it.
+    await Promise.all(this.core.config.machines.map(({ key }) => this.core.machine(key)));
     await this.hosts.tick();
     // Every call Run began before this process started is cut off. Only turns with a call that ran
     // and was never kept are read; a turn jsonb refuses (some older JSON) is left to keep().
