@@ -68,7 +68,7 @@ ${(constraints.length ? constraints : ['[[write: the approved success criteria a
 
 [[write: the answer in one line of at most 15 words, no caveats]]
 
-[[write: one chart block of every criterion against its bar; then optionally one paragraph of at most 40 words for nuance]]
+[[write: one chart block of every criterion against its bar, or of the measured results when the plan set no numeric bar; then optionally one paragraph of at most 40 words for nuance]]
 
 ## Method
 

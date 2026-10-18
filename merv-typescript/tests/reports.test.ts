@@ -459,3 +459,45 @@ test('a locked section the plan left as a placeholder is written once, then stay
     hasCode('report_locked_section'),
   );
 });
+
+test('a plan that set no numeric bar charts its measured results with criteria: []', async (t) => {
+  const f = await fixture(t);
+  f.allowed.add('exp_x');
+  const first = await f.reports.open(f.operator, f.subject('exp_x'));
+  assert.match(first.source, /^criteria: \[\]$/m);
+  const leaderboard = `Kev-9B and Kev-27B tie for the most correct answers.
+
+\`\`\`chart
+{"id": "leaderboard", "message": "Two checkpoints tie at 22 of 24.", "data": {"values": [{"model": "Kev-9B", "correct": 22}, {"model": "Kev-27B", "correct": 22}, {"model": "JEV", "correct": 20}]},
+ "y": {"field": "model"}, "x": {"field": "correct", "title": "correct of 24", "domain": [0, 24]},
+ "layer": [{"mark": "bar", "color": "result"}]}
+\`\`\``;
+  const written = await f.reports.write(f.operator, {
+    ...f.subject('exp_x'),
+    expectedRevision: first.revision,
+    requestId: f.request(),
+    ...COMPLETE,
+    frontMatter: 'id: "EXP-1"\ndate: "2026-10-14"\ncriteria: []',
+    sections: [{ name: 'Result', content: leaderboard }, ...COMPLETE.sections.slice(1)],
+  });
+  // No invented bar is needed: the chart is checked as it stands, and a warning names the rule.
+  const checked = await f.reports.check(f.operator, f.subject('exp_x'));
+  assert.deepEqual(
+    checked.issues.filter((i) => i.level === 'error'),
+    [],
+  );
+  assert.ok(
+    checked.issues.some((i) => i.where === 'front matter' && /no numeric bar/.test(i.message)),
+    JSON.stringify(checked.issues),
+  );
+  if (!browser) return;
+  const review = await f.reports.reviewVisual(f.operator, {
+    ...f.subject('exp_x'),
+    chartId: 'leaderboard',
+  });
+  assert.equal(review.revision, written.revision);
+  assert.deepEqual(
+    review.issues.filter((i) => i.level === 'error'),
+    [],
+  );
+});

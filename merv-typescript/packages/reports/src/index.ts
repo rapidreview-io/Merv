@@ -454,12 +454,14 @@ export class ReportService implements Reports {
         });
       }
     }
+    // A plan may pre-register no numeric bar (an exploratory question): its result chart shows
+    // the measured results. Requiring criteria made agents invent bars after seeing results.
     if (report.charts.some((c) => c.section === 'Result') && !report.criteria.length)
       issues.push({
-        level: 'error',
+        level: 'warning',
         where: 'front matter',
         message:
-          'criteria are required: one {metric, bar} or {metric, floor} per pre-registered criterion',
+          'no criteria, so the result chart shows measured results with no bar or status; that is right only when the approved plan set no numeric bar. Otherwise list each {metric, bar} or {metric, floor} it pre-registered, never one chosen after seeing results',
       });
     const charts = report.charts
       .filter((c) => typeof c.spec?.id === 'string')
