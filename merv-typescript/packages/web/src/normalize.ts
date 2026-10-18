@@ -252,6 +252,8 @@ type ExtractPlan =
       extract_depth: 'basic' | 'advanced';
       start: string;
       end: string;
+      /** Characters of the page, or of its section, skipped before the text returned. */
+      offset: number;
       notes: string[];
     }
   | { answer: WebPage };
@@ -275,54 +277,106 @@ export function planExtract(input: WebExtractInput): ExtractPlan {
     notes.push(`unsupported extract_depth=${JSON.stringify(depth)} replaced with 'basic'`);
   const start = (input.start_text ?? '').trim();
   const end = (input.end_text ?? '').trim();
+  let offset = input.offset ?? 0;
+  if (!Number.isFinite(offset) || offset < 0) {
+    notes.push(`invalid offset=${offset} replaced with 0`);
+    offset = 0;
+  }
   return {
     url,
     extract_depth: depth === 'advanced' ? 'advanced' : 'basic',
     start,
     end,
+    offset: Math.trunc(offset),
     notes,
   };
 }
 
+/** ASCII punctuation, which Markdown may escape with a backslash, and such an escape. */
+const PUNCTUATION = /[!-/:-@[-`{-~]/;
+const ESCAPED = new RegExp(`\\\\(${PUNCTUATION.source})`, 'g');
+
 /**
- * The text from the start marker to the end marker with 200 characters either side; with one
- * marker alone, the page from the start marker on or up to the end marker. A marker that is
- * not found leaves the rest whole with a warning, and `cut` says whether every marker given was
- * found. A cut never leaves half a character at either end.
+ * Where `marker` first occurs in `content` at or after `from`, and how long it is there. Tavily
+ * answers in Markdown, which escapes punctuation (def soft\_ce\_loss) and reflows white space,
+ * while a marker is copied from source code or an excerpt: so a punctuation mark matches with
+ * or without its backslash, on either side, and any run of white space matches any other.
  */
-function section(content: string, start: string, end: string): { text: string; cut: boolean } {
-  const trim = (text: string) => text.replace(/^\p{Surrogate}|\p{Surrogate}$/gu, '');
-  const missing = (marker: 'start' | 'end', rest: string) =>
-    `\n\n[WARNING: ${marker} marker "${clip(marker === 'start' ? start : end, 50)}" not found — ${rest}]`;
-  const from = start ? content.indexOf(start) : 0;
-  if (from < 0) return { text: content + missing('start', 'returning full content'), cut: false };
-  const head = start ? Math.max(0, from - 200) : 0;
-  if (!end) return { text: trim(content.slice(head)), cut: true };
-  const to = content.indexOf(end, from + start.length);
-  if (to < 0)
-    return {
-      text:
-        trim(content.slice(head)) +
-        missing('end', `returning from ${start ? 'start marker' : 'the beginning'} to end`),
-      cut: false,
-    };
-  return { text: trim(content.slice(head, to + end.length + 200)), cut: true };
+function find(content: string, marker: string, from: number) {
+  let source = '';
+  for (const char of marker.replace(ESCAPED, '$1'))
+    if (/\s/u.test(char)) source += source.endsWith('\\s+') ? '' : '\\s+';
+    else if (PUNCTUATION.test(char))
+      source += `\\\\?${char.replace(/[$()*+./?[\\\]^{|}]/, '\\$&')}`;
+    else source += char;
+  const pattern = new RegExp(source, 'gu');
+  pattern.lastIndex = from;
+  const match = pattern.exec(content);
+  return match ? { at: match.index, length: match[0].length } : undefined;
 }
 
-/** The page's text, cut to its section when a marker is given, and always capped at `limit`
- * (20,000) characters: a marker that misses must not put the whole page into the model's context. */
-export function pageText(
+/**
+ * The page's text from the start marker to the end marker with 200 characters either side;
+ * with one marker alone, the page from the start marker on or up to the end marker. A marker
+ * that is not found leaves the rest whole, and `section` says whether every marker given was
+ * found. Each miss is a note, never text appended to the page, where the cap would cut it off.
+ * A cut never leaves half a character at either end.
+ */
+export function pageSection(
   raw: unknown,
   start: string,
   end: string,
+): { text: string; section: boolean; notes: string[] } {
+  const content = cleanText(raw, Number.MAX_SAFE_INTEGER);
+  if (!start && !end) return { text: content, section: false, notes: [] };
+  const trim = (text: string) => text.replace(/^\p{Surrogate}|\p{Surrogate}$/gu, '');
+  const missed = (field: 'start_text' | 'end_text', marker: string, rest: string) =>
+    `${field} ${JSON.stringify(clip(marker, 50))} not found on the page, even ignoring Markdown escapes and spacing: ${rest}`;
+  const from = start ? find(content, start, 0) : { at: 0, length: 0 };
+  if (!from)
+    return {
+      text: content,
+      section: false,
+      notes: [missed('start_text', start, 'returned the page from its beginning')],
+    };
+  const head = start ? Math.max(0, from.at - 200) : 0;
+  if (!end) return { text: trim(content.slice(head)), section: true, notes: [] };
+  const to = find(content, end, from.at + from.length);
+  if (!to)
+    return {
+      text: trim(content.slice(head)),
+      section: false,
+      notes: [
+        missed(
+          'end_text',
+          end,
+          `returned the page from ${start ? 'start_text' : 'its beginning'} to its end`,
+        ),
+      ],
+    };
+  return { text: trim(content.slice(head, to.at + to.length + 200)), section: true, notes: [] };
+}
+
+/**
+ * At most `limit` (20,000) characters of `text` from `offset` on: a marker that misses must not
+ * put the whole page into the model's context, and next_offset reads on past the cut.
+ */
+export function pageWindow(
+  text: string,
+  offset: number,
   limit = MAX_EXTRACT_CHARS,
-): { content: string; section: boolean } {
-  let content = cleanText(raw, Number.MAX_SAFE_INTEGER);
-  let applied = false;
-  if (start || end) ({ text: content, cut: applied } = section(content, start, end));
-  if (content.length > limit)
-    content = `${clip(content, limit)}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters]`;
-  return { content, section: applied };
+): { content: string; next_offset?: number } {
+  // An offset inside a character starts after it.
+  const skipped = text.length - text.slice(offset).replace(/^\p{Surrogate}/u, '').length;
+  const rest = text.slice(skipped);
+  if (rest.length <= limit) return { content: rest };
+  const shown = clip(rest, limit);
+  const next = skipped + shown.length;
+  const more = (text.length - next).toLocaleString('en-US');
+  return {
+    content: `${shown}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters, ${more} more: offset ${next} reads on]`,
+    next_offset: next,
+  };
 }
 
 /** Tavily's reason a page failed, as short plain text. */

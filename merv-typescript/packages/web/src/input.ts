@@ -82,5 +82,11 @@ export const extractInput = z
       .max(500)
       .nullish()
       .describe('Text marking the end of the section; alone, the page up to there.'),
+    offset: z
+      .number()
+      .nullish()
+      .describe(
+        'Characters of the text to skip, to read on past a cut: the next_offset an earlier answer gave, with the same url and markers.',
+      ),
   })
   .strict();

@@ -22,6 +22,8 @@ export interface WebExtractInput {
   extract_depth?: string | null;
   start_text?: string | null;
   end_text?: string | null;
+  /** Characters of the page, or of its section, to skip: a cut answer's next_offset. */
+  offset?: number | null;
 }
 
 /** One result, and only these fields, whatever the provider sent. */
@@ -58,6 +60,8 @@ export interface WebPage {
   content: string;
   /** Whether the page was cut at start_text, end_text or both, each found. */
   section: boolean;
+  /** Where the text cut at the cap goes on: the offset that reads the rest. */
+  next_offset?: number;
   status: 'success' | 'error' | 'needs_valid_url';
   provider?: 'tavily';
   error?: string;

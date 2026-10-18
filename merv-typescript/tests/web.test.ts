@@ -393,12 +393,21 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
     { ...whole, content: whole.content.length },
     {
       url,
-      content: 20_000 + '\n\n... [truncated at 20,000 characters]'.length,
+      content:
+        20_000 +
+        '\n\n... [truncated at 20,000 characters, 5,000 more: offset 20000 reads on]'.length,
+      next_offset: 20_000,
       section: false,
       status: 'success',
       provider: 'tavily',
       normalization_note: `unsupported extract_depth="thorough" replaced with 'basic'`,
     },
+  );
+  // The rest of a cut page is read by passing its next_offset back.
+  const rest = await read({ url, offset: whole.next_offset });
+  assert.deepEqual(
+    { ...rest, content: rest.content.length },
+    { url, content: 5000, section: false, status: 'success', provider: 'tavily' },
   );
   const text = 'a'.repeat(1000) + '## Methods' + 'm'.repeat(100) + '## Results' + 'r'.repeat(1000);
   extracted = { body: { results: [{ url, raw_content: '', content: text }] } };
@@ -413,8 +422,11 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(methods.content, text.slice(800, 1000 + 10 + 100 + 10 + 200));
   const missed = await read({ url, start_text: '## Discussion', end_text: '## Results' });
   assert.equal(missed.section, false);
-  assert.ok(missed.content.startsWith(text));
-  assert.match(missed.content, /start marker "## Discussion" not found/);
+  assert.equal(missed.content, text);
+  assert.match(
+    missed.normalization_note!,
+    /^start_text "## Discussion" not found on the page, .*: returned the page from its beginning$/,
+  );
   // One marker alone cuts the page there: from the start marker on, or up to the end marker.
   const from = await read({ url, start_text: '## Methods' });
   assert.deepEqual(
@@ -432,10 +444,67 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(upTo.content, text.slice(0, 1000 + 10 + 200));
   const unfound = await read({ url, end_text: '## Discussion' });
   assert.equal(unfound.section, false);
+  assert.equal(unfound.content, text);
   assert.match(
-    unfound.content,
-    /end marker "## Discussion" not found — returning from the beginning to end/,
+    unfound.normalization_note!,
+    /end_text "## Discussion" not found .*: returned the page from its beginning to its end/,
   );
+  // Tavily's Markdown escapes punctuation and reflows lines; a marker copied from source code
+  // or an excerpt still finds its place, as does one the agent escaped itself.
+  const code =
+    'nav '.repeat(100) +
+    'def soft\\_ce\\_loss(logits, target):\n    return \\-(target \\* logp)\n\n' +
+    'def td\\_lambda\\_targets(rewards):\n    pass\n' +
+    'Licensing &\nPersonal   Information\n\nThe data is public.';
+  extracted = { body: { results: [{ url, raw_content: code }] } };
+  const loss = await read({
+    url,
+    start_text: 'def soft_ce_loss',
+    end_text: 'def td_lambda_targets',
+  });
+  assert.equal(loss.section, true);
+  assert.equal(loss.normalization_note, undefined);
+  assert.equal(loss.content, code.slice(code.indexOf('def soft') - 200));
+  const escaped = await read({ url, start_text: 'return \\-(target \\* logp)' });
+  assert.equal(escaped.section, true);
+  assert.ok(escaped.content.includes('return \\-(target'));
+  const spaced = await read({ url, start_text: 'Licensing & Personal Information' });
+  assert.equal(spaced.section, true);
+  assert.match(spaced.content, /The data is public\.$/);
+  // Two markers neither found on a page past the cap: the note says so, and offset reads on.
+  const chrome = '[Skip to content](#start-of-content) ' + 'n'.repeat(24_000);
+  extracted = { body: { results: [{ url, raw_content: chrome }] } };
+  const lost = await read({ url, start_text: 'def rlcd_loss', end_text: 'def sigma_at' });
+  assert.equal(lost.section, false);
+  assert.match(lost.normalization_note!, /^start_text "def rlcd_loss" not found on the page/);
+  assert.ok(lost.content.startsWith('[Skip to content]'));
+  assert.equal(lost.next_offset, 20_000);
+  const on = await read({
+    url,
+    start_text: 'def rlcd_loss',
+    end_text: 'def sigma_at',
+    offset: 20_000,
+  });
+  assert.equal(on.content, chrome.slice(20_000));
+  assert.equal(on.next_offset, undefined);
+  // So does an end marker missing after a found start.
+  const tail = await read({ url, start_text: 'Skip to content', end_text: 'Acknowledgments' });
+  assert.equal(tail.section, false);
+  assert.match(
+    tail.normalization_note!,
+    /^end_text "Acknowledgments" not found .*: returned the page from start_text to its end$/,
+  );
+  assert.equal(tail.next_offset, 20_000);
+  // An offset past the text, or one that is no offset, is reported, never refused.
+  const past = await read({ url, offset: 30_000 });
+  assert.equal(past.content, '');
+  assert.equal(
+    past.normalization_note,
+    `offset=30000 is past the end of the text (${chrome.length} characters)`,
+  );
+  const negative = await read({ url, offset: -5 });
+  assert.equal(negative.normalization_note, 'invalid offset=-5 replaced with 0');
+  assert.equal(negative.next_offset, 20_000);
   // The 200 characters either side never leave half a character at a cut.
   const astral = `${'😀'.repeat(200)}x## Methods ## Resultsy${'😀'.repeat(200)}`;
   extracted = { body: { results: [{ url, raw_content: astral }] } };
@@ -773,7 +842,11 @@ test('an answer at Nisa’s caps still fits what Pi shows of one result, whateve
   const page = await web.extract(caller, { url: 'https://example.com/page' });
   assert.equal(page.status, 'success');
   assert.deepEqual(fit('web.extract', page), page);
-  assert.match(page.content, /\n\n\.\.\. \[truncated at [\d,]+ characters\]$/);
+  assert.match(
+    page.content,
+    /\n\n\.\.\. \[truncated at [\d,]+ characters, [\d,]+ more: offset \d+ reads on\]$/,
+  );
+  assert.equal(page.next_offset, page.content.indexOf('\n\n... [truncated'));
   reply = { status: 401, body: {} };
   const grounded_ = await web.search(caller, { query: 'q' });
   assert.equal(grounded_.provider, 'openai_web_search');

@@ -21,7 +21,8 @@ import {
   MAX_EXTRACT_CHARS,
   MAX_TOTAL_CHARS,
   pageError,
-  pageText,
+  pageSection,
+  pageWindow,
   planExtract,
   planSearch,
   tavilyResults,
@@ -308,12 +309,21 @@ export class WebService implements Web {
             'This page could not be read, twice. Use web.search with its title or address to find indexed excerpts, or try the publisher’s HTML page.',
           ...note,
         };
+      const { text, section, notes } = pageSection(
+        page.raw_content || page.content,
+        plan.start,
+        plan.end,
+      );
+      if (plan.offset > 0 && plan.offset >= text.length)
+        notes.push(`offset=${plan.offset} is past the end of the text (${text.length} characters)`);
+      const all = [...plan.notes, ...notes];
       return sized(MAX_EXTRACT_CHARS, (limit): WebPage => ({
         url: plan.url,
-        ...pageText(page.raw_content || page.content, plan.start, plan.end, limit),
+        ...pageWindow(text, plan.offset, limit),
+        section,
         status: 'success',
         provider: 'tavily',
-        ...note,
+        ...(all.length > 0 && { normalization_note: all.join('; ') }),
       })).value;
     });
   }

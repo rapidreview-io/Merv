@@ -101,7 +101,7 @@ result_count }`, with `normalization_note`, and `content_truncated` with
   sources, with empty content and scores of 1/(i+1). Nisa also copies the answer
   into the first result; Web does not, so the answer is counted once.
 
-`web.extract { url, extract_depth?, start_text?, end_text? }`
+`web.extract { url, extract_depth?, start_text?, end_text?, offset? }`
 
 - Tavily reads the page. Merv never fetches it: Main sits on a network with
   services no caller may address, so a direct fetch would be a request forgery
@@ -112,9 +112,17 @@ result_count }`, with `normalization_note`, and `content_truncated` with
 - With both markers, only the text between them is returned, with 200
   characters either side; `start_text` alone returns the page from 200
   characters before it on, and `end_text` alone the page up to 200 characters
-  past it. A marker that misses returns the page with a warning.
-  The content is always capped at 20,000 characters, and at 28,000 bytes of
-  JSON for the whole answer.
+  past it. Tavily answers in Markdown, which escapes punctuation
+  (`def soft\_ce\_loss`) and reflows lines, while agents copy markers from
+  source code or excerpts: a punctuation mark matches with or without its
+  backslash, on either side, and any run of white space matches any other. A
+  marker that misses returns the rest of the page whole, `section: false`, and
+  names the marker in `normalization_note` (never at the end of the text, where
+  the cap would cut it off).
+- The content is always capped at 20,000 characters, and at 28,000 bytes of
+  JSON for the whole answer. A longer text ends with a note of what is left,
+  and the answer's `next_offset`, passed back as `offset` with the same url and
+  markers, returns the text from there.
 - A page Tavily could not read, or returned without text, is asked for once
   more after 1 s, with advanced extraction: Tavily fails pages
   it reads a minute later, and advanced extraction renders some basic cannot.
