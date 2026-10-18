@@ -51,7 +51,7 @@ Domain plugins never import the UI. Adapters import only the public `@merv/ui/ty
 - `ui.home` (read-only): what Home and the rail draw, in one snapshot: the project, its actors, the open gates, and the records of every row that declares a `home` part, under the row's id.
 - `ui.read` (read-only): `{ rowId }` returns the data a row owns when it declares `read`; for a row that declares `page`, `{ rowId, params: { id } }` returns that record's page; otherwise `row_unreadable`.
 
-`ui.shell` and `ui.home` are the page's own reads, which no agent conversation is offered; `ui.read` is an ordinary catalog tool, offered to agents as well as the browser.
+`ui.shell` and `ui.home` are the page's own reads, which no agent conversation is offered; `ui.read` is an ordinary catalog tool, offered to a person's agents as well as the browser. No leased worker is listed any of the three: it reads the records with their own tools.
 
 Code's `ui.read` supplies commit receipts and status together, with publication records in `status.publication.records`. The graph and integration list use that one read and refresh after publication mutations. The read requires neither `code-tools` nor `code-work-api`; GitHub account status, connection and automation keep their authenticated `/code/github` HTTP routes, and publication detail, sync and merge are the `code.publication.*` tools.
 
