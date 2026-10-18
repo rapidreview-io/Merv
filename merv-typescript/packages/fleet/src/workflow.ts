@@ -44,8 +44,6 @@ import { modelMigrations } from './schema.js';
 /** Loading the adapter is the switch. Fleet still owns all machine limits and lifecycle. */
 const workflowConfig = z
   .object({
-    /** Ignored: configurations rendered before still carry it. */
-    enabled: z.boolean().optional(),
     /** Whose choice of Fleet it serves: sign-in identities as 'issuer subject', or '*' for all. */
     people: z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))

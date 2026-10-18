@@ -122,7 +122,6 @@ export const progressSchema = z
       .optional(),
   })
   .strict();
-export type ProgressInput = z.infer<typeof progressSchema>;
 
 export const submitResultsSchema = z
   .object({
