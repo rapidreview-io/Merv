@@ -36,30 +36,40 @@ export const customerConfig = z
     computeProviders: z.array(z.string().min(1)).min(1).max(8),
     sponsor: z.object({ issuer: z.string().min(1), subject: z.string().min(1) }).strict(),
     publicIntake: z.boolean().default(false),
-    intakeKeyEnv: env.default('MERV_CUSTOMER_INTAKE_KEY'),
-    accessKeyEnv: env.default('MERV_CUSTOMER_ACCESS_KEY'),
+    intakeKeyEnv: env
+      .describe('Standalone experiment requests · intake key')
+      .default('MERV_CUSTOMER_INTAKE_KEY'),
+    accessKeyEnv: env
+      .describe('Standalone experiment customer links · signing secret')
+      .default('MERV_CUSTOMER_ACCESS_KEY'),
     maxRequestsPerDay: z.number().int().min(1).max(1000).default(25),
     storage: z
       .object({
         endpoint: origin,
         region: z.string().min(1).default('us-east-1'),
         bucketPrefix: z.string().regex(/^[a-z][a-z0-9-]{2,20}$/),
-        accessKeyIdEnv: env,
-        secretAccessKeyEnv: env,
+        accessKeyIdEnv: env.describe('Standalone experiment data buckets · S3 access key id'),
+        secretAccessKeyEnv: env.describe('Standalone experiment data buckets · S3 secret key'),
       })
       .strict()
       .optional(),
     stripe: z
       .object({
-        secretKeyEnv: env.default('MERV_CUSTOMER_STRIPE_SECRET_KEY'),
-        webhookSecretEnv: env.default('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET'),
+        secretKeyEnv: env
+          .describe('Standalone experiment checkout · Stripe secret key')
+          .default('MERV_CUSTOMER_STRIPE_SECRET_KEY'),
+        webhookSecretEnv: env
+          .describe('Standalone experiment checkout · Stripe webhook signing secret')
+          .default('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET'),
         live: z.boolean().default(false),
       })
       .strict()
       .optional(),
     email: z
       .object({
-        apiKeyEnv: env.default('MERV_CUSTOMER_RESEND_KEY'),
+        apiKeyEnv: env
+          .describe('Standalone experiment result emails · Resend API key')
+          .default('MERV_CUSTOMER_RESEND_KEY'),
         from: z.string().min(1).max(254),
       })
       .strict()

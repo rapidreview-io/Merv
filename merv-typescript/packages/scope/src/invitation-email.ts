@@ -7,7 +7,7 @@ export interface InvitationSender {
 }
 export const invitationEmailSchema = z
   .object({
-    apiKeyEnv: envName,
+    apiKeyEnv: envName.describe('Project invitation emails · Resend API key'),
     from: z
       .string()
       .min(3)

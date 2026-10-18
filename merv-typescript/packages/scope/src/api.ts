@@ -225,18 +225,16 @@ export function scopeRoutes(
   };
 }
 
+const Config = z.object({ invitations: invitationEmailSchema.optional() }).strict().default({});
 export const scopeApiPlugin = {
   name: 'merv-scope-api',
+  Config,
   inject: ['scope', 'api', 'identity'],
-  apply(ctx: Context, config: { invitations?: z.infer<typeof invitationEmailSchema> } = {}) {
-    const parsed = z
-      .object({ invitations: invitationEmailSchema.optional() })
-      .strict()
-      .parse(config);
+  apply(ctx: Context, config: z.infer<typeof Config>) {
     const routes = scopeRoutes(
       ctx.scope,
-      parsed.invitations
-        ? { identity: ctx.identity, sender: new ResendInvitationSender(parsed.invitations) }
+      config.invitations
+        ? { identity: ctx.identity, sender: new ResendInvitationSender(config.invitations) }
         : undefined,
     );
     ctx.effect(() => ctx.api.mount('/account', routes));

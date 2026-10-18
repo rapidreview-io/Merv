@@ -110,6 +110,7 @@ const configSchema = z
     managedSecretEnv: z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .describe('Fleet machine runner tokens · signing secret')
       .optional(),
   })
   .strict();
@@ -2072,6 +2073,7 @@ export class LeasedSessions implements Sessions {
 }
 export const sessionsPlugin = {
   name: 'merv-sessions',
+  Config: configSchema.default({}),
   inject: ['state', 'scope', 'workflows', 'domainEvents', 'blobs'],
   async apply(ctx: Context, config: SessionsConfig = {}) {
     await ctx.effect(async function* () {

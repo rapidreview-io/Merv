@@ -139,8 +139,10 @@ export const piConfig = z
         { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'low' },
         { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
       ]),
-    secretEnv: envVar.default('MERV_PI_SECRET'),
-    modelApiKeyEnv: envVar.default('MERV_PI_MODEL_API_KEY'),
+    secretEnv: envVar.describe('Agent machine tokens · signing secret').default('MERV_PI_SECRET'),
+    modelApiKeyEnv: envVar
+      .describe('Agent model calls · OpenAI API key')
+      .default('MERV_PI_MODEL_API_KEY'),
     /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
     dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
     /** How long a turn may go without progress: to reach its machine, then between any two signs
@@ -153,7 +155,9 @@ export const piConfig = z
     host: z
       .object({
         projectId: id,
-        credentialEnv: envVar.default('MERV_PI_HOST_KEY'),
+        credentialEnv: envVar
+          .describe('Agent machine rental · Merv host project key')
+          .default('MERV_PI_HOST_KEY'),
       })
       .strict(),
     /** From MERV_FLEET_RUNTIMES, keyed like the Sandboxes runtime profiles; the first is the
@@ -193,8 +197,12 @@ export const piConfig = z
           .default(
             'https://api.cloudflare.com/client/v4/accounts/{account}/browser-run/screenshot',
           ),
-        tokenEnv: envVar.default('MERV_BROWSER_RENDER_TOKEN'),
-        accountEnv: envVar.default('MERV_BROWSER_RENDER_ACCOUNT'),
+        tokenEnv: envVar
+          .describe('Agent screen reading · Cloudflare Browser Rendering token')
+          .default('MERV_BROWSER_RENDER_TOKEN'),
+        accountEnv: envVar
+          .describe('Agent screen reading · Cloudflare Browser Rendering account')
+          .default('MERV_BROWSER_RENDER_ACCOUNT'),
         /** How long the person's page has to answer a look. */
         waitMs: z.number().int().min(1_000).max(60_000).default(12_000),
       })

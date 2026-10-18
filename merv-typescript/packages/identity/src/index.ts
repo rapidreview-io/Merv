@@ -8,6 +8,7 @@ import {
   type JSONWebKeySet,
   type JWTVerifyGetKey,
 } from 'jose';
+import { z } from 'zod';
 import { MervError, readCapped, type VerifiedIdentity } from '@merv/contracts';
 import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
 
@@ -343,6 +344,15 @@ export class SupabaseIdentity implements IdentityProvider {
 
 export const identityPlugin = {
   name: 'merv-identity',
+  /** What each secret is for. The constructor judges every value, and says only that it is invalid. */
+  Config: z
+    .object({
+      secretEnv: z.unknown().describe('Sign-in checks · Supabase JWT secret'),
+      publishableKeyEnv: z.unknown().describe('Sign-in page · Supabase publishable key'),
+      directoryKeyEnv: z.unknown().describe('Invitations by email · Supabase service key'),
+    })
+    .passthrough()
+    .default({}),
   inject: [],
   apply(ctx: Context, config: IdentityConfig = {}) {
     ctx.provide('identity', new SupabaseIdentity(config));

@@ -49,7 +49,10 @@ const workflowConfig = z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))
       .min(1)
       .max(100),
-    modelApiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    modelApiKeyEnv: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .describe('Fleet agent model calls · OpenAI API key'),
     baseUrl: z.string().url().max(2048),
     maxAgents: z.number().int().min(1).max(64).default(10),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
@@ -924,6 +927,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
+  Config: workflowConfig,
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
   async apply(ctx: Context, config: FleetWorkflowConfig) {
     const adapter = new FleetWorkflowAdapter(
