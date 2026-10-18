@@ -279,6 +279,7 @@ export class WebService implements Web {
     tool: WebCall['tool'],
     run: (providers: WebProvider[]) => Promise<T>,
   ): Promise<T> {
+    check(!caller.platform, 'web_forbidden', 'A platform reader spends no web budget', 403);
     check(!this.stopping.signal.aborted, 'web_stopped', 'Web search is stopping', 503);
     const day = this.today();
     const { dailyCallsPerProject, dailyCalls } = this.config;
