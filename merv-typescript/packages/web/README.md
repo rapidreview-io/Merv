@@ -71,8 +71,13 @@ what it sends leaves Merv (see [Privacy](#privacy)).
 
 `web.search { query, max_results?, search_depth?, topic?, time_range? }`
 
-- `query` is a string of at most 400 characters, or up to 4 phrasings joined
-  with OR into one request while they fit Tavily's 400 characters. An empty
+- `query` is a string of at most 400 characters, or a list of up to 4, each
+  run as its own search in parallel and counted as its own call against the
+  day's budgets. Agents list unrelated queries far more often than phrasings of
+  one, and Nisa's single request that ORs them answered none of them well (a
+  dataset-license search returned basketball pages). A list's answer has
+  `query` as the list run and each result's `query` naming the query that found
+  it; the content caps below are shared alike among its queries. An empty
   query, or one that is only a `site:` filter, is answered with
   `status: "needs_query_terms"` and a `fallback_hint`, and no request; a `site:`
   filter naming an exact page becomes that page's path terms.
@@ -103,11 +108,16 @@ result_count }`, with `normalization_note`, and `content_truncated` with
 - `url` must be an absolute http(s) address without credentials, or the answer
   is `status: "needs_valid_url"` and no request is made.
 - With both markers, only the text between them is returned, with 200
-  characters either side; a marker that misses returns the page with a warning.
+  characters either side; `start_text` alone returns the page from 200
+  characters before it on, and `end_text` alone the page up to 200 characters
+  past it. A marker that misses returns the page with a warning.
   The content is always capped at 20,000 characters, and at 28,000 bytes of
   JSON for the whole answer.
-- A page Tavily could not read is `status: "error"` with its reason and a hint
-  to search instead.
+- A page Tavily could not read, or returned without text, is asked for once
+  more after `extractRetryMs` (1 s), with advanced extraction: Tavily fails pages
+  it reads a minute later, and advanced extraction renders some basic cannot.
+  A page neither read gets is `status: "error"` with its reason and a hint to
+  search instead.
 
 ### Reading pages
 

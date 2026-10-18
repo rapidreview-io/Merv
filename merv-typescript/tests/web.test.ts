@@ -63,7 +63,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
     (await tools.call('web.search', caller, input)) as WebSearch;
 
   const result = await search({
-    query: [' flash attention ', '', 'FA3'],
+    query: ' flash attention ',
     max_results: 25,
     search_depth: 'Deep',
     topic: 'sports',
@@ -76,7 +76,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
         'POST',
         '/search',
         {
-          query: '(flash attention) OR (FA3)',
+          query: 'flash attention',
           max_results: 20,
           search_depth: 'basic',
           topic: 'general',
@@ -99,7 +99,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
   assert.equal(result.provider, 'tavily');
   assert.equal(
     result.normalization_note,
-    'combined 2 query variants into one web request; max_results=25 replaced with 20; ' +
+    'max_results=25 replaced with 20; ' +
       `search_depth="deep" replaced with 'basic'; topic="sports" replaced with 'general'`,
   );
   // Four results fill the 24,000 characters at 6,000 each; later ones keep their links only.
@@ -147,13 +147,41 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
     topic: 'general',
   });
   assert.match(site.normalization_note!, /expanded exact site target/);
-  // Phrasings are combined only while Tavily's 400 characters allow.
-  const long = await search({ query: ['a'.repeat(300), 'b'.repeat(300)], time_range: 'decade' });
-  assert.equal(tavily.seen.at(-1)!.body.query, 'a'.repeat(300));
-  assert.equal(
-    long.normalization_note,
-    `combined 1 query variant into one web request (of 2 given); unsupported time_range="decade" omitted`,
+  // A list runs each query as its own search, never ORed into one request that answers none
+  // of them: each result names its query, and the content budget is shared alike.
+  const before = tavily.seen.length;
+  const list = await search({
+    query: ['dataset license', ' ', 'NBA scores', 'dataset license', 'site:example.com', 'c', 'd'],
+    max_results: 2,
+    time_range: 'decade',
+  });
+  assert.deepEqual(
+    tavily.seen
+      .slice(before)
+      .map(({ body }) => body.query)
+      .sort(),
+    ['NBA scores', 'c', 'dataset license'],
   );
+  assert.deepEqual(list.query, ['dataset license', 'NBA scores', 'c']);
+  assert.equal(
+    list.normalization_note,
+    'ran 3 queries as separate searches, each result naming its query; ' +
+      'ran only the first 4 of the 5 queries given; ' +
+      'skipped "site:example.com": A site: filter needs descriptive search terms, for example site:example.com transformer benchmark.; ' +
+      'unsupported time_range="decade" omitted',
+  );
+  assert.deepEqual(
+    list.results.map(({ query, content }) => [query, content.length]),
+    [
+      ['dataset license', 6000],
+      ['dataset license', 2000],
+      ['NBA scores', 6000],
+      ['NBA scores', 2000],
+      ['c', 6000],
+      ['c', 2000],
+    ],
+  );
+  assert.equal(list.content_budget_chars, 24_000);
   await assert.rejects(search({ query: 'x'.repeat(401) }), { code: 'invalid_input' });
   await assert.rejects(search({ query: 'x', site: 'example.com' }), { code: 'invalid_input' });
 });
@@ -327,9 +355,11 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   // The page's own server: Merv must never reach it.
   const page = await provider(t);
   let extracted: Reply = {};
-  const tavily = await provider(t, () => extracted);
+  /** Replies for the next reads, before `extracted` answers again. */
+  const queued: Reply[] = [];
+  const tavily = await provider(t, () => queued.shift() ?? extracted);
   const tavilyEnv = keyEnv(t, 'tvly-fixture');
-  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin });
+  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin, extractRetryMs: 0 });
   const tools = registry(t, web);
   const read = async (input: object) => (await tools.call('web.extract', caller, input)) as WebPage;
   const url = `${page.origin}/article`;
@@ -364,9 +394,27 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(missed.section, false);
   assert.ok(missed.content.startsWith(text));
   assert.match(missed.content, /start marker "## Discussion" not found/);
-  const one = await read({ url, start_text: '## Methods' });
-  assert.equal(one.content, text);
-  assert.equal(one.normalization_note, 'start_text and end_text select a section only together');
+  // One marker alone cuts the page there: from the start marker on, or up to the end marker.
+  const from = await read({ url, start_text: '## Methods' });
+  assert.deepEqual(
+    { ...from, url: undefined },
+    {
+      url: undefined,
+      content: text.slice(800),
+      section: true,
+      status: 'success',
+      provider: 'tavily',
+    },
+  );
+  const upTo = await read({ url, end_text: '## Methods' });
+  assert.equal(upTo.section, true);
+  assert.equal(upTo.content, text.slice(0, 1000 + 10 + 200));
+  const unfound = await read({ url, end_text: '## Discussion' });
+  assert.equal(unfound.section, false);
+  assert.match(
+    unfound.content,
+    /end marker "## Discussion" not found — returning from the beginning to end/,
+  );
   // The 200 characters either side never leave half a character at a cut.
   const astral = `${'😀'.repeat(200)}x## Methods ## Resultsy${'😀'.repeat(200)}`;
   extracted = { body: { results: [{ url, raw_content: astral }] } };
@@ -374,11 +422,32 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.ok(!/\p{Surrogate}/u.test(cut.content), 'a cut split a character');
 
   extracted = { body: { results: [], failed_results: [{ url, error: 'Blocked by robots.txt' }] } };
+  const tries = tavily.seen.length;
   const failed = await read({ url });
   assert.equal(failed.status, 'error');
   assert.equal(failed.error, 'Blocked by robots.txt');
   assert.equal(failed.content, '');
   assert.ok(failed.fallback_hint);
+  // A page Tavily could not read is asked for once more, with advanced extraction.
+  assert.deepEqual(
+    tavily.seen.slice(tries).map(({ body }) => body.extract_depth),
+    ['basic', 'advanced'],
+  );
+  // A page it failed, or returned empty, may read the second time.
+  for (const first of [
+    { body: { results: [], failed_results: [{ url, error: 'Error fetching content' }] } },
+    { body: { results: [{ url, raw_content: '', content: ' ' }] } },
+  ]) {
+    queued.push(first, { body: { results: [{ url, raw_content: 'The abstract.' }] } });
+    assert.deepEqual(await read({ url }), {
+      url,
+      content: 'The abstract.',
+      section: false,
+      status: 'success',
+      provider: 'tavily',
+      normalization_note: 'Tavily could not read the page at first; a second, advanced read did',
+    });
+  }
 
   // An address Tavily should not be given is refused before any request.
   const asked = tavily.seen.length;
@@ -473,6 +542,14 @@ test('a project’s day, the deployment’s and its fallback searches’ are bou
   // The next UTC day starts afresh.
   now = Date.parse('2026-09-27T00:00:01Z');
   await web.search(caller, { query: 'query-tomorrow' });
+  // Each query of a list is its own search and its own call: one left is not enough for two.
+  await assert.rejects(web.search(caller, { query: ['query-x', 'query-y'] }), {
+    code: 'web_budget_exhausted',
+    status: 429,
+    message:
+      'This project has 1 of its 2 web calls left for today, and these 2 queries need one each: search fewer at once, or after 00:00 UTC',
+  });
+  assert.equal(tavily.seen.length, 4);
   // One line for each call a provider was asked for: who, which, how long, never what.
   assert.deepEqual(
     logged.map(({ ms, ...rest }) => (assert.equal(typeof ms, 'number'), rest)),
@@ -871,6 +948,7 @@ test('the render composes web search into Main, where MCP clients list and call 
     keyEnv: 'MERV_TAVILY_API_KEY',
     origin: 'https://api.tavily.com',
     timeoutMs: 30_000,
+    extractRetryMs: 1000,
     maxResponseBytes: 8 * 1024 * 1024,
     maxInFlight: 8,
     queueMs: 15_000,

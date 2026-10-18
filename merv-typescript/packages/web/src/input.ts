@@ -26,6 +26,9 @@ export const webConfig = z
       .optional(),
     // Deadline for one Tavily call, its retries included.
     timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
+    // The pause before a page Tavily could not read is asked for once more. With the queue and
+    // both reads, an extract still ends inside the 180 s a Codex worker waits on a tool.
+    extractRetryMs: z.number().int().min(0).max(10_000).default(1000),
     // A larger answer is refused, whatever its Content-Length says.
     maxResponseBytes: z
       .number()
@@ -58,7 +61,7 @@ export const searchInput = z
     query: z
       .union([z.string().max(400), z.array(z.string().max(400)).max(8)])
       .describe(
-        'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 phrasings is combined with OR into one search.',
+        'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 queries runs each as its own search, and each result names the query that found it.',
       ),
     max_results: z.number().nullish().describe('Number of results to return (1-20, default 5).'),
     search_depth: choice('"basic" (fast, 1 credit) or "advanced" (deeper, 2 credits).'),
@@ -74,7 +77,13 @@ export const extractInput = z
       .string()
       .max(500)
       .nullish()
-      .describe('Text marking the start of the section to return, copied from the page.'),
-    end_text: z.string().max(500).nullish().describe('Text marking the end of the section.'),
+      .describe(
+        'Text marking the start of the section to return, copied from the page; alone, the page from there on.',
+      ),
+    end_text: z
+      .string()
+      .max(500)
+      .nullish()
+      .describe('Text marking the end of the section; alone, the page up to there.'),
   })
   .strict();
