@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { check, MervError, type State } from '@merv/contracts';
 import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
+import { creditRoutes } from './credits.js';
 import type { AdminIdentity } from './models.js';
 import { adminOverview } from './work.js';
 import { platformRead } from './platform.js';
@@ -67,6 +68,7 @@ export const adminPlugin = {
     const routes: AdminRoutes = {
       'GET /admin/experiments': async () => await adminOverview(env.state, env.admins),
       ...platformRead(env),
+      ...creditRoutes(env),
     };
     ctx.effect(() =>
       ctx.api.mount('/admin', async (req, res, r) => {

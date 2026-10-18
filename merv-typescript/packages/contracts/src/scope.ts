@@ -121,6 +121,14 @@ export interface ScopeMembers {
     projectId: string,
     options?: { repairReason: string },
   ): Promise<ProjectMembership>;
+  /** For the platform admin only, never a route or tool: every verified person, with the
+   * projects they are an active member of. */
+  people(): Promise<ScopePerson[]>;
+}
+export interface ScopePerson {
+  issuer: string;
+  subject: string;
+  projects: { projectId: string; name: string; role: Role }[];
 }
 /** Keys a person issues to their own machines, which act through the person's memberships. */
 export interface ScopeUserKeys {

@@ -1118,6 +1118,15 @@ test('today’s compute counts open machines to now at the price they were reser
   f.advance(30 * 60_000);
   // Two hours of the open machine; the queued request has no machine yet.
   assert.equal((await f.get(queued.id)).phase, 'queued');
+  // An owner that meters model tokens answers for each person asked.
+  f.fleet.registerOwner('meter', {
+    ...f.owner,
+    modelTokens: async (person) => ({ used: person === 'person_a' ? 7 : 0, limit: 9 }),
+  });
+  assert.deepEqual(await f.fleet.peopleToday(['person_a', 'person_z']), [
+    { person: 'person_a', usd: 2, usdCap: 2, tokens: { used: 7, limit: 9 } },
+    { person: 'person_z', usd: 0, usdCap: 2, tokens: { used: 0, limit: 9 } },
+  ]);
   await assert.rejects(f.ask('a_4'), { code: 'fleet_compute_cap' });
   // A new UTC day starts from nothing, though the machine is still open.
   f.advance(22 * 3_600_000);

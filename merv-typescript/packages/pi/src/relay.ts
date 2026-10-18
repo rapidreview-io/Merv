@@ -1,6 +1,6 @@
 import { check, clip, type State } from '@merv/contracts';
 import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
-import type { ModelRelayConfig } from '@merv/fleet/types';
+import type { ModelRelayConfig, ModelTokens } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
 import {
@@ -46,6 +46,17 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
     // Settles the day the call was charged to, even past midnight.
     const delta = usage.inputTokens + usage.outputTokens - reserved.tokens;
     await state.transaction((tx) => piLedger.settle(tx, grant.userId, reserved.day, delta));
+  },
+  async today(persons: readonly string[]): Promise<(ModelTokens & { person: string })[]> {
+    const rows = await state.read((sql) =>
+      sql.all<{ person: string; tokens: number | string }>(
+        `SELECT person,tokens FROM pi_model_usage WHERE day=? AND person IN (${persons.map(() => '?').join(',') || 'NULL'})`,
+        now().slice(0, 10),
+        ...persons,
+      ),
+    );
+    const used = new Map(rows.map((row) => [row.person, Number(row.tokens)]));
+    return persons.map((person) => ({ person, used: used.get(person) ?? 0, limit: ceiling }));
   },
 });
 

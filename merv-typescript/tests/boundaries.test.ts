@@ -95,6 +95,7 @@ const capabilities: Record<string, readonly string[]> = {
     'contextBuilder',
     'codeWork',
     'paper',
+    'sessions',
   ],
   knowledge: [
     'state',
@@ -971,6 +972,15 @@ test('Cordis service requirements match the architecture and every accessed capa
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate console orchestration');
         orchestrationAdapters.add(name.text);
+        return;
+      }
+      if (name.text === 'merv-admin') {
+        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
+        // The platform admin composes owners' reads and provides nothing. Sandboxes, Fleet and
+        // Pi it finds per request (credits.ts), answering without them.
+        assert.deepEqual(sorted(declared), ['api', 'scope', 'state']);
+        assert.deepEqual(sorted([...optional]), []);
+        assert.deepEqual(actualProvided, []);
         return;
       }
       assert.equal(

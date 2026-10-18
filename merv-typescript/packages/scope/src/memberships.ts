@@ -14,6 +14,7 @@ import {
   type ProjectMembership,
   type ProjectInvitation,
   type Role,
+  type ScopePerson,
   type SharedUser,
   type Sql,
   type State,
@@ -861,5 +862,21 @@ export class Memberships {
       });
       return value;
     });
+  }
+  async people(): Promise<ScopePerson[]> {
+    const rows = await this.state.read((sql) =>
+      sql.all<{ issuer: string; subject: string; id: string | null; name: string; role: Role }>(
+        `SELECT u.issuer,u.subject,p.id,p.name,m.role FROM shared_users u
+         LEFT JOIN project_memberships m ON m.issuer=u.issuer AND m.subject=u.subject AND m.active=1
+         LEFT JOIN projects p ON p.id=m.project_id ORDER BY u.created_at,u.issuer,u.subject,m.created_at`,
+      ),
+    );
+    const people = new Map<string, ScopePerson>();
+    for (const { issuer, subject, id, name, role } of rows) {
+      const key = digest({ issuer, subject });
+      if (!people.has(key)) people.set(key, { issuer, subject, projects: [] });
+      if (id) people.get(key)!.projects.push({ projectId: id, name, role });
+    }
+    return [...people.values()];
   }
 }
