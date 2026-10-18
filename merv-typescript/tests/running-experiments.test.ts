@@ -1,9 +1,6 @@
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import {
   type Caller,
@@ -21,7 +18,7 @@ import {
   type ExperimentStanding,
 } from '@merv/experiments/running';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 const plan =
@@ -32,26 +29,7 @@ const plan =
  * review has used them all, an operator who owns the work, a reviewer and a reader.
  */
 async function assembled(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-running-experiments-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app, tool } = await httpApp(t, 'merv-running-experiments-');
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Running',
     actorName: 'Op',
@@ -78,14 +56,6 @@ async function assembled(t: TestContext) {
   };
   const reviewer = await issue('reviewer');
   const reader = await issue('reader');
-  const tool = async (name: string, token: string, input: unknown = {}) => {
-    const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    return { status: response.status, body: (await response.json()) as any };
-  };
   const board = async (token = boot.token) => {
     const answer = await tool('ui.running', token);
     assert.equal(answer.status, 200, JSON.stringify(answer.body));

@@ -8,6 +8,7 @@ import type { RemoteToolDefinition, ToolDefinition } from '@merv/api/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { ExactToolPolicy } from '@merv/scope/tool-policy';
+import { deferred as latch } from './fixtures/deferred.js';
 
 const caller = { actorId: 'alice', projectId: 'local-project' };
 const scope = {
@@ -34,13 +35,6 @@ function remote(
     handler: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
     ...overrides,
   };
-}
-function latch() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 for (const phase of ['authentication', 'parsing'] as const) {

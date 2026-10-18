@@ -3,8 +3,6 @@ import { currentExperiment } from './fixtures/current-experiment.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import {
@@ -19,7 +17,7 @@ import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
 import type { RunningRead } from '@merv/ui';
 import { reviewSections } from '@merv/reviews/running';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 /**
@@ -28,27 +26,7 @@ import { confirmedDelivery } from './fixtures/task-evidence.js';
  */
 
 async function fixture(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-running-reviews-'));
-  // The committed composition, browser layer included, on a port of its own.
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app, directory } = await httpApp(t, 'merv-running-reviews-');
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Running reviews',
     actorName: 'Operator',

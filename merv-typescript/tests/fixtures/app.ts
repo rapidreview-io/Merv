@@ -5,6 +5,10 @@
  * but switches off. Any other state entry, and every other plugin entry, is passed through exactly
  * as written.
  */
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { TestContext } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createApp as create } from '../../src/app.js';
@@ -53,4 +57,48 @@ export async function createApp({ feed, ...options }: ConfigurationOptions & { f
     ...(options.port === undefined ? {} : { port: options.port }),
     config: { plugins },
   });
+}
+
+/**
+ * The committed composition over HTTP in a new temporary directory: the API on a port of its own,
+ * the browser layer with no bundle, and `extra` entries after them. It stops and is removed after
+ * the test unless `cleanup` is false. `tool` POSTs one tool call with a bearer token.
+ */
+export async function httpApp(
+  t: TestContext,
+  prefix: string,
+  { cleanup = true, extra = [] }: { cleanup?: boolean; extra?: object[] } = {},
+) {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  const { plugins } = JSON.parse(
+    readFileSync(new URL('../../config/default.json', import.meta.url), 'utf8'),
+  ) as { plugins: { id: string; config?: unknown }[] };
+  const app = await createApp({
+    directory: join(directory, 'data'),
+    config: {
+      plugins: plugins
+        .map((entry) =>
+          entry.id === 'api'
+            ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
+            : entry.id === 'ui'
+              ? { ...entry, config: { assets: join(directory, 'nowhere') } }
+              : entry,
+        )
+        .concat(extra as never[]) as never,
+    },
+  });
+  if (cleanup)
+    t.after(async () => {
+      await app.stop();
+      rmSync(directory, { recursive: true, force: true });
+    });
+  const tool = async (name: string, token: string, input: unknown = {}) => {
+    const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    return { status: response.status, body: (await response.json()) as any };
+  };
+  return { app, directory, tool };
 }

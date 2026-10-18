@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type {
   Artifact,
@@ -23,7 +20,7 @@ import {
 } from '@merv/ui/running';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import { waveNode, wavePanel } from '../packages/reflections/src/running.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 
 /**
  * Reflections on the Running page, read through the assembled application: the open wave is
@@ -36,26 +33,7 @@ const earliest = (instants: string[]) =>
   instants.reduce((a, b) => (Date.parse(b) < Date.parse(a) ? b : a));
 
 async function fixture(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-running-reflections-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app } = await httpApp(t, 'merv-running-reflections-');
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Running',
     actorName: 'Owner',

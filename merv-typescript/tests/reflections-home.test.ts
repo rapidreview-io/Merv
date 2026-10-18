@@ -4,36 +4,14 @@
  * running an action's check.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 import type { Caller } from '@merv/contracts';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { counter } from './fixtures/statements.js';
 
 test('Home reads its waves in the same statements however many there are', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-reflections-home-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app } = await httpApp(t, 'merv-reflections-home-');
   const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'H', actorName: 'Owner' });
   const owner: Caller = {
     projectId: boot.project.id,

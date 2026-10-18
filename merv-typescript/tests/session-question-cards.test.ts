@@ -7,38 +7,16 @@
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 import type { Caller, RunningBoard } from '@merv/contracts';
 import { MervError } from '@merv/contracts';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
 
 test('a lens question marks its wave’s card until the lens it asked about ends', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-question-cards-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app } = await httpApp(t, 'merv-question-cards-');
   const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'Q', actorName: 'Owner' });
   const owner: Caller = {
     projectId: boot.project.id,

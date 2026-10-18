@@ -1,13 +1,11 @@
 import type { Task, TaskCreate } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import test, { type TestContext } from 'node:test';
 import type { Caller, RunningBoard, RunningNode, RunningPanel, Verdict } from '@merv/contracts';
 import { taskNode, type TaskStanding } from '../packages/tasks/src/running.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 /**
@@ -16,22 +14,7 @@ import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js
  * uses them up in two deliveries.
  */
 async function fixture(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-running-tasks-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
+  const { app, directory, tool } = await httpApp(t, 'merv-running-tasks-', { cleanup: false });
   t.after(async () => {
     await work.close();
     await app.stop();
@@ -59,14 +42,6 @@ async function fixture(t: TestContext) {
     reviewer = await issue('Reviewer', 'operator'),
     reader = await issue('Reader', 'reader');
 
-  const tool = async (name: string, token: string, input: unknown = {}) => {
-    const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    return { status: response.status, body: (await response.json()) as any };
-  };
   const board = async (token = boot.token) => {
     const answer = await tool('ui.running', token);
     assert.equal(answer.status, 200, JSON.stringify(answer.body));

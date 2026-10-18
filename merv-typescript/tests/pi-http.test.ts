@@ -8,6 +8,7 @@ import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 import { PiStreams } from '../packages/pi/src/stream.js';
 import type { PiService } from '../packages/pi/src/service.js';
+import { deferred } from './fixtures/deferred.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig & RelayTuning) =>
@@ -38,14 +39,6 @@ test('evicted transient tails get a new generation so reconnect can replace old 
   streams.publish('second', { commandId: 'command', type: 'text', text: 'unread' });
   assert.throws(() => streams.subscribe('second', () => {}), { code: 'pi_stream_busy' });
 });
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 async function within<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
