@@ -1024,13 +1024,7 @@ export class CodeUnitService {
     };
     const input = async (commit: string, seen: Set<string>): Promise<ResolutionInput> => {
       const units = await work(commit, seen);
-      const main =
-        !units.length &&
-        !!(await tx.get(
-          'SELECT 1 FROM code_edges WHERE project_id=? AND target_ref=?',
-          projectId,
-          `main:${commit}`,
-        ));
+      const main = !units.length && (await this.bases.isMain(tx, projectId, commit));
       return { commit, units, ...(main ? { main } : {}) };
     };
     const side = async (key: string, commit: string) => {

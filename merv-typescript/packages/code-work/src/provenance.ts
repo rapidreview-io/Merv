@@ -53,14 +53,7 @@ export async function resolutionProvenance(
       commit,
     );
     // Main, merged in for work that publishes, is admitted code and brings no authors.
-    if (
-      !rows.length &&
-      (await tx.get(
-        'SELECT 1 FROM code_edges WHERE project_id=? AND target_ref=?',
-        projectId,
-        `main:${commit}`,
-      ))
-    ) {
+    if (!rows.length && (await bases.isMain(tx, projectId, commit))) {
       main.push(commit);
       continue;
     }
