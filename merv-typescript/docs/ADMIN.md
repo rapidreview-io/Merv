@@ -82,3 +82,53 @@ no session, conversation or lease. Web refuses it (`403 web_forbidden`), so a dr
 project's web budget. Any other principal sending the header, and every MCP request with it, is
 refused `403 platform_forbidden`. The first read of a project in an hour records `project.read` in
 the admin audit log.
+
+## v2: operable credentials and credits (founder review, 2026-10-18)
+
+Every view of a resource carries the control that changes it. Every fact is named by what it is
+for, not by its implementation name. Details live in a right-side drawer, not in more columns.
+
+### Credentials
+
+- **Purpose labels come from the owner.** Each plugin describes its own secret fields in its
+  config schema (`z.string().describe('Agent model calls · OpenAI')`), and
+  `composition.environment()` returns that description beside `{ plugin, field, env }`. Sandbox
+  provider fields keep their provider plugin's own field descriptions. The admin keeps no list of
+  purposes.
+- **Platform secrets** (`GET /admin/credentials`): rows `{ purpose, env, plugin, field, set,
+  lastChanged, lastOk, lastFailure, dead, editable }`, grouped as Agent, Fleet agents, Fleet
+  machines, Platform services. No fingerprint.
+- **Sandbox provider keys** are their own table: one row per provider instance and credential
+  field: `{ provider, plugin, source: host | user, namespace, field, description, secret, present,
+  health, healthReason, verifiedAt, editable }`.
+- `POST /admin/credentials/reveal` `{ env }` or `{ provider, namespace, field }` returns
+  `{ value }`. It is one secret per call, never cached, and recorded in the audit as
+  `credentials.reveal`. The page hides the value after 30 s.
+- `POST /admin/credentials/change` `{ env, value }` or `{ provider, namespace, fields }` returns
+  `{ ok, reloaded: string[] }` and is recorded as `credentials.change`.
+  - **Platform secret:** `@merv/secrets` keeps an encrypted platform-secret store (AES-GCM under
+    `MERV_SECRETS_ENCRYPTION_KEY`) whose value overrides the env value. The composition root
+    applies stored values before plugins load. After a change, it applies the new value and
+    reloads only the plugin entries whose config names that env.
+  - **Sandbox provider:** the key goes through Sandboxes' own save path (verified against the
+    provider before it is stored); a host instance's key is an override of its credential env.
+
+### Credits
+
+- `GET /admin/credits` stays the list: one row per person with a total per credit type.
+- `GET /admin/credits/people/:person` is the drawer: for each credit type `{ kind, label, unit,
+  limit, used: { day, week, month, total }, left }`.
+  - Internal types are read from their owners: the Agent's tokens (Pi), Fleet agent tokens (Fleet
+    model ledger), and Fleet VM dollars (Fleet allocations).
+  - External types: one per sandbox provider (Sandboxes credit pools and settlements, through the
+    person's accounts), with their grants and schedules.
+- `POST /admin/credits/people/:person/limits` `{ kind, limit }` sets a per-person limit, kept by
+  the owner: Pi's per-person token limit, Fleet's per-person token and daily-dollar limits.
+  Recorded as `credits.limit`.
+- `POST /admin/credits/grants` (existing) takes `{ person }` as well as `{ accountId }`. A person
+  is granted on their own account.
+- **Every person has a Sandboxes account.** The Merv↔Sandboxes bridge (`@merv/sandboxes/integration`)
+  makes sure each verified person has their own account and membership: at sign-in, and for
+  everyone already signed in. It grants the configured base credits once
+  (`newPersonCredits: { lambda: "<usd>" }`, from `MERV_NEW_PERSON_CREDITS`), under an idempotent
+  grant id per person.
