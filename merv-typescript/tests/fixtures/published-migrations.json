@@ -967,7 +967,7 @@
       "component": "secrets",
       "version": 2,
       "hash": "ba06a9394e639df2584271ca884bb2c5a5d0431d716f19f69ac41bdb9de25113",
-      "published": false
+      "published": true
     },
     {
       "component": "sandboxes-native",
@@ -1251,13 +1251,13 @@
       "component": "fleet",
       "version": 6,
       "hash": "ec7dcf9a283a1653ca5673445716c1ae4e9b5a47fad8a1289354c4216705388d",
-      "published": false
+      "published": true
     },
     {
       "component": "pi",
       "version": 5,
       "hash": "c1d643f95098cdadfb99c248ad027ece716eb32a82c51c5704ab42ec30298a7a",
-      "published": false
+      "published": true
     }
   ]
 }
