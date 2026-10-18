@@ -594,14 +594,7 @@ export class SessionThreads {
     );
     return await this.reading(caller, async (tx) => {
       for (const id of ids) await this.host.readable(caller, id, tx);
-      const threads = await tx.all<Row>(
-        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
-        caller.projectId,
-        caller.projectId,
-        JSON.stringify(ids),
-      );
-      const standing = await this.standingOf(tx, caller.projectId, threads);
-      return (await this.viewed(tx, threads, standing)).map(
+      return (await this.ofWork(tx, caller.projectId, ids)).map(
         ({ name: _name, workflow: _workflow, ...view }) => view,
       );
     });
@@ -625,17 +618,10 @@ export class SessionThreads {
         caller.actorId,
       );
       check(own, 'session_not_found', 'Session not found', 404);
-      const threads = await tx.all<Row>(
-        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id=?) ORDER BY _merv_rowid',
-        caller.projectId,
-        caller.projectId,
-        own.instance_id,
-      );
-      const standing = await this.standingOf(tx, caller.projectId, threads);
       // Whether a person may message or ask a thread is theirs to read, not its worker's.
       return {
         instanceId: own.instance_id,
-        threads: (await this.viewed(tx, threads, standing)).map(
+        threads: (await this.ofWork(tx, caller.projectId, [own.instance_id])).map(
           ({ name: _name, workflow: _workflow, takesMessage: _takes, asks: _asks, ...view }) =>
             view,
         ),
@@ -799,6 +785,16 @@ export class SessionThreads {
       threads: threads.map((thread) => thread.id),
       instances: threads.map((thread) => thread.instance_id),
     });
+  }
+  /** Every thread with a visit on any of these work items, oldest first, viewed. */
+  private async ofWork(tx: Transaction, projectId: string, instanceIds: string[]) {
+    const threads = await tx.all<Row>(
+      'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
+      projectId,
+      projectId,
+      JSON.stringify(instanceIds),
+    );
+    return await this.viewed(tx, threads, await this.standingOf(tx, projectId, threads));
   }
   /** A read of the project's threads by a person or their key, never a worker. */
   private async reading<T>(caller: Caller, read: (tx: Transaction) => Promise<T>): Promise<T> {
