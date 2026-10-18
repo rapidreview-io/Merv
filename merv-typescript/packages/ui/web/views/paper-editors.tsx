@@ -2,7 +2,7 @@ import { useState, type InputHTMLAttributes, type ReactNode } from 'react';
 import type { PaperCitation, PaperRevision, PaperSection } from '@merv/paper/models';
 import { useCommand } from '../mutations';
 import { Area, Failure, Field, OpenedForm, Submit, useArtifacts } from '../components';
-import { EditIcon, PlusIcon } from '../icons';
+import { Icon } from '../icons';
 import { RecordPicker, filePick } from '../record-picker';
 import { useSession } from '../session';
 
@@ -26,7 +26,6 @@ export function HeadTool({
   tool: string;
   onClick: () => void;
 }) {
-  const Glyph = glyph === 'edit' ? EditIcon : PlusIcon;
   return (
     <button
       type="button"
@@ -36,7 +35,7 @@ export function HeadTool({
       title={label}
       onClick={onClick}
     >
-      <Glyph />
+      <Icon name={glyph} />
     </button>
   );
 }

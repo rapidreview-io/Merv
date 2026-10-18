@@ -1,5 +1,6 @@
 import {
   Component,
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -12,8 +13,8 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
-import { useTool, type ApiError } from './api';
-import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
+import { readOnly, useTool, type ApiError } from './api';
+import { Icon } from './icons';
 import {
   capital,
   clockOf,
@@ -135,7 +136,7 @@ const TONES: [Tone, string][] = [
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
       'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
-      'held waiting_inputs retry_wait awaiting_resolution',
+      'held waiting_inputs retry_wait awaiting_resolution uncertain releasing',
   ],
   [
     'bad',
@@ -148,7 +149,7 @@ const TONES: [Tone, string][] = [
     'archived inactive disabled skipped ignored observer reader retired unassigned paused idle ' +
       'stopped ' +
       'draft none unpublished unverified cancelled closed expired not-published not-applicable ' +
-      'metadata-only ended suspended',
+      'metadata-only ended suspended released',
   ],
 ];
 const TONE_OF = new Map(
@@ -158,8 +159,8 @@ export const toneOf = (value: string, states?: StateWords) =>
   TONE_OF.get(value) ?? (states?.working.has(value) ? 'warn' : 'neutral');
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
-const Word = ({ tone, value }: { tone: string; value: string }) => (
-  <span className={cx('status', `status--${tone}`)}>
+export const Word = ({ tone, value, title }: { tone: string; value: string; title?: string }) => (
+  <span className={cx('status', `status--${tone}`)} title={title}>
     <span className="status-dot" aria-hidden="true" />
     {words(value)}
   </span>
@@ -235,6 +236,7 @@ export function ConfirmAction({
   note,
   danger = true,
   ready = true,
+  opened = false,
   onToggle,
   onConfirm,
   children,
@@ -253,12 +255,14 @@ export function ConfirmAction({
   danger?: boolean;
   /** Whether what the guard asks for is given: until it is, the act cannot be confirmed. */
   ready?: boolean;
+  /** Open on arrival, where a menu already chose the act and the guard is its next step. */
+  opened?: boolean;
   /** Said as the guard opens and closes, so a caller can draw only the open one. */
   onToggle?(open: boolean): void;
   onConfirm(): void | Promise<boolean | void>;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(opened);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (open) box.current?.querySelector('button')?.focus();
@@ -267,6 +271,8 @@ export function ConfirmAction({
     setOpen(next);
     onToggle?.(next);
   };
+  // The drill-in reads: no verb is drawn there, guarded or not.
+  if (readOnly()) return null;
   if (!open)
     return (
       <button className="btn" onClick={() => show(true)}>
@@ -308,7 +314,7 @@ export function ConfirmAction({
  */
 export const Summary = ({ children, ...rest }: HTMLAttributes<HTMLElement>) => (
   <summary {...rest}>
-    <ChevronRightIcon size={12} className="caret" />
+    <Icon name="chevron-right" size={12} className="caret" />
     {children}
   </summary>
 );
@@ -800,11 +806,12 @@ export const Submit = ({
   retry?: boolean;
   disabled?: boolean;
   saving?: string;
-}) => (
-  <button type="submit" className="btn btn--primary" disabled={busy || disabled}>
-    {busy ? saving : retry ? 'Retry same request' : label}
-  </button>
-);
+}) =>
+  readOnly() ? null : (
+    <button type="submit" className="btn btn--primary" disabled={busy || disabled}>
+      {busy ? saving : retry ? 'Retry same request' : label}
+    </button>
+  );
 
 /**
  * Machine text is there to be copied, not read: one glyph takes all of it to the
@@ -834,7 +841,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
         )
       }
     >
-      {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+      {copied ? <Icon name="check" size={14} /> : <Icon name="copy" size={14} />}
     </button>
   );
 }
@@ -888,6 +895,7 @@ export function ResearchCommand({
     conflictCode: 'revision_conflict',
     onConflict: onSaved,
   });
+  if (readOnly()) return null;
   return (
     <div className="stack">
       <Failure message={command.error} />
@@ -910,7 +918,7 @@ export function KV({ rows }: { rows: KVRow[] }) {
   return (
     <dl className="kv">
       {rows
-        .filter((row): row is [string, ReactNode] => !!row)
+        .filter((row): row is [string, ReactNode] => !!row && row[1] != null && row[1] !== '')
         .map(([label, value]) => (
           <div className="kv-row" key={label}>
             <dt>{label}</dt>
@@ -933,58 +941,18 @@ export const timeRows = (createdAt?: string | null, updatedAt?: string | null): 
     (!createdAt || stamp(updatedAt) !== stamp(createdAt)) && ['Updated', <Stamp at={updatedAt} />],
 ];
 
-/** One column declared once: its key, its heading, and what a row says in it. */
+/** One column declared once: its key, its heading, and what a row says in it; `num` a figure. */
 export interface Column<T> {
   key: string;
   label: string;
   render(row: T): ReactNode;
-  width?: string;
+  num?: boolean;
 }
-export const col = <T,>(
-  key: string,
-  label: string,
-  render: (row: T) => ReactNode,
-  width?: string,
-): Column<T> => ({ key, label, render, width });
-
-export function Table<T>({
-  columns,
-  rows,
-  keyOf,
-}: {
-  columns: Column<T>[];
-  rows: T[];
-  keyOf(row: T): string;
-}) {
-  return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                scope="col"
-                style={column.width ? { width: column.width } : undefined}
-              >
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={keyOf(row)}>
-              {columns.map((column) => (
-                <td key={column.key}>{column.render(row)}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+export const col = <T,>(key: string, label: string, render: (row: T) => ReactNode): Column<T> => ({
+  key,
+  label,
+  render,
+});
 
 /**
  * Facts that are not records, ruled on one grid: the head and every row read the
@@ -999,12 +967,17 @@ export function Ruled<T>({
   columns,
   rows,
   keyOf,
+  row,
+  under,
 }: {
   label: string;
   template: string;
   columns: Column<T>[];
   rows: T[];
   keyOf(row: T): string;
+  /** A row's own class and press, and what it unfolds under itself. */
+  row?(row: T): HTMLAttributes<HTMLDivElement>;
+  under?(row: T): ReactNode;
 }) {
   return (
     <div
@@ -1015,21 +988,32 @@ export function Ruled<T>({
     >
       <div className="ruled-head" role="row">
         {columns.map((column) => (
-          <span className="label" role="columnheader" key={column.key}>
+          <span className={cx('label', column.num && 'num')} role="columnheader" key={column.key}>
             {column.label}
           </span>
         ))}
       </div>
-      {rows.map((row) => (
-        <div className="ruled-row" role="row" key={keyOf(row)}>
-          {columns.map((column, at) => (
-            // The first fact is the row's own name; the rest say which fact they are.
-            <div role="cell" key={column.key} data-label={at ? column.label : undefined}>
-              {column.render(row)}
+      {rows.map((item) => {
+        const own = row?.(item);
+        return (
+          <Fragment key={keyOf(item)}>
+            <div {...own} className={cx('ruled-row', own?.className)} role="row">
+              {columns.map((column, at) => (
+                // The first fact is the row's own name; the rest say which fact they are.
+                <div
+                  role="cell"
+                  key={column.key}
+                  className={column.num ? 'num' : undefined}
+                  data-label={at ? column.label : undefined}
+                >
+                  {column.render(item)}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ))}
+            {under?.(item)}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

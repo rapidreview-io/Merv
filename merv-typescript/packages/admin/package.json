@@ -1,0 +1,26 @@
+{
+  "name": "@merv/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@merv/api": "0.1.0",
+    "@merv/contracts": "0.1.0",
+    "@merv/customer-experiments": "0.1.0",
+    "@merv/fleet": "0.1.0",
+    "@merv/identity": "0.1.0",
+    "@merv/pi": "0.1.0",
+    "@sandboxes/accounts": "0.1.0",
+    "@sandboxes/auth": "0.1.0",
+    "@sandboxes/billing": "0.1.0",
+    "@sandboxes/kernel": "0.1.0",
+    "@sandboxes/merv-host": "0.1.0",
+    "@sandboxes/providers": "0.1.0",
+    "cordis": "4.0.0-rc.10",
+    "zod": "^3.25.0"
+  }
+}

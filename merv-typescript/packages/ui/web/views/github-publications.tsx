@@ -13,7 +13,7 @@ import {
   kindStyle,
   words,
 } from '../components';
-import { ExternalIcon } from '../icons';
+import { Icon } from '../icons';
 import { useCommand, useCurrent } from '../mutations';
 
 /**
@@ -339,7 +339,7 @@ export function GitHubPublications({
           <div className="pr-line">
             <a className="pr-out cluster" href={p.pull.url} target="_blank" rel="noreferrer">
               Open on GitHub
-              <ExternalIcon size={14} />
+              <Icon name="external" size={14} />
             </a>
           </div>
         )}

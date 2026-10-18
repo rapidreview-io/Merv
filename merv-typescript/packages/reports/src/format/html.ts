@@ -1,6 +1,7 @@
 // HTML for report sections. Styling lives here only; agents never touch it.
 
 import { marked, type Tokens } from 'marked';
+import { escapeHtml } from '@merv/contracts/text';
 import type { Report, Section } from './parse.js';
 
 export const PAGE = {
@@ -23,14 +24,8 @@ PAGE.contentH = PAGE.height - PAGE.padTop - PAGE.padBottom;
 
 export const spanWidth = (span: number) => span * PAGE.colW + (span - 1) * PAGE.gutter;
 
-const escape = (s: string) =>
-  s.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-  );
-
 // Agent text never becomes markup: raw HTML in Markdown is escaped before rendering.
-marked.use({ renderer: { html: (token: Tokens.HTML | Tokens.Tag) => escape(token.text) } });
+marked.use({ renderer: { html: (token: Tokens.HTML | Tokens.Tag) => escapeHtml(token.text) } });
 const inline = (text: string) => marked.parseInline(text, { async: false }) as string;
 
 export const CSS = `
@@ -103,10 +98,10 @@ export function sectionHtml(
   section: Pick<Section, 'name' | 'blocks'>,
   { heading = true } = {},
 ): string {
-  const parts = heading ? [`<h2>${escape(section.name)}</h2>`] : [];
+  const parts = heading ? [`<h2>${escapeHtml(section.name)}</h2>`] : [];
   for (const b of section.blocks) {
     if (b.type === 'chart')
-      parts.push(`<div class="chart" data-chart="${escape(b.chart!.spec.id)}"></div>`);
+      parts.push(`<div class="chart" data-chart="${escapeHtml(b.chart!.spec.id)}"></div>`);
     else if (b.type === 'table') parts.push(tableHtml(b.token as Tokens.Table));
     else if (section.name === 'References' && b.type === 'list')
       parts.push(referencesHtml(b.token as Tokens.List));
@@ -124,7 +119,7 @@ export function bandHtml(report: Report): string {
   const rest = res ? { name: res.name, blocks: res.blocks.filter((b) => b !== answer) } : null;
   const meta = report.meta as { id?: unknown; date?: unknown };
   return `
-<div class="meta"><span>${escape(String(meta.id ?? ''))}</span><span>${escape(String(meta.date ?? ''))}</span></div>
+<div class="meta"><span>${escapeHtml(String(meta.id ?? ''))}</span><span>${escapeHtml(String(meta.date ?? ''))}</span></div>
 <h1>${inline(report.title ?? '')}</h1>
 <div class="band">
   <div class="left">${inq ? sectionHtml(inq, { heading: false }) : ''}${con ? `<span class="label">Constraints</span>${sectionHtml(con, { heading: false })}` : ''}</div>

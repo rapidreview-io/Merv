@@ -1,11 +1,28 @@
 /** Text with something to read: not only whitespace and invisible format characters. */
 export const visible = (text: string) => /[^\s\p{Cf}]/u.test(text);
+/** A name nobody wrote is not one: an identifier (a UUID, a minted id's hex, a sign-in key)
+ *  names nobody. */
+export const personName = (name: string | undefined) =>
+  name && !/[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/.test(name) ? name : undefined;
 /** At most `max` UTF-16 units, never ending in half a surrogate pair. */
 export const clip = (text: string, max: number) =>
   text.length > max ? text.slice(0, max).replace(/\p{Surrogate}$/u, '') : text;
 /** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
 export const ellipsis = (text: string, max: number) =>
   text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/** A server-sent event frame's data: the values of its `data:` lines, joined by newlines. */
+export const eventData = (frame: string) =>
+  frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
+/** Text as HTML character data or a quoted attribute value: never markup. */
+export const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+  );
 /** The first clause of a recorded sentence, in its own words; null where nothing was written. */
 export function firstSentence(text: string | null | undefined, limit = 140): string | null {
   const trimmed = (text ?? '').trim();

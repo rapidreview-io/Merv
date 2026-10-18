@@ -1,5 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
-export { mapAsync, everyAsync } from './async.js';
+export { mapAsync, everyAsync, sleep } from './async.js';
 export type {
   ToolPolicy,
   ToolGrant,
@@ -14,7 +14,7 @@ import 'cordis';
 export type { Json, Data } from './data.js';
 export { cleanText, clip, ellipsis, itemTitle, visible } from './text.js';
 export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
-export { ordered } from './order.js';
+export { byCodeUnit, ordered } from './order.js';
 export {
   allowedOrigin,
   allowedUrl,
@@ -24,6 +24,7 @@ export {
   origin,
   OutboundError,
   outboundFailure,
+  readCapped,
   record,
   sized,
   Slots,
@@ -260,6 +261,14 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
   };
   return (value === undefined && limits.undefined !== 'reject' ? undefined : copy(value, 0)) as T;
 }
+/** Freeze a detached data tree; keep live service handles outside this traversal. */
+export function freezeData<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeData(child);
+    Object.freeze(value);
+  }
+  return value;
+}
 /** Parse a detached copy of `value`; refusals carry `code` and name the failing fields. */
 export function parsed<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
@@ -288,8 +297,6 @@ export interface ReceiptTable {
   result?: string;
   /** Set when the table stores the operation beside a hash of the input alone. */
   operation?: string;
-  /** An older hash recipe whose receipts still replay. */
-  legacyHash?: string;
   conflict?: string;
 }
 /** How receipted() compares and replays a table's receipts. */
@@ -327,9 +334,7 @@ export class RequestJournal {
     if (!found) return undefined;
     const { receipt_hash: hash, receipt_operation: kept, ...previous } = found;
     check(
-      (operation === undefined || kept === operation) &&
-        (hash === this.hash ||
-          (this.receipt.legacyHash !== undefined && hash === this.receipt.legacyHash)),
+      (operation === undefined || kept === operation) && hash === this.hash,
       'request_conflict',
       this.receipt.conflict ?? 'requestId was already used with different input',
       409,
@@ -628,11 +633,7 @@ export interface State {
     tx?: Transaction,
   ): Promise<StoredEvent | undefined>;
   /** nextEvent's id alone, for a reader that only asks whether one is due. */
-  nextEventId(
-    after: number,
-    types: readonly string[],
-    tx?: Transaction,
-  ): Promise<number | undefined>;
+  nextEventId(after: number, types: readonly string[]): Promise<number | undefined>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;
 }
@@ -773,6 +774,11 @@ export interface ConversationAuthority {
 export interface ManagedRunnerAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
+/** Whether a platform caller's person is a platform administrator, asked for each of its
+ *  decisions in its project; only the provider knows who the administrators are. */
+export interface PlatformAuthority {
+  vouches(caller: Caller): boolean | Promise<boolean>;
+}
 /**
  * Append a domain event stamped with the caller's source. That source is audit provenance only:
  * authority is still rechecked by Scope inside the operation.
@@ -802,9 +808,18 @@ export interface PluginStatus {
   required: boolean;
   missingDependencies: string[];
 }
+/** An environment variable a plugin entry's config names (a string field whose key ends in `Env`). */
+export interface ConfiguredEnv {
+  plugin: string;
+  /** The config field's dotted path, such as `host.credentialEnv`. */
+  field: string;
+  env: string;
+}
 /** The composition root's plugin lifecycle report; every reader of plugin state shares it. */
 interface Composition {
   status(): PluginStatus[];
+  /** Every environment variable the enabled entries' configs name, defaults included. */
+  environment(): ConfiguredEnv[];
 }
 export function eventSource(caller: Caller): Data {
   return caller.session

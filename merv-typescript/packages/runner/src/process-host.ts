@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { lstatSync, readFileSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { check, sessionSecretPattern } from '@merv/contracts';
+import { check, sessionSecretPattern, sha256Hex } from '@merv/contracts';
 import { LocalLedger, terminalLaunch, type LaunchRecord } from './ledger.js';
 
 export interface ProcessCommand {
@@ -236,11 +235,8 @@ export class ProcessHost {
     );
   }
   private request(id: string, message: Record<string, unknown>): Promise<void> {
-    const socketDirectory = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(this.ledger.directory).digest('hex').slice(0, 16)}`;
-    const path = join(
-      socketDirectory,
-      `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`,
-    );
+    const socketDirectory = `/tmp/merv-runner-${process.getuid!()}-${sha256Hex(this.ledger.directory).slice(0, 16)}`;
+    const path = join(socketDirectory, `${sha256Hex(id).slice(0, 24)}.sock`);
     // The guardian listens only in a folder of this user's own that nobody else may enter:
     // anywhere else, no guardian of this launch listens yet.
     const folder = lstatSync(socketDirectory, { throwIfNoEntry: false });

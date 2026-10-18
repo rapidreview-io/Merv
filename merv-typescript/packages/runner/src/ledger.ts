@@ -1,8 +1,8 @@
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, lstatSync, openSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { plain } from '@merv/contracts';
+import { plain, sha256Hex } from '@merv/contracts';
 import { privateDirectory, syncPath } from '@merv/contracts/private-directory';
 
 export type LaunchStatus =
@@ -271,11 +271,7 @@ export class LocalLedger {
       throw new Error('Invalid launch reservation');
     const metadata = encode(input.metadata ?? {});
     const now = Date.now();
-    const runDirectory = join(
-      this.directory,
-      'launches',
-      createHash('sha256').update(input.id).digest('hex'),
-    );
+    const runDirectory = join(this.directory, 'launches', sha256Hex(input.id));
     privateDirectory(runDirectory);
     syncPath(join(this.directory, 'launches'));
     // `fingerprint` is a retired column the identity trigger still names.

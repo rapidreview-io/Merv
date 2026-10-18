@@ -1,31 +1,18 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { sandboxesHostCapabilities } from '../packages/sandboxes/src/host-capabilities.js';
 import { loadConfiguration } from '../src/config.js';
-import { writeArchitectureExplorer } from './architecture-explorer.js';
-import { writeAtlas } from './atlas.js';
+import { writeArchitectureExplorer, type InventoryPlugin } from './architecture-explorer.js';
+import { walk, writeAtlas } from './atlas.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const walk = (path: string): string[] =>
-  readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
-    entry.isDirectory() ? walk(resolve(path, entry.name)) : [resolve(path, entry.name)],
-  );
 const config = JSON.parse(readFileSync(resolve(root, 'config/default.json'), 'utf8')) as {
   plugins: { id: string; name: string }[];
 };
 const configured = new Set(config.plugins.map((p) => p.id));
-const plugins: {
-  plugin: string;
-  source: string;
-  provides: string[];
-  requires: string[];
-  optional: string[];
-  kind: string;
-  runtime: 'server' | 'machine';
-  defaultConfiguration: boolean;
-}[] = [];
+const plugins: InventoryPlugin[] = [];
 const sources = [...walk(resolve(root, 'packages')), ...walk(resolve(root, 'src'))];
 for (const file of sources.filter(
   (p) => p.includes('/src/') && p.endsWith('.ts') && !p.includes('/node_modules/'),

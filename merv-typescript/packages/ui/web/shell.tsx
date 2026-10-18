@@ -1,3 +1,4 @@
+import { personName } from '@merv/contracts/text';
 import type { UiRowDescription } from '@merv/ui/rows';
 import {
   createContext,
@@ -10,20 +11,19 @@ import {
 } from 'react';
 import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
-import { useTool, type Account } from './api';
+import { readOnly, safely, useTool, type Account } from './api';
 import { useSession } from './session';
 import { cx } from './components';
-import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
+import { Icon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
-import { initials, personName } from './views/people';
+import { initials } from './views/people';
 import { accountLines, documentTitle, holds as held, railSections } from './navigation';
 import { useMenu } from './record-picker';
 import { useTrail } from './trail';
 import { useNow } from './views/needs-you';
 
 import type { ShellData } from './shell-types';
-export type { PluginState, ShellData, WorkflowShape } from './shell-types';
 
 const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 
@@ -40,7 +40,7 @@ const unwell = (row: UiRowDescription) =>
  * badge (Agents: working·waiting) carries that; a second dot appears only when the
  * row behind it is unwell.
  */
-function RailRow({
+export function RailRow({
   to,
   label,
   icon,
@@ -73,7 +73,7 @@ function RailRow({
       }
       title={sick?.status.detail}
     >
-      <RowIcon name={icon} />
+      <Icon name={icon} className="rail-icon" />
       <span className="rail-row-label">{label}</span>
       {counted && <span className="rail-count">{count}</span>}
       {!counted && badge && (
@@ -92,14 +92,52 @@ function RailRow({
   );
 }
 
-/** Whether this sign-in reaches more than the one project it is in. */
+/** Whether this sign-in reaches more than the one project it is in; the drill-in reads one. */
 const switchable = (account: Account) =>
-  account.kind === 'user' || (account.kind === 'key' && account.key.grantScope === 'account');
+  !readOnly() &&
+  (account.kind === 'user' || (account.kind === 'key' && account.key.grantScope === 'account'));
 
 function AccountFoot() {
   const { actor, account, signOut, chooseProject } = useSession();
-  // A person is named, never identified: a directory name that is an id names nobody.
-  const who = personName(actor.name) ?? signedInEmail();
+  return (
+    <AccountMenu
+      // A person is named, never identified: a directory name that is an id names nobody.
+      who={personName(actor.name) ?? signedInEmail()}
+      role={actor.role}
+      signOut={signOut}
+      chooseProject={switchable(account) ? chooseProject : undefined}
+    />
+  );
+}
+
+/** The rail's head: the wordmark, and the control that hides the rail. */
+export const RailHead = ({ onHide }: { onHide(): void }) => (
+  <div className="rail-util">
+    <span className="rail-wordmark">merv</span>
+    <button
+      type="button"
+      className="sidebar-hide"
+      onClick={onHide}
+      title={`Hide sidebar (${SIDEBAR_KB})`}
+      aria-label="Hide sidebar"
+    >
+      <Icon name="sidebar" size={18} />
+    </button>
+  </div>
+);
+
+/** Who is signed in, at the rail's foot, and the menu it opens: the theme, and the way out. */
+export function AccountMenu({
+  who,
+  role: held,
+  signOut,
+  chooseProject,
+}: {
+  who: string | undefined;
+  role: string;
+  signOut(): void;
+  chooseProject?(): void;
+}) {
   const theme = useSyncExternalStore(onWorn, worn);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -108,7 +146,7 @@ function AccountFoot() {
   // cursor back to the row, and Tab or a click elsewhere leaves and shuts it.
   useMenu(ref, open, () => setOpen(false));
   // The role is a second line only where it says something the name did not.
-  const [name, role] = accountLines(who, actor.role);
+  const [name, role] = accountLines(who, held);
   const said = [name, role].filter(Boolean).join(' · ');
   const item = (label: ReactNode, act: () => void) => (
     <button type="button" role="menuitem" tabIndex={-1} className="account-menu-item" onClick={act}>
@@ -134,14 +172,14 @@ function AccountFoot() {
           <span className="account-name">{name}</span>
           {role && <span className="account-role">{role}</span>}
         </span>
-        <ChevronsIcon className="account-caret" />
+        <Icon name="chevrons" className="account-caret" />
       </button>
       {open && (
         // The row it opens from already says whose menu this is, so the menu does not.
         // It is drawn over the row and written after it, so the keyboard meets them in order.
         <div className="account-menu" role="menu" aria-label="Account">
           {item(<>Theme · {theme}</>, () => wear(theme === 'dark' ? 'light' : 'dark'))}
-          {switchable(account) && item('Switch project', chooseProject)}
+          {chooseProject && item('Switch project', chooseProject)}
           <div className="account-menu-sep" role="separator" />
           {/* Keys are a setting, and live under Settings › Keys with the rest. */}
           {item('Sign out', signOut)}
@@ -213,19 +251,9 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
     );
   return (
     <aside className="sidebar" aria-label="Primary">
-      <div className="rail-util">
-        <span className="rail-wordmark">merv</span>
-        <button
-          type="button"
-          className="sidebar-hide"
-          onClick={onHide}
-          title={`Hide sidebar (${SIDEBAR_KB})`}
-          aria-label="Hide sidebar"
-        >
-          <SidebarIcon size={18} />
-        </button>
-      </div>
-      {switchable(account) ? (
+      <RailHead onHide={onHide} />
+      {/* The drill-in names the project in its own line above the shell. */}
+      {readOnly() ? null : switchable(account) ? (
         // The project's name is the switch, so where to change it is where it is named.
         <button
           type="button"
@@ -234,7 +262,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
           title="Switch project"
         >
           <span className="rail-project-name">{project.name}</span>
-          <ChevronsIcon className="rail-project-caret" />
+          <Icon name="chevrons" className="rail-project-caret" />
         </button>
       ) : (
         <div className="rail-project">
@@ -350,20 +378,44 @@ export function useShell() {
   return useTool<ShellData>('ui.shell', {}, { every: 30000 });
 }
 
+/** Whether the rail is shown, kept for the browser; ⌘B shows or hides it. */
+export function useRailOpen() {
+  const [open, setOpen] = useState(() =>
+    safely(() => localStorage.getItem('merv:sidebar') !== 'closed', true),
+  );
+  useEffect(
+    () => safely(() => localStorage.setItem('merv:sidebar', open ? 'open' : 'closed')),
+    [open],
+  );
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        setOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  return [open, setOpen] as const;
+}
+
 export function ShellFrame({
   children,
   sidebar,
+  name,
   open,
   onShow,
 }: {
   children: ReactNode;
   sidebar: ReactNode;
+  /** What the shell frames — the project, or the platform — for the phone's bar and the tab. */
+  name: string;
   open: boolean;
   onShow(): void;
 }) {
   const location = useLocation();
   const navigationType = useNavigationType();
-  const { project } = useSession();
   useTrail();
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigation = useRef<HTMLDivElement>(null);
@@ -388,17 +440,17 @@ export function ShellFrame({
   useEffect(() => {
     const page = main.current;
     if (!page) return;
-    const name = () => {
+    const retitle = () => {
       const heading = page.querySelector('h1');
       const said = (heading?.querySelector('.lede-here') ?? heading)?.textContent ?? undefined;
-      const title = documentTitle(said, project.name);
+      const title = documentTitle(said, name);
       if (document.title !== title) document.title = title;
     };
-    const watch = new MutationObserver(name);
+    const watch = new MutationObserver(retitle);
     watch.observe(page, { subtree: true, childList: true, characterData: true });
-    name();
+    retitle();
     return () => watch.disconnect();
-  }, [project.name]);
+  }, [name]);
   useEffect(() => {
     setMobileOpen(false);
     if (previousPath.current !== location.pathname && navigationType !== 'POP') {
@@ -485,11 +537,9 @@ export function ShellFrame({
           aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           onClick={() => setMobileOpen((v) => !v)}
         >
-          <SidebarIcon size={18} />
+          <Icon name="sidebar" size={18} />
         </button>
-        <span className="topbar-title" title={project.id}>
-          {project.name}
-        </span>
+        <span className="topbar-title">{name}</span>
       </header>
       {/* display:contents wrapper: closes the mobile overlay on any link click. */}
       <div
@@ -533,7 +583,7 @@ export function ShellFrame({
           aria-label="Show sidebar"
         >
           <span className="sb-edge-glyph">
-            <SidebarIcon size={18} />
+            <Icon name="sidebar" size={18} />
           </span>
         </button>
       )}

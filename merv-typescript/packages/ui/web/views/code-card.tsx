@@ -18,7 +18,7 @@ import {
   type KVRow,
 } from '../components';
 import { CodeBlock } from '../code-block';
-import { ArrowRightIcon, ExternalIcon } from '../icons';
+import { Icon } from '../icons';
 import { RecordLink, type RecordNames } from '../markdown';
 import { useCommand } from '../mutations';
 import { bytes } from './artifacts';
@@ -350,7 +350,7 @@ function PublishedBody({ published }: { published: CodePublication }) {
             'Branch',
             <span className="cluster">
               <code className="mono">{published.branch}</code>
-              <ArrowRightIcon size={12} />
+              <Icon name="arrow-right" size={12} />
               <code className="mono">{published.baseBranch}</code>
             </span>,
           ],
@@ -358,7 +358,7 @@ function PublishedBody({ published }: { published: CodePublication }) {
           !!pull && [
             'Pull request',
             <a className="btn-text" href={pull.url} target="_blank" rel="noreferrer">
-              {pull.title} <ExternalIcon size={14} />
+              {pull.title} <Icon name="external" size={14} />
             </a>,
           ],
           !!merged && ['Merged', <Short value={merged} />],
@@ -411,7 +411,7 @@ export function CodeCard({
   const main = status?.project;
   const open = node.to && (
     <Link className="map-open" to={node.to}>
-      Open record <ArrowRightIcon size={14} />
+      Open record <Icon name="arrow-right" size={14} />
     </Link>
   );
   return (

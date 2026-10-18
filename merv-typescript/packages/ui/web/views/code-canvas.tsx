@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNo
 import { useNavigate } from 'react-router-dom';
 import { ellipsis } from '@merv/contracts/text';
 import { KindLabel, StatusPill, cx, kindOf, kindStyle, toneOf, words } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { MAIN, relationsOf, type GitModel } from './code-model';
 
 /**
@@ -430,7 +430,7 @@ export function BranchList({ model, selected, onSelect, lit, card }: Held & { mo
               </span>
               {(relations.get(node.id) ?? []).map((said) => (
                 <span className="map-rel" key={said}>
-                  <ArrowRightIcon size={12} />
+                  <Icon name="arrow-right" size={12} />
                   {said}
                 </span>
               ))}

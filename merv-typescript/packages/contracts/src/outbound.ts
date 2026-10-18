@@ -3,7 +3,6 @@
  * one bounded JSON request, the calls in flight, and what an answer may weigh.
  */
 import { check, MervError } from './index.js';
-import type { Json } from './data.js';
 import { allowedOrigin, allowedUrl, isOrigin } from './origins.js';
 
 export { allowedOrigin, allowedUrl };
@@ -27,8 +26,6 @@ export class OutboundError extends Error {
     readonly failure: OutboundFailure,
     /** How long the service asked to wait before a retry. */
     readonly wait?: number,
-    /** The service's own JSON error body, read only when the caller asked for one. */
-    readonly body?: Record<string, unknown>,
   ) {
     super(`Outbound ${failure.kind}`);
   }
@@ -42,6 +39,25 @@ function retryAfter(value: string | null): number | undefined {
     : undefined;
 }
 
+/** A body's bytes as they arrive; past `maxBytes` the rest is cancelled and `tooLarge()` thrown. */
+export async function readCapped(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number,
+  tooLarge: () => Error,
+): Promise<Buffer> {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (let part = await reader.read(); !part.done; part = await reader.read()) {
+    bytes += part.value.byteLength;
+    if (bytes > maxBytes) {
+      void reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(part.value);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** The body's JSON, read as it arrives and refused past `maxBytes`; the signal's reason ends it. */
 async function readJson(response: Response, maxBytes: number, signal: AbortSignal) {
   const length = Number(response.headers.get('content-length'));
@@ -51,16 +67,9 @@ async function readJson(response: Response, maxBytes: number, signal: AbortSigna
   }
   if (!response.body) throw new OutboundError({ kind: 'invalid' });
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
+  let body: Buffer;
   try {
-    for (;;) {
-      const item = await reader.read();
-      if (item.done) break;
-      bytes += item.value.length;
-      if (bytes > maxBytes) throw new OutboundError({ kind: 'too_large' });
-      chunks.push(item.value);
-    }
+    body = await readCapped(reader, maxBytes, () => new OutboundError({ kind: 'too_large' }));
   } catch (error) {
     void reader.cancel().catch(() => undefined);
     if (signal.aborted) throw signal.reason;
@@ -69,59 +78,37 @@ async function readJson(response: Response, maxBytes: number, signal: AbortSigna
     reader.releaseLock();
   }
   try {
-    return JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
-    ) as unknown;
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) as unknown;
   } catch {
     throw new OutboundError({ kind: 'invalid' });
   }
 }
 
 type FetchOptions = {
-  method?: 'GET' | 'POST' | 'DELETE';
-  /** A 204 is an empty answer, to any method. */
-  empty?: boolean;
   body?: unknown;
-  headers?: Record<string, string>;
   userAgent?: string;
   maxBytes: number;
-  /** Read at most this much of a failure's JSON body into the error; none is read without it. */
-  errorBytes?: number;
   signal: AbortSignal;
-  fetcher?: typeof fetch;
 };
 
 /**
- * One JSON request: a GET, or a POST of `body`, unless `method` says otherwise. The key is sent
- * as a bearer token, or `headers` carry the credential instead. A redirect is never followed (it
- * would carry the key somewhere nobody chose) but refused as its 3xx status, and a JSON object of at most `maxBytes` back (any JSON value with
- * `anyJson`), or `{}` for a 204 when `empty` allows one.
- * A failure says only its kind and HTTP status, and the service's error body when `errorBytes`
- * asks for it; the signal's own reason is thrown when it ends the call.
+ * One JSON request: a GET, or a POST of `body`, with the key as a bearer token. A redirect is
+ * never followed (it would carry the key somewhere nobody chose) but refused as its 3xx status,
+ * and a JSON object of at most `maxBytes` back. A failure says only its kind and HTTP status; the
+ * signal's own reason is thrown when it ends the call.
  */
 export async function fetchJson(
   url: string | URL,
-  key: string | null,
-  options: FetchOptions & { anyJson: true },
-): Promise<Json>;
-export async function fetchJson(
-  url: string | URL,
-  key: string | null,
+  key: string,
   options: FetchOptions,
-): Promise<Record<string, unknown>>;
-export async function fetchJson(
-  url: string | URL,
-  key: string | null,
-  options: FetchOptions & { anyJson?: boolean },
-): Promise<unknown> {
+): Promise<Record<string, unknown>> {
   const { body, maxBytes, signal } = options;
   let response: Response;
   try {
-    response = await (options.fetcher ?? fetch)(url, {
-      method: options.method ?? (body === undefined ? 'GET' : 'POST'),
+    response = await fetch(url, {
+      method: body === undefined ? 'GET' : 'POST',
       headers: {
-        ...(key !== null && { authorization: `Bearer ${key}` }),
-        ...options.headers,
+        authorization: `Bearer ${key}`,
         accept: 'application/json',
         ...(body !== undefined && { 'content-type': 'application/json' }),
         ...(options.userAgent !== undefined && { 'user-agent': options.userAgent }),
@@ -134,28 +121,19 @@ export async function fetchJson(
     if (signal.aborted) throw signal.reason;
     throw new OutboundError({ kind: 'network' });
   }
-  const refuse = (failure: OutboundFailure): never => {
-    void response.body?.cancel().catch(() => undefined);
-    throw new OutboundError(failure);
-  };
   if (!response.ok) {
-    const said = options.errorBytes
-      ? await readJson(response, options.errorBytes, signal).catch(() => undefined)
-      : void response.body?.cancel().catch(() => undefined);
+    void response.body?.cancel().catch(() => undefined);
     throw new OutboundError(
       { kind: 'status', status: response.status },
       retryAfter(response.headers.get('retry-after')),
-      record(said),
     );
   }
-  if (response.status === 204 && options.empty) {
-    void response.body?.cancel().catch(() => undefined);
-    return {};
-  }
   const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
-  if (!(type === 'application/json' || type?.endsWith('+json'))) refuse({ kind: 'invalid' });
-  const data = await readJson(response, maxBytes, signal);
-  const answer = options.anyJson ? data : record(data);
+  if (!(type === 'application/json' || type?.endsWith('+json'))) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new OutboundError({ kind: 'invalid' });
+  }
+  const answer = record(await readJson(response, maxBytes, signal));
   if (answer === undefined) throw new OutboundError({ kind: 'invalid' });
   return answer;
 }

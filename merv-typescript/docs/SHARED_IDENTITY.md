@@ -80,7 +80,7 @@ and [jose's verifier](https://github.com/panva/jose/blob/main/docs/jwt/verify/fu
 For an existing HS256 deployment, explicitly set `mode: "hs256"` and
 `secretEnv: "SUPABASE_JWT_SECRET"`. Supply the server's existing signing secret
 through that environment variable. HS256 and JWKS are exclusive modes; there is
-no fallback from one to the other. `audience` defaults to `authenticated`.
+no fallback from one to the other. The audience is always `authenticated`.
 `allowLocalHttp: true` permits loopback HTTP for local development only.
 
 Verification performs asynchronous crypto/network work before State transactions.

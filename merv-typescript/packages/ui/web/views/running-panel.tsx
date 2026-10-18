@@ -11,9 +11,9 @@ import type {
   RunningSection,
   RunningStreamItem,
 } from '@merv/contracts/running';
-import { refreshTools, useTool } from '../api';
+import { readOnly, refreshTools, useTool } from '../api';
 import { ConfirmAction, LoadState, Ruled, Summary, col, cx, useNow, words } from '../components';
-import { ArrowRightIcon, CloseIcon, ExpandIcon, RestoreIcon } from '../icons';
+import { Icon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
@@ -66,6 +66,8 @@ export function Act({ action }: { action: RunningAction }) {
       refreshTools('ui.running', 'ui.running_panel', 'ui.home');
     return met.current === true;
   };
+  // The drill-in reads: an owner's control is not drawn there.
+  if (readOnly()) return null;
   const lost = adds && command.retry;
   const label = command.retry && !adds ? 'Retry same request' : action.label;
   const busy = command.busy ? 'Working…' : undefined;
@@ -495,7 +497,7 @@ export function RunningSidebar({
           title={full ? 'Restore' : 'Maximize'}
           onClick={onFull}
         >
-          {full ? <RestoreIcon /> : <ExpandIcon />}
+          {full ? <Icon name="restore" /> : <Icon name="expand" />}
         </button>
       )}
       <button
@@ -505,7 +507,7 @@ export function RunningSidebar({
         title="Close"
         onClick={onClose}
       >
-        <CloseIcon />
+        <Icon name="close" />
       </button>
     </span>
   );
@@ -593,7 +595,7 @@ export function RunningSidebar({
         )}
         {data.route && (
           <Link className="running-open hit" to={data.route}>
-            Open record <ArrowRightIcon size={14} />
+            Open record <Icon name="arrow-right" size={14} />
           </Link>
         )}
       </div>

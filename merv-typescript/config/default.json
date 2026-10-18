@@ -129,6 +129,10 @@
       "required": false
     },
     {
+      "id": "admin",
+      "name": "@merv/admin"
+    },
+    {
       "id": "sessions-ui",
       "name": "@merv/sessions/ui",
       "required": false

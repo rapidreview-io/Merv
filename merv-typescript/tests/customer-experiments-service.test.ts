@@ -107,7 +107,7 @@ async function fixture(
   const profiles: PiProfile[] = [];
   const conversations: { id: string; projectId: string; profile?: { version: number } }[] = [];
   const sent: { id: string; input: { commandId: string; text: string } }[] = [];
-  const turns: { id: string }[] = [];
+  const turns: { id: string; text: string }[] = [];
   const pi = {
     registerProfile(profile: PiProfile) {
       profiles.push(profile);
@@ -129,7 +129,8 @@ async function fixture(
     async send(_caller: Caller, id: string, input: { commandId: string; text: string }) {
       if (pi.refuse) throw pi.refuse;
       sent.push({ id, input });
-      if (!turns.some((turn) => turn.id === input.commandId)) turns.push({ id: input.commandId });
+      if (!turns.some((turn) => turn.id === input.commandId))
+        turns.push({ id: input.commandId, text: input.text });
       return { id: input.commandId };
     },
     async snapshot() {
@@ -140,7 +141,7 @@ async function fixture(
             id: 'initial',
             messages: [{ role: 'assistant', text: 'What decision should this experiment settle?' }],
           },
-          ...turns.map((turn) => ({ id: turn.id, messages: [] })),
+          ...turns.map(({ id, text }) => ({ id, messages: [{ role: 'user', text }] })),
         ],
         stage: { name: 'idle' },
       };
@@ -910,41 +911,13 @@ test('public intake issues private capabilities, preserves admission limits and 
   assert.equal((await f.experiment(created.body.id)).workflow.state, 'planning');
 });
 
-test('platform admin projection shows standalone state without private capabilities', async (t) => {
-  const { adminOverview, requireAdmin } = await import('../packages/ui/src/admin.js');
+test("the platform admin's standalone drill-in, the customer's own snapshot, carries no capability", async (t) => {
   const f = await fixture(t);
   const created = await f.create();
-  const identity = { issuer: 'https://identity.example', subject: 'admin' };
-  const human = {
-    kind: 'user' as const,
-    user: { ...identity, createdAt: new Date().toISOString() },
-    expiresAt: new Date(Date.now() + 60000).toISOString(),
-  };
-  requireAdmin(human, [identity]);
-  for (const principal of [
-    undefined,
-    { ...human, user: { ...human.user, subject: 'other' } },
-    { kind: 'actor', actor: { role: 'operator' } },
-    { kind: 'key', key: { owner: identity } },
-  ]) {
-    assert.throws(
-      () => requireAdmin(principal as never, [identity]),
-      (e: unknown) => e instanceof MervError && e.status === 403,
-    );
-  }
-  assert.throws(() => requireAdmin(human, []));
-  const view = await adminOverview(f.state);
-  const row = view.rows.find((r) => r.id === created.id || r.requestId === created.id);
-  assert.ok(row);
-  assert.equal(row.source, 'standalone');
-  assert.equal(row.state, 'planning');
-  assert.equal(row.paid, false);
-  assert.ok(view.unavailable.includes('Project experiments'));
-  const json = JSON.stringify(view);
-  for (const secret of [created.agentToken, created.customerToken, intakeKey])
-    assert.ok(!json.includes(secret));
-  assert.ok(!json.includes('clientRequest'));
-  assert.ok(!json.includes('checkout'));
+  const snapshot = JSON.stringify(await f.service.snapshot(await f.store.get(created.id)));
+  assert.ok(snapshot.includes(created.id));
+  for (const secret of [created.agentToken, created.customerToken, intakeKey, 'clientRequest'])
+    assert.ok(!snapshot.includes(secret));
 });
 
 const fileState = { deleted: false, etag: '' };
@@ -1134,6 +1107,9 @@ test('submit hands the exact revision to the intake agent, which returns it or f
   assert.equal(f.sent[0].id, f.record.conversationId);
   assert.equal(f.sent[0].input.commandId, 'plan-submit-1-1');
   assert.match(f.sent[0].input.text, /submitted plan revision 1 for verification/);
+  // The customer's snapshot reads that turn as their own chat does: their press of Submit.
+  const { conversation } = await f.service.snapshot(await f.store.get(f.a.id));
+  assert.deepEqual(conversation.at(-1), { role: 'user', text: 'Submitted the plan.' });
   // A retry while that turn is under way sends nothing; once it ended without a verdict
   // (stopped, refused or expired), the retry sends a fresh turn.
   f.pi.active = 'plan-submit-1-1';

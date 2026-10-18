@@ -68,7 +68,7 @@
         "members": [
           "tasks",
           "experiments",
-          "merv-customer-experiments"
+          "customerExperiments"
         ]
       },
       {
@@ -118,6 +118,7 @@
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
         "members": [
           "api",
+          "merv-admin",
           "merv-sandboxes-console",
           "merv-code-work-api",
           "merv-pi-api",
@@ -195,7 +196,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-15",
+  "snapshot": "2026-10-18",
   "groups": [
     {
       "id": "front",
@@ -301,8 +302,9 @@
       "label": "New providers",
       "caption": "Discovered in source",
       "members": [
+        "merv-admin",
         "codeWork",
-        "merv-customer-experiments",
+        "customerExperiments",
         "fleet",
         "merv-fleet-workflow",
         "pi",
@@ -315,6 +317,28 @@
     }
   ],
   "nodes": [
+    {
+      "plugin": "merv-admin",
+      "source": "packages/admin/src/index.ts",
+      "provides": [],
+      "requires": [
+        "state"
+      ],
+      "optional": [
+        "api",
+        "scope",
+        "tools"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-admin",
+      "group": "other",
+      "owner": "merv-admin",
+      "label": "merv-admin",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
     {
       "plugin": "merv-api",
       "source": "packages/api/src/index.ts",
@@ -927,7 +951,9 @@
     {
       "plugin": "merv-customer-experiments",
       "source": "packages/customer-experiments/src/index.ts",
-      "provides": [],
+      "provides": [
+        "customerExperiments"
+      ],
       "requires": [
         "state",
         "scope",
@@ -956,10 +982,10 @@
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
-      "id": "merv-customer-experiments",
+      "id": "customerExperiments",
       "group": "other",
-      "owner": "merv-customer-experiments",
-      "label": "merv-customer-experiments",
+      "owner": "customerExperiments",
+      "label": "customerExperiments",
       "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
       "exposedTools": []
     },
@@ -997,7 +1023,8 @@
         "reviews",
         "contextBuilder",
         "codeWork",
-        "paper"
+        "paper",
+        "sessions"
       ],
       "optional": [
         "sandboxEvidence",
@@ -3356,6 +3383,26 @@
   ],
   "edges": [
     {
+      "from": "merv-admin",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "merv-admin",
+      "to": "api",
+      "optional": true
+    },
+    {
+      "from": "merv-admin",
+      "to": "scope",
+      "optional": true
+    },
+    {
+      "from": "merv-admin",
+      "to": "tools",
+      "optional": true
+    },
+    {
       "from": "api",
       "to": "scope",
       "optional": false
@@ -3561,107 +3608,107 @@
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "state",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "scope",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "artifacts",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "workflows",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "reviews",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "codeWork",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sessions",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sandboxEvidence",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "reports",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "sbxMerv",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "pi",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "tools",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "api",
       "optional": false
     },
     {
-      "from": "merv-customer-experiments",
+      "from": "customerExperiments",
       "to": "identity",
       "optional": true
     },
@@ -3708,6 +3755,11 @@
     {
       "from": "experiments",
       "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "sessions",
       "optional": false
     },
     {
@@ -4572,10 +4624,10 @@
     }
   ],
   "counts": {
-    "plugins": 77,
-    "providers": 34,
+    "plugins": 78,
+    "providers": 35,
     "adapters": 43,
-    "dependencies": 243
+    "dependencies": 248
   },
   "network": [
     {

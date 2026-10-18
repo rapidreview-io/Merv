@@ -1,3 +1,17 @@
+/** Resolves after `ms`, or rejects with the signal's reason once it aborts. */
+export const sleep = (ms: number, signal?: AbortSignal | null) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', stop);
+      resolve();
+    }, ms);
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', stop, { once: true });
+  });
 /** Sequential async collection operations keep transactional callbacks in source order. */
 export async function mapAsync<T extends readonly unknown[], U>(
   values: T,

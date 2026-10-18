@@ -18,6 +18,7 @@ import { registerWorkerTools } from './worker-tools.js';
 import { FilesService } from './files.js';
 import { hostedCustomerCompute } from './hosted-compute.js';
 import { plansDocument } from './program.js';
+import type { StandaloneExperiments } from './models.js';
 
 const env = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const origin = z
@@ -168,6 +169,11 @@ export const customerExperimentsPlugin = {
         files,
       );
       service.access.activity = (id) => files.touch(id);
+      const standalone: StandaloneExperiments = {
+        snapshot: async (id) => await service.snapshot(await store.get(id)),
+        customers: store.customers.bind(store),
+      };
+      yield ctx.provide('customerExperiments', standalone);
       // Optional: without identity, service_experiment@3 customers are refused with a 503.
       ctx.inject(['identity'], (ctx) => {
         ctx.effect(() => {

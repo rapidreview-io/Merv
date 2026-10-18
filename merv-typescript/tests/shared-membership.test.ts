@@ -576,6 +576,17 @@ test('a project owner is its longest-standing signed-in operator, never an invit
     [[project.id, 'second']],
   );
   assert.equal((await f.scope.requireDelegation(owners[0]!.source, 'write')).id, second.actorId);
+  // The platform admin's people: verified sign-ins only, with the project actors they are.
+  const { issuer } = alice.user;
+  const directory = await f.scope.directory();
+  assert.deepEqual(directory.projects, [project]);
+  assert.deepEqual(
+    directory.people.map(({ subject, actors }) => [subject, actors.length]),
+    [
+      ['alice', 1],
+      ['second', 1],
+    ],
+  );
 });
 
 test('simultaneous self-demotions leave one verified human operator after serialized checks', async (t) => {

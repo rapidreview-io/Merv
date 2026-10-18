@@ -1,5 +1,5 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
-import type { ModelRelayHandle } from '@merv/fleet/types';
+import type { ModelRelayHandle, ModelTokens } from '@merv/fleet/types';
 import type { PiModelConfig } from './models.js';
 import type { PiProfile, PiProfiledCreate, PiStoredProfile } from './profile-types.js';
 import type {
@@ -24,6 +24,19 @@ export interface PiConversationRecord extends PiConversation {
   source: DelegationSource;
   /** Immutable server-owned role and request binding. Public Pi creation cannot set it. */
   profile?: PiStoredProfile;
+}
+export interface PiPlatformTurn extends Pick<
+  PiCommand,
+  'id' | 'status' | 'runtimeId' | 'createdAt'
+> {
+  live: boolean;
+  /** A command id is unique only within its conversation. */
+  conversationId: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  projectId: string;
+  title: string;
+  source: DelegationSource;
 }
 export interface PiCommandRecord extends PiCommand {
   inputHash: string;
@@ -252,6 +265,10 @@ export interface PiRuntime extends Pi {
     subscribe(id: string, listener: () => void): () => void;
   };
   authorizeStream(caller: Caller, id: string): Promise<void>;
+  /** Platform admin read, never exposed through a tool or a machine key: every turn still live
+   *  or ended since `since` (begun then, while it has no end), newest first, with its
+   *  conversation's title, project and person. */
+  platformTurns(since: string): Promise<PiPlatformTurn[]>;
   /** A `piw_` bearer's caller, once its slot is live. */
   authenticateWorker(token: string): Promise<Caller>;
   /** Holds up to `holdMs` for work before answering `work: null`. */
@@ -264,6 +281,8 @@ export interface PiRuntime extends Pi {
   /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it
    *  public and closes it with the mount. */
   modelRelay(): ModelRelayHandle;
+  /** For the platform admin only, never a tool: each of `persons`' Agent tokens today (UTC). */
+  tokensToday(persons: readonly string[]): Promise<ModelTokens[]>;
 }
 declare module 'cordis' {
   interface Context {

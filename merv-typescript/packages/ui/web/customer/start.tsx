@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react';
-import { Icon } from '../icons';
 import { safely } from '../api';
 import { useTyped } from './typing';
-import { fromDrop } from './uploads';
+import { DropZone } from './files';
 
 /**
  * /start: the customer page before there is a request. It looks as a request's page does when
@@ -74,9 +73,7 @@ export function Start({ opened }: { opened(id: string): void }) {
   const [name, setName] = useState('');
   const nameInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [over, setOver] = useState(false);
   const [error, setError] = useState('');
-  const picker = useRef<HTMLInputElement>(null);
   // Create only after the customer has supplied an experiment name.
   const creating = useRef(false);
   const begin = async (
@@ -124,36 +121,7 @@ export function Start({ opened }: { opened(id: string): void }) {
           onChange={(event) => setName(event.target.value)}
         />
       </label>
-      <button
-        type="button"
-        className={`cx-drop${over ? ' cx-drop--over' : ''}`}
-        onClick={() => picker.current?.click()}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setOver(false);
-          void fromDrop(event.dataTransfer).then((files) => begin(undefined, files));
-        }}
-      >
-        <span className="cx-drop-title">Chug anything</span>
-        <Icon name="upload" size={20} className="cx-drop-icon" />
-        <span className="cx-drop-kinds">datasets, papers, content files</span>
-      </button>
-      <input
-        ref={picker}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          const files = [...(event.target.files ?? [])].map((file) => ({ file, path: file.name }));
-          event.target.value = '';
-          if (files.length) void begin(undefined, files);
-        }}
-      />
+      <DropZone onFiles={(files) => void begin(undefined, files)} />
       <div className="cx-start-middle">
         <form
           className="pi-compose cx-start-compose"

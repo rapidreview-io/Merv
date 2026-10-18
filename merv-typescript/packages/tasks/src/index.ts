@@ -65,18 +65,6 @@ import {
   submitReview as verdict,
 } from './commands.js';
 
-export type {
-  Task,
-  TaskCreate,
-  TaskDelivery,
-  TaskFailure,
-  TaskMarkFailed,
-  TaskRecord,
-  TaskReview,
-  Tasks,
-} from './types.js';
-export { serviceWorkflow, TASK_LIMITS, TASK_WORKFLOW, taskWorkspace } from './workflow.js';
-
 export interface TaskRow {
   id: string;
   project_id: string;
@@ -485,6 +473,15 @@ export class TaskService implements Tasks {
       await this.scope.require(caller, 'read', tx);
       return await this.projectRecord(caller, await this.row(tx, caller, taskId), tx);
     });
+  }
+  async platformTypes(taskIds: readonly string[]) {
+    const rows = await this.state.read((sql) =>
+      sql.all<{ id: string; type_name: string }>(
+        'SELECT id,type_name FROM tasks WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        JSON.stringify(taskIds),
+      ),
+    );
+    return new Map(rows.map((row) => [row.id, row.type_name]));
   }
   async records(caller: Caller, transaction?: Transaction): Promise<TaskRecord[]> {
     caller = structuredClone(caller);

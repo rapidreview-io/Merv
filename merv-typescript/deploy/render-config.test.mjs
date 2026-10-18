@@ -106,7 +106,7 @@ test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t
     MERV_PI_ENABLED: 'true',
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 12);
+  assert.equal(JSON.parse(readFileSync(output)).plugins.length, 13);
   assert.ok(
     JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
   );
@@ -124,9 +124,10 @@ test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) =
 test('the UI is served from the directory the release scripts write, when the VM names one', (t) => {
   const { run, plugin } = renderer(t);
   assert.equal(run().status, 0);
-  assert.deepEqual(plugin('ui').config, { admins: [] });
+  assert.deepEqual(plugin('ui').config, {});
+  assert.deepEqual(plugin('admin').config, { admins: [] });
   assert.equal(run({ MERV_UI_ASSETS: '/ui/' }).status, 0);
-  assert.deepEqual(plugin('ui').config, { assets: '/ui/', admins: [] });
+  assert.deepEqual(plugin('ui').config, { assets: '/ui/' });
   assert.notEqual(run({ MERV_UI_ASSETS: 'ui' }).status, 0);
 });
 
@@ -142,7 +143,7 @@ function renderer(t) {
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
       plugins:
-        'state scope scope-api blobs secrets identity api ui code code-work code-work-api sessions'
+        'state scope scope-api blobs secrets identity api ui admin code code-work code-work-api sessions'
           .split(' ')
           .map((id) => ({ id, name: id })),
     }),
@@ -161,7 +162,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 15);
+  assert.equal(config.plugins.length, 16);
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
@@ -174,7 +175,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 17);
+  assert.equal(config.plugins.length, 18);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });

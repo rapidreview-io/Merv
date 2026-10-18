@@ -72,7 +72,7 @@ export class FeedService implements Feed {
       );
       // Two descriptions of the same post — artifactIds omitted, or given as the empty default
       // it would take anyway — are one request. Hash the post that gets written, not the words
-      // used to ask for it, and still honour a receipt written under the older hash.
+      // used to ask for it.
       const hash = digest({ ...input, artifactIds: input.artifactIds ?? [] });
       return await receipted(
         tx,
@@ -80,12 +80,7 @@ export class FeedService implements Feed {
         input.requestId,
         hash,
         () => this.write(caller, input, tx),
-        {
-          table: 'feed_requests',
-          actor: 'author_id',
-          result: 'response_json',
-          legacyHash: digest(input),
-        },
+        { table: 'feed_requests', actor: 'author_id', result: 'response_json' },
       );
     });
   }

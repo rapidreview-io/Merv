@@ -17,7 +17,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import type { ApiError } from './api';
+import { readOnly, type ApiError } from './api';
 import {
   EmptyState,
   KindLabel,
@@ -311,8 +311,6 @@ export interface Creation {
   label: string;
   /** False where this reader may not create anything: no control is drawn. */
   shown?: boolean;
-  /** True where the control opens something other than a new record. */
-  plain?: boolean;
   form(close: () => void): ReactNode;
 }
 
@@ -360,11 +358,11 @@ function Opened({
  * still one thing to press: a press anywhere on it that is not on a control of its
  * own, and is not the end of a selection being dragged, is a press on its name.
  */
-function openRow(event: MouseEvent<HTMLLIElement>) {
+export function openRow(event: MouseEvent<HTMLElement>, link = '.row-name > .row-link') {
   const pressed = event.target as HTMLElement;
   if (pressed.closest('a, button, input, select, summary') || window.getSelection()?.toString())
     return;
-  event.currentTarget.querySelector<HTMLElement>('.row-name > .row-link')?.click();
+  event.currentTarget.querySelector<HTMLElement>(link)?.click();
 }
 
 /**
@@ -387,7 +385,6 @@ export function ListPage<T extends { id: string }>({
   opens,
   narrow,
   create,
-  aside,
   end,
   cards,
   emptyTitle,
@@ -418,8 +415,6 @@ export function ListPage<T extends { id: string }>({
   /** Where a page holds more than one list: the choice between them, beside its filters. */
   narrow?: ReactNode;
   create?: Creation;
-  /** A second control on the same row that opens something other than a record. */
-  aside?: Creation;
   /** A control of the page's own that does its work in place, at the row's end. */
   end?: ReactNode;
   /** Where the row is a designed card of its own: the class its stack takes. */
@@ -460,18 +455,18 @@ export function ListPage<T extends { id: string }>({
     last.current = open;
   }, [open]);
   const control = (key: string, item: Creation) =>
-    item.shown === false ? null : (
+    item.shown === false || readOnly() ? null : (
       <button
         type="button"
         data-opens={key}
         // In a title line the page's own move is the accent; what opens a form is a word.
-        className={cx('btn', lede ? 'btn--quiet' : !item.plain && open !== key && 'btn--primary')}
+        className={cx('btn', lede ? 'btn--quiet' : open !== key && 'btn--primary')}
         aria-expanded={open === key}
         // Cancel means what Escape means, and neither can take back a request in flight.
         disabled={open === key && locked}
         onClick={() => (open === key ? close() : setOpen(key))}
       >
-        {open !== key ? item.label : item.plain ? 'Close' : 'Cancel'}
+        {open !== key ? item.label : 'Cancel'}
       </button>
     );
   useRowKeys(frame);
@@ -531,11 +526,9 @@ export function ListPage<T extends { id: string }>({
       )}
     </>
   );
-  // What the page can open ends the row, the quiet control before the primary one.
+  // What the page can open ends the row.
   const ends = (
     <>
-      {/* A quiet control beside nothing at all would be the page's only element. */}
-      {aside && (!vacant || open === 'aside') && control('aside', aside)}
       {end}
       {create && !offered && !load.loading && control('create', create)}
     </>
@@ -566,11 +559,6 @@ export function ListPage<T extends { id: string }>({
               <div className="action-filters">{filters}</div>
               <div className="action-end">{ends}</div>
             </div>
-          )}
-          {open === 'aside' && aside && (
-            <Opened onClose={close} onLock={setLocked}>
-              {aside.form(close)}
-            </Opened>
           )}
           {creating && create && (
             <Opened onClose={close} onLock={setLocked}>
@@ -650,12 +638,31 @@ const Staged = ({ staged, children }: { staged: boolean; children: ReactNode }) 
  * The controls that narrow a list, behind one word at the end of the title line. The word
  * opens them in a panel under itself, which a press outside it or Escape shuts; while the
  * list is narrowed away from how it opens the word is lit and `Reset` stands beside it.
+ * `/` anywhere but in a field opens it with the cursor in its search.
  */
 function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const seek = useRef(false);
   // Shutting the panel is all its Escape means: the page keeps what else is open.
   useDismiss(open, box, () => setOpen(false), true);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || typing(event.target)) return;
+      event.preventDefault();
+      seek.current = true;
+      setOpen(true);
+      // Already open, the panel takes the cursor now.
+      box.current?.querySelector<HTMLInputElement>('.narrowing-panel input')?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    if (!open || !seek.current) return;
+    seek.current = false;
+    box.current?.querySelector<HTMLInputElement>('input')?.focus();
+  }, [open]);
   return (
     <div className="narrowing" ref={box}>
       <button

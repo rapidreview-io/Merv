@@ -12,13 +12,7 @@ import type {
 import type {} from 'cordis';
 import type { UiRowFields, UiRowStatus } from './rows.js';
 
-export type {
-  UiRowDescription,
-  UiRowFields,
-  UiRowNeeds,
-  UiRowStatus,
-  UiStateWords,
-} from './rows.js';
+export type { UiRowDescription, UiRowStatus } from './rows.js';
 
 /** One sidebar row. Rows are data: the browser bundle renders `view.kind`, never plugin code. */
 export interface UiRow extends UiRowFields {

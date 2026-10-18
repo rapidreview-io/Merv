@@ -13,7 +13,6 @@ import type {
   ReviewReturn,
 } from './review-models.js';
 export type {
-  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,
@@ -132,7 +131,6 @@ export interface Reviews {
       claimId: string;
       actorId: string;
       reason: string;
-      releasedBy?: string;
     },
     tx: Transaction,
   ): Promise<void>;

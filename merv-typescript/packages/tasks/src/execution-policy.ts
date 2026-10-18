@@ -1,5 +1,5 @@
 import { type WorkflowExecutionBinding, type WorkflowExecutionPolicy } from '@merv/contracts';
-import { grant, reference, target } from '@merv/workflows/rules';
+import { artifactGrants, grant, reference, reviewGrants, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 
 type Bindings = Record<string, WorkflowExecutionBinding>;
@@ -42,24 +42,14 @@ export function taskExecutionPolicy(
       grant('review.get', { reviewId: reference('reviewId') }),
       ...(purpose === 'work'
         ? [
-            grant('artifact.create', {}),
-            grant('artifact.upload_begin', {}),
-            grant('artifact.upload_resume', {}),
-            grant('artifact.upload_complete', {}),
+            ...artifactGrants(),
             grant('task.submit_delivery', { taskId: reference('producerTaskId'), ...revision }),
             grant('task.mark_failed', { ...task, ...revision }),
             grant('code.commit', {}),
             grant('code.operation', {}),
             ...(workspace === 'resolution' ? [grant('code.merge', {})] : []),
           ]
-        : [
-            grant('review.start', { reviewId: reference('reviewId') }),
-            grant('review.submit', {
-              reviewId: reference('reviewId'),
-              claimId: reference('claimId'),
-              ...revision,
-            }),
-          ]),
+        : reviewGrants()),
     ],
   };
 }

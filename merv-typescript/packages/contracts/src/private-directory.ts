@@ -22,6 +22,16 @@ export function privateDirectory(
   return path;
 }
 
+/** The path's own lstat (a link is not followed), or undefined when nothing is there. */
+export const pathStat = (path: string) => {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+};
+
 /** Flush a file's bytes or a directory's entries before a durable journal moves past them. */
 export function syncPath(path: string): void {
   const fd = openSync(path, 'r');

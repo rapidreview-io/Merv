@@ -5,8 +5,10 @@ const origin = z.string().refine(allowedOrigin, 'Expected an https origin or a l
 
 export const webConfig = z
   .object({
+    // Tavily's key is read from this variable on every call.
     keyEnv: envName.default('MERV_TAVILY_API_KEY'),
     origin: origin.default('https://api.tavily.com'),
+    // OpenAI's hosted web search, used when Tavily has no key or refuses it (Nisa's fallback).
     fallback: z
       .object({
         keyEnv: envName,
@@ -22,18 +24,22 @@ export const webConfig = z
       })
       .strict()
       .optional(),
+    // Deadline for one Tavily call, its retries included.
     timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
+    // A larger answer is refused, whatever its Content-Length says.
     maxResponseBytes: z
       .number()
       .int()
       .min(1024)
       .max(32 * 1024 * 1024)
       .default(8 * 1024 * 1024),
+    /** Calls this process has in flight at once. */
     maxInFlight: z.number().int().min(1).max(64).default(8),
     /** Half of maxInFlight when unset. */
     maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
     /** How long a call past either in-flight limit waits for its turn before web_busy. */
     queueMs: z.number().int().min(0).max(15_000).default(15_000),
+    // Calls per UTC day; the next is refused with web_budget_exhausted.
     dailyCallsPerProject: z.number().int().min(1).max(100_000).default(200),
     // Projects cost nothing to make, so each one's day bounds nothing alone: the deployment's
     // day does, and its fallback searches, which spend a model's tokens, have a smaller one.

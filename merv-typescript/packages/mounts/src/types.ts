@@ -20,11 +20,6 @@ export interface MountConfig {
   reconnectMs?: number; // discovery interval after a success or a failure (default 60000)
 }
 
-export interface MountsConfig {
-  mounts: MountConfig[];
-  bindings?: CredentialBinding[];
-}
-
 export interface MountStatus {
   id: string;
   /** Public endpoint origin only; never credentials, paths, query strings, or headers. */

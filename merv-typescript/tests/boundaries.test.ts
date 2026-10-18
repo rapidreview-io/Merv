@@ -261,6 +261,7 @@ const capabilityOf = (owner: string) =>
  * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
 const contractsRuntimeExports = new Set([
+  'async',
   'origins',
   'private-directory',
   'schemas',
@@ -524,7 +525,8 @@ function assertComponentReferences(
         codeUtilityExports.has(specifier.slice('@merv/code/'.length));
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
-        ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
+        ['scope', 'sessions', 'pi', 'admin'].includes(owner) &&
+        specifier === '@merv/identity/credentials';
       // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
       // Customer experiments serves its request's intake conversation to the customer the same way.
       const events =
@@ -936,6 +938,17 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
+        // Its snapshot and work reads for the platform admin, which takes them where loaded.
+        assert.deepEqual(actualProvided, ['customerExperiments']);
+        return;
+      }
+      if (name.text === 'merv-admin') {
+        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
+        // Its audit's state; the routes, platform authority and caller rules wait for the API,
+        // Scope and the tools registry. It reads every other owner's service where that is
+        // loaded (ctx.get).
+        assert.deepEqual(sorted(declared), ['state']);
+        assert.deepEqual(sorted([...optional]), ['api', 'scope', 'tools']);
         assert.deepEqual(actualProvided, []);
         return;
       }

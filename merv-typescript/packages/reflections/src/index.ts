@@ -33,6 +33,7 @@ import * as running from './running.js';
 import * as program from './program.js';
 import * as commands from './commands.js';
 import { submitted, type LensRow, type WaveRow } from './program.js';
+import { lensName } from './names.js';
 import {
   LENSES,
   LENS_WORKFLOW,
@@ -321,6 +322,20 @@ export class ReflectionService implements Reflections {
       reflection: await this.get(caller, id),
       process: await this.workflows.process(caller, id, { checks: false }),
     }));
+  }
+  async platformLenses(lensIds: readonly string[]) {
+    const rows = await this.state.read((sql) =>
+      sql.all<{ id: string; perspective: string; reflectionId: string }>(
+        'SELECT id,perspective,reflection_id AS "reflectionId" FROM reflection_lenses WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        JSON.stringify(lensIds),
+      ),
+    );
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        { name: lensName(row.perspective), reflectionId: row.reflectionId },
+      ]),
+    );
   }
   async home(caller: Caller): Promise<ReflectionSummary[]> {
     caller = structuredClone(caller);

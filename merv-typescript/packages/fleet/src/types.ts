@@ -1,4 +1,4 @@
-import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
+import type { Caller, DelegationSource, Sql, Transaction } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 
 export type FleetPhase =
@@ -117,6 +117,21 @@ export interface FleetOwner {
   bootstrap(allocation: FleetAllocation): Promise<string>;
   /** finished means all required capture/checkpoint work has been retained. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
+  /** The model tokens this owner charges `person` for today (UTC): read for the platform admin. */
+  modelTokens?(person: string, sql: Sql): Promise<ModelTokens>;
+}
+/** A person's model tokens today (UTC) and their daily limit. */
+export interface ModelTokens {
+  used: number;
+  limit: number;
+}
+/** A person's Fleet day so far (UTC). */
+export interface FleetPersonDay {
+  /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. */
+  usd: number;
+  usdCap: number | null;
+  /** Null when no owner meters model tokens. */
+  tokens: ModelTokens | null;
 }
 /** What a worker's model calls may do, read again about once a second while one streams. */
 export interface ModelRelayGrant {
@@ -217,6 +232,21 @@ export interface ModelRelayConfig<
     reserved: R,
   ) => void | Promise<void>;
 }
+/** A model relay's latest call the provider answered and latest it failed, on one provider key
+ *  and model (`Fleet.relayOutcomes`). */
+export interface RelayOutcome {
+  relay: string;
+  /** The environment variable the relay's provider key is read from. */
+  keyEnv: string;
+  model: string;
+  lastOkAt: string | null;
+  /** Its latest `upstream_failed` call. */
+  lastFailureAt: string | null;
+  lastFailureStatus: number | null;
+  lastFailureCode: string | null;
+  /** That failure was the provider refusing the key itself. */
+  rejected: boolean;
+}
 /** A model relay: its HTTP handler, which answers 404 off its one route and authenticates its own
  *  bearers, so its owner mounts it public; and close(), which ends the calls it is streaming. */
 export interface ModelRelayHandle {
@@ -251,6 +281,12 @@ export interface Fleet {
   /** The owner's open allocations in every project, oldest first, with every released one whose
    * owner id is in `targets`: exact counts, however long the history. */
   listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;
+  /** Platform admin read, never exposed through a tool, an owner or a machine key: every open
+   * allocation in every project, with its profile's key and provider while this deployment
+   * keeps that profile, and the unit of work it was rented for. */
+  platformAllocations(): Promise<
+    (FleetAllocation & { profile: string | null; provider: string | null; work: string | null })[]
+  >;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
   inspect(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
@@ -265,10 +301,17 @@ export interface Fleet {
   /** Sessions must call this inside the same transaction that enrolls or claims work. False for
    * a work machine while work machines are held. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;
-  /** A model relay for workers that hold no provider key; its owner mounts and closes it. */
+  /** A model relay for workers that hold no provider key; its owner mounts and closes it. Its
+   *  calls' outcomes are kept under `keyEnv`, the variable its provider key is read from. */
   modelRelay<G extends ModelRelayGrant, N extends string, R>(
     config: ModelRelayConfig<G, N, R>,
+    keyEnv: string,
   ): ModelRelayHandle;
+  /** For the platform admin only, never a tool: each of `persons`' day so far, in order. */
+  peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]>;
+  /** Every relay's latest outcomes per provider key and model: the platform admin's read, never
+   *  a tool's. */
+  relayOutcomes(): Promise<RelayOutcome[]>;
 }
 declare module 'cordis' {
   interface Context {

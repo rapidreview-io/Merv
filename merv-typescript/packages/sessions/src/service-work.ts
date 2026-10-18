@@ -49,7 +49,6 @@ export class SessionServiceWork implements ServiceWork {
     private readonly scope: Scope,
     private readonly workflows: Workflows,
     private readonly clock: () => number,
-    private readonly concurrency: number,
     private readonly dispatching: (projectId: string, tx: Transaction) => Promise<boolean>,
   ) {}
 
@@ -144,8 +143,8 @@ FOR EACH ROW EXECUTE FUNCTION session_service_work_guard();`,
       'SELECT COUNT(*) AS count FROM session_service_work WHERE project_id=? AND settled_at IS NULL',
       input.projectId,
     );
-    if (Number(active?.count) >= this.concurrency)
-      return { admitted: false, reason: 'capacity_full' };
+    // One server execution at a time in a project, across every provider.
+    if (Number(active?.count) >= 1) return { admitted: false, reason: 'capacity_full' };
     const caller = await this.scope.serviceActor('sessions', input.projectId, tx);
     const budgets = await budgetStatuses(
       tx,

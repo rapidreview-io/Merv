@@ -15,7 +15,7 @@ import {
   kindOf,
   words,
 } from '../components';
-import { ArrowRightIcon, CheckIcon } from '../icons';
+import { Icon } from '../icons';
 import { personMove } from '@merv/code-work/blockers';
 import { pathOf } from '../navigation';
 import { namesOf } from './people';
@@ -296,7 +296,7 @@ function Move({ line }: { line: Line }) {
     return line.desk ? (
       <div className="ov-move">
         <Link className="btn btn--primary" to={line.desk.to}>
-          {line.desk.label} <ArrowRightIcon size={14} />
+          {line.desk.label} <Icon name="arrow-right" size={14} />
         </Link>
       </div>
     ) : null;
@@ -431,7 +431,7 @@ export function NeedsYou({
         load.data && !count ? (
           // Nothing to do is good news, and wears the colour of it.
           <p className="home-clear">
-            <CheckIcon size={14} /> Nothing needs you
+            <Icon name="check" size={14} /> Nothing needs you
           </p>
         ) : undefined
       }

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { digest } from '@merv/contracts';
-import { taskWorkspace } from '@merv/tasks';
+import { taskWorkspace } from '@merv/tasks/workflow';
 import { currentExperiment } from '../packages/experiments/src/program.js';
 import { createApp } from './fixtures/app.js';
 

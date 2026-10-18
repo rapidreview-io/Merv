@@ -32,6 +32,12 @@
       "published": false
     },
     {
+      "component": "fleet",
+      "version": 5,
+      "hash": "e85a9dc996268b0f0852166035a1b68b895426b87e9b74726a96c7f29e0e8da6",
+      "published": false
+    },
+    {
       "component": "fleet_workflow",
       "version": 1,
       "hash": "7f5b75f5e21b67ed85946c51632cf2a0b301f5509471470d80ec92f59d858679",
@@ -1215,6 +1221,18 @@
       "component": "fleet_workflow",
       "version": 7,
       "hash": "1bb0457691d829a92e1b1980f7ac405106c98554b45824f256d17809cd613585",
+      "published": false
+    },
+    {
+      "component": "admin",
+      "version": 1,
+      "hash": "4e5698687a8b24d8b3600d31de829767df12b4be9d40e2332081e1e26cef85a4",
+      "published": false
+    },
+    {
+      "component": "admin",
+      "version": 2,
+      "hash": "79c4a710d0137adb841fbb37f29d2877ee63b5eb7cea79643873d091dd7e9eb7",
       "published": false
     }
   ]

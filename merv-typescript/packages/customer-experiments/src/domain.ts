@@ -354,24 +354,7 @@ export class CustomerExperiments {
           createdAt: now(),
         };
         const contract: ExperimentContract = { ...body, hash: digest(body) };
-        const artifact = await this.artifacts.create(
-          caller,
-          {
-            title: `Accepted offer ${version}: ${input.plan.title}`,
-            content: JSON.stringify(contract),
-            mediaType: 'application/json',
-          },
-          tx,
-        );
-        await tx.run(
-          'INSERT INTO customer_experiment_contracts(id,experiment_id,version,hash,artifact_id,record) VALUES(?,?,?,?,?,?)',
-          contract.id,
-          exp.id,
-          version,
-          contract.hash,
-          artifact.id,
-          JSON.stringify(contract),
-        );
+        await this.keepContract(caller, exp.id, contract, input.plan.title, tx);
         await tx.run(
           'UPDATE customer_experiments SET contract_id=?,title=? WHERE id=?',
           contract.id,
@@ -540,12 +523,11 @@ export class CustomerExperiments {
   async writePlan(
     caller: Caller,
     input: { id: string; expectedRevision: number; document: string; by: 'customer' | 'agent' },
-    transaction?: Transaction,
   ): Promise<PlanView> {
     caller = structuredClone(caller);
     input = plain(input);
     const document = planDocumentSchema.parse(input.document);
-    return inTransaction(this.state, transaction, async (tx) => {
+    return this.state.transaction(async (tx) => {
       const plan = await this.openPlan(caller, input.id, input.expectedRevision, tx);
       check(
         ['drafting', 'changes_requested'].includes(plan.status),
@@ -581,11 +563,10 @@ export class CustomerExperiments {
   async submitPlan(
     caller: Caller,
     input: { id: string; expectedRevision: number },
-    transaction?: Transaction,
   ): Promise<PlanView> {
     caller = structuredClone(caller);
     input = plain(input);
-    return inTransaction(this.state, transaction, async (tx) => {
+    return this.state.transaction(async (tx) => {
       const plan = await this.openPlan(caller, input.id, input.expectedRevision, tx);
       // A retried submit of the revision already under verification is the same request.
       if (plan.status === 'verifying') return plan;
@@ -622,11 +603,10 @@ export class CustomerExperiments {
   async withdrawPlan(
     caller: Caller,
     input: { id: string; revision: number; status: 'drafting' | 'changes_requested' },
-    transaction?: Transaction,
   ): Promise<PlanView> {
     caller = structuredClone(caller);
     input = plain(input);
-    return inTransaction(this.state, transaction, async (tx) => {
+    return this.state.transaction(async (tx) => {
       const plan = await this.openPlan(caller, input.id, input.revision, tx);
       if (plan.status !== 'verifying') return plan;
       await this.setPlanStatus(input.id, input.status, plan.feedback, tx);
@@ -642,11 +622,10 @@ export class CustomerExperiments {
   async reopenPlan(
     caller: Caller,
     input: { id: string; contractVersion: number; feedback: string },
-    transaction?: Transaction,
   ): Promise<PlanView> {
     caller = structuredClone(caller);
     input = plain(input);
-    return inTransaction(this.state, transaction, async (tx) => {
+    return this.state.transaction(async (tx) => {
       this.open();
       await this.scope.require(caller, 'write', tx);
       const exp = await this.get(caller, input.id, tx);
@@ -673,11 +652,10 @@ export class CustomerExperiments {
   async verifyPlan(
     caller: Caller,
     input: PlanVerification & { id: string; files: RequestFile[] },
-    transaction?: Transaction,
   ): Promise<PlanView> {
     caller = structuredClone(caller);
     input = plain(input);
-    return inTransaction(this.state, transaction, async (tx) => {
+    return this.state.transaction(async (tx) => {
       const plan = await this.openPlan(caller, input.id, input.revision, tx);
       check(
         plan.status === 'verifying',
@@ -708,30 +686,40 @@ export class CustomerExperiments {
         createdAt: now(),
       };
       const contract: DocumentContract = { ...body, hash: digest(body) };
-      const artifact = await this.artifacts.create(
-        caller,
-        {
-          title: `Accepted offer ${version}: ${exp.title}`,
-          content: JSON.stringify(contract),
-          mediaType: 'application/json',
-        },
-        tx,
-      );
-      await tx.run(
-        'INSERT INTO customer_experiment_contracts(id,experiment_id,version,hash,artifact_id,record) VALUES(?,?,?,?,?,?)',
-        contract.id,
-        exp.id,
-        version,
-        contract.hash,
-        artifact.id,
-        JSON.stringify(contract),
-      );
+      await this.keepContract(caller, exp.id, contract, exp.title, tx);
       await tx.run('UPDATE customer_experiments SET contract_id=? WHERE id=?', contract.id, exp.id);
       await this.setPlanStatus(input.id, 'accepted', input.feedback ?? null, tx);
       // One acceptance per contract: a reopened plan may be accepted again at the same revision.
       await this.move(caller, exp, 'propose', `plan-${plan.revision}-v${version}`, tx);
       return this.plan(caller, input.id, tx);
     });
+  }
+  /** A contract's accepted offer, kept as an artifact and as its own row. */
+  private async keepContract(
+    caller: Caller,
+    experimentId: string,
+    contract: { id: string; version: number; hash: string },
+    title: string,
+    tx: Transaction,
+  ) {
+    const artifact = await this.artifacts.create(
+      caller,
+      {
+        title: `Accepted offer ${contract.version}: ${title}`,
+        content: JSON.stringify(contract),
+        mediaType: 'application/json',
+      },
+      tx,
+    );
+    await tx.run(
+      'INSERT INTO customer_experiment_contracts(id,experiment_id,version,hash,artifact_id,record) VALUES(?,?,?,?,?,?)',
+      contract.id,
+      experimentId,
+      contract.version,
+      contract.hash,
+      artifact.id,
+      JSON.stringify(contract),
+    );
   }
   private async openPlan(
     caller: Caller,

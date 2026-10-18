@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
-import { safely } from './api';
-import { SessionProvider } from './session';
-import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
+import { readOnly } from './api';
+import { SessionProvider, useSession } from './session';
+import { Sidebar, ShellFrame, PageLede, useRailOpen, useShell } from './shell';
+import type { ShellData } from './shell-types';
 import { EmptyState, ErrorBoundary, LoadState, PageLoad, StatusPill } from './components';
 import { Icon } from './icons';
 import { MOVED, dormantOwner, humanizeGroup } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
 import { HomeView } from './views/home';
-import { AdminView } from './views/admin';
+import { AdminApp } from './admin/app';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
 
@@ -47,31 +48,36 @@ function NotFound({ shell }: { shell: ShellData }) {
   );
 }
 
+/** Pages that are only verbs — the Agent's chat, a board, the settings, the sandbox console. */
+const VERBS = new Set(['pi', 'boards', 'settings', 'sandboxes']);
+
 function Workspace() {
-  const shell = useShell();
+  const read = useShell();
+  // The drill-in is read-only: a page that is only verbs has no route and no row in its rail.
+  const data = useMemo(
+    () =>
+      read.data && readOnly()
+        ? { ...read.data, rows: read.data.rows.filter((row) => !VERBS.has(row.view.kind)) }
+        : read.data,
+    [read.data],
+  );
+  const shell = { ...read, data };
+  const { project } = useSession();
   const { pathname, search } = useLocation();
-  const [open, setOpen] = useState(() =>
-    safely(() => localStorage.getItem('merv:sidebar') !== 'closed', true),
-  );
-  useEffect(
-    () => safely(() => localStorage.setItem('merv:sidebar', open ? 'open' : 'closed')),
-    [open],
-  );
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
-        event.preventDefault();
-        setOpen((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const [open, setOpen] = useRailOpen();
   const rows = shell.data?.rows ?? [];
   return (
     // The Agent's conversation outlives its page, and stands beside every other page in the dock.
     <PiProvider>
+      {readOnly() && (
+        <header className="admin-drill">
+          {/* A full load: the admin is its own app, outside this project's router. */}
+          <a href="/ui/admin">← Admin</a>
+          <span className="admin-drill-name">{project.name}</span>
+        </header>
+      )}
       <ShellFrame
+        name={project.name}
         open={open}
         onShow={() => setOpen(true)}
         sidebar={<Sidebar shell={shell.data} onHide={() => setOpen(false)} />}
@@ -113,21 +119,18 @@ function Workspace() {
           )}
         </PageLede>
       </ShellFrame>
-      <PiDock rows={rows} />
+      {!readOnly() && <PiDock rows={rows} />}
     </PiProvider>
   );
 }
 
-function AppContent() {
-  const { pathname } = useLocation();
-  return pathname === '/admin' ? <AdminView /> : <Workspace />;
-}
-
 export function App() {
   const { pathname } = useLocation();
+  // The platform admin is an account-wide app of its own; its drill-in is this Workspace.
+  const admin = !readOnly() && /^\/admin(\/|$)/.test(pathname);
   return (
-    <SessionProvider accountOnly={pathname === '/admin'}>
-      <AppContent />
+    <SessionProvider key={admin ? 'admin' : 'member'} accountOnly={admin}>
+      {admin ? <AdminApp /> : <Workspace />}
     </SessionProvider>
   );
 }

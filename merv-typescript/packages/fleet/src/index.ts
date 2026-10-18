@@ -24,8 +24,9 @@ import {
   runtimeLaunch,
   runtimeOffer,
 } from './runtime.js';
-import { migration, migrationV2, migrationV3, migrationV4 } from './schema.js';
+import { migration, migrationV2, migrationV3, migrationV4, migrationV5 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
+import { rentedWork } from './running.js';
 import type {
   Fleet,
   FleetAllocation,
@@ -33,12 +34,14 @@ import type {
   FleetIntent,
   FleetMachine,
   FleetOwner,
+  FleetPersonDay,
   FleetProjectLimit,
   FleetRequest,
   FleetRuntimeHandle,
   ModelRelayConfig,
   ModelRelayGrant,
   ModelRelayHandle,
+  RelayOutcome,
 } from './types.js';
 export type * from './types.js';
 
@@ -60,8 +63,6 @@ const requestSchema = z
   .strict();
 export const fleetConfig = z
   .object({
-    /** Ignored: loading Fleet is the switch. Configurations rendered before still carry it. */
-    enabled: z.boolean().optional(),
     profiles: runtimeProfiles,
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
@@ -161,7 +162,13 @@ export class FleetService implements Fleet {
     this.startedAt = clock();
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration, migrationV2, migrationV3, migrationV4]);
+    await this.state.migrate('fleet', [
+      migration,
+      migrationV2,
+      migrationV3,
+      migrationV4,
+      migrationV5,
+    ]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -283,27 +290,45 @@ export class FleetService implements Fleet {
     return this.projectLimit(caller);
   }
   /**
-   * What a person's machines have cost today (UTC) at the prices stamped when Fleet reserved
-   * them, each from its request to its release (or now). Time in the queue counts, so it errs
-   * high; a request that never had a machine costs nothing. Reads the database only.
+   * What each person's machines have cost today (UTC), or only `person`'s, at the prices stamped
+   * when Fleet reserved them, each from its request to its release (or now). Time in the queue
+   * counts, so it errs high; a request that never had a machine costs nothing. Reads the database only.
    */
-  private async spentToday(person: string, sql: Sql): Promise<number> {
+  private async spentToday(sql: Sql, person?: string): Promise<Map<string, number>> {
     const now = this.clock();
     const day = now - (now % 86_400_000);
     // A machine of today can be older: a day in the queue, a day of work and a lease to stop.
     const rows = await sql.all<Row>(
-      "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
-      person,
+      `SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person' ${person ? '=?' : 'IS NOT NULL'} AND created_at>=?`,
+      ...(person ? [person] : []),
       new Date(day - 3 * 86_400_000).toISOString(),
     );
-    let usd = 0;
+    const usd = new Map<string, number>();
     for (const a of rows.map(decode)) {
       if (!a.runtime) continue;
       const from = Math.max(day, Date.parse(a.createdAt));
       const to = a.phase === 'released' ? Date.parse(a.updatedAt) : now;
-      if (to > from) usd += ((to - from) / 3_600_000) * (a.usdPerHour ?? 0);
+      if (to > from)
+        usd.set(
+          a.person!,
+          (usd.get(a.person!) ?? 0) + ((to - from) / 3_600_000) * (a.usdPerHour ?? 0),
+        );
     }
     return usd;
+  }
+  async peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]> {
+    const meter = [...this.owners.values()].find((owner) => owner.modelTokens);
+    return this.state.read(async (sql) => {
+      const usd = await this.spentToday(sql);
+      const days: FleetPersonDay[] = [];
+      for (const person of persons)
+        days.push({
+          usd: usd.get(person) ?? 0,
+          usdCap: this.config.dailyUsdPerPerson ?? null,
+          tokens: (await meter?.modelTokens!(person, sql)) ?? null,
+        });
+      return days;
+    });
   }
   /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
   private stale(a: FleetAllocation): boolean {
@@ -411,6 +436,13 @@ export class FleetService implements Fleet {
     );
     return rows.map(decode);
   }
+  async platformAllocations() {
+    return (await this.state.read((sql) => this.all(sql))).map((a) => {
+      const profile = this.profiles.find(({ id }) => id === a.profileId);
+      const { key, provider } = profile ?? {};
+      return { ...a, profile: key ?? null, provider: provider ?? null, work: rentedWork(a) };
+    });
+  }
   async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
     return inTransaction(this.state, tx, async (tx) => {
       const allocation = await this.inspectOwned(owner, id, tx);
@@ -495,7 +527,7 @@ export class FleetService implements Fleet {
       const person = (await owner.payer?.(source, input.owner.id, tx)) ?? undefined;
       if (person && this.config.dailyUsdPerPerson !== undefined)
         check(
-          (await this.spentToday(person, tx)) < this.config.dailyUsdPerPerson,
+          ((await this.spentToday(tx, person)).get(person) ?? 0) < this.config.dailyUsdPerPerson,
           'fleet_compute_cap',
           "Today's compute is used up",
           429,
@@ -652,8 +684,47 @@ export class FleetService implements Fleet {
   }
   modelRelay<G extends ModelRelayGrant, N extends string, R>(
     config: ModelRelayConfig<G, N, R>,
+    keyEnv: string,
   ): ModelRelayHandle {
-    return new ModelRelay(config);
+    // One upsert per call the provider answered or failed: the latest of each.
+    const keep = (model: string, failure?: { status?: number; code?: string }) =>
+      this.state.transaction((tx) =>
+        tx.run(
+          failure
+            ? 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,last_failure_at,last_failure_status,last_failure_code) VALUES(?,?,?,?,?,?) ON CONFLICT(relay,key_env,model) DO UPDATE SET last_failure_at=excluded.last_failure_at,last_failure_status=excluded.last_failure_status,last_failure_code=excluded.last_failure_code'
+            : 'INSERT INTO fleet_relay_outcomes(relay,key_env,model,last_ok_at) VALUES(?,?,?,?) ON CONFLICT(relay,key_env,model) DO UPDATE SET last_ok_at=excluded.last_ok_at',
+          config.name,
+          keyEnv,
+          model,
+          new Date(this.clock()).toISOString(),
+          ...(failure ? [failure.status ?? null, failure.code ?? null] : []),
+        ),
+      );
+    return new ModelRelay({
+      ...config,
+      // Only what the provider did says whether its key works: a refunded call was never sent.
+      onUsage: async (record, grant, reserved) => {
+        await Promise.all([
+          config.onUsage?.(record, grant, reserved),
+          record.refund || keep(record.model),
+        ]);
+      },
+      onFailure: async (record, grant) => {
+        await Promise.all([
+          config.onFailure?.(record, grant),
+          record.code === 'upstream_failed' &&
+            keep(record.model, { status: record.upstreamHttpStatus, code: record.providerCode }),
+        ]);
+      },
+    });
+  }
+  async relayOutcomes(): Promise<RelayOutcome[]> {
+    // The Responses API refuses a key itself with 401 or `invalid_api_key`.
+    return await this.state.read((sql) =>
+      sql.all<RelayOutcome>(
+        `SELECT relay,key_env AS "keyEnv",model,last_ok_at AS "lastOkAt",last_failure_at AS "lastFailureAt",last_failure_status AS "lastFailureStatus",last_failure_code AS "lastFailureCode",COALESCE(last_failure_status=401 OR last_failure_code='invalid_api_key',false) AS rejected FROM fleet_relay_outcomes ORDER BY relay,key_env,model`,
+      ),
+    );
   }
   /** Only a full pass reads offers and steady machines; true while anything is not steady. */
   private run(full: boolean): Promise<boolean> {
@@ -722,7 +793,7 @@ export class FleetService implements Fleet {
           (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId, caps)
         ) {
           // Its person may have spent today's compute while it waited.
-          if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {
+          if (capped(a) && ((await this.spentToday(tx, a.person)).get(a.person!) ?? 0) >= cap!) {
             a.error = 'person_capped';
             a.intent = 'stop';
             a.phase = 'released';

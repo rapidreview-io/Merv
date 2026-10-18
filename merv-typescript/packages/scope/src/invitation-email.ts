@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MervError, envName, type ProjectInvitation } from '@merv/contracts';
+import { escapeHtml } from '@merv/contracts/text';
 
 export interface InvitationSender {
   send(invitation: ProjectInvitation): Promise<void>;
@@ -79,12 +80,6 @@ export class ResendInvitationSender implements InvitationSender {
   }
 }
 
-const escape = (text: string) =>
-  text.replace(
-    /[&<>"']/g,
-    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
-  );
-
 export function invitationMessage(
   invitation: ProjectInvitation,
   publicOrigin: string,
@@ -105,10 +100,10 @@ export function invitationMessage(
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;text-align:left">
 <tr><td style="font-size:14px;font-weight:700;padding-bottom:36px">merv</td></tr>
 <tr><td><h1 style="margin:0 0 20px;font-size:26px;line-height:1.2;font-weight:600">Project invitation</h1>
-<p style="margin:0 0 8px;font-size:18px;line-height:1.4;overflow-wrap:anywhere">${escape(invitation.projectName)}</p>
-<p style="margin:0 0 28px;font-size:14px;line-height:1.5">Role: ${escape(role)}</p>
-<table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="background:#111111"><a href="${escape(link.href)}" style="display:inline-block;padding:14px 20px;border:1px solid #111111;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600">Review invitation</a></td></tr></table>
-<p style="margin:28px 0 0;font-size:12px;line-height:1.7">Expires ${escape(expiry)} (UTC).</p>
+<p style="margin:0 0 8px;font-size:18px;line-height:1.4;overflow-wrap:anywhere">${escapeHtml(invitation.projectName)}</p>
+<p style="margin:0 0 28px;font-size:14px;line-height:1.5">Role: ${escapeHtml(role)}</p>
+<table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="background:#111111"><a href="${escapeHtml(link.href)}" style="display:inline-block;padding:14px 20px;border:1px solid #111111;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600">Review invitation</a></td></tr></table>
+<p style="margin:28px 0 0;font-size:12px;line-height:1.7">Expires ${escapeHtml(expiry)} (UTC).</p>
 </td></tr></table></td></tr></table></body></html>`;
   return { text, html };
 }

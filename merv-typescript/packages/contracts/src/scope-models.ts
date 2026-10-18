@@ -80,6 +80,9 @@ export interface Caller {
   };
   /** A project's credential-free service acting for a person, never set by a transport. */
   service?: { vouchedBy: DelegationSource };
+  /** A platform administrator reading any project, attached by the transport: read-only, as
+   *  `PLATFORM_ACTOR`, which no actor row backs. */
+  platform?: { issuer: string; subject: string; expiresAt: string };
 }
 /** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
 export type DelegationSource = { actorId: string; projectId: string } & (

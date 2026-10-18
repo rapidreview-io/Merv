@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useRef, useState, type ReactNode } from 'react';
-import { refreshTools, useTool, type Loaded } from '../api';
+import { readOnly, refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { recordRoutes } from '../list-filters';
 import {
@@ -17,7 +17,7 @@ import {
   useArtifacts,
   words,
 } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown';
 import { homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
@@ -104,7 +104,7 @@ export function ReviewSummary({
         <StatusPill value={review.verdict ?? review.status} />
         {reviews && (
           <Link className="cluster hit" to={`${reviews}/${review.id}`}>
-            Open the review <ArrowRightIcon size={14} />
+            Open the review <Icon name="arrow-right" size={14} />
           </Link>
         )}
       </div>
@@ -454,6 +454,7 @@ function Controls({
       refreshTools('ui.home', 'review.list', 'task.list', 'experiment.list');
     },
   });
+  if (readOnly()) return null;
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
   const start = guidance.data.actions.find((action) => action.tool === 'review.start');
   const submit = guidance.data.actions.find((action) => action.tool === 'review.submit');

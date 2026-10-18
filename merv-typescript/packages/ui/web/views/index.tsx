@@ -2,7 +2,7 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import type { ComponentType } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
-import type { ShellData } from '../shell';
+import type { ShellData } from '../shell-types';
 import { ArtifactsView } from './artifacts';
 import { BoardsView } from './board';
 import { CodeView } from './code';
@@ -11,7 +11,7 @@ import { FeedView } from './feed';
 import { LegacyHistoryView } from './legacy-history';
 import { PaperView } from './paper';
 import { PiView } from './pi';
-import { CollectionView, RecordView } from './remote';
+import { CollectionView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
@@ -52,9 +52,8 @@ const views: Record<string, ComponentType<ViewProps>> = {
   reflections: ReflectionsView,
   work: WorkView,
   'legacy-history': LegacyHistoryView,
-  // Two generic kinds: a row a remote service describes through its manifest.
+  // The generic kind: a row a plugin describes through its manifest.
   collection: CollectionView,
-  record: RecordView,
 };
 
 /** Every view kind this build can draw: what an address may open with and still be ours. */

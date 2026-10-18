@@ -2,14 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { MemoryRouter } from 'react-router-dom';
 import type { createClient } from '@supabase/supabase-js';
 import { safely } from '../api';
-import { Icon } from '../icons';
 import { Records } from '../navigation';
 import { Speak, Transcript } from '../views/pi';
 import { Floating } from '../views/pi-dock';
 import { useVoice, type Voice } from '../views/pi-voice';
 import { useConversation, type Conversation } from '../views/pi-conversation';
 import { currentCredentials, customerRequest, requestOf } from './api';
-import { FileManager, UploadTray, type Listing } from './files';
+import { DropZone, FileManager, UploadTray, type Listing } from './files';
 import { PlanEditor, type Plan } from './plan';
 import { Status, type Delivered, type Progress } from './status';
 import { ExperimentLink } from './experiment-link';
@@ -17,7 +16,7 @@ import { Start, takePending, takeVoice } from './start';
 import { useTyped } from './typing';
 import { useCustomerSession, type CustomerSession, type SessionControls } from './session';
 import { customerTransport } from './transport';
-import { formatBytes, fromDrop, Uploader } from './uploads';
+import { formatBytes, Uploader } from './uploads';
 
 type View = 'arrive' | 'chat' | 'plan' | 'files' | 'status';
 
@@ -415,9 +414,7 @@ function Arrive({
   drop(entries: { file: File; path: string }[]): void;
   expand(): void;
 }) {
-  const [over, setOver] = useState(false);
   const touch = useRef<number | null>(null);
-  const picker = useRef<HTMLInputElement>(null);
   return (
     <div
       className="cx-arrive"
@@ -434,26 +431,7 @@ function Arrive({
         }
       }}
     >
-      <button
-        type="button"
-        className={`cx-drop${over ? ' cx-drop--over' : ''}`}
-        onClick={() => (frozen ? open() : picker.current?.click())}
-        onDragOver={(event) => {
-          if (frozen) return;
-          event.preventDefault();
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(event) => {
-          if (frozen) return;
-          event.preventDefault();
-          setOver(false);
-          void fromDrop(event.dataTransfer).then(drop);
-        }}
-      >
-        <span className="cx-drop-title">Chug anything</span>
-        <Icon name="upload" size={20} className="cx-drop-icon" />
-        <span className="cx-drop-kinds">datasets, papers, content files</span>
+      <DropZone onFiles={drop} frozen={frozen} onFrozen={open}>
         {size !== null && (
           <span
             role="button"
@@ -474,18 +452,7 @@ function Arrive({
             {formatBytes(size)}
           </span>
         )}
-      </button>
-      <input
-        ref={picker}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          const files = [...(event.target.files ?? [])].map((file) => ({ file, path: file.name }));
-          event.target.value = '';
-          if (files.length) drop(files);
-        }}
-      />
+      </DropZone>
       <Chat pi={pi} voice={voice} />
     </div>
   );

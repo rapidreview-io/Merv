@@ -444,6 +444,9 @@ test('a project’s day, the deployment’s and its fallback searches’ are bou
     { clock: () => now, log: (record) => logged.push(record) },
   );
   await web.search(caller, { query: 'query-one' });
+  // A platform administrator reading the project spends none of its day.
+  const admin = { ...caller, platform: { issuer: 'i', subject: 's', expiresAt: '2030-01-01' } };
+  await assert.rejects(web.search(admin, { query: 'q' }), { code: 'web_forbidden', status: 403 });
   // Answers that need no provider cost nothing.
   await web.search(caller, { query: '' });
   await web.extract(caller, { url: 'not an address' });

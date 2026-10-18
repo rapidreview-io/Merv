@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   effectiveWorkspace,
+  sha256Hex,
   type SessionWorkspace,
   type WorkspaceDriver,
   type WorkspaceHandle,
@@ -11,10 +11,9 @@ import {
 } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import { privateDirectory } from '@merv/contracts/private-directory';
+import { pathStat, privateDirectory } from '@merv/contracts/private-directory';
 import { LocalLedger, terminalLaunch } from './ledger.js';
 
-export type { WorkspaceHandle } from '@merv/contracts';
 /** The hosted image's unprivileged assignment user, and the wrapper that runs Git as it. */
 export const assignmentUser = {
   uid: 12001,
@@ -43,15 +42,6 @@ class WorkspaceError extends Error {
     super(code);
   }
 }
-const statIfPresent = (path: string) => {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-};
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /**
  * Each launch's workspace row in the runner's ledger. A path is occupied while a row for it is
@@ -95,7 +85,7 @@ class WorkspaceRows {
         )
         .get(claim.path) as { known: number; open: number };
       if (rows.open) throw new WorkspaceError('workspace_owned_by_another_launch');
-      if (!rows.known && statIfPresent(claim.path) && !adoptable())
+      if (!rows.known && pathStat(claim.path) && !adoptable())
         throw new WorkspaceError('workspace_foreign_checkout');
       this.db
         .prepare(
@@ -182,7 +172,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       if (terminalLaunch(this.ledger.get(record.id)!))
         throw new WorkspaceError('workspace_launch_closed');
       const path = this.assignment
-        ? join(this.assignment.directory, hash(this.assignment.workInstanceId))
+        ? join(this.assignment.directory, sha256Hex(this.assignment.workInstanceId))
         : join(realpathSync(record.runDirectory), 'workspace');
       this.rows.claim(
         {
@@ -256,7 +246,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
   }
   private prepareScratch(row: WorkspaceRow): void {
     this.within(this.parent(row), row.path);
-    const info = statIfPresent(row.path);
+    const info = pathStat(row.path);
     // On a retained hosted machine the preceding phase handed this same leaf to the
     // unprivileged assignment user. Its parent is still supervisor-owned and fenced.
     if (this.assignment && info && process.getuid?.() === 0 && info.uid === assignmentUser.uid) {
@@ -275,10 +265,10 @@ export class RunnerWorkspaces implements WorkspaceDriver {
     if (name === '..' || name.startsWith(`..${sep}`) || isAbsolute(name))
       throw new WorkspaceError('workspace_path_escape');
     let current = root;
-    if (statIfPresent(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
+    if (pathStat(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
     for (const part of name.split(sep).filter(Boolean)) {
       current = join(current, part);
-      if (statIfPresent(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
+      if (pathStat(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
     }
   }
 }

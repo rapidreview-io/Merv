@@ -1,21 +1,13 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
+import type { InventoryPlugin } from './architecture-explorer.js';
 
 /**
  * Compiles the plugin atlas from source: each package's service contracts (read through the
  * type checker), which neighbour calls which method, native tools, domain events, owned tables
  * and the SQL that reaches into another package's tables. Nothing here runs a plugin.
  */
-interface InventoryPlugin {
-  plugin: string;
-  source: string;
-  provides: string[];
-  requires: string[];
-  optional: string[];
-  kind: string;
-  runtime: string;
-}
 interface Inventory {
   snapshot: string;
   plugins: InventoryPlugin[];
@@ -43,7 +35,7 @@ const TOOL = /^[a-z_][a-z0-9_]*\.[a-z0-9_.]+$/;
 const CONTEXT_TYPES = new Set(['Transaction', 'Caller', 'Sql']);
 const EMITTERS = /^(?:recorded|record[A-Z]\w*|appendEvent|emit\w*|event)$/;
 
-const walk = (path: string): string[] =>
+export const walk = (path: string): string[] =>
   existsSync(path)
     ? readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
         entry.isDirectory() ? walk(resolve(path, entry.name)) : [resolve(path, entry.name)],

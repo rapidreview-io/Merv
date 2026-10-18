@@ -1,5 +1,6 @@
 flowchart BT
   subgraph server["Merv server"]
+    merv_admin["merv-admin"]
     api["api"]
     merv_artifact_tools["merv-artifact-tools"]
     merv_artifact_ui["merv-artifact-ui"]
@@ -14,7 +15,7 @@ flowchart BT
     codeWork["codeWork"]
     merv_code_work_api["merv-code-work-api"]
     contextBuilder["contextBuilder"]
-    merv_customer_experiments["merv-customer-experiments"]
+    customerExperiments["customerExperiments"]
     domainEvents["domainEvents"]
     experiments["experiments"]
     merv_experiments_tools["merv-experiments-tools"]
@@ -80,6 +81,10 @@ flowchart BT
   subgraph machine["Independent machine runtime"]
     runner["runner"]
   end
+  merv_admin --> state
+  merv_admin -. optional .-> api
+  merv_admin -. optional .-> scope
+  merv_admin -. optional .-> tools
   api --> scope
   api --> tools
   api --> identity
@@ -121,27 +126,27 @@ flowchart BT
   contextBuilder --> state
   contextBuilder --> scope
   contextBuilder --> artifacts
-  merv_customer_experiments --> state
-  merv_customer_experiments --> scope
-  merv_customer_experiments --> artifacts
-  merv_customer_experiments --> workflows
-  merv_customer_experiments --> reviews
-  merv_customer_experiments --> codeWork
-  merv_customer_experiments --> sessions
-  merv_customer_experiments --> sandboxEvidence
-  merv_customer_experiments --> reports
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> sbxMerv
-  merv_customer_experiments --> pi
-  merv_customer_experiments --> tools
-  merv_customer_experiments --> api
-  merv_customer_experiments -. optional .-> identity
+  customerExperiments --> state
+  customerExperiments --> scope
+  customerExperiments --> artifacts
+  customerExperiments --> workflows
+  customerExperiments --> reviews
+  customerExperiments --> codeWork
+  customerExperiments --> sessions
+  customerExperiments --> sandboxEvidence
+  customerExperiments --> reports
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> sbxMerv
+  customerExperiments --> pi
+  customerExperiments --> tools
+  customerExperiments --> api
+  customerExperiments -. optional .-> identity
   domainEvents --> state
   experiments --> state
   experiments --> scope
@@ -151,6 +156,7 @@ flowchart BT
   experiments --> contextBuilder
   experiments --> codeWork
   experiments --> paper
+  experiments --> sessions
   experiments -. optional .-> sandboxEvidence
   experiments -. optional .-> reports
   merv_experiments_tools --> experiments

@@ -21,6 +21,7 @@ import {
   hasToken,
   identityVersion,
   onAccessLost,
+  readOnly,
   recentProjects,
   resolveAccountSession,
   safely,
@@ -45,6 +46,9 @@ interface Session {
   signOut(): void;
 }
 const SessionContext = createContext<Session | null>(null);
+/** What an account-wide page (the platform admin) knows of its sign-in: who, and the way out. */
+const AccountContext = createContext<Pick<Session, 'account' | 'signOut'> | null>(null);
+export const useAccount = () => useContext(AccountContext);
 export const useSession = (): Session => {
   const session = useContext(SessionContext);
   if (!session) throw new Error('useSession outside SessionProvider');
@@ -136,6 +140,8 @@ function SignIn({
   const googleSignIn = async () => {
     if (!client) return;
     begin('shared');
+    // The callback is the app's root: main.tsx brings the person back to this page from there.
+    safely(() => sessionStorage.setItem('merv:return', window.location.pathname));
     try {
       const { error } = await client.auth.signInWithOAuth({
         provider: 'google',
@@ -260,7 +266,7 @@ function SignIn({
 const SigninHost = () => <p className="signin-host">{window.location.host}</p>;
 
 /** A date a person reads at a glance: the year only when it is not this one. */
-const day = (iso: string) => {
+export const day = (iso: string) => {
   const at = new Date(iso);
   return at.toLocaleDateString(undefined, {
     month: 'short',
@@ -554,6 +560,7 @@ export function SessionProvider({
     checking.current = true;
     resolveAccountSession({
       invitations: !!(invitationId ?? safely(() => sessionStorage.getItem('merv:invitation'))),
+      accountOnly,
     })
       .then((result) => {
         failures.current = 0;
@@ -586,7 +593,8 @@ export function SessionProvider({
               ? 'That credential was not accepted.'
               : undefined,
         });
-        setToken(null);
+        // The drill-in's refusal is the project's, not the sign-in's: the credential stays.
+        if (refused || !readOnly()) setToken(null);
       })
       .finally(() => {
         // A check waiting to be asked again is still in flight.
@@ -612,6 +620,13 @@ export function SessionProvider({
   };
   if (state.phase === 'checking' || ('epoch' in state && state.epoch !== epoch))
     return <main className="signin empty">Connecting…</main>;
+  // A drill-in the server refused keeps its credential: it says why and leads back to the admin.
+  if (state.phase === 'anonymous' && readOnly() && hasToken())
+    return (
+      <main className="signin empty">
+        {state.error} <a href="/ui/admin">← Admin</a>
+      </main>
+    );
   if (state.phase === 'anonymous')
     return (
       <SignIn
@@ -624,7 +639,12 @@ export function SessionProvider({
       />
     );
   // Account-wide pages authorize their own reads without granting project membership.
-  if (accountOnly) return <>{children}</>;
+  if (accountOnly)
+    return (
+      <AccountContext.Provider value={{ account: state.account, signOut }}>
+        {children}
+      </AccountContext.Provider>
+    );
   // The page that was asked for opens in the chosen project.
   const choose = (id: string) => {
     const url = new URL(window.location.href);

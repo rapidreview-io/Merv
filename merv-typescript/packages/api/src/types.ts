@@ -55,10 +55,15 @@ export interface RemoteToolDefinition extends ToolDescription {
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 /** A native definition, or a remote tool's description without its handler (Tools.list()). */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
-/** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`. */
-export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation'> & { remote: boolean };
-/** The callers one plugin issues: Pi's conversations and Sessions' managed runners. */
-export type CallerKind = 'conversation' | 'managed';
+/** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`
+ *  and never `readOnly`, whatever its server says. */
+export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation'> & {
+  remote: boolean;
+  readOnly: boolean;
+};
+/** The callers one plugin issues: Pi's conversations, Sessions' managed runners and the admin's
+ *  platform readers. */
+export type CallerKind = 'conversation' | 'managed' | 'platform';
 /** How the plugin that issues one kind of caller limits its tools; without them, 503. */
 export interface CallerRules {
   /** Whether describe lists the tool to such a caller; invoke refuses any other with
@@ -127,7 +132,6 @@ export interface ApiCredential {
 
 export interface Api {
   readonly url?: string;
-  start(): Promise<string>;
   stop(): Promise<void>;
   /** Serves one lowercase path segment (409 when taken). Until it is mounted, and once its
    *  disposer withdraws it, a credential's request to it answers 503. */

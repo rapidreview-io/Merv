@@ -6,8 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { after, test, type TestContext } from 'node:test';
-import pg from 'pg';
+import { test, type TestContext } from 'node:test';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -23,25 +22,7 @@ import { ExactToolPolicy } from '@merv/scope/tool-policy';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { deferred } from './fixtures/deferred.js';
-import { openState, postgresUrl, schemaFor, testLimits } from './fixtures/state.js';
-
-let observer: pg.Client | undefined;
-after(async () => await observer?.end());
-
-/** Whether any session waits for the writer lock of `schema` (see fixtures/writer-race.ts). */
-async function lockWaiters(schema: string): Promise<number> {
-  if (!observer) {
-    observer = new pg.Client({ connectionString: postgresUrl });
-    await observer.connect();
-  }
-  const { rows } = await observer.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pg_catalog.pg_locks
-     WHERE locktype='advisory' AND NOT granted
-       AND ((classid::bigint << 32) | objid::bigint) = pg_catalog.hashtextextended($1, 0)`,
-    [`merv-state:${schema}`],
-  );
-  return rows[0]!.n;
-}
+import { openState, schemaFor, testLimits, whileWriterHeld } from './fixtures/state.js';
 
 async function fixture() {
   const schema = schemaFor();
@@ -140,42 +121,6 @@ async function fixture() {
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Operation = (f: Fixture) => Promise<unknown>;
-
-/**
- * Runs `operation` while another writer holds State's writer lock. 'free' when it settles on its
- * own; 'queued' as soon as it waits for the lock. Either way the writer then lets go and the
- * operation, with its own assertions, is awaited to its end.
- */
-async function whileWriterHeld(f: Fixture, operation: () => Promise<unknown>) {
-  const locked = deferred();
-  const release = deferred();
-  const writer = f.state.transaction(async () => {
-    locked.resolve();
-    await release.promise;
-  });
-  await locked.promise;
-  let settled = false;
-  const running = operation().finally(() => {
-    settled = true;
-  });
-  const queued = async () => {
-    const deadline = Date.now() + 10_000;
-    while (!settled) {
-      if ((await lockWaiters(f.schema)) > 0) return 'queued' as const;
-      if (Date.now() > deadline) throw new Error('The operation neither settled nor queued');
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    return 'free' as const;
-  };
-  try {
-    return await Promise.race([running.then(() => 'free' as const), queued()]);
-  } finally {
-    release.resolve();
-    await writer;
-    // A 'queued' operation settles only now; its rejection must still fail the test.
-    await running;
-  }
-}
 
 /** Group A: every provider-backed decision family, each checking what it returns. */
 const decisions: [string, Operation][] = [

@@ -15,7 +15,8 @@ import { dirname, join, relative, sep } from 'node:path';
 import { CODE_DRIVER, type SessionWorkspace } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { CodeWorkspaceManifest } from '../store/protocol.js';
-import { diffStats, hash, oid, pathStat, WorkspaceError } from './git.js';
+import { pathStat } from '@merv/contracts/private-directory';
+import { diffStats, hash, oid, WorkspaceError } from './git.js';
 import { type WorkspaceRow, driverDirectory, stageAssignmentBundle, DriverCore } from './core.js';
 
 /** Where a launch's code comes from: the cache, its fetches and the checkouts. */

@@ -44,15 +44,10 @@ The Workflows tool adapter exposes `workflow.status_and_next`, `workflow.catalog
 
 The checked-in SVG/PNG and DOT panels show their 2026-09-16 dependency snapshot and should not be used as the current count. `current-dependencies.json` is the generated inventory for current declarations, including the separate Runner HTTP connection.
 
-The checked-in [renderer](../../scripts/render-dependencies.mjs) uses the Graphviz `dot` engine through `@viz-js/viz`, combines five SVG panels with the adapter rows, and converts the result to a 2800 × 4905 PNG with Sharp. It uses the bundled dependency runtime; `MERV_RENDER_NODE_MODULES` can name another directory containing those existing packages. The checked-in outputs were visually checked for their historical snapshot.
-
-Regenerate the inventory and images with:
+Their renderer was deleted on 2026-10-17; the SVG/PNG and DOT panels stay as that frozen snapshot. Regenerate the inventory with:
 
 ```sh
 npm run docs:architecture
-node scripts/render-dependencies.mjs
 ```
-
-Regenerate or update the DOT panels before presenting new SVG/PNG exports as current. The renderer checks their providers, Cordis edges and HTTP connections against the generated inventory.
 
 Scope now owns tool grants through `scope.toolPolicy`; Sessions registers its session tool policy with the tool registry (`ctx.tools.registerSessionPolicy()`). Access is an internal Scope module, not a separate plugin. Tools requires only Scope; External Mounts requires Tools and Scope and owns upstream credential resolution internally. See the [configuration migration](../../packages/scope/README.md).

@@ -9,6 +9,7 @@ import {
   type Scope,
   type Transaction,
 } from '@merv/contracts';
+import type { PiCommand } from '@merv/pi/models';
 import type { PiProfile, PiRuntime } from '@merv/pi/types';
 import type { Tools } from '@merv/api/types';
 import { z } from 'zod';
@@ -26,7 +27,6 @@ import { plansDocument } from './program.js';
 import {
   isDocumentContract,
   type CustomerExperiment,
-  type ExperimentPlan,
   type RequestFile,
   type RequestFiles,
 } from './types.js';
@@ -36,6 +36,12 @@ import { CustomerAccess } from './access.js';
 /** Commands the server sends into the intake conversation when the customer submits the plan;
  *  no customer or agent message may use the prefix. */
 export const PLAN_SUBMIT = 'plan-submit-';
+/** A turn's words as its customer reads them: the server's instruction to verify a submitted
+ *  plan is the customer's press of Submit. */
+export const customerMessages = ({ id, messages }: Pick<PiCommand, 'id' | 'messages'>) =>
+  id.startsWith(PLAN_SUBMIT)
+    ? messages.map((m) => (m.role === 'user' ? { ...m, text: 'Submitted the plan.' } : m))
+    : messages;
 
 export interface CustomerServiceOptions {
   publicOrigin: string;
@@ -320,7 +326,7 @@ export class CustomerService {
     if (includeConversation && record.conversationId) {
       try {
         const snapshot = await this.pi.snapshot(caller, record.conversationId);
-        conversation = snapshot.commands.flatMap((c) => c.messages);
+        conversation = snapshot.commands.flatMap(customerMessages);
         intakeStatus = snapshot.stage.name;
       } catch (error) {
         if ((error as { status?: number }).status !== 503) throw error;
@@ -358,6 +364,7 @@ export class CustomerService {
         : null;
     return {
       ...exp,
+      email: exp.email ?? record.email ?? null,
       state,
       statusMessage,
       progress,
@@ -575,6 +582,34 @@ export class CustomerService {
         await this.intakeRecord(caller, binding.requestId);
       },
     };
+    // What an intake conversation may call from version 4, when it gained its terminal.
+    const terminalTools = [
+      'customer_experiments.read',
+      'customer_experiments.compute_options',
+      'customer_experiments.plan_read',
+      'customer_experiments.plan_write',
+      'customer_experiments.plan_verify',
+      'customer_experiments.files',
+      'customer_experiments.file_read',
+      'customer_experiments.file_fetch',
+      'web.search',
+      'web.extract',
+      'nisa.search',
+      'nisa.semantic_search',
+      'nisa.paper',
+      'nisa.excerpts',
+    ];
+    // The request as it is now, read only from its own isolated project.
+    const snapshot: NonNullable<PiProfile['context']> = async ({ binding, caller }) => {
+      const record = await this.store.get(binding.requestId);
+      check(
+        record.projectId === caller.projectId,
+        'forbidden',
+        'Request context belongs to its isolated project',
+        403,
+      );
+      return JSON.stringify(await this.snapshot(record, false)).slice(0, 32000);
+    };
     const installations = [
       () =>
         this.pi.registerProfile({
@@ -587,16 +622,7 @@ export class CustomerService {
             'customer_experiments.compute_options',
             'customer_experiments.propose',
           ],
-          context: async ({ binding, caller }) => {
-            const record = await this.store.get(binding.requestId);
-            check(
-              record.projectId === caller.projectId,
-              'forbidden',
-              'Request context belongs to its isolated project',
-              403,
-            );
-            return JSON.stringify(await this.snapshot(record, false)).slice(0, 32000);
-          },
+          context: snapshot,
           authorizeTool: async ({ binding, caller, input }) => {
             check(
               input.id === binding.requestId,
@@ -628,148 +654,28 @@ export class CustomerService {
           version: 3,
           model: { id: 'gpt-6-astra', effort: 'medium' },
           instructions: guideInstructions,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
+          tools: terminalTools.filter((name) => name !== 'customer_experiments.file_fetch'),
           ...scoped,
         }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 4,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: terminalInstructions,
-          shell: true,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'customer_experiments.file_fetch',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
-          ...scoped,
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 5,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: budgetInstructions,
-          shell: true,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'customer_experiments.file_fetch',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
-          ...scoped,
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 6,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: leadInstructions,
-          shell: true,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'customer_experiments.file_fetch',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
-          ...scoped,
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 7,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: researchedInstructions,
-          shell: true,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'customer_experiments.file_fetch',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
-          ...scoped,
-        }),
-      () =>
-        this.pi.registerProfile({
-          id: 'customer-experiments-intake',
-          version: 8,
-          model: { id: 'gpt-6-astra', effort: 'medium' },
-          instructions: criteriaInstructions,
-          shell: true,
-          tools: [
-            'customer_experiments.read',
-            'customer_experiments.compute_options',
-            'customer_experiments.plan_read',
-            'customer_experiments.plan_write',
-            'customer_experiments.plan_verify',
-            'customer_experiments.files',
-            'customer_experiments.file_read',
-            'customer_experiments.file_fetch',
-            'web.search',
-            'web.extract',
-            'nisa.search',
-            'nisa.semantic_search',
-            'nisa.paper',
-            'nisa.excerpts',
-          ],
-          ...scoped,
-        }),
+      // Every version stays registered for the conversations stored under it.
+      ...[
+        terminalInstructions,
+        budgetInstructions,
+        leadInstructions,
+        researchedInstructions,
+        criteriaInstructions,
+      ].map(
+        (instructions, index) => () =>
+          this.pi.registerProfile({
+            id: 'customer-experiments-intake',
+            version: 4 + index,
+            model: { id: 'gpt-6-astra', effort: 'medium' },
+            instructions,
+            shell: true,
+            tools: terminalTools,
+            ...scoped,
+          }),
+      ),
       () =>
         this.pi.registerProfile({
           id: 'customer-experiments-healer',
@@ -789,16 +695,7 @@ export class CustomerService {
             'web.search',
             'web.extract',
           ],
-          context: async ({ binding, caller }) => {
-            const record = await this.store.get(binding.requestId);
-            check(
-              record.projectId === caller.projectId,
-              'forbidden',
-              'Request context belongs to its isolated project',
-              403,
-            );
-            return JSON.stringify(await this.snapshot(record, false)).slice(0, 32000);
-          },
+          context: snapshot,
           // Threads are its request's run's only; machines and reports live in the request's own
           // isolated project, which is all its caller can reach.
           authorizeTool: async ({ binding, caller, name, input }) => {

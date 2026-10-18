@@ -14,7 +14,7 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { MervError, plain, type Caller, type Scope } from '@merv/contracts';
+import { MervError, plain, type Caller, type Principal, type Scope } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
   ApiCredential,
@@ -28,8 +28,6 @@ import type {
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { projectSelection, unknownEndpoint, validated } from './errors.js';
-
-export { describeTool } from './registry.js';
 
 export interface HttpOptions {
   host?: string;
@@ -179,6 +177,16 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
  *  characters even when it looks namespaced. */
 const namespaced = (token: string) =>
   /^[a-z]+_/.test(token) && !token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
+
+/** Whether a request asks for platform read authority (`x-merv-platform: read`). Only a signed-in
+ *  person may ask; the platform authority decides whether they administer the platform. */
+function platformRead(req: IncomingMessage, principal: ApiPrincipal): boolean {
+  const asked = req.headers['x-merv-platform'];
+  if (asked === undefined) return false;
+  if (asked !== 'read' || principal.kind !== 'user' || !('user' in principal))
+    throw new MervError('platform_forbidden', 'Only a signed-in person reads as platform', 403);
+  return true;
+}
 
 interface Mounted {
   upgrade?: MountOptions['upgrade'];
@@ -407,7 +415,14 @@ export class ApiServer {
     principal: ApiPrincipal,
     projectId?: string,
     decide = false,
+    platform = false,
   ): Promise<Caller> {
+    // A platform reader is Scope's platform caller alone, never one of the person's memberships.
+    if (platform) {
+      const caller = await this.scope.platformCaller(principal as Principal, projectId);
+      if (decide) await this.scope.require(caller, 'read');
+      return caller;
+    }
     if (!('caller' in principal)) return await this.scope.caller(principal, projectId, decide);
     projectSelection(principal.caller.projectId, projectId);
     if (decide) await this.scope.require(principal.caller, 'read');
@@ -446,13 +461,14 @@ export class ApiServer {
 
   /** One tool call. A native tool's `projectId` argument selects its project; a mounted tool's
    *  arguments are all its own (the reserved namespace routes even while a catalog is withdrawn).
-   *  actorId and other caller-shaped fields are ordinary arguments that strict schemas reject. */
+   *  actorId and other caller-shaped fields are ordinary arguments that strict schemas reject.
+   *  `as`: a person's agent over MCP, or a platform reader over /tools, never both. */
   private async call(
     principal: ApiPrincipal,
     name: string,
     input: unknown,
     selectedProject: unknown,
-    agent = false,
+    as?: 'agent' | 'platform',
   ): Promise<ToolInvocation> {
     if (input === null || typeof input !== 'object' || Array.isArray(input))
       throw new MervError('invalid_input', 'Tool arguments must be an object');
@@ -461,8 +477,10 @@ export class ApiServer {
     const caller = await this.selectedCaller(
       principal,
       projectSelection(selectedProject, remote ? undefined : projectId),
+      false,
+      as === 'platform',
     );
-    const operation = this.tools.invoke(name, caller, remote ? input : native, agent);
+    const operation = this.tools.invoke(name, caller, remote ? input : native, as === 'agent');
     this.calls.add(operation);
     try {
       return await operation;
@@ -530,6 +548,7 @@ export class ApiServer {
     mounted: Mounted,
     principal?: ApiPrincipal,
   ): ApiRequest {
+    const platform = !!principal && platformRead(req, principal);
     // A body read while its route was withdrawn reaches no handler.
     const current = <T>(value: T): T => {
       if (this.mounts.get(prefix) !== mounted)
@@ -546,6 +565,7 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id'], projectId),
           true,
+          platform,
         );
       },
       json: async (schema, maxBytes = this.maxBodyBytes) => {
@@ -558,12 +578,15 @@ export class ApiServer {
 
   private async toolsRoute(req: IncomingMessage, r: ApiRequest): Promise<unknown> {
     const path = r.url.pathname;
+    const platform = platformRead(req, r.principal!);
     // A verified user's first request records that user, which is a write, so the caller is
     // authenticated before the read-only scope opens.
     if (path === '/tools' && req.method === 'GET') {
       const project = projectSelection(req.headers['x-merv-project-id']);
       const describe = async () => ({
-        tools: await this.tools.describe(await this.selectedCaller(r.principal!, project)),
+        tools: await this.tools.describe(
+          await this.selectedCaller(r.principal!, project, false, platform),
+        ),
       });
       return this.options.snapshot ? await this.options.snapshot(describe) : await describe();
     }
@@ -575,13 +598,16 @@ export class ApiServer {
       throw new MervError('invalid_tool', 'Malformed tool name');
     }
     const body = await r.json();
-    const result = await this.call(r.principal!, name, body, req.headers['x-merv-project-id']);
+    const as = platform ? 'platform' : undefined;
+    const result = await this.call(r.principal!, name, body, req.headers['x-merv-project-id'], as);
     return { result: result.value ?? null };
   }
 
   private async mcpRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
     const principal = r.principal!;
     if (r.url.pathname !== '/mcp') throw unknownEndpoint();
+    if (platformRead(req, principal))
+      throw new MervError('platform_forbidden', 'Agents never act with platform authority', 403);
     if (req.method !== 'POST') {
       res.setHeader('allow', 'POST');
       json(res, 405, {
@@ -626,7 +652,7 @@ export class ApiServer {
     instance.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const { name, arguments: input = {}, _meta } = request.params;
-        const result = await this.call(principal, name, input, selected(_meta), true);
+        const result = await this.call(principal, name, input, selected(_meta), 'agent');
         return result.format === 'mcp'
           ? (result.value as CallToolResult)
           : (result.mcp ?? {

@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -30,7 +30,7 @@ import { UiRegistry } from '@merv/ui';
 import { homeRead } from '@merv/ui/home';
 import reviewUiPlugin from '@merv/reviews/ui';
 import { openState } from './fixtures/state.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { assessment, ownReviews } from './fixtures/review-verdict.js';
 import './ui-render.js';
@@ -762,26 +762,7 @@ test('a blocker the gate names as the reader’s move is their line, in its own 
  * opens the wave's card on the asking thread.
  */
 test('a lens agent’s question reaches Needs you once, and its link opens the wave on its thread', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-lens-question-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app } = await httpApp(t, 'merv-lens-question-');
   const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'Q', actorName: 'Owner' });
   const owner: Caller = {
     projectId: boot.project.id,
@@ -834,26 +815,7 @@ test('a lens agent’s question reaches Needs you once, and its link opens the w
 });
 
 test('a wave’s owner who is no operator sees its lens agent’s question', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-lens-owner-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app } = await httpApp(t, 'merv-lens-owner-');
   const boot = await app.ctx.scope.credentials.bootstrap({ projectName: 'Q', actorName: 'Owner' });
   const operator: Caller = {
     projectId: boot.project.id,

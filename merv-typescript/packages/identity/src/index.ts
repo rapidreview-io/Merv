@@ -8,10 +8,8 @@ import {
   type JSONWebKeySet,
   type JWTVerifyGetKey,
 } from 'jose';
-import { MervError, type VerifiedIdentity } from '@merv/contracts';
+import { MervError, readCapped, type VerifiedIdentity } from '@merv/contracts';
 import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
-
-export type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
 
 const MAX_JWT_BYTES = 16_384;
 const MAX_JWKS_BYTES = 65_536;
@@ -27,7 +25,6 @@ const fields = new Set([
   'secretEnv',
   'publishableKeyEnv',
   'directoryKeyEnv',
-  'audience',
   'allowLocalHttp',
 ]);
 const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -94,16 +91,8 @@ async function loadJwks(
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_JWKS_BYTES))
       throw unauthorized();
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      length += part.value.byteLength;
-      if (length > MAX_JWKS_BYTES) throw unauthorized();
-      chunks.push(part.value);
-    }
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+    const body = await readCapped(reader, MAX_JWKS_BYTES, unauthorized);
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
   } finally {
     signal.removeEventListener('abort', abort);
     void reader.cancel().catch(() => undefined);
@@ -200,7 +189,6 @@ export class SupabaseIdentity implements IdentityProvider {
   #public: IdentityConfiguration = { enabled: false };
   #key?: Uint8Array | JWTVerifyGetKey;
   #issuer = '';
-  #audience = 'authenticated';
   #algorithms: string[] = [];
   #clock: () => number;
   #directoryKey?: string;
@@ -238,16 +226,6 @@ export class SupabaseIdentity implements IdentityProvider {
       this.#issuer = `${url.origin}/auth/v1`;
       if (config.directoryKeyEnv !== undefined)
         this.#directoryKey = environment(config.directoryKeyEnv);
-      if (config.audience !== undefined) {
-        if (
-          typeof config.audience !== 'string' ||
-          !config.audience ||
-          config.audience.length > 200 ||
-          config.audience.trim() !== config.audience
-        )
-          throw invalidConfig();
-        this.#audience = config.audience;
-      }
       const mode = config.mode ?? 'jwks';
       if (mode === 'hs256') {
         const secret = environment(config.secretEnv);
@@ -333,7 +311,7 @@ export class SupabaseIdentity implements IdentityProvider {
       const { payload } = await jwtVerify(token, this.#key, {
         algorithms: this.#algorithms,
         issuer: this.#issuer,
-        audience: this.#audience,
+        audience: 'authenticated',
         requiredClaims: ['iss', 'aud', 'sub', 'exp'],
         clockTolerance: 0,
         currentDate: new Date(now),

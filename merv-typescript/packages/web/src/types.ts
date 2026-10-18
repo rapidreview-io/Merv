@@ -1,35 +1,10 @@
 import type { Caller } from '@merv/contracts';
 import type {} from 'cordis';
+import type { z } from 'zod';
+import type { webConfig } from './input.js';
 
 /** Configuration names each key's environment variable and never carries a key. */
-export interface WebConfig {
-  /** Environment variable holding the Tavily key, read on every call. MERV_TAVILY_API_KEY. */
-  keyEnv?: string;
-  /** Tavily's API origin: https, or loopback http for tests. */
-  origin?: string;
-  /** OpenAI's hosted web search, used when Tavily has no key or refuses it (Nisa's fallback). */
-  fallback?: {
-    keyEnv: string;
-    /** A Responses model that can use the hosted web_search tool. */
-    model?: string;
-    origin?: string;
-    timeoutMs?: number;
-  };
-  /** Deadline for one Tavily call, its retries included. */
-  timeoutMs?: number;
-  /** A larger answer is refused, whatever its Content-Length says. */
-  maxResponseBytes?: number;
-  /** Calls this process has in flight at once, and one project's share of them (half by
-   * default); a call past either waits up to queueMs for its turn, then is refused (web_busy). */
-  maxInFlight?: number;
-  maxInFlightPerProject?: number;
-  queueMs?: number;
-  /** Calls per UTC day: one project's, the deployment's, and the deployment's fallback searches;
-   * the next is refused with web_budget_exhausted. */
-  dailyCallsPerProject?: number;
-  dailyCalls?: number;
-  fallbackDailyCalls?: number;
-}
+export type WebConfig = z.input<typeof webConfig>;
 
 export type WebProvider = 'tavily' | 'openai_web_search';
 

@@ -1,3 +1,4 @@
+import { personName } from '@merv/contracts/text';
 import { permits } from '@merv/scope/rules';
 import type { UiRowDescription } from '@merv/ui/rows';
 import { useState, type ReactNode } from 'react';
@@ -11,7 +12,7 @@ import { useSession } from '../session';
 import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
 import { HuggingFaceSettings } from './huggingface';
-import { NeedsAccount, PeopleView, personName } from './people';
+import { NeedsAccount, PeopleView } from './people';
 import { ProjectIntroduction } from './project-context';
 import type { ViewProps } from './index';
 

@@ -2,8 +2,6 @@ import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
 import {
@@ -30,8 +28,9 @@ import { FleetService } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { sessionsUiPlugin } from '../packages/sessions/src/ui.js';
 import { briefText, face, leaseNode, type Lease } from '../packages/sessions/src/running.js';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const request = () => randomBytes(10).toString('hex');
@@ -54,11 +53,6 @@ const auto = (runnerId = 'machine') => ({
   secret: secret(),
   platform: { name: 'codex', harness: 'codex' as const, model: 'fixture-model' },
 });
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((yes) => (resolve = yes));
-  return { promise, resolve };
-}
 /** Every string a person reads on the board or a sidebar: phrases, titles, rows. No keys. */
 function words(value: unknown, into: string[] = []): string[] {
   if (typeof value === 'string') into.push(value);
@@ -980,26 +974,7 @@ test('a Fleet machine that refuses work is named as one, never by its hostname',
 
 /** The default composition over HTTP: the real tools, the real adapters, one snapshot each. */
 test('through ui.running and ui.running_panel, operators and readers see a lease, and only an operator its brief and halt', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-running-sessions-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
+  const { app, directory, tool } = await httpApp(t, 'merv-running-sessions-');
   const credentials = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Running',
     actorName: 'Op',
@@ -1012,14 +987,6 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
   const reader = (
     await app.ctx.scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' })
   ).token;
-  const tool = async (name: string, token: string, input: unknown = {}) => {
-    const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    return { status: response.status, body: (await response.json()) as any };
-  };
   const task = await currentTask(app.ctx, operator, {
     title: 'Rebuild citation index',
     goal: 'Every citation key maps to one retained file.',

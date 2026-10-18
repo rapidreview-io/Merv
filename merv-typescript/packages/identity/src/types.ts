@@ -21,7 +21,6 @@ export interface IdentityConfig {
   secretEnv?: string;
   publishableKeyEnv?: string;
   directoryKeyEnv?: string;
-  audience?: string;
   allowLocalHttp?: boolean;
 }
 

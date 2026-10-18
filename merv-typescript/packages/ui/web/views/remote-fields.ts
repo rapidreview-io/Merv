@@ -1,13 +1,9 @@
-import type { UiColumn, UiPhrasePart } from '@merv/ui/manifest';
 import { stamp } from '../components';
-import { elapsed } from '../liveness';
-import { bytes } from './artifacts';
 
 /**
  * Reading a remote row's data. The service's JSON arrives as-is, so every fact
  * is reached by the dot path the manifest named and a missing field renders
- * nothing — never a zero, never a placeholder. Units are the service's; the
- * words for them are ours, and they are written in exactly one place.
+ * nothing — never a zero, never a placeholder.
  */
 export type Json = Record<string, unknown>;
 
@@ -26,11 +22,6 @@ export const str = (value: unknown): string =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
     ? String(value)
     : '';
-/** A number, including the decimal strings money arrives as ("0.007"); null and NaN are absent. */
-export const num = (value: unknown): number | undefined => {
-  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value;
-  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : undefined;
-};
 export const list = (value: unknown): Json[] =>
   Array.isArray(value) ? value.filter((item) => !!item && typeof item === 'object') : [];
 
@@ -42,37 +33,9 @@ export const records = (data: unknown): Json[] => {
   return [];
 };
 
-export type Unit = 'bytes' | 'mib' | 'gb' | 'count' | 'seconds' | 'instant';
-
-const UNITS: Record<string, (measure: number) => string> = {
-  bytes,
-  mib: (measure) => (measure >= 1024 ? `${(measure / 1024).toFixed(1)} GB` : `${measure} MiB`),
-  gb: (measure) => `${measure} GB`,
-  count: (measure) => `${measure}×`,
-  seconds: (measure) => elapsed(measure * 1000),
-};
-
-/** A number in the unit the service sent it in, read the way a person says it. */
-export function unit(value: unknown, kind?: Unit): string {
-  if (kind === 'instant') return str(value) ? stamp(str(value)) : '';
-  const measure = num(value);
-  if (measure === undefined) return str(value);
-  return (kind && UNITS[kind])?.(measure) ?? String(measure);
-}
-
-/** One phrase from several fields — hardware, location — with absent parts skipped. */
-export const phrase = (data: Json, parts: UiPhrasePart[], separator = ' · ') =>
-  parts
-    .map((part) => {
-      if (typeof part === 'string') return part;
-      const value = at(data, part.field);
-      if (value === undefined || value === '') return '';
-      return `${part.prefix ?? ''}${unit(value, part.unit)}${part.suffix ?? ''}`;
-    })
-    .filter(Boolean)
-    .join(separator);
-
-const SYMBOL: Record<string, string> = { USD: '$', EUR: '€', GBP: '£' };
+/** A detail's value: an instant as a stamp, anything else as the service sent it. */
+export const unit = (value: unknown, kind?: 'instant'): string =>
+  kind === 'instant' && str(value) ? stamp(str(value)) : str(value);
 
 /**
  * What it has cost so far — against its cap, where it has one — over what it costs per
@@ -85,17 +48,21 @@ export function formatMoney(
   of?: number,
 ): string {
   if (rate === 0 && !total) return 'free';
-  // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it.
-  const cash = (value: number) =>
-    `${SYMBOL[currency] ?? `${currency} `}${value.toFixed(value && value < 0.1 ? 3 : 2)}`;
+  // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it; an
+  // amount is in cents, and one under a cent says so: `<$0.01`.
+  const cash = (value: number, cents = true): string =>
+    cents && value > 0 && value < 0.01
+      ? `<${cash(0.01)}`
+      : value.toLocaleString('en-US', {
+          style: 'currency',
+          currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: !cents && value && Math.abs(value) < 0.1 ? 3 : 2,
+        });
   return [
     total !== undefined && `${cash(total)}${of === undefined ? '' : ` of ${cash(of)}`}`,
-    rate !== undefined && `${cash(rate)}/h`,
+    rate !== undefined && `${cash(rate, false)}/h`,
   ]
     .filter(Boolean)
     .join(' · ');
 }
-
-/** A remote row's money column, read through the same words. */
-export const money = (data: Json, column: Extract<UiColumn, { type: 'money' }>): string =>
-  formatMoney(num(at(data, column.total)), num(at(data, column.rate)), column.currency ?? 'USD');

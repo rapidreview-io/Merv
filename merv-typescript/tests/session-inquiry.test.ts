@@ -4,14 +4,14 @@
  * holds no lease on the work, never saves its conversation back, and spends a budget of its own.
  */
 import assert from 'node:assert/strict';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { MervError, withoutTriggers, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { MervError, withoutTriggers } from '@merv/contracts';
 import { CredentialStore } from '@merv/identity/credentials';
 import { MachineRunner } from '@merv/runner';
 import { codexModelRelay, hostedGrant } from '../packages/fleet/src/codex-relay.js';
@@ -30,143 +30,23 @@ import type {
   ThreadInquiry,
   ThreadMessages,
 } from '../packages/sessions/src/types.js';
-import type { ApplicationConfig } from '../src/config.js';
-import { createApp } from './fixtures/app.js';
-import { s3Blobs } from './fixtures/s3-blobs.js';
+import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
 
 /** The question an inquiry visit answers; none for a work visit. */
 const inquiryOf = (session?: Session | null) =>
   session?.kind === 'inquiry' ? session.inquiry : undefined;
-const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const CONVERSATION = '0199a0b2-1111-7222-8333-944445555666';
 
 async function fixture(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), 'merv-inquiry-'));
-  const env = `MERV_INQUIRY_TEST_${randomUUID().replaceAll('-', '')}`;
-  process.env[env] = randomBytes(48).toString('hex');
-  const s3 = await s3Blobs(t);
-  const config = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as ApplicationConfig;
-  config.plugins = config.plugins.map((plugin) =>
-    plugin.id === 'sessions'
-      ? { ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }
-      : plugin.id === 'blobs'
-        ? s3.entry
-        : plugin,
+  const { app, sessions, token, owner, http, ok, offer, move, start } = await twoStepWorkflow(
+    t,
+    'inquiry',
   );
-  const app = await createApp({ directory, config, port: 0 });
-  t.after(async () => {
-    await app.stop();
-    await rm(directory, { recursive: true, force: true });
-    delete process.env[env];
-  });
-  const scope = app.ctx.scope;
-  const allow: WorkflowPolicy['actions'][number]['check'] = async ({ caller, tx }) => {
-    await scope.require(caller, 'write', tx);
-  };
-  const action = (name: string, state: string) => ({
-    name,
-    states: [state],
-    transitions: [name],
-    tool: name,
-    instruction: name,
-    check: allow,
-  });
-  const assignment = (state: string, role: 'producer' | 'reviewer') => ({
-    state,
-    check: async ({ caller, tx }: Parameters<typeof allow>[0]) => {
-      await scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
-    },
-    build: () => ({
-      role,
-      label: `${state} work`,
-      brief: 'Do the work',
-      references: [],
-      handoff: { instruction: 'Hand off', tools: [] },
-      execution: { readOnly: role === 'reviewer', tools: [] },
-      context: null,
-    }),
-    execution: { readOnly: role === 'reviewer', tools: [] },
-    lease: {
-      role: () => role,
-      acquire: ({ leaseId }: { leaseId: string }) => ({ leaseId }),
-      check: () => {},
-      release: () => {},
-    },
-  });
-  const handle = await app.ctx.workflows.register(
-    {
-      name: 'inquiry-test',
-      version: 1,
-      initial: 'working',
-      states: ['working', 'review', 'done'],
-      terminal: ['done'],
-      edges: [
-        { from: 'working', action: 'submit', to: 'review' },
-        { from: 'review', action: 'revise', to: 'working' },
-        { from: 'review', action: 'approve', to: 'done' },
-      ],
-    },
-    {
-      successStates: ['done'],
-      actions: [
-        action('submit', 'working'),
-        action('revise', 'review'),
-        action('approve', 'review'),
-      ],
-      assignments: [assignment('working', 'producer'), assignment('review', 'reviewer')],
-    } as WorkflowPolicy,
-  );
-  const http = async (method: string, path: string, token: string, body?: unknown) => {
-    const response = await fetch(`${app.ctx.api.url}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const text = await response.text();
-    return { status: response.status, body: JSON.parse(text), text };
-  };
-  const ok = async (method: string, path: string, token: string, body?: unknown) => {
-    const result = await http(method, path, token, body);
-    assert.equal(result.status, 200, result.text);
-    return result.body;
-  };
-  const boot = await scope.credentials.bootstrap({ projectName: 'Inquiry', actorName: 'Owner' });
-  const owner: Caller = {
-    actorId: boot.actor.id,
-    projectId: boot.project.id,
-    credentialId: boot.credential.id,
-  };
-  const token = boot.token;
-  const sessions = app.ctx.sessions;
-  /** A hand offer of the instance's current step, attached by `runnerId`. */
-  const offer = async (instanceId: string, runnerId = 'runner', requestId = randomUUID()) => {
-    const { revision } = await app.ctx.workflows.get(owner, instanceId);
-    const input = { instanceId, expectedRevision: revision, runnerId, requestId, secret: secret() };
-    const session = await sessions.offer(owner, input);
-    const control = { runnerId, hostRef: `launch-${randomUUID()}` };
-    await ok('POST', `/sessions/${session.id}/attach`, token, control);
-    return { session, control, input };
-  };
   const release = async (session: Session, body: object = {}) =>
     await ok('POST', `/sessions/${session.id}/release`, token, {
       runnerId: session.runnerId,
       ...body,
     });
-  const move = async (instanceId: string, name: string) => {
-    const { revision } = await app.ctx.workflows.get(owner, instanceId);
-    await app.ctx.state.transaction((tx) =>
-      handle.transition(
-        owner,
-        { instanceId, expectedRevision: revision, action: name, requestId: randomUUID() },
-        tx,
-      ),
-    );
-  };
   /** The runner's declaration and delivery of a conversation file, through its signed PUT. */
   const keep = async (
     session: Session,
@@ -194,8 +74,6 @@ async function fixture(t: TestContext) {
     await ok('POST', path, token, { ...control, ...facts, deliver: true });
     return { bytes, facts };
   };
-  const start = async () =>
-    await handle.start(owner, { workflow: 'inquiry-test', requestId: randomUUID() });
   /** A thread whose producer visit kept and delivered its conversation, then closed. */
   const worked = async (runnerId = 'runner-hand', harness: 'claude' | 'codex' = 'claude') => {
     const unit = await start();

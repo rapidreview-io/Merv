@@ -12,14 +12,8 @@ import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fle
 import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => {
-    resolve = yes;
-  });
-  return { promise, resolve };
-}
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function within(ms: number, ok: () => boolean | Promise<boolean>) {
   const end = Date.now() + ms;
@@ -1118,6 +1112,15 @@ test('today’s compute counts open machines to now at the price they were reser
   f.advance(30 * 60_000);
   // Two hours of the open machine; the queued request has no machine yet.
   assert.equal((await f.get(queued.id)).phase, 'queued');
+  // An owner that meters model tokens answers for each person asked.
+  f.fleet.registerOwner('meter', {
+    ...f.owner,
+    modelTokens: async (person) => ({ used: person === 'person_a' ? 7 : 0, limit: 9 }),
+  });
+  assert.deepEqual(await f.fleet.peopleToday(['person_a', 'person_z']), [
+    { usd: 2, usdCap: 2, tokens: { used: 7, limit: 9 } },
+    { usd: 0, usdCap: 2, tokens: { used: 0, limit: 9 } },
+  ]);
   await assert.rejects(f.ask('a_4'), { code: 'fleet_compute_cap' });
   // A new UTC day starts from nothing, though the machine is still open.
   f.advance(22 * 3_600_000);

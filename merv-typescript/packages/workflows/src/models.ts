@@ -301,3 +301,15 @@ export interface WorkflowOverview {
   unavailable: string[];
   workflows: WorkflowDecision[];
 }
+/** A unit of work as the platform admin reads it: where it stands, without its data. */
+export interface WorkflowPlatformWork extends Omit<WorkflowSnapshot, 'data'> {
+  /** What it is called (instanceName). */
+  name: string;
+  /** The actor of its start, where history keeps it. */
+  startedBy: string | null;
+  /** In a terminal state of its own pinned version. */
+  terminal: boolean;
+  /** Waits where only an admin's allowance moves it on, as a suspended service task does. */
+  allowance: boolean;
+  blockers: WorkflowProvidedBlocker[];
+}

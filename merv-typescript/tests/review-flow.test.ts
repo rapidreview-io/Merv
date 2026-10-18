@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import test, { type TestContext } from 'node:test';
 import type { Caller, ReviewApplication, RunningBoard, Verdict } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
 import type { Task } from '@merv/tasks/types';
 import { LIMIT_ASK } from '@merv/workflows/evaluation';
-import { createApp } from './fixtures/app.js';
+import { httpApp } from './fixtures/app.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -19,22 +17,7 @@ import { feasibilityStatement } from './feasibility-fixture.js';
  * the worker could see the rounds coming, and a claim held by hand can be handed back.
  */
 async function fixture(t: TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-review-flow-'));
-  const { plugins } = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as { plugins: { id: string; config?: unknown }[] };
-  const app = await createApp({
-    directory: join(directory, 'data'),
-    config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
-    },
-  });
+  const { app, directory, tool } = await httpApp(t, 'merv-review-flow-', { cleanup: false });
   t.after(async () => {
     await work.close();
     await app.stop();
@@ -59,14 +42,6 @@ async function fixture(t: TestContext) {
     return { caller, token: issued.token };
   };
   const producer = await issue('Producer', 'producer');
-  const tool = async (name: string, token: string, input: unknown = {}) => {
-    const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    return { status: response.status, body: (await response.json()) as any };
-  };
   let sequence = 0;
   const id = (prefix: string) => `${prefix}-${++sequence}`;
   const work = currentWork(app.ctx, { directory, source: producer.caller });

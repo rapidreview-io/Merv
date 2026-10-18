@@ -64,6 +64,23 @@ export const migrationV4 = {
   );`,
 };
 
+/** Each model relay's latest call the provider answered and latest it failed, with that
+ *  failure's status and code, per relay, provider key name and model. Never a request, an answer
+ *  or a person. A new table: no prod count. */
+export const migrationV5 = {
+  version: 5,
+  sql: `CREATE TABLE fleet_relay_outcomes (
+    relay TEXT NOT NULL,
+    key_env TEXT NOT NULL,
+    model TEXT NOT NULL,
+    last_ok_at TEXT,
+    last_failure_at TEXT,
+    last_failure_status INTEGER,
+    last_failure_code TEXT,
+    PRIMARY KEY(relay, key_env, model)
+  );`,
+};
+
 /** Fleet workflow's own tables (component `fleet_workflow`): its model ledger and retry grants.
  *  Published migration text is immutable after release. */
 export const usageMigration = {

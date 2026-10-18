@@ -1,17 +1,11 @@
 import type { ReviewRequest } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
+import type { z } from 'zod';
+import type { dataRequirementSchema, planSchema } from './schema.js';
 import type { RequestRecord } from './store.js';
 
 export const SERVICE_MODEL = { harness: 'codex', model: 'gpt-6-astra', effort: 'medium' } as const;
-export interface DataRequirement {
-  id: string;
-  label: string;
-  role: 'training' | 'validation' | 'evaluation' | 'reference';
-  format: 'csv' | 'jsonl';
-  columns: string[];
-  labelColumn?: string;
-  minRows: number;
-}
+export type DataRequirement = z.infer<typeof dataRequirementSchema>;
 /** Only the upload validator, never the external agent, constructs these records. */
 export interface ValidatedDataset {
   requirementId: string;
@@ -26,27 +20,7 @@ export interface ValidatedDataset {
   validationId: string;
   validatedAt: string;
 }
-export interface ExperimentPlan {
-  title: string;
-  question: string;
-  decision: string;
-  rationale: string;
-  hypothesis: string;
-  method: string[];
-  baseline: string;
-  metric: string;
-  successCriteria: string[];
-  research: { title: string; url: string }[];
-  code: { repository: string; revision: string } | null;
-  models: { name: string; revision: string }[];
-  dataRequirements: DataRequirement[];
-  /** Customer-facing execution bounds. Hardware selection belongs to Merv's executing agent. */
-  limits: { wallMinutes: number; maxTokens: number; maxAttempts: number };
-  turnaround: string;
-  deliverables: string[];
-  executionSpec: string;
-  feasibility: string;
-}
+export type ExperimentPlan = z.infer<typeof planSchema>;
 export type PlanLimits = ExperimentPlan['limits'];
 interface ContractTerms {
   id: string;

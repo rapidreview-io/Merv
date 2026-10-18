@@ -144,7 +144,6 @@ This program does not publish code.
 
 New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). From `experiment@41`, planning and design review read a read-only checkout of the experiment's pinned base, project main with its accepted prerequisites' code, which the planner's lease pins (on `experiment@40` they use scratch space and are told to read the prerequisites' delivery evidence instead); execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.
 
-
 ### Producer continuity (experiment@44)
 
 New experiments use one producer thread across planning, execution, rejected-design rework,

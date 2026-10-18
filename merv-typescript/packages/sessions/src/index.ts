@@ -1,7 +1,6 @@
-import { freezeLaunchSnapshot } from './launch-connections.js';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
-import { visible, createService, mapAsync } from '@merv/contracts';
+import { visible, createService, freezeData, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
@@ -103,8 +102,6 @@ const between = (least: number, most: number, fallback: number) =>
     .transform((value) => value ?? fallback);
 const configSchema = z
   .object({
-    /** Maximum simultaneous server executions in one project, across every provider. */
-    serviceConcurrency: between(1, 256, 1),
     sweepIntervalMs: between(100, 60_000, 1000),
     /** Whether a project nobody has switched is on: the founder's ruling (2026-09-25) is that
      * every project runs its work unless someone turns it off. */
@@ -505,7 +502,6 @@ export class LeasedSessions implements Sessions {
       scope,
       workflows,
       this.clock,
-      config.serviceConcurrency,
       async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
     );
     await this.serviceWork.initialize();
@@ -1551,7 +1547,7 @@ export class LeasedSessions implements Sessions {
       return { connections: [] };
     let issued: unknown;
     try {
-      issued = await provider(freezeLaunchSnapshot(structuredClone(before.session)));
+      issued = await provider(freezeData(structuredClone(before.session)));
     } catch (error) {
       // Provider exceptions can carry upstream response bodies or credentials.
       if (error instanceof MervError && [401, 403].includes(error.status))

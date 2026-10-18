@@ -1,25 +1,26 @@
 {
-  "snapshot": "2026-10-15",
+  "snapshot": "2026-10-18",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 77,
-  "serviceProviders": 34,
+  "pluginCount": 78,
+  "serviceProviders": 35,
   "toolAdapters": 19,
   "uiAdapters": 16,
   "apiAdapters": 5,
-  "defaultEntries": 56,
-  "apiEntries": 43,
-  "serverPlugins": 76,
+  "defaultEntries": 57,
+  "apiEntries": 44,
+  "serverPlugins": 77,
   "machinePlugins": 1,
-  "directDependencyCount": 243,
-  "optionalDependencyCount": 14,
+  "directDependencyCount": 248,
+  "optionalDependencyCount": 17,
   "directConsumers": {
-    "api": 9,
+    "api": 10,
     "artifacts": 14,
     "blobs": 3,
     "board": 2,
     "code": 1,
     "codeWork": 8,
     "contextBuilder": 3,
+    "customerExperiments": 0,
     "domainEvents": 6,
     "experiments": 4,
     "feed": 2,
@@ -37,12 +38,12 @@
     "reviews": 8,
     "runner": 0,
     "sandboxEvidence": 3,
-    "scope": 30,
+    "scope": 31,
     "secrets": 2,
-    "sessions": 9,
-    "state": 25,
+    "sessions": 10,
+    "state": 26,
     "tasks": 4,
-    "tools": 26,
+    "tools": 27,
     "ui": 17,
     "web": 1,
     "workflows": 12,
@@ -62,6 +63,22 @@
     "sbxSettings": 2
   },
   "plugins": [
+    {
+      "plugin": "merv-admin",
+      "source": "packages/admin/src/index.ts",
+      "provides": [],
+      "requires": [
+        "state"
+      ],
+      "optional": [
+        "api",
+        "scope",
+        "tools"
+      ],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
     {
       "plugin": "merv-api",
       "source": "packages/api/src/index.ts",
@@ -274,7 +291,9 @@
     {
       "plugin": "merv-customer-experiments",
       "source": "packages/customer-experiments/src/index.ts",
-      "provides": [],
+      "provides": [
+        "customerExperiments"
+      ],
       "requires": [
         "state",
         "scope",
@@ -332,7 +351,8 @@
         "reviews",
         "contextBuilder",
         "codeWork",
-        "paper"
+        "paper",
+        "sessions"
       ],
       "optional": [
         "sandboxEvidence",

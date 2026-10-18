@@ -2,6 +2,7 @@
 import type {
   ConversationAuthority,
   ManagedRunnerAuthority,
+  PlatformAuthority,
   SessionAuthority,
   Transaction,
 } from './index.js';
@@ -168,7 +169,10 @@ export interface Scope {
   readonly credentials: ScopeActorCredentials;
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
-  projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
+  projectOwners(): Promise<{ projectId: string; source: DelegationSource }[]>;
+  /** Platform admin read, never exposed through a tool or a key: every project, newest first, and
+   * every signed-in person with the project actors they are. */
+  directory(): Promise<PlatformDirectory>;
   /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
    * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
    * provider may not hold. */
@@ -188,6 +192,7 @@ export interface Scope {
   registerSessionAuthority(authority: SessionAuthority): () => void;
   registerConversationAuthority(authority: ConversationAuthority): () => void;
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
+  registerPlatformAuthority(authority: PlatformAuthority): () => void;
   /** The actor of a Sessions thread, which every visit of the thread acts as. */
   createSessionActor(
     source: DelegationSource,
@@ -223,6 +228,10 @@ export interface Scope {
   /** The caller `principal` is in the project selected, and its read decision. `decide: false`
    *  only names it, for a use that decides where it acts (a tool registry call or listing). */
   caller(principal: Principal, projectId?: string, decide?: boolean): Promise<Caller>;
+  /** A verified person's platform caller in `projectId`, named only. Its decision refuses every
+   *  permission but read and, once the platform authority vouched for the person, an unknown
+   *  project; no actor row backs it. */
+  platformCaller(principal: Principal, projectId?: string): Promise<Caller>;
   projects(principal: Principal): Promise<Project[]>;
   require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor>;
   /** Whether this actor may act with `permission`; with `{ except }`, whether any actor but
@@ -235,4 +244,12 @@ export interface Scope {
   ): Promise<boolean>;
   project(caller: Caller, tx?: Transaction): Promise<Project>;
   actors(caller: Caller): Promise<Actor[]>;
+}
+export interface PlatformDirectory {
+  projects: Project[];
+  people: {
+    issuer: string;
+    subject: string;
+    actors: { actorId: string; name: string }[];
+  }[];
 }

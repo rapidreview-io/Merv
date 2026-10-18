@@ -1,7 +1,6 @@
-import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
-import { MAX_TRANSCRIPT_BYTES } from '@merv/contracts';
+import { MAX_TRANSCRIPT_BYTES, sha256Hex } from '@merv/contracts';
 import { AGENT_EVENT_TEXT } from '@merv/sessions/agent-stream';
 import type { SessionTranscriptDeclaration } from '@merv/sessions/types';
 import type { Harness } from './harness/index.js';
@@ -126,7 +125,7 @@ export function readTranscript(
     }
     if (length === 0) return undefined; // it shrank to nothing while being read
     const bytes = out.subarray(0, length);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const sha256 = sha256Hex(bytes);
     return {
       bytes,
       facts: { sha256, size: length, logBytes, truncated } satisfies TranscriptFacts,

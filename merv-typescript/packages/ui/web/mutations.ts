@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, call, scopeVersion, useScopeVersion } from './api';
+import { ApiError, call, readOnly, scopeVersion, useScopeVersion } from './api';
 
 /**
  * Whether an answer that began in this render may still change the page: the component is
@@ -40,7 +40,8 @@ export function useCommand<T>(options: {
   const [error, setError] = useState<string>();
   const [code, setCode] = useState<string>();
   const submit = async (input: Record<string, unknown>) => {
-    if (inFlight.current || !current()) return;
+    // The drill-in draws no verb; one that slipped through still sends nothing.
+    if (inFlight.current || !current() || readOnly()) return;
     const command =
       pending.current ??
       Object.freeze(

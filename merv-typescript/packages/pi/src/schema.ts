@@ -118,8 +118,6 @@ export const completionInput = commandInput
   .strict();
 export const piConfig = z
   .object({
-    /** Ignored: loading Pi is the switch. Configurations rendered before still carry it. */
-    enabled: z.boolean().optional(),
     baseUrl: z.string().url().optional(),
     /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
      * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
@@ -205,7 +203,6 @@ export const piConfig = z
   })
   .strict();
 export type PiConfig = z.input<typeof piConfig>;
-export type PiModelConfig = z.output<typeof piConfig>['models'][number];
 
 export const migration = {
   version: 1,

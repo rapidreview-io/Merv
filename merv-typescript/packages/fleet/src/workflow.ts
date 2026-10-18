@@ -44,8 +44,6 @@ import { modelMigrations } from './schema.js';
 /** Loading the adapter is the switch. Fleet still owns all machine limits and lifecycle. */
 const workflowConfig = z
   .object({
-    /** Ignored: configurations rendered before still carry it. */
-    enabled: z.boolean().optional(),
     /** Whose choice of Fleet it serves: sign-in identities as 'issuer subject', or '*' for all. */
     people: z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))
@@ -316,6 +314,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       who.kind === 'human' ? who : (await this.scope.requireDelegation(who, 'read', tx)).user,
       who,
     );
+  }
+  async modelTokens(person: string, sql: Sql) {
+    const budget = await budgetIn(sql, person, this.config.dailyTokensPerPerson);
+    return { used: budget.usedToday, limit: budget.tokens };
   }
   /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
    *  machine was rented for; an inquiry visit's, to the person who asked, within its budget. */
@@ -941,7 +943,7 @@ export const fleetWorkflowPlugin = {
       authorize: (token) => adapter.modelGrant(token),
     });
     ctx.effect(() => {
-      const model = ctx.fleet.modelRelay(relay);
+      const model = ctx.fleet.modelRelay(relay, adapter.config.modelApiKeyEnv);
       const unmount = ctx.api.mount('/codex-model', model.handle, { public: true });
       return () => {
         unmount();

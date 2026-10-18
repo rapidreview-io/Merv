@@ -2910,6 +2910,11 @@ test('a person’s Agent tokens are charged before each call and settled after, 
       { day: charged.day, tokens: 50 + charged.tokens },
     ],
   );
+  // The platform admin's read: today's tokens against the ceiling, nothing for a person without.
+  assert.deepEqual(await f.pi.tokensToday([grant.userId, 'nobody']), [
+    { used: 50 + charged.tokens, limit: 1_000 },
+    { used: 0, limit: 1_000 },
+  ]);
 });
 
 test('a turn sent with a 200-character command id begins and its relay grant holds', async (t) => {

@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import { taskActors } from './fixtures/task-actors.js';
 import { storedContext } from './fixtures/state.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -17,25 +18,7 @@ type App = Awaited<ReturnType<typeof createApp>>;
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-failure-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Failure tests',
-    actorName: 'Operator',
-  });
-  const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const issued = await app.ctx.scope.credentials.issueActor(operator, { role, name: role });
-    return {
-      caller: {
-        actorId: issued.actor.id,
-        projectId: boot.project.id,
-        credentialId: issued.credential.id,
-      },
-      token: issued.token,
-    };
-  };
-  const producer = await issue('producer'),
-    reviewer = await issue('reviewer'),
-    reader = await issue('reader');
+  const { operator, issue, producer, reviewer, reader } = await taskActors(app, 'Failure tests');
   const brief = await app.ctx.artifacts.create(producer.caller, {
     title: 'Brief',
     content: 'Goal. Check.',

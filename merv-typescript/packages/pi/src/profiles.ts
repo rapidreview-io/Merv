@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { check, digest, type Caller } from '@merv/contracts';
-import { createInput, id, type PiModelConfig } from './schema.js';
+import { check, digest } from '@merv/contracts';
+import { createInput, id } from './schema.js';
 
 import type { PiProfile, PiProfileBinding, PiStoredProfile } from './profile-types.js';
 export type * from './profile-types.js';

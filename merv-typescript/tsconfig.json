@@ -48,9 +48,12 @@
     "tests/ui-shell.test.ts",
     "tests/ui-tasks.test.ts",
     "tests/ui-record-polls.test.ts",
+    "tests/ui-records.ts",
     "tests/ui-thread.test.ts",
     "tests/ui-threads.test.ts",
     "tests/ui-huggingface.test.ts",
-    "tests/ui-customer.test.ts"
+    "tests/ui-customer.test.ts",
+    "tests/ui-admin.test.ts",
+    "tests/ui-admin-drill.test.ts"
   ]
 }

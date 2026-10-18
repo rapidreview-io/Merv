@@ -1,4 +1,4 @@
-import { Fragment, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type {
   UiAction,
@@ -7,9 +7,8 @@ import type {
   UiDetail,
   UiLivenessSpec,
   UiRecordSpec,
-  UiSection,
 } from '@merv/ui/manifest';
-import { safely, useTool } from '../api';
+import { useTool } from '../api';
 import {
   Ago,
   ConfirmAction,
@@ -20,8 +19,6 @@ import {
   Live,
   PageLoad,
   RecordPage,
-  Table,
-  col,
   cx,
   toneOf,
   useNow,
@@ -30,19 +27,17 @@ import {
 } from '../components';
 import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { elapsed, say, type Liveness } from '../liveness';
-import { Markdown, safeHref } from '../markdown';
 import { useCommand } from '../mutations';
-import { TimeInStatus } from '../process';
 import { firstSentence } from '@merv/contracts/text';
 import type { ViewProps } from './index';
-import { at, list, money, num, phrase, records, str, unit, type Json } from './remote-fields';
+import { at, records, str, unit, type Json } from './remote-fields';
 
 /**
  * Rows a service outside this process publishes, rendered in Merv's own anatomy.
  * The manifest says what a row holds and never how it looks: the list keeps the
  * control row every collection has, the record keeps the order every record has,
- * and both speak the one vocabulary — state words, liveness phrases, clocks and
- * money — that the pages this process owns already speak. A field the service did
+ * and both speak the one vocabulary — state words, liveness phrases and clocks —
+ * that the pages this process owns already speak. A field the service did
  * not send renders nothing, and the key is only ever a route and a prefix search.
  */
 type States = UiCollectionSpec['states'];
@@ -55,8 +50,6 @@ interface Facts {
   data: Json;
   states: States;
   now: number;
-  /** True where the whole row is already a link, so a second anchor cannot nest in it. */
-  linked?: boolean;
 }
 
 const ATTENTION = 'attention';
@@ -91,63 +84,30 @@ function livenessOf(data: Json, spec: UiLivenessSpec | undefined, now: number): 
 }
 
 /** One column of one row, in the type the manifest gave it. */
-function cell(column: UiColumn, { data, states, now, linked }: Facts): ReactNode {
+function cell(column: UiColumn, { data, states, now }: Facts): ReactNode {
+  const value = str(at(data, column.field));
   switch (column.type) {
     case 'name':
-      return <strong>{str(at(data, column.field))}</strong>;
+      return <strong>{value}</strong>;
     case 'state':
-      return <StateWord value={str(at(data, column.field))} states={states} />;
-    case 'ago': {
-      const value = str(at(data, column.field));
+      return <StateWord value={value} states={states} />;
+    case 'ago':
       return value ? <Ago at={value} className="muted" /> : null;
-    }
-    case 'countdown': {
-      const granted = num(at(data, column.granted));
-      return (
-        <>
-          <Countdown to={str(at(data, column.field)) || null} now={now} />
-          {granted !== undefined && <span className="muted"> of {elapsed(granted * 1000)}</span>}
-        </>
-      );
-    }
-    case 'money':
-      return money(data, column);
-    case 'phrase':
-      return <span className="muted">{phrase(data, column.fields, column.separator)}</span>;
-    case 'link': {
-      const link = at(data, column.field) as { name?: string; href?: string } | undefined;
-      if (!link?.name) return null;
-      const safe = typeof link.href === 'string' ? safeHref(link.href) : null;
-      return linked || !safe ? (
-        <span className="muted">{link.name}</span>
-      ) : (
-        <a href={safe.href}>{link.name}</a>
-      );
-    }
-    default:
-      return <span className="muted">{str(at(data, column.field))}</span>;
+    case 'countdown':
+      return <Countdown to={value || null} now={now} />;
   }
 }
 
-/** The two column types that carry sentences get the room; the rest share what is left. */
-const WIDTH: Record<string, string> = {
-  name: 'minmax(0, 1.5fr)',
-  phrase: 'minmax(0, 1.6fr)',
-};
-
 /** The columns on one grid, so a fact keeps its x-position down the whole list. */
 function Columns({ columns, ...facts }: { columns: UiColumn[] } & Facts) {
+  // The name carries a sentence and gets the room; the rest share what is left.
   const template = columns
-    .map((column) => column.width ?? WIDTH[column.type] ?? 'minmax(0, 1fr)')
+    .map((column) => (column.type === 'name' ? 'minmax(0, 1.5fr)' : 'minmax(0, 1fr)'))
     .join(' ');
   return (
     <span className="remote-cols" style={{ '--remote-cols': template } as CSSProperties}>
       {columns.map((column) => (
-        <span
-          className={cx('remote-cell', column.type === 'money' && 'remote-cell--end')}
-          key={column.label}
-          title={column.label}
-        >
+        <span className="remote-cell" key={column.label} title={column.label}>
           {cell(column, facts)}
         </span>
       ))}
@@ -218,18 +178,9 @@ function CollectionList({ row }: ViewProps) {
       columns={spec.columns.length}
       emptyTitle={spec.empty.title}
       line={(item) => ({
-        name: (
-          <Columns
-            columns={spec.columns}
-            data={item.data}
-            states={spec.states}
-            now={now}
-            linked={linked}
-          />
-        ),
+        name: <Columns columns={spec.columns} data={item.data} states={spec.states} now={now} />,
         standing: (
           <div className="remote-standing">
-            <Live of={livenessOf(item.data, spec.liveness, now)} />
             {!!reason(item) && (
               <span className="remote-attn">{firstSentence(reason(item), 72)}</span>
             )}
@@ -296,117 +247,42 @@ function Act({ action, id, onDone }: { action: UiAction; id: string; onDone(): v
   );
 }
 
-/** One section of a record, in the shape its kind names: a paragraph, rows, a table, a ladder. */
-function Section({ section, ...facts }: { section: UiSection } & Facts) {
-  const { data, states, now } = facts;
-  // A service writes its prose the way an agent writes a brief, so it is read the same way.
-  if (section.kind === 'text') return <Markdown source={str(at(data, section.field))} />;
-  if (section.kind === 'kv')
-    return <KV rows={section.rows.map((detail) => detailRow(data, detail))} />;
-  const items = list(at(data, section.field));
-  if (section.kind === 'list')
-    return (
-      <Table
-        rows={items}
-        keyOf={(item) => String(items.indexOf(item))}
-        columns={section.columns.map((column, index) =>
-          col<Json>(
-            String(index),
-            column.label,
-            (item) => cell(column, { data: item, states, now }),
-            column.width,
-          ),
-        )}
-      />
-    );
-  // A ladder is a process read as its stages, so it is said as every other one is.
-  return (
-    <TimeInStatus
-      steps={items.map((step, index) => ({
-        state: str(at(step, section.step)),
-        end: index === items.length - 1,
-        stopped: false,
-        current: str(at(step, section.state)) === 'here',
-        entered: str(at(step, section.state)) !== 'next',
-      }))}
-    />
-  );
-}
-
-function RemoteRecord({ row }: ViewProps) {
-  const collection =
-    row.view.kind === 'collection' ? (row.view.spec as UiCollectionSpec) : undefined;
-  const spec = (row.view.record ?? row.view.spec) as UiRecordSpec | undefined;
+/** One record of a collection row. */
+export function RemoteRecord({ row }: ViewProps) {
+  const collection = row.view.spec as UiCollectionSpec;
+  const spec = row.view.record as UiRecordSpec | undefined;
   const { id = '' } = useParams();
   const read = useTool<Json>('ui.read', { rowId: row.id, params: { id } }, { every: 8000 });
   const now = useNow(4000);
   const data = read.data;
   if (!spec || !data) return <PageLoad {...read} back={{ to: row.path, label: row.label }} />;
-  const noun = collection?.noun.singular ?? row.label;
-  const facts: Facts = { data, states: collection?.states, now };
-  // A section the service did not fill is dropped where it is written, never drawn empty.
-  const has = (section: UiSection) =>
-    section.kind === 'kv'
-      ? section.rows.some((detail) => at(data, detail.field) !== undefined)
-      : section.kind === 'text'
-        ? !!str(at(data, section.field))
-        : list(at(data, section.field)).length > 0;
-  const titled = (section: UiSection) => (
-    <Fragment key={section.title}>
-      <h3 className="ev-role">{section.title}</h3>
-      <Section section={section} {...facts} />
-    </Fragment>
-  );
+  const noun = collection.noun.singular;
   const standing = livenessOf(data, spec.standing, now);
   const state = str(at(data, spec.state));
-  const history = (spec.history ?? []).filter(has);
   const details = (spec.details ?? []).map((detail) => detailRow(data, detail)).filter(Boolean);
   const actions = (spec.act ?? []).filter(
     (action) => !action.when || action.when.in.includes(str(at(data, action.when.field))),
   );
-  const out = spec.console && consoleHref(spec.console.href, id, str(at(data, 'console_origin')));
   return (
     <RecordPage
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={noun}
       name={str(at(data, spec.title)) || noun}
       standing={standing ? <Live of={standing} /> : undefined}
-      state={state ? <StateWord value={state} states={collection?.states} /> : undefined}
+      state={state ? <StateWord value={state} states={collection.states} /> : undefined}
       act={
-        actions.length || out ? (
+        actions.length ? (
           <div className="stack">
             {actions.map((action) => (
               <Act key={action.id} action={action} id={id} onDone={read.reload} />
             ))}
-            {out && (
-              <a className="agent-help" href={out} target="_blank" rel="noreferrer">
-                {spec.console!.label} →
-              </a>
-            )}
           </div>
         ) : undefined
       }
-      title={spec.content?.title ?? ''}
-      content={
-        spec.content && has(spec.content) ? (
-          <Section section={spec.content} {...facts} />
-        ) : undefined
-      }
-      history={history.length ? history.map(titled) : undefined}
-      related={spec.related && has(spec.related) ? titled(spec.related) : undefined}
       details={details.length ? <KV rows={details} /> : undefined}
     />
   );
 }
 
-/** The one link out: the key substituted, and a relative href resolved where the service said. */
-function consoleHref(href: string, id: string, origin: string): string {
-  const path = href.replaceAll('{id}', encodeURIComponent(id));
-  if (!origin || /^[a-z]+:/i.test(path)) return path;
-  return safely(() => new URL(path, origin).toString(), path);
-}
-
 /** A collection row: its list, and the record it opens beside it on a wide screen. */
 export const CollectionView = splitRoutes(CollectionList, RemoteRecord);
-/** A row that is one record rather than a collection. */
-export const RecordView = RemoteRecord;

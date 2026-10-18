@@ -21,7 +21,6 @@ import { cloneJson, compileSchema } from './schema.js';
 import { toolsGuide } from './guide.js';
 import { validated } from './errors.js';
 
-export type { ToolDescription } from './types.js';
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
   tool: T,
 ): tool is Extract<T, { kind: 'mcp' }> {
@@ -121,13 +120,15 @@ export class ToolRegistry implements Tools {
       return this.prepareRemote(definition, remote);
     }
     // Schema changes require a new registration, keeping validation paired with its catalog.
-    // Conversation policy is likewise the registration's: mutating the definition changes neither.
+    // Conversation policy and whether it only reads (which a session may call, as may a platform
+    // reader) are likewise the registration's: mutating the definition changes none of them.
     const { inputSchema, conversation } = definition;
+    const readOnly = definition.readOnly === true;
     return {
       name: definition.name,
       definition,
-      description: describeTool({ ...definition, inputSchema }),
-      tool: { name: definition.name, remote: false, conversation },
+      description: describeTool({ ...definition, inputSchema, readOnly }),
+      tool: { name: definition.name, remote: false, conversation, readOnly },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) =>
@@ -162,7 +163,7 @@ export class ToolRegistry implements Tools {
       definition,
       description,
       remote,
-      tool: { name: definition.name, remote: true },
+      tool: { name: definition.name, remote: true, readOnly: false },
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -370,7 +371,8 @@ export class ToolRegistry implements Tools {
 
   /** The rules of the plugin that issued this caller, if any; fails closed without them. */
   private rulesFor(caller?: Caller): CallerRules | undefined {
-    const kind = caller?.conversation ? 'conversation' : caller?.managed ? 'managed' : undefined;
+    // Each kind is named by the caller field that carries its authority.
+    const kind = (['conversation', 'managed', 'platform'] as const).find((name) => caller?.[name]);
     if (!kind) return undefined;
     const rules = this.callerRules.get(kind);
     if (!rules) throw new MervError('unavailable', `Tools are unavailable to ${kind} callers`, 503);
@@ -405,21 +407,15 @@ export class ToolRegistry implements Tools {
     await this.fenced(session, session.provider.validate(caller, name, input));
   }
 
-  /** A native tool that only reads; a session may call every one of them. */
-  private reads(entry: Entry): boolean {
-    // Like the compiled schema, authority belongs to the published registration. Native
-    // handlers may be instrumented, but mutating their definition must not change policy.
-    return !entry.remote && entry.description.annotations?.readOnlyHint === true;
-  }
   /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
    *  would hold a reader connection for as long as that service takes to answer. */
   private snapshotted(entry: Entry): boolean {
-    return this.reads(entry) && entry.description.annotations?.openWorldHint !== true;
+    return entry.tool.readOnly && entry.description.annotations?.openWorldHint !== true;
   }
   /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
     return (
-      !!entry.remote || (entry.tool.conversation !== 'never' && (!reader || this.reads(entry)))
+      !!entry.remote || (entry.tool.conversation !== 'never' && (!reader || entry.tool.readOnly))
     );
   }
 
@@ -444,7 +440,7 @@ export class ToolRegistry implements Tools {
         (!session ||
           (await this.fenced(
             session,
-            session.provider.allowsTool(caller!, entry.name, this.reads(entry)),
+            session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
           ))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
       )
@@ -494,7 +490,7 @@ export class ToolRegistry implements Tools {
         caller,
         name,
         input as Data,
-        this.reads(entry),
+        entry.tool.readOnly,
       );
       // Preparation may allocate a reservation. Its original provider releases it in finally,
       // even when a replacement now owns the slot.
@@ -525,7 +521,7 @@ export class ToolRegistry implements Tools {
           const result =
             this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
           rules?.returns?.(result);
-          if (this.reads(entry) && !this.snapshotted(entry))
+          if (entry.tool.readOnly && !this.snapshotted(entry))
             await this.scope.require(activeCaller, 'read');
           completed = entry.complete(result);
           return result;

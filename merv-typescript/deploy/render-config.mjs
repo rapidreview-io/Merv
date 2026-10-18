@@ -142,10 +142,8 @@ set('api', {
 const uiAssets = process.env.MERV_UI_ASSETS;
 if (uiAssets !== undefined && !/^\/[\w./-]*\/$/.test(uiAssets))
   throw new Error('Invalid MERV_UI_ASSETS');
-set('ui', {
-  ...(uiAssets ? { assets: uiAssets } : {}),
-  admins: process.env.MERV_ADMIN_IDENTITIES ? json('MERV_ADMIN_IDENTITIES') : [],
-});
+set('ui', uiAssets ? { assets: uiAssets } : {});
+set('admin', { admins: process.env.MERV_ADMIN_IDENTITIES ? json('MERV_ADMIN_IDENTITIES') : [] });
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });

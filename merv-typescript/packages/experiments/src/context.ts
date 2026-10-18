@@ -28,12 +28,10 @@ import { readsOnly } from './execution-policy.js';
 import {
   recipeNames,
   instructions,
-  handoff,
   presentationAt,
   handoffAt,
   recipeKey,
   feasibilityFormat,
-  CONTEXT_CHARS,
 } from './definitions.js';
 import { leaseOf, resumedOutputs } from './lease.js';
 import { reviewOf, reviewCapture, admit } from './policy.js';
@@ -42,8 +40,6 @@ import { reviewOf, reviewCapture, admit } from './policy.js';
 
 export interface FrozenInputs {
   experiment: Data;
-  /** The paper's items. */
-  paper: ContextInput;
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
@@ -144,41 +140,16 @@ export async function inputsOf(
   const historicalArtifacts = [
     ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
   ].filter((id) => !evidenceArtifacts.includes(id) && !approvedArtifacts.includes(id));
-  const historicalReferences = (await ctx.artifacts.getAll(caller, historicalArtifacts, tx)).map(
-    ({ id, title, hash, mediaType, size }) => ({ id, title, hash, mediaType, size }),
-  );
-  // Paper serves the Introduction from the Problem, whose sections `paper` carries.
-  const project = await ctx.scope.project(caller, tx);
   return {
     experiment: own({
-      id: experiment.id,
-      name: experiment.name,
       intent: experiment.intent,
-      details: experiment.details,
-      ownerId: experiment.ownerId,
-      project,
-      workspace: 'git',
+      project: await ctx.scope.project(caller, tx),
       codeCapture: await reviewCapture(ctx, caller, experiment, tx),
-      paperChangesFormat: {
-        documents: [
-          {
-            kind: 'methods or results',
-            expectedRevision: 0,
-            changes: [
-              { id: 'section-id', title: 'Section title', content: 'Changed section text' },
-            ],
-          },
-        ],
-      },
       ...(state === 'planned' ? { feasibilityFormat, computeAccess: PLANNING_COMPUTE } : {}),
-      // Its notes are the feedback section's, which embeds the newest few.
-      attempt: { ...experiment.attempt, feedback: undefined },
-      workflow: experiment.workflow,
       selectedEvidence: experiment.evidence.filter((evidence) =>
         selected.includes(evidence.artifactId),
       ),
     }),
-    paper: await ctx.paper.contextInput(caller, CONTEXT_CHARS, tx),
     approvedArtifacts,
     evidenceArtifacts,
     historicalArtifacts,
@@ -203,9 +174,7 @@ export async function inputsOf(
             ),
           }
         : {}),
-      ...(historicalReferences.length ? { artifactReferences: historicalReferences } : {}),
       ...(history.rounds.length ? { history } : {}),
-      recovery: review?.recovery ?? null,
     }),
   };
 }
@@ -322,21 +291,15 @@ export async function references(
   };
 }
 
-/** Project a validated capture for the model; keep the full record in frozen server inputs. */
-function reviewerCodeContext(experiment: Data): Data {
-  const { codeCapture, ...rest } = experiment;
-  const capture = codeCapture as unknown as CodeCapture | null | undefined;
-  return {
-    ...rest,
-    ...(capture?.workspace
-      ? {
-          code: {
-            submittedCommit: capture.workspace.headOid,
-            startingCommit: capture.attachedBaseOid ?? capture.workspace.baseOid,
-          },
-        }
-      : {}),
-  };
+/** The commits a reviewer compares, from the validated capture kept in frozen server inputs. */
+function reviewerCode(experiment: Data) {
+  const capture = experiment.codeCapture as unknown as CodeCapture | null | undefined;
+  return capture?.workspace
+    ? {
+        submittedCommit: capture.workspace.headOid,
+        startingCommit: capture.attachedBaseOid ?? capture.workspace.baseOid,
+      }
+    : undefined;
 }
 
 export async function build(ctx: ExperimentsContext, context: WorkflowCheckContext) {
@@ -440,9 +403,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
                   approvedReviewId: experiment.attempt.approvedReviewId,
                 }
               : {}),
-            ...(state === 'experiment_review'
-              ? { code: reviewerCodeContext(inputs.experiment).code }
-              : {}),
+            ...(state === 'experiment_review' ? { code: reviewerCode(inputs.experiment) } : {}),
           }),
           {
             embed: 'always',

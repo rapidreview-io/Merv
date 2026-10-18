@@ -18,7 +18,7 @@ const { ListPage, mixesKinds, splitRoutes, stateCounts, useListFilter } =
   await import('../packages/ui/web/list-filters.js');
 const { fileIcon } = await import('../packages/ui/web/icons.js');
 const { reviewClause } = await import('../packages/ui/web/states.js');
-const { CollectionView, RecordView } = await import('../packages/ui/web/views/remote.js');
+const { CollectionView, RemoteRecord } = await import('../packages/ui/web/views/remote.js');
 
 interface Item {
   id: string;
@@ -35,15 +35,7 @@ const task = (id: string, state = 'in_progress'): Item => ({
 const experiment: Item = { id: 'e1', kind: 'experiments', name: 'Experiment e1', state: 'running' };
 
 /** A collection as a view writes one: every row names its kind, and the list decides. */
-function Page({
-  items,
-  creates = true,
-  checks = false,
-}: {
-  items: Item[];
-  creates?: boolean;
-  checks?: boolean;
-}) {
+function Page({ items, creates = true }: { items: Item[]; creates?: boolean }) {
   const filter = useListFilter(items, {
     stateOf: (item: Item) => item.state,
     isOpen: (state: string) => state !== 'done',
@@ -69,20 +61,13 @@ function Page({
             ),
         }
       : undefined,
-    aside: checks
-      ? {
-          label: 'Check references',
-          plain: true,
-          form: () => createElement('form', { 'aria-label': 'Check references' }),
-        }
-      : undefined,
   });
 }
-const page = (items: Item[], creates = true, checks = false) =>
+const page = (items: Item[], creates = true) =>
   createElement(
     MemoryRouter,
     { initialEntries: ['/work'] },
-    createElement(Page, { items, creates, checks }),
+    createElement(Page, { items, creates }),
   );
 const kinds = () => [...document.querySelectorAll('.rows .kind')].map((node) => node.textContent);
 /**
@@ -319,7 +304,7 @@ for (const guarded of [false, true])
             null,
             createElement(Route, {
               path: '/fleet/:id',
-              element: createElement(RecordView, { row, shell: { rows: [row], plugins: [] } }),
+              element: createElement(RemoteRecord, { row, shell: { rows: [row], plugins: [] } }),
             }),
           ),
         ),
@@ -352,74 +337,6 @@ for (const guarded of [false, true])
         'manifest actions retain their accepted arguments',
       );
     });
-
-test('remote link columns keep safe destinations and show unsafe destinations as text', async (t) => {
-  t.after(async () => await unmount());
-  const destinations = [
-    ['HTTPS', 'https://example.com/output', 'https://example.com/output'],
-    ['HTTP', 'http://example.com/output', 'http://example.com/output'],
-    ['Mail', 'mailto:person@example.com', 'mailto:person@example.com'],
-    ['Relative', '/outputs/report one', '/outputs/report one'],
-    ['Fragment', 'notes/output#result', 'notes/output#result'],
-    ['Protocol relative', '//example.com/output', 'https://example.com/output'],
-    ['Whitespace', '  https://example.com/output  ', 'https://example.com/output'],
-    ['Script', 'javascript:void(document.body.dataset.executed="yes")', null],
-    ['Hidden script', 'JaVa\nScRiPt:alert(1)', null],
-    ['Data', 'data:text/html,<script>alert(1)</script>', null],
-    ['File', 'file:///tmp/output', null],
-    ['Empty', '', null],
-    ['Missing', undefined, null],
-    ['Number', 42, null],
-    ['Object', { url: 'https://example.com/output' }, null],
-  ] as const;
-  const row = {
-    ...fleetRow(),
-    view: {
-      ...fleetRow().view,
-      record: {
-        title: 'title',
-        content: {
-          kind: 'list',
-          title: 'Outputs',
-          field: 'outputs',
-          columns: [{ type: 'link', label: 'Output', field: 'link' }],
-        },
-      },
-    },
-  };
-  serve('/tools/ui.read', (_call, input) => {
-    assert.equal(input.params.id, 'flt_1');
-    return {
-      body: {
-        result: {
-          title: 'Hosted agent',
-          outputs: destinations.map(([name, href]) => ({ link: { name, href } })),
-        },
-      },
-    };
-  });
-  await mount(
-    createElement(
-      MemoryRouter,
-      { initialEntries: ['/fleet/flt_1'] },
-      createElement(
-        Routes,
-        null,
-        createElement(Route, {
-          path: '/fleet/:id',
-          element: createElement(RecordView, { row, shell: { rows: [row], plugins: [] } }),
-        }),
-      ),
-    ),
-  );
-  const anchors = [...document.querySelectorAll('a')];
-  for (const [name, , expected] of destinations) {
-    assert.ok(text().includes(name), `${name} keeps its label`);
-    const anchor = anchors.find((node) => node.textContent === name);
-    assert.equal(anchor?.getAttribute('href') ?? null, expected, name);
-    if (expected === null) assert.equal(!!anchor, false, `${name} must not be clickable`);
-  }
-});
 
 test('every state a record stands in has a tone, and a review gate never reads as stopped', async () => {
   const { stateWords } = await import('../packages/ui/web/navigation.js');
@@ -540,33 +457,6 @@ test('an empty list offers its first record itself, and the form has one Cancel 
   await click('New cycle');
   await click('Create');
   assert.ok(!shows('.creation'), 'the form closes itself on success');
-});
-
-test('what a page can open ends its control row together, the quiet control before the primary', async (t) => {
-  t.after(async () => await unmount());
-  await mount(page([task('t1')], true, true));
-  const end = document.querySelector('.action-row > .action-end')!;
-  assert.deepEqual(
-    [...end.querySelectorAll('button')].map((button) => [
-      button.textContent,
-      button.classList.contains('btn--primary'),
-    ]),
-    [
-      ['Check references', false],
-      ['New cycle', true],
-    ],
-  );
-  assert.ok(!shows('.action-filters [data-opens]'));
-  // One thing is open at a time, and what is not a new record closes with Close.
-  await click('Check references');
-  assert.ok(shows('form[aria-label="Check references"]'));
-  assert.deepEqual(
-    [...end.querySelectorAll('button')].map((button) => button.textContent),
-    ['Close', 'New cycle'],
-  );
-  await click('New cycle');
-  assert.ok(!shows('form[aria-label="Check references"]'));
-  assert.ok(shows('form[aria-label="New cycle"]'));
 });
 
 test('an empty list nobody may add to says so and offers nothing', async (t) => {

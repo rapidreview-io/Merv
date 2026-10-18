@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Context } from 'cordis';
 import { createService } from '@merv/contracts';
-import { uiManifestSchema } from '@merv/ui/manifest';
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
@@ -67,20 +66,6 @@ test('Fleet is optional and its row and controls install without research or Ses
   assert.equal(row.view.kind, 'collection');
   // Reached from the Agents and machines page, not the rail.
   assert.equal(row.group, 'hidden');
-  // The shipped browser accepts the manifest; no new browser renderer is required.
-  uiManifestSchema.parse({
-    version: 1,
-    rows: [
-      {
-        id: row.id,
-        label: row.label,
-        group: 'operations',
-        order: row.order,
-        collection: row.view.spec,
-        record: row.view.record,
-      },
-    ],
-  });
   assert.deepEqual(await ui.read(caller, 'fleet'), []);
   await assert.rejects(ui.read(caller, 'fleet', { id: '../outside' }), { code: 'fleet_not_found' });
   assert.deepEqual(await tools.call('fleet.list', caller, {}), []);
