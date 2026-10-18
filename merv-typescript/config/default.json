@@ -130,8 +130,7 @@
     },
     {
       "id": "admin",
-      "name": "@merv/admin",
-      "required": false
+      "name": "@merv/admin"
     },
     {
       "id": "sessions-ui",
