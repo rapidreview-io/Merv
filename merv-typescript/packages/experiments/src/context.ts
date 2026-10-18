@@ -33,6 +33,7 @@ import {
   recipeKey,
   feasibilityFormat,
   feasibilityRules,
+  workflowGates,
 } from './definitions.js';
 import { leaseOf, resumedOutputs } from './lease.js';
 import { reviewOf, reviewCapture, admit } from './policy.js';
@@ -547,7 +548,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
+    brief: `${instructions[state]}${speedGuidance}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

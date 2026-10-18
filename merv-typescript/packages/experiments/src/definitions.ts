@@ -106,6 +106,20 @@ export const handoff = (state: ActiveState) =>
 export const reportPresentation =
   'Presenting results in the report: choose the form by the shape of the content. Use a table when two or more items (arms, domains, metrics, runs, settings) are compared on one or more measures; never put a run of numbers in a sentence. Use a sentence for one number and its comparison, a Mermaid flowchart for a process or flow, and a Mermaid xychart-beta chart when a pattern across many values or over time matters more than the exact numbers. Keep prose for reasoning, interpretation and caveats. Every number states what it is compared with and its unit; where its meaning is not obvious, add a few plain words on what it means for the result. Define each abbreviation or unit once, where it first appears. Make the report longer only by adding information, a table or a figure, never by adding wording. Link every record or file you name: artifacts as [name](/artifacts/<artifact id>), files in the experiment code as [name](code-file:<full commit>:<path from the repository root>), and external models, datasets and papers by their URL at the exact revision used. Identifiers such as revisions, seeds and hashes belong where someone needs them to reproduce the work: shorten them in the text and link the full record. Say plainly what was verified and how, as facts, not as a first-person account.';
 
+/**
+ * What the workflow can hold, said in each stage's brief beside its pinned handoff. Approved plans
+ * asked for readiness and final-freeze approvals no state holds, and agents then bent result
+ * submissions into gates and spent the result rounds on them (2026-10-05).
+ */
+export const workflowGates: Partial<Record<ActiveState, string>> = {
+  planned:
+    ' The workflow holds two independent reviews: of this design before execution, and of the results after it. It cannot hold any further approval a plan asks for, such as a readiness check before validation or a freeze before test access, so design the run to need none; split a staged evaluation that does need one into separate experiments.',
+  design_review:
+    ' The workflow holds only this design review and the results review: a plan that requires a further approval during execution, such as a readiness check or a freeze before test access, cannot be carried out as written and needs changes.',
+  running:
+    ' Execution has no route back to design. If the approved design proves unworkable, stop, retain what showed it, and submit results whose report says so; the results reviewer returns the experiment to planning for a new design. Each return uses one of its result rounds, which status_and_next shows under limits.',
+};
+
 /** The shape a planner fills in, shown beside the design it is asked for. */
 export const feasibilityFormat: FeasibilityStatement = {
   formatVersion: 1,

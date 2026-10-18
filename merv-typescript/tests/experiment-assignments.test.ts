@@ -441,16 +441,17 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(planned.execution.readOnly, true);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.match(planned.brief, /Investigate uncertain assumptions with primary sources/);
+  // Each stage is told what the workflow can hold: no approval gate beyond the two reviews.
+  assert.match(planned.brief, /It cannot hold any further approval a plan asks for/);
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
     ),
   );
   const pending = (await f.design(experiment)).experiment;
-  assert.equal(
-    (await f.workflows.assignment(f.reviewer, pending.id)).context!.type,
-    'experiment.design_review',
-  );
+  const designReview = await f.workflows.assignment(f.reviewer, pending.id);
+  assert.equal(designReview.context!.type, 'experiment.design_review');
+  assert.match(designReview.brief, /cannot be carried out as written and needs changes/);
   assert.ok(
     !(await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
@@ -466,6 +467,7 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.match(executing.brief, /choose the form by the shape of the content/);
   assert.match(executing.brief, /report\.review_visual/);
   assert.match(executing.brief, /report\.clear to start over/);
+  assert.match(executing.brief, /Execution has no route back to design/);
   assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
