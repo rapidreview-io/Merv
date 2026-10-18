@@ -249,7 +249,7 @@
         "id": "work",
         "label": "Research work",
         "purpose": "Use the platform to deliver tasks and execute reviewed experiments.",
-        "members": ["tasks", "experiments", "merv-customer-experiments"]
+        "members": ["tasks", "experiments", "customerExperiments"]
       },
       {
         "id": "synthesis",
@@ -281,7 +281,7 @@
         "id": "transport",
         "label": "HTTP / MCP boundary",
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
-        "members": ["api", "merv-sandboxes-console"],
+        "members": ["api", "merv-admin", "merv-sandboxes-console"],
         "kinds": ["api"]
       },
       {
