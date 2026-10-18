@@ -171,6 +171,9 @@ test('recovery after Git succeeded but SQL rolled back keeps exactly one root', 
       store: { repositories: import('@merv/code/store/repository').CodeRepositories };
     }
   ).store.repositories;
+  // Creating the project wakes Code's store, whose waker would initialize it on its own: this
+  // test's passes alone may run, or one could land between the crash and the checks after it.
+  t.mock.method((f.code as unknown as { store: { wake(): void } }).store, 'wake', () => {});
   const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://test.example',
     subject: 'crash',
