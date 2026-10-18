@@ -86,6 +86,22 @@ test('the drill-in opens a project nobody made it a member of, read as the platf
   assert.doesNotMatch(document.querySelector('.account-menu')!.textContent!, /Switch project/);
 });
 
+test('a drill-in the server refuses keeps the sign-in it was refused to', async (t) => {
+  t.after(async () => await unmount());
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', { body: { kind: 'user', user: { issuer: 'i', subject: 's' }, projects: [] } });
+  const refusal = {
+    code: 'forbidden',
+    message: 'Live platform administrator authority is required',
+  };
+  for (const tool of ['ui.shell', 'actor.whoami', 'project.get'])
+    serve(`/tools/${tool}`, { status: 403, body: { error: refusal } });
+  await mount(createElement(MemoryRouter, { initialEntries: ['/'] }, createElement(App)));
+  await settle(20);
+  assert.match(text(), /Live platform administrator authority is required/);
+  assert.equal(sessionStorage.getItem('merv:token'), 'fixture-token');
+});
+
 test('in the drill-in the verb primitives draw nothing', async (t) => {
   t.after(async () => await unmount());
   await mount(

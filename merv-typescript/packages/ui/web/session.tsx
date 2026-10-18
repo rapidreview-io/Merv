@@ -21,6 +21,7 @@ import {
   hasToken,
   identityVersion,
   onAccessLost,
+  readOnly,
   recentProjects,
   resolveAccountSession,
   safely,
@@ -263,7 +264,7 @@ function SignIn({
 const SigninHost = () => <p className="signin-host">{window.location.host}</p>;
 
 /** A date a person reads at a glance: the year only when it is not this one. */
-const day = (iso: string) => {
+export const day = (iso: string) => {
   const at = new Date(iso);
   return at.toLocaleDateString(undefined, {
     month: 'short',
@@ -590,7 +591,8 @@ export function SessionProvider({
               ? 'That credential was not accepted.'
               : undefined,
         });
-        setToken(null);
+        // The drill-in's refusal is the project's, not the sign-in's: the credential stays.
+        if (refused || !readOnly()) setToken(null);
       })
       .finally(() => {
         // A check waiting to be asked again is still in flight.

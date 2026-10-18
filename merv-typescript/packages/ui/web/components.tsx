@@ -917,7 +917,7 @@ export function KV({ rows }: { rows: KVRow[] }) {
   return (
     <dl className="kv">
       {rows
-        .filter((row): row is [string, ReactNode] => !!row)
+        .filter((row): row is [string, ReactNode] => !!row && row[1] != null && row[1] !== '')
         .map(([label, value]) => (
           <div className="kv-row" key={label}>
             <dt>{label}</dt>

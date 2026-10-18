@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useRef, useState, type ReactNode } from 'react';
-import { refreshTools, useTool, type Loaded } from '../api';
+import { readOnly, refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { recordRoutes } from '../list-filters';
 import {
@@ -454,6 +454,7 @@ function Controls({
       refreshTools('ui.home', 'review.list', 'task.list', 'experiment.list');
     },
   });
+  if (readOnly()) return null;
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
   const start = guidance.data.actions.find((action) => action.tool === 'review.start');
   const submit = guidance.data.actions.find((action) => action.tool === 'review.submit');
