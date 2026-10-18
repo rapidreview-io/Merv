@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
-import type { AdminCredential, AdminCredentials } from '@merv/admin/models';
+import type { AdminCredentialsV2, PlatformSecret, ProviderKey } from '@merv/admin/models';
 import { useTool } from '../api';
-import { Ago, KV, LoadState, Ruled, Word, col, cx, stamp, toneOf, words } from '../components';
+import { Ago, LoadState, Ruled, Word, col, cx, stamp, toneOf, words } from '../components';
 import { elapsed } from '../liveness';
 import { Head, None, fact, fig } from './parts';
 
@@ -24,37 +24,29 @@ const state = (set: boolean | null, dead = false) =>
     <Word tone={dead ? 'bad' : set ? 'ok' : 'dim'} value={dead ? 'dead' : set ? 'set' : 'unset'} />
   );
 
-const COLUMNS = [
-  col<AdminCredential>('env', 'Credential', (c) => <Env name={c.env} />),
-  col<AdminCredential>('plugin', 'Used by', (c) => (
-    <span title={`${c.plugin} · ${c.field}`}>{c.plugin}</span>
+const SECRETS = [
+  // What it is for, in its owner's words; the config path is a hover title.
+  col<PlatformSecret>('purpose', 'For', (c) => (
+    <span title={`${c.plugin} · ${c.field}`}>{c.purpose}</span>
   )),
-  col<AdminCredential>('state', 'State', (c) => state(c.set, c.dead)),
+  col<PlatformSecret>('env', 'Variable', (c) => <Env name={c.env} />),
+  col<PlatformSecret>('state', 'State', (c) => state(c.set, c.dead)),
   // Another name that holds the same value; the same name read by another plugin is no news.
-  fact<AdminCredential>('fingerprint', 'Fingerprint', (c) =>
-    c.fingerprint ? (
-      <span>
-        <span className="mono">{c.fingerprint}</span>
-        {c.sharedWith
-          .filter((other) => other.env !== c.env)
-          .map((other) => (
-            <span key={other.env} className="faint">
-              {' = '}
-              <Env name={other.env} />
-            </span>
-          ))}
-      </span>
-    ) : null,
-  ),
-  fig<AdminCredential>('changed', 'Changed', (c) => c.lastChanged && <Ago at={c.lastChanged} />),
-  fig<AdminCredential>('ok', 'Last ok', ({ lastOk: ok }) =>
+  fact<PlatformSecret>('shared', 'Same as', (c) => {
+    const others = [...new Set(c.sharedWith.map((other) => other.env))].filter(
+      (env) => env !== c.env,
+    );
+    return others.length ? others.map((env) => <Env key={env} name={env} />) : null;
+  }),
+  fig<PlatformSecret>('changed', 'Changed', (c) => c.lastChanged && <Ago at={c.lastChanged} />),
+  fig<PlatformSecret>('ok', 'Last ok', ({ lastOk: ok }) =>
     ok ? (
       <span title={`${ok.relay} · ${ok.model}`}>
         <Ago at={ok.at} />
       </span>
     ) : null,
   ),
-  fig<AdminCredential>('failure', 'Last failure', ({ lastFailure: failed, lastOk: ok, dead }) =>
+  fig<PlatformSecret>('failure', 'Last failure', ({ lastFailure: failed, lastOk: ok, dead }) =>
     failed ? (
       <span
         className={dead || !ok || failed.at > ok.at ? 'status--bad' : 'faint'}
@@ -65,7 +57,22 @@ const COLUMNS = [
     ) : null,
   ),
 ];
-type Minted = AdminCredentials['minted'][number];
+const PROVIDERS = [
+  col<ProviderKey>('provider', 'Provider', (k) => <span title={k.plugin}>{k.provider}</span>),
+  col<ProviderKey>('field', 'Key', (k) => <span title={k.field}>{k.description || k.field}</span>),
+  col<ProviderKey>('whose', 'Whose', (k) => k.namespace ?? 'Platform'),
+  col<ProviderKey>('state', 'State', (k) => state(k.present)),
+  fact<ProviderKey>(
+    'health',
+    'Health',
+    (k) =>
+      k.health && (
+        <Word tone={toneOf(k.health)} value={k.health} title={k.healthReason ?? undefined} />
+      ),
+  ),
+  fig<ProviderKey>('verified', 'Verified', (k) => k.verifiedAt && <Ago at={k.verifiedAt} />),
+];
+type Minted = AdminCredentialsV2['minted'][number];
 const MINTED = [
   col<Minted>('owner', 'Minted by', (m) => m.owner),
   col<Minted>('kind', 'Kind', (m) => words(m.kind)),
@@ -82,9 +89,9 @@ const MINTED = [
 ];
 
 export function CredentialsView() {
-  const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
+  const read = useTool<AdminCredentialsV2>('/admin/credentials', {}, { every: 60_000 });
   const groups = read.data?.groups ?? [];
-  const all = groups.flatMap((g) => g.credentials);
+  const all = groups.flatMap((g) => g.secrets);
   const unset = all.filter((c) => !c.set).length;
   const dead = all.filter((c) => c.dead).length;
   return (
@@ -100,47 +107,31 @@ export function CredentialsView() {
         }
       />
       <LoadState {...read} columns={6} />
-      {groups.map(({ purpose, provider: p, credentials }) => (
-        <section className="stack admin-purpose" key={p ? `provider:${p.name}` : purpose}>
-          <h2 className="section-title admin-group">
-            {p ? (
-              <>
-                {p.name}{' '}
-                {p.health && (
-                  <Word
-                    tone={toneOf(p.health.status)}
-                    value={p.health.status}
-                    title={[p.health.message, p.health_reason].filter(Boolean).join(' · ')}
-                  />
-                )}{' '}
-                {!p.enabled && <Word tone="dim" value="disabled" />}
-                {p.verified_at && (
-                  <span className="faint">
-                    {' '}
-                    verified <Ago at={p.verified_at} />
-                  </span>
-                )}
-              </>
-            ) : (
-              purpose
-            )}
-          </h2>
-          {credentials.length > 0 && (
-            <Ruled
-              label={p?.name ?? purpose}
-              template="minmax(0, 2fr) minmax(0, 0.8fr) 84px minmax(0, 2fr) 76px 76px minmax(0, 1fr)"
-              columns={COLUMNS}
-              rows={credentials}
-              keyOf={(c) => `${c.env}:${c.field}`}
-              row={(c) => ({ className: cx(c.dead && 'admin-dead') })}
-            />
-          )}
-          {/* A provider whose key is sealed in its row says which fields it holds. */}
-          {p && !credentials.length && (
-            <KV rows={p.fields.map((field) => [field.name, state(field.present)])} />
-          )}
+      {groups.map(({ purpose, secrets }) => (
+        <section className="stack admin-purpose" key={purpose}>
+          <h2 className="section-title admin-group">{purpose}</h2>
+          <Ruled
+            label={purpose}
+            template="minmax(0, 2fr) minmax(0, 1.6fr) 84px minmax(0, 1.4fr) 76px 76px minmax(0, 1fr)"
+            columns={SECRETS}
+            rows={secrets}
+            keyOf={(c) => `${c.plugin}:${c.field}`}
+            row={(c) => ({ className: cx(c.dead && 'admin-dead') })}
+          />
         </section>
       ))}
+      {!!read.data?.providers.length && (
+        <section className="stack admin-purpose">
+          <h2 className="section-title admin-group">Sandbox provider keys</h2>
+          <Ruled
+            label="Sandbox provider keys"
+            template="minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr) 84px 104px 104px"
+            columns={PROVIDERS}
+            rows={read.data.providers}
+            keyOf={(k) => `${k.provider}:${k.namespace ?? ''}:${k.field}`}
+          />
+        </section>
+      )}
       {!!read.data?.minted.length && (
         <section className="stack">
           <h2 className="section-title">Minted</h2>

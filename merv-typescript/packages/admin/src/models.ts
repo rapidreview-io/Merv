@@ -102,45 +102,6 @@ interface EnvName {
   env: string;
 }
 type Outcome = Record<'at' | 'relay' | 'model', string>;
-export interface AdminCredential extends EnvName {
-  set: boolean;
-  /** The first 8 hex of the value's SHA-256; never the value. */
-  fingerprint: string | null;
-  /** Every other name and field that holds the same value. */
-  sharedWith: EnvName[];
-  /** When the value last changed, once this page has seen it change. */
-  lastChanged: string | null;
-  /** Fleet's relay's last call the provider answered, and its last that failed. */
-  lastOk: Outcome | null;
-  lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
-  /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
-  dead: boolean;
-}
-export interface AdminCredentialGroup {
-  purpose: string;
-  /** A sandbox provider's instance; its credentials are its host key reference, if any. */
-  provider?: {
-    name: string;
-    plugin: string;
-    source: 'host' | 'user';
-    namespaces: readonly string[] | null;
-    enabled: boolean;
-    /** The environment variable a host instance's key reference names, if it names one. */
-    credential_env: string | null;
-    fields: readonly { name: string; present: boolean | null }[];
-    verified_at: string | null;
-    health: { status: string; message: string } | null;
-    health_reason: string | null;
-  };
-  credentials: AdminCredential[];
-}
-export interface AdminCredentials {
-  at: string;
-  groups: AdminCredentialGroup[];
-  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
-  minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
-    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
-}
 
 // ── v2 (docs/ADMIN.md "v2"): operable credentials and credits. These replace the shapes above
 // where they overlap; the builders delete what they supersede.
@@ -183,9 +144,13 @@ export interface AdminCredentialsV2 {
     secrets: PlatformSecret[];
   }[];
   providers: ProviderKey[];
-  minted: AdminCredentials['minted'];
+  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
+  minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
+    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
 }
-/** `POST /admin/credentials/reveal` and `/change`: one platform secret, or one provider's keys. */
+/** `POST /admin/credentials/reveal` (→ `{ value }`) and `/change` (→ `{ ok, reloaded }`, the
+ *  plugin entries reloaded and provider instances rebound): one platform secret, or one
+ *  provider's keys. */
 export type CredentialTarget =
   { env: string } | { provider: string; namespace: string | null; field: string };
 export type CredentialChange =

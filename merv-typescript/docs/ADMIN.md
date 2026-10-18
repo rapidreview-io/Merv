@@ -16,7 +16,9 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Fleet spend, model-token ledgers, relay outcomes | `@merv/fleet` | a read method per ledger; each relay's latest success and failure per key and model, and whether the provider rejected the key |
 | Pi model-token ledger | `@merv/pi` | a read method |
 | Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService`, which refuses new credit for a provider without an operator connection |
-| Secret names per plugin | composition root (`composition.environment()`), Sandboxes (`credential_env`) | env names from each plugin's `*Env` config fields; a host provider's from its credential reference |
+| Secret names and purposes per plugin | composition root (`composition.environment()`), each plugin's config schema, Sandboxes (`credential_env`, field descriptions) | env names from each plugin's `*Env` config fields with the schema's `.describe()`; a host provider's from its credential reference |
+| Stored platform secrets | `@merv/secrets` (`platform_secrets`, secrets@2) | set, read and list (names and times); the composition root applies them (`override`) |
+| Provider keys | Sandboxes (`sbxProviders.connect`, `sbxVault`, `rebindHost`) | a user key verified then saved; a host instance rebound from its credential env |
 
 `@merv/admin` composes these reads. It owns no copy of another plugin's rules: terminal states
 come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes. An owner not
@@ -40,10 +42,19 @@ loaded here leaves its facts out.
   recorded in the admin audit log and answered with the `{ id }` it wrote. A grant names its
   `validFrom`, so a retry repeats its terms exactly and replays. The admin checks only the body's
   shape: Sandboxes refuses the values (`sandbox_validation`).
-- `GET /admin/credentials` — by purpose (Agent, Fleet agents, Fleet machines, sandbox
-  providers, platform services): env name, set or unset, an 8-hex SHA-256 fingerprint, last
-  change, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
-  with no success or change since, live provider health. Never a value.
+- `GET /admin/credentials` — `AdminCredentialsV2`: platform secrets grouped Agent, Fleet agents,
+  Fleet machines, Platform services, each named by its owner's purpose, set or unset, which other
+  names hold the same value, last change here, Fleet's relay's last success and failure, `dead`
+  once the relay saw the provider reject the key with no success or change since, and `editable`;
+  then every sandbox provider instance's key fields with their plugin's descriptions and health.
+  Never a value.
+- `POST /admin/credentials/reveal` `{ env }` or `{ provider, namespace, field }` → `{ value }`,
+  and `POST /admin/credentials/change` `{ env, value }` or `{ provider, namespace, fields }` →
+  `{ ok, reloaded }`: only a name an enabled entry's config gives, or a field Sandboxes lists for
+  that instance. Each is recorded as `credentials.reveal` or `credentials.change` with its target
+  alone. A platform secret is stored sealed in Secrets, applied, and the entries naming it reload
+  (`reloaded`); a user's provider key goes through `connect` (verified, then saved); a host
+  instance's key is stored as its credential env and the hub rebinds it (`reloaded` names it).
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
   experiments' own snapshot, without the customer's token) and the move of theirs it waits on;
   503 where it is not installed. The first read of a request in an hour records `standalone.read`
@@ -112,6 +123,11 @@ for, not by its implementation name. Details live in a right-side drawer, not in
     reloads only the plugin entries whose config names that env.
   - **Sandbox provider:** the key goes through Sandboxes' own save path (verified against the
     provider before it is stored); a host instance's key is an override of its credential env.
+  - **Boot:** State and Secrets load alone first; every stored value then replaces its env value
+    before any other entry loads. No stored value replaces what State and Secrets read, or
+    Identity's (the API verifies every request through it, so reloading it would end the request
+    that changed it): those show `editable: false` and change in the deployment. A stored value
+    that the key cannot open stops the boot. admin@2's fingerprint table is no longer read.
 
 ### Credits
 

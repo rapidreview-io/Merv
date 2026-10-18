@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { check, type ConfiguredEnv, type PluginStatus } from '@merv/contracts';
 import type {} from '@merv/api';
+import type {} from '@merv/secrets/types';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
 
 const states: Record<FiberState, PluginStatus['state']> = {
@@ -14,6 +15,27 @@ const states: Record<FiberState, PluginStatus['state']> = {
   [FiberState.DISPOSED]: 'disposed',
   [FiberState.UNLOADING]: 'unloading',
 };
+
+/** Loaded first and alone: the store of platform secrets, and the state it keeps them in. */
+const FIRST = new Set(['@merv/state', '@merv/secrets']);
+/** Whose env no stored secret replaces: what State and Secrets read before the store opens, and
+ *  Identity's, which the API verifies every request through, so a reload of it would stop the
+ *  API under the request that asked for it. */
+const FIXED = new Set([...FIRST, '@merv/identity']);
+
+/** The `.describe()` a zod config schema gives the field at `path`, through its wrappers,
+ *  unions, arrays and records. */
+function describedAt(schema: unknown, path: readonly string[]): string | undefined {
+  const def = (schema as { _def?: Record<string, any> } | null | undefined)?._def;
+  if (!def) return undefined;
+  if (!path.length && def.description) return def.description;
+  const [key, ...rest] = path;
+  if (def.typeName === 'ZodObject') return key && describedAt(def.shape()[key], rest);
+  if (def.typeName === 'ZodArray') return describedAt(def.type, rest);
+  if (def.typeName === 'ZodRecord') return describedAt(def.valueType, rest);
+  if (def.options) return def.options.map((o: unknown) => describedAt(o, path)).find(Boolean);
+  return describedAt(def.innerType ?? def.schema ?? def.in ?? def.type ?? def.getter?.(), path);
+}
 
 /** Composition and readiness policy only. Cordis owns the dependency graph and its lifecycle. */
 export async function createApp(options: ConfigurationOptions) {
@@ -86,43 +108,96 @@ export async function createApp(options: ConfigurationOptions) {
       );
     };
     // Config names secrets and never holds them: every `*Env` string field, at any depth, of the
-    // config each enabled entry was given, its plugin's defaults applied where it loaded.
-    const named = (value: unknown, plugin: string, path = ''): ConfiguredEnv[] =>
+    // config each enabled entry was given, its plugin's defaults applied where it loaded, for
+    // what its plugin's config schema says the field is for.
+    type Named = Omit<ConfiguredEnv, 'plugin' | 'overridable'>;
+    const named = (value: unknown, schema: unknown, path: string[] = []): Named[] =>
       value && typeof value === 'object'
         ? Object.entries(value).flatMap(([key, child]) => {
-            const field = path ? `${path}.${key}` : key;
+            const at = [...path, key];
+            const field = at.join('.');
             return typeof child === 'string' && key.endsWith('Env')
-              ? [{ plugin, field, env: child }]
-              : named(child, plugin, field);
+              ? [{ field, env: child, purpose: describedAt(schema, at) ?? field }]
+              : named(child, schema, at);
           })
         : [];
-    const environment = () =>
-      [...loader.entries()]
+    const environment = (): ConfiguredEnv[] => {
+      const entries = [...loader.entries()]
         .filter((entry) => !entry.disabled)
-        .flatMap((entry) => named(entry.fiber?.config ?? entry.options.config, entry.id));
+        .map((entry) => ({
+          entry,
+          refs: named(entry.fiber?.config ?? entry.options.config, entry.fiber?.runtime?.Config),
+        }));
+      const fixed = new Set(
+        entries
+          .filter(({ entry }) => FIXED.has(entry.options.name))
+          .flatMap(({ refs }) => refs.map((ref) => ref.env)),
+      );
+      return entries.flatMap(({ entry, refs }) =>
+        refs.map((ref) => ({ plugin: entry.id, ...ref, overridable: !fixed.has(ref.env) })),
+      );
+    };
+
+    // Serialize administrative changes; domain calls continue while consumers drain.
+    const serialized = <T>(change: () => Promise<T>): Promise<T> => {
+      check(!stopping, 'unavailable', 'Application is stopping', 503);
+      const operation = changing.then(async () => {
+        check(!stopping, 'unavailable', 'Application is stopping', 503);
+        return await change();
+      });
+      changing = operation.catch(() => undefined);
+      return operation;
+    };
+    const toggle = async (ids: string[], enabled: boolean) => {
+      for (const id of ids) {
+        check(loader.store[id], 'plugin_not_found', `Plugin entry not found: ${id}`, 404);
+        await loader.update(id, { disabled: !enabled });
+      }
+      await settle();
+      if (enabled) assertReady(status().filter((entry) => ids.includes(entry.id)));
+    };
+    /** A stored platform secret, decrypted; none without Secrets, or without its key. */
+    const stored = async (env: string) => (await ctx.get('secrets')?.platformSecret(env)) ?? null;
+    const override = (env: string) =>
+      serialized(async () => {
+        const refs = environment().filter((ref) => ref.env === env);
+        check(
+          refs.every((ref) => ref.overridable),
+          'invalid_input',
+          `${env} is read before stored secrets apply`,
+        );
+        const value = await stored(env);
+        check(
+          value !== null,
+          'secrets_unavailable',
+          'Stored platform secrets are unavailable',
+          503,
+        );
+        process.env[env] = value;
+        const ids = [...new Set(refs.map((ref) => ref.plugin))];
+        await toggle(ids, false);
+        await toggle(ids, true);
+        return ids;
+      });
     // Plugins read lifecycle state from this report, never by recomputing it from the loader.
-    ctx.provide('composition', { status, environment });
+    ctx.provide('composition', { status, environment, override });
     // A required flag is Merv readiness policy; do not pass it as a loader/plugin option.
-    await loader.root.update(
-      configuration.entries.map(({ required: _required, ...entry }) => entry),
-    );
+    const entries = configuration.entries.map(({ required: _required, ...entry }) => entry);
+    // State and Secrets load alone, and each platform secret stored there replaces its env value
+    // before any other entry reads it.
+    await loader.root.update(entries.filter((entry) => FIRST.has(entry.name)));
+    await settle();
+    const first = new Set(environment().map((ref) => ref.env));
+    for (const { env } of (await ctx.get('secrets')?.platformSecrets()) ?? [])
+      if (!first.has(env)) process.env[env] = (await stored(env)) ?? process.env[env];
+    await loader.root.update(entries);
     await settle();
     assertReady(status().filter((entry) => entry.required));
 
     const getFiber = (id: string): Fiber | undefined => loader.store[id]?.fiber;
     const setEnabled = (id: string, enabled: boolean): Promise<void> => {
-      check(!stopping, 'unavailable', 'Application is stopping', 503);
       check(typeof enabled === 'boolean', 'invalid_config', 'enabled must be a boolean');
-      // Serialize administrative changes; domain calls continue while consumers drain.
-      const operation = changing.then(async () => {
-        check(!stopping, 'unavailable', 'Application is stopping', 503);
-        check(loader.store[id], 'plugin_not_found', `Plugin entry not found: ${id}`, 404);
-        await loader.update(id, { disabled: !enabled });
-        await settle();
-        if (enabled) assertReady(status().filter((entry) => entry.id === id));
-      });
-      changing = operation.catch(() => undefined);
-      return operation;
+      return serialized(() => toggle([id], enabled));
     };
     return {
       ctx,

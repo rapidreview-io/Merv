@@ -377,19 +377,20 @@ test('credits: ⋯ on a grant opens its guard, which revokes it', async (t) => {
   assert.equal(document.querySelector('[role="alertdialog"]'), null, 'done, the guard closes');
 });
 
-test('credentials: purposes in order, a fingerprint and what shares it, a dead key in red', async (t) => {
+test('credentials: each secret by what it is for, what shares it, a dead key in red, provider keys apart', async (t) => {
   t.after(async () => await unmount());
-  const credential = (env: string, over: Record<string, unknown> = {}) => ({
+  const secret = (env: string, purpose: string, over: Record<string, unknown> = {}) => ({
     env,
+    purpose,
     plugin: 'pi',
     field: 'model.keyEnv',
     set: true,
-    fingerprint: 'a1b2c3d4',
     sharedWith: [],
     lastChanged: null,
     lastOk: null,
     lastFailure: null,
     dead: false,
+    editable: true,
     ...over,
   });
   serve('/auth/config', { body: { enabled: false } });
@@ -400,8 +401,8 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
       groups: [
         {
           purpose: 'Agent',
-          credentials: [
-            credential('OPENAI_API_KEY', {
+          secrets: [
+            secret('OPENAI_API_KEY', 'Agent model calls · OpenAI API key', {
               sharedWith: [{ plugin: 'fleet', field: 'relay.keyEnv', env: 'FLEET_OPENAI_KEY' }],
               // Overloaded once, and answered since.
               lastOk: { at: ago(1), relay: 'pi', model: 'gpt-5' },
@@ -417,8 +418,8 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
         },
         {
           purpose: 'Fleet agents',
-          credentials: [
-            credential('FLEET_OPENAI_KEY', {
+          secrets: [
+            secret('FLEET_OPENAI_KEY', 'Fleet agent model calls · OpenAI API key', {
               dead: true,
               lastFailure: {
                 at: ago(30),
@@ -431,22 +432,33 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
           ],
         },
         {
-          purpose: 'Sandbox provider',
-          provider: {
-            name: 'modal-main',
-            plugin: 'modal',
-            source: 'host',
-            enabled: true,
-            fields: [],
-            verified_at: ago(2),
-            health: { status: 'degraded', message: 'slow' },
-            health_reason: null,
-          },
-          credentials: [credential('MODAL_TOKEN', { set: false, fingerprint: null })],
-        },
-        {
           purpose: 'Platform services',
-          credentials: [credential('MERV_DB_URL', { plugin: 'state' })],
+          secrets: [
+            secret('MERV_DB_URL', 'Merv database · Postgres connection URL', {
+              plugin: 'state',
+              editable: false,
+            }),
+            secret('MERV_NISA_API_KEY', 'Literature search for agents · Nisa API key', {
+              plugin: 'nisa',
+              set: false,
+            }),
+          ],
+        },
+      ],
+      providers: [
+        {
+          provider: 'modal-main',
+          plugin: 'modal',
+          source: 'host',
+          namespace: null,
+          field: 'token_secret',
+          description: 'Modal token secret',
+          secret: true,
+          present: true,
+          health: 'degraded',
+          healthReason: null,
+          verifiedAt: null,
+          editable: true,
         },
       ],
       minted: [
@@ -463,18 +475,17 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
   });
   await open('/admin/credentials');
   const groups = [...document.querySelectorAll('.admin-group')].map((row) => row.textContent);
-  assert.deepEqual(
-    groups.map((g) => g!.replace(/ degraded.*/, '')),
-    ['Agent', 'Fleet agents', 'modal-main', 'Platform services'],
-  );
-  assert.match(text(), /a1b2c3d4 = FLEET_OPENAI_KEY/);
-  assert.doesNotMatch(text(), /model\.keyEnv|same as/, 'a config path is a hover title');
+  assert.deepEqual(groups, ['Agent', 'Fleet agents', 'Platform services', 'Sandbox provider keys']);
+  assert.match(text(), /Agent model calls · OpenAI API key/);
+  assert.match(text(), /FLEET_OPENAI_KEY/);
+  assert.doesNotMatch(text(), /model\.keyEnv|fingerprint/i, 'a config path is a hover title');
   const dead = document.querySelector('.admin-dead')!;
   assert.match(dead.textContent!, /dead/);
   assert.match(dead.textContent!, /invalid_api_key/);
   assert.match(text(), /3 set\s*1 unset\s*1 dead/, 'unset is no failure');
   const red = [...document.querySelectorAll('.ruled .status--bad')].map((el) => el.textContent);
   assert.deepEqual(red, ['dead', 'invalid_api_key 30m ago'], 'a recovered failure is faint');
+  assert.match(text(), /Modal token secret/);
   assert.match(text(), /degraded/);
   assert.match(text(), /in 3h/, 'an expiry still to come');
 });
