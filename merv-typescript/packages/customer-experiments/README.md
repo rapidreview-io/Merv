@@ -153,6 +153,9 @@ are separate: `customer_experiment.get` and `customer_experiment.submit_results`
 the existing artifacts, Code and Reviews tools granted by the workflow. From
 `service_experiment@4` the running worker also posts status-page lines with
 `customer_experiment.progress`; a session calls only what its version's policy grants.
+Merv's own agents (the worker, its reviewer through `review.submit`, the interviewer and
+the healer) read the request without the buyer's email and payment id; the customer page,
+the owner and the platform administrator keep them.
 
 Every ten seconds the module reconciles final code captures and result email delivery.
 Remote result files must be retained as native Capture artifact collections before handoff;

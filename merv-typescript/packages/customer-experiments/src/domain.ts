@@ -48,6 +48,7 @@ import {
   contractDatasets,
   contractLimits,
   isDocumentContract,
+  seenBy,
   type CustomerExperiment,
   type DocumentContract,
   type ProgressLine,
@@ -163,7 +164,9 @@ export class CustomerExperiments {
           403,
         );
       },
-      submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+      // review.submit answers its reviewer with the request, as a worker reads it.
+      submit: async (caller, input, tx) =>
+        seenBy(caller, await this.submitReview(caller, input, tx)),
       guidance:
         'Review only the submitted results against the customer-accepted immutable contract. Never approve or rewrite the plan. Pass only after independently checking retained evidence and code. A repair keeps the exact contract; a change in scope returns to planning for fresh human acceptance. Failed experiments and negative findings are valid results when faithfully measured and reported.',
       returns: async () => [

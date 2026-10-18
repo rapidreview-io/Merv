@@ -1341,6 +1341,21 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
   exp = await f.experiment(f.a.id);
   assert.equal(exp.workflow.state, 'running');
   assert.equal(exp.email, 'customer@example.com');
+  assert.equal(exp.paymentId, 'pi_v3');
+  // The customer's page shows their email; the interviewer and the healer read the request
+  // without the buyer's email or payment id.
+  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).email, 'customer@example.com');
+  const agentContext = (id: string, version: number) =>
+    f.profiles.find((p) => p.id === id && p.version === version)!.context!({
+      binding: { id, version, requestId: f.a.id },
+      caller: { projectId: f.record.projectId!, actorId: 'actor' } as Caller,
+    });
+  for (const text of [
+    JSON.stringify(await f.tool('read', {})),
+    await agentContext('customer-experiments-intake', 8),
+    await agentContext('customer-experiments-healer', 2),
+  ])
+    assert.doesNotMatch(text, /customer@example\.com|pi_v3/);
   assert.equal(f.emails.length, 0);
   assert.equal((await f.store.get(f.a.id)).submissionEmailPending, true);
   f.delivery.fail = false;

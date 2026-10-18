@@ -22,6 +22,7 @@ import {
   serviceExecution,
 } from '../packages/customer-experiments/src/execution.js';
 import { planSchema, validateAgreement } from '../packages/customer-experiments/src/schema.js';
+import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
 import { currentWork } from './fixtures/current-work.js';
@@ -92,6 +93,19 @@ async function fixture(
   );
   // These cover the structured offer: requests start on service_experiment@2.
   service.startVersion = 2;
+  // The worker tools as a leased session calls them, answers included.
+  type Handler = (caller: Caller, input: never) => Promise<Record<string, unknown>>;
+  const tools = new Map<string, Handler>();
+  await registerWorkerTools(
+    {
+      register: (tool: { name: string; handler: Handler }) => {
+        tools.set(tool.name, tool.handler);
+        return () => {};
+      },
+    } as never,
+    service,
+  );
+  const submitted: Record<string, unknown>[] = [];
   const reports = legacyReports(state);
   service.bindReports(reports);
   const work = currentWork(managed, { directory: dir, source: caller });
@@ -170,8 +184,8 @@ async function fixture(
     if (workspace) await managed.sessions.workspaceResult(caller, { ...held.control, workspace });
     await managed.events.drain();
   };
-  const deliver = async (exp: CustomerExperiment) => {
-    const worker = await offer();
+  const deliver = async (exp: CustomerExperiment, held?: Awaited<ReturnType<typeof offer>>) => {
+    const worker = held ?? (await offer());
     const artifact = await work.run(
       worker,
       'artifact.create',
@@ -180,18 +194,20 @@ async function fixture(
     );
     reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
     await work.commit(worker, { 'experiment.ts': `console.log('attempt ${exp.attempts}');\n` });
-    await work.run(
-      worker,
-      'customer_experiment.submit_results',
-      {
-        id: exp.id,
-        expectedRevision: exp.workflow.revision,
-        artifactIds: [artifact.id],
-        reportArtifactId: artifact.id,
-        summary: 'Run finished.',
-        requestId: id(),
-      },
-      (c, input) => service.submitResults(c, input),
+    submitted.push(
+      await work.run(
+        worker,
+        'customer_experiment.submit_results',
+        {
+          id: exp.id,
+          expectedRevision: exp.workflow.revision,
+          artifactIds: [artifact.id],
+          reportArtifactId: artifact.id,
+          summary: 'Run finished.',
+          requestId: id(),
+        },
+        (c, input) => tools.get('customer_experiment.submit_results')!(c, input as never),
+      ),
     );
     await finish(worker);
     return service.reconcile(caller, exp.id);
@@ -230,6 +246,8 @@ async function fixture(
     state,
     scope,
     caller,
+    tools,
+    submitted,
     artifacts,
     workflows,
     reviews,
@@ -408,7 +426,7 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
   exp = await f.judge(reviewer, exp, 'planning');
   assert.equal(exp.workflow.state, 'planning');
   assert.equal(exp.acceptedContractId, null);
-  assert.equal(exp.paymentId, null);
+  assert.equal((await f.service.get(f.caller, exp.id)).paymentId, null);
   assert.equal(
     exp.workflow.data.computeEpoch,
     `${oldContract.id}:planning:${exp.workflow.revision}`,
@@ -541,6 +559,28 @@ test('results wait for the final code capture, then dispatch a separate Astra re
       f.reviews.apply(caller, input as unknown as Parameters<typeof f.reviews.apply>[1]),
   );
   assert.equal((submitted as typeof exp).workflow.state, 'complete');
+});
+
+test("leased workers and reviewers read the request without the buyer's email or payment id", async (t) => {
+  const f = await fixture(t);
+  const paid = await f.pay();
+  const buyer = (view: object) => ['email', 'paymentId'].filter((key) => key in view);
+  // The owner's read keeps the buyer.
+  const owned = await f.service.get(f.caller, paid.id);
+  assert.equal(owned.email, 'customer@example.test');
+  assert.match(owned.paymentId!, /^pi_/);
+  const producer = await f.offer();
+  const read = await f.tools.get('customer_experiment.get')!(producer.worker, {
+    id: paid.id,
+  } as never);
+  assert.equal(read.id, paid.id);
+  assert.equal(read.acceptedContractId, owned.acceptedContractId);
+  assert.deepEqual(buyer(read), []);
+  const exp = await f.deliver(owned, producer);
+  assert.deepEqual(buyer(f.submitted.at(-1)!), []);
+  const reviewer = await f.offer();
+  assert.deepEqual(buyer(await f.judge(reviewer, exp, 'running')), []);
+  assert.equal((await f.service.get(f.caller, exp.id)).email, 'customer@example.test');
 });
 
 test('customer agreements leave CPU and GPU selection to Merv', () => {

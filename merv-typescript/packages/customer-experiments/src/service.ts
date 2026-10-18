@@ -26,6 +26,7 @@ import {
 import { plansDocument } from './program.js';
 import {
   isDocumentContract,
+  withoutBuyer,
   type CustomerExperiment,
   type RequestFile,
   type RequestFiles,
@@ -313,6 +314,10 @@ export class CustomerService {
         .map((line) => ({ at: line.at, text: line.text })),
     };
   }
+  /** The request as its interviewer and healer read it: no conversation, and no buyer. */
+  async agentSnapshot(record: RequestRecord) {
+    return withoutBuyer(await this.snapshot(record, false));
+  }
   async snapshot(record: RequestRecord, includeConversation = true) {
     const caller = await this.caller(record);
     check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
@@ -580,7 +585,7 @@ export class CustomerService {
         return (
           lines.join('\n').slice(0, 8000) +
           '\n\n' +
-          JSON.stringify(await this.snapshot(record, false))
+          JSON.stringify(await this.agentSnapshot(record))
         ).slice(0, 32000);
       },
       authorizeTool: async ({
@@ -627,7 +632,7 @@ export class CustomerService {
         'Request context belongs to its isolated project',
         403,
       );
-      return JSON.stringify(await this.snapshot(record, false)).slice(0, 32000);
+      return JSON.stringify(await this.agentSnapshot(record)).slice(0, 32000);
     };
     const installations = [
       () =>
@@ -865,7 +870,7 @@ export class CustomerService {
           readOnly: true,
           handler: async (caller, input) => {
             const r = await this.intakeRecord(caller, input.id);
-            return this.snapshot(r, false);
+            return this.agentSnapshot(r);
           },
         }),
       () =>

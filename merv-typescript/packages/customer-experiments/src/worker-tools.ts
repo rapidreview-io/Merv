@@ -5,7 +5,7 @@ import type {} from '@merv/api/types';
 import type { CustomerExperiments } from './domain.js';
 import type { FilesService } from './files.js';
 import { progressSchema, submitResultsSchema } from './schema.js';
-import { isDocumentContract } from './types.js';
+import { isDocumentContract, seenBy } from './types.js';
 
 /** Deliberately no create/approve/payment tool: customer authority stays at the HTTP edge. */
 export function registerWorkerTools(
@@ -34,7 +34,8 @@ export function registerWorkerTools(
         'Read the fixed customer contract, manifest, current execution and result review for this experiment.',
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
       readOnly: true,
-      handler: async (caller: Caller, input: { id: string }) => service.get(caller, input.id),
+      handler: async (caller: Caller, input: { id: string }) =>
+        seenBy(caller, await service.get(caller, input.id)),
     }),
     tools.register({
       name: 'customer_experiment.submit_results',
@@ -42,7 +43,8 @@ export function registerWorkerTools(
       description:
         "Submit retained results of the exact accepted and paid contract at expectedRevision. Only its leased execution worker may submit its own artifacts: artifactIds may hold only artifacts you created in this session and this attempt's native compute captures; cite any other by id in the report. reportArtifactId is the sourceArtifactId report.render with final: true returned. The session then ends, final code is retained, and an independent Astra reviewer verifies the results. Never change scope; explain deviations or infeasibility in the report.",
       inputSchema: submitResultsSchema,
-      handler: async (caller: Caller, input: unknown) => service.submitResults(caller, input),
+      handler: async (caller: Caller, input: unknown) =>
+        seenBy(caller, await service.submitResults(caller, input)),
     }),
     tools.register({
       name: 'customer_experiment.progress',
