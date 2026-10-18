@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { PageHeader, col, cx, type Column } from '../components';
+import { PageHeader, Word, col, cx, toneOf, type Column } from '../components';
 import { formatMoney } from '../views/remote-fields';
 
 /** Dollars as every page states them (`formatMoney`). */
@@ -46,3 +46,11 @@ export const Of = (props: { used: ReactNode; of?: ReactNode; className?: string 
 );
 /** A fact the row does not have. */
 export const None = () => <span className="ghost">—</span>;
+/** A unit's state: in its need's tone while it waits on someone, else in its word's own, and a
+ *  word no table knows is work under way until the unit has ended. */
+export const State = (props: { value: string; ended?: boolean; need?: string | false }) => (
+  <Word
+    tone={props.need || toneOf(props.value).replace('neutral', props.ended ? 'dim' : 'warn')}
+    value={props.value}
+  />
+);

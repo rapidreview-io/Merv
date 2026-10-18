@@ -40,7 +40,10 @@ const unit = (id: string, over: Record<string, unknown> = {}) => ({
 });
 const work = {
   rows: [
-    unit('wf_quiet', { lastActivity: ago(1) }),
+    unit('wf_quiet', {
+      lastActivity: ago(1),
+      machine: { phase: 'provisioning', profile: 'standard', provider: 'cf', usdPerHour: 0.074 },
+    }),
     unit('wf_held', {
       kind: 'experiment',
       title: 'Decay sweep',
@@ -70,6 +73,10 @@ const work = {
     unit('wf_alone', {
       kind: 'service_experiment',
       title: 'Customer study',
+      project: { id: 'project_c', name: 'Customer study' },
+      state: 'ready',
+      attention: [{ reason: 'customer', code: 'approval' }],
+      lastActivity: ago(60),
       requestId: 'ce_request',
       // A closed visit that reported nothing measured nothing.
       cost: { sessions: 1, reportedSessions: 0, wallMs: 0, inputTokens: 0, outputTokens: 0 },
@@ -118,23 +125,30 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
   boot();
   await open('/admin');
   assert.match(text(), /3 running/);
-  assert.match(text(), /1 need attention/);
+  assert.match(text(), /2 need attention/);
   assert.match(rows()[0]!.textContent!, /Decay sweep/, 'the unit that needs someone leads');
   assert.match(rows()[0]!.textContent!, /agent question/i);
   assert.match(rows()[0]!.textContent!, /Its agent asked its owner/, 'the phrase, read as words');
   assert.match(rows()[0]!.textContent!, /1\.3M/, 'tokens counted');
-  assert.match(rows()[0]!.textContent!, /\$0\.80\/h/);
+  // A running machine by its profile, its price in its title.
+  assert.match(rows()[0]!.textContent!, /producer active · gpu-l4/);
+  assert.ok(rows()[0]!.querySelector('[title="modal · $0.80/h"]'));
   // Under the app's /ui base: a drill-in is loaded whole, as an app of its own.
   const link = rows()[0]!.querySelector('a')!;
   assert.equal(link.getAttribute('href'), '/admin/p/project_a/experiments/wf_held');
-  assert.equal(
-    rows()[1]!.querySelector('a')!.getAttribute('href'),
-    '/admin/p/project_a/tasks/wf_quiet',
-  );
+  const quiet = rows().find((row) => /Unit quiet/.test(row.textContent!))!;
+  assert.equal(quiet.querySelector('a')!.getAttribute('href'), '/admin/p/project_a/tasks/wf_quiet');
   // A standalone experiment opens as its customer sees it, which takes its request.
   const alone = rows().find((row) => /Customer study/.test(row.textContent!))!;
   assert.equal(alone.querySelector('a')!.getAttribute('href'), '/admin/standalone/ce_request');
   assert.doesNotMatch(alone.textContent!, /\b0 · 0s|\b0s\b/, 'no cost where nothing was measured');
+  // It waits on its customer in its owner's words, its state in that tone, in a project its own.
+  assert.match(alone.textContent!, /waits on approval/);
+  assert.equal(alone.querySelector('.status')!.className, 'status status--warn');
+  assert.equal(alone.textContent!.match(/Customer study/g)!.length, 1);
+  // A machine not yet running says its phase; its price is in its title, never cut.
+  assert.match(quiet.textContent!, /standard provisioning/);
+  assert.ok(quiet.querySelector('[title="cf · $0.074/h"]'));
   assert.doesNotMatch(text(), /wf_|project_a|ce_request/, 'ids live in routes and titles only');
   assert.doesNotMatch(text(), /Finished task/);
   await click('Filter');
@@ -164,6 +178,45 @@ test('work: / opens the filter with the cursor in its search, and a search narro
   });
   assert.equal(rows().length, 1);
   assert.match(rows()[0]!.textContent!, /Decay sweep/);
+});
+
+test('standalone: its title, the plan it was accepted on, its customer, the chat as they read it', async (t) => {
+  t.after(async () => await unmount());
+  boot();
+  serve('/admin/standalone/ce_request', {
+    body: {
+      title: 'Label smoothing for the churn classifier',
+      state: 'ready',
+      waits: 'approval',
+      email: 'priya@example.org',
+      planStatus: 'accepted',
+      contract: { question: 'Does smoothing help?', criteria: ['ECE falls by 20%'] },
+      contractSummary: {
+        priceCents: 1000,
+        currency: 'usd',
+        limits: { wallMinutes: 180, maxTokens: 4e6, maxAttempts: 2 },
+      },
+      conversation: [
+        { role: 'user', text: 'Submitted the plan.' },
+        { role: 'assistant', text: 'Plan approved.' },
+      ],
+    },
+  });
+  await open('/admin/standalone/ce_request');
+  assert.equal(
+    document.querySelector('h1')!.textContent,
+    'Label smoothing for the churn classifier',
+  );
+  assert.match(text(), /QuestionDoes smoothing help\?/);
+  assert.match(text(), /SuccessECE falls by 20%/);
+  assert.match(text(), /Limits3 h · 4M tokens · 2 attempts/);
+  assert.match(text(), /Customerpriya@example\.org/);
+  assert.match(text(), /waits on approval/);
+  const pill = [...document.querySelectorAll('.status')].find((el) => el.textContent === 'ready');
+  assert.equal(pill!.className, 'status status--warn', 'its state in the tone of its wait');
+  assert.match(text(), /Submitted the plan\./);
+  // An admin page has no project: nothing asks for one, the state words included.
+  assert.ok(!requests.some((r) => r.includes('/tools/')), requests.join('\n'));
 });
 
 const account = (accountId: string, name: string, over: Record<string, unknown> = {}) => ({
@@ -213,6 +266,14 @@ const credits = {
       fleet: { usd: 3.2, usdCap: 25, tokens: { used: 120_000, limit: 2_000_000 } },
       pi: { used: 40_000, limit: 1_000_000 },
     },
+    {
+      label: 'Tomás Ruiz',
+      issuer: user.issuer,
+      subject: 'tomas',
+      accounts: [],
+      fleet: { usd: 0.004, usdCap: 25, tokens: null },
+      pi: null,
+    },
   ],
   accounts: [
     account('acct_mira', 'Personal account'),
@@ -247,6 +308,8 @@ test('credits: left of granted per provider, an unfolded person, and a grant tha
   assert.match(mira.textContent!, /\$95\.05 of\s\$100\.00/);
   assert.match(mira.textContent!, /\$3\.20 of\s\$25\.00/);
   assert.match(mira.textContent!, /120K of\s2M/);
+  // Money is in cents: one under a cent says so, never a third decimal.
+  assert.match(text(), /Tomás Ruiz——<\$0\.01 of\s\$25\.00/);
   assert.match(text(), /merv-lab/, 'an account nobody belongs to is still a row');
   assert.ok(!requests.some((r) => r.includes('/admin/work')), 'the rail reads no work table');
   assert.doesNotMatch(text(), /Design partner pilot/);
@@ -336,10 +399,19 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
       at: new Date().toISOString(),
       groups: [
         {
-          purpose: 'Pi agents',
+          purpose: 'Agent',
           credentials: [
             credential('OPENAI_API_KEY', {
               sharedWith: [{ plugin: 'fleet', field: 'relay.keyEnv', env: 'FLEET_OPENAI_KEY' }],
+              // Overloaded once, and answered since.
+              lastOk: { at: ago(1), relay: 'pi', model: 'gpt-5' },
+              lastFailure: {
+                at: ago(5),
+                relay: 'pi',
+                model: 'gpt-5',
+                status: 529,
+                code: 'overloaded',
+              },
             }),
           ],
         },
@@ -393,14 +465,16 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
   const groups = [...document.querySelectorAll('.admin-group')].map((row) => row.textContent);
   assert.deepEqual(
     groups.map((g) => g!.replace(/ degraded.*/, '')),
-    ['Pi agents', 'Fleet agents', 'modal-main', 'Platform services'],
+    ['Agent', 'Fleet agents', 'modal-main', 'Platform services'],
   );
   assert.match(text(), /a1b2c3d4 = FLEET_OPENAI_KEY/);
   assert.doesNotMatch(text(), /model\.keyEnv|same as/, 'a config path is a hover title');
   const dead = document.querySelector('.admin-dead')!;
   assert.match(dead.textContent!, /dead/);
   assert.match(dead.textContent!, /invalid_api_key/);
-  assert.match(text(), /missing/);
+  assert.match(text(), /3 set\s*1 unset\s*1 dead/, 'unset is no failure');
+  const red = [...document.querySelectorAll('.ruled .status--bad')].map((el) => el.textContent);
+  assert.deepEqual(red, ['dead', 'invalid_api_key 30m ago'], 'a recovered failure is faint');
   assert.match(text(), /degraded/);
   assert.match(text(), /in 3h/, 'an expiry still to come');
 });

@@ -7852,6 +7852,13 @@ html.modal-open {
     text-overflow: ellipsis;
   }
 }
+/* Facts beside each other in one cell wrap between them, never inside one. */
+.admin-parts {
+  white-space: normal;
+}
+.admin-parts > :not(.ghost) {
+  white-space: nowrap;
+}
 /* A person unfolded: their accounts, then the word that grants, under the person's row. */
 .admin-holding {
   padding: var(--space-4) 0 var(--space-5);

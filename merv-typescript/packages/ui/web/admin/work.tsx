@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { AdminWork, AdminWorkRow } from '@merv/admin/models';
 import { useTool } from '../api';
-import { Ago, Ruled, Word, col, cx, kindStyle, stamp, toneOf, useNow, words } from '../components';
+import { Ago, Ruled, col, cx, kindStyle, stamp, toneOf, useNow, words } from '../components';
 import { Chips, ListPage, openRow, useListFilter } from '../list-filters';
 import { clockOf, duration, elapsed } from '../liveness';
+import { formatMoney } from '../views/remote-fields';
 import { valueText } from '../views/running-phrase';
-import { Head, count, fact, fig, usd } from './parts';
+import { Head, State, count, fact, fig } from './parts';
 
 /** Each workflow the table names: the record kind it wears the colour of, its word, its path. */
 const KINDS: Record<string, [kind: string, label: string, path?: string]> = {
@@ -32,21 +33,31 @@ function opens(row: AdminWorkRow): string | undefined {
   return `/admin/p/${part(row.project.id)}/${path ? `${path}/${part(row.id)}` : ''}`;
 }
 
-const said = (message: AdminWorkRow['attention'][number]['message']) =>
+type Need = AdminWorkRow['attention'][number];
+const said = ({ message }: Need) =>
   typeof message === 'string'
     ? message
     : (message ?? [])
         .map((value) => valueText(value, { now: clockOf(Date.now()), nameOf: () => undefined }))
         .join('');
+/** A need's word: the owner's code, and a customer's move as what the unit waits on. */
+const named = (need: Need) => (need.reason === 'customer' ? 'waits on ' : '') + words(need.code);
+/** A word in its tone. */
+const status = (value: string) => (
+  <span className={`status--${toneOf(value)}`}>{words(value)}</span>
+);
+/** What a unit needs reads in its tone, and so does its state while it needs it. */
+const toneOfNeed = (row: AdminWorkRow) =>
+  !row.terminal && row.attention[0] && (row.attention[0].reason === 'allowance' ? 'bad' : 'warn');
 
 const COLUMNS = [
   col<AdminWorkRow>('title', 'Title', (row) => {
     const [kind, label] = kindOf(row.kind);
     const to = opens(row);
     const [first] = row.terminal ? [] : row.attention;
-    const says = first ? said(first.message) : '';
+    const says = first ? said(first) : '';
     // The owner's code, unless its own words already say it, then those words.
-    const code = first && !says.toLowerCase().startsWith(words(first.code).toLowerCase());
+    const code = first && !says.toLowerCase().startsWith(named(first).toLowerCase());
     return (
       <>
         {/* A part stands under the unit it is part of, by its own name alone. */}
@@ -65,14 +76,9 @@ const COLUMNS = [
         )}
         {/* What it needs, under its name. */}
         {first && (
-          <div
-            className="admin-attn"
-            title={row.attention.map((item) => said(item.message)).join('\n') || undefined}
-          >
-            <span
-              className={`admin-attn-code status--${first.reason === 'allowance' ? 'bad' : 'warn'}`}
-            >
-              {code ? `${words(first.code)} ` : says}
+          <div className="admin-attn" title={row.attention.map(said).join('\n') || undefined}>
+            <span className={`admin-attn-code status--${toneOfNeed(row)}`}>
+              {code ? `${named(first)} ` : says}
             </span>
             {code && <span className="faint">{says}</span>}
           </div>
@@ -80,31 +86,32 @@ const COLUMNS = [
       </>
     );
   }),
-  col<AdminWorkRow>('project', 'Project', (row) => row.project.name),
+  // A project named as its row is the row's own: a standalone experiment's, its intake's.
+  fact<AdminWorkRow>('project', 'Project', ({ project, title }) =>
+    project.name === title ? null : project.name,
+  ),
   col<AdminWorkRow>('person', 'Person', (row) => row.person),
   col<AdminWorkRow>('state', 'State', (row) => (
-    // A state no word table knows is work under way until its unit has ended.
-    <Word
-      tone={toneOf(row.state).replace('neutral', row.terminal ? 'dim' : 'warn')}
-      value={row.state}
-    />
+    <State value={row.state} ended={row.terminal} need={toneOfNeed(row)} />
   )),
-  fact<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine }) =>
-    agent || machine ? (
-      <span>
+  // A machine by its profile, and its phase until it runs; what it costs an hour in its title.
+  fact<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine: m }) =>
+    agent || m ? (
+      <span className="admin-parts">
         {agent && (
-          <>
-            {words(agent.role)}{' '}
-            <span className={`status--${toneOf(agent.status)}`}>{words(agent.status)}</span>
-          </>
+          <span>
+            {words(agent.role)} {status(agent.status)}
+          </span>
         )}
-        {agent && machine && <span className="ghost"> · </span>}
-        {machine && (
-          <span title={[machine.provider, machine.phase].filter(Boolean).join(' · ')}>
-            {machine.profile ?? machine.provider ?? words(machine.phase)}
-            {machine.usdPerHour !== null && (
-              <span className="faint tabular"> {usd(machine.usdPerHour)}/h</span>
-            )}
+        {agent && m && <span className="ghost"> · </span>}
+        {m && (
+          <span
+            title={[m.provider, m.usdPerHour !== null && formatMoney(undefined, m.usdPerHour)]
+              .filter(Boolean)
+              .join(' · ')}
+          >
+            {m.profile ?? m.provider}
+            {(m.phase !== 'running' || !(m.profile ?? m.provider)) && <> {status(m.phase)}</>}
           </span>
         )}
       </span>
@@ -165,6 +172,8 @@ export function WorkView() {
   const needs = live.filter((row) => row.attention.length).length;
   const kinds = [...new Set(all.map((row) => row.kind))].sort();
   const narrowed = filter.filtering || kind || ended;
+  // The state column as wide as its longest word, which it never cuts.
+  const widest = Math.max(5, ...rows.map((row) => row.state.length));
   const clear = () => {
     filter.clear();
     setKind('');
@@ -214,7 +223,7 @@ export function WorkView() {
         rows.length > 0 && (
           <Ruled
             label="Work"
-            template="minmax(0, 3fr) minmax(0, 1fr) minmax(0, 0.8fr) 112px minmax(0, 1.2fr) 72px 40px 56px"
+            template={`minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) calc(${widest}ch + 12px) minmax(0, 1fr) 72px 40px 56px`}
             columns={COLUMNS}
             rows={rows}
             keyOf={(row) => row.id}

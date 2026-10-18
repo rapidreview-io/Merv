@@ -7,6 +7,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { signedInEmail } from '../auth';
 import { ErrorBoundary } from '../components';
+import { Records } from '../navigation';
 import { useAccount } from '../session';
 import { AccountMenu, RailHead, RailRow, ShellFrame, useRailOpen } from '../shell';
 import { CredentialsView } from './credentials';
@@ -47,15 +48,17 @@ export function AdminApp() {
         </aside>
       }
     >
-      <ErrorBoundary reset={pathname}>
-        <Routes>
-          <Route path="/admin" element={<WorkView />} />
-          <Route path="/admin/credits" element={<CreditsView />} />
-          <Route path="/admin/credentials" element={<CredentialsView />} />
-          <Route path="/admin/standalone/:id" element={<StandaloneView />} />
-          <Route path="*" element={<Navigate to="/admin" replace />} />
-        </Routes>
-      </ErrorBoundary>
+      <Records.Provider value={false}>
+        <ErrorBoundary reset={pathname}>
+          <Routes>
+            <Route path="/admin" element={<WorkView />} />
+            <Route path="/admin/credits" element={<CreditsView />} />
+            <Route path="/admin/credentials" element={<CredentialsView />} />
+            <Route path="/admin/standalone/:id" element={<StandaloneView />} />
+            <Route path="*" element={<Navigate to="/admin" replace />} />
+          </Routes>
+        </ErrorBoundary>
+      </Records.Provider>
     </ShellFrame>
   );
 }

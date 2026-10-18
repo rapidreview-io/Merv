@@ -1,21 +1,25 @@
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { KV, PageLoad, RecordPage, StatusPill, timeRows } from '../components';
+import { KV, PageLoad, RecordPage, timeRows } from '../components';
+import { limitLine } from '../customer/plan-card';
 import type { Delivered, Progress } from '../customer/status';
 import { Markdown } from '../markdown';
 import { formatMoney } from '../views/remote-fields';
-import { usd } from './parts';
+import { State } from './parts';
 
 /** What a standalone experiment's customer is shown (Customer experiments' snapshot), as read here. */
 interface Snapshot {
-  name?: string;
+  title: string;
+  waits?: 'approval' | 'payment' | null;
   intent?: string;
   state: string;
   statusMessage?: string;
+  email?: string | null;
   createdAt?: string;
   workflow?: { updatedAt?: string };
   planStatus?: string;
-  contractSummary?: { priceCents: number; currency: string } | null;
+  contract?: { question?: string; criteria?: string[] } | null;
+  contractSummary?: { priceCents: number; currency: string; limits?: Record<string, number> };
   plan?: Partial<
     Record<'question' | 'hypothesis' | 'metric' | 'baseline' | 'turnaround', string> &
       Record<'method' | 'successCriteria' | 'deliverables', string[]>
@@ -41,16 +45,17 @@ export function StandaloneView() {
     return (
       <PageLoad loading={read.loading} error={read.error} back={{ to: '/admin', label: 'Work' }} />
     );
-  const { plan, progress: p, contractSummary: price } = s;
+  const { plan, contract: c, progress: p, contractSummary: price } = s;
   return (
     <RecordPage
       back={<Link to="/admin">← Work</Link>}
       kind="experiments"
-      name={s.name ?? plan?.question ?? 'Standalone experiment'}
-      state={<StatusPill value={s.state} />}
+      name={s.title}
+      state={<State value={s.state} need={!!s.waits && 'warn'} />}
       standing={
-        (s.intent || s.statusMessage) && (
+        (s.waits || s.intent || s.statusMessage) && (
           <>
+            {s.waits && <span className="status--warn">waits on {s.waits}</span>}
             {s.intent && <span>{s.intent}</span>}
             {s.statusMessage && <span className="muted">{s.statusMessage}</span>}
           </>
@@ -58,17 +63,18 @@ export function StandaloneView() {
       }
       title="Plan"
       content={
-        plan && (
+        (plan || c) && (
           <KV
             rows={[
-              ['Question', plan.question],
-              ['Hypothesis', plan.hypothesis],
-              ['Metric', plan.metric],
-              ['Baseline', plan.baseline],
-              ['Method', list(plan.method)],
-              ['Success', list(plan.successCriteria)],
-              ['Deliverables', list(plan.deliverables)],
-              ['Turnaround', plan.turnaround],
+              ['Question', plan?.question ?? c?.question],
+              ['Hypothesis', plan?.hypothesis],
+              ['Metric', plan?.metric],
+              ['Baseline', plan?.baseline],
+              ['Method', list(plan?.method)],
+              ['Success', list(plan?.successCriteria ?? c?.criteria)],
+              ['Deliverables', list(plan?.deliverables)],
+              ['Turnaround', plan?.turnaround],
+              ['Limits', price?.limits && limitLine(price.limits)],
             ]}
           />
         )
@@ -94,11 +100,9 @@ export function StandaloneView() {
       details={
         <KV
           rows={[
+            ['Customer', s.email],
             ['Plan', s.planStatus?.replaceAll('_', ' ')],
-            !!price && [
-              'Price',
-              usd(price.priceCents / 100) + (price.currency === 'usd' ? '' : ` ${price.currency}`),
-            ],
+            !!price && ['Price', formatMoney(price.priceCents / 100, undefined, price.currency)],
             !!p && ['Stage', `${p.stage} · attempt ${p.attempt} of ${p.maxAttempts}`],
             !!p?.compute && [
               'Compute',

@@ -15,7 +15,10 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
   const since = new Date(Date.parse(at) - 86_400_000).toISOString();
   const work = (await ctx.get('workflows')?.platformWork(since)) ?? [];
   const ids = work.map(({ id }) => id);
-  const turns = (await ctx.get('pi')?.platformTurns(since)) ?? [];
+  // One row per Agent conversation, its newest turn's (Pi answers newest first).
+  const turns = new Map(
+    ((await ctx.get('pi')?.platformTurns(since)) ?? []).reverse().map((t) => [t.conversationId, t]),
+  );
   const visits = await ctx.get('sessions')?.running.platform(work);
   const machines = new Map(
     // By its id, and by the unit it serves: a unit Sessions has no visit on yet still has one.
@@ -100,8 +103,8 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
         requestId: found?.requestId,
       };
     }),
-    ...turns.map((turn) => ({
-      id: `${turn.conversationId}/${turn.id}`,
+    ...[...turns.values()].map((turn) => ({
+      id: turn.conversationId,
       kind: 'pi',
       title: turn.title,
       project: project(turn.projectId),

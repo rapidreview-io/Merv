@@ -48,17 +48,20 @@ export function formatMoney(
   of?: number,
 ): string {
   if (rate === 0 && !total) return 'free';
-  // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it.
-  const cash = (value: number) =>
-    value.toLocaleString('en-US', {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: value && Math.abs(value) < 0.1 ? 3 : 2,
-    });
+  // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it; an
+  // amount is in cents, and one under a cent says so: `<$0.01`.
+  const cash = (value: number, cents = true): string =>
+    cents && value > 0 && value < 0.01
+      ? `<${cash(0.01)}`
+      : value.toLocaleString('en-US', {
+          style: 'currency',
+          currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: !cents && value && Math.abs(value) < 0.1 ? 3 : 2,
+        });
   return [
     total !== undefined && `${cash(total)}${of === undefined ? '' : ` of ${cash(of)}`}`,
-    rate !== undefined && `${cash(rate)}/h`,
+    rate !== undefined && `${cash(rate, false)}/h`,
   ]
     .filter(Boolean)
     .join(' · ');

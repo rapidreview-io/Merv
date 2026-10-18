@@ -228,20 +228,22 @@ test('the work table reads every project’s open and recent work through its ow
   assert.ok(!json.includes('private-'));
 });
 
-test('Pi turns are rows of the table, with the Fleet machine their host slot runs on', async (t) => {
+test('an Agent conversation is one row at its newest turn, on the Fleet machine its slot runs on', async (t) => {
   const f = await piFixture(t);
   const conversation = await f.create();
+  await f.finish(await f.claimed(await f.send(conversation)));
   const command = await f.send(conversation);
   const get = (name: string) => ({ pi: f.pi, fleet: f.fleet, scope: f.scope })[name as 'pi'];
   const view = await adminWork({ ctx: { get }, admins: [] } as never);
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
-  // A command id is unique only within its conversation, so the row's names both.
-  assert.equal(turn!.id, `${conversation.id}/${command.id}`);
+  // A row is a conversation, at its newest turn.
+  assert.equal(turn!.id, conversation.id);
   assert.equal(turn!.kind, 'pi');
   assert.equal(turn!.title, 'Chat');
   assert.equal(turn!.project.name, 'Pi integration');
-  assert.equal(turn!.state, 'waiting');
+  // Its newest turn's state, which a host that already runs starts on, never the completed one's.
+  assert.equal(turn!.state, 'starting');
   assert.equal(turn!.terminal, false);
   const allocation = await f.allocation(command.runtimeId);
   assert.deepEqual(turn!.machine, {

@@ -189,17 +189,23 @@ test('a platform admin reads a project it is not a member of through its pages, 
   await delay(50);
   assert.deepEqual(await audited(), [{ subject: 'platform-admin', target: f.project.id }]);
 
-  // A standalone experiment as its customer sees it, from Customer experiments while installed.
+  // A standalone experiment as its customer sees it, and the move of theirs it waits on, from
+  // Customer experiments while installed.
   const standalone = (bearer: string) =>
     f.request('/admin/standalone/ce_request', bearer, { platform: null });
   assert.equal((await standalone(f.adminToken)).status, 503);
   t.after(
     f.app.ctx.provide('customerExperiments', {
-      snapshot: async (id: string) => ({ id }),
-      customers: async () => [],
+      snapshot: async (id: string) => ({ id, experimentId: 'experiment_1', state: 'ready' }),
+      customers: async () => new Map([['experiment_1', { waits: 'approval' } as never]]),
     }),
   );
-  assert.deepEqual((await standalone(f.adminToken)).body, { id: 'ce_request' });
+  assert.deepEqual((await standalone(f.adminToken)).body, {
+    id: 'ce_request',
+    experimentId: 'experiment_1',
+    state: 'ready',
+    waits: 'approval',
+  });
   assert.equal((await standalone(f.strangerToken)).status, 403);
   // A customer's page is a read of its own, audited the same way.
   await standalone(f.adminToken);

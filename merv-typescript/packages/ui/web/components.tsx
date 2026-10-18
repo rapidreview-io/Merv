@@ -136,7 +136,7 @@ const TONES: [Tone, string][] = [
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
       'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
-      'held waiting_inputs retry_wait awaiting_resolution',
+      'held waiting_inputs retry_wait awaiting_resolution uncertain releasing',
   ],
   [
     'bad',
@@ -149,7 +149,7 @@ const TONES: [Tone, string][] = [
     'archived inactive disabled skipped ignored observer reader retired unassigned paused idle ' +
       'stopped ' +
       'draft none unpublished unverified cancelled closed expired not-published not-applicable ' +
-      'metadata-only ended suspended',
+      'metadata-only ended suspended released',
   ],
 ];
 const TONE_OF = new Map(

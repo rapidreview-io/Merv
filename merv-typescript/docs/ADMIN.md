@@ -25,13 +25,14 @@ loaded here leaves its facts out.
 ## Routes (all `adminOf`; the API answers each `Cache-Control: no-store`)
 
 - `GET /admin/work` — every nonterminal unit of work across projects, plus units ended in the
-  last 24 hours: its workflow's name (`pi` for an Agent turn), title, project, person, state,
-  attention (each owner's code, and its words where it has any), agent, machine, last activity,
-  age, cost so far, and a standalone experiment's request. Joined from each owner's platform
-  read: `workflows.platformWork`, `sessions.running.platform`, `fleet.platformAllocations`,
-  `pi.platformTurns`, `tasks.platformTypes`, `reflections.platformLenses`,
-  `customerExperiments.customers` and `scope.directory`. An agent's need is Sessions' own
-  phrase; a machine is found by its allocation id or by the unit Fleet says it serves.
+  last 24 hours: its workflow's name (`pi` for an Agent conversation, at its newest turn), title,
+  project, person, state, attention (each owner's code, and its words where it has any), agent,
+  machine, last activity, age, cost so far, and a standalone experiment's request. Joined from
+  each owner's platform read: `workflows.platformWork`, `sessions.running.platform`,
+  `fleet.platformAllocations`, `pi.platformTurns`, `tasks.platformTypes`,
+  `reflections.platformLenses`, `customerExperiments.customers` and `scope.directory`. An agent's
+  need is Sessions' own phrase; a machine is found by its allocation id or by the unit Fleet says
+  it serves.
 - `GET /admin/credits` — per person → sandbox account → provider: granted, used, reserved,
   available; schedules; budget caps; Fleet daily spend and model tokens.
 - `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
@@ -39,13 +40,14 @@ loaded here leaves its facts out.
   recorded in the admin audit log and answered with the `{ id }` it wrote. A grant names its
   `validFrom`, so a retry repeats its terms exactly and replays. The admin checks only the body's
   shape: Sandboxes refuses the values (`sandbox_validation`).
-- `GET /admin/credentials` — by purpose (Pi agents, Fleet agents, Fleet machines, sandbox
-  providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, last
+- `GET /admin/credentials` — by purpose (Agent, Fleet agents, Fleet machines, sandbox
+  providers, platform services): env name, set or unset, an 8-hex SHA-256 fingerprint, last
   change, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
   with no success or change since, live provider health. Never a value.
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
-  experiments' own snapshot, without the customer's token); 503 where it is not installed. The
-  first read of a request in an hour records `standalone.read` in the admin audit log.
+  experiments' own snapshot, without the customer's token) and the move of theirs it waits on;
+  503 where it is not installed. The first read of a request in an hour records `standalone.read`
+  in the admin audit log.
 - Tool calls with `x-merv-platform: read` — the user UI's own record pages for any project,
   read-only.
 

@@ -16,7 +16,7 @@ export const credentialMigrations = {
 
 /** The purpose each plugin entry's credentials serve; every other entry's is a platform service. */
 const purposes: Record<string, string> = {
-  pi: 'Pi agents',
+  pi: 'Agent',
   'fleet-workflow': 'Fleet agents',
   fleet: 'Fleet machines',
   sessions: 'Fleet machines',
