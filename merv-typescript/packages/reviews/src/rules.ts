@@ -1,4 +1,4 @@
-import { clip, visible } from '@merv/contracts/text';
+import { clip, ellipsis, visible } from '@merv/contracts/text';
 import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/types';
 
 // Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them,
@@ -207,6 +207,24 @@ export function synopsisProblem(synopsis: unknown): 'length' | 'format' | 'ident
   return entityId.test(synopsis) ? 'identifier' : undefined;
 }
 
+/** What a finding's evidenceIds get wrong: each id that is not pinned, and each given twice. */
+function miscited(finding: { evidenceIds?: unknown }, pinned: string[]): string[] {
+  if (!Array.isArray(finding.evidenceIds)) return ['gives no evidenceIds array'];
+  const seen = new Set<unknown>();
+  const wrong = finding.evidenceIds.flatMap((id: unknown) => {
+    const shown = JSON.stringify(typeof id === 'string' ? ellipsis(id, 80) : id) ?? String(id);
+    const problem =
+      typeof id !== 'string' || !pinned.includes(id)
+        ? [`cites ${shown}, which is not pinned`]
+        : seen.has(id)
+          ? [`cites ${shown} twice`]
+          : [];
+    seen.add(id);
+    return problem;
+  });
+  return wrong.length > 5 ? [...wrong.slice(0, 5), `and ${wrong.length - 5} more`] : wrong;
+}
+
 /**
  * The first rule of review.submit a verdict's findings break, in the order it checks them, or
  * undefined. `rule` is which: the findings' own shape, a criterion left without a word or notes,
@@ -271,18 +289,22 @@ export function assessmentProblem(
         `Criterion ${number} needs assessment notes (1–16000 characters)`,
         number,
       );
-    if (!(
-      Array.isArray(item.evidenceIds) &&
-      new Set(item.evidenceIds).size === item.evidenceIds.length &&
-      item.evidenceIds.every(
-        (id: unknown) => typeof id === 'string' && review.artifactIds.includes(id),
-      )
-    ))
+    if (miscited(item, review.artifactIds).length) {
+      // Models garble long ids, often in several findings at once: name every one, so that one
+      // resubmission repairs them all.
+      const cited = value
+        .filter((finding) => Number.isSafeInteger(finding?.criterionNumber))
+        .sort((a, b) => a.criterionNumber - b.criterionNumber)
+        .flatMap((finding) => {
+          const wrong = miscited(finding, review.artifactIds);
+          return wrong.length ? [`criterion ${finding.criterionNumber} ${wrong.join(', ')}`] : [];
+        });
       return refused(
         'shape',
-        `Criterion ${number} must refer only to distinct pinned artifact IDs`,
+        `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): ${cited.slice(0, 12).join('; ')}${cited.length > 12 ? `; and ${cited.length - 12} more criteria` : ''}`,
         number,
       );
+    }
     if (item.status === 'met' && !item.evidenceIds.length)
       return refused(
         'uncited',

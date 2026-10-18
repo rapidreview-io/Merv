@@ -239,6 +239,31 @@ test('structured review preflights reject incomplete, contradictory or unpinned 
   }
 });
 
+test('findings that cite unpinned or repeated ids are refused naming every one, in every criterion', async () => {
+  const f = await fixture();
+  try {
+    const claimed = await f.reviews.start(f.reviewer, (await f.request()).id);
+    const valid = f.submit(claimed);
+    // As a model splices two long ids into one.
+    const spliced = f.proof.id.slice(0, 20) + f.extra.id.slice(20);
+    const [one, two] = [...valid.findings!].sort((a, b) => a.criterionNumber - b.criterionNumber);
+    // Listed out of order, as a reviewer may; the refusal names them by criterion.
+    const findings = [
+      { ...two!, evidenceIds: [spliced, 42] },
+      { ...one!, evidenceIds: [f.proof.id, f.proof.id] },
+    ];
+    await assert.rejects(
+      async () => await f.reviews.submit(f.reviewer, { ...valid, findings } as ReviewSubmit),
+      {
+        code: 'invalid_findings',
+        message: `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): criterion 1 cites "${f.proof.id}" twice; criterion 2 cites "${spliced}", which is not pinned, cites 42, which is not pinned`,
+      },
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test('synopses must be bounded plain prose and generic review observations must be finite bounded JSON', async () => {
   const f = await fixture();
   try {

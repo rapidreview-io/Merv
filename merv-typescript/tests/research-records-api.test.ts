@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
+import { projectSelection } from '../packages/api/src/errors.js';
 import type {} from '@merv/knowledge/types';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
@@ -99,6 +100,28 @@ test('Scope holds no Introduction: project.get carries none and no tool writes o
   assert.equal(
     (await client.listTools()).tools.some((tool) => tool.name === 'project.context.update'),
     false,
+  );
+});
+
+test("a tool call whose projectId is not its credential's project names both ids", async (t) => {
+  const f = await fixture(t),
+    client = await f.connect(f.producer.token);
+  // As a model garbles a long id: one segment dropped.
+  const garbled = f.caller.projectId.slice(0, 12) + f.caller.projectId.slice(16);
+  const refused = await f.call(client, 'project.get', { projectId: garbled });
+  assert.equal(refused.result.isError, true);
+  assert.deepEqual(refused.value.error, {
+    code: 'forbidden',
+    message: `Actor credentials are bound to their original project ${f.caller.projectId}, not "${garbled}": omit projectId, or pass exactly that id`,
+  });
+  // A worker session's caller is fixed before its call, and the selections it carries are compared.
+  assert.throws(
+    () => projectSelection(f.caller.projectId, garbled),
+    (error: unknown) =>
+      error instanceof MervError &&
+      error.code === 'invalid_input' &&
+      error.message ===
+        `Conflicting Merv project selections: "${f.caller.projectId}" and "${garbled}". A request works in one project, and a session, actor token or project key already selects its own: omit projectId, or pass exactly that id`,
   );
 });
 
