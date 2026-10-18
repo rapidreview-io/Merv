@@ -11,8 +11,8 @@ import type { UiRowDescription } from '@merv/ui/rows';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { safely } from '../api';
-import { CloseIcon, ExpandIcon } from '../icons';
-import { media } from '../theme';
+import { Icon } from '../icons';
+import { useRoomy } from '../theme';
 import type { PiSnapshot } from '@merv/pi/models';
 import { Speak, Standing, Transcript, useAgent } from './pi';
 import type { Conversation } from './pi-conversation';
@@ -22,7 +22,6 @@ import type { Voice } from './pi-voice';
 const PLACE = 'merv:agent-dock';
 /** How long what the agent opened is named in the window. */
 const SHOWN_MS = 8_000;
-const useRoomy = media('(min-width: 640px)');
 
 /**
  * When the person's machine is released for inactivity, on this clock: the server's moment less
@@ -237,7 +236,7 @@ export function Floating({
               expand();
             }}
           >
-            <ExpandIcon />
+            <Icon name="expand" />
           </button>
           {!compact && (
             <button
@@ -247,7 +246,7 @@ export function Floating({
               title="Close"
               onClick={hide}
             >
-              <CloseIcon />
+              <Icon name="close" />
             </button>
           )}
         </div>

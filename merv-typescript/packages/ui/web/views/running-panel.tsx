@@ -13,7 +13,7 @@ import type {
 } from '@merv/contracts/running';
 import { readOnly, refreshTools, useTool } from '../api';
 import { ConfirmAction, LoadState, Ruled, Summary, col, cx, useNow, words } from '../components';
-import { ArrowRightIcon, CloseIcon, ExpandIcon, RestoreIcon } from '../icons';
+import { Icon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
@@ -497,7 +497,7 @@ export function RunningSidebar({
           title={full ? 'Restore' : 'Maximize'}
           onClick={onFull}
         >
-          {full ? <RestoreIcon /> : <ExpandIcon />}
+          {full ? <Icon name="restore" /> : <Icon name="expand" />}
         </button>
       )}
       <button
@@ -507,7 +507,7 @@ export function RunningSidebar({
         title="Close"
         onClick={onClose}
       >
-        <CloseIcon />
+        <Icon name="close" />
       </button>
     </span>
   );
@@ -595,7 +595,7 @@ export function RunningSidebar({
         )}
         {data.route && (
           <Link className="running-open hit" to={data.route}>
-            Open record <ArrowRightIcon size={14} />
+            Open record <Icon name="arrow-right" size={14} />
           </Link>
         )}
       </div>

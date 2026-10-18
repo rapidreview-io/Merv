@@ -10,14 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
-
-function latch() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred as latch } from './fixtures/deferred.js';
 
 function bounded<T>(promise: PromiseLike<T>, message: string): Promise<T> {
   return new Promise((resolve, reject) => {

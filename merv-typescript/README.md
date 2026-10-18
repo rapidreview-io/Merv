@@ -529,14 +529,8 @@ See [what it calls, how to turn it on, and what is deferred](docs/NISA_PLUGIN.md
 Internet search is the separate `@merv/web`, composed from its own keys
 ([packages/web/README.md](packages/web/README.md)).
 
-The older Nisa-owned six-tool MCP integration through generic mounts is still
-implemented ([history and limits](docs/NISA_PLUGIN_IMPLEMENTATION.md)). With
-`MERV_NISA_CHECKOUT` and `MERV_NISA_PYTHON` set, `npm run test:nisa` (also
-`npm run test:nisa-mcp`) runs the actual Nisa API and MCP server through generic
-mounts using synthetic identity, corpus and model providers. It is configured to check
-catalog withdrawal and restoration in the explicit configuration with the browser layer, durable Q&A surviving unmount, and task/review/feed work plus
-the same sandbox connections during Nisa's absence. These commands fail if no
-prepared Nisa checkout is supplied; they do not silently skip verification.
+The older Nisa-owned six-tool MCP integration through generic mounts, and the
+scenario that drove it, are retired ([history](docs/NISA_PLUGIN_IMPLEMENTATION.md)).
 
 ### Work-item prerequisites
 

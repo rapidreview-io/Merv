@@ -5,7 +5,7 @@ import type { Artifact } from '@merv/contracts/artifact-models';
 import type { PaperKind, PaperWorkspace } from '@merv/paper/models';
 import { useTool } from '../api';
 import { Ago, KindLabel, StatusPill, cx, words } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { recordNames } from '../markdown';
 import { pathOf } from '../navigation';
 import { useSession } from '../session';
@@ -58,7 +58,7 @@ function Head({ shell, home }: { shell: ShellData; home: HomeData | undefined })
           )}
           {work && (
             <Link className="home-more" to={work}>
-              Open Work <ArrowRightIcon size={14} />
+              Open Work <Icon name="arrow-right" size={14} />
             </Link>
           )}
         </p>

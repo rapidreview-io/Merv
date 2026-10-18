@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNow } from '../components';
-import { Markdown } from '../markdown';
 import { customerRequest } from './api';
 
 /** The `progress` the request snapshot carries once the experiment is paid for. */

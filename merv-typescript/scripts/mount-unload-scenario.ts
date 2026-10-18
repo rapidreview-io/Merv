@@ -3,7 +3,6 @@ import { deliverCurrentTask } from '../tests/fixtures/current-task-delivery.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -11,19 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { CredentialServer } from '../tests/fixtures/credential-server.js';
-
-async function until(predicate: () => boolean | Promise<boolean>, message: string) {
-  const deadline = Date.now() + 5000;
-  while (!(await predicate())) {
-    assert.ok(Date.now() < deadline, message);
-    await delay(5);
-  }
-}
-async function native(client: Client, name: string, args: Record<string, unknown> = {}) {
-  const result = await client.callTool({ name, arguments: args });
-  assert.equal(result.isError, undefined, JSON.stringify(result.content));
-  return JSON.parse((result.content as { text: string }[])[0].text);
-}
+import { callJson as native, until } from './scenario.js';
 
 function remoteCall(client: Client, name: string) {
   return client.request(

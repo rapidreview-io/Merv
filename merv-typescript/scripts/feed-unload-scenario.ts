@@ -1,27 +1,14 @@
 import { currentTask } from '../tests/fixtures/current-work.js';
 import { deliverCurrentTask } from '../tests/fixtures/current-task-delivery.js';
+import { deferred as latch } from '../tests/fixtures/deferred.js';
 import assert from 'node:assert/strict';
-import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../src/app.js';
 import type { ToolDefinition } from '@merv/api/types';
+import { callJson as call, until } from './scenario.js';
 
-async function until(check: () => boolean | Promise<boolean>, message: string) {
-  const deadline = Date.now() + 5000;
-  while (!(await check())) {
-    assert.ok(Date.now() < deadline, message);
-    await delay(5);
-  }
-}
-function latch() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 async function connect(url: string, token: string) {
   const client = new Client({ name: 'merv-feed-unload', version: '1' });
   await client.connect(
@@ -30,11 +17,6 @@ async function connect(url: string, token: string) {
     }),
   );
   return client;
-}
-async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
-  const result = await client.callTool({ name, arguments: args });
-  assert.equal(result.isError, undefined, JSON.stringify(result.content));
-  return JSON.parse((result.content as { type: string; text: string }[])[0].text);
 }
 
 /**

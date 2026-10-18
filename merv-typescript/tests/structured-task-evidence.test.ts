@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import { taskActors } from './fixtures/task-actors.js';
 import { validateConfirmations } from '@merv/tasks/evidence';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -14,25 +15,10 @@ type App = Awaited<ReturnType<typeof createApp>>;
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-structured-evidence-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Structured evidence',
-    actorName: 'Operator',
-  });
-  const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const actor = await app.ctx.scope.credentials.issueActor(operator, { name: role, role });
-    return {
-      caller: {
-        actorId: actor.actor.id,
-        projectId: operator.projectId,
-        credentialId: actor.credential.id,
-      } as Caller,
-      token: actor.token,
-    };
-  };
-  const producer = await issue('producer'),
-    reviewer = await issue('reviewer'),
-    reader = await issue('reader');
+  const { operator, issue, producer, reviewer, reader } = await taskActors(
+    app,
+    'Structured evidence',
+  );
   const proof = await app.ctx.artifacts.create(producer.caller, {
     title: 'Retained execution receipt',
     mediaType: 'application/json',

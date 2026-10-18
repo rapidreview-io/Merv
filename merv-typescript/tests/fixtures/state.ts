@@ -11,6 +11,7 @@ import { resolve } from 'node:path';
 import pg from 'pg';
 import type { ContextPackage, State, Transaction } from '@merv/contracts';
 import { PostgresState, statePlugin, type PostgresConfig } from '@merv/state';
+import { deferred } from './deferred.js';
 
 type StateConfig = Parameters<typeof statePlugin.apply>[1];
 
@@ -103,12 +104,66 @@ export function countWrites(state: PostgresState): () => number {
 }
 
 let admin: pg.Client | undefined;
-export async function dropSchema(schema: string) {
+async function adminClient() {
   if (!admin) {
     admin = new pg.Client({ connectionString: postgresUrl });
     await admin.connect();
   }
-  await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  return admin;
+}
+export async function dropSchema(schema: string) {
+  await (await adminClient()).query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+}
+
+/** Whether any session waits for the writer lock of `schema` (see fixtures/writer-race.ts). */
+export async function lockWaiters(schema: string): Promise<number> {
+  const { rows } = await (
+    await adminClient()
+  ).query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM pg_catalog.pg_locks
+     WHERE locktype='advisory' AND NOT granted
+       AND ((classid::bigint << 32) | objid::bigint) = pg_catalog.hashtextextended($1, 0)`,
+    [`merv-state:${schema}`],
+  );
+  return rows[0]!.n;
+}
+
+/**
+ * Runs `operation` while another writer holds State's writer lock: 'free' when it settles on its
+ * own, 'queued' as soon as it waits for the lock. Either way the writer then lets go and the
+ * operation is awaited to its end, so its rejection still fails the test.
+ */
+export async function whileWriterHeld(
+  f: { state: PostgresState; schema: string },
+  operation: () => Promise<unknown>,
+) {
+  const locked = deferred();
+  const release = deferred();
+  const writer = f.state.transaction(async () => {
+    locked.resolve();
+    await release.promise;
+  });
+  await locked.promise;
+  let settled = false;
+  const running = operation().finally(() => {
+    settled = true;
+  });
+  const queued = async () => {
+    const deadline = Date.now() + 10_000;
+    while (!settled) {
+      if ((await lockWaiters(f.schema)) > 0) return 'queued' as const;
+      if (Date.now() > deadline) throw new Error('The operation neither settled nor queued');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return 'free' as const;
+  };
+  try {
+    return await Promise.race([running.then(() => 'free' as const), queued()]);
+  } finally {
+    release.resolve();
+    await writer;
+    await running;
+  }
 }
 
 after(async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ellipsis } from '@merv/contracts/text';
 import { ApiError, call } from '../api';
 import { useEventStream } from '../event-stream';
 import { useCurrent } from '../mutations';
@@ -50,7 +51,6 @@ const STAGE: Record<string, string> = {
 const WAITS = ['queued', 'machine', 'agent', 'thinking'];
 /** What the server calls a conversation until Pi names it; until then its first question does. */
 const UNNAMED = 'New conversation';
-const clip = (text: string) => (text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text);
 const RECONNECTING = 'Reconnecting…';
 const UNAVAILABLE = 'This conversation isn’t available right now.';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
@@ -295,7 +295,8 @@ export function useConversation(transport: PiTransport = toolTransport) {
   }).current;
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
-  const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
+  const title =
+    named && named.title !== UNNAMED ? named.title : asked ? ellipsis(asked, 48) : UNNAMED;
 
   const open = async () => {
     if (!transport.create) return null;

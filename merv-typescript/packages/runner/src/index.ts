@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,6 +8,7 @@ import {
   effectiveWorkspace,
   sessionSecretPattern,
   sessionUsageReportSchema,
+  sha256Hex,
   WorkspaceDeferred,
   type CodeCommitCommand,
   type WorkspaceDriver,
@@ -322,7 +322,7 @@ export class MachineRunner implements Runner {
       binding: {
         baseUrl: this.client.baseUrl,
         projectId: config.projectId,
-        sourceId: createHash('sha256').update(source).digest('hex'),
+        sourceId: sha256Hex(source),
       },
     });
     this.host = new ProcessHost(this.ledger, source);
@@ -580,7 +580,7 @@ export class MachineRunner implements Runner {
         'invalid_control_response',
         'Retained machine received another work item',
       );
-      const id = `launch_${createHash('sha256').update(session.id).digest('hex').slice(0, 32)}`;
+      const id = `launch_${sha256Hex(session.id).slice(0, 32)}`;
       let record = this.ledger.get(id);
       if (!record && !liveSession(session)) return complete();
       if (!record) {
@@ -978,7 +978,7 @@ export class MachineRunner implements Runner {
       if (spent) return this.delivered(kind, record.id, `${kind}_abandoned`);
       // The declaration is write-once: a file changed or removed since cannot be delivered.
       const bytes = this.kept(kind, record);
-      if (!bytes || createHash('sha256').update(bytes).digest('hex') !== t.sha256)
+      if (!bytes || sha256Hex(bytes) !== t.sha256)
         return this.delivered(kind, record.id, `${kind}_changed`);
       const abort = (this.uploading = new AbortController());
       // Off the tick: presence, leases and other launches go on. 128 KiB/s (~1 Mbit/s) is the
@@ -1091,7 +1091,7 @@ export class MachineRunner implements Runner {
       );
       const bytes = await this.client.resume(session.id, this.ledger.runnerId, id, resume.size);
       check(
-        createHash('sha256').update(bytes).digest('hex') === resume.sha256,
+        sha256Hex(bytes) === resume.sha256,
         'resume_hash_mismatch',
         'Not the conversation Sessions recorded',
       );

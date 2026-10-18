@@ -4,7 +4,7 @@ import { codexLauncher } from './codex.js';
 import { commandLauncher } from './command.js';
 import type { Harness, Launcher } from './shared.js';
 
-export type { Harness, Launcher } from './shared.js';
+export type { Harness } from './shared.js';
 const launchers = { claude: claudeLauncher, codex: codexLauncher, command: commandLauncher };
 /** How the profile is launched: everything the runner core does differently for a harness. */
 export const launcherOf = (profile: RunnerProfile): Launcher =>

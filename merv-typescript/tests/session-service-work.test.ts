@@ -19,7 +19,6 @@ async function fixture(t: TestContext, dispatchByDefault?: boolean) {
     new LeasedSessions(state, scope, workflows, events, {
       clock: () => time,
       sweepIntervalMs: 60_000,
-      serviceConcurrency: 1,
       dispatchByDefault,
     }),
   );
@@ -111,7 +110,6 @@ test('service reservations and settlements survive every transactional boundary 
     f.scope,
     f.workflows,
     f.clock,
-    1,
     async () => true,
   );
   await restarted.initialize();

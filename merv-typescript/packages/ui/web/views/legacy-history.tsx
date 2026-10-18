@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
 import { KV, LoadState, Stamp, StatusPill, Summary, words } from '../components';
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon } from '../icons';
+import { Icon } from '../icons';
 import { JsonView } from '../json-view';
 import { ListPage, Tabs, useListFilter } from '../list-filters';
 import { Markdown } from '../markdown';
@@ -167,7 +167,7 @@ function Detail({
           title="Close (Esc)"
           onClick={close}
         >
-          <CloseIcon />
+          <Icon name="close" />
         </button>
       </div>
       <LoadState {...detail} />
@@ -366,7 +366,7 @@ function History({ row }: ViewProps) {
                     disabled={!pages.length || records.loading}
                     onClick={() => update({ type, pages: pages.slice(0, -1) })}
                   >
-                    <ChevronLeftIcon />
+                    <Icon name="chevron-left" />
                   </button>
                   <span className="faint tabular">Page {pages.length + 1}</span>
                   <button
@@ -380,7 +380,7 @@ function History({ row }: ViewProps) {
                         update({ type, pages: [...pages, records.data.next] });
                     }}
                   >
-                    <ChevronRightIcon />
+                    <Icon name="chevron-right" />
                   </button>
                 </div>
               )}

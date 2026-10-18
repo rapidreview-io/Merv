@@ -1,5 +1,6 @@
 import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { eventData } from '@merv/contracts/text';
 import { RESPONSES_URL } from './model-ledger.js';
 import type {
   ModelRelayConfig,
@@ -434,11 +435,7 @@ export class ModelRelay<
           const frame = Buffer.concat([...held, chunk.subarray(from, end)]);
           [held, heldBytes, from] = [[], 0, end];
           const content = frame.toString('utf8');
-          const data = content
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart())
-            .join('\n');
+          const data = eventData(content);
           const terminal =
             /(?:^|\r?\n)event:\s*response\.(completed|incomplete|failed)\s*(?:\r?\n|$)/i.exec(
               content,

@@ -7,7 +7,7 @@ import type {
   RunningValue,
 } from '@merv/contracts/running';
 import { CopyButton, cx, stamp, words } from '../components';
-import { ArrowRightIcon, ExternalIcon } from '../icons';
+import { Icon } from '../icons';
 import { clockOf, duration, elapsed, type Clock } from '../liveness';
 import { formatMoney } from './remote-fields';
 
@@ -160,20 +160,20 @@ export function Target({
         onClick={() => open(to.key, to.route)}
       >
         {children}
-        <ArrowRightIcon size={12} />
+        <Icon name="arrow-right" size={12} />
       </button>
     );
   if ('route' in to)
     return (
       <Link className={cx('running-target', className)} to={to.route}>
         {children}
-        <ArrowRightIcon size={12} />
+        <Icon name="arrow-right" size={12} />
       </Link>
     );
   return (
     <a className={cx('running-target', className)} href={to.href} target="_blank" rel="noreferrer">
       {children}
-      <ExternalIcon size={12} />
+      <Icon name="external" size={12} />
     </a>
   );
 }

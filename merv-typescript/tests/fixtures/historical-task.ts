@@ -1,6 +1,6 @@
 import type { Task, TaskCreate, Tasks } from '@merv/tasks/types';
 import { renderBrief } from '../../packages/tasks/src/evidence.js';
-import { TASK_WORKFLOW } from '@merv/tasks';
+import { TASK_WORKFLOW } from '@merv/tasks/workflow';
 import {
   clip,
   inTransaction,

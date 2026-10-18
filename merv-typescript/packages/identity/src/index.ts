@@ -8,7 +8,7 @@ import {
   type JSONWebKeySet,
   type JWTVerifyGetKey,
 } from 'jose';
-import { MervError, type VerifiedIdentity } from '@merv/contracts';
+import { MervError, readCapped, type VerifiedIdentity } from '@merv/contracts';
 import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
 
 const MAX_JWT_BYTES = 16_384;
@@ -91,16 +91,8 @@ async function loadJwks(
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_JWKS_BYTES))
       throw unauthorized();
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      length += part.value.byteLength;
-      if (length > MAX_JWKS_BYTES) throw unauthorized();
-      chunks.push(part.value);
-    }
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+    const body = await readCapped(reader, MAX_JWKS_BYTES, unauthorized);
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
   } finally {
     signal.removeEventListener('abort', abort);
     void reader.cancel().catch(() => undefined);

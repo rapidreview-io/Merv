@@ -13,7 +13,6 @@ import type {
   ReviewReturn,
 } from './review-models.js';
 export type {
-  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,

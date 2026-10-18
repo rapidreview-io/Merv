@@ -1,6 +1,5 @@
-import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
-import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -12,6 +11,7 @@ import type { EventConsumer, Transaction } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import { ownReviews } from './fixtures/review-verdict.js';
 import type { PostgresState } from '@merv/state';
+import { deferred as signal } from './fixtures/deferred.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check: () => boolean | Promise<boolean>) {
@@ -274,14 +274,6 @@ test('async handlers are supported, changed subscriptions require a new ID, and 
     await state.close();
   }
 });
-
-function signal() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 async function emitProbe(state: PostgresState) {
   return state.transaction((tx) =>

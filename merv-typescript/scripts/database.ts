@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { basename, resolve } from 'node:path';
-import pg from 'pg';
 
 /**
  * Live runs and demos keep server state in the PostgreSQL server that MERV_DB_URL names, each in
@@ -39,15 +38,4 @@ export function useRunSchema(directory: string): string {
   requireDatabaseUrl();
   if (!process.env.MERV_DB_SCHEMA?.trim()) process.env.MERV_DB_SCHEMA = runSchema(directory);
   return process.env.MERV_DB_SCHEMA.trim();
-}
-
-/** Removes a schema this process created for temporary state. */
-export async function dropSchema(schema: string): Promise<void> {
-  const client = new pg.Client({ connectionString: requireDatabaseUrl() });
-  await client.connect();
-  try {
-    await client.query(`DROP SCHEMA IF EXISTS "${schema.replaceAll('"', '""')}" CASCADE`);
-  } finally {
-    await client.end();
-  }
 }

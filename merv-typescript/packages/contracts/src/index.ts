@@ -1,5 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
-export { mapAsync, everyAsync } from './async.js';
+export { mapAsync, everyAsync, sleep } from './async.js';
 export type {
   ToolPolicy,
   ToolGrant,
@@ -24,6 +24,7 @@ export {
   origin,
   OutboundError,
   outboundFailure,
+  readCapped,
   record,
   sized,
   Slots,
@@ -296,8 +297,6 @@ export interface ReceiptTable {
   result?: string;
   /** Set when the table stores the operation beside a hash of the input alone. */
   operation?: string;
-  /** An older hash recipe whose receipts still replay. */
-  legacyHash?: string;
   conflict?: string;
 }
 /** How receipted() compares and replays a table's receipts. */
@@ -335,9 +334,7 @@ export class RequestJournal {
     if (!found) return undefined;
     const { receipt_hash: hash, receipt_operation: kept, ...previous } = found;
     check(
-      (operation === undefined || kept === operation) &&
-        (hash === this.hash ||
-          (this.receipt.legacyHash !== undefined && hash === this.receipt.legacyHash)),
+      (operation === undefined || kept === operation) && hash === this.hash,
       'request_conflict',
       this.receipt.conflict ?? 'requestId was already used with different input',
       409,

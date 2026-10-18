@@ -33,6 +33,7 @@ export const planSchema = z
       .nullable(),
     models: z.array(z.object({ name: text, revision: text }).strict()).max(20),
     dataRequirements: z.array(dataRequirementSchema).max(10),
+    /** Customer-facing execution bounds. Hardware selection belongs to Merv's executing agent. */
     limits: z
       .object({
         wallMinutes: z.number().int().min(1).max(1440),

@@ -261,6 +261,7 @@ const capabilityOf = (owner: string) =>
  * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
 const contractsRuntimeExports = new Set([
+  'async',
   'origins',
   'private-directory',
   'schemas',

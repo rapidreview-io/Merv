@@ -39,6 +39,25 @@ function retryAfter(value: string | null): number | undefined {
     : undefined;
 }
 
+/** A body's bytes as they arrive; past `maxBytes` the rest is cancelled and `tooLarge()` thrown. */
+export async function readCapped(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number,
+  tooLarge: () => Error,
+): Promise<Buffer> {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (let part = await reader.read(); !part.done; part = await reader.read()) {
+    bytes += part.value.byteLength;
+    if (bytes > maxBytes) {
+      void reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(part.value);
+  }
+  return Buffer.concat(chunks);
+}
+
 /** The body's JSON, read as it arrives and refused past `maxBytes`; the signal's reason ends it. */
 async function readJson(response: Response, maxBytes: number, signal: AbortSignal) {
   const length = Number(response.headers.get('content-length'));
@@ -48,16 +67,9 @@ async function readJson(response: Response, maxBytes: number, signal: AbortSigna
   }
   if (!response.body) throw new OutboundError({ kind: 'invalid' });
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
+  let body: Buffer;
   try {
-    for (;;) {
-      const item = await reader.read();
-      if (item.done) break;
-      bytes += item.value.length;
-      if (bytes > maxBytes) throw new OutboundError({ kind: 'too_large' });
-      chunks.push(item.value);
-    }
+    body = await readCapped(reader, maxBytes, () => new OutboundError({ kind: 'too_large' }));
   } catch (error) {
     void reader.cancel().catch(() => undefined);
     if (signal.aborted) throw signal.reason;
@@ -66,9 +78,7 @@ async function readJson(response: Response, maxBytes: number, signal: AbortSigna
     reader.releaseLock();
   }
   try {
-    return JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
-    ) as unknown;
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) as unknown;
   } catch {
     throw new OutboundError({ kind: 'invalid' });
   }

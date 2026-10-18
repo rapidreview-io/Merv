@@ -270,8 +270,8 @@ assignment, policy, reference set and lease receipt is bounded at 512 KiB. This 
 admission limit, not a transport upload limit.
 
 Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
-`serviceConcurrency` (1–256; default 1), `dispatchByDefault` and `managedSecretEnv`. Any other
-key is refused at startup. The thresholds `session.stuck` reports are fixed:
+`dispatchByDefault` and `managedSecretEnv`. Any other key is refused at startup. A project runs
+one server execution at a time, across every provider. The thresholds `session.stuck` reports are fixed:
 `maxLaunchFailures` 5, `idleNoticeSeconds` 1800 (see [alive is not progressing](#alive-quiet-and-what-silence-does-not-prove)),
 `quietReadySeconds` 21600 and `refusalSeconds` 300; only a test sets others.
 Offer commits expired-predecessor closure and drains durable cleanup before

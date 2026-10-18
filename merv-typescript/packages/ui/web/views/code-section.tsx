@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
-import { ArrowRightIcon, ExternalIcon } from '../icons';
+import { Icon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
 import { firstPersonMove } from '@merv/code-work/blockers';
 import type { CodeUnit } from '@merv/code-work/models';
@@ -126,7 +126,7 @@ export function UnitCode({
               canvas the control would lead to the page it already stands on. */}
           {!!held.move.control && signedIn && !open && (
             <Link className="btn-text" to={held.move.control.to}>
-              {held.move.control.label} <ArrowRightIcon size={14} />
+              {held.move.control.label} <Icon name="arrow-right" size={14} />
             </Link>
           )}
           {!!held.blocker.next && (
@@ -199,7 +199,7 @@ export function UnitCode({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  {`#${publication.pull.number}`} <ExternalIcon size={14} />
+                  {`#${publication.pull.number}`} <Icon name="external" size={14} />
                 </a>
               )}
               {!!publication.mergeCommit && <Short value={publication.mergeCommit} />}
@@ -212,7 +212,7 @@ export function UnitCode({
       )}
       {open ?? (
         <Link className="btn-text" to={CANVAS}>
-          Open in the canvas <ArrowRightIcon size={14} />
+          Open in the canvas <Icon name="arrow-right" size={14} />
         </Link>
       )}
     </div>

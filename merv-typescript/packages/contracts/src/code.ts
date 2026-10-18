@@ -1,50 +1,14 @@
 import { visible } from './text.js';
 import { idSchema as id, oidSchema as oid } from './schemas.js';
 import { z } from 'zod';
-import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
-export interface CodeCommitInput {
-  expectedHead: string;
-  message: string;
-  requestId: string;
-}
+import { sessionWorkspaceSchema } from './workspace.js';
+export type CodeCommitInput = z.infer<typeof codeCommitInputSchema>;
 /** Server-frozen command. Workers never supply filesystem paths or executable arguments. */
-export interface CodeCommitCommand {
-  id: string;
-  projectId: string;
-  sessionId: string;
-  actorId: string;
-  instanceId: string;
-  expectedRevision: number;
-  runnerId: string;
-  hostRef: string;
-  workspace: SessionWorkspace;
-  expectedHead: string;
-  message: string;
-  createdAt: string;
-  merge?: 'start' | 'complete';
-}
+export type CodeCommitCommand = z.infer<typeof codeCommitCommandSchema>;
 /** An immutable, authenticated runner observation of this exact commit operation. */
-export interface CodeCommitReceipt {
-  commandId: string;
-  repositoryId: string;
-  workspaceId: string;
-  baseOid: string;
-  parentOid: string;
-  headOid: string;
-  treeOid: string;
-  stats: SessionWorkspace['stats'];
-}
-export interface CodeCommandRecord {
-  command: CodeCommitCommand;
-  status: 'queued' | 'dispatched' | 'succeeded' | 'failed' | 'cancelled';
-  receipt: CodeCommitReceipt | null;
-  error: string | null;
-}
-export interface CodeCommandControl {
-  sessionId: string;
-  runnerId: string;
-  hostRef: string;
-}
+export type CodeCommitReceipt = z.infer<typeof codeCommitReceiptSchema>;
+export type CodeCommandRecord = z.infer<typeof codeCommandRecordSchema>;
+export type CodeCommandControl = z.infer<typeof codeCommandControlSchema>;
 export type CodeCommandCompletion = CodeCommandControl & {
   commandId: string;
 } & ({ receipt: CodeCommitReceipt; error?: never } | { error: string; receipt?: never });
@@ -126,17 +90,8 @@ export const codeCommandRecordSchema = z
           : value.error === null),
   );
 
-/**
- * An operator binds the project's repository identity and names main before importing history.
- * Main is usable by hosted work only when Code holds that commit.
- */
-export interface CodeLocalBindInput {
-  repositoryId: string;
-  mainOid: string;
-  /** The main this caller last read; absent for the first binding. Moving main is a compare-and-set. */
-  expectedMainOid?: string;
-  requestId: string;
-}
+/** An operator binds the repository identity and names main; moving main is a compare-and-set. */
+export type CodeLocalBindInput = z.input<typeof codeLocalBindInputSchema>;
 export interface CodeProjectBinding {
   mode: 'local';
   repositoryId: string;

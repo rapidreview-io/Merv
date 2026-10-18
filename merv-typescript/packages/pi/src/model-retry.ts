@@ -5,6 +5,8 @@
  * agent read is ever read twice; anything else (a refusal, a context overflow, a failure partway
  * through an answer) reaches the agent as it came. The relay refunds a failed call.
  */
+import { sleep as wait } from '@merv/contracts/async';
+import { eventData } from '@merv/contracts/text';
 
 /** Provider codes that say "try again shortly", as the relay passes them on. */
 const TRANSIENT = /overloaded|rate_limit|server_error|service_unavailable|temporarily_unavailable/i;
@@ -20,56 +22,28 @@ export interface RetryOptions {
   onRetry?: (attempt: number, code: string) => void;
 }
 
-const wait = (ms: number, signal?: AbortSignal | null) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
-  });
-
-/** The code of a frame that is a failure, or null for any other frame. */
-function failureCode(frame: string): string | null {
-  const data = frame
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trimStart())
-    .join('\n');
+type Frame = { type?: unknown; code?: unknown; response?: { error?: { code?: unknown } } };
+/** A frame's JSON data, or null when it holds none. */
+function frameJson(frame: string): Frame | null {
   try {
-    const parsed = JSON.parse(data) as {
-      type?: string;
-      code?: unknown;
-      response?: { error?: { code?: unknown } };
-    };
-    if (parsed.type === 'error') return typeof parsed.code === 'string' ? parsed.code : '';
-    if (parsed.type === 'response.failed') {
-      const code = parsed.response?.error?.code;
-      return typeof code === 'string' ? code : '';
-    }
-    return null;
+    return JSON.parse(eventData(frame)) as Frame | null;
   } catch {
     return null;
   }
 }
 
+/** The code of a frame that is a failure, or null for any other frame. */
+function failureCode(frame: string): string | null {
+  const parsed = frameJson(frame);
+  if (parsed?.type === 'error') return typeof parsed.code === 'string' ? parsed.code : '';
+  if (parsed?.type !== 'response.failed') return null;
+  const code = parsed.response?.error?.code;
+  return typeof code === 'string' ? code : '';
+}
+
 function frameType(frame: string): string | null {
-  const data = frame
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trimStart())
-    .join('\n');
-  try {
-    const type = (JSON.parse(data) as { type?: unknown }).type;
-    return typeof type === 'string' ? type : null;
-  } catch {
-    return null;
-  }
+  const type = frameJson(frame)?.type;
+  return typeof type === 'string' ? type : null;
 }
 
 /** Sends `send()` and, while the provider turns it away before answering, sends it again. */

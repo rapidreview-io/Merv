@@ -20,14 +20,7 @@ import type { SbxPipelines } from '@sandboxes/pipelines';
 import type { SbxObjects } from '@sandboxes/storage';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import { openState } from './fixtures/state.js';
-
-function gate() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred as gate } from './fixtures/deferred.js';
 
 async function fixture(t: TestContext) {
   const state = await openState();

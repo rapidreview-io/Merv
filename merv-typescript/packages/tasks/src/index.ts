@@ -65,18 +65,6 @@ import {
   submitReview as verdict,
 } from './commands.js';
 
-export type {
-  Task,
-  TaskCreate,
-  TaskDelivery,
-  TaskFailure,
-  TaskMarkFailed,
-  TaskRecord,
-  TaskReview,
-  Tasks,
-} from './types.js';
-export { serviceWorkflow, TASK_LIMITS, TASK_WORKFLOW, taskWorkspace } from './workflow.js';
-
 export interface TaskRow {
   id: string;
   project_id: string;

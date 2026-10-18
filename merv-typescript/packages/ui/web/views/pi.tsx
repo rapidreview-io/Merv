@@ -12,7 +12,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { currentToken, projectSelection, useScopeVersion } from '../api';
 import { Ago, relativeTime } from '../components';
-import { ChevronsIcon } from '../icons';
+import { Icon } from '../icons';
 import { MarkdownPieces, useRecordNames } from '../markdown';
 import type { PiConversation, PiInterruption, PiProposal } from '@merv/pi/models';
 import type { ViewProps } from './index';
@@ -435,7 +435,7 @@ function PiConversationPage() {
               }
             >
               <span>{title}</span>
-              <ChevronsIcon />
+              <Icon name="chevrons" />
             </button>
             {menu && (
               <div className="pi-menu" role="menu" aria-label="Conversations">

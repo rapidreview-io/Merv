@@ -21,7 +21,6 @@ import { UploadRefused, terminal, deferral } from './core.js';
 import { DriverTransfer } from './transfer.js';
 
 export { WorkspaceError } from './git.js';
-export type { CodeDriverOptions } from './core.js';
 
 /**
  * The workspace driver for projects whose history lives in Code's repository on the server.

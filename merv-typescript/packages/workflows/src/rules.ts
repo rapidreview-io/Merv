@@ -66,6 +66,22 @@ export const grant = (
   name,
   alternatives,
 });
+/** A reviewer's grants: start the review it was handed, then submit it at the target's revision. */
+export const reviewGrants = () => [
+  grant('review.start', { reviewId: reference('reviewId') }),
+  grant('review.submit', {
+    reviewId: reference('reviewId'),
+    claimId: reference('claimId'),
+    expectedRevision: target('revision'),
+  }),
+];
+/** A producer's artifact writes: one created whole, or uploaded in parts. */
+export const artifactGrants = () => [
+  grant('artifact.create', {}),
+  grant('artifact.upload_begin', {}),
+  grant('artifact.upload_resume', {}),
+  grant('artifact.upload_complete', {}),
+];
 
 const edgeKey = (instanceId: string, revision: number, action: string) =>
   `${instanceId}@${revision}:${action}`;

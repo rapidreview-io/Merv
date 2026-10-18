@@ -15,7 +15,7 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { safely } from './api';
 import { CopyButton } from './components';
-import { ChevronRightIcon } from './icons';
+import { Icon } from './icons';
 import { RecordLink, safeHref, splitIds, useRecordNames, type RecordNames } from './markdown';
 
 /** How deep the tree stands open before anything is pressed: the root and its entries. */
@@ -179,7 +179,7 @@ function Node({
           aria-label={name === undefined ? (list ? 'Array' : 'Object') : undefined}
           onClick={toggle}
         >
-          <ChevronRightIcon size={12} className="json-caret" />
+          <Icon name="chevron-right" size={12} className="json-caret" />
           {label}
         </button>
         {/* The root has no key, so its count is what its toggle stands beside, open or not. */}

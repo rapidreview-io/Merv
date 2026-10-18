@@ -26,7 +26,7 @@ import {
   useNow,
   words,
 } from '../components';
-import { CloseIcon } from '../icons';
+import { Icon } from '../icons';
 import { capital, clock, elapsed, say, type Clock, type Liveness } from '../liveness';
 import { useCommand } from '../mutations';
 import { StageList } from '../process';
@@ -667,7 +667,7 @@ export function ThreadDialog({
             title="Close"
             onClick={() => dialog.current?.close()}
           >
-            <CloseIcon />
+            <Icon name="close" />
           </button>
         </header>
         <ThreadReading thread={thread} group={group} loadedAt={loadedAt} />

@@ -1,5 +1,8 @@
 # Nisa-owned MCP plugin
 
+> Archived 2026-10-17: production uses the native `@merv/nisa`; the mounted-Nisa scenario
+> (`scripts/nisa-mcp-scenario.ts`, `npm run test:nisa-mcp`) was deleted. This page is history.
+
 History: this page records the Nisa-owned MCP route through generic Mounts, as
 verified locally on 2026-09-14. Since 2026-09-26 the supported route is the
 native `@merv/nisa` plugin over Nisa's public `/api/sdk` routes, which reaches

@@ -20,7 +20,7 @@ import {
   useNow,
   type KVRow,
 } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { Icon } from '../icons';
 import { Segments } from '../list-filters';
 import { rowOf } from '../navigation';
 import { clock, decisionLiveness, runnerLiveness, type Clock } from '../liveness';
@@ -178,7 +178,7 @@ function LeaseRow({
           {route && (
             <Link className="cluster agent-help hit" to={route.to}>
               <KindLabel kind={route.kind} />
-              Open record <ArrowRightIcon size={14} />
+              Open record <Icon name="arrow-right" size={14} />
             </Link>
           )}
           <KV rows={rows} />

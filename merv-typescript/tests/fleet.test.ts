@@ -12,14 +12,8 @@ import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fle
 import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => {
-    resolve = yes;
-  });
-  return { promise, resolve };
-}
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function within(ms: number, ok: () => boolean | Promise<boolean>) {
   const end = Date.now() + ms;
