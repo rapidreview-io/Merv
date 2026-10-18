@@ -1107,8 +1107,7 @@ export class MachineRunner implements Runner {
       // A resumed harness may report the conversation's whole total: what it had spent is
       // taken off what this launch reports.
       const carried = harnessOf(profile)?.recorded?.(
-        Buffer.from(bytes).subarray(-recordedTail).toString('utf8'),
-        'model' in profile ? profile.model : undefined,
+        bytes.subarray(-recordedTail).toString('utf8'),
       );
       this.save(id, { resumed: resume.conversationId, ...(carried && { carried }) });
       return resume.conversationId;
