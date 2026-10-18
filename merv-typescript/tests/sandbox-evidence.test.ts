@@ -229,8 +229,25 @@ test('an unfinished capture waits, failed captures retain partial files, and emp
   await f.evidence.reconcile();
   const collections = await f.artifacts.list(f.caller);
   assert.equal(collections.length, 2);
-  assert.equal(collections.find((a) => a.metadata?.captureNode === 'partial')!.files!.length, 1);
-  assert.equal(collections.find((a) => a.metadata?.captureNode === 'empty')!.files!.length, 0);
+  const partial = collections.find((a) => a.metadata?.captureNode === 'partial')!;
+  const empty = collections.find((a) => a.metadata?.captureNode === 'empty')!;
+  assert.equal(partial.files!.length, 1);
+  assert.equal(empty.files!.length, 0);
+  // Where they are listed they say they are records of a failure, not evidence of results.
+  assert.equal(
+    partial.title,
+    'Compute capture pipeline-1 / partial (failed, 1 file retained) — Training',
+  );
+  assert.equal(
+    empty.title,
+    'Compute capture pipeline-1 / empty (skipped, nothing retained) — Training',
+  );
+  assert.equal(
+    empty.metadata?.outputState,
+    'failed',
+    'nothing was retained, so nothing is partial',
+  );
+  assert.equal(partial.metadata?.outputState, 'partial');
 });
 
 test('a capture registers once its node ends, while the rest of its workflow still runs', async (t) => {

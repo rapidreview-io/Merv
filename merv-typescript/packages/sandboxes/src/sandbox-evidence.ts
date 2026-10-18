@@ -309,6 +309,13 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       if (page.next === null) break;
       after = Number(page.next);
     }
+    // A capture that did not succeed, or kept nothing, is kept as a record of that, and says so
+    // where it is listed: it is not evidence of results.
+    const kept = files.length
+      ? `${files.length} file${files.length === 1 ? '' : 's'} retained`
+      : 'nothing retained';
+    const outcome =
+      node.state !== 'succeeded' ? ` (${node.state}, ${kept})` : files.length ? '' : ` (${kept})`;
     await this.state.transaction(async (tx) => {
       const caller = await this.scope.serviceActor('sandboxes', work.project_id, tx);
       const artifact = await this.artifacts.createCollection(
@@ -316,7 +323,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         {
           // Ids first, so a clipped title still says which capture this is.
           title: clip(
-            `Compute capture ${workflow.id} / ${node.id}${
+            `Compute capture ${workflow.id} / ${node.id}${outcome}${
               workflow.name && workflow.name !== workflow.id ? ` — ${workflow.name}` : ''
             }`,
             200,
@@ -330,7 +337,8 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
             captureNode: node.id,
             captureState: node.state,
             outputState:
-              node.result.output_state ?? (node.state === 'succeeded' ? 'committed' : 'partial'),
+              node.result.output_state ??
+              (node.state === 'succeeded' ? 'committed' : files.length ? 'partial' : 'failed'),
             evidenceLimitations: [...workflow.evidence_limitations],
           },
         },
