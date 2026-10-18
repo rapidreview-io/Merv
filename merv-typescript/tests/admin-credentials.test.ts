@@ -274,7 +274,7 @@ test('GET /admin/credentials says which credential serves which purpose and neve
   assert.deepEqual(
     first.groups.map((group) => [group.purpose, group.provider?.name ?? null]),
     [
-      ['Pi agents', null],
+      ['Agent', null],
       ['Fleet agents', null],
       ['Fleet machines', null],
       ['Sandbox provider', 'cf'],

@@ -14,7 +14,7 @@ export interface AdminAttention {
 }
 export interface AdminWorkRow {
   id: string;
-  /** The owner's workflow name (`task`, `service_experiment`), `pi` for an Agent turn. */
+  /** The owner's workflow name (`task`, `service_experiment`), `pi` for an Agent conversation. */
   kind: string;
   /** The owner's type name, where it has one (`task.work`). */
   type?: string;

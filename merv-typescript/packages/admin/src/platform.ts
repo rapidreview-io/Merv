@@ -41,7 +41,9 @@ export function platformRead({ ctx, audit, admins }: AdminEnv): AdminRoutes {
       const requestId = r.url.pathname.split('/')[3]!;
       const snapshot = await customers.snapshot(requestId);
       read(who, 'standalone.read', requestId);
-      return snapshot;
+      // And the move of the customer's it waits on, as the work table reads it.
+      const { experimentId: id, state } = snapshot;
+      return { ...snapshot, waits: (await customers.customers([{ id, state }])).get(id)?.waits };
     },
   };
 }
