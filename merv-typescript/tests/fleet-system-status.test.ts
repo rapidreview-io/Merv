@@ -45,6 +45,7 @@ async function status(t: TestContext) {
       }),
     },
     session: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
+    threads: { lineage: async () => ({ instanceId: 'task-1', threads: [] }) },
   } as unknown as Sessions;
   const fleet = {
     allocationSeconds: 86_400,
@@ -152,7 +153,7 @@ const blocked = {
   next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
 };
 const projectKeys = ['scope', 'projectId', 'observedAt', 'dispatch', 'workers'];
-const sessionKeys = ['scope', 'projectId', 'session'];
+const sessionKeys = ['scope', 'projectId', 'session', 'lineage'];
 const rest = ['sessions', 'waiting', 'blockers'];
 
 test('Fleet contributes its system.status sections where Sessions put them', async (t) => {
