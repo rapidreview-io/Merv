@@ -376,7 +376,9 @@ test('without Fleet the session room draws no Fleet tokens row', async (t) => {
   assert.ok(!text().includes('Fleet tokens a day'));
 });
 
-test('a refused day says tokens are short only when they are', async (t) => {
+test('a held day says what Fleet reports, however many tokens refunds freed since', async (t) => {
+  // Owner 2026-10-18: Settings re-derived Fleet's rule from the raw counts to pick its words;
+  // it says Fleet's own hold instead, and when it lifts.
   t.after(async () => {
     await unmount();
     setProject(null);
@@ -387,14 +389,13 @@ test('a refused day says tokens are short only when they are', async (t) => {
     subject: 'subject-1',
     createdAt: project.createdAt,
   };
-  for (const [remaining, says, never] of [
-    [100_000, 'Fleet is waiting for model tokens. 100,000 remain.', 'Fleet holds new work'],
+  const says =
+    'Your daily tokens are used up, so Fleet holds new work: it resumes at the reset, or once you change your limit. Usage resets at 2026-10-19T00:00:00.000Z (UTC).';
+  for (const [remaining, blocked] of [
+    [10_000, true],
     // Refunds of calls in flight freed enough again; the refusal still holds the day.
-    [
-      1_500_000,
-      'Fleet holds new work since a request that needed a reservation of 340,000 was rejected today; it resumes at the reset, or once you change your limit.',
-      'waiting for model tokens',
-    ],
+    [1_500_000, true],
+    [1_500_000, false],
   ] as const) {
     boot('Operator');
     serve('/account', { body: { kind: 'user', user, projects: [project] } });
@@ -405,16 +406,15 @@ test('a refused day says tokens are short only when they are', async (t) => {
           usedToday: 2_000_000 - remaining,
           remaining,
           lastRefusedTokens: 340_000,
-          blocked: true,
+          blocked,
+          blockReason: blocked ? 'worker_token_budget_exhausted' : null,
           resetsAt: '2026-10-19T00:00:00.000Z',
         },
       },
     });
     await open('/settings/session');
-    const status = document.querySelector('form [role="status"]')!.textContent!;
-    assert.ok(status.includes(says), status);
-    assert.ok(!status.includes(never), status);
-    assert.ok(status.includes('Usage resets at 2026-10-19T00:00:00.000Z (UTC).'), status);
+    const status = document.querySelector('form [role="status"]')?.textContent;
+    assert.equal(status ?? null, blocked ? says : null, `${remaining} ${blocked}`);
     await unmount();
   }
 });
