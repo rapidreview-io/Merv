@@ -11,6 +11,7 @@ import { createApp } from './fixtures/app.js';
 // Captured before retirement. These include the graph, success states and every fixed
 // execution manifest: pruning history must not change current worker permissions.
 const current = {
+  'experiment@44': '40e47d30a3eb06bff84214331a665d5d0307e186940e2cf0649bc3ddca4217f1',
   'task@45': '613069c000987e6f5a47427c6d79402e3eebed5fbe05778af9b303f50602ac62',
   'task@44': '5321198840ce6b96801315034ce2ff29e7ef85858389ae4a4c8b3440241a344c',
   'experiment@43': 'fdcac3a20bc3a2248f4e1222dc802e9712970df4893aa7feae65a76085132f16',
@@ -42,7 +43,7 @@ test('only current work contracts register, with unchanged permissions across re
     }
     for (const [name, last] of [
       ['task', 45],
-      ['experiment', 43],
+      ['experiment', 44],
     ] as const) {
       for (let version = 1; version <= last; version++) {
         if (`${name}@${version}` in current) continue;
