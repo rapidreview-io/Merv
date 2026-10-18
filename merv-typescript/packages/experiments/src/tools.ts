@@ -122,7 +122,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.exhibit',
         description:
-          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round. You get its path (the filename a report names), hash, size, whether submission pins it and its result files by artifactId; its content, which repeats those files’ data, only up to 16,000 bytes.',
+          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round. You get its path (the filename a report names), hash, bytes, willPin (whether submission pins it) and resultFiles by artifactId; the exhibit itself, which repeats those files’ data, comes under exhibit only up to 16,000 bytes, and otherwise omitted says so.',
         inputSchema: experimentExhibitSchema,
         readOnly: true,
         handler: async (caller: Caller, input: { experimentId: string }) =>
