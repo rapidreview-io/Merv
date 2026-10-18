@@ -17,7 +17,10 @@ import {
   type CustomerExperiment,
   type ExperimentPlan,
 } from '../packages/customer-experiments/src/types.js';
-import { serviceExecution } from '../packages/customer-experiments/src/execution.js';
+import {
+  executionPolicy,
+  serviceExecution,
+} from '../packages/customer-experiments/src/execution.js';
 import { planSchema, validateAgreement } from '../packages/customer-experiments/src/schema.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
@@ -690,6 +693,67 @@ test('a full 24-hour, 500-million-token agreement fits both worker policies', ()
     assert.equal(policy.maxDurationSeconds, accepted.limits.wallMinutes * 60);
     assert.equal(policy.maxModelTokens, accepted.limits.maxTokens);
   }
+});
+
+test('service_experiment@4 grants the executor the progress its brief asks for', async () => {
+  const names = (review: boolean, version: number) =>
+    serviceExecution(review, version).tools.map((tool) => tool.name);
+  // Version 3's running policy is published: it stays exactly as production pinned it.
+  assert.deepEqual(names(false, 3), [
+    'workflow.status_and_next',
+    'workflow.assignment',
+    'customer_experiment.get',
+    'customer_experiment.files',
+    'customer_experiment.file_download',
+    'artifact.get',
+    'artifact.read',
+    'review.get',
+    'artifact.create',
+    'artifact.upload_begin',
+    'artifact.upload_resume',
+    'artifact.upload_complete',
+    'code.commit',
+    'code.operation',
+    'report.open',
+    'report.write',
+    'report.clear',
+    'report.check',
+    'report.review_visual',
+    'report.approve_visual',
+    'report.render',
+    'customer_experiment.submit_results',
+  ]);
+  assert.deepEqual(names(false, 4), [
+    ...names(false, 3).slice(0, -1),
+    'customer_experiment.progress',
+    'customer_experiment.submit_results',
+  ]);
+  assert.deepEqual(
+    serviceExecution(false, 4).tools.find((t) => t.name === 'customer_experiment.progress'),
+    {
+      name: 'customer_experiment.progress',
+      alternatives: [{ id: { kind: 'target', field: 'instanceId' } }],
+    },
+  );
+  assert.ok(!names(true, 4).includes('customer_experiment.progress'));
+  // Only the version that grants it tells the worker to post progress.
+  const brief = async (version: number) => {
+    const ctx = {
+      get: async () => ({ title: 'T', contract: {}, submission: null, review: null }),
+      contractArtifact: async () => 'art_contract',
+    };
+    const running = executionPolicy(ctx as never, version).assignments!.find(
+      (a) => a.state === 'running',
+    )!;
+    const built = await running.build!({
+      caller: {},
+      snapshot: { id: 'wf_1', version },
+      tx: {},
+    } as never);
+    return (built as { brief: string }).brief;
+  };
+  assert.match(await brief(4), /post progress with customer_experiment\.progress/);
+  assert.doesNotMatch(await brief(3), /customer_experiment\.progress/);
 });
 
 test('only the running worker reports progress, and the customer reads it in order', async (t) => {

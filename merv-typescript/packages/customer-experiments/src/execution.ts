@@ -12,7 +12,7 @@ import { heldLease, insertLease, reviewedLeaseHooks } from '@merv/workflows/leas
 import { directsIndependently, excludedFromReview, reviewActions } from '@merv/reviews/rules';
 import { REPORT_TOOLS } from '@merv/reports/prefill';
 import type { CustomerExperiments } from './domain.js';
-import { SERVICE_EXPERIMENT, plansDocument, writesReport } from './program.js';
+import { SERVICE_EXPERIMENT, plansDocument, postsProgress, writesReport } from './program.js';
 import { SERVICE_MODEL, contractDatasets, contractLimits } from './types.js';
 
 /** What version 2's executor is told: the report tools and their persistent draft. */
@@ -22,7 +22,13 @@ const reportInstruction =
 /** Version 3's executor: the accepted plan document is the specification. */
 const documentInstruction = reportInstruction.replace(
   'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use.',
-  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with: list them with customer_experiment.files and fetch each through customer_experiment.file_download. Check every downloaded request file against its manifest size and ETag before use. The customer watches a status page: post progress with customer_experiment.progress at each milestone (machine ready, files checked, each model or condition started and finished with its score, results being written), a short plain sentence each time. Compute trouble is yours to fix, and nobody can intervene in a customer run: if a machine is not ready within 10 minutes, delete it and rent elsewhere, Modal first, then Lambda; if a rental is refused for concurrency, wait for earlier deletions to finish and retry (two machines may run at once). Never stop to ask about compute, capacity or providers. Ask a question only when the contract itself cannot be executed, and otherwise report infeasibility in the results. Make the report visual: besides the headline result, chart whatever is clearer drawn than written (breakdowns by task or source, accuracy against latency or cost, where models disagree), and keep its prose short and free of internal ids.",
+  "Execute only this accepted contract. Its document is the customer's verified plan and your specification; question, criteria and limits are its frozen summary, and files lists the request files (keys, sizes, ETags) it was accepted with: list them with customer_experiment.files and fetch each through customer_experiment.file_download. Check every downloaded request file against its manifest size and ETag before use. Compute trouble is yours to fix, and nobody can intervene in a customer run: if a machine is not ready within 10 minutes, delete it and rent elsewhere, Modal first, then Lambda; if a rental is refused for concurrency, wait for earlier deletions to finish and retry (two machines may run at once). Never stop to ask about compute, capacity or providers. Ask a question only when the contract itself cannot be executed, and otherwise report infeasibility in the results. Make the report visual: besides the headline result, chart whatever is clearer drawn than written (breakdowns by task or source, accuracy against latency or cost, where models disagree), and keep its prose short and free of internal ids.",
+);
+
+/** Version 4's executor: version 3's, posting to the status page only version 4 grants it. */
+const progressInstruction = documentInstruction.replace(
+  'Check every downloaded request file against its manifest size and ETag before use.',
+  'Check every downloaded request file against its manifest size and ETag before use. The customer watches a status page: post progress with customer_experiment.progress at each milestone (machine ready, files checked, each model or condition started and finished with its score, results being written), a short plain sentence each time.',
 );
 
 export function serviceExecution(review: boolean, version = 1): WorkflowExecutionPolicy {
@@ -59,6 +65,10 @@ export function serviceExecution(review: boolean, version = 1): WorkflowExecutio
                     subjectId: target('instanceId'),
                   }),
                 )
+              : []),
+            // v4: lines on the customer's status page while the run goes.
+            ...(postsProgress(version)
+              ? [grant('customer_experiment.progress', { id: target('instanceId') })]
               : []),
             grant('customer_experiment.submit_results', {
               id: target('instanceId'),
@@ -271,11 +281,13 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
         const compute = ctx.compute ? computeGuidance(review ? 'check' : 'execute') : '';
         const instruction = review
           ? 'Independently verify the retained results against the frozen customer contract. Submit review.submit with pass, or a precise return route. Never change the plan.'
-          : plansDocument(c.snapshot.version)
-            ? documentInstruction
-            : writesReport(c.snapshot.version)
-              ? reportInstruction
-              : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
+          : postsProgress(c.snapshot.version)
+            ? progressInstruction
+            : plansDocument(c.snapshot.version)
+              ? documentInstruction
+              : writesReport(c.snapshot.version)
+                ? reportInstruction
+                : 'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results/report as artifacts, then call customer_experiment.submit_results. Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the results; do not change scope.';
         return {
           role: review ? 'Independent results reviewer' : 'Experiment executor',
           label: `${review ? 'Review' : 'Run'}: ${exp.title}`,
