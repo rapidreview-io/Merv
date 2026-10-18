@@ -240,6 +240,28 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   };
   const planArtifact = await attach('plan', 'plan.md', plan);
   const statement = await attach('feasibility', 'feasibility.json', feasibilityStatement());
+  // The schema an agent sees says a submission takes no evidence, and the refusal says what to
+  // do: every producer once passed a summary there and some stopped at the refusal.
+  const transitionTool = descriptions.find((tool) => tool.name === 'experiment.transition')!;
+  assert.match(
+    (transitionTool.inputSchema.properties!.evidence as { description: string }).description,
+    /Omit it for submit_design and submit_results/,
+  );
+  const refused = await producer.callTool({
+    name: 'experiment.transition',
+    arguments: {
+      experimentId: e.id,
+      transition: 'submit_design',
+      expectedRevision: e.workflow.revision,
+      requestId: 'design',
+      evidence: { detail: 'A summary of the design.' },
+    },
+  });
+  assert.equal(refused.isError, true);
+  assert.match(
+    (refused.content as { text: string }[])[0].text,
+    /Omit evidence for submit_design and submit_results and call again with the same requestId; nothing was submitted/,
+  );
   e = await f.call(producer, 'experiment.transition', {
     experimentId: e.id,
     transition: 'submit_design',

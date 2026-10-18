@@ -83,7 +83,10 @@ export const experimentTransitionSchema = z
     evidence: z
       .object({ reason: prose(1).optional(), detail: prose().optional() })
       .strict()
-      .optional(),
+      .optional()
+      .describe(
+        'Only for retry_running, abandon and mark_failed, which require evidence.reason. Omit it for submit_design and submit_results: a submission seals the artifacts attached with experiment.attach.',
+      ),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -104,7 +107,9 @@ export const experimentTransitionSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['evidence'],
-        message: 'Submission evidence comes from the retained artifact selection',
+        // Every producer passed it once (2026-10): name what to do, and that nothing was sent.
+        message:
+          'Omit evidence for submit_design and submit_results and call again with the same requestId; nothing was submitted. A submission seals the artifacts attached with experiment.attach, so what the reviewer should read belongs in the plan or report. evidence is only for retry_running, abandon and mark_failed.',
       });
   })
   .transform((input): ExperimentTransition => {
