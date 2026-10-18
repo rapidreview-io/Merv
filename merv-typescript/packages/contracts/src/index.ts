@@ -705,6 +705,10 @@ export async function forRead<T>(
 }
 /** The most bytes Blobs moves by signed URL, and so the largest artifact. */
 export const MAX_OBJECT_BYTES = 512 * 1024 * 1024;
+/** How the collection a compute capture registers is titled: Sandboxes names it so, and Sessions'
+ *  compute guidance tells workers to find it by this title. */
+export const captureTitle = (workflowId: string, nodeId: string) =>
+  `Compute capture ${workflowId} / ${nodeId}`;
 export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;

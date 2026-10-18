@@ -1,4 +1,5 @@
 import {
+  captureTitle,
   check,
   clip,
   digest,
@@ -338,7 +339,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         {
           // Ids first, so a clipped title still says which capture this is.
           title: clip(
-            `Compute capture ${workflow.id} / ${node.id}${outcome}${
+            `${captureTitle(workflow.id, node.id)}${outcome}${
               workflow.name && workflow.name !== workflow.id ? ` — ${workflow.name}` : ''
             }`,
             200,
