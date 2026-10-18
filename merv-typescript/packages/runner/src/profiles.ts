@@ -125,8 +125,9 @@ export interface LaunchRequest {
   shellEnvFile?: string;
   /** The conversation this launch continues, already restored where its harness finds it. */
   resume?: string;
-  /** The last whole copy of a frozen assignment that conversation still holds, as it was sent. */
-  held?: string;
+  /** The last whole copy of a frozen assignment that conversation still holds, as it was sent,
+   *  and whether a changed assignment was sent after it. */
+  held?: { copy: string; changed?: true };
 }
 
 /**
@@ -353,6 +354,8 @@ const readOnlyWorkspace = (reviewer: boolean, fresh: boolean) =>
 
 /** The line a whole copy of the frozen assignment follows. */
 const FROZEN = 'Frozen assignment:';
+/** How the header over a changed assignment, sent with what the conversation holds cut, begins. */
+const CHANGED = 'Frozen assignment, as it stands now:';
 const continued =
   'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).';
 /** What a context block a resumed conversation holds unchanged is sent in place of its body. */
@@ -360,14 +363,19 @@ const UNCHANGED = '(unchanged: as in the copy of this assignment earlier in this
 /** An item Context Builder embeds: a `###` heading over a body fenced longer than any run in it. */
 const contextBlock = /\n### ([^\n]*)\n(~{3,})\n([\s\S]*?)\n\2\n/g;
 
-/** The last whole copy of a frozen assignment these prompts hold: the line after its header. */
-export function heldAssignment(prompts: readonly string[]): string | undefined {
+/** The last whole copy of a frozen assignment these prompts hold (the line after its header),
+ *  and whether a changed one was sent after it. */
+export function heldAssignment(prompts: readonly string[]): LaunchRequest['held'] {
+  let changed = false;
   for (const prompt of [...prompts].reverse()) {
     const at = prompt.lastIndexOf(`\n${FROZEN}\n`);
-    if (at < 0) continue;
+    if (at < 0) {
+      changed ||= prompt.includes(`\n${CHANGED} `);
+      continue;
+    }
     const start = at + FROZEN.length + 2,
       end = prompt.indexOf('\n', start);
-    return prompt.slice(start, end < 0 ? undefined : end);
+    return { copy: prompt.slice(start, end < 0 ? undefined : end), ...(changed && { changed }) };
   }
   return undefined;
 }
@@ -384,15 +392,20 @@ const comparable = (assignment: WorkflowAssignment) =>
  * the same bytes, that started visits near the window and were compacted away with the feedback
  * they brought. Where the conversation still holds a whole copy (`held`), an assignment that has
  * not changed is said to be the same, and a changed one is sent with each context block that
- * copy holds as it is cut to a line. Anything else is sent whole.
+ * copy holds as it is cut to a line. Once a changed one was sent after the copy, the agent reads
+ * that as the newer, so one equal to the copy again is sent as a changed one. Anything else is
+ * sent whole.
  */
-function frozen(assignment: WorkflowAssignment, held?: string): { first: string; text: string[] } {
+function frozen(
+  assignment: WorkflowAssignment,
+  held?: LaunchRequest['held'],
+): { first: string; text: string[] } {
   const whole = { first: continued, text: [FROZEN, JSON.stringify(assignment)] };
   let earlier: WorkflowAssignment;
   try {
-    earlier = JSON.parse(held ?? '') as WorkflowAssignment;
+    earlier = JSON.parse(held?.copy ?? '') as WorkflowAssignment;
     if (!earlier || typeof earlier !== 'object' || Array.isArray(earlier)) return whole;
-    if (comparable(earlier) === comparable(assignment))
+    if (!held!.changed && comparable(earlier) === comparable(assignment))
       return {
         first:
           'You are continuing your earlier work on this unit, under the same assignment: nothing in it has changed since the copy earlier in this conversation.',
@@ -421,7 +434,7 @@ function frozen(assignment: WorkflowAssignment, held?: string): { first: string;
   return {
     first: continued,
     text: [
-      `Frozen assignment, as it stands now: each context block whose body reads only "${UNCHANGED}" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy. workflow.assignment returns it whole.`,
+      `${CHANGED} each context block whose body reads only "${UNCHANGED}" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy. workflow.assignment returns it whole.`,
       JSON.stringify({ ...assignment, context: { ...assignment.context!, prompt: changed } }),
     ],
   };

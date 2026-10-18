@@ -60,6 +60,7 @@ import {
   collectRepositorySkillPaths,
   handoffGraceMs,
   validateProfile,
+  type LaunchRequest,
   type RunnerProfile,
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
@@ -1112,7 +1113,7 @@ export class MachineRunner implements Runner {
     profile: RunnerProfile,
     session: Session,
     cwd: string,
-  ): Promise<{ id: string; held?: string } | undefined> {
+  ): Promise<{ id: string; held?: LaunchRequest['held'] } | undefined> {
     const resume = session.continuity?.resume;
     if (!resume) return undefined;
     try {
@@ -1147,7 +1148,7 @@ export class MachineRunner implements Runner {
   }
   /** What a restored conversation still holds of a frozen assignment, so a resumed launch is
    *  sent only what changed; nothing, and it is sent whole, where that cannot be read. */
-  private held(profile: RunnerProfile, session: Session, bytes: Buffer): string | undefined {
+  private held(profile: RunnerProfile, session: Session, bytes: Buffer): LaunchRequest['held'] {
     if (inquiring(session)) return undefined;
     try {
       return heldAssignment(harnessOf(profile)?.held?.(bytes.toString('utf8')) ?? []);

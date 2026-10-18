@@ -33,6 +33,7 @@ import { since } from '../packages/runner/src/harness/shared.js';
 import {
   buildLaunch,
   heldAssignment,
+  type LaunchRequest,
   type RunnerProfile,
 } from '../packages/runner/src/profiles.js';
 import {
@@ -609,7 +610,7 @@ const visit = (feedback: string, registrationId: string) => {
     },
   } as unknown as Session;
 };
-const sent = (session: Session, held?: string, resume: string | null = id) =>
+const sent = (session: Session, held?: LaunchRequest['held'], resume: string | null = id) =>
   buildLaunch(
     codex,
     {
@@ -631,7 +632,7 @@ test('a resumed launch is sent only what changed of the assignment its conversat
   const earlier = visit('Round one: spell out RLCD.', 'execution_a');
   const fresh = sent(earlier, undefined, null);
   const copy = heldAssignment([fresh])!;
-  assert.equal(copy, JSON.stringify(earlier.assignment));
+  assert.deepEqual(copy, { copy: JSON.stringify(earlier.assignment) });
   // The same assignment, but for the registration a deploy renewed: a line, not the assignment.
   const same = sent(visit('Round one: spell out RLCD.', 'execution_b'), copy);
   assert.ok(
@@ -664,15 +665,24 @@ test('a resumed launch is sent only what changed of the assignment its conversat
     ),
   );
   // Neither is a whole copy, so a later visit is compared with the one the conversation holds.
-  assert.equal(heldAssignment([fresh, same, changed]), copy);
+  assert.deepEqual(heldAssignment([fresh, same]), copy);
+  const since = heldAssignment([fresh, same, changed])!;
+  assert.deepEqual(since, { ...copy, changed: true });
+  // Once a changed one was sent, the agent reads that as the newer: an assignment equal to the
+  // copy again is not said to be unchanged, but restated with what the copy holds cut.
+  const reverted = sent(visit('Round one: spell out RLCD.', 'execution_c'), since);
+  assert.ok(reverted.startsWith(`${continued}\nWorker prompt.`));
+  assert.ok(!reverted.includes('unchanged since the copy'));
+  assert.ok(reverted.includes('\nFrozen assignment, as it stands now: '));
+  assert.ok(!reverted.includes('MMMM'));
   // Whole, as before: nothing held, a copy that does not read, nothing it holds unchanged, or
   // a launch that resumes nothing.
   const whole = `\nFrozen assignment:\n${JSON.stringify(returned.assignment)}\n`;
   const other = { ...returned, assignment: { ...returned.assignment, context: null } } as Session;
   for (const launch of [
     sent(returned),
-    sent(returned, 'not json'),
-    sent(returned, JSON.stringify(other.assignment)),
+    sent(returned, { copy: 'not json' }),
+    sent(returned, { copy: JSON.stringify(other.assignment) }),
     sent(returned, copy, null),
   ])
     assert.ok(launch.endsWith(whole));
