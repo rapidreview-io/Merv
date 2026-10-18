@@ -28,14 +28,15 @@ interface ReviewActionContext {
  * review through review.start, and `submit` hands in the verdict through review.submit, which
  * takes the step's `transitions`. The owner names the step's review (`current`), checks a
  * verdict (`submit`), and may refuse a claim for reasons of its own (`start`) before Reviews'
- * own claim check. Where `current` reads a named reviewId, it refuses one that is not current.
+ * own claim check, which also blocks `start` once the caller holds the claim: its verdict is
+ * what comes next. Where `current` reads a named reviewId, it refuses one that is not current.
  */
 export function reviewActions<C extends ReviewActionContext>(owner: {
   names: { submit: string; start: string };
   states: string[];
   transitions: string[];
   instructions: { submit: string; start: string };
-  reviews: { checkStart(caller: C['caller'], reviewId: string, tx: C['tx']): Promise<unknown> };
+  reviews: { checkClaim(caller: C['caller'], reviewId: string, tx: C['tx']): Promise<unknown> };
   current(context: C): Promise<{ id: string; claimId: string | null }>;
   submit(context: C): Promise<void>;
   start?(context: C, review: { id: string }): Promise<void>;
@@ -67,7 +68,7 @@ export function reviewActions<C extends ReviewActionContext>(owner: {
       check: async (context: C) => {
         const review = await owner.current(context);
         await owner.start?.(context, review);
-        await owner.reviews.checkStart(context.caller, review.id, context.tx);
+        await owner.reviews.checkClaim(context.caller, review.id, context.tx);
       },
     },
   ];

@@ -163,6 +163,8 @@ export interface Reviews {
     override?: boolean,
   ): Promise<ReviewRequest>;
   checkStart(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
+  /** checkStart, and refuses the caller's own claim (`review_claimed`), which start retries. */
+  checkClaim(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   checkSubmit(
     caller: Caller,
     reviewId: string,
