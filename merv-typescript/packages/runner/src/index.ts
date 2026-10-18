@@ -1243,21 +1243,16 @@ export class MachineRunner implements Runner {
       const harness = harnessOf(profile);
       // A launch stopped before its output reported (its lease ran out mid-turn) spent what its
       // kept conversation last recorded: read once the launch settled, never while it runs.
-      const recorded = () => {
-        try {
-          return harness?.recorded?.(
-            read(conversationFile(record.runDirectory), recordedTail, 'tail'),
-            model,
-          );
-        } catch {
-          return undefined;
-        }
-      };
       const usage =
         profile.harness === 'claude'
           ? claudeLogUsage(path, model, live)
           : (harness?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model) ??
-            (live ? undefined : recorded()));
+            (live
+              ? undefined
+              : harness?.recorded?.(
+                  read(conversationFile(record.runDirectory), recordedTail, 'tail'),
+                  model,
+                )));
       const carried = sessionUsageReportSchema.safeParse(record.metadata.carried);
       return sessionUsageReportSchema.parse(
         usage && since(usage, carried.success ? carried.data : undefined),
