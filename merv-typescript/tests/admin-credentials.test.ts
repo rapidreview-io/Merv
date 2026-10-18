@@ -154,14 +154,18 @@ test('GET /admin/credentials says which credential serves which purpose and neve
     }),
     Response.json({ error: { code: 'invalid_api_key' } }, { status: 401 }),
   );
-  await call();
-  await call();
+  // A stream's usage is kept as it closes: each call is kept before the next one is made.
   let outcomes = await fleet.relayOutcomes();
-  const settled = () => outcomes[0]?.lastOkAt && outcomes[0].lastFailureAt;
-  for (let tries = 0; tries < 100 && !settled(); tries++) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    outcomes = await fleet.relayOutcomes();
-  }
+  const recorded = async (settled: () => unknown) => {
+    for (let tries = 0; tries < 100 && !settled(); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      outcomes = await fleet.relayOutcomes();
+    }
+  };
+  await call();
+  await recorded(() => outcomes[0]?.lastOkAt);
+  await call();
+  await recorded(() => outcomes[0]?.lastFailureAt);
   assert.deepEqual(
     outcomes.map(({ lastOkAt, lastFailureAt, ...row }) => [row, !!lastOkAt, !!lastFailureAt]),
     [
