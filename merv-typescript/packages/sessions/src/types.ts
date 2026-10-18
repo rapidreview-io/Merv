@@ -630,6 +630,12 @@ export interface SessionMessaging {
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
   /** The worker ends its visit asking its owner; the work waits for the answer. */
   ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion>;
+  /** Server-only: whether `threadId` asked any question about the work item `instanceId`. */
+  threadAsked(threadId: string, instanceId: string): Promise<boolean>;
+  /** Server-only: the newest question about the work item that no message has answered. */
+  unansweredQuestion(
+    instanceId: string,
+  ): Promise<Pick<ThreadQuestion, 'id' | 'threadId' | 'askedAt' | 'question'> | null>;
   acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },

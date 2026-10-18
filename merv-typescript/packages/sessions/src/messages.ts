@@ -766,6 +766,29 @@ export class SessionMessages {
       };
     });
   }
+  // Server-only reads for a plugin that keeps a worker's questions in reach, such as Customer
+  // experiments' healer, so that no other plugin reads session_questions itself.
+  async threadAsked(threadId: string, instanceId: string): Promise<boolean> {
+    const asked = await this.state.read((sql) =>
+      sql.get<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM session_questions WHERE thread_id=? AND instance_id=?',
+        threadId,
+        instanceId,
+      ),
+    );
+    return Number(asked?.n ?? 0) > 0;
+  }
+  async unansweredQuestion(instanceId: string) {
+    const row = await this.state.read((sql) =>
+      sql.get<{ id: string; thread_id: string; asked_at: string; question: string }>(
+        'SELECT id,thread_id,asked_at,question FROM session_questions WHERE instance_id=? AND answered_at IS NULL ORDER BY asked_at DESC LIMIT 1',
+        instanceId,
+      ),
+    );
+    return row
+      ? { id: row.id, threadId: row.thread_id, askedAt: row.asked_at, question: row.question }
+      : null;
+  }
   /**
    * What the owner answered on one work item: the ten newest questions its agents asked with
    * session.ask_owner, on any of its threads, that a message answered, with that answer, oldest

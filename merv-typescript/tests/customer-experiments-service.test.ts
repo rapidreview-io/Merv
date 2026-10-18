@@ -719,6 +719,26 @@ test('intake reads work in a read-only snapshot but ordinary project callers can
   );
 });
 
+test('the healer reaches only a thread whose worker asked about its run', async (t) => {
+  const f = await fixture(t);
+  const request = await f.create();
+  const record = await f.store.get(request.id);
+  const caller = await f.service.caller(record);
+  const binding = { id: 'customer-experiments-healer', version: 2, requestId: request.id };
+  const healer = f.profiles.find((p) => p.id === binding.id && p.version === binding.version)!;
+  // Not a session tool: no thread to check.
+  await healer.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
+  await assert.rejects(
+    healer.authorizeTool!({
+      binding,
+      caller,
+      name: 'session.message',
+      input: { threadId: 'thread_never_asked', body: 'x' },
+    }),
+    { code: 'forbidden', message: "The healer may only reach its run's worker thread" },
+  );
+});
+
 test('checkout rollover keeps the previous session across provider failures so retries cannot charge again', async (t) => {
   const f = await fixture(t);
   const request = await f.create();

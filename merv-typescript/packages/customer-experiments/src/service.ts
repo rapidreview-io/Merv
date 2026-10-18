@@ -727,15 +727,11 @@ export class CustomerService {
               if (!name.startsWith('session.')) return;
               const record = await this.store.get(binding.requestId);
               check(record.projectId === caller.projectId, 'forbidden', 'Not this request', 403);
-              const thread = await this.store.state.read((sql) =>
-                sql.get<{ n: number }>(
-                  'SELECT COUNT(*) AS n FROM session_questions WHERE thread_id=? AND instance_id=?',
+              check(
+                await this.domain.sessions.messaging.threadAsked(
                   String(input.threadId ?? ''),
                   record.experimentId ?? '',
                 ),
-              );
-              check(
-                Number(thread?.n ?? 0) > 0,
                 'forbidden',
                 "The healer may only reach its run's worker thread",
                 403,
@@ -1347,14 +1343,7 @@ export class CustomerService {
       includeDependencies: false,
     });
     if (usage.liveSessions) return null;
-    return (
-      (await this.store.state.read((sql) =>
-        sql.get<{ id: string; thread_id: string; asked_at: string; question: string }>(
-          'SELECT id,thread_id,asked_at,question FROM session_questions WHERE instance_id=? AND answered_at IS NULL ORDER BY asked_at DESC LIMIT 1',
-          exp.id,
-        ),
-      )) ?? null
-    );
+    return await this.domain.sessions.messaging.unansweredQuestion(exp.id);
   }
   /**
    * External runs have no operator. When Pi's responder could not settle the worker's question
@@ -1365,7 +1354,7 @@ export class CustomerService {
    */
   private async resume(record: RequestRecord, caller: Caller, exp: CustomerExperiment) {
     const question = await this.stalled(caller, exp);
-    if (!question || Date.now() - Date.parse(question.asked_at) < RESUME_AFTER_MS) return;
+    if (!question || Date.now() - Date.parse(question.askedAt) < RESUME_AFTER_MS) return;
     const resumed = record.resumed ?? [];
     if (resumed.includes(question.id) || resumed.length >= RESUMES) return;
     const investigating = await this.store.state.read((sql) =>
@@ -1385,7 +1374,7 @@ export class CustomerService {
     });
     await this.pi.send(caller, healer.id, {
       commandId: `heal-${question.id}`,
-      text: `The worker of experiment ${exp.id} is stopped on this question.\n\nThread: ${question.thread_id}\nQuestion: ${question.question}\n\nInvestigate, fix what you can, and answer it with session.message on that thread; leave it unanswered only when Merv itself blocks the results.`,
+      text: `The worker of experiment ${exp.id} is stopped on this question.\n\nThread: ${question.threadId}\nQuestion: ${question.question}\n\nInvestigate, fix what you can, and answer it with session.message on that thread; leave it unanswered only when Merv itself blocks the results.`,
     });
     process.stderr.write(
       JSON.stringify({

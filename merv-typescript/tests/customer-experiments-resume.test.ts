@@ -41,16 +41,9 @@ function harness(
       read: async (read: (sql: unknown) => unknown) =>
         read({
           get: async (query: string) =>
-            query.includes('session_question_responses')
-              ? investigating
-                ? { state: 'investigating' }
-                : undefined
-              : question && {
-                  question: 'The report tool refuses to fill Inquiry.',
-                  id: 'q_1',
-                  thread_id: 'thr_1',
-                  asked_at: new Date(Date.now() - question.askedMinutesAgo * 60_000).toISOString(),
-                },
+            query.includes('session_question_responses') && investigating
+              ? { state: 'investigating' }
+              : undefined,
         }),
     },
   };
@@ -59,6 +52,17 @@ function harness(
     reconcile: async () => exp,
     sessions: {
       usage: async () => ({ liveSessions: live, budgets: [] }),
+      messaging: {
+        unansweredQuestion: async (instanceId: string) =>
+          question && instanceId === exp.id
+            ? {
+                question: 'The report tool refuses to fill Inquiry.',
+                id: 'q_1',
+                threadId: 'thr_1',
+                askedAt: new Date(Date.now() - question.askedMinutesAgo * 60_000).toISOString(),
+              }
+            : null,
+      },
     },
   };
   const service = new CustomerService(
