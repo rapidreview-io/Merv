@@ -33,11 +33,26 @@ const label = (value: unknown) =>
   (typeof value === 'string' ? value : String(JSON.stringify(value))).slice(0, 200);
 /**
  * The refusal of a choice outside its execution reference. It names the values at fault, so the
- * caller drops exactly those rather than guessing, and says what the reference holds.
+ * caller drops exactly those rather than guessing, and says what the reference holds. Only a
+ * subset can drop them: a oneOf is a single value, and citing an id in a new artifact does not
+ * make an earlier one readable.
  */
-function outsideReferences(field: string, name: string, outside: unknown[]): MervError {
+function outsideReferences(
+  field: string,
+  binding: { kind: 'oneOf' | 'subset'; name: string },
+  outside: unknown[],
+): MervError {
+  const { name } = binding;
   const one = outside.length === 1;
   const more = outside.length > SHOWN ? ` and ${outside.length - SHOWN} more` : '';
+  const advice =
+    binding.kind === 'subset'
+      ? ` Leave ${one ? 'it' : 'them'} out of ${field}${
+          name === 'artifacts'
+            ? '; to rely on an artifact from an earlier session, cite its id in one this session creates'
+            : ''
+        }.`
+      : '';
   return new MervError(
     'execution_arguments_forbidden',
     `${field} is outside the declared execution references: ${outside
@@ -47,11 +62,7 @@ function outsideReferences(field: string, name: string, outside: unknown[]): Mer
       name === 'artifacts'
         ? 'hold what the assignment declared and the artifacts this session created'
         : 'hold only what the assignment declared'
-    }. Leave ${one ? 'it' : 'them'} out of ${field}${
-      name === 'artifacts'
-        ? '; to rely on an artifact from an earlier session, cite its id in one this session creates'
-        : ''
-    }.`,
+    }.${advice}`,
     403,
     { field, reference: name, outside: outside.slice(0, 100).map(label) },
   );
@@ -102,10 +113,10 @@ export function admitDispatch(
             `${field} must be a list chosen from this assignment's ${binding.name}`,
             403,
           );
-          const outside = (binding.kind === 'oneOf' ? [actual] : (actual as unknown[])).filter(
-            (value) => typeof value !== 'string' || !values.includes(value),
-          );
-          if (outside.length) throw outsideReferences(field, binding.name, outside);
+          const outside = [
+            ...new Set(binding.kind === 'oneOf' ? [actual] : (actual as unknown[])),
+          ].filter((value) => typeof value !== 'string' || !values.includes(value));
+          if (outside.length) throw outsideReferences(field, binding, outside);
         } else {
           const expected = executionArgument(binding, execution);
           if (Object.hasOwn(result, field))

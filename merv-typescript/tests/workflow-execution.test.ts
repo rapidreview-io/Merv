@@ -11,6 +11,7 @@ import {
   type Caller,
   type Data,
   type WorkflowDefinition,
+  type WorkflowExecution,
   type WorkflowExecutionPolicy,
   type WorkflowLeaseOffer,
   type WorkflowPolicy,
@@ -314,11 +315,67 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
   );
   await assert.rejects(
     async () => await f.admit(offered, 'artifact.read', { artifactId: 'gone' }),
-    { code: 'execution_arguments_forbidden', message: /: gone is not among/ },
+    (error: MervError) =>
+      error.code === 'execution_arguments_forbidden' &&
+      /: gone is not among/.test(error.message) &&
+      !/Leave/.test(error.message),
   );
   assert.deepEqual((await f.admit(offered, '_nisa.search', { query: 'cordis' })).input, {
     query: 'cordis',
   });
+});
+test('a refused oneOf says what its reference holds; only a subset is told to leave values out', () => {
+  const execution: WorkflowExecution = {
+    instanceId: 'instance',
+    projectId: 'project',
+    actorId: 'actor',
+    workflow: 'execution-test',
+    version: 1,
+    state: 'working',
+    revision: 0,
+    policyHash: 'hash',
+    registrationId: 'registration',
+    policy: {
+      readOnly: true,
+      tools: [
+        {
+          name: 'artifact.read',
+          alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
+        },
+        { name: 'submit', alternatives: [{ artifactIds: { kind: 'subset', name: 'artifacts' } }] },
+      ],
+    },
+    references: { artifacts: ['own'] },
+  };
+  // Reading an earlier session's artifact: there is nothing to leave out, and citing it in a new
+  // artifact would not make it readable.
+  assert.throws(
+    () => admitDispatch(execution, 'artifact.read', { artifactId: 'art_old' }),
+    (error: MervError) => {
+      assert.equal(error.code, 'execution_arguments_forbidden');
+      assert.equal(
+        error.message,
+        "artifactId is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created.",
+      );
+      return true;
+    },
+  );
+  // A subset names a repeated id once, and is told to drop it or cite it.
+  assert.throws(
+    () => admitDispatch(execution, 'submit', { artifactIds: ['own', 'art_old', 'art_old'] }),
+    (error: MervError) => {
+      assert.equal(
+        error.message,
+        "artifactIds is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created. Leave it out of artifactIds; to rely on an artifact from an earlier session, cite its id in one this session creates.",
+      );
+      assert.deepEqual(error.details, {
+        field: 'artifactIds',
+        reference: 'artifacts',
+        outside: ['art_old'],
+      });
+      return true;
+    },
+  );
 });
 
 test('a lease check fences its worker, revision, policy and active registration, even inside an existing transaction', async (t) => {
