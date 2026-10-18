@@ -135,6 +135,13 @@ export class Memberships {
       tx: Transaction,
     ) => Promise<Actor>,
   ) {}
+  private readonly firstSignIns = new Set<{ hear(person: SharedUser): void }>();
+
+  onFirstSignIn(listener: (person: SharedUser) => void): () => void {
+    const entry = { hear: listener };
+    this.firstSignIns.add(entry);
+    return () => void this.firstSignIns.delete(entry);
+  }
 
   async acceptVerifiedIdentity({ ...identity }: VerifiedIdentity): Promise<HumanPrincipal> {
     checkIdentity(identity, this.time());
@@ -157,18 +164,27 @@ export class Memberships {
         },
         expiresAt: identity.expiresAt,
       };
-    return await this.state.transaction(async (tx) => {
+    let first = false;
+    const principal = await this.state.transaction(async (tx): Promise<HumanPrincipal> => {
       const insertedAt = this.time();
       checkIdentity(identity, insertedAt);
-      await tx.run(
+      const inserted = await tx.run(
         'INSERT INTO shared_users(issuer,subject,created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING',
         identity.issuer,
         identity.subject,
         insertedAt,
       );
+      first = inserted.changes > 0;
       const user = await this.user(tx, identity.issuer, identity.subject);
       return { kind: 'user', user, expiresAt: identity.expiresAt };
     });
+    // A listener's own failure is its own: the person has signed in.
+    if (first)
+      for (const { hear } of this.firstSignIns)
+        try {
+          hear(principal.user);
+        } catch {}
+    return principal;
   }
 
   private async user(sql: Sql, issuer: string, subject: string): Promise<SharedUser> {
