@@ -352,7 +352,13 @@ test('a message queued after tool admission fences the transaction that submits 
     })
   ).value as any;
   release();
-  assert.equal(errorCode(await submitting), 'session_message_pending');
+  const fenced = await submitting;
+  assert.equal(errorCode(fenced), 'session_message_pending');
+  // Its handler had started: what the refusal stopped is the write it was about to commit.
+  assert.match(
+    JSON.parse((fenced.content as { text: string }[])[0].text).error.message,
+    /the write this call was about to commit was refused/,
+  );
   assert.equal(writes, 0);
   assert.equal(
     (

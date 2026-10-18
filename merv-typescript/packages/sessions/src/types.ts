@@ -621,8 +621,13 @@ export interface SessionMessaging {
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },
   ): Promise<SessionMessage>;
-  /** Refuses while a queued message waits for the worker's acknowledgement. */
-  requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void>;
+  /** Refuses while a queued message waits for the worker's acknowledgement: `unstarted` before
+   *  the call's handler runs, else the write it is about to commit. */
+  requireMessagesAcknowledged(
+    sessionId: string,
+    tx: Transaction,
+    unstarted?: boolean,
+  ): Promise<void>;
 }
 /** The input of `session.ask_thread`: one question to one thread's agent. */
 export interface ThreadInquiryInput {

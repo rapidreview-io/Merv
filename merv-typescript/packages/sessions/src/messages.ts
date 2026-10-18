@@ -342,11 +342,16 @@ export class SessionMessages {
     return true;
   }
   /**
-   * Refuses a visit's call while a message to it waits for its acknowledgement. The refusal
-   * carries the oldest such message, so the worker can acknowledge it at once and send its call
-   * again, without first reading its queue.
+   * Refuses a visit's call while a message to it waits for its acknowledgement: `unstarted`
+   * before its handler runs, else the write it is about to commit. The refusal carries the
+   * oldest such message, so the worker can acknowledge it at once and send its call again,
+   * without first reading its queue.
    */
-  async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
+  async requireMessagesAcknowledged(
+    sessionId: string,
+    tx: Transaction,
+    unstarted = false,
+  ): Promise<void> {
     const session = await tx.get<{ project_id: string; thread_id: string; kind: string }>(
       'SELECT project_id,thread_id,kind FROM worker_sessions WHERE id=?',
       sessionId,
@@ -366,9 +371,7 @@ export class SessionMessages {
     throw new MervError(
       'session_message_pending',
       [
-        one
-          ? 'A message to your thread awaits your acknowledgement, so this call was refused and nothing of it was applied.'
-          : `${pending} messages to your thread await your acknowledgement, so this call was refused and nothing of it was applied.`,
+        `${one ? 'A message to your thread awaits' : `${pending} messages to your thread await`} your acknowledgement, so ${unstarted ? 'this call was refused and nothing of it was applied' : 'the write this call was about to commit was refused'}.`,
         shown
           ? `${one ? 'It is' : 'The oldest is'} in details.message${one ? '' : '; session.messages lists them all'}.`
           : 'You were shown its text moments ago; session.messages reads it again.',

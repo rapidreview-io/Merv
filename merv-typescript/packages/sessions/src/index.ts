@@ -487,7 +487,7 @@ export class LeasedSessions implements Sessions {
         this.valid(session, tx, frozen).catch(async (error) => ({
           error: await this.closure(session, error, tx),
         })),
-      acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
+      acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx, true),
     });
     this.running = new SessionRunning(
       state,
