@@ -25,6 +25,17 @@ export interface PiConversationRecord extends PiConversation {
   /** Immutable server-owned role and request binding. Public Pi creation cannot set it. */
   profile?: PiStoredProfile;
 }
+export interface PiPlatformTurn extends Pick<
+  PiCommand,
+  'id' | 'status' | 'runtimeId' | 'createdAt'
+> {
+  live: boolean;
+  startedAt: string | null;
+  completedAt: string | null;
+  projectId: string;
+  title: string;
+  source: DelegationSource;
+}
 export interface PiCommandRecord extends PiCommand {
   inputHash: string;
   workerId: string | null;
@@ -252,6 +263,9 @@ export interface PiRuntime extends Pi {
     subscribe(id: string, listener: () => void): () => void;
   };
   authorizeStream(caller: Caller, id: string): Promise<void>;
+  /** Platform admin read, never exposed through a tool or a machine key: every turn still live
+   *  or begun since `since`, newest first, with its conversation's title, project and person. */
+  platformTurns(since: string): Promise<PiPlatformTurn[]>;
   /** A `piw_` bearer's caller, once its slot is live. */
   authenticateWorker(token: string): Promise<Caller>;
   /** Holds up to `holdMs` for work before answering `work: null`. */

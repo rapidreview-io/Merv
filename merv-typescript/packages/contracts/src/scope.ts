@@ -169,6 +169,15 @@ export interface Scope {
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
+  /** Platform admin read, never exposed through a tool or a key: every signed-in identity, once
+   * per project actor it is (none: `actorId` null), and the names of the projects given. */
+  directory(
+    projectIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<{
+    members: { issuer: string; subject: string; actorId: string | null; name: string | null }[];
+    projects: { id: string; name: string }[];
+  }>;
   /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
    * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
    * provider may not hold. */

@@ -99,6 +99,9 @@ export interface Tasks {
   active(caller: Caller): Promise<number>;
   record(caller: Caller, taskId: string, tx?: Transaction): Promise<TaskRecord>;
   records(caller: Caller, tx?: Transaction): Promise<TaskRecord[]>;
+  /** Platform admin read, never exposed through a tool or a machine key: each named task's
+   * type (`task.work`), in any project. */
+  platformTypes(taskIds: readonly string[]): Promise<Map<string, string>>;
   submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task>;
   /** A verdict on this task's review, through Reviews.apply and every check it makes first. */
   submitReview(caller: Caller, input: TaskReview, tx?: Transaction): Promise<Task>;

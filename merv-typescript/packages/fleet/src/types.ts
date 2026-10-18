@@ -251,6 +251,12 @@ export interface Fleet {
   /** The owner's open allocations in every project, oldest first, with every released one whose
    * owner id is in `targets`: exact counts, however long the history. */
   listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;
+  /** Platform admin read, never exposed through a tool, an owner or a machine key: every open
+   * allocation in every project, with its profile's key and provider while this deployment
+   * keeps that profile. */
+  platformAllocations(): Promise<
+    (FleetAllocation & { profile: string | null; provider: string | null })[]
+  >;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
   inspect(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;

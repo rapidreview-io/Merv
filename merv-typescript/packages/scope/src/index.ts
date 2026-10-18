@@ -148,6 +148,22 @@ export class ProjectScope implements Scope {
       ...invitations,
     });
   }
+  async directory(projectIds: readonly string[], tx?: Transaction) {
+    return await within(this.state, tx, async (sql) => ({
+      members: await sql.all<{
+        issuer: string;
+        subject: string;
+        actorId: string | null;
+        name: string | null;
+      }>(
+        'SELECT u.issuer,u.subject,m.actor_id AS "actorId",a.name FROM shared_users u LEFT JOIN member_actors m ON m.issuer=u.issuer AND m.subject=u.subject LEFT JOIN actors a ON a.id=m.actor_id ORDER BY u.created_at,u.issuer,u.subject',
+      ),
+      projects: await sql.all<{ id: string; name: string }>(
+        'SELECT id,name FROM projects WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        JSON.stringify(projectIds),
+      ),
+    }));
+  }
   async projectOwners(
     tx?: Transaction,
   ): Promise<{ projectId: string; source: DelegationSource }[]> {
