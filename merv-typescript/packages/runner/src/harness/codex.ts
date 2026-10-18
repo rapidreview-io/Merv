@@ -3,11 +3,13 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import { check } from '@merv/contracts';
 import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
-import { codexEvents, readLine } from '@merv/sessions/agent-stream';
+import { codexEvents } from '@merv/sessions/agent-stream';
+import type { SessionUsageReport } from '@merv/sessions/types';
 import type { RunnerProfile } from '../profiles.js';
 import {
   counted,
   entries,
+  events,
   firstId,
   type Harness,
   INTERNET_READS,
@@ -80,23 +82,14 @@ export const codex: Harness = {
 
 /**
  * A rollout records the thread's running total (`token_count`) after each model call; a resumed
- * thread's `turn.completed` goes on from the last one. Read from the end, as that is where it is.
+ * thread's `turn.completed` goes on from the last one.
  */
 function recordedTotal(conversation: string, model?: string) {
-  for (let end = conversation.length; end > 0;) {
-    const at = conversation.lastIndexOf('"token_count"', end - 1);
-    if (at < 0) return undefined;
-    const start = conversation.lastIndexOf('\n', at) + 1,
-      stop = conversation.indexOf('\n', at);
-    const event = readLine(conversation.slice(start, stop < 0 ? undefined : stop));
-    const usage =
-      event?.type === 'event_msg' && event.payload?.type === 'token_count'
-        ? counted(event.payload.info?.total_token_usage, [], model)
-        : undefined;
-    if (usage) return usage;
-    end = start;
-  }
-  return undefined;
+  let usage: SessionUsageReport | undefined;
+  for (const event of events(conversation, '"token_count"'))
+    if (event.type === 'event_msg' && event.payload?.type === 'token_count')
+      usage = counted(event.payload.info?.total_token_usage, [], model) ?? usage;
+  return usage;
 }
 
 /** Before a local Codex launch: its own `CODEX_HOME`, holding a link to the machine's login. */

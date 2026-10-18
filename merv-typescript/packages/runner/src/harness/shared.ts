@@ -136,7 +136,7 @@ export const entries = (directory: string) => {
 };
 
 /** The JSON lines of `output` that hold `marker`. */
-function* events(output: string, marker: string) {
+export function* events(output: string, marker: string) {
   for (const line of output.split('\n')) if (line.includes(marker)) yield read(line) ?? {};
 }
 /** The first id `pick` finds on a line holding `marker`, if it is a conversation id. */
