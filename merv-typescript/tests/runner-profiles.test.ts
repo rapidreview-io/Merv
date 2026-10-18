@@ -424,13 +424,14 @@ test('a hosted Codex profile calls the model through Main with its session beare
   // A worker on the machine is told what its shell has, where scratch goes and what of its
   // directory follows the work, which workers learned by failing (prod, 2026-09-29..10-16).
   for (const told of [
-    /python3\.12 and uv\. Make Python environments in the workspace with uv/,
+    /python3\.12 and uv\. A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit/,
+    /Make Python environments in the workspace with uv .*, which marks them ignored; list any other environment in \.gitignore/,
     /\/tmp is yours for temporary files and sockets .* SSH ControlPath/,
     /caches such as pip’s and Hugging Face’s go to \/tmp\/cache/,
     // Its reset runs before the final capture and walks at most 100,000 files.
     /Keep \/tmp well under 100,000 files: .* fails the machine’s reset and loses what no commit holds yet/,
-    /may hold files an earlier agent left: they are part of no commit until one takes them in/,
-    /only what Code admitted moves with it .*: environments, downloads, keys and other ignored files stay behind/,
+    /may hold files an earlier agent left, in no commit until one takes them in/,
+    /only what was committed moves with it: environments, downloads, keys and other ignored files stay behind/,
   ])
     assert.match(spec.stdin, told);
   // Not a sealed review, which writes nothing, nor a launch on the person's own machine.
