@@ -4,6 +4,7 @@ import { label, platformName, SESSION_STATUSES } from '@merv/sessions/rules';
 import { z } from 'zod';
 import {
   canonical,
+  readCapped,
   sessionWorkspaceSchema as workspaceSchema,
   codeCommitCommandSchema,
   codeCommandRecordSchema,
@@ -203,7 +204,6 @@ export class RunnerClient {
     try {
       if (!response.body) throw new Error();
       const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
       let raw: string;
       // Sessions admits four frozen packets of up to 512 KiB each. The complete
       // reply also carries session metadata and workspace receipts.
@@ -212,22 +212,10 @@ export class RunnerClient {
           ? 4 * 1024 * 1024 + 65_536
           : 4 * 1024 * 1024
         : 1024 * 1024;
-      let size = 0;
       try {
-        while (true) {
-          const next = await reader.read();
-          if (next.done) break;
-          size += next.value.length;
-          if (size > limit) {
-            await reader.cancel();
-            throw new Error();
-          }
-          chunks.push(next.value);
-        }
-        if (response.ok && transfer?.octets) return Buffer.concat(chunks);
-        raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-          Buffer.concat(chunks),
-        );
+        const body = await readCapped(reader, limit, () => new Error());
+        if (response.ok && transfer?.octets) return body;
+        raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body);
       } finally {
         reader.releaseLock();
       }

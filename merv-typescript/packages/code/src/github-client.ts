@@ -8,7 +8,7 @@ import {
   randomBytes,
   type KeyObject,
 } from 'node:crypto';
-import { check, envName, MervError } from '@merv/contracts';
+import { check, envName, MervError, readCapped } from '@merv/contracts';
 import type {
   GitHubRepository,
   GitHubBranch,
@@ -470,22 +470,17 @@ export class GitHubClient {
       if (response.status === 204) return null;
       const reader = response.body?.getReader();
       check(reader, 'github_response', 'GitHub returned an invalid response', 502);
-      const chunks: Uint8Array[] = [];
-      let bytes = 0;
+      let bytes: Buffer;
       try {
-        while (true) {
-          const part = await reader.read();
-          if (part.done) break;
-          bytes += part.value.byteLength;
-          check(bytes <= 2_000_000, 'github_response', 'GitHub response exceeded the limit', 502);
-          chunks.push(part.value);
-        }
+        bytes = await readCapped(
+          reader,
+          2_000_000,
+          () => new MervError('github_response', 'GitHub response exceeded the limit', 502),
+        );
       } finally {
         await reader.cancel().catch(() => {});
       }
-      return JSON.parse(
-        new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)),
-      );
+      return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
     } catch (error) {
       if (error instanceof MervError) throw error;
       throw new MervError(

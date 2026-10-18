@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   effectiveWorkspace,
+  sha256Hex,
   type SessionWorkspace,
   type WorkspaceDriver,
   type WorkspaceHandle,
@@ -42,7 +42,6 @@ class WorkspaceError extends Error {
     super(code);
   }
 }
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
 /**
  * Each launch's workspace row in the runner's ledger. A path is occupied while a row for it is
@@ -173,7 +172,7 @@ export class RunnerWorkspaces implements WorkspaceDriver {
       if (terminalLaunch(this.ledger.get(record.id)!))
         throw new WorkspaceError('workspace_launch_closed');
       const path = this.assignment
-        ? join(this.assignment.directory, hash(this.assignment.workInstanceId))
+        ? join(this.assignment.directory, sha256Hex(this.assignment.workInstanceId))
         : join(realpathSync(record.runDirectory), 'workspace');
       this.rows.claim(
         {

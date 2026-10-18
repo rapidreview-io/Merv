@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -11,7 +10,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { MAX_TRANSCRIPT_BYTES, MervError } from '@merv/contracts';
+import { MAX_TRANSCRIPT_BYTES, MervError, sha256Hex } from '@merv/contracts';
 import type { SessionConversationDeclaration } from '@merv/sessions/types';
 import { type Harness, harnessOf, launcherOf } from './harness/index.js';
 import { conversationIdPattern } from './harness/shared.js';
@@ -130,7 +129,7 @@ export function keepConversation(
   return {
     harness: found.harness.name,
     conversationId: id,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
+    sha256: sha256Hex(bytes),
     size: bytes.length,
   };
 }

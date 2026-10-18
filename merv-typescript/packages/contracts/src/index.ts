@@ -24,6 +24,7 @@ export {
   origin,
   OutboundError,
   outboundFailure,
+  readCapped,
   record,
   sized,
   Slots,
