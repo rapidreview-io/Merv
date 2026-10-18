@@ -414,6 +414,10 @@ test('a pending message’s refusal carries it once a batch, and the queue lists
     [[sent.id], 0],
   );
   assert.match(waiting.next, /session\.message\.ack/);
+  // Read moments ago, the message holds the next call without its text again.
+  const held = error(await client.callTool({ name: 'system.status', arguments: {} }));
+  assert.deepEqual([held.code, held.details.message], ['session_message_pending', undefined]);
+  assert.match(held.message, /shown its text moments ago/);
   // A visit's queue is its thread's: another session's id is refused, saying so.
   const other = error(
     await client.callTool({

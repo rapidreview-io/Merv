@@ -371,7 +371,7 @@ export class SessionMessages {
           : `${pending} messages to your thread await your acknowledgement, so this call was refused and nothing of it was applied.`,
         shown
           ? `${one ? 'It is' : 'The oldest is'} in details.message${one ? '' : '; session.messages lists them all'}.`
-          : 'Its text came with a refusal moments ago; session.messages reads it again.',
+          : 'You were shown its text moments ago; session.messages reads it again.',
         `Acknowledge ${one ? 'it' : 'each'} with session.message.ack (messageId, a stable requestId, and a reply saying what you will do), then send this call again unchanged.`,
       ].join(' '),
       409,
