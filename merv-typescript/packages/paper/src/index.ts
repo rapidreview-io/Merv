@@ -1,4 +1,4 @@
-import { recorded, mapAsync, parsed } from '@merv/contracts';
+import { ellipsis, recorded, mapAsync, parsed } from '@merv/contracts';
 import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
@@ -54,6 +54,22 @@ const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
   updatedBy: null,
   updatedAt: null,
 });
+/**
+ * A section's text with its edits made in turn, each replacing its find where that occurs exactly
+ * once in the text the edits before it left; otherwise which edit's find does not, and whether it
+ * occurs more than once.
+ */
+function editedText(
+  text: string,
+  edits: readonly { find: string; replace: string }[],
+): string | { edit: number; repeated: boolean } {
+  for (const [edit, { find, replace }] of edits.entries()) {
+    const at = text.indexOf(find);
+    if (at < 0 || text.includes(find, at + 1)) return { edit, repeated: at >= 0 };
+    text = text.slice(0, at) + replace + text.slice(at + find.length);
+  }
+  return text;
+}
 
 /** A document store. Scientific workflow owners stage and accept edits in their own review transaction. */
 export class PaperService implements Paper {
@@ -262,6 +278,7 @@ export class PaperService implements Paper {
           index >= 0 &&
             change.title === undefined &&
             change.content === undefined &&
+            change.edits === undefined &&
             change.afterId === undefined,
           'invalid_paper_input',
           'Remove must name one existing section without other changes',
@@ -277,19 +294,40 @@ export class PaperService implements Paper {
         continue;
       }
       check(
-        change.title !== undefined || change.content !== undefined || change.afterId !== undefined,
+        change.title !== undefined ||
+          change.content !== undefined ||
+          change.edits !== undefined ||
+          change.afterId !== undefined,
         'invalid_paper_input',
         'Specify a section change',
       );
       check(
+        change.content === undefined || change.edits === undefined,
+        'invalid_paper_input',
+        `Section ${change.id} takes content, which replaces it whole, or edits, which change part of it, not both`,
+      );
+      check(
         index >= 0 || (change.title !== undefined && change.content !== undefined),
         'invalid_paper_input',
-        'New sections need title and content',
+        change.edits
+          ? `edits change an existing section, and ${input.kind} revision ${before.revision} has no section ${change.id}: a new section needs title and content`
+          : 'New sections need title and content',
       );
+      const content = change.edits
+        ? editedText(sections[index]!.content, change.edits)
+        : (change.content ?? sections[index]!.content);
+      if (typeof content !== 'string') {
+        const { find } = change.edits![content.edit]!;
+        check(
+          false,
+          'invalid_paper_input',
+          `Edit ${content.edit + 1} of section ${change.id} finds ${JSON.stringify(ellipsis(find, 80))} ${content.repeated ? 'more than once' : 'nowhere'} in ${input.kind} revision ${before.revision}${content.edit ? ', after the edits before it' : ''}: each find quotes text that occurs exactly once in the section as paper.read with kind ${input.kind} and section ${change.id} returns it${content.repeated ? ', so quote more of the text around it' : ''}`,
+        );
+      }
       const section = {
         id: change.id,
         title: change.title ?? sections[index]?.title,
-        content: change.content ?? sections[index]?.content,
+        content,
       };
       if (index >= 0) sections[index] = section;
       else sections.push(section);
@@ -332,8 +370,9 @@ export class PaperService implements Paper {
    * Changes made against an earlier revision, as they apply to the current one. Writers who
    * read the same revision often edit different paragraphs of one shared section: a section
    * nobody else changed since takes the change as written, and one somebody did takes it merged
-   * line by line with theirs. Editing the lines they edited, or moving, removing or creating a
-   * section they changed, is refused, naming the sections to read again.
+   * line by line with theirs; edits apply to theirs wherever each find still occurs once. Editing
+   * the lines they edited, quoting text they changed, or moving, removing or creating a section
+   * they changed, is refused, naming the sections to read again.
    */
   private async rebased(
     caller: Caller,
@@ -359,22 +398,32 @@ export class PaperService implements Paper {
         change.content === undefined || was?.content === now?.content
           ? change.content
           : was && now && mergeText(was.content, change.content, now.content);
+      // Edits that held where the writer read the section but no longer hold quote changed text.
+      const quoted =
+        change.edits &&
+        was &&
+        now &&
+        typeof editedText(now.content, change.edits) !== 'string' &&
+        typeof editedText(was.content, change.edits) === 'string';
       if (
         !was ||
         !now ||
         change.remove ||
         change.afterId !== undefined ||
         content === null ||
+        quoted ||
         (change.title !== undefined && was.title !== now.title && change.title !== now.title)
       )
         clashed.push(change.id);
       return { ...change, ...(content !== undefined && { content: content ?? undefined }) };
     });
     const read = clashed.map((id) => `paper.read with kind ${input.kind} and section ${id}`);
+    // A whole section resent after a conflict is the payload edits spare.
+    const whole = input.changes.some((c) => clashed.includes(c.id) && c.content !== undefined);
     check(
       !clashed.length,
       'paper_revision_conflict',
-      `Expected revision ${input.expectedRevision}, found ${current.revision}, and since then ${clashed.length > 1 ? 'sections' : 'section'} ${clashed.join(', ')} changed where your edit does: read ${clashed.length > 1 ? 'them' : 'it'} again (${read.join('; ')}) and resend your ${input.kind} edit at revision ${current.revision}`,
+      `Expected revision ${input.expectedRevision}, found ${current.revision}, and since then ${clashed.length > 1 ? 'sections' : 'section'} ${clashed.join(', ')} changed where your edit does: read ${clashed.length > 1 ? 'them' : 'it'} again (${read.join('; ')}) and resend your ${input.kind} edit at revision ${current.revision}${whole ? ', with edits [{find, replace}] for only what you change rather than content to replace a section whole' : ''}`,
       409,
     );
     return changes;

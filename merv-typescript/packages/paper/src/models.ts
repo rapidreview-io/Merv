@@ -8,6 +8,8 @@ export interface PaperPatch {
     id: string;
     title?: string;
     content?: string;
+    /** In place of content: each find, occurring once in the section, is replaced in turn. */
+    edits?: { find: string; replace: string }[];
     afterId?: string | null;
     remove?: boolean;
   }[];

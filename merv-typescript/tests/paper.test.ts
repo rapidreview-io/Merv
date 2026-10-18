@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { PaperService, type PaperDocument } from '@merv/paper';
+import { PaperService, type PaperDocument, type PaperPatch } from '@merv/paper';
 import { BoardService } from '@merv/board';
 import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
@@ -959,5 +959,133 @@ test('paper.read refuses a range without its section, outlines a document, and s
   assert.deepEqual(
     await shown({ kind: 'methods', section: 'data' }),
     await call({ kind: 'methods', section: 'data' }),
+  );
+});
+
+test('a section changes in part by edits, each find quoted once, also past the edits made since', async (t) => {
+  const f = await fixture(t);
+  const text = ['First paragraph.', 'Second paragraph.', 'Third paragraph.'].join('\n\n');
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'design', title: 'Design', content: text }],
+  });
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  const planned = 'Planned: experiment X tests whether Y holds.';
+  // One sentence added after the second paragraph: only it is sent.
+  const added = await patch(1, [
+    {
+      id: 'design',
+      edits: [{ find: 'Second paragraph.', replace: `Second paragraph.\n\n${planned}` }],
+    },
+  ]);
+  assert.deepEqual(added.sections, [
+    {
+      id: 'design',
+      title: 'Design',
+      content: ['First paragraph.', 'Second paragraph.', planned, 'Third paragraph.'].join('\n\n'),
+    },
+  ]);
+  // A find that is not there, or not once, is refused by its number and quoted.
+  const refused = async (changes: PaperPatch['changes'], message: string | RegExp) =>
+    await assert.rejects(
+      patch(2, changes),
+      (error: MervError) =>
+        error.code === 'invalid_paper_input' &&
+        (typeof message === 'string' ? error.message === message : message.test(error.message)),
+    );
+  await refused(
+    [{ id: 'design', edits: [{ find: 'Fourth paragraph.', replace: 'x' }] }],
+    'Edit 1 of section design finds "Fourth paragraph." nowhere in methods revision 2: each find quotes text that occurs exactly once in the section as paper.read with kind methods and section design returns it',
+  );
+  await refused(
+    [{ id: 'design', edits: [{ find: ' paragraph.', replace: 'x' }] }],
+    /finds " paragraph\." more than once in methods revision 2: .*, so quote more of the text around it$/,
+  );
+  await refused(
+    [
+      {
+        id: 'design',
+        edits: [
+          { find: 'First paragraph.', replace: 'Opening.' },
+          { find: 'First paragraph.', replace: 'Again.' },
+        ],
+      },
+    ],
+    /^Edit 2 of section design finds "First paragraph\." nowhere in methods revision 2, after the edits before it: /,
+  );
+  await refused(
+    [{ id: 'design', content: 'Whole.', edits: [{ find: 'First', replace: 'x' }] }],
+    'Section design takes content, which replaces it whole, or edits, which change part of it, not both',
+  );
+  await refused(
+    [{ id: 'results', edits: [{ find: 'First', replace: 'x' }] }],
+    'edits change an existing section, and methods revision 2 has no section results: a new section needs title and content',
+  );
+  await refused(
+    [{ id: 'design', remove: true, edits: [{ find: 'First', replace: 'x' }] }],
+    'Remove must name one existing section without other changes',
+  );
+  // Another writer changed the first paragraph meanwhile: an edit read at revision 2 applies
+  // to theirs wherever its find still occurs once.
+  await patch(2, [{ id: 'design', edits: [{ find: 'First paragraph.', replace: 'Opening.' }] }]);
+  const merged = await patch(2, [
+    { id: 'design', edits: [{ find: 'Third paragraph.', replace: 'Closing.' }] },
+  ]);
+  assert.equal(
+    merged.sections[0].content,
+    ['Opening.', 'Second paragraph.', planned, 'Closing.'].join('\n\n'),
+  );
+  // Quoting text changed since, at an earlier revision, is a conflict that names the section.
+  await assert.rejects(
+    patch(2, [{ id: 'design', edits: [{ find: 'First paragraph.', replace: 'Start.' }] }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message ===
+        'Expected revision 2, found 4, and since then section design changed where your edit does: read it again (paper.read with kind methods and section design) and resend your methods edit at revision 4',
+  );
+  // A whole section resent into a conflict is told what edits spare.
+  await assert.rejects(
+    patch(2, [{ id: 'design', content: text.replace('First paragraph.', 'Start.') }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message.endsWith(
+        'resend your methods edit at revision 4, with edits [{find, replace}] for only what you change rather than content to replace a section whole',
+      ),
+  );
+  // A reviewer's paperChanges take edits as well, and publish the section they changed.
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
+  const [publication] = await f.state.transaction((tx) =>
+    f.paper.applyReview(
+      f.reviewer,
+      {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 4,
+            changes: [
+              { id: 'design', edits: [{ find: planned, replace: `${planned} Approved.` }] },
+            ],
+          },
+        ],
+        source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
+        reviewId: 'review-1',
+        verdict: 'pass',
+        evidenceIds: [evidence.id],
+      },
+      tx,
+    ),
+  );
+  assert.deepEqual([publication.revision, publication.sectionIds], [5, ['design']]);
+  assert.match(
+    (await f.paper.document(f.reader, 'methods')).current.sections[0].content,
+    /Approved\.\n\nClosing\.$/,
   );
 });
