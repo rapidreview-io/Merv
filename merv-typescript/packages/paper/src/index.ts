@@ -424,8 +424,13 @@ export class PaperService implements Paper {
       return { ...change, ...(content !== undefined && { content: content ?? undefined }) };
     });
     const read = clashed.map((id) => `paper.read with kind ${input.kind} and section ${id}`);
-    // A whole section resent after a conflict is the payload edits spare.
-    const whole = input.changes.some((c) => clashed.includes(c.id) && c.content !== undefined);
+    // A whole section resent after a conflict is the payload edits spare, if it still exists.
+    const whole = input.changes.some(
+      (c) =>
+        clashed.includes(c.id) &&
+        c.content !== undefined &&
+        current.sections.some((s) => s.id === c.id),
+    );
     check(
       !clashed.length,
       'paper_revision_conflict',

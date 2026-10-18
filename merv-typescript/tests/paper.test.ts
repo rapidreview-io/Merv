@@ -1110,3 +1110,26 @@ test('edits keep a section within the 100,000 characters its whole content may h
   const kept = await patch(1, [{ id: 'long', edits: [{ find: 'End.', replace: 'End. Ten.' }] }]);
   assert.equal(kept.sections[0].content.length, 99_995);
 });
+
+test('a conflict over a section removed since does not suggest edits, which it cannot take', async (t) => {
+  const f = await fixture(t);
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  await patch(0, [
+    { id: 'kept', title: 'Kept', content: 'Stays.' },
+    { id: 'gone', title: 'Gone', content: 'Goes.' },
+  ]);
+  await patch(1, [{ id: 'gone', remove: true }]);
+  await assert.rejects(
+    patch(1, [{ id: 'gone', content: 'Goes, revised.' }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message ===
+        'Expected revision 1, found 2, and since then section gone changed where your edit does: read it again (paper.read with kind methods and section gone) and resend your methods edit at revision 2',
+  );
+});
