@@ -29,6 +29,7 @@ import {
 import { launchCodexHome } from '../packages/runner/src/harness/codex.js';
 import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
 import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
+import { since } from '../packages/runner/src/harness/shared.js';
 import { buildLaunch, type RunnerProfile } from '../packages/runner/src/profiles.js';
 import {
   launchId,
@@ -519,6 +520,22 @@ test('a Codex conversation records its running total, read from its end', () => 
   for (const none of ['', '{"type":"event_msg","payload":{"type":"token_count","info":null}}\n'])
     assert.equal(codexHarness.recorded!(none), undefined);
   assert.equal(claudeHarness.recorded, undefined);
+});
+
+test('a launch reports what it spent of a carried total, and a total below it as its own', () => {
+  const carried = { inputTokens: 5000, outputTokens: 50 };
+  assert.deepEqual(since({ inputTokens: 6000, outputTokens: 60, model: 'm' }, carried), {
+    inputTokens: 1000,
+    outputTokens: 10,
+    model: 'm',
+  });
+  // A harness that resumed without its running total, or started a fresh thread, counted afresh.
+  for (const fresh of [
+    { inputTokens: 800, outputTokens: 5 },
+    { inputTokens: 6000, outputTokens: 5 },
+  ])
+    assert.deepEqual(since(fresh, carried), fresh);
+  assert.deepEqual(since(carried), carried);
 });
 
 test('a resumed Codex launch reports what it spent, not its thread’s running total', async (t) => {
