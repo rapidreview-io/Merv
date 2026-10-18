@@ -542,6 +542,41 @@ test('a joined landing whose base waits on an earlier step’s resolution says s
   assert.equal(current.resolutionTaskId, step.resolutionTaskId);
 });
 
+test('a landing never joins a base that carries work whose pull request was closed unmerged', async (t) => {
+  const f = await baseResolutionFixture(t, false, { mainLanding: true });
+  const landing = landingOf(f.code);
+  // Work on A and D plans {A,D}, and work on A, C and D builds C on top of it.
+  await f.waiter([f.left, f.extra]);
+  await f.waiter([f.left, f.right, f.extra]);
+  // D published to main, its pull request was closed unmerged, and GitHub was unlinked since.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE code_units SET publishes_at='now',publication_id='closed-d' WHERE project_id=? AND unit_id=?",
+      f.admin.projectId,
+      f.extra.id,
+    );
+    await tx.run(
+      "INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json,pull_json,settled) VALUES ('closed-d',?,'{}','null',?,1)",
+      f.admin.projectId,
+      JSON.stringify({
+        number: 7,
+        url: 'https://example.invalid/7',
+        state: 'closed',
+        merged: false,
+      }),
+    );
+  });
+  for (let round = 0; round < 4; round++) {
+    await landing.work(f.admin.projectId);
+    await f.bases.work(f.admin.projectId);
+  }
+  const { project, landing: status } = await f.code.status(f.admin);
+  assert.equal(project!.main.oid, f.a);
+  assert.equal(status!.current?.unitId, f.right.id);
+  assert.equal(status!.current?.baseKey, baseKey([f.a, f.c]));
+  assert.ok(!status!.waiting.some((item) => item.unitId === f.extra.id));
+});
+
 test('a landing whose joined base is cancelled is offered again and lands on its own', async (t) => {
   const f = await siblings(t);
   t.mock.method(f.landing, 'soon', () => {});

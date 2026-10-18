@@ -219,8 +219,8 @@ export class MainLanding {
 
   /** The order, and the commits of work that is never offered, which no landing may carry. */
   private async offered(projectId: string, main: string) {
-    const { candidates, skipped } = await this.state.read(async (sql) => ({
-      candidates: (await this.units.records.candidatesOf(sql, projectId)).candidates,
+    const { candidates, rejected, skipped } = await this.state.read(async (sql) => ({
+      ...(await this.units.records.candidatesOf(sql, projectId)),
       skipped: (
         await sql.all<{ unit_id: string; acceptance_hash: string }>(
           "SELECT unit_id,acceptance_hash FROM code_main_landings WHERE project_id=? AND outcome='skipped'",
@@ -236,9 +236,10 @@ export class MainLanding {
     const order = eligible
       .filter((item) => beyond.has(item.commit))
       .sort((a, b) => a.acceptedAt.localeCompare(b.acceptedAt) || a.unitId.localeCompare(b.unitId));
-    const held = new Set(
-      candidates.filter((item) => !eligible.includes(item)).map((item) => item.commit),
-    );
+    const held = new Set([
+      ...rejected,
+      ...candidates.filter((item) => !eligible.includes(item)).map((item) => item.commit),
+    ]);
     return { order, held };
   }
 
