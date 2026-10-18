@@ -1193,6 +1193,44 @@ test('a capture Sandboxes refused is on the experiment, its card and its sidebar
   assert.ok(JSON.stringify(panel).includes(said[0]!));
 });
 
+test('a capture Sandboxes still retries is not shown as lost compute', async (t) => {
+  const f = await fixture(t);
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
+  const experiment = await f.running();
+  const retrying = {
+    nativeWorkflowId: 'wf_train',
+    captureNode: 'outputs',
+    error: 'Not registered after 10 minutes of failures; Merv keeps retrying: unavailable',
+    retrying: true as const,
+  };
+  native.refused.set(experiment.id, [retrying]);
+  assert.deepEqual((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, [
+    retrying,
+  ]);
+  const card = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(card?.attention?.says, [
+    '1 compute capture not registered yet; Merv keeps retrying',
+  ]);
+  assert.doesNotMatch(card?.attention?.who ?? '', /run it again/);
+  const panel = JSON.stringify(
+    await f.experiments.runningPanel(f.producer, `work:${experiment.id}`),
+  );
+  assert.ok(panel.includes('not registered yet'));
+  assert.ok(!panel.includes('could not be kept as evidence'));
+  // A final refusal beside it is what the owner must act on.
+  native.refused.set(experiment.id, [
+    retrying,
+    { nativeWorkflowId: 'wf_train', captureNode: 'logs', error: 'invalid' },
+  ]);
+  const both = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(both?.attention?.says, ['1 compute capture could not be kept as evidence']);
+});
+
 test('experiments.list reads Sandboxes captures once for every experiment', async (t) => {
   const f = await fixture(t);
   const native = captureEvidenceFixture();

@@ -19,7 +19,9 @@ import { mervRefusals } from '@sandboxes/merv-host/errors';
 
 export interface CaptureEvidence {
   artifactIds: string[];
-  refused: { nativeWorkflowId: string; captureNode: string; error: string }[];
+  /** `retrying`: not refused for good, only failing to register for CAPTURE_STALL_MS; it is
+   *  still retried and registers once its cause clears. */
+  refused: { nativeWorkflowId: string; captureNode: string; error: string; retrying?: true }[];
 }
 
 export interface SandboxCaptureEvidence {
@@ -50,6 +52,7 @@ type Receipt = Omit<Work, 'account_id' | 'released' | 'quiesced'> & {
   attempt_ref: string | null;
   artifact_id: string | null;
   error: string | null;
+  stalled: boolean;
 };
 const provider = 'sbx-evidence';
 const refusals = mervRefusals(MervError);
@@ -125,6 +128,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           nativeWorkflowId: row.workflow_id,
           captureNode: row.node_id,
           error: row.error,
+          ...(row.stalled ? { retrying: true as const } : {}),
         });
     }
     return result;

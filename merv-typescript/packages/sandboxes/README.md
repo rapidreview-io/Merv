@@ -16,7 +16,7 @@ may still recover its files. Its title starts `Compute capture <workflow id> / <
 says when the node failed, was skipped or kept nothing; `metadata.outputObjects` names
 its held output objects, which a later workflow of the project stages directly. A
 deterministic refusal is final. A failure that may pass is retried every pass, and after
-ten minutes it is also listed as refused ("Merv keeps retrying") until it registers.
+ten minutes it is also listed as refused, marked `retrying`, until it registers.
 
 `@merv/sandboxes/console` mounts the authenticated console-session endpoint, proxies
 `/sbx/ui/*` and `/sbx/v1/*` (including Terminal WebSockets), and contributes hardware to

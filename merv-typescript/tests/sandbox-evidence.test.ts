@@ -427,6 +427,7 @@ test('a capture that keeps failing is shown as refused, and still registers once
     shown.refused[0]!.error,
     /^Not registered after 10 minutes of failures; Merv keeps retrying: Captured object/,
   );
+  assert.equal(shown.refused[0]!.retrying, true, 'a reader tells it from a final refusal');
   await f.evidence.reconcile();
   await (await createService(f.service())).reconcile();
   assert.equal(await stalls(), 1, 'shown once, across a restart too');
@@ -450,6 +451,7 @@ test('a stalled capture that turns out never to register is refused for good', a
   const refused = (await f.read()).get('work')!.refused;
   assert.equal(refused.length, 1);
   assert.doesNotMatch(refused[0]!.error, /keeps retrying/);
+  assert.equal(refused[0]!.retrying, undefined);
   f.held(true);
   await f.evidence.reconcile();
   assert.deepEqual(await f.artifacts.list(f.caller), [], 'a refusal is not retried');
