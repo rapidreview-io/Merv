@@ -328,7 +328,7 @@ export class SessionDispatch {
                 status: 409,
                 ...(row.last_message === STOPPED_WITHOUT_HANDOFF
                   ? {
-                      message: `Dispatch holds this work: its agent ended its visits without a handoff or a question (${row.attempts} at this revision), and another visit would stop the same way`,
+                      message: `Dispatch holds this work after ${row.attempts} failed launches, the last its agent ending its visit without a handoff or a question`,
                       next: 'Read its thread for what it waits on, answer there or fix it, then release the hold',
                     }
                   : {

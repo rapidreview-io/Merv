@@ -635,7 +635,11 @@ test('an agent that stops without a handoff twice running at one revision is hel
   assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retries_exhausted');
   const [held] = await f.workflows.blockers(f.owner, target.id);
   assert.equal(held?.code, 'launch_held');
-  assert.match(held!.message, /ended its visits without a handoff or a question \(3 at this/);
+  // Three failed launches, of which only the last two were stops.
+  assert.equal(
+    held!.message,
+    'Dispatch holds this work after 3 failed launches, the last its agent ending its visit without a handoff or a question',
+  );
   assert.match(held!.next!, /^Read its thread for what it waits on/);
   assert.equal((await f.events('session.dispatch_held')).length, 1);
 
