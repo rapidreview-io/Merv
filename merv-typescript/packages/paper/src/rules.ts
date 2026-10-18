@@ -35,8 +35,8 @@ export const introductionFrom = (problem: {
 export const PAPER_REVIEWER_INSTRUCTION =
   'You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.';
 /**
- * What a reviewer who keeps the paper is told of changing part of a long section. The owners'
- * guidance, which review.start and review.get return, may add it: no published recipe pins that.
+ * What a reviewer who keeps the paper is told of changing part of a long section. Experiments and
+ * reflections add it to the guidance review.start and review.get return, which no recipe pins.
  */
 export const PAPER_EDITS_INSTRUCTION =
   'To change part of a long section, give its change edits: [{find, replace}] in place of content. Each find quotes text that occurs exactly once in the section as paper.read returns it, and replace takes its place; to add a sentence, find the end of the paragraph it follows and replace that with itself plus your sentence. Only what you change is sent, and an edit made at an earlier revision still applies wherever its find occurs once.';
