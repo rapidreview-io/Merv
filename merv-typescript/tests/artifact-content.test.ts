@@ -265,6 +265,12 @@ test('create with a requestId stores one artifact however often the call is retr
       status: 409,
       details: { requestId: 'progress-1', artifactId: first.id },
     });
+  // A retry sent while the first call is still in flight waits for it and gets its artifact.
+  const [a, b] = await Promise.all([
+    create({ ...input, requestId: 'progress-2' }),
+    create({ ...input, requestId: 'progress-2' }),
+  ]);
+  assert.equal(a.id, b.id);
   // Another actor's same requestId is its own; without one, every call stores another.
   const issued = await app.ctx.scope.credentials.issueActor(caller, {
     name: 'Other',
@@ -274,7 +280,7 @@ test('create with a requestId stores one artifact however often the call is retr
   assert.notEqual(theirs.id, first.id);
   const plain = { title: 'Notes', content: 'x' };
   assert.notEqual((await create(plain)).id, (await create(plain)).id);
-  assert.equal(await created(), 4);
+  assert.equal(await created(), 5);
   for (const requestId of [42, '', 'r'.repeat(129)])
     await assert.rejects(create({ ...plain, requestId }), { code: 'invalid_input' });
 });
