@@ -657,6 +657,15 @@ test('a worker is told when its lease ends, that nothing extends it, and that a 
   assert.match(kept, /someone else’s action .* call session\.ask_owner/);
 });
 
+test('a Claude launch waits for long Sandboxes work with session.await_compute, and for anything else in its session', () => {
+  const stdin = buildLaunch(claude, request(), safeEnv).stdin;
+  assert.match(
+    stdin,
+    /To wait for long Sandboxes work, call session\.await_compute where it is offered/,
+  );
+  assert.match(stdin, /To wait for anything else, wait inside this session \(a shell sleep loop/);
+});
+
 test('a launch adds no research guidance of its own: source verification arrives in the assignment, and in Pi guidance', () => {
   const producer = request();
   const reviewer = request(true);

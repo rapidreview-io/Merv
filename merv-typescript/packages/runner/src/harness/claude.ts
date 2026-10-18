@@ -308,7 +308,7 @@ export const claudeLauncher: Launcher<Claude> = {
         MCP_TOOL_TIMEOUT: '600000',
         CLAUDE_ENV_FILE: shellEnvFile!,
       },
-      note: 'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for remote work, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.',
+      note: 'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for long Sandboxes work, call session.await_compute where it is offered: the work comes back to you in a later visit once that work has ended. To wait for anything else, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.',
     };
   },
 };
