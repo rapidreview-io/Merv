@@ -129,6 +129,7 @@ export class FleetService implements Fleet {
   private readonly config: z.infer<typeof fleetConfig>;
   private readonly profiles;
   private readonly ready = new Map<string, Map<string, FleetMachine | null> | null | undefined>();
+  private readonly firstReads = new Map<string, Promise<void>>();
   private readonly owners = new Map<string, FleetOwner>();
   private pending?: Promise<boolean>;
   private timer?: ReturnType<typeof setTimeout>;
@@ -205,8 +206,24 @@ export class FleetService implements Fleet {
       Math.min(this.config.globalLimit - open.length, this.limit(projectId, limits) - mine),
     );
   }
+  /** A project's offers are read on its first ask, then by every full pass: a machine asked about
+   *  before the first pass is not reported as unoffered. */
   async describe(projectId: string, key: string) {
-    return this.seen(projectId)?.get(key) ?? null;
+    if (this.seen(projectId) === undefined) await this.firstRead(projectId);
+    return this.ready.get(projectId)?.get(key) ?? null;
+  }
+  private firstRead(projectId: string): Promise<void> {
+    let read = this.firstReads.get(projectId);
+    if (!read)
+      this.firstReads.set(
+        projectId,
+        (read = this.read(projectId).then(
+          (offers) =>
+            void (this.ready.get(projectId) === undefined && this.ready.set(projectId, offers)),
+          () => undefined,
+        )),
+      );
+    return read;
   }
   private seen(projectId: string) {
     if (!this.ready.has(projectId)) this.ready.set(projectId, undefined);
