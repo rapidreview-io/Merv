@@ -79,14 +79,13 @@ async function pooled<T, U>(values: readonly T[], width: number, fn: (value: T) 
   await Promise.all(Array.from({ length: Math.min(width, values.length) }, lane));
   return results;
 }
-/** Not found, with the members the caller most likely meant: those whose path ends with the
- * name asked for or shares its last part. Names are never resolved for it: a member's name is
- * its exact identity. */
+/** Not found, with the members the caller most likely meant: those that share the last part of
+ * the name asked for. Names are never resolved for it: a member's name is its exact identity. */
 function missingMember(files: readonly ArtifactFile[], name: string) {
   const last = (path: string) => path.slice(path.lastIndexOf('/') + 1);
   const likely = files
     .map((file) => file.name)
-    .filter((member) => member.endsWith(`/${name}`) || last(member) === last(name))
+    .filter((member) => last(member) === last(name))
     .slice(0, 5);
   const hint = likely.length
     ? `did you mean ${likely.map((member) => JSON.stringify(member)).join(' or ')}?`
