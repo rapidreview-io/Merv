@@ -202,8 +202,9 @@ Pending messages fence worker writes, including submission. The write's authorit
 check and message enqueue use database transactions, so an older preflight cannot
 authorize a submission past a newly queued message. The next tool call directs the
 worker to read and acknowledge the message before continuing, including before
-further evidence lookups: its `session_message_pending` refusal says nothing of the call was
-applied and carries the oldest waiting message (`details.message`, once a batch of parallel
+further evidence lookups: its `session_message_pending` refusal says what it stopped (the
+whole call before its handler runs, or the write a running call was about to commit) and
+carries the oldest waiting message (`details.message`, once a batch of parallel
 calls), so the worker acknowledges it and sends the call again. Sessions' tool description of
 `session.message` asks a sender for one message with everything rather than several. The worker
 can acknowledge receipt with a reply such as
