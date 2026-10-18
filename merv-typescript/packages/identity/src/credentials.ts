@@ -25,6 +25,17 @@ export interface Credential {
   revokedAt: string | null;
 }
 
+/** One owner's credentials of one kind, as the platform admin reads the ledger. */
+export interface CredentialSummary {
+  owner: string;
+  kind: string;
+  live: number;
+  /** When the next live one expires; null when none expires. */
+  soonestExpiry: string | null;
+  revokedLastDay: number;
+  newestIssued: string;
+}
+
 export interface CredentialInput {
   owner: string;
   subject: string;
@@ -315,6 +326,21 @@ export class CredentialStore {
       find(sql, tokenHash),
     );
     return row && record(row);
+  }
+
+  /** The ledger by owner and kind, never a hash: the platform admin's read, never a tool's. An
+   *  expiry never passes its hard deadline (the table's check), so `live` reads expiry alone. */
+  async summary(): Promise<CredentialSummary[]> {
+    const now = this.now();
+    const live = '(revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?))';
+    return await this.state.read((sql) =>
+      sql.all<CredentialSummary>(
+        `SELECT owner,kind,COUNT(*) FILTER (WHERE ${live}) AS live,MIN(expires_at) FILTER (WHERE ${live}) AS "soonestExpiry",COUNT(*) FILTER (WHERE revoked_at>=?) AS "revokedLastDay",MAX(created_at) AS "newestIssued" FROM identity_credentials GROUP BY owner,kind ORDER BY owner,kind`,
+        now,
+        now,
+        new Date(this.clock() - 86_400_000).toISOString(),
+      ),
+    );
   }
 
   /** Idempotent; keeps the first revocation time. A hash never issued or adopted returns undefined. */
