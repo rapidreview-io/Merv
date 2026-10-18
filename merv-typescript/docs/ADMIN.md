@@ -36,9 +36,9 @@ loaded here leaves its facts out.
   available; schedules; budget caps; Fleet daily spend and model tokens.
 - `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
   `POST /admin/credits/grants/:id/revoke` — credit assignment through `CreditService`, each
-  recorded in the admin audit log. A grant names its `validFrom`, so a retry repeats its terms
-  exactly and replays; it answers `{ id }`. The admin checks only the body's shape: Sandboxes
-  refuses the values (`sandbox_validation`).
+  recorded in the admin audit log and answered with the `{ id }` it wrote. A grant names its
+  `validFrom`, so a retry repeats its terms exactly and replays. The admin checks only the body's
+  shape: Sandboxes refuses the values (`sandbox_validation`).
 - `GET /admin/credentials` — by purpose (Pi agents, Fleet agents, Fleet machines, sandbox
   providers, platform services): env name, set or missing, an 8-hex SHA-256 fingerprint, last
   change, last success and last failure, `dead` once Fleet's relay saw the provider reject the key
