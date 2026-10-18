@@ -464,10 +464,11 @@ export interface ThreadQuestion {
 }
 /** A leased worker's queue (`session.messages`): what waits for its acknowledgement. */
 export interface WorkerQueue {
-  /** The messages to its thread awaiting its acknowledgement, oldest first; with `all`, every
-   *  message to its thread, the acknowledged ones with their replies. */
+  /** The messages to its thread awaiting its acknowledgement, oldest first, and in a visit that
+   *  did not resume its thread's conversation those earlier visits acknowledged; with `all`,
+   *  every message to its thread, the acknowledged ones with their replies. */
   messages: SessionMessage[];
-  /** How many messages to its thread it has acknowledged, which only `all` lists. */
+  /** How many messages to its thread were acknowledged, by this visit or an earlier one. */
   acknowledged: number;
   /** What to do with the messages that wait, while any does. */
   next?: string;

@@ -1776,6 +1776,47 @@ test('a visit’s message check reads only its own project’s pending messages 
   assert.ok(threads < 10, `the check read ${threads} thread rows`);
 });
 
+test('a visit that starts afresh lists what its key’s earlier visits acknowledged; one that resumes has read it', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const queue = async (offered: { input: { secret: string } }) =>
+    (
+      await f.app.ctx.tools.invoke(
+        'session.messages',
+        await f.sessions.authenticate(offered.input.secret),
+        {},
+      )
+    ).value as WorkerQueue;
+  const first = await f.offer(unit.id);
+  const sent = await f.sessions.messaging.message(f.owner, {
+    threadId: first.session.threadId,
+    body: 'Use the 2025 holdout.',
+    requestId: 'holdout',
+  });
+  await f.app.ctx.tools.invoke(
+    'session.message.ack',
+    await f.sessions.authenticate(first.input.secret),
+    { messageId: sent.id, reply: 'Switching to 2025.', requestId: 'holdout-ack' },
+  );
+  // What a visit acknowledges leaves its own queue, which only counts it.
+  assert.deepEqual(await queue(first), { messages: [], acknowledged: 1 });
+  await f.release(first.session);
+  // Nothing delivered, the key's next visit is a new agent, which has not read the correction.
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.continuity?.resume, undefined);
+  const fresh = await queue(second);
+  assert.deepEqual(
+    [fresh.messages.map((item) => [item.id, item.reply]), fresh.acknowledged, fresh.next],
+    [[[sent.id, 'Switching to 2025.']], 1, undefined],
+  );
+  // A visit that resumes the conversation it was read in leaves it out.
+  await f.release(second.session);
+  await f.keep(second.session, second.control);
+  const third = await f.offer(unit.id);
+  assert.equal(third.session.continuity?.resume?.sessionId, second.session.id);
+  assert.deepEqual(await queue(third), { messages: [], acknowledged: 1 });
+});
+
 test('the sweep reads a bounded page of waiting questions a pass, and every one of them in turn', async (t) => {
   const f = await fixture(t);
   const leased = f.sessions as unknown as LeasedSessions;

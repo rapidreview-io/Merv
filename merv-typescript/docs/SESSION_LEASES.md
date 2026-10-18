@@ -193,7 +193,8 @@ the retained message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
 the ones awaiting its acknowledgement with `session.messages` (`{messages, acknowledged,
-next}`: `all: true` lists the acknowledged ones too, with their replies) and acknowledges
+next}`: a visit that does not resume its thread's conversation also gets those earlier visits
+acknowledged, and `all: true` lists every acknowledged one, with their replies) and acknowledges
 each with `session.message.ack`, optionally including a reply. People, and Pi, read the thread's history with
 `session.thread_messages` to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
 that the requested correction was incorporated or independently reviewed.

@@ -611,7 +611,8 @@ export interface SessionMessaging {
   registerResponder(responder: QuestionResponder): () => Promise<void>;
   resolve(caller: Caller, input: QuestionResolution): Promise<ThreadQuestion>;
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
-  /** A leased worker's queue: what awaits its acknowledgement, or with `all` every message. */
+  /** A leased worker's queue: what awaits its acknowledgement (and, in a visit that starts
+   *  afresh, what earlier visits acknowledged), or with `all` every message. */
   messages(caller: Caller, input?: { sessionId?: string; all?: boolean }): Promise<WorkerQueue>;
   /** A thread's messages and questions: anyone who may read its work, never a leased worker. */
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;

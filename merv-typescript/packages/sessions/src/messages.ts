@@ -77,7 +77,7 @@ const FOR_WORK = "inquiry_role IS DISTINCT FROM 'question'";
 const SHOWN_MS = 60_000;
 /** What a worker's queue tells it to do with a message that waits, by its visit's kind. */
 const QUEUE_NEXT = {
-  work: 'Acknowledge each message here with session.message.ack (messageId, a stable requestId, and a reply saying what you will do) before any other Merv call: until you do, every other call is refused with session_message_pending.',
+  work: 'Acknowledge each message here not yet acknowledged (acknowledgedAt null) with session.message.ack (messageId, a stable requestId, and a reply saying what you will do) before any other Merv call: until you do, every other call is refused with session_message_pending.',
   inquiry:
     'Answer the question with session.message.ack (messageId, reply, requestId): that reply is your answer, and it ends this visit.',
 };
@@ -683,8 +683,9 @@ export class SessionMessages {
     });
   }
   /**
-   * A leased worker's queue: the messages to its thread's that await its acknowledgement, or
-   * with `all` every one, its acknowledged ones with their replies. A person reads a thread.
+   * A leased worker's queue: the messages to its thread's that await its acknowledgement and,
+   * in a visit that did not resume its thread's conversation, those earlier visits acknowledged,
+   * or with `all` every one, its acknowledged ones with their replies. A person reads a thread.
    */
   async messages(
     caller: Caller,
@@ -711,10 +712,16 @@ export class SessionMessages {
       const rows = await this.addressed(tx, session);
       const waiting = rows.filter((row) => row.acknowledged_at === null);
       for (const row of waiting) this.show(session.id, row.id);
+      // A visit that starts its conversation afresh has read nothing an earlier one acknowledged.
+      const fresh = !session.continuity?.resume;
+      const listed = rows.filter(
+        (row) =>
+          input.all ||
+          row.acknowledged_at === null ||
+          (fresh && row.acknowledged_at < session.createdAt),
+      );
       return {
-        messages: (input.all ? rows : waiting).map((item) =>
-          this.publicMessage(item, session.instanceId),
-        ),
+        messages: listed.map((item) => this.publicMessage(item, session.instanceId)),
         acknowledged: rows.length - waiting.length,
         ...(waiting.length && { next: QUEUE_NEXT[session.kind] }),
       };

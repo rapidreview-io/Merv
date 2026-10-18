@@ -142,7 +142,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.messages',
         description:
-          "Assigned worker only: read your queue, the messages to your thread that await your acknowledgement, oldest first, those sent to its earlier visits included; it takes no arguments. acknowledged counts the messages you have acknowledged, which all: true lists too, with their replies. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
+          "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; it takes no arguments. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
         inputSchema: z
           .object({
