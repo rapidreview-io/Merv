@@ -480,6 +480,24 @@ export interface ThreadMessages {
   messages: SessionMessage[];
   questions: ThreadQuestion[];
 }
+/**
+ * A question an agent on a work item asked its owner with session.ask_owner, and the message
+ * that answered it, as Sessions recorded both: frozen into every later assignment of that work.
+ */
+export interface OwnerAnswer {
+  questionId: string;
+  /** The asking thread, and the stage and role it works in. */
+  threadId: string;
+  state: string;
+  role: string;
+  /** The work's revision when it was asked. */
+  revision: number;
+  askedAt: string;
+  question: string;
+  answeredAt: string;
+  messageId: string;
+  answer: string;
+}
 
 export interface UsageTotals {
   sessions: number;

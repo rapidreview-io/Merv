@@ -55,6 +55,7 @@ import type {
   UsageTotals,
   WorkerQueue,
   LeaseLiveness,
+  OwnerAnswer,
   SessionPlatform,
   SessionRole,
   SessionWorkspaceRecord,
@@ -88,6 +89,7 @@ export type {
   ThreadMessages,
   InquiryStatus,
   MessageInquiry,
+  OwnerAnswer,
   ThreadInquiry,
   ThreadQuestion,
   ThreadView,
@@ -128,7 +130,8 @@ interface SessionVisit {
   outcome?: SessionOutcome | null;
   /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
   deferral?: SessionDeferral | null;
-  assignment: WorkflowAssignment;
+  /** The work's assignment as Workflows gave it, with what its owner answered on it so far. */
+  assignment: WorkflowAssignment & { ownerAnswers?: OwnerAnswer[] };
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;

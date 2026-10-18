@@ -1512,6 +1512,63 @@ test('a stored transcript’s long text is cut a whole character at a time', asy
   });
 });
 
+test('every later visit to the work, its reviewer’s too, is offered what its owner answered, with the assignment', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  // Nothing answered yet: the assignment is Workflows' own.
+  assert.equal(Object.hasOwn(first.session.assignment, 'ownerAnswers'), false);
+  const worker = await f.sessions.authenticate(first.input.secret);
+  const question = 'May the final evaluation reuse the native final suite?';
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question });
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const answer = 'Yes: reuse the native final suite, and say so in the report.';
+  const sent = (
+    await f.ok('POST', `/sessions/threads/${first.session.threadId}/messages`, f.token, {
+      body: answer,
+      requestId: 'answer',
+    })
+  ).message as SessionMessage;
+  const answered = (assignment: Session['assignment']) =>
+    assignment.ownerAnswers?.map((item) => [
+      item.threadId,
+      item.state,
+      item.role,
+      item.revision,
+      item.question,
+      item.messageId,
+      item.answer,
+      typeof item.askedAt === 'string' && typeof item.answeredAt === 'string',
+    ]);
+  const expected = [
+    [
+      first.session.threadId,
+      'working',
+      'producer',
+      first.session.expectedRevision,
+      question,
+      sent.id,
+      answer,
+      true,
+    ],
+  ];
+  const second = await f.offer(unit.id, 'runner-b');
+  assert.deepEqual(answered(second.session.assignment), expected);
+  await f.release(second.session);
+  // A reviewer reads no other thread's messages: the answer reaches it with its assignment.
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-c');
+  assert.equal(review.session.role, 'reviewer');
+  assert.notEqual(review.session.threadId, first.session.threadId);
+  assert.deepEqual(answered(review.session.assignment), expected);
+  const reviewer = await f.sessions.authenticate(review.input.secret);
+  const read = (
+    await f.app.ctx.tools.invoke('workflow.assignment', reviewer, { instanceId: unit.id })
+  ).value as Session['assignment'];
+  assert.deepEqual(answered(read), expected);
+});
+
 test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {
   const f = await fixture(t);
   const leased = f.sessions as unknown as LeasedSessions;

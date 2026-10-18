@@ -238,6 +238,12 @@ question), and its next visit, which resumes the same conversation, reads the an
 message before anything else. A visit that keeps no conversation (its workflow's continuity
 key is `null`) is not offered the tool, nor told of it; a reviewer keeps its round's.
 
+Every later offer of that work item, on any of its threads, carries what its owner answered in
+its frozen assignment as `ownerAnswers`: the ten newest answered questions, each with the asking
+thread's stage and role, the question, the answering message and when. A reviewer, or a later
+stage that starts afresh, reads no other thread's messages, so this is how it learns the
+decisions that bind the work from Merv rather than from the asker's own copy.
+
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then
 create replacement work with better instructions. Retain earlier evidence and

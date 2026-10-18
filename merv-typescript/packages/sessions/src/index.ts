@@ -1127,8 +1127,14 @@ export class LeasedSessions implements Sessions {
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
     if (!dispatched && workspace.mode !== 'none')
       await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx);
+    // What the owner answered on this work, from any of its threads, travels with the assignment:
+    // a reviewer or a later stage reads the decisions that bind it, not the asker's copy of them.
+    const ownerAnswers = await this.messaging.ownerAnswers(tx, caller.projectId, input.instanceId);
+    const assignment = ownerAnswers.length
+      ? { ...frozen.assignment, ownerAnswers }
+      : frozen.assignment;
     for (const packet of [
-      frozen.assignment,
+      assignment,
       frozen.execution.policy,
       frozen.execution.references,
       frozen.lease.receipt,
@@ -1187,6 +1193,7 @@ export class LeasedSessions implements Sessions {
       outcome: null,
       ...(thread.continuity && { continuity: thread.continuity }),
       ...frozen,
+      assignment,
     };
     return await this.visits.insert(session, owner, input, fingerprint, caller, tx);
   }

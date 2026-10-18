@@ -19,6 +19,7 @@ import type {
   QuestionResolution,
   InquirySession,
   InquiryStatus,
+  OwnerAnswer,
   Session,
   SessionMessage,
   SessionMessageInput,
@@ -764,6 +765,49 @@ export class SessionMessages {
         questions: questions.map((row) => question(row, standing.has(row.id))),
       };
     });
+  }
+  /**
+   * What the owner answered on one work item: the ten newest questions its agents asked with
+   * session.ask_owner, on any of its threads, that a message answered, with that answer, oldest
+   * first. A reviewer or a later stage of the work is offered them with its assignment, since it
+   * reads no other thread's messages.
+   */
+  async ownerAnswers(
+    tx: Transaction,
+    projectId: string,
+    instanceId: string,
+  ): Promise<OwnerAnswer[]> {
+    const rows = await tx.all<{
+      id: string;
+      thread_id: string;
+      state: string;
+      role: string;
+      revision: number | string;
+      asked_at: string;
+      question: string;
+      answered_at: string;
+      answer_message_id: string;
+      body: string;
+    }>(
+      `SELECT q.id,q.thread_id,t.state,t.role,q.revision,q.asked_at,q.question,q.answered_at,q.answer_message_id,m.body
+        FROM session_questions q JOIN session_threads t ON t.id=q.thread_id JOIN session_messages m ON m.id=q.answer_message_id
+        WHERE q.project_id=? AND q.instance_id=? AND q.answered_at IS NOT NULL
+        ORDER BY q.answered_at DESC,q._merv_rowid DESC LIMIT 10`,
+      projectId,
+      instanceId,
+    );
+    return rows.reverse().map((row) => ({
+      questionId: row.id,
+      threadId: row.thread_id,
+      state: row.state,
+      role: row.role,
+      revision: Number(row.revision),
+      askedAt: row.asked_at,
+      question: row.question,
+      answeredAt: row.answered_at,
+      messageId: row.answer_message_id,
+      answer: row.body,
+    }));
   }
   async acknowledgeMessage(
     caller: Caller,
