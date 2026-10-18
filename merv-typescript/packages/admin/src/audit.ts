@@ -1,4 +1,4 @@
-import { newId, type Data, type State, type Transaction } from '@merv/contracts';
+import { newId, type Data, type State } from '@merv/contracts';
 
 /** Published migrations: production pins each text by its digest, never edit one. */
 export const auditMigrations = {
@@ -28,9 +28,9 @@ export interface AuditEntry {
 export class AdminAudit {
   constructor(private readonly state: State) {}
 
-  async record(entry: AuditEntry, tx?: Transaction): Promise<void> {
-    const write = async (sql: Transaction) =>
-      await sql.run(
+  async record(entry: AuditEntry): Promise<void> {
+    await this.state.transaction((sql) =>
+      sql.run(
         'INSERT INTO admin_audit(id,at,issuer,subject,action,target,detail_json) VALUES(?,?,?,?,?,?,?)',
         newId('audit'),
         new Date().toISOString(),
@@ -39,17 +39,7 @@ export class AdminAudit {
         entry.action,
         entry.target,
         JSON.stringify(entry.detail ?? {}),
-      );
-    await (tx ? write(tx) : this.state.transaction(write));
-  }
-
-  async recent(limit = 200) {
-    return await this.state.read(
-      async (sql) =>
-        await sql.all<{ at: string; subject: string; action: string; target: string }>(
-          'SELECT at,subject,action,target FROM admin_audit ORDER BY at DESC LIMIT ?',
-          limit,
-        ),
+      ),
     );
   }
 }
