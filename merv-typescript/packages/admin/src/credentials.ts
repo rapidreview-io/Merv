@@ -45,7 +45,7 @@ export interface AdminCredential {
     status: number | null;
     code: string | null;
   } | null;
-  /** The provider refused this key as invalid since it last changed. */
+  /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
   dead: boolean;
 }
 export interface AdminCredentialGroup {
@@ -104,16 +104,9 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
       credentials: [],
     };
     groups.push(group);
-    const reference = provider.credential_ref;
-    if (reference?.startsWith('env:'))
-      named.push({
-        ref: {
-          plugin: provider.plugin,
-          field: `providers.${provider.name}.credential`,
-          env: reference.slice(4),
-        },
-        group,
-      });
+    const { plugin, name, credential_env: key } = provider;
+    if (key)
+      named.push({ ref: { plugin, field: `providers.${name}.credential`, env: key }, group });
   }
   const digests = new Map<string, string>();
   for (const { ref } of named) {
@@ -146,15 +139,6 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
         .sort((a, b) => (a[key]! < b[key]! ? 1 : -1))[0];
     const ok = latest('lastOkAt');
     const failed = latest('lastFailureAt');
-    const lastFailure = failed
-      ? {
-          at: failed.lastFailureAt!,
-          relay: failed.relay,
-          model: failed.model,
-          status: failed.lastFailureStatus,
-          code: failed.lastFailureCode,
-        }
-      : null;
     return {
       ...ref,
       set: !!digest,
@@ -167,12 +151,19 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
       firstSeen: history[0]?.first_seen ?? null,
       lastChanged,
       lastOk: ok ? { at: ok.lastOkAt!, relay: ok.relay, model: ok.model } : null,
-      lastFailure,
+      lastFailure: failed
+        ? {
+            at: failed.lastFailureAt!,
+            relay: failed.relay,
+            model: failed.model,
+            status: failed.lastFailureStatus,
+            code: failed.lastFailureCode,
+          }
+        : null,
       dead:
-        !!lastFailure &&
-        (lastFailure.status === 401 || lastFailure.code === 'invalid_api_key') &&
-        !(ok && ok.lastOkAt! > lastFailure.at) &&
-        !(lastChanged && lastChanged > lastFailure.at),
+        !!failed?.rejected &&
+        !(ok && ok.lastOkAt! > failed.lastFailureAt!) &&
+        !(lastChanged && lastChanged > failed.lastFailureAt!),
     };
   };
   for (const { ref, group } of named) group.credentials.push(credential(ref));

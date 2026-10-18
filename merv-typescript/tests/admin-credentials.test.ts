@@ -157,7 +157,11 @@ test('GET /admin/credentials says which credential serves which purpose and neve
   await call();
   await call();
   let outcomes = await fleet.relayOutcomes();
-  for (let tries = 0; tries < 100 && !(outcomes[0]?.ok && outcomes[0]?.failed); tries++) {
+  for (
+    let tries = 0;
+    tries < 100 && !(outcomes[0]?.lastOkAt && outcomes[0]?.lastFailureAt);
+    tries++
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 10));
     outcomes = await fleet.relayOutcomes();
   }
@@ -169,12 +173,9 @@ test('GET /admin/credentials says which credential serves which purpose and neve
           relay: 'codex',
           keyEnv: 'ADMIN_TEST_SHARED',
           model: 'gpt-6-luna',
-          day: new Date().toISOString().slice(0, 10),
-          ok: 1,
-          tokens: 10,
-          failed: 1,
           lastFailureStatus: 401,
           lastFailureCode: null,
+          rejected: true,
         },
         true,
         true,
@@ -219,7 +220,7 @@ test('GET /admin/credentials says which credential serves which purpose and neve
             name: 'cf',
             plugin: 'cloudflare',
             access: 'tunnel',
-            credential: 'env:ADMIN_TEST_CF',
+            credential: 'env://ADMIN_TEST_CF',
             settings: { account_id: ACCOUNT },
           },
         ],
@@ -327,16 +328,17 @@ test('GET /admin/credentials says which credential serves which purpose and neve
       ['nisa', 'keyEnv', false, null],
     ],
   );
-  // A host instance names where its key is read; its health asks Cloudflare about the native token.
+  // A host instance names where its key is read, in Sandboxes' own reference grammar; its health
+  // asks Cloudflare about the native token.
   assert.deepEqual(
-    [cf!.provider!.health, cf!.provider!.health_reason, cf!.provider!.credential_ref],
+    [cf!.provider!.health, cf!.provider!.health_reason, cf!.provider!.credential_env],
     [
       {
         status: 'degraded',
         message: 'bridge worker 1; Cloudflare rejected the native API token (401)',
       },
       'credential_rejected',
-      'env:ADMIN_TEST_CF',
+      'ADMIN_TEST_CF',
     ],
   );
   assert.deepEqual(
