@@ -28,7 +28,7 @@ const includesAll = (text: string, parts: string[]) => {
 
 test('the plan template: question, flowchart, arms table, measure, threshold, budget, risks', () => {
   const design = recipe('experiment.design');
-  assert.equal(design.version, 12);
+  assert.equal(design.version, 13);
   includesAll(design.recipe.outputInstructions, [
     'about one screen',
     'appendix artifact',
@@ -48,7 +48,7 @@ test('the plan template: question, flowchart, arms table, measure, threshold, bu
 
 test('the report template stands alone: answer, results table, diagram, meaning, limits, evidence', () => {
   const execute = recipe('experiment.execute');
-  assert.equal(execute.version, 12);
+  assert.equal(execute.version, 14);
   includesAll(execute.recipe.outputInstructions, [
     'stands alone',
     'one to two screens',
@@ -68,7 +68,7 @@ test('the report template stands alone: answer, results table, diagram, meaning,
 
 test('experiment@43 writes the one-page report with the report tools, editing one draft across rounds', () => {
   assert.equal(REPORTED_EXECUTE_RECIPE.name, 'experiment.execute');
-  assert.equal(REPORTED_EXECUTE_RECIPE.version, 13);
+  assert.equal(REPORTED_EXECUTE_RECIPE.version, 15);
   includesAll(REPORTED_EXECUTE_RECIPE.recipe.outputInstructions, [
     'report.open',
     'prefilled from the approved plan',
