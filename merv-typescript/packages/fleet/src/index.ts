@@ -33,6 +33,7 @@ import type {
   FleetIntent,
   FleetMachine,
   FleetOwner,
+  FleetPersonDay,
   FleetProjectLimit,
   FleetRequest,
   FleetRuntimeHandle,
@@ -283,27 +284,46 @@ export class FleetService implements Fleet {
     return this.projectLimit(caller);
   }
   /**
-   * What a person's machines have cost today (UTC) at the prices stamped when Fleet reserved
-   * them, each from its request to its release (or now). Time in the queue counts, so it errs
-   * high; a request that never had a machine costs nothing. Reads the database only.
+   * What each person's machines have cost today (UTC), or only `person`'s, at the prices stamped
+   * when Fleet reserved them, each from its request to its release (or now). Time in the queue
+   * counts, so it errs high; a request that never had a machine costs nothing. Reads the database only.
    */
-  private async spentToday(person: string, sql: Sql): Promise<number> {
+  private async spentToday(sql: Sql, person?: string): Promise<Map<string, number>> {
     const now = this.clock();
     const day = now - (now % 86_400_000);
     // A machine of today can be older: a day in the queue, a day of work and a lease to stop.
     const rows = await sql.all<Row>(
-      "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
-      person,
+      `SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person' ${person ? '=?' : 'IS NOT NULL'} AND created_at>=?`,
+      ...(person ? [person] : []),
       new Date(day - 3 * 86_400_000).toISOString(),
     );
-    let usd = 0;
+    const usd = new Map<string, number>();
     for (const a of rows.map(decode)) {
       if (!a.runtime) continue;
       const from = Math.max(day, Date.parse(a.createdAt));
       const to = a.phase === 'released' ? Date.parse(a.updatedAt) : now;
-      if (to > from) usd += ((to - from) / 3_600_000) * (a.usdPerHour ?? 0);
+      if (to > from)
+        usd.set(
+          a.person!,
+          (usd.get(a.person!) ?? 0) + ((to - from) / 3_600_000) * (a.usdPerHour ?? 0),
+        );
     }
     return usd;
+  }
+  async peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]> {
+    const meter = [...this.owners.values()].find((owner) => owner.modelTokens);
+    return this.state.read(async (sql) => {
+      const usd = await this.spentToday(sql);
+      const days: FleetPersonDay[] = [];
+      for (const person of persons)
+        days.push({
+          person,
+          usd: usd.get(person) ?? 0,
+          usdCap: this.config.dailyUsdPerPerson ?? null,
+          tokens: (await meter?.modelTokens!(person, sql)) ?? null,
+        });
+      return days;
+    });
   }
   /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
   private stale(a: FleetAllocation): boolean {
@@ -495,7 +515,7 @@ export class FleetService implements Fleet {
       const person = (await owner.payer?.(source, input.owner.id, tx)) ?? undefined;
       if (person && this.config.dailyUsdPerPerson !== undefined)
         check(
-          (await this.spentToday(person, tx)) < this.config.dailyUsdPerPerson,
+          ((await this.spentToday(tx, person)).get(person) ?? 0) < this.config.dailyUsdPerPerson,
           'fleet_compute_cap',
           "Today's compute is used up",
           429,
@@ -722,7 +742,7 @@ export class FleetService implements Fleet {
           (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId, caps)
         ) {
           // Its person may have spent today's compute while it waited.
-          if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {
+          if (capped(a) && ((await this.spentToday(tx, a.person)).get(a.person!) ?? 0) >= cap!) {
             a.error = 'person_capped';
             a.intent = 'stop';
             a.phase = 'released';

@@ -317,6 +317,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       who,
     );
   }
+  async modelTokens(person: string, sql: Sql) {
+    const budget = await budgetIn(sql, person, this.config.dailyTokensPerPerson);
+    return { used: budget.usedToday, limit: budget.tokens };
+  }
   /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
    *  machine was rented for; an inquiry visit's, to the person who asked, within its budget. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {

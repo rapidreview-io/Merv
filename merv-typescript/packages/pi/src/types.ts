@@ -1,5 +1,5 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
-import type { ModelRelayHandle } from '@merv/fleet/types';
+import type { ModelRelayHandle, ModelTokens } from '@merv/fleet/types';
 import type { PiModelConfig } from './models.js';
 import type { PiProfile, PiProfiledCreate, PiStoredProfile } from './profile-types.js';
 import type {
@@ -264,6 +264,8 @@ export interface PiRuntime extends Pi {
   /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it
    *  public and closes it with the mount. */
   modelRelay(): ModelRelayHandle;
+  /** For the platform admin only, never a tool: each of `persons`' Agent tokens today (UTC). */
+  tokensToday(persons: readonly string[]): Promise<(ModelTokens & { person: string })[]>;
 }
 declare module 'cordis' {
   interface Context {

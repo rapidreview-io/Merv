@@ -1,4 +1,4 @@
-import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
+import type { Caller, DelegationSource, Sql, Transaction } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
 
 export type FleetPhase =
@@ -117,6 +117,22 @@ export interface FleetOwner {
   bootstrap(allocation: FleetAllocation): Promise<string>;
   /** finished means all required capture/checkpoint work has been retained. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
+  /** The model tokens this owner charges `person` for today (UTC): read for the platform admin. */
+  modelTokens?(person: string, sql: Sql): Promise<ModelTokens>;
+}
+/** A person's model tokens today (UTC) and their daily limit. */
+export interface ModelTokens {
+  used: number;
+  limit: number;
+}
+/** A person's Fleet day so far (UTC), keyed as `personKey` keys them. */
+export interface FleetPersonDay {
+  person: string;
+  /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. */
+  usd: number;
+  usdCap: number | null;
+  /** Null when no owner meters model tokens. */
+  tokens: ModelTokens | null;
 }
 /** What a worker's model calls may do, read again about once a second while one streams. */
 export interface ModelRelayGrant {
@@ -269,6 +285,8 @@ export interface Fleet {
   modelRelay<G extends ModelRelayGrant, N extends string, R>(
     config: ModelRelayConfig<G, N, R>,
   ): ModelRelayHandle;
+  /** For the platform admin only, never a tool: each of `persons`' day so far. */
+  peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]>;
 }
 declare module 'cordis' {
   interface Context {
