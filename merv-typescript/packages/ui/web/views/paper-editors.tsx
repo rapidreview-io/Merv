@@ -118,11 +118,13 @@ export function SectionEditor({
   const [content, setContent] = useState(section?.content ?? '');
   const command = useCommand<PaperRevision>({
     tool: 'paper.patch',
+    // Later than the one edited, not just the next: the paper merges an edit made against an
+    // earlier revision with those written since.
     validate: (value) =>
       !!value &&
       value.projectId === original.projectId &&
       value.kind === original.kind &&
-      value.revision === original.revision + 1,
+      value.revision > original.revision,
     onSuccess: () => {
       onSaved();
       onDone();
