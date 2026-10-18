@@ -13,6 +13,7 @@ import type { ToolGrant, ToolPolicy } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
+  forRead,
   inTransaction,
   newId,
   ROLES,
@@ -32,6 +33,7 @@ import {
   type SessionAuthority,
   type ConversationAuthority,
   type ManagedRunnerAuthority,
+  type PlatformAuthority,
 } from '@merv/contracts';
 import { identityValid, LIVE_OPERATOR, Memberships } from './memberships.js';
 import { UserKeys } from './user-keys.js';
@@ -88,6 +90,8 @@ class AuthoritySlot<T> {
     );
   }
 }
+/** The actor every platform caller acts as: a reader that no actor row backs. */
+export const PLATFORM_ACTOR = 'actor_platform';
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   readonly members: Memberships;
@@ -109,6 +113,11 @@ export class ProjectScope implements Scope {
     'managed',
     'Managed runner',
     'managed_runner_unavailable',
+  );
+  private platform = new AuthoritySlot<PlatformAuthority>(
+    'platform',
+    'Platform',
+    'platform_unavailable',
   );
   constructor(
     private state: State,
@@ -221,6 +230,18 @@ export class ProjectScope implements Scope {
       ? await this.userKeys.caller(principal, projectId, decide)
       : await this.members.caller(principal, projectId, decide);
   }
+  async platformCaller(principal: Principal, projectId?: string): Promise<Caller> {
+    const { user, expiresAt } = await forRead(this.state, (tx) =>
+      this.members.human(principal, tx),
+    );
+    check(
+      typeof projectId === 'string' && projectId.length > 0,
+      'project_required',
+      'Select a project to read',
+    );
+    const { issuer, subject } = user;
+    return { actorId: PLATFORM_ACTOR, projectId, platform: { issuer, subject, expiresAt } };
+  }
   async projects(principal: Principal) {
     return principal?.kind === 'key'
       ? await this.userKeys.projects(principal)
@@ -235,12 +256,21 @@ export class ProjectScope implements Scope {
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void {
     return this.managed.install(authority);
   }
+  registerPlatformAuthority(authority: PlatformAuthority): () => void {
+    return this.platform.install(authority);
+  }
   async delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource> {
     caller = structuredClone(caller);
     check(
       !caller.managed,
       'managed_runner_forbidden',
       'A managed runner cannot delegate authority',
+      403,
+    );
+    check(
+      !caller.platform,
+      'platform_forbidden',
+      'A platform administrator only reads: it starts no work',
       403,
     );
     check(
@@ -516,6 +546,22 @@ export class ProjectScope implements Scope {
     tx?: Transaction,
   ): Promise<Decision> {
     caller = structuredClone(caller);
+    check(
+      [
+        caller.human,
+        caller.credentialId,
+        caller.key,
+        caller.session,
+        caller.managed,
+        caller.conversation,
+        caller.service,
+        caller.platform,
+      ].filter((value) => value !== undefined).length <= 1,
+      'forbidden',
+      'A caller cannot combine human, actor-credential and user-key authority',
+      403,
+    );
+    if (caller.platform) return await this.platformRead(caller, permission, tx);
     const registration = this.sessions.token;
     const managedRegistration = this.managed.token;
     const conversationRegistration = this.conversations.token;
@@ -551,20 +597,6 @@ export class ProjectScope implements Scope {
         row,
         caller.human || caller.key ? 'membership_required' : 'forbidden',
         'Actor cannot access this project',
-        403,
-      );
-      check(
-        [
-          caller.human,
-          caller.credentialId,
-          caller.key,
-          caller.session,
-          caller.managed,
-          caller.conversation,
-          caller.service,
-        ].filter((value) => value !== undefined).length <= 1,
-        'forbidden',
-        'A caller cannot combine human, actor-credential and user-key authority',
         403,
       );
       let source: DelegationSource | undefined;
@@ -734,6 +766,31 @@ export class ProjectScope implements Scope {
     const allowed = permits(value.actor.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
+  }
+  /** A platform caller's decision, which rests on no actor row and is never kept: its provider
+   *  vouches for the person, in a project that exists, to read alone. */
+  private async platformRead(
+    caller: Caller,
+    permission: Permission,
+    tx?: Transaction,
+  ): Promise<Decision> {
+    const registration = this.platform.token;
+    check(permission === 'read', 'platform_read_only', 'Platform administrators only read', 403);
+    check(
+      caller.actorId === PLATFORM_ACTOR &&
+        identityValid(caller.platform!, this.time()) &&
+        (await this.platform.provider().vouches(caller)),
+      'forbidden',
+      'Live platform administrator authority is required',
+      403,
+    );
+    const known = await within(this.state, tx, (sql) =>
+      sql.get('SELECT 1 FROM projects WHERE id=?', caller.projectId),
+    );
+    check(known, 'not_found', 'Project not found', 404);
+    this.platform.fence(registration);
+    const reader = { id: PLATFORM_ACTOR, name: 'Platform administrator', role: 'reader' } as const;
+    return { actor: { ...reader, projectId: caller.projectId, active: true } };
   }
   /** Internal eligibility lookup; inspecting an actor does not assume that actor's authority.
    *  With `{ except }`, whether any actor but those, and no worker session's, is eligible. */

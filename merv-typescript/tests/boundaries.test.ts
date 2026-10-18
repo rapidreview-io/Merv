@@ -935,6 +935,13 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
+        assert.deepEqual(actualProvided, ['customerExperiments']);
+        return;
+      }
+      if (name.text === 'merv-admin') {
+        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
+        // The admin routes, its audit's state, and the platform authority and caller rules.
+        assert.deepEqual(sorted(declared), ['api', 'scope', 'state', 'tools']);
         assert.deepEqual(actualProvided, []);
         return;
       }
