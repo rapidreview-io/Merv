@@ -17,7 +17,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import type { ApiError } from './api';
+import { readOnly, type ApiError } from './api';
 import {
   EmptyState,
   KindLabel,
@@ -460,7 +460,7 @@ export function ListPage<T extends { id: string }>({
     last.current = open;
   }, [open]);
   const control = (key: string, item: Creation) =>
-    item.shown === false ? null : (
+    item.shown === false || readOnly() ? null : (
       <button
         type="button"
         data-opens={key}
@@ -650,12 +650,31 @@ const Staged = ({ staged, children }: { staged: boolean; children: ReactNode }) 
  * The controls that narrow a list, behind one word at the end of the title line. The word
  * opens them in a panel under itself, which a press outside it or Escape shuts; while the
  * list is narrowed away from how it opens the word is lit and `Reset` stands beside it.
+ * `/` anywhere but in a field opens it with the cursor in its search.
  */
-function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
+export function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const seek = useRef(false);
   // Shutting the panel is all its Escape means: the page keeps what else is open.
   useDismiss(open, box, () => setOpen(false), true);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || typing(event.target)) return;
+      event.preventDefault();
+      seek.current = true;
+      setOpen(true);
+      // Already open, the panel takes the cursor now.
+      box.current?.querySelector<HTMLInputElement>('.narrowing-panel input')?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    if (!open || !seek.current) return;
+    seek.current = false;
+    box.current?.querySelector<HTMLInputElement>('input')?.focus();
+  }, [open]);
   return (
     <div className="narrowing" ref={box}>
       <button

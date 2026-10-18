@@ -12,7 +12,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
-import { useTool, type ApiError } from './api';
+import { readOnly, useTool, type ApiError } from './api';
 import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
 import {
   capital,
@@ -235,6 +235,7 @@ export function ConfirmAction({
   note,
   danger = true,
   ready = true,
+  opened = false,
   onToggle,
   onConfirm,
   children,
@@ -253,12 +254,14 @@ export function ConfirmAction({
   danger?: boolean;
   /** Whether what the guard asks for is given: until it is, the act cannot be confirmed. */
   ready?: boolean;
+  /** Open on arrival, where a menu already chose the act and the guard is its next step. */
+  opened?: boolean;
   /** Said as the guard opens and closes, so a caller can draw only the open one. */
   onToggle?(open: boolean): void;
   onConfirm(): void | Promise<boolean | void>;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(opened);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (open) box.current?.querySelector('button')?.focus();
@@ -267,6 +270,8 @@ export function ConfirmAction({
     setOpen(next);
     onToggle?.(next);
   };
+  // The drill-in reads: no verb is drawn there, guarded or not.
+  if (readOnly()) return null;
   if (!open)
     return (
       <button className="btn" onClick={() => show(true)}>
@@ -800,11 +805,12 @@ export const Submit = ({
   retry?: boolean;
   disabled?: boolean;
   saving?: string;
-}) => (
-  <button type="submit" className="btn btn--primary" disabled={busy || disabled}>
-    {busy ? saving : retry ? 'Retry same request' : label}
-  </button>
-);
+}) =>
+  readOnly() ? null : (
+    <button type="submit" className="btn btn--primary" disabled={busy || disabled}>
+      {busy ? saving : retry ? 'Retry same request' : label}
+    </button>
+  );
 
 /**
  * Machine text is there to be copied, not read: one glyph takes all of it to the
@@ -888,6 +894,7 @@ export function ResearchCommand({
     conflictCode: 'revision_conflict',
     onConflict: onSaved,
   });
+  if (readOnly()) return null;
   return (
     <div className="stack">
       <Failure message={command.error} />

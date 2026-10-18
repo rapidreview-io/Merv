@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { sameOriginPath } from '@merv/contracts/running';
-import { currentToken, projectSelection, renewed } from './api';
+import { currentToken, renewed, scopeHeaders } from './api';
 
 type Frame = { event: string; data: string };
 
@@ -77,7 +77,7 @@ export interface StreamSource {
 /** The signed-in account's credential and project, as every stream of this app sends them. */
 const accountHeaders = (): Record<string, string> => ({
   ...(currentToken() ? { authorization: `Bearer ${currentToken()}` } : {}),
-  ...(projectSelection() ? { 'x-merv-project-id': projectSelection()! } : {}),
+  ...scopeHeaders(),
 });
 
 /**

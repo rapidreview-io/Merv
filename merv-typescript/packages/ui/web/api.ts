@@ -57,6 +57,25 @@ const opened = (who: string, project: string) =>
   });
 let memoryToken: string | null = readToken();
 let selectedProject = storedProject();
+/**
+ * The platform admin's drill-in (`/ui/admin/p/<project>/…`): the project its address names, read
+ * as the platform, whose session is read-only. Null everywhere else.
+ */
+let drilled: string | null = null;
+/** True in the drill-in: every scoped request reads as the platform, and no verb is drawn. */
+export const readOnly = () => drilled !== null;
+/** Where the address is a drill-in, reads its project as the platform; answers the router's base. */
+export function drillIn(pathname: string): string | undefined {
+  const base = /^\/ui\/admin\/p\/[^/]+/.exec(pathname)?.[0];
+  if (!base) return undefined;
+  selectedProject = drilled = decodeURIComponent(base.slice('/ui/admin/p/'.length));
+  return base;
+}
+/** The headers that place a request in a project: the selected one, and how it is read. */
+export const scopeHeaders = (project = selectedProject): Record<string, string> =>
+  project
+    ? { 'x-merv-project-id': project, ...(drilled ? { 'x-merv-platform': 'read' } : {}) }
+    : {};
 let scopeEpoch = 0;
 let identityEpoch = 0;
 const scopeListeners = new Set<() => void>();
@@ -81,7 +100,7 @@ export function useScopeVersion() {
 }
 export const projectSelection = () => selectedProject;
 export const setProject = (projectId: string | null) => {
-  if (selectedProject === projectId) return;
+  if (selectedProject === projectId || drilled) return;
   selectedProject = projectId;
   safely(() => {
     if (projectId) sessionStorage.setItem(PROJECT_KEY, projectId);
@@ -98,7 +117,7 @@ export const setToken = (token: string | null, options: { refresh?: boolean } = 
   writeToken(token);
   if (!options.refresh) {
     identityEpoch++;
-    selectedProject = null;
+    selectedProject = drilled;
     safely(() => sessionStorage.removeItem(PROJECT_KEY));
     changed();
   }
@@ -170,7 +189,7 @@ export async function accountRequest<T>(
         headers: {
           ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-          ...(options.scoped && project ? { 'x-merv-project-id': project } : {}),
+          ...(options.scoped ? scopeHeaders(project) : {}),
         },
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
@@ -265,30 +284,36 @@ export const whoOf = (account: Account) =>
       ? `key ${account.key.id}`
       : '';
 
-/** Resolve account discovery before project-scoped reads, including a user's first empty account. */
+/**
+ * Resolve account discovery before project-scoped reads, including a user's first empty account.
+ * An account-wide page (`accountOnly`) stops at the account and leaves the selection alone; the
+ * drill-in reads the project its address names, a member or not.
+ */
 export async function resolveAccountSession(
-  options: { invitations?: boolean } = {},
+  options: { invitations?: boolean; accountOnly?: boolean } = {},
 ): Promise<AccountSession> {
   const epoch = scopeEpoch;
   const account = await accountRequest<Account>('/account');
   requireScope(epoch);
+  if (options.accountOnly) return { phase: 'projects', account, epoch };
   const who = whoOf(account);
-  if (account.kind === 'user' && options.invitations) {
+  if (account.kind === 'user' && options.invitations && !drilled) {
     setProject(null);
     return { phase: 'projects', account, epoch: scopeEpoch };
   }
   const selected =
-    account.kind === 'actor'
+    drilled ??
+    (account.kind === 'actor'
       ? account.actor.projectId
       : account.kind === 'key' && account.key.grantScope === 'project'
         ? account.key.projectId
-        : (projectSelection() ?? (who && lastProject(who)));
-  if (!selected || !account.projects.some((project) => project.id === selected)) {
+        : (projectSelection() ?? (who && lastProject(who))));
+  if (!drilled && (!selected || !account.projects.some((project) => project.id === selected))) {
     setProject(null);
     return { phase: 'projects', account, epoch: scopeEpoch };
   }
   setProject(selected);
-  if (who) opened(who, selected);
+  if (who && !drilled) opened(who, selected!);
   const selectedEpoch = scopeEpoch;
   // The shell answers who and where with the rows the page needs anyway; a
   // composition without it still answers those two questions on their own tools.

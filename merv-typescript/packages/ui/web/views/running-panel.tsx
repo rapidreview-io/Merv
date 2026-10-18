@@ -11,7 +11,7 @@ import type {
   RunningSection,
   RunningStreamItem,
 } from '@merv/contracts/running';
-import { refreshTools, useTool } from '../api';
+import { readOnly, refreshTools, useTool } from '../api';
 import { ConfirmAction, LoadState, Ruled, Summary, col, cx, useNow, words } from '../components';
 import { ArrowRightIcon, CloseIcon, ExpandIcon, RestoreIcon } from '../icons';
 import { clock, elapsed } from '../liveness';
@@ -66,6 +66,8 @@ export function Act({ action }: { action: RunningAction }) {
       refreshTools('ui.running', 'ui.running_panel', 'ui.home');
     return met.current === true;
   };
+  // The drill-in reads: an owner's control is not drawn there.
+  if (readOnly()) return null;
   const lost = adds && command.retry;
   const label = command.retry && !adds ? 'Retry same request' : action.label;
   const busy = command.busy ? 'Working…' : undefined;

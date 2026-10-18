@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { call, refreshTools, useScopeVersion, useTool } from '../api';
+import { call, readOnly, refreshTools, useScopeVersion, useTool } from '../api';
 import {
   Ago,
   ErrorBoundary,
@@ -1128,7 +1128,7 @@ function ArtifactList() {
       rows={ordered(filter.rows, order)}
       drawn={filter.rows.length > 0 && <FileHead order={order} onOrder={choose} />}
       opens
-      end={<UploadControl available={!!storage.data?.available} />}
+      end={!readOnly() && <UploadControl available={!!storage.data?.available} />}
       emptyTitle="No files"
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({

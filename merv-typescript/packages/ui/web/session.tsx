@@ -45,6 +45,9 @@ interface Session {
   signOut(): void;
 }
 const SessionContext = createContext<Session | null>(null);
+/** What an account-wide page (the platform admin) knows of its sign-in: who, and the way out. */
+const AccountContext = createContext<Pick<Session, 'account' | 'signOut'> | null>(null);
+export const useAccount = () => useContext(AccountContext);
 export const useSession = (): Session => {
   const session = useContext(SessionContext);
   if (!session) throw new Error('useSession outside SessionProvider');
@@ -554,6 +557,7 @@ export function SessionProvider({
     checking.current = true;
     resolveAccountSession({
       invitations: !!(invitationId ?? safely(() => sessionStorage.getItem('merv:invitation'))),
+      accountOnly,
     })
       .then((result) => {
         failures.current = 0;
@@ -624,7 +628,12 @@ export function SessionProvider({
       />
     );
   // Account-wide pages authorize their own reads without granting project membership.
-  if (accountOnly) return <>{children}</>;
+  if (accountOnly)
+    return (
+      <AccountContext.Provider value={{ account: state.account, signOut }}>
+        {children}
+      </AccountContext.Provider>
+    );
   // The page that was asked for opens in the chosen project.
   const choose = (id: string) => {
     const url = new URL(window.location.href);
