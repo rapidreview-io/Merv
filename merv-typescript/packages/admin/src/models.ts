@@ -141,3 +141,83 @@ export interface AdminCredentials {
   minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
     Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
 }
+
+// ── v2 (docs/ADMIN.md "v2"): operable credentials and credits. These replace the shapes above
+// where they overlap; the builders delete what they supersede.
+
+/** One platform secret named by a plugin's config, by what it is for. Never its value. */
+export interface PlatformSecret extends EnvName {
+  /** The owner's own description of the field (its config schema's `.describe()`). */
+  purpose: string;
+  set: boolean;
+  /** Every other name and field that holds the same value. */
+  sharedWith: EnvName[];
+  lastChanged: string | null;
+  lastOk: Outcome | null;
+  lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
+  dead: boolean;
+  /** The admin may reveal and change it here (a stored override replaces the env value). */
+  editable: boolean;
+}
+/** One credential field of one sandbox provider instance. Never its value. */
+export interface ProviderKey {
+  provider: string;
+  plugin: string;
+  source: 'host' | 'user';
+  /** The namespace a user-saved key belongs to; null for a host instance. */
+  namespace: string | null;
+  field: string;
+  /** The provider plugin's own description of the field. */
+  description: string;
+  secret: boolean;
+  present: boolean | null;
+  health: 'ok' | 'degraded' | 'unavailable' | null;
+  healthReason: string | null;
+  verifiedAt: string | null;
+  editable: boolean;
+}
+export interface AdminCredentialsV2 {
+  at: string;
+  groups: {
+    purpose: 'Agent' | 'Fleet agents' | 'Fleet machines' | 'Platform services';
+    secrets: PlatformSecret[];
+  }[];
+  providers: ProviderKey[];
+  minted: AdminCredentials['minted'];
+}
+/** `POST /admin/credentials/reveal` and `/change`: one platform secret, or one provider's keys. */
+export type CredentialTarget =
+  { env: string } | { provider: string; namespace: string | null; field: string };
+export type CredentialChange =
+  | { env: string; value: string }
+  | { provider: string; namespace: string | null; fields: Record<string, string> };
+
+/** A credit type a person spends: the platform's own, or one sandbox provider's. */
+export type CreditKind = 'agent-tokens' | 'fleet-tokens' | 'fleet-usd' | `provider:${string}`;
+export interface CreditUse {
+  kind: CreditKind;
+  label: string;
+  unit: 'tokens' | 'usd';
+  /** Per day for the platform's own kinds; what is granted (all time) for a provider. */
+  limit: number | null;
+  /** The person's own limit, where it overrides the platform default. */
+  own: boolean;
+  used: Record<'day' | 'week' | 'month' | 'total', number>;
+  /** What is left now: of today's limit, or of a provider's granted credit. */
+  left: number | null;
+}
+/** `GET /admin/credits/people/:person` (`:person` is `encodeURIComponent(issuer + '|' + subject)`). */
+export interface PersonCredits {
+  person: { key: string; label: string; issuer: string; subject: string };
+  /** Their own Sandboxes account, which provider credit is granted to. */
+  accountId: string | null;
+  kinds: CreditUse[];
+  /** The provider grants and schedules on their account. */
+  grants: CreditAccount['grants'];
+  schedules: CreditAccount['schedules'];
+}
+/** `POST /admin/credits/people/:person/limits`: null clears the person's own limit. */
+export interface CreditLimitInput {
+  kind: 'agent-tokens' | 'fleet-tokens' | 'fleet-usd';
+  limit: number | null;
+}
