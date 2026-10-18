@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { check, MervError, type State } from '@merv/contracts';
 import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
+import { adminCredentials, credentialMigrations } from './credentials.js';
 import { creditRoutes } from './credits.js';
 import type { AdminIdentity } from './models.js';
 import { platformRead } from './platform.js';
@@ -63,7 +64,7 @@ export const adminPlugin = {
   async apply(ctx: Context, config: { admins: AdminIdentity[] }) {
     if (!config.admins.length) return;
     const state: State = ctx.state;
-    await state.migrate('admin', auditMigrations);
+    await state.migrate('admin', { ...auditMigrations, ...credentialMigrations });
     const audit = new AdminAudit(state);
     // The admin is a page of the API: a composition without it has nothing to serve.
     ctx.inject(['api', 'scope', 'tools'], (ctx) => {
@@ -72,6 +73,7 @@ export const adminPlugin = {
         ...workRoutes(env),
         ...platformRead(env),
         ...creditRoutes(env),
+        'GET /admin/credentials': async () => await adminCredentials(env),
       };
       ctx.effect(() =>
         ctx.api.mount('/admin', async (req, res, r) => {

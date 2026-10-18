@@ -524,7 +524,8 @@ function assertComponentReferences(
         codeUtilityExports.has(specifier.slice('@merv/code/'.length));
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
-        ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
+        ['scope', 'sessions', 'pi', 'admin'].includes(owner) &&
+        specifier === '@merv/identity/credentials';
       // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
       // Customer experiments serves its request's intake conversation to the customer the same way.
       const events =
@@ -958,6 +959,14 @@ test('Cordis service requirements match the architecture and every accessed capa
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate workflow orchestration');
         orchestrationAdapters.add(name.text);
+        return;
+      }
+      if (name.text === 'merv-admin') {
+        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
+        // Composes other owners' reads, where loaded, at request time; injects none of them.
+        assert.deepEqual(sorted(declared), ['api', 'state']);
+        assert.deepEqual(sorted([...optional]), []);
+        assert.deepEqual(actualProvided, []);
         return;
       }
       if (name.text === 'merv-sandboxes-console') {

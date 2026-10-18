@@ -945,7 +945,7 @@ export const fleetWorkflowPlugin = {
       authorize: (token) => adapter.modelGrant(token),
     });
     ctx.effect(() => {
-      const model = ctx.fleet.modelRelay(relay);
+      const model = ctx.fleet.modelRelay(relay, adapter.config.modelApiKeyEnv);
       const unmount = ctx.api.mount('/codex-model', model.handle, { public: true });
       return () => {
         unmount();

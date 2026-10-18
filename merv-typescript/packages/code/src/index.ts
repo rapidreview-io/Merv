@@ -2,7 +2,7 @@ import { createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { CodeService } from './service.js';
-import { githubConfig } from './github-client.js';
+import { githubConfig, githubEnv } from './github-client.js';
 
 const bytes = z.number().int().positive().safe();
 const configuration = z
@@ -14,6 +14,7 @@ const configuration = z
         reservedFreeBytes: bytes.default(2 * 1024 ** 3),
       })
       .strict(),
+    github: githubEnv,
   })
   .strict();
 
@@ -24,7 +25,7 @@ export const codePlugin = {
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, config, githubConfig()),
+        new CodeService(ctx.state, ctx.scope, config, githubConfig(process.env, config.github)),
       );
       yield () => service.close();
       // A session's attach and end open and end its writer generation (one its worker ended by

@@ -954,6 +954,7 @@ export class PiService implements Pi {
           await this.core.tokens.settle(record, grant, reserved);
         },
       }),
+      this.core.config.modelApiKeyEnv,
     );
   }
 

@@ -12,6 +12,7 @@
     "@merv/contracts": "0.1.0",
     "@merv/customer-experiments": "0.1.0",
     "@merv/fleet": "0.1.0",
+    "@merv/identity": "0.1.0",
     "@merv/pi": "0.1.0",
     "@sandboxes/accounts": "0.1.0",
     "@sandboxes/auth": "0.1.0",

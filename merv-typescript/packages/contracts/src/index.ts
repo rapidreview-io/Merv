@@ -807,9 +807,18 @@ export interface PluginStatus {
   required: boolean;
   missingDependencies: string[];
 }
+/** An environment variable a plugin entry's config names (a string field whose key ends in `Env`). */
+export interface ConfiguredEnv {
+  plugin: string;
+  /** The config field's dotted path, such as `host.credentialEnv`. */
+  field: string;
+  env: string;
+}
 /** The composition root's plugin lifecycle report; every reader of plugin state shares it. */
 interface Composition {
   status(): PluginStatus[];
+  /** Every environment variable the enabled entries' configs name, defaults included. */
+  environment(): ConfiguredEnv[];
 }
 export function eventSource(caller: Caller): Data {
   return caller.session
