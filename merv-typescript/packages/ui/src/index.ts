@@ -15,7 +15,6 @@ import {
   workflowsOf,
   type RunningSources,
 } from './running.js';
-import { adminHttp, type AdminIdentity } from './admin.js';
 import { serveBundle } from './static.js';
 
 export type {
@@ -126,29 +125,13 @@ export const uiPlugin = {
   Config: z
     .object({
       assets: z.string().refine(visible).optional(),
-      admins: z
-        .array(
-          z
-            .object({
-              issuer: z.string().min(1),
-              subject: z.string().min(1),
-              label: z.string().min(1).max(254).optional(),
-            })
-            .strict(),
-        )
-        .default([]),
     })
     .strict()
     .default({}),
   inject: ['api', 'tools'],
-  apply(ctx: Context, config: { assets?: string; admins?: AdminIdentity[] } = {}) {
+  apply(ctx: Context, config: { assets?: string } = {}) {
     const assets = config.assets ?? defaultAssets;
     const ui = new UiRegistry(assets);
-    if (config.admins?.length) {
-      const state = ctx.get('state');
-      check(state, 'admin_unavailable', 'Admin overview needs state', 503);
-      ctx.effect(() => ctx.api.mount('/admin', adminHttp(state, config.admins!)));
-    }
     // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
     const isolated = async <T>(read: () => Promise<T>): Promise<T> => {
       const state = ctx.get('state');

@@ -1,24 +1,10 @@
-import { check, MervError, type State } from '@merv/contracts';
-import type { ApiPrincipal, MountHandler } from '@merv/api/types';
+import type { State } from '@merv/contracts';
 
-import type { AdminIdentity, AdminExperiment, AdminOverview } from './admin-models.js';
-export type { AdminIdentity } from './admin-models.js';
-export function requireAdmin(principal: ApiPrincipal | undefined, admins: AdminIdentity[]) {
-  check(
-    principal?.kind === 'user' &&
-      'user' in principal &&
-      admins.some(
-        (a) => a.issuer === principal.user.issuer && a.subject === principal.user.subject,
-      ),
-    'forbidden',
-    'Platform administrator access required',
-    403,
-  );
-}
+import type { AdminIdentity, AdminExperiment, AdminOverview } from './models.js';
 /** Intentionally global. Never expose this projection through project-scoped tools or machine keys. */
 export async function adminOverview(
   state: State,
-  identities: AdminIdentity[] = [],
+  identities: readonly AdminIdentity[] = [],
 ): Promise<AdminOverview> {
   return state.read(async (sql) => {
     const tables = new Set(
@@ -168,13 +154,4 @@ export async function adminOverview(
       unavailable,
     };
   });
-}
-export function adminHttp(state: State, admins: AdminIdentity[]): MountHandler {
-  return async (req, res, r) => {
-    requireAdmin(r.principal, admins);
-    if (req.method !== 'GET' || r.url.pathname !== '/admin/experiments')
-      throw new MervError('not_found', 'Route not found', 404);
-    res.setHeader('Cache-Control', 'private, no-store');
-    return adminOverview(state, admins);
-  };
 }

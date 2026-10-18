@@ -911,7 +911,8 @@ test('public intake issues private capabilities, preserves admission limits and 
 });
 
 test('platform admin projection shows standalone state without private capabilities', async (t) => {
-  const { adminOverview, requireAdmin } = await import('../packages/ui/src/admin.js');
+  const { adminOverview } = await import('../packages/admin/src/work.js');
+  const { adminOf } = await import('../packages/admin/src/index.js');
   const f = await fixture(t);
   const created = await f.create();
   const identity = { issuer: 'https://identity.example', subject: 'admin' };
@@ -920,19 +921,16 @@ test('platform admin projection shows standalone state without private capabilit
     user: { ...identity, createdAt: new Date().toISOString() },
     expiresAt: new Date(Date.now() + 60000).toISOString(),
   };
-  requireAdmin(human, [identity]);
+  assert.ok(adminOf(human, [identity]));
   for (const principal of [
     undefined,
     { ...human, user: { ...human.user, subject: 'other' } },
     { kind: 'actor', actor: { role: 'operator' } },
     { kind: 'key', key: { owner: identity } },
   ]) {
-    assert.throws(
-      () => requireAdmin(principal as never, [identity]),
-      (e: unknown) => e instanceof MervError && e.status === 403,
-    );
+    assert.equal(adminOf(principal as never, [identity]), undefined);
   }
-  assert.throws(() => requireAdmin(human, []));
+  assert.equal(adminOf(human, []), undefined);
   const view = await adminOverview(f.state);
   const row = view.rows.find((r) => r.id === created.id || r.requestId === created.id);
   assert.ok(row);

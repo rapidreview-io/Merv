@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openState } from './fixtures/state.js';
-import { adminOverview, adminHttp } from '../packages/ui/src/admin.js';
+import { adminOverview } from '../packages/admin/src/work.js';
 
 test('admin snapshot combines customers, preserves terminal rows and excludes expired leases and private fields', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'merv-admin-'));
@@ -87,25 +87,4 @@ test('admin snapshot combines customers, preserves terminal rows and excludes ex
   assert.equal(result.rows[1]!.paid, true);
   assert.equal(result.rows[1]!.requestId, 'ce_test');
   assert.ok(!JSON.stringify(result).includes('private-'));
-  let touched = false;
-  const handler = adminHttp(
-    {
-      read: () => {
-        touched = true;
-      },
-    } as never,
-    [{ issuer: 'issuer', subject: 'admin' }],
-  );
-  await assert.rejects(
-    () =>
-      handler(
-        { method: 'GET' } as never,
-        {} as never,
-        {
-          principal: { kind: 'user', user: { issuer: 'issuer', subject: 'other' } },
-          url: new URL('https://test/admin/experiments'),
-        } as never,
-      ) as Promise<unknown>,
-  );
-  assert.equal(touched, false);
 });
