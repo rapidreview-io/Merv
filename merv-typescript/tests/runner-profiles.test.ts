@@ -427,6 +427,8 @@ test('a hosted Codex profile calls the model through Main with its session beare
     /python3\.12 and uv\. Make Python environments in the workspace with uv/,
     /\/tmp is yours for temporary files and sockets .* SSH ControlPath/,
     /caches such as pip’s and Hugging Face’s go to \/tmp\/cache/,
+    // Its reset runs before the final capture and walks at most 100,000 files.
+    /Keep \/tmp well under 100,000 files: .* fails the machine’s reset and loses what no commit holds yet/,
     /may hold files an earlier agent left: they are part of no commit until one takes them in/,
     /only what Code admitted moves with it .*: environments, downloads, keys and other ignored files stay behind/,
   ])
