@@ -427,7 +427,7 @@ test('a hosted Codex profile calls the model through Main with its session beare
     /python3\.12 and uv\. Make Python environments in the workspace with uv/,
     /\/tmp is yours for temporary files and sockets .* SSH ControlPath/,
     /caches such as pip’s and Hugging Face’s go to \/tmp\/cache/,
-    /may hold files an earlier agent left/,
+    /may hold files an earlier agent left: they are part of no commit until one takes them in/,
     /only what Code admitted moves with it .*: environments, downloads, keys and other ignored files stay behind/,
   ])
     assert.match(spec.stdin, told);
