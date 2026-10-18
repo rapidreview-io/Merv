@@ -30,7 +30,6 @@ import {
 } from './program.js';
 import {
   recipeNames,
-  handoffs,
   handoff,
   EXPERIMENT_RECIPES,
   REPORTED_EXECUTE_RECIPE,

@@ -42,7 +42,6 @@ import {
 import type { Experiment, ExperimentEvidence, ExperimentReview, Experiments } from './types.js';
 import { experimentGetSchema, parseExperimentInput } from './input.js';
 import {
-  type ActiveState,
   captureEpochs,
   currentExperiment,
   EXPERIMENT_LIMITS,
