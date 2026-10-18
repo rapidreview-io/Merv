@@ -95,6 +95,7 @@ const capabilities: Record<string, readonly string[]> = {
     'contextBuilder',
     'codeWork',
     'paper',
+    'sessions',
   ],
   knowledge: [
     'state',
