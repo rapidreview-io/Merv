@@ -76,7 +76,9 @@ test('every profile says how captures register and how inputs reach a machine', 
     );
     assert.match(text, /never by recency/);
     assert.match(text, /job logs included/);
-    assert.match(text, /after ten minutes, ask the owner/);
+    // Customer workers are told never to ask about compute, and get this same text.
+    assert.match(text, /never re-upload its files by hand/);
+    assert.doesNotMatch(text, /ask the owner/);
     assert.match(
       text,
       /stage node: upload workspace files with storage_upload and storage_complete/,
