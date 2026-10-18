@@ -1,4 +1,4 @@
-import { grant, literal, reference, target } from '@merv/workflows/rules';
+import { artifactGrants, grant, literal, reviewGrants, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { type WorkflowExecutionPolicy } from '@merv/contracts';
 import { REPORT_TOOLS } from '@merv/reports/prefill';
@@ -41,19 +41,9 @@ export function execution(state: ActiveState, version: number): WorkflowExecutio
       grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
       grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
       ...(reviewing(state)
-        ? [
-            grant('review.start', { reviewId: reference('reviewId') }),
-            grant('review.submit', {
-              reviewId: reference('reviewId'),
-              claimId: reference('claimId'),
-              ...revision,
-            }),
-          ]
+        ? reviewGrants()
         : [
-            grant('artifact.create', {}),
-            grant('artifact.upload_begin', {}),
-            grant('artifact.upload_resume', {}),
-            grant('artifact.upload_complete', {}),
+            ...artifactGrants(),
             grant(
               'experiment.attach',
               ...rolesFor(state).map((role) => ({

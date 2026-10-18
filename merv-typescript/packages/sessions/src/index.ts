@@ -102,8 +102,6 @@ const between = (least: number, most: number, fallback: number) =>
     .transform((value) => value ?? fallback);
 const configSchema = z
   .object({
-    /** Maximum simultaneous server executions in one project, across every provider. */
-    serviceConcurrency: between(1, 256, 1),
     sweepIntervalMs: between(100, 60_000, 1000),
     /** Whether a project nobody has switched is on: the founder's ruling (2026-09-25) is that
      * every project runs its work unless someone turns it off. */
@@ -504,7 +502,6 @@ export class LeasedSessions implements Sessions {
       scope,
       workflows,
       this.clock,
-      config.serviceConcurrency,
       async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
     );
     await this.serviceWork.initialize();

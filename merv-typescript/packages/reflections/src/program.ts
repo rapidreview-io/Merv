@@ -24,7 +24,7 @@ import {
   type WorkflowPolicy,
 } from '@merv/contracts';
 import { artifactItem, itemArtifactIds, textItem } from '@merv/context-builder/artifact-item';
-import { grant, reference, target } from '@merv/workflows/rules';
+import { grant, reference, reviewGrants, target } from '@merv/workflows/rules';
 import { lensName } from './names.js';
 import { ITEM_RECIPES } from './definitions.js';
 import type { ChangeSpec, ReflectionReview } from './types.js';
@@ -509,12 +509,7 @@ export function execution(
               { reviewId: reference('reviewId') },
               { reviewId: { kind: 'oneOf' as const, name: 'researchReviews' } },
             ),
-            grant('review.start', { reviewId: reference('reviewId') }),
-            grant('review.submit', {
-              reviewId: reference('reviewId'),
-              claimId: reference('claimId'),
-              expectedRevision: target('revision'),
-            }),
+            ...reviewGrants(),
           ]
         : [
             grant('artifact.create', {}),
