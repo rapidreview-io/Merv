@@ -177,6 +177,7 @@ export const customerExperimentsPlugin = {
           };
         });
       });
+      yield ctx.provide('customerExperiments', { customers: store.customers.bind(store) });
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain, files);
       // v3 requests open the customer app the UI bundle builds, where the UI is loaded.

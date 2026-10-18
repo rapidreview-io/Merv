@@ -1,6 +1,6 @@
 import type { ReviewRequest } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
-import type { RequestRecord } from './store.js';
+import type { RequestRecord, RequestStore } from './store.js';
 
 export const SERVICE_MODEL = { harness: 'codex', model: 'gpt-6-astra', effort: 'medium' } as const;
 export interface DataRequirement {
@@ -154,4 +154,10 @@ export interface ProgressLine {
   text: string;
   result?: { name: string; score: number; total: number };
   step?: { done: number; total: number };
+}
+declare module 'cordis' {
+  interface Context {
+    /** What other plugins may read of standalone experiments: the platform admin's read alone. */
+    customerExperiments: Pick<RequestStore, 'customers'>;
+  }
 }

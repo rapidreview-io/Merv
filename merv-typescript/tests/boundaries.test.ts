@@ -935,7 +935,8 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
-        assert.deepEqual(actualProvided, []);
+        // Its platform admin read alone, which the admin plugin takes when it is loaded.
+        assert.deepEqual(actualProvided, ['customerExperiments']);
         return;
       }
       if (name.text === 'merv-fleet-workflow') {

@@ -50,6 +50,11 @@ export interface IdentityBinding {
   subject: string;
   boundAt: string;
 }
+/** A proposed plan waits for its customer to approve it, an approved one for their payment. */
+const WAITS = new Map<string, 'approval' | 'payment'>([
+  ['ready', 'approval'],
+  ['awaiting_payment', 'payment'],
+]);
 export class RequestStore {
   constructor(
     readonly state: State,
@@ -150,6 +155,31 @@ export class RequestStore {
       (
         await sql.all<{ data_json: string }>('SELECT data_json FROM customer_experiment_requests')
       ).map((r) => JSON.parse(r.data_json)),
+    );
+  }
+  /**
+   * Platform admin read, never exposed through a tool or a machine key: each named experiment's
+   * customer, by its browser sign-in, else the email it gave, and the move of theirs its state
+   * waits on. Never a capability, a checkout or an idempotency key.
+   */
+  async customers(work: readonly { id: string; state: string }[]) {
+    const rows = await this.state.read((sql) =>
+      sql.all<{
+        id: string;
+        requestId: string;
+        issuer: string | null;
+        subject: string | null;
+        email: string | null;
+      }>(
+        `SELECT r.data_json::jsonb->>'experimentId' AS id,r.id AS "requestId",i.issuer,i.subject,r.data_json::jsonb->>'email' AS email
+        FROM customer_experiment_requests r LEFT JOIN customer_experiment_identities i ON i.request_id=r.id
+        WHERE r.data_json::jsonb->>'experimentId' IN (SELECT jsonb_array_elements_text(?::jsonb))`,
+        JSON.stringify(work.map(({ id }) => id)),
+      ),
+    );
+    const states = new Map(work.map(({ id, state }) => [id, state]));
+    return new Map(
+      rows.map((row) => [row.id, { ...row, waits: WAITS.get(states.get(row.id)!) ?? null }]),
     );
   }
   token(record: RequestRecord, role: 'agent' | 'customer'): string {
