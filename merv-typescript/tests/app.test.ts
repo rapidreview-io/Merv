@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 99);
+    assert.equal(catalog.length, 98);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -67,12 +67,13 @@ test('assembled Cordis application preserves current MCP task closure across two
       'session.threads',
       'session.find',
       'session.message',
-      'session.messages',
     ])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,
       );
+    // A worker's queue refuses every person, so a person's agent is not offered it.
+    assert.ok(!catalog.some((tool) => tool.name === 'session.messages'));
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     // Credentials are managed from Merv's own pages: an agent over MCP is not offered them.

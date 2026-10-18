@@ -141,6 +141,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.messages',
+        conversation: 'never' as const,
         description:
           "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; it takes no arguments. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
@@ -279,7 +280,7 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "To steer an assigned agent, use session.find with the work's instanceId to find its thread, then session.message with that threadId, which its live visit or its next one reads. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. Each message holds the worker's Merv calls until it acknowledges it, so send one message with everything it needs, and none only to ask for status. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
+        "To steer an assigned agent, use session.find with the work's instanceId to find its thread, then session.message with that threadId, which its live visit or its next one reads. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. Each message holds the worker's Merv calls until it acknowledges it, so send one message with everything it needs, and none only to ask for status. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
       ),
     );
   },
