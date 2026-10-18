@@ -715,6 +715,41 @@ test('only the reset or a raised limit lifts a refused wait: a smaller call that
   assert.equal(fresh.lastRefusedTokens, null);
 });
 
+test('a refused wait outlasts the refunds of calls that were in flight when it was refused', async (t) => {
+  // 2026-10-13 23:10: a visit refused at the ceiling closed budget_exhausted, other visits' calls
+  // then settled below their reservations, the day's remaining tokens again covered the refused
+  // call, and Sessions relaunched the work 14 s later into the same ceiling.
+  const body = codexPayload(codex, grant)!;
+  const most = Math.ceil(JSON.stringify(body).length / 4) + 65_536;
+  const limit = 2 * most - 1;
+  const f = await fixture(t, limit);
+  const relay = codexModelRelay(f.state, {
+    providerKey: () => key,
+    dailyTokensPerPerson: limit,
+    authorize: async () => grant,
+  });
+  const other = { ...grant, id: 'session_other' };
+  const inFlight = await relay.reserve!(other, body);
+  await assert.rejects(relay.reserve!(grant, body), { code: 'fleet_model_ceiling', status: 403 });
+  assert.equal((await modelBudgetStatus(f.state, grant.person, limit)).blocked, true);
+  const usage = { model: grant.model, cachedTokens: 0, reasoningTokens: 0 };
+  await relay.onUsage!(
+    { event: 'codex_relay_usage', ...usage, inputTokens: 80, outputTokens: 30 },
+    other,
+    inFlight,
+  );
+  const settled = await modelBudgetStatus(f.state, grant.person, limit);
+  assert.ok(settled.remaining >= most, 'the refused call would fit again');
+  assert.deepEqual(
+    [settled.blocked, settled.blockReason],
+    [true, 'last_refused_reservation_unaffordable'],
+  );
+  // The person changing their limit lets the next call judge the day again.
+  await setDailyTokens(f.state, grant.person, limit);
+  assert.equal((await modelBudgetStatus(f.state, grant.person, limit)).blocked, false);
+  await relay.reserve!(grant, body);
+});
+
 test('the provider key never reaches a response or a log', async (t) => {
   const f = await fixture(t);
   const bodies = [

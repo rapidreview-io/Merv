@@ -154,8 +154,10 @@ async function ceiling(sql: Sql, person: string, fallback: number) {
   );
   return Number(own?.tokens ?? fallback);
 }
-/** A refusal stops new Fleet rent, and new work on a machine already rented, while today's
- *  remaining tokens cannot fund that last request. */
+/** A refusal stops new Fleet rent, and new work on a machine already rented, until the UTC
+ *  reset or the person changes their limit. Calls in flight when it came settle below their
+ *  reservations and free tokens again, but not enough to fund the work it stopped: a relaunch
+ *  on those met the ceiling within seconds. */
 export async function modelBudgetStatus(state: State, person: string, fallback: number) {
   return await state.read((sql) => budgetIn(sql, person, fallback));
 }
@@ -179,7 +181,7 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const blockReason =
     remaining <= maxOutputTokens
       ? 'minimum_reservation_unaffordable'
-      : lastRefusedTokens !== null && remaining < lastRefusedTokens
+      : lastRefusedTokens !== null
         ? 'last_refused_reservation_unaffordable'
         : null;
   return {
@@ -192,14 +194,17 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
     resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
   };
 }
+/** A person's own limit. Setting it lifts today's refused wait: the next call judges the day
+ *  again, and is refused, and waits, if the limit still cannot fund it. */
 export async function setDailyTokens(state: State, person: string, tokens: number) {
-  await state.transaction((tx) =>
-    tx.run(
+  await state.transaction(async (tx) => {
+    await tx.run(
       'INSERT INTO fleet_model_limits(person,tokens) VALUES(?,?) ON CONFLICT(person) DO UPDATE SET tokens=excluded.tokens',
       person,
       tokens,
-    ),
-  );
+    );
+    await tx.run('DELETE FROM fleet_model_blockers WHERE person=? AND day=?', person, day());
+  });
 }
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
 
@@ -294,8 +299,9 @@ export function codexModelRelay(
       const refused = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         if (!(await ledger.charge(tx, grant.person, today, most, limit))) {
-          // The day's largest refusal stands until the reset or a raised limit funds it: a
-          // smaller call that still passes leaves the refused visit waiting.
+          // The day's largest refusal stands until the reset or a changed limit: a smaller call
+          // that still passes, or one in flight settling below its reservation, leaves the
+          // refused visit waiting.
           await tx.run(
             'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=GREATEST(fleet_model_blockers.required_tokens,excluded.required_tokens)',
             grant.person,
