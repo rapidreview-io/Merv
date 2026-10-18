@@ -114,7 +114,16 @@ export class WebService implements Web {
     const { queries, max_results, notes } = plan;
     // Each query is its own search and its own call against the day's budgets.
     const answer = await this.admit(caller, 'web.search', queries.length, async (providers) => {
-      const found = await Promise.all(queries.map((query) => this.find(plan, query, providers)));
+      const settled = await Promise.allSettled(
+        queries.map((query) => this.find(plan, query, providers)),
+      );
+      // One failed query costs only its own results: the call fails when every query did.
+      const ran = queries.filter((_, n) => settled[n]!.status === 'fulfilled');
+      const failures = settled.flatMap((one, n) =>
+        one.status === 'rejected' ? [{ query: queries[n]!, error: one.reason as unknown }] : [],
+      );
+      if (ran.length === 0) throw failures[0]!.error;
+      const found = settled.flatMap((one) => (one.status === 'fulfilled' ? [one.value] : []));
       const fell = found.some((one) => 'response' in one);
       if (fell)
         notes.push(
@@ -122,21 +131,25 @@ export class WebService implements Web {
             ? 'Tavily unavailable; used OpenAI web search'
             : 'Tavily is not configured; used OpenAI web search',
         );
+      for (const { query, error } of failures)
+        notes.push(
+          `query "${query}" failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       const many = queries.length > 1;
       return trimmed(
         sized(MAX_TOTAL_CHARS, (total): WebSearch => {
           // The content budget is shared alike, so no query's results crowd out another's.
-          const share = Math.floor(total / queries.length);
+          const share = Math.floor(total / ran.length);
           const parts = found.map((one) =>
             'response' in one
               ? { ...fallbackSearch(max_results, one.response, share), truncated: false }
               : tavilyResults(one.results, max_results, share),
           );
           const results = parts.flatMap((part, n) =>
-            part.results.map((result) => (many ? { ...result, query: queries[n]! } : result)),
+            part.results.map((result) => (many ? { ...result, query: ran[n]! } : result)),
           );
           const answers = parts.flatMap((part, n) =>
-            'answer' in part ? [many ? `${queries[n]}: ${part.answer}` : part.answer] : [],
+            'answer' in part ? [many ? `${ran[n]}: ${part.answer}` : part.answer] : [],
           );
           const truncated = parts.some((part) => part.truncated);
           return {

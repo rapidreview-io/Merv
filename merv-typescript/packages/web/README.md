@@ -77,7 +77,9 @@ what it sends leaves Merv (see [Privacy](#privacy)).
   one, and Nisa's single request that ORs them answered none of them well (a
   dataset-license search returned basketball pages). A list's answer has
   `query` as the list run and each result's `query` naming the query that found
-  it; the content caps below are shared alike among its queries. An empty
+  it; the content caps below are shared alike among its queries. A query that
+  fails is named in `normalization_note` with why, and the others' results
+  still come back; the call fails only when every query does. An empty
   query, or one that is only a `site:` filter, is answered with
   `status: "needs_query_terms"` and a `fallback_hint`, and no request; a `site:`
   filter naming an exact page becomes that page's path terms.

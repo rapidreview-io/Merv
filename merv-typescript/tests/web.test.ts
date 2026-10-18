@@ -186,6 +186,27 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
   await assert.rejects(search({ query: 'x', site: 'example.com' }), { code: 'invalid_input' });
 });
 
+test('a listed query that fails is named, and the others’ results still come back', async (t) => {
+  const tavily = await provider(t, ({ body }) =>
+    body.query.startsWith('broken') ? { status: 400, body: {} } : { body: tavilyResults(1) },
+  );
+  const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
+  const found = await web.search(caller, { query: ['flash attention', 'broken one'] });
+  assert.deepEqual(
+    found.results.map(({ query }) => query),
+    ['flash attention'],
+  );
+  assert.equal(
+    found.normalization_note,
+    'ran 2 queries as separate searches, each result naming its query; ' +
+      'query "broken one" failed: Tavily refused this request (HTTP 400)',
+  );
+  // Only when every query fails is the call refused.
+  await assert.rejects(web.search(caller, { query: ['broken one', 'broken two'] }), {
+    code: 'web_request_refused',
+  });
+});
+
 /** An OpenAI Responses answer from the hosted web_search tool. */
 const grounded = (text = 'FlashAttention 3 is faster [one](https://a.example/one).') => ({
   id: 'resp_1',
