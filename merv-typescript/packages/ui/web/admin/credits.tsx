@@ -166,7 +166,7 @@ function Account({
     ...account.budgets.map(
       (b) =>
         b.cap !== null &&
-        `cap ${b.metric === 'money' ? usd(b.cap) : `${b.cap} h`} ${b.window === 'all_time' ? 'in all' : `a ${b.window}`}${b.provider ? ` ${b.provider}` : ''}`,
+        `${b.provider ? `${b.provider} ` : ''}cap ${b.metric === 'money' ? usd(b.cap) : `${b.cap} h`} ${b.window === 'all_time' ? 'in all' : `a ${b.window}`}`,
     ),
   ].filter(Boolean);
   const grant = account.grants.find((g) => g.id === acting);

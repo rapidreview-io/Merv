@@ -25,6 +25,7 @@ const unit = (id: string, over: Record<string, unknown> = {}) => ({
   kind: 'task',
   type: 'task.work',
   title: `Unit ${id.slice(3)}`,
+  parent: null,
   project: { id: 'project_a', name: 'Grokking replication' },
   person: 'Mira Chen',
   state: 'in_progress',
@@ -90,6 +91,30 @@ const open = async (path: string) => {
   await settle(20);
 };
 const rows = () => [...document.querySelectorAll('[aria-label="Work"] .ruled-row')];
+
+test('work: a lens stands under its reflection, which sorts by its latest part', async (t) => {
+  t.after(async () => await unmount());
+  boot();
+  serve('/admin/work', {
+    body: {
+      ...work,
+      rows: [
+        unit('wf_recent', { lastActivity: ago(10) }),
+        unit('wf_wave', { kind: 'reflection', title: 'Mid-point', lastActivity: ago(50) }),
+        unit('wf_lens', {
+          kind: 'reflection.lens',
+          title: 'theory',
+          parent: 'wf_wave',
+          lastActivity: ago(1),
+        }),
+      ],
+    },
+  });
+  await open('/admin');
+  const names = rows().map((row) => row.querySelector('[role="cell"]')!.textContent);
+  assert.deepEqual(names, ['ReflectionMid-point', 'theory', 'TaskUnit recent']);
+  assert.ok(rows()[1]!.classList.contains('admin-part'));
+});
 
 test('work: attention first, links into the drill-in, no ids, nothing ended until asked', async (t) => {
   t.after(async () => await unmount());

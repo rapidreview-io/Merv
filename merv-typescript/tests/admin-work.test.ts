@@ -211,6 +211,7 @@ test('the work table reads every project’s open and recent work through its ow
   for (const lens of wave.lenses) {
     assert.equal(row(lens.id).kind, 'reflection.lens');
     assert.equal(row(lens.id).title, lens.perspective.replaceAll('_', ' '));
+    assert.equal(row(lens.id).parent, wave.id);
   }
 
   // A standalone experiment names its customer, words left to the page, and opens by its request.

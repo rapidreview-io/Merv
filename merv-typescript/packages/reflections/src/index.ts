@@ -323,14 +323,19 @@ export class ReflectionService implements Reflections {
       process: await this.workflows.process(caller, id, { checks: false }),
     }));
   }
-  async platformLensNames(lensIds: readonly string[]) {
+  async platformLenses(lensIds: readonly string[]) {
     const rows = await this.state.read((sql) =>
-      sql.all<{ id: string; perspective: string }>(
-        'SELECT id,perspective FROM reflection_lenses WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+      sql.all<{ id: string; perspective: string; reflectionId: string }>(
+        'SELECT id,perspective,reflection_id AS "reflectionId" FROM reflection_lenses WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
         JSON.stringify(lensIds),
       ),
     );
-    return new Map(rows.map((row) => [row.id, lensName(row.perspective)]));
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        { name: lensName(row.perspective), reflectionId: row.reflectionId },
+      ]),
+    );
   }
   async home(caller: Caller): Promise<ReflectionSummary[]> {
     caller = structuredClone(caller);

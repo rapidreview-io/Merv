@@ -81,8 +81,10 @@ export interface Reflections {
   home(caller: Caller): Promise<ReflectionSummary[]>;
   lens(caller: Caller, id: string, tx?: Transaction): Promise<ReflectionLens>;
   /** Platform admin read, never exposed through a tool or a machine key: each named lens's
-   * perspective, as a person names it, in any project. */
-  platformLensNames(lensIds: readonly string[]): Promise<Map<string, string>>;
+   * perspective, as a person names it, and the reflection it is part of, in any project. */
+  platformLenses(
+    lensIds: readonly string[],
+  ): Promise<Map<string, { name: string; reflectionId: string }>>;
   submitLens(
     caller: Caller,
     input: ReflectionLensSubmit,

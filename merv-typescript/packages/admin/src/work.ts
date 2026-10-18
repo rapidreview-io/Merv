@@ -44,7 +44,7 @@ export async function adminWork(
     ]),
   );
   const types = await tasks?.platformTypes(all);
-  const lenses = await reflections?.platformLensNames(all);
+  const lenses = await reflections?.platformLenses(all);
   const standalone = await customers?.customers(work);
   const { people, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
   const names = new Map(projects.map(({ id, name }) => [id, name]));
@@ -94,7 +94,8 @@ export async function adminWork(
         id: unit.id,
         kind: unit.workflow,
         type: types?.get(unit.id) ?? null,
-        title: lenses?.get(unit.id) ?? unit.name,
+        title: lenses?.get(unit.id)?.name ?? unit.name,
+        parent: lenses?.get(unit.id)?.reflectionId ?? null,
         project: project(unit.projectId),
         // A standalone experiment's person is its customer, by sign-in, else the email they gave.
         person: !found
@@ -133,6 +134,7 @@ export async function adminWork(
         kind: 'pi',
         type: null,
         title: turn.title,
+        parent: null,
         project: project(turn.projectId),
         person: member(identity(turn.source) ?? byActor.get(turn.source.actorId), turn.projectId),
         state: turn.status,

@@ -16,7 +16,7 @@ import {
 } from '../components';
 import { Chips, ListPage, openRow, useListFilter } from '../list-filters';
 import { clockOf, duration, elapsed } from '../liveness';
-import { steadyText } from '../views/running-phrase';
+import { valueText } from '../views/running-phrase';
 import { Facts, Go, None, count, fig, usd } from './parts';
 
 /** Each workflow the table names: the record kind it wears the colour of, its word, its path. */
@@ -46,7 +46,9 @@ function opens(row: AdminWorkRow): string | undefined {
 const said = (message: AdminWorkRow['attention'][number]['message']) =>
   typeof message === 'string'
     ? message
-    : steadyText(message, { now: clockOf(Date.now()), nameOf: () => undefined });
+    : (message ?? [])
+        .map((value) => valueText(value, { now: clockOf(Date.now()), nameOf: () => undefined }))
+        .join('');
 
 const COLUMNS = [
   col<AdminWorkRow>('title', 'Title', (row) => {
@@ -55,9 +57,12 @@ const COLUMNS = [
     const [first] = row.terminal ? [] : row.attention;
     return (
       <>
-        <span className="kind admin-kind" style={kindStyle(kind)} title={row.type ?? undefined}>
-          {label}
-        </span>
+        {/* A part stands under the unit it is part of, by its own name alone. */}
+        {!row.parent && (
+          <span className="kind admin-kind" style={kindStyle(kind)} title={row.type ?? undefined}>
+            {label}
+          </span>
+        )}
         {to ? <Go to={to}>{row.title}</Go> : row.title}
         {/* What it needs, under its name: the owner's word, then the owner's own, if any. */}
         {first && (
@@ -65,8 +70,15 @@ const COLUMNS = [
             className={cx('admin-attn', first.reason === 'allowance' && 'admin-attn--bad')}
             title={row.attention.map((item) => said(item.message)).join('\n') || undefined}
           >
-            <span className="admin-attn-code">{words(first.code)}</span>
-            {first.message && <span className="faint"> {said(first.message)}</span>}
+            {/* The owner's code, unless its own words already say it, then those words. */}
+            {said(first.message).toLowerCase().startsWith(words(first.code).toLowerCase()) ? (
+              <span className="admin-attn-code">{said(first.message)}</span>
+            ) : (
+              <>
+                <span className="admin-attn-code">{words(first.code)} </span>
+                {first.message && <span className="faint">{said(first.message)}</span>}
+              </>
+            )}
           </div>
         )}
       </>
@@ -113,7 +125,7 @@ const COLUMNS = [
     </span>
   )),
   // What its closed visits measured, each figure only where it is not zero.
-  fig<AdminWorkRow>('cost', 'Cost', ({ cost: c }) => {
+  fig<AdminWorkRow>('cost', 'Usage', ({ cost: c }) => {
     const tokens = c ? c.inputTokens + c.outputTokens : 0;
     const figures = [tokens > 0 && count(tokens), c && c.wallMs >= 1000 && elapsed(c.wallMs)];
     return c && figures.some(Boolean) ? (
@@ -144,9 +156,24 @@ export function WorkView() {
     ids: (row) => [row.id],
     also: (row) => (ended || !row.terminal) && (!kind || row.kind === kind),
   });
-  const rows = [...filter.rows].sort(
-    (a, b) => rank(a) - rank(b) || b.lastActivity.localeCompare(a.lastActivity),
-  );
+  // Each part right under its unit, where that unit is listed too: the unit ranks by its most
+  // pressing part and sorts by the latest activity among them.
+  const listed = new Set(filter.rows.map((row) => row.id));
+  const parts = (unit: AdminWorkRow) => filter.rows.filter((row) => row.parent === unit.id);
+  const key = (unit: AdminWorkRow) => {
+    const all = [unit, ...parts(unit)];
+    return [
+      Math.min(...all.map(rank)),
+      all
+        .map((row) => row.lastActivity)
+        .sort()
+        .at(-1)!,
+    ] as const;
+  };
+  const rows = filter.rows
+    .filter((row) => !row.parent || !listed.has(row.parent))
+    .sort((a, b) => key(a)[0] - key(b)[0] || key(b)[1].localeCompare(key(a)[1]))
+    .flatMap((unit) => [unit, ...parts(unit)]);
   const live = all.filter((row) => !row.terminal);
   const kinds = [...new Set(all.map((row) => row.kind))].sort();
   const clear = () => {
@@ -219,6 +246,7 @@ export function WorkView() {
                 'admin-line',
                 opens(row) && 'admin-opens',
                 row.terminal && 'admin-ended',
+                row.parent && listed.has(row.parent) && 'admin-part',
               ),
               onClick: (event) => openRow(event, 'a'),
             })}

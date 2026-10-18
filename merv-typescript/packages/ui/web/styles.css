@@ -7881,6 +7881,9 @@ button.admin-name {
 .admin-unfolded {
   background: var(--hover);
 }
+.admin-part > [role='cell']:first-child {
+  padding-left: 24px;
+}
 .admin-ended,
 .admin-ended .admin-name {
   color: var(--faint);
