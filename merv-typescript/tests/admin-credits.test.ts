@@ -115,6 +115,7 @@ test('credits read per person, account and provider, as report() computes them, 
     accountId: own!.id,
     provider: 'fake',
     amount: '10',
+    validFrom: '2026-01-01T00:00:00Z',
     reason: 'Welcome credit',
   });
   await f.call('POST', '/admin/credits/grants', {
@@ -122,6 +123,7 @@ test('credits read per person, account and provider, as report() computes them, 
     accountId: payer.account_id,
     provider: 'fake',
     amount: '4.5',
+    validFrom: '2026-01-01T00:00:00Z',
     reason: 'Pilot',
   });
   await f.call('POST', '/admin/credits/grants/g2/revoke');
@@ -215,16 +217,20 @@ test('credits read per person, account and provider, as report() computes them, 
 test('credit writes land in Sandboxes through CreditService and in the admin audit log', async (t) => {
   const f = await fixture(t);
   const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const grant = { id: 'g1', accountId, provider: 'fake', amount: '2.25', reason: 'Trial' };
-  const granted = (await f.call('POST', '/admin/credits/grants', grant)) as { validFrom: string };
+  const validFrom = '2026-01-01T00:00:00Z';
+  const grant = {
+    id: 'g1',
+    accountId,
+    provider: 'fake',
+    amount: '2.25',
+    validFrom,
+    reason: 'Trial',
+  };
+  assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
   // The same id with the same terms is the same grant; different terms are refused.
-  await f.call('POST', '/admin/credits/grants', { ...grant, validFrom: granted.validFrom });
+  await f.call('POST', '/admin/credits/grants', grant);
   await assert.rejects(
-    f.call('POST', '/admin/credits/grants', {
-      ...grant,
-      amount: '3',
-      validFrom: granted.validFrom,
-    }),
+    f.call('POST', '/admin/credits/grants', { ...grant, amount: '3' }),
     f.refused('sandbox_validation', 400),
   );
   const schedule = {
@@ -268,13 +274,14 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
       ['founder', 'credits.revoke', 'g1'],
     ],
   );
-  assert.equal(JSON.parse(audit[0]!.detail_json).validFrom, granted.validFrom);
+  assert.deepEqual(JSON.parse(audit[0]!.detail_json), grant);
 });
 
 test('only an admin may read or assign credits, and only real providers, accounts and amounts', async (t) => {
   const f = await fixture(t);
   const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const grant = { id: 'g1', accountId, provider: 'fake', amount: '1', reason: 'Trial' };
+  const validFrom = '2026-01-01T00:00:00Z';
+  const grant = { id: 'g1', accountId, provider: 'fake', amount: '1', validFrom, reason: 'Trial' };
   for (const who of [
     human('someone'),
     { kind: 'key', keyId: 'key', issuer, subject: 'founder' } as unknown as Principal,
@@ -288,15 +295,28 @@ test('only an admin may read or assign credits, and only real providers, account
       f.refused('forbidden', 403),
     );
   }
-  await assert.rejects(
-    f.call('POST', '/admin/credits/grants', { ...grant, provider: 'modal' }),
-    f.refused('invalid_provider', 400),
-  );
-  for (const amount of ['0', '0.000', '-1', '1e3', 'ten', '1.1234567'])
+  // A provider with an operator connection, a positive amount of at most six places and a reason
+  // are Sandboxes' rules; the admin refuses only a body it cannot read.
+  for (const refused of [
+    { provider: 'modal' },
+    { amount: '0' },
+    { amount: '0.000' },
+    { amount: '1.1234567' },
+    { reason: ' ' },
+  ])
+    await assert.rejects(
+      f.call('POST', '/admin/credits/grants', { ...grant, ...refused }),
+      f.refused('sandbox_validation', 400),
+    );
+  for (const amount of ['-1', '1e3', 'ten'])
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', { ...grant, amount }),
       f.refused('invalid_input', 400),
     );
+  await assert.rejects(
+    f.call('POST', '/admin/credits/grants', { ...grant, validFrom: undefined }),
+    f.refused('invalid_input', 400),
+  );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants', { ...grant, accountId: 'acct_missing' }),
     f.refused('sandbox_not_found', 404),

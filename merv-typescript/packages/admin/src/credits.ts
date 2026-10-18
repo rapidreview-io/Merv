@@ -49,21 +49,19 @@ export interface CreditAccount extends Omit<CreditBalance, 'account_id' | 'curre
 
 const refusals = mervRefusals(MervError);
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
-const usd = z
-  .string()
-  .regex(/^\d{1,15}(\.\d{1,6})?$/)
-  .refine((value) => /[1-9]/.test(value), 'Amount must be positive');
+/** Syntax alone: CreditService refuses the values, but an amount it cannot parse would be a 500. */
+const usd = z.string().regex(/^\d+(\.\d+)?$/);
 const time = z.string().datetime({ offset: true });
-const target = { accountId: z.string().min(1).max(48), provider: z.string().min(1).max(64) };
+const target = { accountId: z.string().min(1).max(48), provider: z.string() };
 /** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. */
 const grantInput = z
   .object({
     id,
     ...target,
     amount: usd,
-    validFrom: time.optional(),
+    validFrom: time,
     expiresAt: time.optional(),
-    reason: z.string().trim().min(1).max(2000),
+    reason: z.string(),
   })
   .strict();
 /** Terms are immutable: the same `id` only enables or disables the schedule. */
@@ -74,7 +72,7 @@ const scheduleInput = z
     amount: usd,
     cadence: z.enum(['daily', 'weekly', 'monthly']),
     startsAt: time,
-    validityPeriods: z.number().int().min(1).max(1200).nullable(),
+    validityPeriods: z.number().int().nullable(),
     endsAt: time.nullable().optional(),
     enabled: z.boolean(),
   })
@@ -174,35 +172,30 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
 
 /** Writes go through CreditService alone, and each is kept in the admin audit log. */
 export function creditRoutes(env: AdminEnv): AdminRoutes {
-  const provider = async (sbx: Sandboxes, name: string) =>
-    check(
-      (await plugins(sbx)).includes(name),
-      'invalid_provider',
-      'Credits name a provider with an operator connection',
-    );
   return {
     'GET /admin/credits': async () => await refusals.call(() => credits(env)),
     'POST /admin/credits/grants': async (r, who) => {
       const sbx = sandboxes(env.ctx);
       const input = await r.json(grantInput);
-      await provider(sbx, input.provider);
-      const validFrom = input.validFrom ?? new Date().toISOString();
       await refusals.call(() =>
         sbx.billing.credits.grant({
           ...input,
           amount: Decimal.parse(input.amount),
-          validFrom: Instant.parseIso(validFrom),
+          validFrom: Instant.parseIso(input.validFrom),
           expiresAt: input.expiresAt ? Instant.parseIso(input.expiresAt) : null,
         }),
       );
-      const detail = { ...input, validFrom };
-      await env.audit.record({ ...who, action: 'credits.grant', target: input.accountId, detail });
-      return { id: input.id, validFrom };
+      await env.audit.record({
+        ...who,
+        action: 'credits.grant',
+        target: input.accountId,
+        detail: input,
+      });
+      return { id: input.id };
     },
     'POST /admin/credits/schedules': async (r, who) => {
       const sbx = sandboxes(env.ctx);
       const input = await r.json(scheduleInput);
-      await provider(sbx, input.provider);
       await refusals.call(() =>
         sbx.billing.credits.setSchedule({
           ...input,
