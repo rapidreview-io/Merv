@@ -340,6 +340,11 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
               node.result.output_state ??
               (node.state === 'succeeded' ? 'committed' : files.length ? 'partial' : 'failed'),
             evidenceLimitations: [...workflow.evidence_limitations],
+            // One held object per declared output, in this project's namespace: a later workflow
+            // stages it with a stage input {object_id, path} instead of downloading every member.
+            outputObjects: Object.fromEntries(
+              Object.entries(node.result.outputs).filter(([, id]) => typeof id === 'string'),
+            ),
           },
         },
         tx,

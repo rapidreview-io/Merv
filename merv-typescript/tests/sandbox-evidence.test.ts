@@ -209,6 +209,21 @@ test('replay and crash backfill create one immutable collection; bulk epoch read
   );
 });
 
+test('a collection names its output objects, so a later workflow can stage them', async (t) => {
+  const f = await fixture(t);
+  const w = f.workflow();
+  f.captures.set(w.id, [
+    {
+      id: 'output',
+      state: 'succeeded',
+      result: { outputs: { metrics: 'obj_metrics', bad: 7 }, output_state: 'committed' },
+    },
+  ]);
+  await f.evidence.reconcile();
+  const [collection] = await f.artifacts.list(f.caller);
+  assert.deepEqual(collection!.metadata?.outputObjects, { metrics: 'obj_metrics' });
+});
+
 test('an unfinished capture waits, failed captures retain partial files, and empty captures remain explicit', async (t) => {
   const f = await fixture(t);
   const original = f.workflow();
