@@ -1153,6 +1153,13 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     purpose: 'work',
     requestId: 'resumed-context',
   });
+  // A conflict resolution lists the paper and embeds none of it, and its brief says why.
+  assert.ok(context.prompt.includes('\n- paper:none — Project paper '));
+  assert.ok(
+    (await f.workflows.assignment(f.admin, taskId)).brief.includes(
+      'the project paper is listed by section, not included',
+    ),
+  );
   for (let prior = 1; prior <= 3; prior++) {
     assert.ok(context.prompt.includes(`Correction ${prior}`));
     assert.ok(context.prompt.includes(`Unmet criterion ${prior}`));

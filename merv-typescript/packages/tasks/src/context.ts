@@ -26,6 +26,7 @@ import {
   GIT_CLAIM,
   GIT_DELIVERY,
   GIT_REVIEW,
+  RESOLUTION_PAPER,
   serviceOwned,
   SOURCE_VERIFICATION,
 } from './workflow.js';
@@ -94,6 +95,47 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
   checkpoints: { priority: 400 },
   checkpointEvidence: { priority: 300 },
 };
+
+/**
+ * How much of the shared paper a task context embeds. Every experiment's reviewers write into one
+ * Methods and one Results section, which grew to 30,000-83,000 characters (2026-10-13); embedded
+ * whole ahead of a task's saved progress, they cut that progress and its documents out.
+ */
+const PAPER_SECTION_CHARS = 8000;
+const PAPER_CHARS = 16_000;
+/** Added to every paper item's priority, so each ranks below all of the task's own (300 and up). */
+const PAPER_RANK = -1000;
+
+/**
+ * The paper as a task's context takes it: below the task's own items, in the paper's order. A
+ * section is embedded only while it holds at most PAPER_SECTION_CHARS and the distinct sections
+ * embedded hold at most PAPER_CHARS, highest priority first; every other one is listed by its
+ * line, which gives its size and the paper.read that returns it. A conflict resolution embeds
+ * none: its work is in the conflicting files.
+ */
+export function taskPaper(paper: ContextInput, resolution: boolean): ContextInput {
+  let room = resolution ? 0 : PAPER_CHARS;
+  const texts = new Set<string>(),
+    embedded = new Set<ContextItem>();
+  for (const item of [...paper.items].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))) {
+    if (!('text' in item.body)) continue;
+    const { text } = item.body;
+    // A copy of an embedded section costs only its line: the builder names whose it is.
+    if (!texts.has(text)) {
+      if (text.length > Math.min(PAPER_SECTION_CHARS, room)) continue;
+      room -= text.length;
+      texts.add(text);
+    }
+    embedded.add(item);
+  }
+  return {
+    items: paper.items.map((item) => ({
+      ...item,
+      priority: (item.priority ?? 0) + PAPER_RANK,
+      ...(embedded.has(item) ? {} : { embed: 'never' as const }),
+    })),
+  };
+}
 
 export async function context(
   ctx: TasksContext,
@@ -192,9 +234,12 @@ export async function contextInputs(
     ? await leaseReceipt(tx, await currentLease(ctx, caller, task.id, task.workflow.revision, tx))
     : null;
   const project = receipt?.project ?? (await ctx.scope.project(caller, tx));
-  const projectPaper = receipt
-    ? (receipt.paper as unknown as ContextInput)
-    : await ctx.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
+  const projectPaper = taskPaper(
+    receipt
+      ? (receipt.paper as unknown as ContextInput)
+      : await ctx.paper.contextInput(caller, type.definition.recipe.maxChars, tx),
+    serviceOwned(task.workflow.version),
+  );
   const taskMetadata =
     JSON.stringify(assignmentTask) +
     `\n\nProject (as pinned when this work was offered):\n${JSON.stringify(project)}`;
@@ -377,7 +422,7 @@ export async function workflowAssignment(
     role: purpose === 'review' ? 'reviewer' : 'producer',
     label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
     name: task.title,
-    brief: `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}`,
+    brief: `${type.definition.recipe.instructions}${serviceOwned(task.workflow.version) ? ` ${RESOLUTION_PAPER}` : ''}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}`,
     references: [
       { kind: 'task', id: task.id, label: task.title },
       ...task.guidance.references,

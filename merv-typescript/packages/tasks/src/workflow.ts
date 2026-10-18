@@ -73,6 +73,13 @@ export const GIT_REVIEW =
 export const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until its claimer or an admin hands it back with review.release.';
 
+/**
+ * Said to a conflict resolution's producer and reviewer, whose published recipe asks them to read
+ * abbreviated paper sections: a .gitignore merge read an 83,000-character Methods section (2026-10-14).
+ */
+export const RESOLUTION_PAPER =
+  'This conflict resolution works on the conflicting files: the project paper is listed by section, not included, and needs reading only where a conflicting file depends on it.';
+
 /** Said to every producer and reviewer of a task, in the assignment; the published recipes stay as they are. */
 export const SOURCE_VERIFICATION =
   'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';
