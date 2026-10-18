@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createService, type Caller } from '@merv/contracts';
+import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -596,7 +596,13 @@ test('native compute captures are scoped to the accepted attempt and frozen into
       summary: 'Invalid inherited evidence',
       requestId: f.id(),
     }),
-    errorCode('invalid_evidence_author'),
+    // The refusal names the artifact at fault and only it, so the worker drops exactly that.
+    (error: MervError) =>
+      error.code === 'invalid_evidence_author' &&
+      error.message.includes(unrelated.id) &&
+      !error.message.includes(report.id) &&
+      /cite them by id/.test(error.message) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [unrelated.id] }),
   );
   await f.work.commit(producer, { 'experiment.ts': 'console.log("remote results");\n' });
   exp = await f.work.run(

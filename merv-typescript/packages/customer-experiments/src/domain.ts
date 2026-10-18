@@ -3,6 +3,7 @@ import {
   childRequest,
   digest,
   inTransaction,
+  MervError,
   newId,
   now,
   plain,
@@ -983,20 +984,40 @@ export class CustomerExperiments {
         const captures = new Set((await this.computeEvidence(exp, tx)).artifactIds);
         const ids = [...new Set([...rendered, ...input.artifactIds, ...captures])];
         const artifacts = await this.artifacts.getAll(caller, ids, tx);
-        check(
-          artifacts.every((a) => captures.has(a.id) || a.createdBy === caller.actorId),
+        // A refusal names the ids at fault, so the worker drops exactly those rather than
+        // guessing, and says where the evidence it cannot attach still belongs.
+        const refuse = (code: string, rule: string, at: string[]) => {
+          if (!at.length) return;
+          const report = at.filter((id) => rendered.includes(id));
+          throw new MervError(
+            code,
+            `${rule}; these are not: ${at.join(', ')}. ${
+              report.length
+                ? 'The report was rendered final outside this session: render it with final: true again here. '
+                : ''
+            }${
+              report.length < at.length
+                ? 'Leave the others out of artifactIds and cite them by id in the report or in an evidence artifact you write in this session.'
+                : ''
+            }`.trim(),
+            403,
+            { artifactIds: at },
+          );
+        };
+        refuse(
           'invalid_evidence_author',
           'Results must be retained by the executing worker or this attempt’s native compute',
-          403,
+          artifacts
+            .filter((a) => !captures.has(a.id) && a.createdBy !== caller.actorId)
+            .map((a) => a.id),
         );
         const outputs = new Set(
           (await this.artifacts.executionOutputs(caller, tx)).map((a) => a.id),
         );
-        check(
-          ids.every((id) => captures.has(id) || outputs.has(id)),
+        refuse(
           'invalid_evidence_origin',
           'Results must be outputs of this execution session or this attempt’s native compute',
-          403,
+          ids.filter((id) => !captures.has(id) && !outputs.has(id)),
         );
         check(
           ids.some((id) => !captures.has(id) && outputs.has(id)),
