@@ -10,6 +10,7 @@ import host from '@merv/sandboxes/host';
 import { sandboxesPeoplePlugin, type SandboxesPeople } from '@merv/sandboxes/people';
 import { ProjectScope } from '@merv/scope';
 import { migrate, openDatabase } from '@sandboxes/db';
+import { Decimal, Instant } from '@sandboxes/kernel';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -117,17 +118,36 @@ test('ensure is idempotent: one person, their own account with them its admin, o
   );
 });
 
-test('welcome credit comes with access to spend it, and an access an operator revoked stays revoked', async (t) => {
+test('credit comes with access to spend it; a disabled schedule and an access an operator revoked do not', async (t) => {
   const f = await fixture(t);
-  const people = await f.start({ fake: '10' });
+  const people = await f.start({});
   const { connections } = f.ctx.sbxProviders;
   const access = async (accountId: string) =>
     (await connections.listEntitlements({ accountId })).map((e) => [e.connection_id, e.enabled]);
-  const { accountId } = await people.ensure({ issuer, subject: 'alice' });
+  const now = Instant.parseIso(new Date().toISOString());
+  const terms = { provider: 'fake', amount: Decimal.parse('1'), reason: 'More' };
+  const alice = { issuer, subject: 'alice' };
+  assert.equal(await people.accountOf(alice), null);
+  const { accountId } = await people.ensure(alice);
+  assert.deepEqual(await people.accountOf(alice), { accountId, name: null });
+  assert.deepEqual(await access(accountId), []);
+  await people.grant(alice, { ...terms, id: 'g1', validFrom: now, expiresAt: null });
   assert.deepEqual(await access(accountId), [['cloud', true]]);
   await connections.setEntitlement({ connectionId: 'cloud', accountId, enabled: false });
-  await people.entitle(accountId, 'fake');
+  await people.grant(alice, { ...terms, id: 'g2', validFrom: now, expiresAt: null });
   assert.deepEqual(await access(accountId), [['cloud', false]]);
+  // Bob's first credit is a schedule saved disabled: his account is made, with no access.
+  const bob = { issuer, subject: 'bob' };
+  await people.schedule(bob, {
+    ...terms,
+    id: 's1',
+    cadence: 'daily',
+    startsAt: now,
+    validityPeriods: null,
+    endsAt: null,
+    enabled: false,
+  });
+  assert.deepEqual(await access((await people.accountOf(bob))!.accountId), []);
 });
 
 test('a first sign-in makes the account; later sign-ins do not ask again', async (t) => {

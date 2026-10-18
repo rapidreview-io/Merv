@@ -1,7 +1,5 @@
 import type { Context } from 'cordis';
 import { z, type ZodType, type ZodTypeDef } from 'zod';
-import type {} from '@sandboxes/accounts';
-import type {} from '@sandboxes/auth';
 import type {} from '@sandboxes/billing';
 import type {} from '@sandboxes/providers';
 import { PLUGIN_COPY } from '@sandboxes/providers/console-labels';
@@ -23,27 +21,19 @@ import type {
 import { personLabel, type AdminEnv, type AdminRoute, type AdminRoutes } from './index.js';
 
 const refusals = mervRefusals(MervError);
-/** Syntax alone: CreditService refuses the values, but an amount it cannot parse would be a 500. */
+/** Syntax alone: CreditService refuses the values, but an amount it cannot parse would be a 500.
+ *  `person` (`issuer|subject`) is whose own account it is on. */
 const terms = {
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
-  accountId: z.string().min(1).max(48),
+  person: z.string().min(1),
   provider: z.string(),
   amount: z.string().regex(/^\d+(\.\d+)?$/),
 };
 const time = z.string().datetime({ offset: true });
-/** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. It
- *  names an account, or a person (`issuer|subject`) granted on their own account. */
+/** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. */
 const grantInput = z
-  .object({
-    ...terms,
-    accountId: terms.accountId.optional(),
-    person: z.string().min(1).optional(),
-    validFrom: time,
-    expiresAt: time.nullable().optional(),
-    reason: z.string(),
-  })
-  .strict()
-  .refine(({ accountId, person }) => !accountId !== !person);
+  .object({ ...terms, validFrom: time, expiresAt: time.nullable().optional(), reason: z.string() })
+  .strict();
 /** Terms are immutable: the same `id` only enables or disables the schedule. */
 const scheduleInput = z
   .object({
@@ -68,19 +58,19 @@ const limitInput: ZodType<CreditLimitInput, ZodTypeDef, unknown> = z.union([
     .strict(),
 ]);
 
-/** The Sandboxes services credits live in, found per request: without them, 503. */
+/** The Sandboxes services credits live in, and the bridge to each person's own account, found
+ *  per request: without them, 503. */
 function sandboxes(ctx: Context) {
   const billing = ctx.get('sbxBilling');
-  const accounts = ctx.get('sbxAccounts');
-  const auth = ctx.get('sbxAuth');
   const providers = ctx.get('sbxProviders');
+  const people = ctx.get('sandboxesPeople');
   check(
-    billing && accounts && auth && providers,
+    billing && providers && people,
     'credits_unavailable',
     'Sandbox credits are not available on this server',
     503,
   );
-  return { billing, accounts, auth, providers };
+  return { billing, providers, people };
 }
 type Sandboxes = ReturnType<typeof sandboxes>;
 /** Provider plugins with an operator connection: the only providers credits may name. */
@@ -106,20 +96,6 @@ function segment(r: ApiRequest) {
     throw new MervError('invalid_input', 'Malformed person');
   }
 }
-/** The Merv↔Sandboxes bridge: each person's own account, and access to spend what is given. */
-function people(env: AdminEnv) {
-  const bridge = env.ctx.get('sandboxesPeople');
-  check(bridge, 'credits_unavailable', 'Sandbox accounts are not available on this server', 503);
-  return bridge;
-}
-/** A person's own Sandboxes account, which the bridge makes now if it has not yet. */
-async function ownAccount(env: AdminEnv, key: string) {
-  const person = await named(env, key);
-  const label = personLabel(env.admins, person);
-  const { issuer, subject } = person;
-  return (await people(env).ensure({ issuer, subject, label })).accountId;
-}
-
 type Window = keyof CreditUse['used'];
 type Span = readonly [window: Window, from: string, to: string];
 const DAY = 86_400_000;
@@ -175,15 +151,11 @@ async function uses(
   };
   return await Promise.all(
     people.map(async (person, i) => {
-      const row = await sbx.auth.persons.byIdentity(person.issuer, person.subject);
-      // Their own account is the one their home namespace belongs to.
-      const accountId = row?.home_namespace
-        ? (await sbx.accounts.namespace(row.home_namespace)).account_id
-        : null;
+      const own = await sbx.people.accountOf(person);
       const held =
-        accountId &&
+        own &&
         (await sbx.billing.credits.usage(
-          accountId,
+          own.accountId,
           windows.map(([, from, to]) => [at(from), at(to)] as const),
         ));
       const pools = new Map(held ? held.pools.map((pool) => [pool.provider, pool]) : []);
@@ -192,11 +164,8 @@ async function uses(
       return {
         person: {
           key: `${person.issuer}|${person.subject}`,
-          label: personLabel(env.admins, person) ?? (row?.display_name || row?.email || 'Unnamed'),
-          issuer: person.issuer,
-          subject: person.subject,
+          label: personLabel(env.admins, person) ?? own?.name ?? 'Unnamed',
         },
-        accountId,
         kinds: [
           ...kind('agent-tokens', 'Agent tokens', 'tokens', agent?.[i]),
           ...kind('fleet-tokens', 'Fleet agent tokens', 'tokens', metered),
@@ -228,11 +197,8 @@ async function uses(
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
   const { people } = await env.ctx.scope.directory();
-  const providers = await connected(sbx);
-  const rows = await uses(env, sbx, people, spans().slice(0, 1), providers);
+  const rows = await uses(env, sbx, people, spans().slice(0, 1), await connected(sbx));
   return {
-    at: new Date().toISOString(),
-    providers,
     people: rows.map(({ person, kinds }) => ({
       ...person,
       kinds: kinds.map(({ used, ...kind }) => ({ ...kind, used: used.day })),
@@ -242,21 +208,20 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
 
 /** Writes go through each owner alone, and each is kept in the admin audit log. */
 export function creditRoutes(env: AdminEnv): AdminRoutes {
-  /** A credit write whose body names its own id, and its account or the person whose own account
-   *  it is, which may then spend it: done, it answers that id. */
+  /** A credit write whose body names its own id and the person on whose own account it is, kept
+   *  through the bridge, which gives them access to spend it: done, it answers that id. */
   const write =
-    <T extends { id: string; accountId?: string; person?: string; provider: string }>(
+    <T extends { id: string; person: string }>(
       action: string,
       input: ZodType<T, ZodTypeDef, unknown>,
-      apply: (sbx: Sandboxes, body: T & { accountId: string }) => Promise<unknown>,
+      apply: (sbx: Sandboxes, person: Person & { label?: string }, body: T) => Promise<void>,
     ): AdminRoute =>
     async (r, who) => {
       const sbx = sandboxes(env.ctx);
       const body = await r.json(input);
-      const accountId = body.accountId ?? (await ownAccount(env, body.person!));
-      await refusals.call(() => apply(sbx, { ...body, accountId }));
-      await people(env).entitle(accountId, body.provider);
-      await env.audit.record(who, action, accountId, body);
+      const person = await named(env, body.person);
+      await apply(sbx, { ...person, label: personLabel(env.admins, person) }, body);
+      await env.audit.record(who, action, body.person, body);
       return { id: body.id };
     };
   const instant = (at: string | null | undefined) => (at ? Instant.parseIso(at) : null);
@@ -292,24 +257,24 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
       });
       return input;
     },
-    'POST /admin/credits/grants': write(
-      'credits.grant',
-      grantInput,
-      (sbx, { person: _, ...input }) =>
-        sbx.billing.credits.grant({
-          ...input,
-          amount: Decimal.parse(input.amount),
-          validFrom: Instant.parseIso(input.validFrom),
-          expiresAt: instant(input.expiresAt),
-        }),
-    ),
-    'POST /admin/credits/schedules': write('credits.schedule', scheduleInput, (sbx, input) =>
-      sbx.billing.credits.setSchedule({
+    'POST /admin/credits/grants': write('credits.grant', grantInput, (sbx, person, input) =>
+      sbx.people.grant(person, {
         ...input,
         amount: Decimal.parse(input.amount),
-        startsAt: Instant.parseIso(input.startsAt),
-        endsAt: instant(input.endsAt),
+        validFrom: Instant.parseIso(input.validFrom),
+        expiresAt: instant(input.expiresAt),
       }),
+    ),
+    'POST /admin/credits/schedules': write(
+      'credits.schedule',
+      scheduleInput,
+      (sbx, person, input) =>
+        sbx.people.schedule(person, {
+          ...input,
+          amount: Decimal.parse(input.amount),
+          startsAt: Instant.parseIso(input.startsAt),
+          endsAt: instant(input.endsAt),
+        }),
     ),
     'POST /admin/credits/grants/:id/revoke': async (r, who) => {
       const sbx = sandboxes(env.ctx);

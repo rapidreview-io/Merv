@@ -135,12 +135,11 @@ export class Memberships {
       tx: Transaction,
     ) => Promise<Actor>,
   ) {}
-  private readonly firstSignIns = new Set<{ hear(person: SharedUser): void }>();
+  private readonly firstSignIns = new Set<(person: SharedUser) => void>();
 
   onFirstSignIn(listener: (person: SharedUser) => void): () => void {
-    const entry = { hear: listener };
-    this.firstSignIns.add(entry);
-    return () => void this.firstSignIns.delete(entry);
+    this.firstSignIns.add(listener);
+    return () => void this.firstSignIns.delete(listener);
   }
 
   async acceptVerifiedIdentity({ ...identity }: VerifiedIdentity): Promise<HumanPrincipal> {
@@ -180,7 +179,7 @@ export class Memberships {
     });
     // A listener's own failure is its own: the person has signed in.
     if (first)
-      for (const { hear } of this.firstSignIns)
+      for (const hear of this.firstSignIns)
         try {
           hear(principal.user);
         } catch {}

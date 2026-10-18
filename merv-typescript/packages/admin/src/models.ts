@@ -46,30 +46,13 @@ export interface AdminWork {
   at: string;
 }
 
-/** The credit Sandboxes holds on an account: each grant's money as decimal text, its times as
- *  ISO text. */
-export interface CreditAccount {
-  grants: (Record<'id' | 'provider' | 'amount' | 'used' | 'reserved' | 'available', string> &
-    Record<'valid_from' | 'created_at' | 'reason', string> &
-    Record<'expires_at' | 'revoked_at' | 'schedule_id', string | null>)[];
-  schedules: (Record<'id' | 'provider' | 'amount' | 'starts_at', string> & {
-    cadence: 'daily' | 'weekly' | 'monthly';
-    validity_periods: number | null;
-    ends_at: string | null;
-    enabled: boolean;
-  })[];
-}
-
-/** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
+/** The loader entry and the config field that names `env`. */
 interface EnvName {
   plugin: string;
   field: string;
   env: string;
 }
 type Outcome = Record<'at' | 'relay' | 'model', string>;
-
-// ── v2 (docs/ADMIN.md "v2"): operable credentials and credits. These replace the shapes above
-// where they overlap; the builders delete what they supersede.
 
 /** One platform secret named by a plugin's config, by what it is for. Never its value. */
 export interface PlatformSecret extends EnvName {
@@ -85,25 +68,18 @@ export interface PlatformSecret extends EnvName {
   /** The admin may reveal and change it here (a stored override replaces the env value). */
   editable: boolean;
 }
-/** One credential field of one sandbox provider instance. Never its value. */
+/** One credential field of one of the platform's sandbox provider instances. Never its value. */
 export interface ProviderKey {
   provider: string;
-  plugin: string;
-  source: 'host' | 'user';
-  /** The namespace a user-saved key belongs to; null for a host instance. */
-  namespace: string | null;
   field: string;
   /** The provider plugin's own description of the field. */
   description: string;
-  secret: boolean;
   present: boolean | null;
   health: 'ok' | 'degraded' | 'unavailable' | null;
   healthReason: string | null;
-  verifiedAt: string | null;
   editable: boolean;
 }
-export interface AdminCredentialsV2 {
-  at: string;
+export interface AdminCredentials {
   groups: {
     purpose: 'Agent' | 'Fleet agents' | 'Fleet machines' | 'Platform services';
     secrets: PlatformSecret[];
@@ -113,14 +89,10 @@ export interface AdminCredentialsV2 {
   minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
     Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
 }
-/** `POST /admin/credentials/reveal` (→ `{ value }`) and `/change` (→ `{ ok, reloaded }`, the
- *  plugin entries reloaded and provider instances rebound): one platform secret, or one
- *  provider's keys. */
-export type CredentialTarget =
-  { env: string } | { provider: string; namespace: string | null; field: string };
-export type CredentialChange =
-  | { env: string; value: string }
-  | { provider: string; namespace: string | null; fields: Record<string, string> };
+/** `POST /admin/credentials/reveal` (→ `{ value }`) names one; `/change` (→ `{ ok, reloaded }`,
+ *  the plugin entries reloaded and provider instances rebound) gives an env its `value`, or a
+ *  provider some of its key's `fields`. */
+export type CredentialTarget = { env: string } | { provider: string; field: string };
 
 /** A credit type a person spends: the platform's own, or one sandbox provider's. */
 export type CreditKind = 'agent-tokens' | 'fleet-tokens' | 'fleet-usd' | `provider:${string}`;
@@ -136,21 +108,25 @@ export interface CreditUse {
   /** What is left now: of today's limit, or of a provider's granted credit. */
   left: number | null;
 }
-/** `GET /admin/credits/people/:person` (`:person` is `encodeURIComponent(issuer + '|' + subject)`). */
+/** `GET /admin/credits/people/:person` (`:person` is `encodeURIComponent(key)`). */
 export interface PersonCredits {
-  person: { key: string; label: string; issuer: string; subject: string };
-  /** Their own Sandboxes account, which provider credit is granted to. */
-  accountId: string | null;
+  /** `key` is `issuer|subject`, which every credit write names the person by. */
+  person: { key: string; label: string };
   kinds: CreditUse[];
-  /** The provider grants and schedules on their account. */
-  grants: CreditAccount['grants'];
-  schedules: CreditAccount['schedules'];
+  /** The provider grants and schedules on their own Sandboxes account: money as decimal text,
+   *  times as ISO text. */
+  grants: (Record<'id' | 'provider' | 'amount' | 'used' | 'reserved' | 'available', string> &
+    Record<'valid_from' | 'created_at' | 'reason', string> &
+    Record<'expires_at' | 'revoked_at' | 'schedule_id', string | null>)[];
+  schedules: (Record<'id' | 'provider' | 'amount' | 'starts_at', string> & {
+    cadence: 'daily' | 'weekly' | 'monthly';
+    validity_periods: number | null;
+    ends_at: string | null;
+    enabled: boolean;
+  })[];
 }
 /** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
 export interface AdminCredits {
-  at: string;
-  /** Provider plugins with an operator connection: the only providers credits may name. */
-  providers: string[];
   people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
 }
 /** `POST /admin/credits/people/:person/limits`: null clears the person's own limit. */

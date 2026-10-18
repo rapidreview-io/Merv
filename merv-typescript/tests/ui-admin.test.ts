@@ -287,21 +287,15 @@ const failure = (minutes: number, code: string, status: number) => ({
 });
 const providerKey = (field: string, description: string, over: Record<string, unknown> = {}) => ({
   provider: 'modal-main',
-  plugin: 'modal',
-  source: 'host',
-  namespace: null,
   field,
   description,
-  secret: true,
   present: true,
   health: 'degraded',
   healthReason: 'slow to answer',
-  verifiedAt: ago(2),
   editable: true,
   ...over,
 });
 const credentials = {
-  at: new Date().toISOString(),
   groups: [
     {
       purpose: 'Agent',
@@ -343,7 +337,7 @@ const credentials = {
     },
   ],
   providers: [
-    providerKey('token_id', 'Modal token id', { secret: false }),
+    providerKey('token_id', 'Modal token id', {}),
     providerKey('token_secret', 'Modal token secret'),
   ],
   minted: [
@@ -396,16 +390,15 @@ test('credentials: purposes lead, names faint, no fingerprint, provider keys the
   assert.doesNotMatch(rowOf('Platform services', /MERV_DB_URL/).textContent!, /Reveal|Change/);
   assert.doesNotMatch(rowOf('Platform services', /RESEND/).textContent!, /Reveal/);
   assert.match(rowOf('Platform services', /RESEND/).textContent!, /Change/);
-  // The provider keys: provider and its health, what the key is, present, verified.
+  // The provider keys: provider and its health, what the key is, present.
   const keys = [...document.querySelectorAll('[aria-label="Sandbox providers"] .ruled-head > *')];
   assert.deepEqual(
     keys.map((th) => th.textContent),
-    ['Provider', 'Key', 'Present', 'Verified', ''],
+    ['Provider', 'Key', 'Present', ''],
   );
   const modal = rowOf('Sandbox providers', /token_secret/);
   assert.match(modal.textContent!, /^modal-main degraded/);
   assert.match(modal.textContent!, /Modal token secrettoken_secret/);
-  assert.match(modal.textContent!, /2m ago/);
   assert.ok(modal.querySelector('[title="slow to answer"]'), 'the health reason is its title');
   assert.equal(document.querySelectorAll('[aria-label="Agent"] .ruled-row').length, 1);
   // Machine credentials stand at the foot.
@@ -435,7 +428,7 @@ test('credentials: Reveal shows the value for 30 s with Copy, then takes it off 
   assert.match(text(), /sk-agent-1234/);
   const shown = document.querySelector('.admin-secret')!;
   assert.ok(shown.classList.contains('mono'));
-  assert.match(shown.parentElement!.textContent!, /Copy30s/);
+  assert.match(shown.parentElement!.textContent!, /30s$/);
   await press(shown.parentElement!, 'Copy');
   await settle(10);
   assert.deepEqual(copied, ['sk-agent-1234']);
@@ -444,10 +437,10 @@ test('credentials: Reveal shows the value for 30 s with Copy, then takes it off 
   await jump(21_000);
   assert.doesNotMatch(text(), /sk-agent-1234/, 'hidden at 30 s');
   assert.equal(document.querySelector('.admin-secret'), null);
-  // A provider key is named by its provider, namespace and field; Hide takes it away early.
+  // A provider key is named by its provider and field; Hide takes it away early.
   await press(rowOf('Sandbox providers', /token_secret/), 'Reveal');
   await settle(10);
-  assert.deepEqual(asked[1], { provider: 'modal-main', namespace: null, field: 'token_secret' });
+  assert.deepEqual(asked[1], { provider: 'modal-main', field: 'token_secret' });
   assert.match(text(), /as-secret-5678/);
   await press(rowOf('Sandbox providers', /token_secret/), 'Hide');
   assert.doesNotMatch(text(), /as-secret-5678/);
@@ -495,11 +488,7 @@ test('credentials: Change sends the new value, states a refusal verbatim, then w
   const key = document.querySelector<HTMLFormElement>('form[aria-label^="Change modal-main"]')!;
   await fill(key, 'token_id', 'ak-1');
   await send(key);
-  assert.deepEqual(changes[2], {
-    provider: 'modal-main',
-    namespace: null,
-    fields: { token_id: 'ak-1' },
-  });
+  assert.deepEqual(changes[2], { provider: 'modal-main', fields: { token_id: 'ak-1' } });
 });
 
 // ── Credits (v2): one row per person, a drawer per person with its windows and controls ──
@@ -552,8 +541,7 @@ const tomasKinds = [
 const miraKey = `${user.issuer}|mira`;
 const miraPath = `/admin/credits/people/${encodeURIComponent(miraKey)}`;
 const mira = {
-  person: { key: miraKey, label: 'Mira Chen', issuer: user.issuer, subject: 'mira' },
-  accountId: 'acct_mira',
+  person: { key: miraKey, label: 'Mira Chen' },
   kinds: [
     use('agent-tokens', 'Agent tokens', 'tokens', {
       limit: 1_000_000,
@@ -593,23 +581,9 @@ const mira = {
   ],
 };
 const credits = {
-  at: new Date().toISOString(),
-  providers: ['fake', 'modal'],
   people: [
-    {
-      key: miraKey,
-      label: 'Mira Chen',
-      issuer: user.issuer,
-      subject: 'mira',
-      kinds: listed(mira.kinds),
-    },
-    {
-      key: `${user.issuer}|tomas`,
-      label: 'Tomás Ruiz',
-      issuer: user.issuer,
-      subject: 'tomas',
-      kinds: listed(tomasKinds),
-    },
+    { key: miraKey, label: 'Mira Chen', kinds: listed(mira.kinds) },
+    { key: `${user.issuer}|tomas`, label: 'Tomás Ruiz', kinds: listed(tomasKinds) },
   ],
 };
 const tomasPath = `/admin/credits/people/${encodeURIComponent(`${user.issuer}|tomas`)}`;
@@ -621,13 +595,7 @@ const bootCredits = () => {
   serve(miraPath, { body: mira });
   serve(tomasPath, {
     body: {
-      person: {
-        key: `${user.issuer}|tomas`,
-        label: 'Tomás Ruiz',
-        issuer: user.issuer,
-        subject: 'tomas',
-      },
-      accountId: null,
+      person: { key: `${user.issuer}|tomas`, label: 'Tomás Ruiz' },
       kinds: [],
       grants: [],
       schedules: [],

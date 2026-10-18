@@ -16,7 +16,7 @@ import {
   type State,
 } from '@merv/contracts';
 import { adminPlugin } from '@merv/admin';
-import type { AdminCredentialsV2 } from '@merv/admin/models';
+import type { AdminCredentials } from '@merv/admin/models';
 import type { ApiRequest, MountHandler } from '@merv/api/types';
 import type { ManagedModelGrant } from '@merv/fleet/types';
 import { CredentialStore } from '@merv/identity/credentials';
@@ -341,7 +341,7 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
     (await credentialRoutes(env)['GET /admin/credentials']!(
       {} as ApiRequest,
       admin,
-    )) as AdminCredentialsV2;
+    )) as AdminCredentials;
 
   const first = await read();
   const name = ({ plugin, field, env }: ConfiguredEnv) => ({ plugin, field, env });
@@ -404,62 +404,25 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
       ['state', 'connectionStringEnv', true, false],
     ],
   );
-  // Sandbox provider keys are their own table: a host instance's health asks Cloudflare about
-  // the native token; a user's own key stays sealed.
+  // Sandbox provider keys are their own table, the platform's alone: a host instance's health
+  // asks Cloudflare about the native token; a key a person saved is not listed.
   assert.deepEqual(
     first.providers.map((p) => [
       p.provider,
-      p.source,
-      p.namespace,
       p.field,
-      p.secret,
       p.present,
       p.health,
       p.healthReason,
-      !!p.verifiedAt,
       p.editable,
     ]),
-    [
-      [
-        'cf',
-        'host',
-        null,
-        'bridge_url',
-        false,
-        true,
-        'degraded',
-        'credential_rejected',
-        false,
-        true,
-      ],
-      [
-        'cf',
-        'host',
-        null,
-        'bridge_token',
-        true,
-        true,
-        'degraded',
-        'credential_rejected',
-        false,
-        true,
-      ],
-      [
-        'cf',
-        'host',
-        null,
-        'cloudflare_api_token',
-        true,
-        true,
-        'degraded',
-        'credential_rejected',
-        false,
-        true,
-      ],
-      ['mine', 'user', 'team-a', 'bridge_url', false, true, null, null, true, true],
-      ['mine', 'user', 'team-a', 'bridge_token', true, true, null, null, true, true],
-      ['mine', 'user', 'team-a', 'cloudflare_api_token', true, null, null, null, true, true],
-    ],
+    ['bridge_url', 'bridge_token', 'cloudflare_api_token'].map((field) => [
+      'cf',
+      field,
+      true,
+      'degraded',
+      'credential_rejected',
+      true,
+    ]),
   );
   assert.equal(first.providers[1]!.description, 'Bearer token the Worker was given');
   assert.ok(statements.some((sql) => sql.includes('FROM provider_credentials')));
@@ -676,8 +639,16 @@ test('a platform secret is revealed and changed here: sealed, applied, its one c
   const [row] = await f.stored();
   assert.deepEqual([row!.env, row!.updated_subject], ['ADMIN_TEST_READER', 'founder']);
   assert.ok(row!.ciphertext !== second && !row!.ciphertext.includes(second));
+  // A value its consumer will not start with is put back at once, and never stored.
+  await assert.rejects(
+    f.call('POST', '/admin/credentials/change', { env: 'ADMIN_TEST_READER', value: 'refused' }),
+    refused('credential_rejected', 422),
+  );
+  assert.equal(process.env.ADMIN_TEST_READER, second);
+  assert.ok(f.app.status().every((entry) => entry.state === 'active'));
+  assert.deepEqual(await f.stored(), [row]);
 
-  const listed = await f.call<AdminCredentialsV2>('GET', '/admin/credentials');
+  const listed = await f.call<AdminCredentials>('GET', '/admin/credentials');
   const shown = listed.groups.flatMap((group) => group.secrets);
   assert.deepEqual(
     shown.map((s) => [s.plugin, s.env, s.purpose, s.set, !!s.lastChanged, s.editable]),
@@ -726,12 +697,12 @@ test('a platform secret is revealed and changed here: sealed, applied, its one c
   stopped = true;
   f = await operable(t, directory, schema, dataDir);
   stopped = false;
-  assert.deepEqual(reads.slice(before), [first, second, second]);
+  assert.deepEqual(reads.slice(before), [first, second, 'refused', second, second]);
   assert.equal(process.env.ADMIN_TEST_READER, second);
 });
 
-test('a sandbox provider key changes through Sandboxes: a user key verified before it is saved, a host key rebound', async (t) => {
-  const [host1, host2, user1, user2] = [secret(), secret(), secret(), secret()];
+test('a platform sandbox provider key is revealed and changed here, rebound; a key a person saved is theirs', async (t) => {
+  const [host1, host2, user1] = [secret(), secret(), secret()];
   const cf = (token: string) =>
     JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: token });
   environment(t, {
@@ -741,10 +712,7 @@ test('a sandbox provider key changes through Sandboxes: a user key verified befo
     ADMIN_TEST_VAULT_KEY: Buffer.alloc(32, 6).toString('base64url'),
     ADMIN_TEST_CF: cf(host1),
   });
-  const accepted = {
-    'https://bridge.example.test': host1,
-    'https://user-bridge.example.test': user2,
-  };
+  const accepted = { 'https://bridge.example.test': host1 };
   const sent = bridges(t, accepted);
   const [directory, schema, dataDir] = await places(t);
   const f = await operable(t, directory, schema, dataDir);
@@ -758,37 +726,22 @@ test('a sandbox provider key changes through Sandboxes: a user key verified befo
     access: 'tunnel',
     verified: true,
   });
-  const reveal = (provider: string, namespace: string | null, field = 'bridge_token') =>
-    f.call<{ value: string }>('POST', '/admin/credentials/reveal', { provider, namespace, field });
+  const reveal = (provider: string, field = 'bridge_token') =>
+    f.call<{ value: string }>('POST', '/admin/credentials/reveal', { provider, field });
 
-  // A user's key opens for the admin route alone; the listing reads no sealed column.
-  assert.deepEqual(await reveal('mine', 'team-a'), { value: user1 });
-  assert.deepEqual(await reveal('cf', null), { value: host1 });
-  for (const [provider, namespace, field] of [
-    ['mine', 'team-b', 'bridge_token'],
-    ['mine', null, 'bridge_token'],
-    ['cf', 'team-a', 'bridge_token'],
-    ['mine', 'team-a', 'password'],
-    ['nobody', null, 'bridge_token'],
-  ] as const)
-    await assert.rejects(reveal(provider, namespace, field), refused('not_found', 404));
-
-  // A key the provider refuses is not saved: Sandboxes asked the bridge with it first.
-  const user = { provider: 'mine', namespace: 'team-a' };
-  await assert.rejects(
-    f.call('POST', '/admin/credentials/change', { ...user, fields: { bridge_token: user1 } }),
-    (error) => error instanceof MervError && error.code.startsWith('sandbox_'),
-  );
-  assert.deepEqual(sent.at(-1), ['https://user-bridge.example.test', user1]);
-  assert.deepEqual(await reveal('mine', 'team-a'), { value: user1 });
-  assert.deepEqual(
-    await f.call('POST', '/admin/credentials/change', { ...user, fields: { bridge_token: user2 } }),
-    { ok: true, reloaded: ['mine'] },
-  );
-  assert.deepEqual(sent.at(-1), ['https://user-bridge.example.test', user2]);
-  assert.deepEqual(await reveal('mine', 'team-a'), { value: user2 });
-  // Saved in Sandboxes' vault, not as a platform secret.
-  assert.deepEqual(await f.stored(), []);
+  assert.deepEqual(await reveal('cf'), { value: host1 });
+  // A person's own key, a field the provider has not, and a provider nobody configured.
+  for (const [provider, field] of [
+    ['mine', 'bridge_token'],
+    ['cf', 'password'],
+    ['nobody', 'bridge_token'],
+  ] as const) {
+    await assert.rejects(reveal(provider, field), refused('not_found', 404));
+    await assert.rejects(
+      f.call('POST', '/admin/credentials/change', { provider, fields: { [field]: host2 } }),
+      refused('not_found', 404),
+    );
+  }
 
   // A host key is an override of its credential env: stored sealed, applied, and the hub
   // rebinds the instance that reads it, which then calls its bridge with the new key.
@@ -797,7 +750,6 @@ test('a sandbox provider key changes through Sandboxes: a user key verified befo
   assert.deepEqual(
     await f.call('POST', '/admin/credentials/change', {
       provider: 'cf',
-      namespace: null,
       fields: { bridge_token: host2 },
     }),
     { ok: true, reloaded: ['cf'] },
@@ -807,27 +759,20 @@ test('a sandbox provider key changes through Sandboxes: a user key verified befo
   const [row] = await f.stored();
   assert.equal(row!.env, 'ADMIN_TEST_CF');
   assert.ok(!row!.ciphertext.includes(host2));
-  const listed = await f.call<AdminCredentialsV2>('GET', '/admin/credentials');
+  const listed = await f.call<AdminCredentials>('GET', '/admin/credentials');
   assert.deepEqual(sent.at(-1), ['https://bridge.example.test', host2]);
   assert.deepEqual(
     listed.providers.filter((p) => p.field === 'bridge_token').map((p) => [p.provider, p.health]),
-    [
-      ['cf', 'ok'],
-      ['mine', null],
-    ],
+    [['cf', 'ok']],
   );
-  assert.deepEqual(await reveal('cf', null), { value: host2 });
+  assert.deepEqual(await reveal('cf'), { value: host2 });
   assert.deepEqual(
     (await f.audit()).map((entry) => [entry.action, entry.target, JSON.parse(entry.detail_json)]),
     [
-      ['credentials.reveal', 'mine', { namespace: 'team-a', field: 'bridge_token' }],
-      ['credentials.reveal', 'cf', { namespace: null, field: 'bridge_token' }],
-      ['credentials.reveal', 'mine', { namespace: 'team-a', field: 'bridge_token' }],
-      ['credentials.change', 'mine', { namespace: 'team-a', fields: ['bridge_token'] }],
-      ['credentials.reveal', 'mine', { namespace: 'team-a', field: 'bridge_token' }],
-      ['credentials.change', 'cf', { namespace: null, fields: ['bridge_token'] }],
-      ['credentials.reveal', 'cf', { namespace: null, field: 'bridge_token' }],
+      ['credentials.reveal', 'cf', { field: 'bridge_token' }],
+      ['credentials.change', 'cf', { fields: ['bridge_token'] }],
+      ['credentials.reveal', 'cf', { field: 'bridge_token' }],
     ],
   );
-  undisclosed([listed, await f.audit()], [host1, host2, user1, user2]);
+  undisclosed([listed, await f.audit()], [host1, host2, user1]);
 });

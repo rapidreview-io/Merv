@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { digest, MervError, type Scope } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { SbxAuth } from '@sandboxes/auth';
-import type { SbxBilling } from '@sandboxes/billing';
+import type { CreditGrantInput, CreditScheduleInput, SbxBilling } from '@sandboxes/billing';
 import { Decimal } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
 import type { SbxProviders } from '@sandboxes/providers';
@@ -56,23 +56,51 @@ export class SandboxesPeople implements People {
           continue;
         }
         // Fixed terms, so a concurrent ensure of this person grants the same grant.
-        await credits.grant({
-          id,
-          accountId,
-          provider,
-          amount: Decimal.parse(usd),
-          validFrom: person.created_at,
-          expiresAt: null,
-          reason: 'Welcome credits',
-        });
-        await this.entitle(accountId, provider);
+        await this.#credit(accountId, provider, true, () =>
+          credits.grant({
+            id,
+            accountId,
+            provider,
+            amount: Decimal.parse(usd),
+            validFrom: person.created_at,
+            expiresAt: null,
+            reason: 'Welcome credits',
+          }),
+        );
       }
       return { accountId };
     });
   }
 
-  entitle(accountId: string, provider: string): Promise<void> {
+  accountOf({ issuer, subject }: Person) {
     return refusals.call(async () => {
+      const person = await this.sbx.auth.persons.byIdentity(issuer, subject);
+      if (!person?.home_namespace) return null;
+      const { account_id } = await this.sbx.accounts.namespace(person.home_namespace);
+      return { accountId: account_id, name: person.display_name || person.email || null };
+    });
+  }
+
+  async grant(person: Person, input: Omit<CreditGrantInput, 'accountId'>): Promise<void> {
+    const { accountId } = await this.ensure(person);
+    await this.#credit(accountId, input.provider, true, () =>
+      this.sbx.billing.credits.grant({ ...input, accountId }),
+    );
+  }
+
+  async schedule(person: Person, input: Omit<CreditScheduleInput, 'accountId'>): Promise<void> {
+    const { accountId } = await this.ensure(person);
+    await this.#credit(accountId, input.provider, input.enabled, () =>
+      this.sbx.billing.credits.setSchedule({ ...input, accountId }),
+    );
+  }
+
+  /** The credit write, then the account's access to the provider's operator connections where
+   *  no operator decided it yet. */
+  #credit(accountId: string, provider: string, entitle: boolean, write: () => Promise<void>) {
+    return refusals.call(async () => {
+      await write();
+      if (!entitle) return;
       const { connections } = this.sbx.providers;
       const decided = new Set(
         (await connections.listEntitlements({ accountId }))

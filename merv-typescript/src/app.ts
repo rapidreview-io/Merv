@@ -2,7 +2,13 @@ import { Context, FiberState, type Fiber } from 'cordis';
 import Loader from '@cordisjs/plugin-loader';
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { check, type ConfiguredEnv, type PluginStatus } from '@merv/contracts';
+import {
+  check,
+  MervError,
+  type Composition,
+  type ConfiguredEnv,
+  type PluginStatus,
+} from '@merv/contracts';
 import type {} from '@merv/api';
 import type {} from '@merv/secrets/types';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
@@ -18,12 +24,13 @@ const states: Record<FiberState, PluginStatus['state']> = {
 
 /** Loaded first and alone: the store of platform secrets, and the state it keeps them in. */
 const FIRST = new Set(['@merv/state', '@merv/secrets']);
-/** Whose env no stored secret replaces: what State and Secrets read before the store opens, and
+/** Whose env no stored secret replaces: what State and Secrets read before the store opens,
  *  Identity's, which the API verifies every request through, so a reload of it would stop the
- *  API under the request that asked for it. */
-const FIXED = new Set([...FIRST, '@merv/identity']);
-/** A key its owner seals stored data with (its purpose says so): replaced, what it sealed is lost. */
-const sealing = (purpose: string) => purpose.endsWith('· encryption key');
+ *  API under the request that asked for it, and the Sandboxes host's database and vault. */
+const FIXED = new Set([...FIRST, '@merv/identity', '@merv/sandboxes/host']);
+/** A key Merv seals stored data or signs what it hands out with (its owner's purpose says so):
+ *  replaced, everything it sealed or signed stops working. */
+const issued = (purpose: string) => /· (encryption key|signing secret)$/.test(purpose);
 
 /** The `.describe()` a zod config schema gives the field at `path`, through its wrappers,
  *  unions, arrays and records. */
@@ -133,7 +140,7 @@ export async function createApp(options: ConfigurationOptions) {
       const fixed = new Set(
         entries
           .flatMap(({ entry, refs }) =>
-            refs.filter((ref) => FIXED.has(entry.options.name) || sealing(ref.purpose)),
+            refs.filter((ref) => FIXED.has(entry.options.name) || issued(ref.purpose)),
           )
           .map((ref) => ref.env),
       );
@@ -160,28 +167,40 @@ export async function createApp(options: ConfigurationOptions) {
       await settle();
       if (enabled) assertReady(status().filter((entry) => ids.includes(entry.id)));
     };
-    /** A stored platform secret, decrypted; none without Secrets, or without its key. */
-    const stored = async (env: string) => (await ctx.get('secrets')?.platformSecret(env)) ?? null;
-    const override = (env: string) =>
+    const setEnv = (env: string, value: string | undefined) =>
+      value === undefined ? delete process.env[env] : (process.env[env] = value);
+    /** The entries whose config names `env` reload with `value`, then `then` runs (a provider
+     *  rebinding its key); Secrets keeps it only once all of that took it, else the previous
+     *  value is back. */
+    const override: Composition['override'] = (env, value, by, then = async () => []) =>
       serialized(async () => {
         const refs = environment().filter((ref) => ref.env === env);
         check(
           refs.every((ref) => ref.overridable),
-          'invalid_input',
-          `${env} is read before stored secrets apply`,
+          'credential_fixed',
+          'This secret is read before stored secrets apply; change it in the deployment',
+          409,
         );
-        const value = await stored(env);
-        check(
-          value !== null,
-          'secrets_unavailable',
-          'Stored platform secrets are unavailable',
-          503,
-        );
-        process.env[env] = value;
+        const secrets = ctx.get('secrets');
+        check(secrets, 'secrets_unavailable', 'Stored platform secrets are unavailable', 503);
         const ids = [...new Set(refs.map((ref) => ref.plugin))];
-        await toggle(ids, false);
-        await toggle(ids, true);
-        return ids;
+        const previous = process.env[env];
+        const apply = async (to: string | undefined) => {
+          setEnv(env, to);
+          await toggle(ids, false);
+          await toggle(ids, true);
+          return [...ids, ...(await then())];
+        };
+        try {
+          const reloaded = await apply(value);
+          await secrets.setPlatformSecret(env, value, by);
+          return reloaded;
+        } catch (error) {
+          await apply(previous).catch(() => undefined);
+          // A refusal names the problem; a plugin that failed with the value names nothing of it.
+          if (error instanceof MervError && error.code !== 'plugin_unavailable') throw error;
+          throw new MervError('credential_rejected', 'The new value did not load', 422);
+        }
       });
     // Plugins read lifecycle state from this report, never by recomputing it from the loader.
     ctx.provide('composition', { status, environment, override });
@@ -192,8 +211,12 @@ export async function createApp(options: ConfigurationOptions) {
     await loader.root.update(entries.filter((entry) => FIRST.has(entry.name)));
     await settle();
     const first = new Set(environment().map((ref) => ref.env));
-    for (const { env } of (await ctx.get('secrets')?.platformSecrets()) ?? [])
-      if (!first.has(env)) process.env[env] = (await stored(env)) ?? process.env[env];
+    const secrets = ctx.get('secrets');
+    for (const { env } of (await secrets?.platformSecrets()) ?? []) {
+      // A value that no longer opens (the store's key replaced) leaves the deployment's.
+      const value = first.has(env) ? null : await secrets!.platformSecret(env).catch(() => null);
+      if (value !== null) process.env[env] = value;
+    }
     await loader.root.update(entries);
     await settle();
     assertReady(status().filter((entry) => entry.required));

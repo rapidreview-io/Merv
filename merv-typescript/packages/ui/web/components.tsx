@@ -753,6 +753,22 @@ export function useSidebarEscape(open: boolean, shut: () => void) {
   }, [open]);
 }
 
+/** A sidebar's name takes the cursor once `ready`; where the sidebar stands under the page rather
+ *  than beside it, its head is brought into view as well. */
+export function useHeadFocus(
+  ready: boolean,
+  heading: RefObject<HTMLElement | null>,
+  head: RefObject<HTMLElement | null> = heading,
+) {
+  useEffect(() => {
+    if (!ready || !head.current) return;
+    heading.current?.focus({ preventScroll: true });
+    const top = head.current.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight - 96) head.current.scrollIntoView?.({ block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+}
+
 /**
  * A page's ⋯ menu: `menu(items)` is the control and the panel it opens, shut by Escape or a
  * press away (`claims` keeps that Escape from also leaving the record), and `item` one entry.
@@ -843,16 +859,7 @@ export const Submit = ({
  * secure origin; without it nothing is drawn, and the text is still there to
  * select or to read from its hover title.
  */
-export function CopyButton({
-  text,
-  label = 'Copy',
-  word,
-}: {
-  text: string;
-  label?: string;
-  /** The label itself, a quiet word, where the page draws no glyph. */
-  word?: boolean;
-}) {
+export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -864,8 +871,8 @@ export function CopyButton({
   return (
     <button
       type="button"
-      className={word ? 'btn-text' : 'btn-icon btn-icon--inline'}
-      aria-label={word ? undefined : label}
+      className="btn-icon btn-icon--inline"
+      aria-label={label}
       title={copied ? 'Copied' : label}
       onClick={() =>
         void clipboard.writeText(text).then(
@@ -874,7 +881,7 @@ export function CopyButton({
         )
       }
     >
-      {!word ? <Icon name={copied ? 'check' : 'copy'} size={14} /> : copied ? 'Copied' : label}
+      {copied ? <Icon name="check" size={14} /> : <Icon name="copy" size={14} />}
     </button>
   );
 }

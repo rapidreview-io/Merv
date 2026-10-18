@@ -5,7 +5,7 @@ import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/secrets/types';
 import { mervRefusals } from '@sandboxes/merv-host';
 import type {} from '@sandboxes/providers';
-import type { AdminCredentialsV2, PlatformSecret, ProviderKey } from './models.js';
+import type { AdminCredentials, PlatformSecret, ProviderKey } from './models.js';
 import type { AdminEnv, AdminRoutes } from './index.js';
 
 /** Published migrations: production pins each text by its digest, never edit one. Nothing reads
@@ -18,7 +18,7 @@ export const credentialMigrations = {
   );`,
 };
 
-type Purpose = AdminCredentialsV2['groups'][number]['purpose'];
+type Purpose = AdminCredentials['groups'][number]['purpose'];
 /** The purpose each plugin entry's secrets serve; every other entry's are platform services. */
 const purposes: Record<string, Purpose> = {
   pi: 'Agent',
@@ -32,8 +32,7 @@ const refusals = mervRefusals(MervError);
 /** Which secret serves which purpose, never a value: the composition root's names and their
  *  owners' words, Secrets' changes, Fleet's relay outcomes, Identity's ledger and Sandboxes'
  *  providers, composed here and nowhere else. */
-async function credentials(env: AdminEnv): Promise<AdminCredentialsV2> {
-  const at = new Date().toISOString();
+async function credentials(env: AdminEnv): Promise<AdminCredentials> {
   const secrets = env.ctx.get('secrets');
   const named = env.ctx.get('composition')?.environment() ?? [];
   // A read that fails leaves its facts out.
@@ -89,7 +88,6 @@ async function credentials(env: AdminEnv): Promise<AdminCredentialsV2> {
     };
   };
   return {
-    at,
     groups: groups
       .map((purpose) => ({
         purpose,
@@ -98,36 +96,32 @@ async function credentials(env: AdminEnv): Promise<AdminCredentialsV2> {
           .map(secret),
       }))
       .filter((group) => group.secrets.length),
-    providers: inventory.flatMap((p) =>
-      p.fields.map((field): ProviderKey => ({
-        provider: p.name,
-        plugin: p.plugin,
-        source: p.source,
-        namespace: p.source === 'user' ? (p.namespaces?.[0] ?? null) : null,
-        field: field.name,
-        description: field.description,
-        secret: field.secret,
-        present: field.present,
-        health: p.health?.status ?? null,
-        healthReason: p.health_reason,
-        verifiedAt: p.verified_at?.toJSON() ?? null,
-        editable: p.source === 'user' || (!!p.credential_env && !!secrets),
-      })),
-    ),
+    // The platform's own keys: a key a person saved is theirs, not the admin's to read.
+    providers: inventory
+      .filter((p) => p.source === 'host')
+      .flatMap((p) =>
+        p.fields.map((field): ProviderKey => ({
+          provider: p.name,
+          field: field.name,
+          description: field.description,
+          present: field.present,
+          health: p.health?.status ?? null,
+          healthReason: p.health_reason,
+          editable: !!p.credential_env && !!secrets,
+        })),
+      ),
     minted,
   };
 }
 
-const instance = { provider: z.string(), namespace: z.string().nullable() };
-type Instance = { provider: string; namespace: string | null };
 const target = z.union([
   z.object({ env: envName }).strict(),
-  z.object({ ...instance, field: z.string() }).strict(),
+  z.object({ provider: z.string(), field: z.string() }).strict(),
 ]);
 const change = z.union([
   z.object({ env: envName, value: z.string().min(1) }).strict(),
   z
-    .object({ ...instance, fields: z.record(z.string().min(1)) })
+    .object({ provider: z.string(), fields: z.record(z.string().min(1)) })
     .strict()
     .refine((input) => Object.keys(input.fields).length > 0),
 ]);
@@ -136,16 +130,20 @@ const change = z.union([
  *  its value: a platform secret a loaded plugin's config names, or a provider instance's field
  *  Sandboxes lists. Nothing else is read. */
 export function credentialRoutes(env: AdminEnv): AdminRoutes {
-  const owners = () => {
-    const secrets = env.ctx.get('secrets');
-    const composition = env.ctx.get('composition');
-    check(secrets && composition, 'credentials_unavailable', 'Stored secrets are unavailable', 503);
-    return { secrets, composition };
+  const composition = () => {
+    const composed = env.ctx.get('composition');
+    check(
+      composed && env.ctx.get('secrets'),
+      'credentials_unavailable',
+      'Stored secrets are unavailable',
+      503,
+    );
+    return composed;
   };
   /** An env name a loaded plugin's config names, which a stored secret may replace. */
   const platform = (name: string) => {
-    const refs = owners()
-      .composition.environment()
+    const refs = composition()
+      .environment()
       .filter((ref) => ref.env === name);
     check(refs.length, 'not_found', 'No loaded plugin names this secret', 404);
     check(
@@ -156,35 +154,25 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
     );
     return name;
   };
-  /** The instance Sandboxes lists under these names with these fields, and its key now: a user
-   *  one's sealed row, or what a host one's key env holds. */
-  const provider = async (input: Instance, names: string[]) => {
+  /** A host provider instance Sandboxes lists with these fields: its key env, and its key now. */
+  const provider = async (name: string, fields: string[]) => {
     const hub = env.ctx.get('sbxProviders');
-    const vault = env.ctx.get('sbxVault');
-    check(hub && vault, 'credentials_unavailable', 'Sandbox providers are not available', 503);
+    check(hub, 'credentials_unavailable', 'Sandbox providers are not available', 503);
     const found = (await refusals.call(() => hub.inventory())).find(
-      (p) =>
-        p.name === input.provider &&
-        (p.source === 'user' ? p.namespaces?.[0] === input.namespace : input.namespace === null),
+      (p) => p.source === 'host' && p.name === name,
     );
-    check(found, 'not_found', 'No such sandbox provider', 404);
     check(
-      names.every((name) => found.fields.some((field) => field.name === name)),
+      found && fields.every((field) => found.fields.some((known) => known.name === field)),
       'not_found',
-      'The provider has no such field',
+      'No such sandbox provider key',
       404,
     );
-    if (found.source === 'user') {
-      const saved = await refusals.call(() => vault.fields(input.namespace!, found.name));
-      check(saved.record.namespace === input.namespace, 'not_found', 'No such sandbox key', 404);
-      return { hub, found, saved, current: saved.fields };
-    }
     const key = found.credential_env;
     check(key, 'credential_fixed', 'This provider key is not read from the environment', 409);
     const current = await refusals.call(async () =>
       hub.plugin(found.plugin).auth.resolve(`env:${key}`, { instanceName: found.name }),
     );
-    return { hub, found, key, current };
+    return { hub, key, current };
   };
   return {
     'GET /admin/credentials': async () => await credentials(env),
@@ -193,49 +181,31 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
       const value =
         'env' in input
           ? process.env[platform(input.env)]
-          : (await provider(input, [input.field])).current[input.field];
+          : (await provider(input.provider, [input.field])).current[input.field];
       check(value, 'not_found', 'This secret is not set', 404);
-      // The target alone: its env name, or its provider with the namespace and field.
-      const { env: name, provider: instance, ...detail } = input as Record<string, string | null>;
+      // The target alone: its env name, or its provider and field.
+      const { env: name, provider: instance, ...detail } = input as Record<string, string>;
       await env.audit.record(who, 'credentials.reveal', (name ?? instance)!, detail);
       return { value };
     },
     'POST /admin/credentials/change': async (r, who) => {
       const input = await r.json(change);
       if ('env' in input) {
-        const { secrets, composition } = owners();
-        await secrets.setPlatformSecret(platform(input.env), input.value, who);
-        const reloaded = await composition.override(input.env);
+        const reloaded = await composition().override(platform(input.env), input.value, who);
         await env.audit.record(who, 'credentials.change', input.env);
         return { ok: true, reloaded };
       }
       const names = Object.keys(input.fields);
-      const { hub, found, saved, key, current } = await provider(input, names);
-      const fields = { ...current, ...input.fields };
-      let reloaded = [found.name];
-      if (saved) {
-        // Sandboxes verifies the key with the provider before it saves it and rebinds.
-        const { plugin, settings, access } = saved.record;
-        await refusals.call(() =>
-          hub.connect(input.namespace!, {
-            name: found.name,
-            plugin,
-            fields,
-            settings,
-            access: access as 'inbound' | 'tunnel',
-          }),
-        );
-      } else {
-        // A host instance's key is its credential env, replaced as any platform secret is.
-        const { secrets, composition } = owners();
-        await secrets.setPlatformSecret(key!, JSON.stringify(fields), who);
-        reloaded = await composition.override(key!);
-        reloaded.push(...(await refusals.call(() => hub.rebindHost(key!))));
-      }
-      await env.audit.record(who, 'credentials.change', found.name, {
-        namespace: input.namespace,
-        fields: names,
-      });
+      const { hub, key, current } = await provider(input.provider, names);
+      // A host instance's key is its credential env, replaced as any platform secret is, and
+      // Sandboxes rebinds the instances that read it.
+      const reloaded = await composition().override(
+        key,
+        JSON.stringify({ ...current, ...input.fields }),
+        who,
+        () => refusals.call(() => hub.rebindHost(key)),
+      );
+      await env.audit.record(who, 'credentials.change', input.provider, { fields: names });
       return { ok: true, reloaded };
     },
   };

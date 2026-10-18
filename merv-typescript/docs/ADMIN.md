@@ -7,22 +7,24 @@ roles, user keys, machine keys and agent credentials never inherit it.
 
 ## Ownership
 
-| Concern | Owner | What it exposes |
-|---|---|---|
-| Admin identities, `/admin/*` routes, the admin audit log | `@merv/admin` | the only cross-project projections |
-| Platform read authority (`caller.platform`) | `@merv/scope` slot, `@merv/admin` installs it | read-only, synthetic actor, never delegates |
-| Platform caller tool rules | `@merv/api` registry `platform` kind, `@merv/admin` installs them | read tools only |
-| Work state | `@merv/workflows` (instances, definitions, blockers) | terminal states per version |
-| Fleet spend, model-token ledgers, relay outcomes | `@merv/fleet` | a read per ledger over UTC days [from, to); each person's own daily dollars and tokens (`fleet_usd_limits`, `fleet_model_limits`), which its caps enforce; each relay's latest success and failure per key and model, and whether the provider rejected the key |
-| Pi model-token ledger | `@merv/pi` | a read over UTC days [from, to); each person's own daily tokens (`pi_model_limits`), which its charge enforces |
-| Credits, budgets, providers | Sandboxes (`sbxBilling`, `sbxProviders`, `sbxDb`) | in process; grants through `CreditService`, which refuses new credit for a provider without an operator connection |
-| Secret names and purposes per plugin | composition root (`composition.environment()`), each plugin's config schema, Sandboxes (`credential_env`, field descriptions) | env names from each plugin's `*Env` config fields with the schema's `.describe()`; a host provider's from its credential reference |
-| Stored platform secrets | `@merv/secrets` (`platform_secrets`, secrets@2) | set, read and list (names and times); the composition root applies them (`override`) |
-| Provider keys | Sandboxes (`sbxProviders.connect`, `sbxVault`, `rebindHost`) | a user key verified then saved; a host instance rebound from its credential env |
+| Concern                                                  | Owner                                                                                                                         | What it exposes                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admin identities, `/admin/*` routes, the admin audit log | `@merv/admin`                                                                                                                 | the only cross-project projections                                                                                                                                                                                                                                                                                                                                                                 |
+| Platform read authority (`caller.platform`)              | `@merv/scope` slot, `@merv/admin` installs it                                                                                 | read-only, synthetic actor, never delegates                                                                                                                                                                                                                                                                                                                                                        |
+| Platform caller tool rules                               | `@merv/api` registry `platform` kind, `@merv/admin` installs them                                                             | read tools only                                                                                                                                                                                                                                                                                                                                                                                    |
+| Work state                                               | `@merv/workflows` (instances, definitions, blockers)                                                                          | terminal states per version                                                                                                                                                                                                                                                                                                                                                                        |
+| Fleet spend, model-token ledgers, relay outcomes         | `@merv/fleet`                                                                                                                 | a read per ledger over UTC days [from, to); each person's own daily dollars and tokens (`fleet_usd_limits`, `fleet_model_limits`), which its caps enforce; each relay's latest success and failure per key and model, and whether the provider rejected the key                                                                                                                                    |
+| Pi model-token ledger                                    | `@merv/pi`                                                                                                                    | a read over UTC days [from, to); each person's own daily tokens (`pi_model_limits`), which its charge enforces                                                                                                                                                                                                                                                                                     |
+| Credits, providers                                       | Sandboxes (`sbxBilling`, `sbxProviders`)                                                                                      | in process; `CreditService` refuses new credit for a provider without an operator connection, and counts a provider's use per window (`usage`)                                                                                                                                                                                                                                                     |
+| Each person's own Sandboxes account                      | the Merv↔Sandboxes bridge (`sandboxesPeople`, `@merv/sandboxes/integration`)                                                  | made at first sign-in and at start for everyone signed in before, with the configured welcome credit once (`MERV_NEW_PERSON_CREDITS`, e.g. `{"lambda":"25"}`); every credit write goes through it (`grant`, `schedule`), which also gives the account access to the provider's operator connections where no operator decided it (an access revoked stays revoked; a disabled schedule gives none) |
+| Secret names and purposes per plugin                     | composition root (`composition.environment()`), each plugin's config schema, Sandboxes (`credential_env`, field descriptions) | env names from each plugin's `*Env` config fields with the schema's `.describe()`; a host provider's from its credential reference                                                                                                                                                                                                                                                                 |
+| Stored platform secrets                                  | `@merv/secrets` (`platform_secrets`, secrets@2)                                                                               | sealed to their names; only the composition root writes and opens them (`override`, and at boot)                                                                                                                                                                                                                                                                                                   |
 
-`@merv/admin` composes these reads. It owns no copy of another plugin's rules: terminal states
-come from workflow definitions, spend from Fleet, credit arithmetic from Sandboxes. An owner not
-loaded here leaves its facts out.
+`@merv/admin` composes these reads and calls these writes. It owns no copy of another plugin's
+rules: terminal states come from workflow definitions, spend from Fleet, credit arithmetic from
+Sandboxes. It groups secrets by the plugin entry that names them (Agent: `pi`; Fleet agents:
+`fleet-workflow`; Fleet machines: `fleet`, `sessions`; everything else Platform services). An
+owner not loaded here leaves its facts out.
 
 ## Routes (all `adminOf`; the API answers each `Cache-Control: no-store`)
 
@@ -38,28 +40,35 @@ loaded here leaves its facts out.
 - `GET /admin/credits` — one row per person: each credit type's use today (UTC), its limit, own
   or not, and what is left. `GET /admin/credits/people/:person` — the drawer (`PersonCredits`):
   the same per window (today, last 7 days, last 30, all time), with their own account's grants and
-  schedules. A provider's use is its settled charges counted over the time each ran
-  (`CreditService.usage`); its limit is what is granted, what is left what is available.
-- `POST /admin/credits/people/:person/limits` — sets or clears (`null`) the person's own daily
-  limit in its owner (`pi.setTokenLimit`, `fleet.setPersonLimit`), recorded as `credits.limit`.
-- `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
-  `POST /admin/credits/grants/:id/revoke` — credit assignment through `CreditService`, each
-  recorded in the admin audit log and answered with the `{ id }` it wrote. A grant names its
-  `validFrom`, so a retry repeats its terms exactly and replays. The admin checks only the body's
-  shape: Sandboxes refuses the values (`sandbox_validation`).
-- `GET /admin/credentials` — `AdminCredentialsV2`: platform secrets grouped Agent, Fleet agents,
+  schedules. The types: the Agent's tokens (Pi), Fleet agent tokens and Fleet machine dollars
+  (Fleet), and one per sandbox provider, whose use is its settled charges counted over the time
+  each ran, its limit what is granted, what is left what is available.
+- `POST /admin/credits/people/:person/limits` `{ kind, limit }` — sets or clears (`null`) the
+  person's own daily limit in its owner (`pi.setTokenLimit`, `fleet.setPersonLimit`), recorded as
+  `credits.limit`.
+- `POST /admin/credits/grants`, `POST /admin/credits/schedules` (each names its `person`, on whose
+  own account it lands) and `POST /admin/credits/grants/:id/revoke` — recorded in the admin audit
+  log and answered with the `{ id }` written. A grant names its `validFrom`, so a retry repeats its
+  terms exactly and replays. The admin checks only the body's shape: Sandboxes refuses the values
+  (`sandbox_validation`).
+- `GET /admin/credentials` — `AdminCredentials`: platform secrets grouped Agent, Fleet agents,
   Fleet machines, Platform services, each named by its owner's purpose, set or unset, which other
   names hold the same value, last change here, Fleet's relay's last success and failure, `dead`
   once the relay saw the provider reject the key with no success or change since, and `editable`;
-  then every sandbox provider instance's key fields with their plugin's descriptions and health.
+  then the platform's sandbox provider keys (host instances; a key a person saved is theirs and not
+  listed) with their plugin's descriptions and health; then the machine credentials Merv minted.
   Never a value.
-- `POST /admin/credentials/reveal` `{ env }` or `{ provider, namespace, field }` → `{ value }`,
-  and `POST /admin/credentials/change` `{ env, value }` or `{ provider, namespace, fields }` →
-  `{ ok, reloaded }`: only a name an enabled entry's config gives, or a field Sandboxes lists for
-  that instance. Each is recorded as `credentials.reveal` or `credentials.change` with its target
-  alone. A platform secret is stored sealed in Secrets, applied, and the entries naming it reload
-  (`reloaded`); a user's provider key goes through `connect` (verified, then saved); a host
-  instance's key is stored as its credential env and the hub rebinds it (`reloaded` names it).
+- `POST /admin/credentials/reveal` `{ env }` or `{ provider, field }` → `{ value }`, and
+  `POST /admin/credentials/change` `{ env, value }` or `{ provider, fields }` → `{ ok, reloaded }`:
+  only a name an enabled entry's config gives, or a field Sandboxes lists for a host instance read
+  from its credential env. Each is recorded as `credentials.reveal` or `credentials.change` with
+  its target alone. A change goes through `composition.override`: the entries naming the env reload
+  with the new value (a provider's instances rebind), and Secrets keeps it only once they took it;
+  otherwise the previous value is back (`422 credential_rejected`). At boot, State and Secrets
+  load alone and every stored value then replaces its env value; one the store's key no longer
+  opens leaves the deployment's. Fixed, read only from the deployment (`editable: false`, `409
+credential_fixed`): what State, Secrets, Identity and the Sandboxes host read, and any key whose
+  purpose ends `· encryption key` or `· signing secret`.
 - `GET /admin/standalone/:requestId` — a standalone experiment as its customer sees it (Customer
   experiments' own snapshot, without the customer's token) and the move of theirs it waits on;
   503 where it is not installed. The first read of a request in an hour records `standalone.read`
@@ -73,11 +82,13 @@ loaded here leaves its facts out.
 with Work, Credits and Credentials and the signed-in admin at its foot. Work polls `/admin/work`
 every 15 s into one ruled list, attention first, with kind, state and `Ended today` behind
 `Filter` (`/` opens it); a row opens its record in the drill-in, a standalone experiment its
-customer snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials poll every 60 s;
-a person's row unfolds their accounts, each headed by what it holds per provider and its budget
-caps, then its grants (⋯ revokes) and schedules (⋯ pauses or resumes), and the quiet `Grant`
-word that opens the one form that grants or schedules credit. The pages read the routes' types
-from `@merv/admin/models`; on a phone each row's facts stand under their names.
+customer snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials poll every 60 s.
+Credentials draws one ruled table per purpose, then Sandbox providers and Machine credentials; a
+row's quiet `Reveal` shows its value under it for 30 s, `Change` opens one password field. Credits
+is one row per person and a column per credit type; a row opens the drawer at the right (the
+page, on a phone): one 1D · 1W · 1M · Total switch for every type, and each type with its
+control (`Set limit`, or `Give credit` and its grants and schedules behind ⋯). The pages read the
+routes' types from `@merv/admin/models`.
 
 ## Drill-in
 
@@ -98,58 +109,3 @@ no session, conversation or lease. Web refuses it (`403 web_forbidden`), so a dr
 project's web budget. Any other principal sending the header, and every MCP request with it, is
 refused `403 platform_forbidden`. The first read of a project in an hour records `project.read` in
 the admin audit log.
-
-## v2: operable credentials and credits (founder review, 2026-10-18)
-
-Every view of a resource carries the control that changes it. Every fact is named by what it is
-for, not by its implementation name. Details live in a right-side drawer, not in more columns.
-
-### Credentials
-
-- **Purpose labels come from the owner.** Each plugin describes its own secret fields in its
-  config schema (`z.string().describe('Agent model calls · OpenAI')`), and
-  `composition.environment()` returns that description beside `{ plugin, field, env }`. Sandbox
-  provider fields keep their provider plugin's own field descriptions. The admin keeps no list of
-  purposes.
-- **Platform secrets** (`GET /admin/credentials`): rows `{ purpose, env, plugin, field, set,
-  lastChanged, lastOk, lastFailure, dead, editable }`, grouped as Agent, Fleet agents, Fleet
-  machines, Platform services. No fingerprint.
-- **Sandbox provider keys** are their own table: one row per provider instance and credential
-  field: `{ provider, plugin, source: host | user, namespace, field, description, secret, present,
-  health, healthReason, verifiedAt, editable }`.
-- `POST /admin/credentials/reveal` `{ env }` or `{ provider, namespace, field }` returns
-  `{ value }`. It is one secret per call, never cached, and recorded in the audit as
-  `credentials.reveal`. The page hides the value after 30 s.
-- `POST /admin/credentials/change` `{ env, value }` or `{ provider, namespace, fields }` returns
-  `{ ok, reloaded: string[] }` and is recorded as `credentials.change`.
-  - **Platform secret:** `@merv/secrets` keeps an encrypted platform-secret store (AES-GCM under
-    `MERV_SECRETS_ENCRYPTION_KEY`) whose value overrides the env value. The composition root
-    applies stored values before plugins load. After a change, it applies the new value and
-    reloads only the plugin entries whose config names that env.
-  - **Sandbox provider:** the key goes through Sandboxes' own save path (verified against the
-    provider before it is stored); a host instance's key is an override of its credential env.
-  - **Boot:** State and Secrets load alone first; every stored value then replaces its env value
-    before any other entry loads. No stored value replaces what State and Secrets read, or
-    Identity's (the API verifies every request through it, so reloading it would end the request
-    that changed it): those show `editable: false` and change in the deployment. A stored value
-    that the key cannot open stops the boot. admin@2's fingerprint table is no longer read.
-
-### Credits
-
-- `GET /admin/credits` stays the list: one row per person with a total per credit type.
-- `GET /admin/credits/people/:person` is the drawer: for each credit type `{ kind, label, unit,
-  limit, used: { day, week, month, total }, left }`.
-  - Internal types are read from their owners: the Agent's tokens (Pi), Fleet agent tokens (Fleet
-    model ledger), and Fleet VM dollars (Fleet allocations).
-  - External types: one per sandbox provider (Sandboxes credit pools and settlements, through the
-    person's accounts), with their grants and schedules.
-- `POST /admin/credits/people/:person/limits` `{ kind, limit }` sets a per-person limit, kept by
-  the owner: Pi's per-person token limit, Fleet's per-person token and daily-dollar limits.
-  Recorded as `credits.limit`.
-- `POST /admin/credits/grants` (existing) takes `{ person }` as well as `{ accountId }`. A person
-  is granted on their own account.
-- **Every person has a Sandboxes account.** The Merv↔Sandboxes bridge (`@merv/sandboxes/integration`)
-  makes sure each verified person has their own account and membership: at sign-in, and for
-  everyone already signed in. It grants the configured base credits once
-  (`newPersonCredits: { lambda: "<usd>" }`, from `MERV_NEW_PERSON_CREDITS`), under an idempotent
-  grant id per person.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { CreditUse, PersonCredits } from '@merv/admin/models';
-import { accountRequest, useTool } from '../api';
+import type { AdminCredits, CreditUse, PersonCredits } from '@merv/admin/models';
+import { useTool } from '../api';
 import {
   ConfirmAction,
   Failure,
@@ -13,32 +13,18 @@ import {
   col,
   cx,
   stamp,
+  useHeadFocus,
   useSidebarEscape,
   type Column,
 } from '../components';
 import { ListPage, Segments, openRow, typing, useListFilter } from '../list-filters';
-import { useCommand } from '../mutations';
 import { day } from '../session';
 import { useRoomy } from '../theme';
-import { Head, None, Of, count, fig, usd } from './parts';
+import { Head, None, Of, count, fig, usd, usePost } from './parts';
 
-/**
- * `GET /admin/credits`: one row per person, each credit type as it stands today (`used` is
- * today's alone). Written here until `@merv/admin/models` carries it.
- */
-interface CreditList {
-  at: string;
-  providers: string[];
-  people: CreditListPerson[];
-}
-interface CreditListPerson extends Pick<PersonCredits['person'], 'key' | 'label'> {
-  issuer: string;
-  subject: string;
-  kinds: (Omit<CreditUse, 'used'> & { used: number })[];
-}
 /** A row: the person, under the id a list filter keys it by (their `issuer|subject`). */
-type Person = CreditListPerson & { id: string };
-type Today = CreditListPerson['kinds'][number];
+type Person = AdminCredits['people'][number] & { id: string };
+type Today = Person['kinds'][number];
 const WINDOWS = [
   { value: 'day', label: '1D' },
   { value: 'week', label: '1W' },
@@ -77,28 +63,10 @@ const when = (at: string | null) =>
     </time>
   );
 
-/** A POST to an /admin route, sent whole again on a retry; done, it closes and the page reloads. */
-const usePost = (
-  close: () => void,
-  done: () => void,
-  validate = (r: { id?: unknown }) => typeof r?.id === 'string',
-) =>
-  useCommand<{ id?: unknown }>({
-    tool: 'admin.credits',
-    // Each body names its own id, or is the whole change, so a retry is the same write.
-    idempotent: true,
-    send: ({ path, ...body }) => accountRequest(String(path), { method: 'POST', body }),
-    validate,
-    onSuccess: () => {
-      close();
-      done();
-    },
-  });
-
 /** What ⋯ on a grant or a schedule asks for: its verb, what it names, and the POST that does it. */
 type Act = { id: string; verb: string; says: string; path: string; body?: Record<string, unknown> };
 function Guard({ act, close, done }: { act: Act; close(): void; done(): void }) {
-  const command = usePost(close, done);
+  const command = usePost(() => (close(), done()));
   return (
     <ConfirmAction
       opened
@@ -120,7 +88,10 @@ function LimitForm(props: { use: CreditUse; person: string; close(): void; done(
   const { use, close } = props;
   const [value, setValue] = useState(use.own && use.limit !== null ? String(use.limit) : '');
   // Any answer the route confirms is the change: it names no record of its own.
-  const command = usePost(close, props.done, () => true);
+  const command = usePost(
+    () => (close(), props.done()),
+    () => true,
+  );
   const path = `/admin/credits/people/${encodeURIComponent(props.person)}/limits`;
   const send = (limit: number | null) => void command.submit({ path, kind: use.kind, limit });
   return (
@@ -174,7 +145,7 @@ function GiveForm(props: { provider: string; of: PersonCredits; close(): void; d
     onChange: (value: string) => setForm({ ...form, [key]: value }),
   });
   const once = form.cadence === 'once';
-  const command = usePost(close, props.done);
+  const command = usePost(() => (close(), props.done()));
   const submit = (event: FormEvent) => {
     event.preventDefault();
     // The grant's own id is its idempotency key, made once per submission and kept for a retry.
@@ -194,7 +165,7 @@ function GiveForm(props: { provider: string; of: PersonCredits; close(): void; d
         : {
             path: '/admin/credits/schedules',
             ...terms,
-            accountId: of.accountId,
+            person: of.person.key,
             cadence: form.cadence,
             startsAt: at,
             validityPeriods: 1,
@@ -221,20 +192,14 @@ function GiveForm(props: { provider: string; of: PersonCredits; close(): void; d
           placeholder="0.00"
           {...field('amount')}
         />
-        {/* A schedule is kept on an account, so it waits for the person to have one. */}
-        {of.accountId && (
-          <label>
-            Repeats
-            <select
-              {...field('cadence')}
-              onChange={(e) => field('cadence').onChange(e.target.value)}
-            >
-              {['once', 'daily', 'weekly', 'monthly'].map((cadence) => (
-                <option key={cadence}>{cadence}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        <label>
+          Repeats
+          <select {...field('cadence')} onChange={(e) => field('cadence').onChange(e.target.value)}>
+            {['once', 'daily', 'weekly', 'monthly'].map((cadence) => (
+              <option key={cadence}>{cadence}</option>
+            ))}
+          </select>
+        </label>
         <Field label={once ? 'Expires' : 'Ends'} type="datetime-local" {...field('until')} />
         {once && <Field label="Reason" required maxLength={2000} {...field('reason')} />}
       </fieldset>
@@ -356,26 +321,24 @@ function Use(props: { use: CreditUse; span: Span; of: PersonCredits; done(): voi
               <Word tone={s.enabled ? 'ok' : 'dim'} value={s.enabled ? 'on' : 'paused'} />
               <span className="faint">from {when(s.starts_at)}</span>
               {s.ends_at && <span className="faint">until {when(s.ends_at)}</span>}
-              {more(
-                !!of.accountId && {
+              {more({
+                id: s.id,
+                verb: s.enabled ? 'Pause schedule' : 'Resume schedule',
+                says: `${usd(s.amount)} ${s.provider} ${s.cadence} · ${of.person.label}`,
+                path: '/admin/credits/schedules',
+                // The same id with the same terms only switches a schedule on or off.
+                body: {
                   id: s.id,
-                  verb: s.enabled ? 'Pause schedule' : 'Resume schedule',
-                  says: `${usd(s.amount)} ${s.provider} ${s.cadence} · ${of.person.label}`,
-                  path: '/admin/credits/schedules',
-                  // The same id with the same terms only switches a schedule on or off.
-                  body: {
-                    id: s.id,
-                    accountId: of.accountId,
-                    provider: s.provider,
-                    amount: s.amount,
-                    cadence: s.cadence,
-                    startsAt: s.starts_at,
-                    validityPeriods: s.validity_periods,
-                    endsAt: s.ends_at,
-                    enabled: !s.enabled,
-                  },
+                  person: of.person.key,
+                  provider: s.provider,
+                  amount: s.amount,
+                  cadence: s.cadence,
+                  startsAt: s.starts_at,
+                  validityPeriods: s.validity_periods,
+                  endsAt: s.ends_at,
+                  enabled: !s.enabled,
                 },
-              )}
+              })}
               {guard(s.id)}
             </li>
           ))}
@@ -399,14 +362,9 @@ function Drawer(props: {
     {},
     { every: 60_000 },
   );
-  // The cursor goes to the name of who opened; under the list, the head is brought into view.
+  // The cursor goes to the name of who opened.
   const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    const head = heading.current;
-    head?.focus({ preventScroll: true });
-    const top = head?.getBoundingClientRect().top ?? 0;
-    if (top < 0 || top > window.innerHeight - 96) head?.scrollIntoView?.({ block: 'start' });
-  }, []);
+  useHeadFocus(true, heading);
   const done = () => {
     read.reload();
     props.done();
@@ -435,7 +393,7 @@ function Drawer(props: {
 }
 
 export function CreditsView() {
-  const credits = useTool<CreditList>('/admin/credits', {}, { every: 60_000 });
+  const credits = useTool<AdminCredits>('/admin/credits', {}, { every: 60_000 });
   const data = credits.data;
   const filter = useListFilter(
     data?.people.map((p): Person => ({ ...p, id: p.key })),

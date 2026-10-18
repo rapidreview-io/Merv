@@ -1,7 +1,22 @@
 import type { ReactNode } from 'react';
+import { accountRequest } from '../api';
 import { PageHeader, Word, col, cx, toneOf, type Column } from '../components';
+import { useCommand } from '../mutations';
 import { formatMoney } from '../views/remote-fields';
 
+/** A POST to an /admin route (`path`, the rest its body), sent whole again on a retry: each
+ *  body names its own id or is the whole change, so a retry is the same write. */
+export const usePost = <T = { id?: unknown },>(
+  done: (result: T) => void,
+  validate: (result: T) => boolean = (r) => typeof (r as { id?: unknown })?.id === 'string',
+) =>
+  useCommand<T>({
+    tool: 'admin',
+    idempotent: true,
+    send: ({ path, ...body }) => accountRequest(String(path), { method: 'POST', body }),
+    validate,
+    onSuccess: done,
+  });
 /** Dollars as every page states them (`formatMoney`). */
 export const usd = (value: string | number) => formatMoney(Number(value), undefined);
 /** A count a person reads at a glance: 940, 12.5K, 3.1M. */

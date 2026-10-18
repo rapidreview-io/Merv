@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type {
-  AdminCredentialsV2,
+  AdminCredentials,
   CredentialTarget,
   PlatformSecret,
   ProviderKey,
@@ -24,8 +24,7 @@ import {
   words,
 } from '../components';
 import { elapsed } from '../liveness';
-import { useCommand } from '../mutations';
-import { Head, fig } from './parts';
+import { Head, fig, usePost } from './parts';
 
 /** A revealed value stands this long, then leaves the page. */
 const SHOWN_MS = 30_000;
@@ -51,11 +50,9 @@ const Named = (props: { what: string; name: string; title?: string }) => (
 );
 
 const keyOf = (target: CredentialTarget) =>
-  'env' in target ? target.env : `${target.provider}:${target.namespace ?? ''}:${target.field}`;
+  'env' in target ? target.env : `${target.provider}:${target.field}`;
 const targetOf = (row: PlatformSecret | ProviderKey): CredentialTarget =>
-  'env' in row
-    ? { env: row.env }
-    : { provider: row.provider, namespace: row.namespace, field: row.field };
+  'env' in row ? { env: row.env } : { provider: row.provider, field: row.field };
 
 /** What a row's words opened: its value (asked, shown or refused), or the form that changes it. */
 type Open = {
@@ -80,7 +77,7 @@ function Shown({ value, until, hide }: { value: string; until: number; hide(): v
   return (
     <div className="admin-said">
       <code className="mono admin-secret">{value}</code>
-      <CopyButton text={value} word />
+      <CopyButton text={value} />
       <span className="faint tabular">{Math.max(0, left)}s</span>
     </div>
   );
@@ -96,24 +93,17 @@ function Change(props: {
 }) {
   const { target, close } = props;
   const [value, setValue] = useState('');
-  const command = useCommand<{ ok: boolean; reloaded: string[] }>({
-    tool: 'admin.credentials.change',
-    // The body is the change itself: sending it again sets the same value.
-    idempotent: true,
-    send: (body) => accountRequest('/admin/credentials/change', { method: 'POST', body }),
-    validate: (result) => result?.ok === true && Array.isArray(result.reloaded),
-    onSuccess: (result) => props.done(result.reloaded),
-  });
+  const command = usePost<{ ok: boolean; reloaded: string[] }>(
+    (result) => props.done(result.reloaded),
+    (result) => result?.ok === true && Array.isArray(result.reloaded),
+  );
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const path = '/admin/credentials/change';
     void command.submit(
       'env' in target
-        ? { env: target.env, value }
-        : {
-            provider: target.provider,
-            namespace: target.namespace,
-            fields: { [target.field]: value },
-          },
+        ? { path, env: target.env, value }
+        : { path, provider: target.provider, fields: { [target.field]: value } },
     );
   };
   return (
@@ -242,7 +232,7 @@ function useActs(reload: () => void) {
   return { controls, under, unfolded };
 }
 
-type Minted = AdminCredentialsV2['minted'][number];
+type Minted = AdminCredentials['minted'][number];
 const MINTED = [
   col<Minted>('owner', 'Minted by', (m) => m.owner),
   col<Minted>('kind', 'Kind', (m) => words(m.kind)),
@@ -259,7 +249,7 @@ const MINTED = [
 ];
 
 export function CredentialsView() {
-  const read = useTool<AdminCredentialsV2>('/admin/credentials', {}, { every: 60_000 });
+  const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
   const acts = useActs(read.reload);
   const groups = read.data?.groups ?? [];
   const providers = read.data?.providers ?? [];
@@ -314,13 +304,10 @@ export function CredentialsView() {
         )}
       </>
     )),
-    col<ProviderKey>('key', 'Key', (p) => (
-      <Named what={p.description} name={p.field} title={p.namespace ?? p.source} />
-    )),
+    col<ProviderKey>('key', 'Key', (p) => <Named what={p.description} name={p.field} />),
     col<ProviderKey>('present', 'Present', ({ present: on }) =>
       on === null ? null : <Word tone={on ? 'ok' : 'dim'} value={on ? 'set' : 'unset'} />,
     ),
-    fig<ProviderKey>('verified', 'Verified', (p) => p.verifiedAt && <Ago at={p.verifiedAt} />),
     col<ProviderKey>('acts', '', (p) => acts.controls(p, !!p.present)),
   ];
   return (
@@ -337,29 +324,26 @@ export function CredentialsView() {
         }
       />
       <LoadState {...read} columns={6} />
-      {groups.map(
-        ({ purpose, secrets: rows }) =>
-          rows.length > 0 && (
-            <section className="stack admin-purpose" key={purpose}>
-              <h2 className="section-title admin-group">{purpose}</h2>
-              <Ruled
-                label={purpose}
-                template="minmax(0, 2.4fr) 84px repeat(3, 100px) minmax(116px, 0.8fr)"
-                columns={secrets}
-                rows={rows}
-                keyOf={(s) => `${s.env}:${s.field}`}
-                row={acts.unfolded}
-                under={acts.under}
-              />
-            </section>
-          ),
-      )}
+      {groups.map(({ purpose, secrets: rows }) => (
+        <section className="stack admin-purpose" key={purpose}>
+          <h2 className="section-title admin-group">{purpose}</h2>
+          <Ruled
+            label={purpose}
+            template="minmax(0, 2.4fr) 84px repeat(3, 100px) minmax(116px, 0.8fr)"
+            columns={secrets}
+            rows={rows}
+            keyOf={(s) => `${s.env}:${s.field}`}
+            row={acts.unfolded}
+            under={acts.under}
+          />
+        </section>
+      ))}
       {providers.length > 0 && (
         <section className="stack">
           <h2 className="section-title admin-group">Sandbox providers</h2>
           <Ruled
             label="Sandbox providers"
-            template="minmax(0, 1fr) minmax(0, 2fr) 84px 100px minmax(116px, 0.8fr)"
+            template="minmax(0, 1fr) minmax(0, 2fr) 84px minmax(116px, 0.8fr)"
             columns={keys}
             rows={providers}
             keyOf={(p) => keyOf(targetOf(p))}

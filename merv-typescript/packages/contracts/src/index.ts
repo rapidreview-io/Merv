@@ -816,17 +816,25 @@ export interface ConfiguredEnv {
   env: string;
   /** What it is for, in its owner's words: the field's config schema `.describe()`. */
   purpose: string;
-  /** Whether a platform secret stored in Secrets may replace its value (`override`). */
+  /** Whether a platform secret stored in Secrets may replace its value (`override`): never for
+   *  State's, Secrets', Identity's or the Sandboxes host's names, nor for a key whose purpose
+   *  ends `· encryption key` or `· signing secret` (what it sealed or signed would stop working). */
   overridable: boolean;
 }
 /** The composition root's plugin lifecycle report; every reader of plugin state shares it. */
-interface Composition {
+export interface Composition {
   status(): PluginStatus[];
   /** Every environment variable the enabled entries' configs name, defaults included. */
   environment(): ConfiguredEnv[];
-  /** Applies `env`'s stored platform secret to the process, then reloads the enabled entries
-   *  whose config names it; their ids. Refused for a name that is not overridable. */
-  override(env: string): Promise<string[]>;
+  /** Replaces `env`'s value, reloading the enabled entries whose config names it and then
+   *  running `then`, and stores it in Secrets once they took it (else the previous value is
+   *  back): the ids reloaded and whatever `then` answers. Refused for a name not overridable. */
+  override(
+    env: string,
+    value: string,
+    by: { issuer: string; subject: string },
+    then?: () => Promise<string[]>,
+  ): Promise<string[]>;
 }
 export function eventSource(caller: Caller): Data {
   return caller.session

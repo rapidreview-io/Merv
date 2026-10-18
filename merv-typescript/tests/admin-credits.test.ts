@@ -127,7 +127,7 @@ test('the list and the drawer read each credit type from its owner per window, a
   const [own] = await f.ctx.sbxAccounts.accountsOf(person.id);
   await f.call('POST', '/admin/credits/grants', {
     id: 'g1',
-    accountId: own!.id,
+    person: `${issuer}|alice`,
     provider: 'fake',
     amount: '10',
     validFrom,
@@ -136,7 +136,7 @@ test('the list and the drawer read each credit type from its owner per window, a
   // Started two days ago, the schedule has three periods due that nothing has issued yet.
   await f.call('POST', '/admin/credits/schedules', {
     id: 's1',
-    accountId: own!.id,
+    person: `${issuer}|alice`,
     provider: 'fake',
     amount: '1',
     cadence: 'daily',
@@ -238,8 +238,7 @@ test('the list and the drawer read each credit type from its owner per window, a
   assert.deepEqual(
     { ...drawn, grants: issuedAs(drawn.grants) },
     {
-      person: { key: `${issuer}|alice`, label: 'Alice', issuer, subject: 'alice' },
-      accountId: own!.id,
+      person: { key: `${issuer}|alice`, label: 'Alice' },
       kinds,
       grants: issuedAs(held.grants),
       schedules: held.schedules,
@@ -247,8 +246,7 @@ test('the list and the drawer read each credit type from its owner per window, a
   );
   // A person without an account sees every connected provider, with nothing granted.
   assert.deepEqual(none, {
-    person: { key: `${issuer}|bob`, label: 'Unnamed', issuer, subject: 'bob' },
-    accountId: null,
+    person: { key: `${issuer}|bob`, label: 'Unnamed' },
     kinds: [
       ...kinds.slice(0, 3).map((kind) => ({
         ...kind,
@@ -262,7 +260,6 @@ test('the list and the drawer read each credit type from its owner per window, a
     schedules: [],
   });
   // The list: one row per person with today's use of each type.
-  assert.deepEqual(list.providers, ['fake']);
   assert.deepEqual(
     list.people.map(({ kinds, ...person }) => [person, kinds]),
     [drawn, none].map(({ person, kinds }) => [
@@ -274,9 +271,11 @@ test('the list and the drawer read each credit type from its owner per window, a
 
 test('credit writes land in Sandboxes through CreditService and in the admin audit log', async (t) => {
   const f = await fixture(t);
-  const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const grant = { id: 'g1', accountId, provider: 'fake', amount: '2.25', validFrom, reason: 'Try' };
+  await f.signIn('dave');
+  const person = `${issuer}|dave`;
+  const grant = { id: 'g1', person, provider: 'fake', amount: '2.25', validFrom, reason: 'Try' };
   assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
+  const { accountId } = (await f.ctx.sandboxesPeople.accountOf({ issuer, subject: 'dave' }))!;
   // The same id with the same terms is the same grant; different terms are refused.
   await f.call('POST', '/admin/credits/grants', grant);
   await assert.rejects(
@@ -285,7 +284,7 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
   );
   const schedule = {
     id: 's1',
-    accountId,
+    person,
     provider: 'fake',
     amount: '5',
     cadence: 'monthly',
@@ -317,10 +316,10 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
   assert.deepEqual(
     audit.map((row) => [row.subject, row.action, row.target]),
     [
-      ['founder', 'credits.grant', accountId],
-      ['founder', 'credits.grant', accountId],
-      ['founder', 'credits.schedule', accountId],
-      ['founder', 'credits.schedule', accountId],
+      ['founder', 'credits.grant', person],
+      ['founder', 'credits.grant', person],
+      ['founder', 'credits.schedule', person],
+      ['founder', 'credits.schedule', person],
       ['founder', 'credits.revoke', 'g1'],
     ],
   );
@@ -340,9 +339,10 @@ test('a grant may name a person: it lands on their own account, which the bridge
   };
   // Granted to the person, it lands on their own account, made now, which may then spend it.
   assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
-  const { accountId, grants, kinds } = (await f.call('GET', drawer('carol'))) as PersonCredits;
+  const { grants, kinds } = (await f.call('GET', drawer('carol'))) as PersonCredits;
+  const { accountId } = (await f.ctx.sandboxesPeople.accountOf({ issuer, subject: 'carol' }))!;
   assert.deepEqual(
-    (await f.ctx.sbxProviders.connections.listEntitlements({ accountId: accountId! })).map((e) => [
+    (await f.ctx.sbxProviders.connections.listEntitlements({ accountId })).map((e) => [
       e.scope,
       e.enabled,
     ]),
@@ -357,11 +357,11 @@ test('a grant may name a person: it lands on their own account, which the bridge
     [['provider:fake', 5, 5]],
   );
   const [row] = await f.audit();
-  assert.deepEqual([row!.action, row!.target], ['credits.grant', accountId]);
+  assert.deepEqual([row!.action, row!.target], ['credits.grant', grant.person]);
   assert.deepEqual(JSON.parse(row!.detail_json), grant);
-  // An account and a person at once, or neither, is refused; so is a person nobody signed in as.
+  // An account instead of a person, or no person, is refused; so is a person nobody signed in as.
   const { person: _, ...unnamed } = grant;
-  for (const body of [{ ...grant, accountId }, unnamed])
+  for (const body of [{ ...unnamed, accountId }, unnamed])
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', body),
       f.refused('invalid_input', 400),
@@ -420,8 +420,9 @@ test('a person’s own limits are set and cleared in their owners, each recorded
 
 test('only an admin may read or assign credits, and only real providers, accounts and amounts', async (t) => {
   const f = await fixture(t);
-  const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const grant = { id: 'g1', accountId, provider: 'fake', amount: '1', validFrom, reason: 'Trial' };
+  await f.signIn('erin');
+  const person = `${issuer}|erin`;
+  const grant = { id: 'g1', person, provider: 'fake', amount: '1', validFrom, reason: 'Trial' };
   for (const who of [
     human('someone'),
     { kind: 'key', keyId: 'key', issuer, subject: 'founder' } as unknown as Principal,
@@ -455,14 +456,15 @@ test('only an admin may read or assign credits, and only real providers, account
       f.refused('invalid_input', 400),
     );
   await assert.rejects(
-    f.call('POST', '/admin/credits/grants', { ...grant, accountId: 'acct_missing' }),
-    f.refused('sandbox_not_found', 404),
+    f.call('POST', '/admin/credits/grants', { ...grant, person: `${issuer}|nobody` }),
+    f.refused('not_found', 404),
   );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants/missing/revoke'),
     f.refused('sandbox_not_found', 404),
   );
-  assert.deepEqual((await f.ctx.sbxBilling.credits.report(accountId)).grants, []);
+  const own = await f.ctx.sandboxesPeople.accountOf({ issuer, subject: 'erin' });
+  assert.deepEqual((await f.ctx.sbxBilling.credits.report(own!.accountId)).grants, []);
   assert.deepEqual(await f.state.read((sql) => sql.all('SELECT id FROM admin_audit')), []);
 });
 
