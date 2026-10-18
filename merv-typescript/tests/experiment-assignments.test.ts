@@ -2131,6 +2131,76 @@ test('a resumed visit submits results its cut visit retained before attaching th
   await f.work.release(resumed);
 });
 
+test('a resumed visit of the same worker submits the report its cut visit attached; a successor does not', async (t) => {
+  const f = await fixture(t);
+  // A visit attaches its result and report, and is cut before its submission lands.
+  const cutVisit = async (experiment: Experiment) => {
+    const cut = await f.work.lease(experiment);
+    for (const [role, content] of [
+      ['result', 'The observation is unchanged.'],
+      ['report', report],
+    ] as const) {
+      const artifact = await f.work.run(
+        cut,
+        'artifact.create',
+        { title: role, content, mediaType: 'text/markdown' },
+        (caller, input) => f.artifacts.create(caller, input as never),
+      );
+      await f.work.run(
+        cut,
+        'experiment.attach',
+        {
+          artifactId: artifact.id,
+          role,
+          path: `${role}.md`,
+          attemptIndex: experiment.attempt.index,
+          requestId: f.request(),
+          ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+        },
+        (caller, input) => f.experiments.attach(caller, input as never),
+      );
+    }
+    return cut;
+  };
+  const submitBlockers = async (lease: Awaited<ReturnType<typeof f.work.lease>>, id: string) =>
+    (await f.workflows.evaluate(lease.worker, id)).actions
+      .find((action) => action.action === 'submit_results')!
+      .blockers.map((blocker) => blocker.code);
+
+  let experiment = await f.running();
+  const cut = await cutVisit(experiment);
+  // Its runner delivered its conversation, so the next offer resumes the same worker's thread.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE session_threads SET harness='codex',conversation_id='conversation-1',sha256=?,size=1,uploaded_at=? WHERE actor_id=?",
+      'a'.repeat(64),
+      new Date().toISOString(),
+      cut.worker.actorId,
+    );
+  });
+  await f.work.release(cut);
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const resumed = await f.work.lease(experiment);
+  assert.equal(resumed.worker.actorId, cut.worker.actorId, 'the same worker resumes');
+  assert.deepEqual(await submitBlockers(resumed, experiment.id), []);
+  const submitted = await f.work.run(
+    resumed,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  assert.equal(submitted.workflow.state, 'experiment_review');
+  await f.work.release(resumed);
+
+  // Without a conversation to resume, a new worker takes the step: it writes its own report.
+  let other = await f.running();
+  await f.work.release(await cutVisit(other));
+  other = await f.experiments.get(f.source, other.id);
+  const successor = await f.work.lease(other);
+  assert.deepEqual(await submitBlockers(successor, other.id), ['invalid_evidence_author']);
+  await f.work.release(successor);
+});
+
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {
   const f = await fixture(t);
   let experiment = await f.running();

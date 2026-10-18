@@ -1018,8 +1018,13 @@ export async function checkAction(
     );
     const own = one(selection, action === 'submit_design' ? 'plan' : 'report');
     const authored = await authorship(ctx, caller, tx);
+    const document = await ctx.artifacts.get(caller, own.artifactId, tx);
     check(
-      authored(await ctx.artifacts.get(caller, own.artifactId, tx)),
+      authored(document) ||
+        // The same worker's own earlier visit to this step wrote it and was cut before its
+        // submission landed: resuming is that worker going on, not a successor reusing a report.
+        (document.createdBy === caller.actorId &&
+          (await resumedOutputs(ctx, caller, experiment.workflow, tx)).includes(document.id)),
       'invalid_evidence_author',
       'The submitting worker must retain and attach its own plan or report after verifying any inherited evidence',
       403,
