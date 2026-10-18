@@ -468,6 +468,9 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.match(executing.brief, /report\.review_visual/);
   assert.match(executing.brief, /report\.clear to start over/);
   assert.match(executing.brief, /Execution has no route back to design/);
+  // It is not sent looking for a replanning route the workflow does not have.
+  assert.match(executing.brief, /Follow the approved scope\. Retain the required results/);
+  assert.doesNotMatch(executing.brief, /replanning route/);
   assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
