@@ -24,35 +24,6 @@ No backend service, authentication contract, mutation receipt, plugin dependency
 
 This is targeted acceptance, not a claim that every production user journey has been exhaustively tested. Public production cutover remains a separate migration decision; deployment evidence lives in `deploy/`.
 
-## Start a fresh preview
-
-From `merv-typescript`:
-
-```sh
-node --import tsx scripts/ui-overhaul-demo.ts
-```
-
-The script creates a new private `/private/tmp/merv-ui-overhaul-*` directory and starts the real local backend on an available loopback port. Set `PORT` to request a particular port. It prints only the URL, directory, private credential-file path and aggregate coverage.
-
-For editing the UI with Vite, use the reported API address:
-
-```sh
-MERV_API=http://127.0.0.1:58905 PORT=5181 npm run dev --workspace @merv/ui -- --host 127.0.0.1
-```
-
-The fixture allows the exact Vite origin `http://127.0.0.1:5181` in addition to any configured origins; it remains bound to loopback. The existing built UI is also served at the reported API's `/ui/` path. Rebuild the UI or use Vite to see source changes.
-
-## Current retained preview
-
-- API: `http://127.0.0.1:58905`
-- Built UI: `http://127.0.0.1:58905/ui/`
-- Source preview: `http://127.0.0.1:5181/ui/`
-- Synthetic credentials and fixture IDs: `/private/tmp/merv-ui-overhaul-5yDB4x/private-preview.json`, mode `0600`.
-
-Use `tokens.operator` or `tokens.reader` from that private file in the existing local token sign-in form. Do not paste their values into source, documentation or logs. These are locally signed synthetic identities, not real Supabase users. The operator sees five projects; the reader sees three and cannot mutate project data. Producer/reviewer actor credentials are also retained for targeted interface checks.
-
-Type `quit` on the fixture terminal, or send SIGINT, to close it. `disable <plugin>` and `enable <plugin>` use the existing application controls. The temporary data is retained for inspection after shutdown; a new invocation creates a separate fresh dataset.
-
 ## Coverage
 
 - Five projects, including duplicate names, a long name, populated projects and empty projects.

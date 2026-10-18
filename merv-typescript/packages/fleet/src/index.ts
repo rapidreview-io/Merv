@@ -63,8 +63,6 @@ const requestSchema = z
   .strict();
 export const fleetConfig = z
   .object({
-    /** Ignored: loading Fleet is the switch. Configurations rendered before still carry it. */
-    enabled: z.boolean().optional(),
     profiles: runtimeProfiles,
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),

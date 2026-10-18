@@ -1,5 +1,14 @@
 import { z } from 'zod';
-import { canonical, check, digest, envName, MervError, RESERVED_KEYS } from '@merv/contracts';
+import {
+  byCodeUnit,
+  canonical,
+  check,
+  digest,
+  envName,
+  freezeData,
+  MervError,
+  RESERVED_KEYS,
+} from '@merv/contracts';
 import type {
   Data,
   WorkflowAssignmentContent,
@@ -11,7 +20,7 @@ import type {
 } from '@merv/contracts';
 import { toolName, valid } from './definition.js';
 import { executionArgument } from './execution.js';
-import { DATA_LIMITS, freezeData, workflowJson } from './json.js';
+import { DATA_LIMITS, workflowJson } from './json.js';
 
 const field = envName.refine((value) => !RESERVED_KEYS.includes(value));
 const binding = z.discriminatedUnion('kind', [
@@ -93,7 +102,6 @@ const referencesSchema = z.record(
   field,
   z.union([z.string().min(1), z.array(z.string().min(1)).max(4096)]),
 );
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function executionMetadata<T>(value: T): T {
   return workflowJson(value, 'invalid_workflow_policy', 500, DATA_LIMITS);
@@ -115,10 +123,10 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
       );
       return {
         name: tool.name,
-        alternatives: alternatives.sort(compare).map((value) => JSON.parse(value)),
+        alternatives: alternatives.sort().map((value) => JSON.parse(value)),
       };
     })
-    .sort((a, b) => compare(a.name, b.name));
+    .sort((a, b) => byCodeUnit(a.name, b.name));
   return freezeData({
     readOnly: parsed.data.readOnly,
     ...(parsed.data.workspace === undefined ? {} : { workspace: parsed.data.workspace }),

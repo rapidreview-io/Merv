@@ -1,5 +1,6 @@
 import {
   check,
+  freezeData,
   inTransaction,
   newId,
   plain,
@@ -17,7 +18,7 @@ import { permits } from '@merv/scope/rules';
 import { evidenceFrom, ownField, validateAssessment } from './findings.js';
 import type { ReviewsContext } from './index.js';
 import { REVIEW_VERDICTS } from './rules.js';
-import { freeze, hydrate, type ReviewRow } from './rows.js';
+import { hydrate, type ReviewRow } from './rows.js';
 
 // Claiming a review, submitting its verdict and releasing a claim: the reviewer's side of a
 // review. Each runs on ReviewService (index.ts) as its ReviewsContext.
@@ -80,7 +81,7 @@ export async function start(
     if (current.status === 'started') return current;
     // Only a review one domain can apply a verdict to is claimed, and that domain may refuse
     // a claim its rules could never let finish.
-    const { owner, current: unchanged } = await ctx.ownerOf(freeze(current), tx);
+    const { owner, current: unchanged } = await ctx.ownerOf(freezeData(current), tx);
     await owner.claim?.(caller, current, tx);
     unchanged();
     const claimId = newId('claim');

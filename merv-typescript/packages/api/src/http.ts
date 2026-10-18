@@ -29,8 +29,6 @@ import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { projectSelection, unknownEndpoint, validated } from './errors.js';
 
-export { describeTool } from './registry.js';
-
 export interface HttpOptions {
   host?: string;
   port?: number;

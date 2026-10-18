@@ -6,7 +6,7 @@ import {
   roundsUsed,
   standings,
 } from './rules.js';
-import { canonical, visible, isDirectHuman, within } from '@merv/contracts';
+import { canonical, freezeData, visible, isDirectHuman, within } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import { bound, createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -34,7 +34,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { EARLIER, reviewSections } from './running.js';
-import { freeze, hydrate, type ReviewRow } from './rows.js';
+import { hydrate, type ReviewRow } from './rows.js';
 import { request, supersede } from './requests.js';
 import {
   actorPermissionsChanged,
@@ -269,7 +269,7 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
       await this.scope.require(caller, 'review', tx);
-      const review = freeze(await this.get(caller, input.reviewId, tx));
+      const review = freezeData(await this.get(caller, input.reviewId, tx));
       const { owner, current } = await this.ownerOf(review, tx);
       const extra = Object.keys(input).find(
         (key) => !submitFields.has(key) && !owner.fields?.includes(key),
@@ -290,7 +290,7 @@ export class ReviewService implements Reviews {
     transaction?: Transaction,
   ): Promise<ReviewGuide> {
     caller = structuredClone(caller);
-    const review = freeze(
+    const review = freezeData(
       typeof reviewOrId === 'string'
         ? await this.get(caller, reviewOrId, transaction)
         : structuredClone(reviewOrId),

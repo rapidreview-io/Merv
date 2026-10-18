@@ -132,7 +132,6 @@ export interface ApiCredential {
 
 export interface Api {
   readonly url?: string;
-  start(): Promise<string>;
   stop(): Promise<void>;
   /** Serves one lowercase path segment (409 when taken). Until it is mounted, and once its
    *  disposer withdraws it, a credential's request to it answers 503. */

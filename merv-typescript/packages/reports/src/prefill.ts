@@ -1,5 +1,16 @@
 /** Pure: other packages run this to build their subject's first draft. */
 
+/** What the writer of a report is granted to finish that draft (packages/reports/src/tools.ts). */
+export const REPORT_TOOLS = [
+  'report.open',
+  'report.write',
+  'report.clear',
+  'report.check',
+  'report.review_visual',
+  'report.approve_visual',
+  'report.render',
+];
+
 /** What an approved plan fixes for its report. */
 export interface PlanFacts {
   id: string;

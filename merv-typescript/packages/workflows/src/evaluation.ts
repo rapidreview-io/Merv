@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, mapAsync, MervError, stateFault } from '@merv/contracts';
+import { check, freezeData, mapAsync, MervError, stateFault } from '@merv/contracts';
 import type {
   Caller,
   Transaction,
@@ -22,7 +22,7 @@ import type {
   WorkflowWorkStart,
 } from './models.js';
 import { identifier, toolName, valid } from './definition.js';
-import { freezeData, workflowJson } from './json.js';
+import { workflowJson } from './json.js';
 import { extendsAt, requireDependencies } from './rules.js';
 import { validateExecution } from './execution-policy.js';
 import { limitMessage, validateLimits } from './limits.js';

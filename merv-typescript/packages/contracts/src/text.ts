@@ -10,6 +10,12 @@ export const clip = (text: string, max: number) =>
 /** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
 export const ellipsis = (text: string, max: number) =>
   text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/** Text as HTML character data or a quoted attribute value: never markup. */
+export const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+  );
 /** The first clause of a recorded sentence, in its own words; null where nothing was written. */
 export function firstSentence(text: string | null | undefined, limit = 140): string | null {
   const trimmed = (text ?? '').trim();

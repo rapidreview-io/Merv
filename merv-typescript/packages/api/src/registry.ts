@@ -21,7 +21,6 @@ import { cloneJson, compileSchema } from './schema.js';
 import { toolsGuide } from './guide.js';
 import { validated } from './errors.js';
 
-export type { ToolDescription } from './types.js';
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
   tool: T,
 ): tool is Extract<T, { kind: 'mcp' }> {

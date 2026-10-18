@@ -127,15 +127,6 @@ button.cx-feature:hover {
   color: var(--text);
   background: var(--bg-soft);
 }
-.cx-dot {
-  position: absolute;
-  top: 4px;
-  right: 3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--active);
-}
 .cx-center {
   margin: 20vh auto 0;
   text-align: center;
@@ -261,29 +252,6 @@ button.cx-feature:hover {
 .cx-plan-actions {
   display: flex;
   gap: var(--space-2);
-}
-.cx-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-.cx-status::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ghost);
-}
-.cx-status--verifying::before {
-  background: var(--qualifies);
-}
-.cx-status--changes_requested::before {
-  background: var(--refutes);
-}
-.cx-status--accepted::before {
-  background: var(--supports);
 }
 .cx-feedback {
   padding: var(--space-2) var(--space-3);
@@ -513,11 +481,6 @@ button.cx-feature:hover {
 }
 .cx-pay .btn {
   justify-self: start;
-}
-.cx-chat--docked {
-  min-height: 0;
-  padding-left: var(--space-4);
-  border-left: 1px solid var(--line);
 }
 
 /* Files: the braziliano bucket UI. */
@@ -927,12 +890,6 @@ button.cx-feature:hover {
   }
   .cx-plan {
     overflow: visible;
-  }
-  .cx-chat--docked {
-    height: 70dvh;
-    padding: var(--space-3) 0 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
   }
   .cx-files-head {
     flex-wrap: wrap;

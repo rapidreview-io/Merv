@@ -12,14 +12,14 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { privateDirectory } from '@merv/contracts/private-directory';
+import { pathStat, privateDirectory } from '@merv/contracts/private-directory';
 import {
   WorkspaceDeferred,
   type WorkspaceDriverHost,
   type WorkspaceHandle,
   type WorkspaceTransport,
 } from '@merv/contracts';
-import { DriverGit, hash, oid, pathStat, WorkspaceError } from './git.js';
+import { DriverGit, hash, oid, WorkspaceError } from './git.js';
 
 export interface CodeDriverOptions {
   /** How often an admission that outlasts its request is asked about again. */

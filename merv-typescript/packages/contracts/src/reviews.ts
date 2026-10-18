@@ -132,7 +132,6 @@ export interface Reviews {
       claimId: string;
       actorId: string;
       reason: string;
-      releasedBy?: string;
     },
     tx: Transaction,
   ): Promise<void>;

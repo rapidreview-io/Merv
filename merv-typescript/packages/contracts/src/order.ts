@@ -1,3 +1,7 @@
+/** Code-unit order, never the locale's: what is sorted by it, and any fingerprint of it, is the
+ * same everywhere. */
+export const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Items in an order that puts every prerequisite before what waits on it, stable by listed
  * position. Undefined when the dependencies form a cycle. Shared because the program that

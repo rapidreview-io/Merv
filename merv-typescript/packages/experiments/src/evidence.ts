@@ -1,6 +1,7 @@
 import { isUtf8 } from 'node:buffer';
 import { z } from 'zod';
 import {
+  byCodeUnit,
   visible,
   check,
   markdownSection,
@@ -15,7 +16,6 @@ export const RESULT_FILES = 100;
 function error(condition: unknown, message: string): asserts condition {
   check(condition, 'invalid_experiment_evidence', message);
 }
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** Retained bytes as the text every other check here reads. */
 export function decodeEvidence(bytes: Uint8Array): string {
   error(
@@ -264,7 +264,7 @@ export function buildMetricsExhibit(input: {
     `An exhibit pins at most ${RESULT_FILES} result files`,
   );
   const resultFiles = [...input.sources]
-    .sort((a, b) => compare(a.path, b.path))
+    .sort((a, b) => byCodeUnit(a.path, b.path))
     .map((source) => {
       error(
         source.data !== undefined && (source.resultFormat === 'json' || source.data === null),
@@ -309,7 +309,7 @@ export function exhibitBytes(exhibit: MetricsExhibit): Buffer {
       return item.some((child) => child !== null && typeof child === 'object')
         ? `[\n${item.map((child) => `${inner}${pretty(child, depth + 1)}`).join(',\n')}\n${pad}]`
         : JSON.stringify(item);
-    const keys = Object.keys(item).sort(compare);
+    const keys = Object.keys(item).sort();
     return keys.length
       ? `{\n${keys.map((key) => `${inner}${JSON.stringify(key)}: ${pretty(item[key], depth + 1)}`).join(',\n')}\n${pad}}`
       : '{}';

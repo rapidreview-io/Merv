@@ -10,19 +10,9 @@ import { codeWorkspace } from '@merv/code-work/workspace';
 import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { heldLease, insertLease, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
 import { directsIndependently, excludedFromReview, reviewActions } from '@merv/reviews/rules';
+import { REPORT_TOOLS } from '@merv/reports/prefill';
 import type { CustomerExperiments } from './domain.js';
 import { SERVICE_EXPERIMENT, plansDocument, writesReport } from './program.js';
-
-/** The executor writes, reviews and renders its report for this request only (version 2). */
-const REPORT_TOOLS = [
-  'report.open',
-  'report.write',
-  'report.clear',
-  'report.check',
-  'report.review_visual',
-  'report.approve_visual',
-  'report.render',
-];
 import { SERVICE_MODEL, contractDatasets, contractLimits } from './types.js';
 
 /** What version 2's executor is told: the report tools and their persistent draft. */

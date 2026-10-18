@@ -31,14 +31,6 @@ export const oid = (value: string): string => {
   if (!oidPattern.test(result)) throw new WorkspaceError('workspace_invalid_oid');
   return result;
 };
-export const pathStat = (path: string) => {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-};
 /** Changed files above this size are refused at capture and commit. */
 export const MAX_FILE = 50 * 1024 * 1024;
 export const identity = {

@@ -311,8 +311,6 @@ export interface Creation {
   label: string;
   /** False where this reader may not create anything: no control is drawn. */
   shown?: boolean;
-  /** True where the control opens something other than a new record. */
-  plain?: boolean;
   form(close: () => void): ReactNode;
 }
 
@@ -387,7 +385,6 @@ export function ListPage<T extends { id: string }>({
   opens,
   narrow,
   create,
-  aside,
   end,
   cards,
   emptyTitle,
@@ -418,8 +415,6 @@ export function ListPage<T extends { id: string }>({
   /** Where a page holds more than one list: the choice between them, beside its filters. */
   narrow?: ReactNode;
   create?: Creation;
-  /** A second control on the same row that opens something other than a record. */
-  aside?: Creation;
   /** A control of the page's own that does its work in place, at the row's end. */
   end?: ReactNode;
   /** Where the row is a designed card of its own: the class its stack takes. */
@@ -465,13 +460,13 @@ export function ListPage<T extends { id: string }>({
         type="button"
         data-opens={key}
         // In a title line the page's own move is the accent; what opens a form is a word.
-        className={cx('btn', lede ? 'btn--quiet' : !item.plain && open !== key && 'btn--primary')}
+        className={cx('btn', lede ? 'btn--quiet' : open !== key && 'btn--primary')}
         aria-expanded={open === key}
         // Cancel means what Escape means, and neither can take back a request in flight.
         disabled={open === key && locked}
         onClick={() => (open === key ? close() : setOpen(key))}
       >
-        {open !== key ? item.label : item.plain ? 'Close' : 'Cancel'}
+        {open !== key ? item.label : 'Cancel'}
       </button>
     );
   useRowKeys(frame);
@@ -531,11 +526,9 @@ export function ListPage<T extends { id: string }>({
       )}
     </>
   );
-  // What the page can open ends the row, the quiet control before the primary one.
+  // What the page can open ends the row.
   const ends = (
     <>
-      {/* A quiet control beside nothing at all would be the page's only element. */}
-      {aside && (!vacant || open === 'aside') && control('aside', aside)}
       {end}
       {create && !offered && !load.loading && control('create', create)}
     </>
@@ -566,11 +559,6 @@ export function ListPage<T extends { id: string }>({
               <div className="action-filters">{filters}</div>
               <div className="action-end">{ends}</div>
             </div>
-          )}
-          {open === 'aside' && aside && (
-            <Opened onClose={close} onLock={setLocked}>
-              {aside.form(close)}
-            </Opened>
           )}
           {creating && create && (
             <Opened onClose={close} onLock={setLocked}>

@@ -6,6 +6,7 @@ import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import {
   MervError,
+  runningSchema,
   type Caller,
   type RunningAttention,
   type RunningBoard,
@@ -21,21 +22,24 @@ import {
   LANE_CAP,
   RunningRegistry,
   actionOf,
-  attentionOf,
   compose,
   edgesOf,
   fold,
   markOf,
   nodeOf,
   order,
-  phraseOf,
   runningBoard,
   runningPanel,
   sectionOf,
-  targetOf,
   type RunningSources,
 } from '@merv/ui/running';
 import { createApp } from './fixtures/app.js';
+
+// The contract's parts as a row reads them: null when one breaks it.
+const { runningAttention, runningPhrase, runningTarget } = runningSchema;
+const targetOf = (value: unknown) => runningTarget.safeParse(value).data ?? null;
+const phraseOf = (value: unknown) => runningPhrase.safeParse(value).data ?? null;
+const attentionOf = (value: unknown) => runningAttention.safeParse(value).data ?? null;
 
 /**
  * The Running board's composition rules, held with fake contributions: no plugin, no

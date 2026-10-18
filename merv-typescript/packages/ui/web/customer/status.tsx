@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNow } from '../components';
 import { Markdown } from '../markdown';
 import { customerRequest } from './api';
 
@@ -110,22 +111,12 @@ const dollars = (usd: number) =>
     maximumFractionDigits: usd < 10 ? 2 : 0,
   }).format(usd);
 
-/** A minute's tick, so the clock moves between reads. */
-function useNow(every = 30_000) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), every);
-    return () => clearInterval(timer);
-  }, [every]);
-  return now;
-}
-
 /**
  * Where a paid experiment stands: four stages, what it is doing now, time and compute against
  * their limits, scores as they finish, and what it has done; once complete, its report.
  */
 export function Status({ progress, result }: { progress: Progress; result?: Delivered | null }) {
-  const now = useNow();
+  const now = useNow(30_000);
   const at = progress.stage === 'failed' ? 3 : STAGES.indexOf(progress.stage);
   const started = progress.startedAt ? Date.parse(progress.startedAt) : null;
   const elapsed = started ? now - started : null;
