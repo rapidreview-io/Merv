@@ -15,6 +15,13 @@ import type { CustomerExperiments } from './domain.js';
 import { SERVICE_EXPERIMENT, plansDocument, postsProgress, writesReport } from './program.js';
 import { SERVICE_MODEL, contractDatasets, contractLimits } from './types.js';
 
+/**
+ * Whether an executor may end its visit to wait for its compute (session.await_compute), its
+ * limit staying agent working time, which a wait uses none of. The owner's decision is pending
+ * (2026-10-18); false keeps every wait of a customer run inside its visit.
+ */
+const executorsAwaitCompute: boolean = true;
+
 /** What version 2's executor is told: the report tools and their persistent draft. */
 const reportInstruction =
   'Execute only this accepted contract. Validate every downloaded dataset SHA-256 before use. Select suitable hardware internally, including GPU rentals through the native Sandboxes connection when available. Inspect current inventory and pricing before choosing; the customer does not select or approve a fixed GPU type. Use only the authorized account allowance, bounded job timeouts and rental leases, release unused machines, and do not use paid external APIs or unapproved training. Complete explicit native Capture nodes for remote outputs and wait until their Merv artifact collections are registered before handing off; machine files and temporary Snapshots are not retained evidence. Save code with code.commit and results as artifacts. Write the report with the report tools (subjectKind customer_experiment, subjectId this request): report.open returns a draft prefilled from the contract, its question, inquiry and constraints locked, and the format guide; it persists, so after a review returns the work edit it (report.write) or start over (report.clear) instead of rewriting it. Compute every number from the retained results, review and approve each chart (report.review_visual, report.approve_visual), check the page (report.render), render it with final: true, then call customer_experiment.submit_results with its sourceArtifactId as reportArtifactId and, as artifactIds, the result artifacts you created in this session (this attempt’s native compute captures are added for you; cite a result kept in an earlier session by id in the report). Stop after successful handoff; final capture and independent review follow automatically. If feasibility changes, report it faithfully in the report; do not change scope.';
@@ -256,6 +263,7 @@ export function executionPolicy(ctx: CustomerExperiments, version = 1): Workflow
         return {
           computeKind: 'experiment',
           computeProfile: state === 'running' ? 'execute' : 'check',
+          ...(!executorsAwaitCompute && { computeWait: 'inside' }),
           artifacts: [
             ...new Set([
               await ctx.contractArtifact(exp, c.tx),

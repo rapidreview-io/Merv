@@ -417,6 +417,62 @@ test('missing token accounting waits without launching an unbounded replacement'
   assert.equal(demand.candidates.length, 0);
 });
 
+test('an executor that ends its visit to wait for its compute comes back once that visit’s usage is reported, nothing counted', async (t) => {
+  const f = await fixture(t);
+  const exp = await f.pay();
+  let status: 'running' | 'succeeded' = 'running';
+  f.managed.sessions.computeWaits.register({
+    offers: async () => true,
+    states: async ({ targets }) => ({
+      targets: targets.map((target) => ({ ...target, status, state: status })),
+      idle: [],
+    }),
+  });
+  const worker = await f.offer();
+  // Offered while executorsAwaitCompute holds, the owner's decision being pending.
+  assert.equal(await f.managed.sessions.computeWaits.available(worker.session), true);
+  await f.work.run(
+    worker,
+    'session.await_compute',
+    { jobIds: ['job_train'], reason: 'Training the candidate rule.' },
+    (caller, input) => f.managed.sessions.computeWaits.await(caller, input as never),
+  );
+  assert.equal((await f.service.reconcile(f.caller, exp.id)).workflow.state, 'running');
+  status = 'succeeded';
+  await f.managed.sessions.sweep();
+  // Its conversation never arrives here, so only the bound would hold the work: past it.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'ALTER TABLE session_compute_waits DISABLE TRIGGER session_compute_waits_immutable',
+    );
+    await tx.run(
+      'UPDATE session_compute_waits SET created_at=? WHERE session_id=?',
+      new Date(Date.now() - 3_600_000).toISOString(),
+      worker.session.id,
+    );
+    await tx.run(
+      'ALTER TABLE session_compute_waits ENABLE TRIGGER session_compute_waits_immutable',
+    );
+  });
+  const demand = async () =>
+    (
+      await f.managed.sessions.dispatch.dispatchDemand(f.caller, {
+        platform: { name: 'astra', ...SERVICE_MODEL, enabled: true, parallelism: 1 },
+        capabilities: ['code.v2'],
+      })
+    ).candidates.length;
+  // Until its runner reports what the visit used, its paid allowance cannot be judged.
+  assert.equal(await demand(), 0);
+  await f.finish(worker);
+  assert.equal(await demand(), 1);
+  const next = await f.offer();
+  assert.equal(next.session.awaited?.outcome, 'ended');
+  assert.deepEqual(
+    await f.state.read((sql) => sql.all('SELECT * FROM session_dispatch_holds')),
+    [],
+  );
+});
+
 test('a scope change clears acceptance and payment and requires a fresh fixed contract', async (t) => {
   const f = await fixture(t);
   let exp = await f.deliver(await f.pay());
