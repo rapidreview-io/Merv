@@ -1,5 +1,5 @@
 import { currentTask, currentWork } from './fixtures/current-work.js';
-import { createService } from '@merv/contracts';
+import { createService, type MervError } from '@merv/contracts';
 import { admitDispatch } from '@merv/workflows/execution';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -291,9 +291,30 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
   assert.deepEqual((await f.admit(offered, 'checkpoint', { artifactIds: [] })).input, {
     artifactIds: [],
   });
+  // The refusal names each value outside the reference, so the caller drops exactly those.
   await assert.rejects(
-    async () => await f.admit(offered, 'checkpoint', { artifactIds: ['review-b'] }),
-    { code: 'execution_arguments_forbidden' },
+    async () =>
+      await f.admit(offered, 'checkpoint', { artifactIds: ['task-a', 'review-b', 'gone'] }),
+    (error: MervError) => {
+      assert.equal(error.code, 'execution_arguments_forbidden');
+      assert.match(error.message, /^artifactIds is outside the declared execution references: /);
+      assert.match(error.message, /review-b, gone are not among this assignment's taskArtifacts/);
+      assert.doesNotMatch(error.message, /task-a/);
+      assert.deepEqual(error.details, {
+        field: 'artifactIds',
+        reference: 'taskArtifacts',
+        outside: ['review-b', 'gone'],
+      });
+      return true;
+    },
+  );
+  await assert.rejects(
+    async () => await f.admit(offered, 'checkpoint', { artifactIds: 'task-a' }),
+    { code: 'execution_arguments_forbidden', message: /must be a list chosen from/ },
+  );
+  await assert.rejects(
+    async () => await f.admit(offered, 'artifact.read', { artifactId: 'gone' }),
+    { code: 'execution_arguments_forbidden', message: /: gone is not among/ },
   );
   assert.deepEqual((await f.admit(offered, '_nisa.search', { query: 'cordis' })).input, {
     query: 'cordis',

@@ -746,6 +746,28 @@ test('a report rendered final in an earlier session is refused with the advice t
       ) &&
       JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id, notes.id] }),
   );
+  // Through the session's own admission, the workflow names the earlier artifact it refuses.
+  await assert.rejects(
+    f.work.run(
+      producer,
+      'customer_experiment.submit_results',
+      {
+        id: exp.id,
+        expectedRevision: exp.workflow.revision,
+        artifactIds: [notes.id],
+        reportArtifactId: report.id,
+        summary: 'Notes from an earlier session',
+        requestId: f.id(),
+      },
+      (c, input) => f.service.submitResults(c, input),
+    ),
+    (error: MervError) =>
+      error.code === 'execution_arguments_forbidden' &&
+      error.message.includes(`${notes.id} is not among this assignment's artifacts`) &&
+      /cite its id in one this session creates/.test(error.message) &&
+      JSON.stringify(error.details) ===
+        JSON.stringify({ field: 'artifactIds', reference: 'artifacts', outside: [notes.id] }),
+  );
 });
 
 test('readiness rejects incomplete data and training/evaluation byte reuse', () => {
