@@ -4,13 +4,22 @@ import type {} from '@sandboxes/accounts';
 import type {} from '@sandboxes/auth';
 import type {} from '@sandboxes/billing';
 import type {} from '@sandboxes/providers';
+import { PLUGIN_COPY } from '@sandboxes/providers/console-labels';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host';
-import { check, MervError, pathSegment } from '@merv/contracts';
+import { check, MervError, pathSegment, type PlatformDirectory } from '@merv/contracts';
+import type { ApiRequest } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
-import type {} from '@merv/fleet/types';
+import type { PersonUse } from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
-import type { AdminCredits, CreditAccount } from './models.js';
+import type {} from '@merv/sandboxes/types';
+import type {
+  AdminCredits,
+  CreditKind,
+  CreditLimitInput,
+  CreditUse,
+  PersonCredits,
+} from './models.js';
 import { personLabel, type AdminEnv, type AdminRoute, type AdminRoutes } from './index.js';
 
 const refusals = mervRefusals(MervError);
@@ -22,10 +31,19 @@ const terms = {
   amount: z.string().regex(/^\d+(\.\d+)?$/),
 };
 const time = z.string().datetime({ offset: true });
-/** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. */
+/** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. It
+ *  names an account, or a person (`issuer|subject`) granted on their own account. */
 const grantInput = z
-  .object({ ...terms, validFrom: time, expiresAt: time.nullable().optional(), reason: z.string() })
-  .strict();
+  .object({
+    ...terms,
+    accountId: terms.accountId.optional(),
+    person: z.string().min(1).optional(),
+    validFrom: time,
+    expiresAt: time.nullable().optional(),
+    reason: z.string(),
+  })
+  .strict()
+  .refine(({ accountId, person }) => !accountId !== !person);
 /** Terms are immutable: the same `id` only enables or disables the schedule. */
 const scheduleInput = z
   .object({
@@ -37,6 +55,18 @@ const scheduleInput = z
     enabled: z.boolean(),
   })
   .strict();
+/** A daily limit within what its owner's own setting takes; null clears the person's own. */
+const limitInput: ZodType<CreditLimitInput, ZodTypeDef, unknown> = z.union([
+  z
+    .object({
+      kind: z.enum(['agent-tokens', 'fleet-tokens']),
+      limit: z.number().int().min(1).max(1_000_000_000).nullable(),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal('fleet-usd'), limit: z.number().positive().max(100_000).nullable() })
+    .strict(),
+]);
 
 /** The Sandboxes services credits live in, found per request: without them, 503. */
 function sandboxes(ctx: Context) {
@@ -53,98 +83,219 @@ function sandboxes(ctx: Context) {
   return { billing, accounts, auth, providers };
 }
 type Sandboxes = ReturnType<typeof sandboxes>;
-/** An account no credit was ever granted in. */
-const UNFUNDED = { pools: [], grants: [], schedules: [] };
+/** Provider plugins with an operator connection: the only providers credits may name. */
+const connected = async (sbx: Sandboxes) =>
+  [...new Set((await sbx.providers.connections.list()).map((c) => c.plugin))].sort();
+
+type Person = PlatformDirectory['people'][number];
+/** Fleet and Pi key a person by their sign-in; the actor names only callers without one. */
+const keyOf = (person: Person) => personKey(person, { projectId: '', actorId: '' });
+/** The person a route or a body names as `issuer|subject`, from Scope's directory. */
+async function named(env: AdminEnv, key: string): Promise<Person> {
+  const person = (await env.ctx.scope.directory()).people.find(
+    ({ issuer, subject }) => `${issuer}|${subject}` === key,
+  );
+  check(person, 'not_found', 'Person not found', 404);
+  return person;
+}
+/** The person `/admin/credits/people/:person` names: an issuer is a URL, so it holds `/`. */
+function segment(r: ApiRequest) {
+  try {
+    return decodeURIComponent(r.url.pathname.split('/')[4]!);
+  } catch {
+    throw new MervError('invalid_input', 'Malformed person');
+  }
+}
+/** A person's own Sandboxes account, which the bridge makes now if it has not yet. */
+async function ownAccount(env: AdminEnv, key: string) {
+  const people = env.ctx.get('sandboxesPeople');
+  check(people, 'credits_unavailable', 'Sandbox accounts are not available on this server', 503);
+  const person = await named(env, key);
+  const label = personLabel(env.admins, person);
+  return (await people.ensure({ issuer: person.issuer, subject: person.subject, label })).accountId;
+}
+
+type Window = keyof CreditUse['used'];
+type Span = readonly [window: Window, from: string, to: string];
+const DAY = 86_400_000;
+/** The drawer's windows as UTC days [from, to): today first, the last 7 days, the last 30, all. */
+function spans(now = Date.now()): Span[] {
+  const day = (offset: number) =>
+    new Date(now - (now % DAY) + offset * DAY).toISOString().slice(0, 10);
+  return [
+    ['day', day(0), day(1)],
+    ['week', day(-6), day(1)],
+    ['month', day(-29), day(1)],
+    ['total', '1970-01-01', day(1)],
+  ];
+}
+/**
+ * Each person's use of every credit type in each window, read from its owner, with their own
+ * Sandboxes account's grants and schedules. An owner not loaded leaves its types out; a provider
+ * is listed where the account holds its credit or the operator connected it.
+ */
+async function uses(
+  env: AdminEnv,
+  sbx: Sandboxes,
+  people: readonly Person[],
+  windows: readonly Span[],
+  providers: readonly string[],
+): Promise<PersonCredits[]> {
+  const keys = people.map(keyOf);
+  /** An owner's reading of every person in every window, by person, then window. */
+  const read = async <T>(of?: (from: string, to: string) => Promise<T[]>) => {
+    const all = of && (await Promise.all(windows.map(([, from, to]) => of(from, to))));
+    return all && keys.map((_, i) => all.map((rows) => rows[i]!));
+  };
+  const pi = env.ctx.get('pi');
+  const fleet = env.ctx.get('fleet');
+  const agent = await read(pi && ((from, to) => pi.tokensUsed(keys, from, to)));
+  const machines = await read(fleet && ((from, to) => fleet.peopleUsage(keys, from, to)));
+  const at = (day: string) => Instant.parseIso(`${day}T00:00:00Z`);
+  /** A credit type from its owner's reading in each window, if it has one. The limit is now's;
+   *  what is left is of today's limit unless the owner says (`left`). */
+  const kind = (
+    kind: CreditKind,
+    label: string,
+    unit: CreditUse['unit'],
+    reads?: PersonUse<number | null>[],
+    left?: number,
+  ): CreditUse[] => {
+    if (!reads) return [];
+    const { limit, own, used } = reads[0]!;
+    // Only the windows asked for: the list asks for today alone.
+    const by = Object.fromEntries(windows.map(([w], n) => [w, reads[n]!.used]));
+    const rest = limit === null ? null : Math.max(0, limit - used);
+    return [{ kind, label, unit, limit, own, used: by as CreditUse['used'], left: left ?? rest }];
+  };
+  return await Promise.all(
+    people.map(async (person, i) => {
+      const row = await sbx.auth.persons.byIdentity(person.issuer, person.subject);
+      // Their own account is the one their home namespace belongs to.
+      const accountId = row?.home_namespace
+        ? (await sbx.accounts.namespace(row.home_namespace)).account_id
+        : null;
+      const held =
+        accountId &&
+        (await sbx.billing.credits.usage(
+          accountId,
+          windows.map(([, from, to]) => [at(from), at(to)] as const),
+        ));
+      const pools = new Map(held ? held.pools.map((pool) => [pool.provider, pool]) : []);
+      const rented = machines?.[i];
+      const metered = rented?.[0]!.tokens ? rented.map((use) => use.tokens!) : undefined;
+      return {
+        person: {
+          key: `${person.issuer}|${person.subject}`,
+          label: personLabel(env.admins, person) ?? (row?.display_name || row?.email || 'Unnamed'),
+          issuer: person.issuer,
+          subject: person.subject,
+        },
+        accountId,
+        kinds: [
+          ...kind('agent-tokens', 'Agent tokens', 'tokens', agent?.[i]),
+          ...kind('fleet-tokens', 'Fleet agent tokens', 'tokens', metered),
+          ...kind(
+            'fleet-usd',
+            'Fleet machines',
+            'usd',
+            rented?.map((use) => use.usd),
+          ),
+          ...[...new Set([...pools.keys(), ...providers])].sort().flatMap((provider) => {
+            const pool = pools.get(provider);
+            const granted = Number(pool?.granted ?? 0);
+            const reads = windows.map((_, n) => ({
+              used: Number(pool?.used_in[n] ?? 0),
+              limit: granted,
+              own: false,
+            }));
+            const label = PLUGIN_COPY[provider]?.title ?? provider;
+            return kind(`provider:${provider}`, label, 'usd', reads, Number(pool?.available ?? 0));
+          }),
+        ],
+        grants: held ? held.grants : [],
+        schedules: held ? held.schedules : [],
+      };
+    }),
+  );
+}
 
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
-  const { people, projects } = await env.ctx.scope.directory();
-  const persons = await Promise.all(
-    people.map((p) => sbx.auth.persons.byIdentity(p.issuer, p.subject)),
-  );
-  const memberships = await Promise.all(
-    persons.map(async (p) => (p ? await sbx.accounts.accountsOf(p.id) : [])),
-  );
-  const links = new Map<string, CreditAccount['projects']>();
-  for (const { id: projectId, name } of projects) {
-    const link = await sbx.accounts.linked(projectId);
-    if (link)
-      links.set(link.account_id, [...(links.get(link.account_id) ?? []), { projectId, name }]);
-  }
-  const balances = new Map(
-    (await sbx.billing.credits.overview()).map((balance) => [balance.account_id, balance]),
-  );
-  const ids = new Set([
-    ...memberships.flat().map((account) => account.id),
-    ...links.keys(),
-    ...balances.keys(),
-  ]);
-  const accounts: CreditAccount[] = [];
-  for (const accountId of [...ids].sort()) {
-    const { pools, grants, schedules } = balances.get(accountId) ?? UNFUNDED;
-    accounts.push({
-      accountId,
-      name: (await sbx.accounts.get(accountId)).name,
-      projects: links.get(accountId) ?? [],
-      pools,
-      grants,
-      schedules,
-      budgets: (await sbx.billing.policies(accountId)).map(
-        ({ account_id, cap, source, updated_at, ...policy }) => ({
-          ...policy,
-          cap: cap?.toJSON() ?? null,
-        }),
-      ),
-    });
-  }
-  // Fleet and Pi key a person by their sign-in; the actor names only callers without one.
-  const keys = people.map((p) => personKey(p, { projectId: '', actorId: '' }));
-  const days = await env.ctx.get('fleet')?.peopleToday(keys);
-  const tokens = await env.ctx.get('pi')?.tokensToday(keys);
-  const connections = await sbx.providers.connections.list();
+  const { people } = await env.ctx.scope.directory();
+  const providers = await connected(sbx);
+  const rows = await uses(env, sbx, people, spans().slice(0, 1), providers);
   return {
     at: new Date().toISOString(),
-    providers: [...new Set(connections.map((c) => c.plugin))].sort(),
-    people: people.map((person, i) => ({
-      label:
-        personLabel(env.admins, person) ??
-        (persons[i]?.display_name || persons[i]?.email || 'Unnamed'),
-      issuer: person.issuer,
-      subject: person.subject,
-      accounts: memberships[i]!.map((a) => ({ accountId: a.id, role: a.role })),
-      fleet: days?.[i] ?? null,
-      pi: tokens?.[i] ?? null,
+    providers,
+    people: rows.map(({ person, kinds }) => ({
+      ...person,
+      kinds: kinds.map(({ used, ...kind }) => ({ ...kind, used: used.day })),
     })),
-    accounts,
   };
 }
 
-/** Writes go through CreditService alone, and each is kept in the admin audit log. */
+/** Writes go through each owner alone, and each is kept in the admin audit log. */
 export function creditRoutes(env: AdminEnv): AdminRoutes {
-  /** A write whose body names its own id and account: done, it answers that id. */
+  /** A credit write whose body names its own id, and its account or the person whose own account
+   *  it is: done, it answers that id. */
   const write =
-    <T extends { id: string; accountId: string }>(
+    <T extends { id: string; accountId?: string; person?: string }>(
       action: string,
       input: ZodType<T, ZodTypeDef, unknown>,
-      apply: (sbx: Sandboxes, body: T) => Promise<unknown>,
+      apply: (sbx: Sandboxes, body: T & { accountId: string }) => Promise<unknown>,
     ): AdminRoute =>
     async (r, who) => {
       const sbx = sandboxes(env.ctx);
       const body = await r.json(input);
-      await refusals.call(() => apply(sbx, body));
-      await env.audit.record(who, action, body.accountId, body);
+      const accountId = body.accountId ?? (await ownAccount(env, body.person!));
+      await refusals.call(() => apply(sbx, { ...body, accountId }));
+      await env.audit.record(who, action, accountId, body);
       return { id: body.id };
     };
   const instant = (at: string | null | undefined) => (at ? Instant.parseIso(at) : null);
   return {
     'GET /admin/credits': async () => await refusals.call(() => credits(env)),
-    'POST /admin/credits/grants': write('credits.grant', grantInput, (sbx, input) =>
-      sbx.billing.credits.grant({
+    'GET /admin/credits/people/:person': async (r) => {
+      const sbx = sandboxes(env.ctx);
+      const person = await named(env, segment(r));
+      return await refusals.call(async () => {
+        const [found] = await uses(env, sbx, [person], spans(), await connected(sbx));
+        return found!;
+      });
+    },
+    // Each limit is its owner's own, which its owner enforces.
+    'POST /admin/credits/people/:person/limits': async (r, who) => {
+      const person = await named(env, segment(r));
+      const input = await r.json(limitInput);
+      const [pi, fleet] = [env.ctx.get('pi'), env.ctx.get('fleet')];
+      const set =
+        input.kind === 'agent-tokens'
+          ? pi && (() => pi.setTokenLimit(keyOf(person), input.limit))
+          : fleet &&
+            (() =>
+              fleet.setPersonLimit(
+                keyOf(person),
+                input.kind === 'fleet-usd' ? 'usd' : 'tokens',
+                input.limit,
+              ));
+      check(set, 'credits_unavailable', 'That credit is not kept on this server', 503);
+      await set();
+      await env.audit.record(who, 'credits.limit', `${person.issuer}|${person.subject}`, {
         ...input,
-        amount: Decimal.parse(input.amount),
-        validFrom: Instant.parseIso(input.validFrom),
-        expiresAt: instant(input.expiresAt),
-      }),
+      });
+      return input;
+    },
+    'POST /admin/credits/grants': write(
+      'credits.grant',
+      grantInput,
+      (sbx, { person: _, ...input }) =>
+        sbx.billing.credits.grant({
+          ...input,
+          amount: Decimal.parse(input.amount),
+          validFrom: Instant.parseIso(input.validFrom),
+          expiresAt: instant(input.expiresAt),
+        }),
     ),
     'POST /admin/credits/schedules': write('credits.schedule', scheduleInput, (sbx, input) =>
       sbx.billing.credits.setSchedule({

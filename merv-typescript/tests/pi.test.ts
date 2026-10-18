@@ -2910,11 +2910,49 @@ test('a person’s Agent tokens are charged before each call and settled after, 
       { day: charged.day, tokens: 50 + charged.tokens },
     ],
   );
-  // The platform admin's read: today's tokens against the ceiling, nothing for a person without.
-  assert.deepEqual(await f.pi.tokensToday([grant.userId, 'nobody']), [
-    { used: 50 + charged.tokens, limit: 1_000 },
-    { used: 0, limit: 1_000 },
+  // The platform admin's read: each window's tokens against the ceiling, none for a person without.
+  const tomorrow = new Date(Date.parse(charged.day) + 86_400_000).toISOString().slice(0, 10);
+  assert.deepEqual(await f.pi.tokensUsed([grant.userId, 'nobody'], charged.day, tomorrow), [
+    { used: 50 + charged.tokens, limit: 1_000, own: false },
+    { used: 0, limit: 1_000, own: false },
   ]);
+  assert.deepEqual(
+    (await f.pi.tokensUsed([grant.userId], '1970-01-01', tomorrow)).map(({ used }) => used),
+    [3 + 50 + charged.tokens],
+  );
+  assert.deepEqual(
+    (await f.pi.tokensUsed([grant.userId], '2000-01-01', '2000-01-02')).map(({ used }) => used),
+    [3],
+  );
+});
+
+test('a person’s own Agent token limit replaces the ceiling in the charge itself, above it or below it', async (t) => {
+  const f = await fixture(t, { pi: { dailyTokensPerPerson: 1_000 } as PiConfig });
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  const body = { model: grant.model, input: [], max_output_tokens: 600 };
+  const first = await f.pi.tokens.reserve(grant, body);
+  // Past the ceiling, the person's own larger limit lets the call through.
+  await assert.rejects(f.pi.tokens.reserve(grant, body), code('pi_model_ceiling'));
+  await f.pi.setTokenLimit(grant.userId, 2_000);
+  const second = await f.pi.tokens.reserve(grant, body);
+  const tomorrow = new Date(Date.parse(first.day) + 86_400_000).toISOString().slice(0, 10);
+  assert.deepEqual(await f.pi.tokensUsed([grant.userId], first.day, tomorrow), [
+    { used: 2 * first.tokens, limit: 2_000, own: true },
+  ]);
+  // Under the ceiling, a smaller own limit refuses what the ceiling would allow.
+  for (const charge of [first, second])
+    await f.pi.tokens.settle({ inputTokens: 1, outputTokens: 1 }, grant, charge);
+  await f.pi.setTokenLimit(grant.userId, 100);
+  await assert.rejects(f.pi.tokens.reserve(grant, body), code('pi_model_ceiling'));
+  // Cleared, the ceiling holds again.
+  await f.pi.setTokenLimit(grant.userId, null);
+  assert.deepEqual(await f.pi.tokensUsed([grant.userId], first.day, tomorrow), [
+    { used: 4, limit: 1_000, own: false },
+  ]);
+  await f.pi.tokens.reserve(grant, body);
 });
 
 test('a turn sent with a 200-character command id begins and its relay grant holds', async (t) => {

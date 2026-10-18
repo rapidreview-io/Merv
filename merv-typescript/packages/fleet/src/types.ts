@@ -117,19 +117,25 @@ export interface FleetOwner {
   bootstrap(allocation: FleetAllocation): Promise<string>;
   /** finished means all required capture/checkpoint work has been retained. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
-  /** The model tokens this owner charges `person` for today (UTC): read for the platform admin. */
-  modelTokens?(person: string, sql: Sql): Promise<ModelTokens>;
+  /** The model tokens this owner charges `person` for over the UTC days [from, to): read for the
+   *  platform admin. */
+  modelTokens?(person: string, sql: Sql, from: string, to: string): Promise<ModelTokens>;
+  /** Sets `person`'s own daily model tokens, or clears them (null): the platform admin's write. */
+  setModelTokens?(person: string, tokens: number | null): Promise<void>;
 }
-/** A person's model tokens today (UTC) and their daily limit. */
-export interface ModelTokens {
+/** What a person used over a window, and the daily limit that holds for them now: their own
+ *  (`own`), else the deployment's. */
+export interface PersonUse<Limit = number> {
   used: number;
-  limit: number;
+  limit: Limit;
+  own: boolean;
 }
-/** A person's Fleet day so far (UTC). */
-export interface FleetPersonDay {
-  /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. */
-  usd: number;
-  usdCap: number | null;
+export type ModelTokens = PersonUse;
+/** A person's Fleet use over a window. */
+export interface FleetPersonUsage {
+  /** What their machines cost, at the prices stamped when Fleet reserved them: an estimate. Its
+   *  limit is null where no daily cap holds. */
+  usd: PersonUse<number | null>;
   /** Null when no owner meters model tokens. */
   tokens: ModelTokens | null;
 }
@@ -307,8 +313,12 @@ export interface Fleet {
     config: ModelRelayConfig<G, N, R>,
     keyEnv: string,
   ): ModelRelayHandle;
-  /** For the platform admin only, never a tool: each of `persons`' day so far, in order. */
-  peopleToday(persons: readonly string[]): Promise<FleetPersonDay[]>;
+  /** For the platform admin only, never a tool: each of `persons`' use over the UTC days
+   *  [from, to), in order. */
+  peopleUsage(persons: readonly string[], from: string, to: string): Promise<FleetPersonUsage[]>;
+  /** For the platform admin only, never a tool: sets `person`'s own daily machine dollars or
+   *  model tokens, or clears it (null) so the deployment's holds again. */
+  setPersonLimit(person: string, of: 'usd' | 'tokens', limit: number | null): Promise<void>;
   /** Every relay's latest outcomes per provider key and model: the platform admin's read, never
    *  a tool's. */
   relayOutcomes(): Promise<RelayOutcome[]>;

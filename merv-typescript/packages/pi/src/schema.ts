@@ -349,5 +349,21 @@ export const toldMigration = {
   FROM kept WHERE pi_commands.conversation_id = kept.conversation_id AND pi_commands.id = kept.id;`,
 };
 
+/** A person's own daily Agent tokens, set by the platform admin: it replaces dailyTokensPerPerson
+ *  for them. A new table: no prod count. */
+export const limitsMigration = {
+  version: 5,
+  sql: `CREATE TABLE pi_model_limits (
+    person TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL CHECK (tokens > 0)
+  );`,
+};
+
 /** Pi's tables, in order: what its service migrates when it starts. */
-export const piMigrations = [migration, hostMigration, usageMigration, toldMigration];
+export const piMigrations = [
+  migration,
+  hostMigration,
+  usageMigration,
+  toldMigration,
+  limitsMigration,
+];

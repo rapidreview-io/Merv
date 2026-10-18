@@ -46,36 +46,9 @@ export interface AdminWork {
   at: string;
 }
 
-type Tokens = Record<'used' | 'limit', number>;
-/** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
-export interface AdminCredits {
-  at: string;
-  /** Provider plugins with an operator connection: the only providers credits may name. */
-  providers: string[];
-  people: CreditPerson[];
-  /** Every account a person belongs to, a project pays from, or credits are held in, once. */
-  accounts: CreditAccount[];
-}
-export interface CreditPerson {
-  label: string;
-  issuer: string;
-  subject: string;
-  /** The Sandboxes accounts they are a member of. */
-  accounts: { accountId: string; role: 'admin' | 'member' }[];
-  /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
-  fleet: { usd: number; usdCap: number | null; tokens: Tokens | null } | null;
-  /** Today (UTC): their Agent chat model tokens. */
-  pi: Tokens | null;
-}
-/** One account's credits per provider, as Sandboxes computes them, and its budget caps beside. */
+/** The credit Sandboxes holds on an account: each grant's money as decimal text, its times as
+ *  ISO text. */
 export interface CreditAccount {
-  accountId: string;
-  name: string;
-  /** The Merv projects whose agents spend from it. */
-  projects: { projectId: string; name: string }[];
-  /** Sandboxes' pools, of which the page reads what is granted and what is left. */
-  pools: { provider: string; granted: string; available: string }[];
-  /** Each grant's money as decimal text, its times as ISO text. */
   grants: (Record<'id' | 'provider' | 'amount' | 'used' | 'reserved' | 'available', string> &
     Record<'valid_from' | 'created_at' | 'reason', string> &
     Record<'expires_at' | 'revoked_at' | 'schedule_id', string | null>)[];
@@ -85,14 +58,6 @@ export interface CreditAccount {
     ends_at: string | null;
     enabled: boolean;
   })[];
-  /** Budget caps (`infra_policies`): a limit of their own, never part of the credits. */
-  budgets: {
-    id: string;
-    window: 'day' | 'month' | 'all_time';
-    metric: 'money' | 'compute_hours';
-    cap: string | null;
-    provider: string | null;
-  }[];
 }
 
 /** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
@@ -180,6 +145,13 @@ export interface PersonCredits {
   /** The provider grants and schedules on their account. */
   grants: CreditAccount['grants'];
   schedules: CreditAccount['schedules'];
+}
+/** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
+export interface AdminCredits {
+  at: string;
+  /** Provider plugins with an operator connection: the only providers credits may name. */
+  providers: string[];
+  people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
 }
 /** `POST /admin/credits/people/:person/limits`: null clears the person's own limit. */
 export interface CreditLimitInput {

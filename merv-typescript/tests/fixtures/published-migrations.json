@@ -1240,6 +1240,18 @@
       "version": 2,
       "hash": "79c4a710d0137adb841fbb37f29d2877ee63b5eb7cea79643873d091dd7e9eb7",
       "published": true
+    },
+    {
+      "component": "fleet",
+      "version": 6,
+      "hash": "ec7dcf9a283a1653ca5673445716c1ae4e9b5a47fad8a1289354c4216705388d",
+      "published": false
+    },
+    {
+      "component": "pi",
+      "version": 5,
+      "hash": "c1d643f95098cdadfb99c248ad027ece716eb32a82c51c5704ab42ec30298a7a",
+      "published": false
     }
   ]
 }
