@@ -457,6 +457,44 @@ test('a pending message’s refusal carries it once a batch, and the queue lists
     [[sent.id, 'Switching to 2025.']],
   );
   assert.equal(history.next, undefined);
+  // Two waiting, a refusal counts them and carries the older; once it is acknowledged, the other.
+  const send = async (requestId: string, text: string) =>
+    (
+      (
+        await f.app.ctx.tools.invoke('session.message', f.source, {
+          threadId: issued.session.threadId,
+          body: text,
+          requestId,
+        })
+      ).value as any
+    ).id as string;
+  const older = await send('older', 'Cite the 2025 holdout.');
+  const newer = await send('newer', 'And give its size.');
+  const refuse = async () => error(await client.callTool({ name: 'system.status', arguments: {} }));
+  const two = await refuse();
+  assert.deepEqual([two.details.pending, two.details.message?.id], [2, older]);
+  assert.match(two.message, /^2 messages to your thread await/);
+  assert.match(two.message, /The oldest is in details\.message; session\.messages lists them all/);
+  assert.match(two.message, /Acknowledge each/);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: older, reply: 'Citing it.', requestId: 'older-ack' },
+  });
+  const one = await refuse();
+  assert.deepEqual(
+    [one.details.pending, one.details.message?.id, one.details.message?.body],
+    [1, newer, 'And give its size.'],
+  );
+  // Its text is left out for a batch of calls, and carried again once a minute has passed (here,
+  // as though each showing had been a minute ago).
+  assert.equal((await refuse()).details.message, undefined);
+  const shown = (f.app.ctx.sessions.messaging as unknown as { shown: Map<string, number> }).shown;
+  for (const [key, at] of shown) shown.set(key, at - 61_000);
+  assert.equal((await refuse()).details.message?.id, newer);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: newer, reply: 'Giving it.', requestId: 'newer-ack' },
+  });
   const status = await client.callTool({ name: 'system.status', arguments: {} });
   assert.equal(status.isError, undefined, JSON.stringify(status));
 });
