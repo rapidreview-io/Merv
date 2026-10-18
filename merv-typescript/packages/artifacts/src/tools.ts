@@ -78,13 +78,14 @@ export const artifactToolsPlugin = {
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
+      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Give a requestId of your own (1-128 characters) so a retry after an uncertain result, such as a timeout or an HTTP 502, is safe: the same call with the same requestId returns the artifact already stored instead of a second copy, and other title, mediaType or content under it is refused.',
       z
         .object({
           title: z.string().min(1).max(300),
           content: z.string().min(1).max(2_700_000),
           mediaType: z.string().optional(),
           encoding: z.enum(['utf8', 'base64']).optional(),
+          requestId: z.string().min(1).max(128).optional(),
         })
         .strict(),
       async (c, i) => await ctx.artifacts.create(c, i),

@@ -21,6 +21,8 @@ async function fixture(t: TestContext) {
         { id: 'scope', name: '@merv/scope' },
         entry,
         { id: 'artifacts', name: '@merv/artifacts' },
+        { id: 'tools', name: '@merv/api/tools-plugin' },
+        { id: 'artifact-tools', name: '@merv/artifacts/tools' },
       ],
     },
   });
@@ -210,4 +212,65 @@ test('create and uploadBegin refuse malformed media types and request IDs with c
   const again = await app.ctx.artifacts.uploadBegin(caller, { ...upload, requestId: '  ' });
   assert.equal(again.uploadId, blank.uploadId);
   assert.match(blank.uploadId, /^aup_[0-9a-f]{64}$/);
+});
+
+test('create with a requestId stores one artifact however often the call is retried', async (t) => {
+  const { app, caller } = await fixture(t);
+  const create = (input: Record<string, unknown>, as = caller) =>
+    app.ctx.tools.call('artifact.create', as, input) as Promise<Artifact>;
+  const input = {
+    title: 'Progress',
+    content: '# Progress\n',
+    mediaType: 'text/markdown',
+    requestId: 'progress-1',
+  };
+  const first = await create(input);
+  // A retry, concurrent ones too, returns the artifact the first call stored.
+  for (const retry of await Promise.all([
+    create(input),
+    create(input),
+    app.ctx.artifacts.create(caller, input),
+  ]))
+    assert.deepEqual(retry, first);
+  // The same bytes sent as base64 are the same artifact.
+  const base64 = Buffer.from(input.content).toString('base64');
+  assert.deepEqual(await create({ ...input, content: base64, encoding: 'base64' }), first);
+  const created = async () =>
+    (
+      await app.ctx.state.read((sql) =>
+        sql.get<{ count: number }>(
+          "SELECT count(*)::int AS count FROM events WHERE type='artifact.created'",
+        ),
+      )
+    )?.count;
+  assert.deepEqual(
+    (await app.ctx.artifacts.list(caller)).map((artifact) => artifact.id),
+    [first.id],
+  );
+  assert.equal(await created(), 1);
+  // The same requestId with anything else is refused, naming the artifact it stored.
+  for (const changed of [{ content: 'Other' }, { title: 'Other' }, { mediaType: 'text/plain' }])
+    await assert.rejects(create({ ...input, ...changed }), {
+      code: 'artifact_request_conflict',
+      status: 409,
+      details: { requestId: 'progress-1', artifactId: first.id },
+    });
+  // Another actor's same requestId is its own; without one, every call stores another.
+  const issued = await app.ctx.scope.credentials.issueActor(caller, {
+    name: 'Other',
+    role: 'producer',
+  });
+  const theirs = await create(input, { ...caller, actorId: issued.actor.id });
+  assert.notEqual(theirs.id, first.id);
+  const plain = { title: 'Notes', content: 'x' };
+  assert.notEqual((await create(plain)).id, (await create(plain)).id);
+  assert.equal(await created(), 4);
+  for (const requestId of [42, '', 'r'.repeat(129)]) {
+    await assert.rejects(
+      app.ctx.artifacts.create(caller, { ...plain, requestId: requestId as string }),
+      { code: 'invalid_artifact' },
+      String(requestId),
+    );
+    await assert.rejects(create({ ...plain, requestId }), { code: 'invalid_input' });
+  }
 });

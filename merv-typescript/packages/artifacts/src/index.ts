@@ -375,10 +375,45 @@ export class ArtifactStore implements Artifacts {
     // Without a declared type, bytes that read back as text are Markdown; others are opaque.
     const type = input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream');
     const fields = { ...meta(input.title, type), hash: sha256Hex(bytes), size: bytes.length };
+    const { requestId } = input;
+    // The tool schema's rule and no stricter, because the value is only hashed.
+    check(
+      requestId === undefined ||
+        (typeof requestId === 'string' && requestId.length >= 1 && requestId.length <= 128),
+      'invalid_artifact',
+      'requestId must be a string of 1-128 characters',
+    );
+    // A retry finds its actor's artifact by this key; another actor's same requestId stores its
+    // own. It shares the project-unique source keys of collections, none of which is request:.
+    const sourceKey =
+      requestId === undefined
+        ? null
+        : `request:${sha256Hex(JSON.stringify([caller.actorId, requestId]))}`;
     // Database only: the bytes go in the row, so the caller's transaction does no network I/O.
     return await inTransaction(this.state, tx ?? this.state.ambient, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return await insert(this.state, tx, caller, fields, bytes);
+      // Write transactions take the writer lock, so a concurrent retry waits and then finds it.
+      const stored =
+        sourceKey &&
+        (await tx.get(
+          `SELECT ${META} FROM artifacts WHERE project_id=? AND source_key=?`,
+          caller.projectId,
+          sourceKey,
+        ));
+      if (!stored) return await insert(this.state, tx, caller, fields, bytes, sourceKey);
+      const artifact = fromRow(stored);
+      if (
+        artifact.title !== fields.title ||
+        artifact.mediaType !== fields.mediaType ||
+        artifact.hash !== fields.hash
+      )
+        throw new MervError(
+          'artifact_request_conflict',
+          `requestId ${JSON.stringify(requestId)} already stored artifact ${artifact.id} with another title, media type or content; give a new requestId to store a different artifact`,
+          409,
+          { requestId, artifactId: artifact.id },
+        );
+      return artifact;
     });
   }
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {

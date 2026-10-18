@@ -39,13 +39,15 @@ export const fromRow = (row: any): Artifact => ({
   ...(row.metadata_json != null ? { metadata: json(row.metadata_json) } : {}),
 });
 
-/** Inserts a new artifact row with its bytes (null: they are only in blobs) and session. */
+/** Inserts a new artifact row with its bytes (null: they are only in blobs), session and the
+ * project-unique key a retry finds it by, if any. */
 export async function insert(
   state: State,
   tx: Transaction,
   caller: Caller,
   fields: Pick<Artifact, 'title' | 'mediaType' | 'hash' | 'size'>,
   content: Buffer | null,
+  sourceKey: string | null = null,
 ): Promise<Artifact> {
   const artifact: Artifact = {
     id: newId('art'),
@@ -55,8 +57,8 @@ export async function insert(
     createdAt: now(),
   };
   await tx.run(
-    `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id)
-     VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id,source_key)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     artifact.id,
     artifact.projectId,
     artifact.createdBy,
@@ -67,6 +69,7 @@ export async function insert(
     artifact.createdAt,
     content,
     caller.session?.id ?? null,
+    sourceKey,
   );
   await recorded(state, tx, caller, 'artifact.created', artifact.id, {
     hash: artifact.hash,

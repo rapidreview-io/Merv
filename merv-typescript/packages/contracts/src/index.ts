@@ -851,6 +851,8 @@ export interface ArtifactInput {
   content: string;
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
+  /** The caller's own key for this create, 1-128 characters: a retry with it is safe. */
+  requestId?: string;
 }
 export interface ArtifactCollectionInput {
   title: string;
@@ -951,7 +953,9 @@ export interface Artifacts {
     range?: { fileName?: string; offset?: number; length?: number },
   ): Promise<ArtifactContent & { fileName?: string }>;
   /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
-   * a transaction of its own. No network I/O. Not idempotent. */
+   * a transaction of its own. No network I/O. Idempotent per actor and requestId: a retry gets
+   * the artifact the first call stored; other title, media type or bytes under that requestId are
+   * `artifact_request_conflict` (409). Without a requestId each call stores a new artifact. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
   /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: those this project holds. */
