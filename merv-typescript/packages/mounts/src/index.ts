@@ -4,8 +4,6 @@ import { idSchema } from '@merv/contracts';
 import { Bindings } from './credentials.js';
 import { MountRuntime } from './runtime.js';
 
-export type { MountConfig, Mounts, MountsConfig, MountStatus } from './types.js';
-
 const distinct = (values: string[]) => new Set(values).size === values.length;
 const mountIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const mountSchema = z

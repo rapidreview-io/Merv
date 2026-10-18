@@ -796,12 +796,8 @@ END $merv$;`);
     return row && eventFromRow(row);
   }
 
-  async nextEventId(
-    after: number,
-    types: readonly string[],
-    tx?: Transaction,
-  ): Promise<number | undefined> {
-    return (await this.next<{ id: number }>('id', after, types, tx))?.id;
+  async nextEventId(after: number, types: readonly string[]): Promise<number | undefined> {
+    return (await this.next<{ id: number }>('id', after, types))?.id;
   }
 
   private async next<T>(

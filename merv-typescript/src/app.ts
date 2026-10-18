@@ -6,8 +6,6 @@ import { check, type ConfiguredEnv, type PluginStatus } from '@merv/contracts';
 import type {} from '@merv/api';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
 
-export type AppOptions = ConfigurationOptions;
-
 const states: Record<FiberState, PluginStatus['state']> = {
   [FiberState.PENDING]: 'pending',
   [FiberState.LOADING]: 'loading',
@@ -18,7 +16,7 @@ const states: Record<FiberState, PluginStatus['state']> = {
 };
 
 /** Composition and readiness policy only. Cordis owns the dependency graph and its lifecycle. */
-export async function createApp(options: AppOptions) {
+export async function createApp(options: ConfigurationOptions) {
   const configuration = loadConfiguration(options);
   const directory = resolve(options.directory);
   mkdirSync(directory, { recursive: true, mode: 0o700 });

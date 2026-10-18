@@ -1,8 +1,6 @@
 import { check, MervError, type Caller, type Scope } from '@merv/contracts';
 import type { CredentialBinding } from './types.js';
 
-export type { CredentialBinding } from './types.js';
-
 const key = (projectId: string, actorId: string, mountId: string) =>
   JSON.stringify([projectId, actorId, mountId]);
 

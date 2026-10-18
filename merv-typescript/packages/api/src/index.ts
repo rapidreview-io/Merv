@@ -4,10 +4,8 @@ import { z } from 'zod';
 import { ApiServer, type HttpOptions } from './http.js';
 import { ToolRegistry } from './registry.js';
 
-export { ApiServer, describeTool } from './http.js';
-export type { HttpOptions } from './http.js';
+export { ApiServer } from './http.js';
 export { ToolRegistry } from './registry.js';
-export type { ToolDescription } from './registry.js';
 
 /** Runs `fn` in a snapshot scope when a state store is present: no writer lock, writes refused. */
 const snapshotIn =

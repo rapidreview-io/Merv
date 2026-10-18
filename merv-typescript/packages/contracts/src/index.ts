@@ -628,11 +628,7 @@ export interface State {
     tx?: Transaction,
   ): Promise<StoredEvent | undefined>;
   /** nextEvent's id alone, for a reader that only asks whether one is due. */
-  nextEventId(
-    after: number,
-    types: readonly string[],
-    tx?: Transaction,
-  ): Promise<number | undefined>;
+  nextEventId(after: number, types: readonly string[]): Promise<number | undefined>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;
 }

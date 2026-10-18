@@ -158,8 +158,8 @@ export class ProjectScope implements Scope {
       ...invitations,
     });
   }
-  async directory(tx?: Transaction): Promise<PlatformDirectory> {
-    return await within(this.state, tx, async (sql) => {
+  async directory(): Promise<PlatformDirectory> {
+    return await this.state.read(async (sql) => {
       // Verified sign-ins alone: an invitation names a person who may never have signed in.
       const people = new Map(
         (
@@ -186,9 +186,7 @@ export class ProjectScope implements Scope {
       return { projects, people: [...people.values()] };
     });
   }
-  async projectOwners(
-    tx?: Transaction,
-  ): Promise<{ projectId: string; source: DelegationSource }[]> {
+  async projectOwners(): Promise<{ projectId: string; source: DelegationSource }[]> {
     const read = (sql: Sql) =>
       sql.all<{
         id: string;
@@ -200,7 +198,7 @@ export class ProjectScope implements Scope {
         `SELECT * FROM (SELECT DISTINCT ON (m.project_id) m.id,m.project_id,m.actor_id,m.issuer,m.subject,m.created_at
          FROM ${LIVE_OPERATOR} ORDER BY m.project_id,m.created_at,m.id) o ORDER BY o.created_at,o.id`,
       );
-    return (await within(this.state, tx, read)).map((row) => ({
+    return (await this.state.read(read)).map((row) => ({
       projectId: row.project_id,
       source: {
         actorId: row.actor_id,

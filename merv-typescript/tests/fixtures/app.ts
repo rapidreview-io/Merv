@@ -7,8 +7,13 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { createApp as create, type AppOptions } from '../../src/app.js';
-import { defaultConfigFile, loadConfiguration, type ConfiguredPlugin } from '../../src/config.js';
+import { createApp as create } from '../../src/app.js';
+import {
+  defaultConfigFile,
+  loadConfiguration,
+  type ConfigurationOptions,
+  type ConfiguredPlugin,
+} from '../../src/config.js';
 import { stateConfig } from './state.js';
 
 export * from '../../src/app.js';
@@ -28,7 +33,7 @@ const local = (directory: string, feed?: boolean) => (entry: ConfiguredPlugin) =
         ? { ...entry, name: legacyReports }
         : entry;
 
-export async function createApp({ feed, ...options }: AppOptions & { feed?: boolean }) {
+export async function createApp({ feed, ...options }: ConfigurationOptions & { feed?: boolean }) {
   const adapt = local(options.directory, feed);
   // Programmatic config keeps its own module resolution; only its default state entry moves.
   if (options.config)
