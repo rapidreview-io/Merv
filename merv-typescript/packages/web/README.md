@@ -116,7 +116,7 @@ result_count }`, with `normalization_note`, and `content_truncated` with
   The content is always capped at 20,000 characters, and at 28,000 bytes of
   JSON for the whole answer.
 - A page Tavily could not read, or returned without text, is asked for once
-  more after `extractRetryMs` (1 s), with advanced extraction: Tavily fails pages
+  more after 1 s, with advanced extraction: Tavily fails pages
   it reads a minute later, and advanced extraction renders some basic cannot.
   A page neither read gets is `status: "error"` with its reason and a hint to
   search instead.

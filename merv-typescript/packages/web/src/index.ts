@@ -63,6 +63,9 @@ export class WebService implements Web {
   private readonly slots: Slots;
   private readonly clock: () => number;
   private readonly log: (record: WebCall) => void;
+  /** The pause before a page Tavily could not read is asked for once more. With the queue and
+   * both reads, an extract still ends inside the 180 s a Codex worker waits on a tool. */
+  private readonly extractRetryMs: number;
   private readonly calls = new Map<string, number>();
   private total = 0;
   private fallbacks = 0;
@@ -72,7 +75,11 @@ export class WebService implements Web {
 
   constructor(
     config: WebConfig = {},
-    options: { clock?: () => number; log?: (record: WebCall) => void } = {},
+    options: {
+      clock?: () => number;
+      log?: (record: WebCall) => void;
+      extractRetryMs?: number;
+    } = {},
   ) {
     const parsed = webConfig.safeParse(config);
     check(parsed.success, 'invalid_web_config', 'The web search configuration is invalid');
@@ -83,6 +90,7 @@ export class WebService implements Web {
     );
     this.clock = options.clock ?? Date.now;
     this.log = options.log ?? stderr;
+    this.extractRetryMs = options.extractRetryMs ?? 1000;
   }
 
   private key(name: string | undefined): string | undefined {
@@ -276,7 +284,7 @@ export class WebService implements Web {
       // cannot: one more try, advanced, before the agent settles for search excerpts.
       if (!answer.page) {
         try {
-          await sleep(this.config.extractRetryMs, this.stopping.signal);
+          await sleep(this.extractRetryMs, this.stopping.signal);
           const again = await read('advanced');
           if (again.page) {
             answer = again;

@@ -380,7 +380,7 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   const queued: Reply[] = [];
   const tavily = await provider(t, () => queued.shift() ?? extracted);
   const tavilyEnv = keyEnv(t, 'tvly-fixture');
-  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin, extractRetryMs: 0 });
+  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin }, { extractRetryMs: 0 });
   const tools = registry(t, web);
   const read = async (input: object) => (await tools.call('web.extract', caller, input)) as WebPage;
   const url = `${page.origin}/article`;
@@ -980,7 +980,6 @@ test('the render composes web search into Main, where MCP clients list and call 
     keyEnv: 'MERV_TAVILY_API_KEY',
     origin: 'https://api.tavily.com',
     timeoutMs: 30_000,
-    extractRetryMs: 1000,
     maxResponseBytes: 8 * 1024 * 1024,
     maxInFlight: 8,
     queueMs: 15_000,

@@ -26,9 +26,6 @@ export const webConfig = z
       .optional(),
     // Deadline for one Tavily call, its retries included.
     timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
-    // The pause before a page Tavily could not read is asked for once more. With the queue and
-    // both reads, an extract still ends inside the 180 s a Codex worker waits on a tool.
-    extractRetryMs: z.number().int().min(0).max(10_000).default(1000),
     // A larger answer is refused, whatever its Content-Length says.
     maxResponseBytes: z
       .number()
