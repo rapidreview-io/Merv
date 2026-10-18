@@ -69,7 +69,6 @@ interface LandingRow {
   reason: string | null;
   settled_at: string | null;
 }
-type Candidate = { unitId: string; commit: string; acceptanceHash: string; acceptedAt: string };
 const ACTOR = 'system:code';
 const OPEN = 'SELECT * FROM code_main_landings WHERE project_id=? AND outcome IS NULL';
 /** States in which an unfinished base waits on an operator rather than on its own work. */
@@ -211,13 +210,9 @@ export class MainLanding {
   /**
    * The accepted units main is missing, oldest acceptance first: a dependent is accepted after
    * what it depends on, so this is also dependency order. Quarantined work, code-less work, a
-   * rejected publication and a landing already skipped are never offered.
+   * rejected publication and a landing already skipped are never offered, and their commits
+   * are held: no landing may carry them.
    */
-  async order(projectId: string, main: string): Promise<Candidate[]> {
-    return (await this.offered(projectId, main)).order;
-  }
-
-  /** The order, and the commits of work that is never offered, which no landing may carry. */
   private async offered(projectId: string, main: string) {
     const { candidates, rejected, skipped } = await this.state.read(async (sql) => ({
       ...(await this.units.records.candidatesOf(sql, projectId)),
@@ -447,7 +442,9 @@ export class MainLanding {
         ),
       };
     });
-    const order = standing.main ? await this.order(projectId, standing.main).catch(() => []) : [];
+    const { order } = standing.main
+      ? await this.offered(projectId, standing.main).catch(() => ({ order: [] }))
+      : { order: [] };
     // A joined base may wait on an earlier step of its plan rather than on its own merge.
     const base = path.find((record) => record.state === 'awaiting_resolution') ?? path[0];
     return {
