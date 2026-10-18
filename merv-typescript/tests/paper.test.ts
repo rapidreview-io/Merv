@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { PaperService } from '@merv/paper';
+import { PaperService, type PaperDocument } from '@merv/paper';
 import { BoardService } from '@merv/board';
 import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
@@ -839,4 +839,125 @@ test('a revision past exact integers is refused as input; a section range ends w
   // Two characters would end in half the emoji: the range stops before it.
   const part = await read.handler(f.reader, { kind: 'methods', section: 'm', length: 2 });
   assert.equal((part as { content: string }).content, 'a');
+});
+
+test('paper.read refuses a range without its section, outlines a document, and shows an agent each published section once', async (t) => {
+  const f = await fixture(t);
+  const tools = new Map<string, ToolDefinition>();
+  paperToolsPlugin.apply({
+    paper: f.paper,
+    effect: (fn: () => unknown) => fn(),
+    tools: {
+      register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      contributeInstructions() {},
+      contributeContext() {},
+    },
+  } as unknown as Context);
+  const read = tools.get('paper.read')!;
+  const call = async (input: object) => await read.handler(f.reader, read.inputSchema.parse(input));
+  const shown = async (input: object) =>
+    JSON.parse((read.present!(await call(input)).content[0] as { text: string }).text);
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
+  // A reviewer publishes Methods at revision 1, as review.submit's paperChanges do.
+  await f.state.transaction((tx) =>
+    f.paper.applyReview(
+      f.reviewer,
+      {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 0,
+            changes: [
+              { id: 'design', title: 'Design', content: 'Planned design.' },
+              { id: 'data', title: 'Data', content: 'Held-out split.' },
+            ],
+          },
+        ],
+        source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
+        reviewId: 'review-1',
+        verdict: 'pass',
+        evidenceIds: [evidence.id],
+      },
+      tx,
+    ),
+  );
+  // offset and length without a section were dropped and the whole document returned; now
+  // they are refused, naming each section and its length, at the current or a given revision.
+  for (const input of [
+    { kind: 'methods', length: 100 },
+    { kind: 'methods', revision: 1, offset: 5 },
+  ])
+    await assert.rejects(
+      call(input),
+      (error: MervError) =>
+        error.code === 'invalid_paper_input' &&
+        error.message ===
+          'offset and length read part of one section’s content, so name its section too: methods revision 1 holds design (15 characters), data (15 characters)',
+    );
+  await assert.rejects(
+    call({ kind: 'methods', section: 'results' }),
+    (error: MervError) =>
+      error.code === 'not_found' &&
+      /^Section results is not in the document: methods revision 1 holds design/.test(
+        error.message,
+      ),
+  );
+  // Neither history nor outline takes what it would drop, and neither reads without a kind.
+  for (const input of [
+    { history: true },
+    { outline: true },
+    { kind: 'methods', history: true, revision: 1 },
+    { kind: 'methods', outline: true, section: 'design' },
+    { kind: 'methods', outline: true, length: 10 },
+  ])
+    await assert.rejects(call(input), { code: 'invalid_paper_input' });
+  // The outline: ids, titles and lengths, no content, and the revision last published.
+  const outline = (await call({ kind: 'methods', outline: true })) as Record<string, unknown>;
+  assert.deepEqual(
+    [outline.revision, outline.sections, outline.publishedRevision],
+    [
+      1,
+      [
+        { id: 'design', title: 'Design', length: 15 },
+        { id: 'data', title: 'Data', length: 15 },
+      ],
+      1,
+    ],
+  );
+  assert.equal(
+    ((await call({ kind: 'methods', revision: 1, outline: true })) as Record<string, unknown>)
+      .publishedRevision,
+    undefined,
+  );
+  // Published at the current revision, every published section reads as the current one: an
+  // agent is shown each once, while the JSON answer (Merv's page) keeps them whole.
+  const same = await shown({ kind: 'methods' });
+  assert.deepEqual(
+    same.current.sections.map(({ content }: { content: string }) => content),
+    ['Planned design.', 'Held-out split.'],
+  );
+  assert.deepEqual(same.published.document.sections, [
+    { id: 'design', title: 'Design', sameAsCurrent: true },
+    { id: 'data', title: 'Data', sameAsCurrent: true },
+  ]);
+  assert.equal(same.published.publication.reviewId, 'review-1');
+  const whole = (await call({ kind: 'methods' })) as PaperDocument;
+  assert.equal(whole.published!.document.sections[0].content, 'Planned design.');
+  // A later direct edit: only the section it changed is shown in both revisions.
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 1,
+    requestId: f.request(),
+    changes: [{ id: 'design', content: 'Revised design.' }],
+  });
+  for (const document of [await shown({ kind: 'methods' }), (await shown({})).documents.methods])
+    assert.deepEqual(document.published.document.sections, [
+      { id: 'design', title: 'Design', content: 'Planned design.' },
+      { id: 'data', title: 'Data', sameAsCurrent: true },
+    ]);
+  // Other answers are shown as they are.
+  assert.deepEqual(
+    await shown({ kind: 'methods', section: 'data' }),
+    await call({ kind: 'methods', section: 'data' }),
+  );
 });

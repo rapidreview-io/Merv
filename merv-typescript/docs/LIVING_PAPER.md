@@ -50,7 +50,7 @@ New revisions name the reviewer as author and retain the review ID, source exper
 
 Old producer proposals stay stored in `paper_proposals` but nothing reads them: they do not overlay the current paper or apply when a review completes. Accepted publications and standalone-writing history remain readable. A publication from that time names no sections, so the UI shows it behind every section it still holds word for word.
 
-`paper.read` returns current documents and citations; kind selects a document and history returns its revisions. `paper.cite` maintains the bibliographic ledger independently; citation changes do not rewrite Literature prose. Neither paper reads nor publication records claim that all project evidence has been incorporated.
+`paper.read` returns current documents and citations; kind selects a document, outline lists its sections with their lengths and no content, section reads one of them (offset and length a part of it, never of a whole document), and history returns its revisions. An agent is shown a published section that reads as the current one by its id and title only, since a reviewed document is most often published at its current revision; Merv's pages receive both whole. `paper.cite` maintains the bibliographic ledger independently; citation changes do not rewrite Literature prose. Neither paper reads nor publication records claim that all project evidence has been incorporated.
 
 ## Experiment references
 
