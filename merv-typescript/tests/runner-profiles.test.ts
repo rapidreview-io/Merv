@@ -538,9 +538,12 @@ test('Codex disables exact repository SKILL.md paths using literal config withou
 
 test('read-only Codex still receives explicitly authorized protocol writes, while command refuses the lease', () => {
   // readOnly is about the record. A reviewer on scratch space may run what it is judging.
+  const judging = request(true);
+  judging.session.role = 'reviewer';
+  assert.match(buildLaunch(codex, judging, safeEnv).stdin, /workspace is yours to compute in/);
   const spec = buildLaunch(codex, request(true), safeEnv);
   assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'workspace-write');
-  assert.match(spec.stdin, /workspace is yours to compute in/);
+  assert.match(spec.stdin, /workspace is yours to read and compute in, but nothing you write/);
   // Nothing in the launch hides the lease's writes: Codex sees them as the server lists them.
   assert.doesNotMatch(config(spec.args).mcp_servers, /enabled_tools/);
   assert.match(config(spec.args).mcp_servers, /default_tools_approval_mode="approve"/);
@@ -563,6 +566,75 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   assert.throws(() => buildLaunch(command, request(true), safeEnv), {
     code: 'unsupported_read_only',
   });
+});
+
+test('a producer on a lease that keeps no workspace is told what lasts, and a resumed one that its checkout is new', () => {
+  // Prod 2026-10-07..13: experiment.design producers were told the reviewer's "your handoff is the
+  // only thing this lease writes" while they made and attached their plan and feasibility
+  // artifacts, and a resumed design found its probe files gone without being told why.
+  const design: WorkflowWorkspacePolicy = {
+    mode: 'ephemeral',
+    namespace: 'experiment-designs',
+    base: 'reference:base',
+    retain: false,
+    driver: 'code.v2',
+  };
+  const hosted = validateProfile({
+    ...codex,
+    isolatedLauncher: '/opt/launcher',
+    model: 'gpt-6-luna',
+    hosted: true,
+  });
+  const producer = request(true, design);
+  const fresh = buildLaunch(hosted, producer, safeEnv).stdin;
+  assert.match(
+    fresh,
+    /The workspace is yours to read and compute in, but nothing you write there is kept: it is a fresh checkout each visit, and a later visit will not find what you leave in it\. What must last goes into the project through the assignment’s tools, as the artifacts you create and attach\./,
+  );
+  assert.doesNotMatch(fresh, /Run what you are judging|the only thing this lease writes/);
+  // Nobody commits such a checkout, and no later visit finds it on this machine either.
+  assert.match(fresh, /This checkout is made afresh for each visit and no commit takes it in/);
+  assert.doesNotMatch(fresh, /before you commit|in no commit until one takes them in|\.gitignore/);
+  assert.match(
+    fresh,
+    /Keep \/tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset, so put/,
+  );
+  const resumed = buildLaunch(
+    hosted,
+    { ...producer, resume: '0199a0b2-1111-7222-8333-944445555666' },
+    safeEnv,
+  ).stdin;
+  assert.match(
+    resumed.split('\n')[0]!,
+    /^You are continuing your earlier work on this unit\. .* This visit’s checkout is a fresh one: what earlier visits wrote in theirs is gone, and what they kept is in the project\.$/,
+  );
+  // A reviewer on the same checkout still runs what it judges; a writer's directory is kept.
+  const reviewer = request(true, design);
+  reviewer.session.role = 'reviewer';
+  const judging = buildLaunch(hosted, reviewer, safeEnv).stdin;
+  assert.match(judging, /Run what you are judging rather than reading about it/);
+  assert.match(judging, /This checkout is made afresh for each visit/);
+  const writer = buildLaunch(
+    hosted,
+    {
+      ...request(false, {
+        mode: 'persistent',
+        namespace: 'experiments',
+        base: 'reference:base',
+        perBase: false,
+        retain: true,
+        advancesCentral: false,
+        driver: 'code.v2',
+      }),
+      resume: '0199a0b2-1111-7222-8333-944445555666',
+    },
+    safeEnv,
+  ).stdin;
+  assert.doesNotMatch(writer, /fresh checkout|made afresh/);
+  assert.match(
+    writer,
+    /may hold files an earlier agent left, in no commit until one takes them in/,
+  );
 });
 
 test('a worker is told when its lease ends, that nothing extends it, and that a stop is no way to wait', () => {

@@ -322,10 +322,34 @@ const searching = (web: boolean): string =>
 /**
  * What a worker on a hosted machine is told of it, which workers otherwise learned by failing:
  * what its shell has, where scratch and caches go (codex.ts), and what of its directory follows
- * the work to another machine (only what Code holds).
+ * the work to another machine (only what Code holds). A checkout made afresh each visit (`kept`
+ * false: a design's or a review's) is committed by nobody and found by no later visit.
  */
-const workHost =
-  'Your shell has git, curl, ssh, unzip, python3 (Debian’s 3.11, with pip and venv; python is the same), python3.12 and uv. A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit. Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>), which marks them ignored; list any other environment in .gitignore. /tmp is yours for temporary files and sockets (TMPDIR; put SSH ControlPath sockets there, since the workspace path is too long for one), and caches such as pip’s and Hugging Face’s go to /tmp/cache; /tmp is emptied when this visit ends. Keep /tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset and loses what no commit holds yet, so put environments, clones and unpacked data in an ignored workspace directory instead. Every visit to this work on this machine runs in this same directory, so it may hold files an earlier agent left, in no commit until one takes them in. If the work moves to another machine, only what was committed moves with it: environments, downloads, keys and other ignored files stay behind.';
+const workHost = (kept: boolean) =>
+  [
+    'Your shell has git, curl, ssh, unzip, python3 (Debian’s 3.11, with pip and venv; python is the same), python3.12 and uv.',
+    ...(kept
+      ? [
+          'A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit.',
+        ]
+      : []),
+    `Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>)${kept ? ', which marks them ignored; list any other environment in .gitignore' : ''}.`,
+    '/tmp is yours for temporary files and sockets (TMPDIR; put SSH ControlPath sockets there, since the workspace path is too long for one), and caches such as pip’s and Hugging Face’s go to /tmp/cache; /tmp is emptied when this visit ends.',
+    `Keep /tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset${kept ? ' and loses what no commit holds yet' : ''}, so put environments, clones and unpacked data in ${kept ? 'an ignored workspace directory' : 'the workspace'} instead.`,
+    kept
+      ? 'Every visit to this work on this machine runs in this same directory, so it may hold files an earlier agent left, in no commit until one takes them in. If the work moves to another machine, only what was committed moves with it: environments, downloads, keys and other ignored files stay behind.'
+      : 'This checkout is made afresh for each visit and no commit takes it in: nothing you write in it, environments included, is there for a later visit.',
+  ].join(' ');
+/**
+ * What a lease that records nothing of its workspace is told of it. A reviewer is to run what it
+ * judges; a producer on such a lease (a design) writes its work through the assignment's tools,
+ * and was told the reviewer's "your handoff is the only thing this lease writes" while it made
+ * and attached its plan and feasibility artifacts and its probe files vanished between visits.
+ */
+const readOnlyWorkspace = (reviewer: boolean, fresh: boolean) =>
+  reviewer
+    ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
+    : `The workspace is yours to read and compute in, but nothing you write there is kept${fresh ? ': it is a fresh checkout each visit, and a later visit will not find what you leave in it' : ''}. What must last goes into the project through the assignment’s tools, as the artifacts you create and attach.`;
 
 /** The line a whole copy of the frozen assignment follows. */
 const FROZEN = 'Frozen assignment:';
@@ -482,8 +506,16 @@ export function buildLaunch(
   // An inquiry visit's own prompt, Sessions', says what it is, and it is sent its question whole.
   const resumed = request.resume !== undefined && !inquiry;
   const assignment = frozen(session.assignment, resumed ? request.held : undefined);
+  // A checkout made afresh for each visit: a resumed design found its probe files gone.
+  const fresh = effectiveWorkspace(session.execution.policy).mode === 'ephemeral';
   const stdin = [
-    ...(resumed ? [assignment.first] : []),
+    ...(resumed
+      ? [
+          fresh
+            ? `${assignment.first} This visit’s checkout is a fresh one: what earlier visits wrote in theirs is gone, and what they kept is in the project.`
+            : assignment.first,
+        ]
+      : []),
     request.prompt,
     ...(session.kind === 'work' &&
     request.connections?.some((connection) => connection.name === 'sandboxes')
@@ -494,7 +526,7 @@ export function buildLaunch(
         ]
       : []),
     ...(launcher.agent ? [searching(internet(profile, session))] : []),
-    ...(launcher.isolated(profile) && !sealed(session) ? [workHost] : []),
+    ...(launcher.isolated(profile) && !sealed(session) ? [workHost(!fresh)] : []),
     ...(launcher.huggingface(profile) && !sealed(session) && request.hfToken && request.hfEndpoint
       ? [
           'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment: huggingface_hub, datasets, transformers and hf download use them as they are, once installed in your Python environment (none is preinstalled); do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
@@ -505,7 +537,7 @@ export function buildLaunch(
       : sealed(session)
         ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
         : session.execution.policy.readOnly
-          ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
+          ? readOnlyWorkspace(session.role === 'reviewer', fresh)
           : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(parts.note && !inquiry ? [parts.note] : []),
     ...(session.execution.workflow === 'experiment' &&
