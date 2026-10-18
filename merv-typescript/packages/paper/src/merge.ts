@@ -90,7 +90,6 @@ export function mergeText(base: string, ours: string, theirs: string): string | 
   }
   // Ours sort before theirs at the same place: the sort is stable, and ours are listed first.
   const ordered = [...all, ...other].sort((x, y) => x.start - y.start);
-  for (let n = 1; n < ordered.length; n++) if (ordered[n]!.start < ordered[n - 1]!.end) return null;
   const merged: string[] = [];
   let at = 0;
   for (const hunk of ordered) {
