@@ -1,7 +1,6 @@
 import type { Context } from 'cordis';
 import type { DelegationSource, RunningPhrase } from '@merv/contracts';
-import type { AdminEnv, AdminRoutes } from './index.js';
-import type { AdminIdentity } from './models.js';
+import { loaded, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
 
 /**
  * The work table: every unit of work running anywhere, and every unit that ended in the last
@@ -95,9 +94,7 @@ export async function adminWork(
 ): Promise<AdminWork> {
   const at = new Date().toISOString();
   const since = new Date(Date.parse(at) - 86_400_000).toISOString();
-  const unavailable: string[] = [];
-  const get = <K extends keyof Context & string>(name: K): Context[K] | undefined =>
-    ctx.get(name) ?? void unavailable.push(name);
+  const { get, unavailable } = loaded(ctx);
   const [workflows, sessions, fleet, pi, tasks, reflections, customers, scope] = [
     get('workflows'),
     get('sessions'),

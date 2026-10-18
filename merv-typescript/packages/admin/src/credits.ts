@@ -10,7 +10,7 @@ import { check, MervError, pathSegment, type PlatformDirectory } from '@merv/con
 import { personKey } from '@merv/fleet/model-ledger';
 import type { FleetPersonDay, ModelTokens } from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
-import type { AdminEnv, AdminRoutes } from './index.js';
+import { loaded, type AdminEnv, type AdminRoutes } from './index.js';
 
 /** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
 export interface AdminCredits {
@@ -99,8 +99,8 @@ const plugins = async (sbx: Sandboxes) =>
 
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
-  const fleet = env.ctx.get('fleet');
-  const pi = env.ctx.get('pi');
+  const { get, unavailable } = loaded(env.ctx);
+  const [fleet, pi] = [get('fleet'), get('pi')];
   const { people } = await env.ctx.scope.directory();
   const persons = await Promise.all(
     people.map((p) => sbx.auth.persons.byIdentity(p.issuer, p.subject)),
@@ -166,7 +166,7 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
       pi: tokens?.[i] ?? null,
     })),
     accounts,
-    unavailable: [...(fleet ? [] : ['fleet']), ...(pi ? [] : ['pi'])],
+    unavailable,
   };
 }
 

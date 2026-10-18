@@ -5,11 +5,8 @@ import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
 import { adminCredentials, credentialMigrations } from './credentials.js';
 import { creditRoutes } from './credits.js';
-import type { AdminIdentity } from './models.js';
 import { platformRead } from './platform.js';
 import { workRoutes } from './work.js';
-
-export type { AdminIdentity } from './models.js';
 
 const identity = z
   .object({
@@ -18,6 +15,7 @@ const identity = z
     label: z.string().min(1).max(254).optional(),
   })
   .strict();
+export type AdminIdentity = z.infer<typeof identity>;
 
 /** The configured admin a verified human principal is, if any. */
 export function adminOf(
@@ -35,6 +33,13 @@ export interface AdminEnv {
   state: State;
   audit: AdminAudit;
   admins: readonly AdminIdentity[];
+}
+/** `ctx.get` for each owner a read composes, listing in `unavailable` each one not loaded. */
+export function loaded(ctx: Pick<Context, 'get'>) {
+  const unavailable: string[] = [];
+  const get = <K extends keyof Context & string>(name: K): Context[K] | undefined =>
+    ctx.get(name) ?? void unavailable.push(name);
+  return { get, unavailable };
 }
 /** One admin route, answering for the verified admin `who`. */
 export type AdminRoute = (r: ApiRequest, who: AdminIdentity) => Promise<unknown>;
@@ -76,12 +81,11 @@ export const adminPlugin = {
         'GET /admin/credentials': async () => await adminCredentials(env),
       };
       ctx.effect(() =>
-        ctx.api.mount('/admin', async (req, res, r) => {
+        ctx.api.mount('/admin', async (req, _res, r) => {
           const who = adminOf(r.principal, env.admins);
           check(who, 'forbidden', 'Platform administrator access required', 403);
           const route = match(routes, req.method ?? 'GET', r.url.pathname);
           if (!route) throw new MervError('not_found', 'Route not found', 404);
-          res.setHeader('Cache-Control', 'private, no-store');
           return await route(r, who);
         }),
       );

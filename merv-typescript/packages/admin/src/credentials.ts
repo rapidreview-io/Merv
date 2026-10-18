@@ -2,7 +2,7 @@ import { sha256Hex, type ConfiguredEnv } from '@merv/contracts';
 import type {} from '@merv/fleet/types';
 import { CredentialStore, type CredentialSummary } from '@merv/identity/credentials';
 import type { ProviderInventoryEntry } from '@sandboxes/providers';
-import type { AdminEnv } from './index.js';
+import { loaded, type AdminEnv } from './index.js';
 
 /** Published migrations: production pins each text by its digest, never edit one. */
 export const credentialMigrations = {
@@ -62,6 +62,7 @@ export interface AdminCredentials {
   groups: AdminCredentialGroup[];
   /** Machine and agent credentials Merv minted, by owner and kind. */
   minted: CredentialSummary[];
+  /** The owners not loaded here, or whose read failed. */
   unavailable: string[];
 }
 
@@ -69,22 +70,18 @@ export interface AdminCredentials {
  *  relay outcomes, Identity's ledger and Sandboxes' providers, composed here and nowhere else. */
 export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials> {
   const at = new Date().toISOString();
-  const unavailable: string[] = [];
-  const read = async <T>(label: string, fn: () => Promise<T> | undefined) => {
+  const { get, unavailable } = loaded(env.ctx);
+  const read = async <T>(owner: string, fn: () => Promise<T> | undefined) => {
     try {
       return await fn();
     } catch {
-      unavailable.push(label);
+      unavailable.push(owner);
     }
   };
-  const composition = env.ctx.get('composition');
-  if (!composition) unavailable.push('Configured credentials');
-  const providers =
-    (await read('Sandbox providers', () => env.ctx.get('sbxProviders')?.inventory())) ?? [];
-  const outcomes =
-    (await read('Model relay outcomes', () => env.ctx.get('fleet')?.relayOutcomes())) ?? [];
-  const minted =
-    (await read('Minted credentials', () => new CredentialStore(env.state).summary())) ?? [];
+  const composition = get('composition');
+  const providers = (await read('sbxProviders', () => get('sbxProviders')?.inventory())) ?? [];
+  const outcomes = (await read('fleet', () => get('fleet')?.relayOutcomes())) ?? [];
+  const minted = (await read('identity', () => new CredentialStore(env.state).summary())) ?? [];
 
   const groups: AdminCredentialGroup[] = [...new Set(Object.values(purposes)), services].map(
     (purpose) => ({ purpose, credentials: [] }),
