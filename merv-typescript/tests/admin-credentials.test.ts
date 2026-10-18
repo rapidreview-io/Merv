@@ -704,10 +704,10 @@ test('a platform secret is revealed and changed here: sealed, applied, its one c
       [
         'sandboxes-host',
         'ADMIN_TEST_VAULT_KEY',
-        'Saved sandbox provider keys · Sandboxes vault key',
+        'Saved sandbox provider keys · encryption key',
         true,
         false,
-        true,
+        false,
       ],
     ],
   );

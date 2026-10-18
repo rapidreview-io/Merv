@@ -117,6 +117,19 @@ test('ensure is idempotent: one person, their own account with them its admin, o
   );
 });
 
+test('welcome credit comes with access to spend it, and an access an operator revoked stays revoked', async (t) => {
+  const f = await fixture(t);
+  const people = await f.start({ fake: '10' });
+  const { connections } = f.ctx.sbxProviders;
+  const access = async (accountId: string) =>
+    (await connections.listEntitlements({ accountId })).map((e) => [e.connection_id, e.enabled]);
+  const { accountId } = await people.ensure({ issuer, subject: 'alice' });
+  assert.deepEqual(await access(accountId), [['cloud', true]]);
+  await connections.setEntitlement({ connectionId: 'cloud', accountId, enabled: false });
+  await people.entitle(accountId, 'fake');
+  assert.deepEqual(await access(accountId), [['cloud', false]]);
+});
+
 test('a first sign-in makes the account; later sign-ins do not ask again', async (t) => {
   const f = await fixture(t);
   const people = await f.start({ fake: '10' });

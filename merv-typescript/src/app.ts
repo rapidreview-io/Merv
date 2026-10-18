@@ -22,6 +22,8 @@ const FIRST = new Set(['@merv/state', '@merv/secrets']);
  *  Identity's, which the API verifies every request through, so a reload of it would stop the
  *  API under the request that asked for it. */
 const FIXED = new Set([...FIRST, '@merv/identity']);
+/** A key its owner seals stored data with (its purpose says so): replaced, what it sealed is lost. */
+const sealing = (purpose: string) => purpose.endsWith('· encryption key');
 
 /** The `.describe()` a zod config schema gives the field at `path`, through its wrappers,
  *  unions, arrays and records. */
@@ -130,8 +132,10 @@ export async function createApp(options: ConfigurationOptions) {
         }));
       const fixed = new Set(
         entries
-          .filter(({ entry }) => FIXED.has(entry.options.name))
-          .flatMap(({ refs }) => refs.map((ref) => ref.env)),
+          .flatMap(({ entry, refs }) =>
+            refs.filter((ref) => FIXED.has(entry.options.name) || sealing(ref.purpose)),
+          )
+          .map((ref) => ref.env),
       );
       return entries.flatMap(({ entry, refs }) =>
         refs.map((ref) => ({ plugin: entry.id, ...ref, overridable: !fixed.has(ref.env) })),

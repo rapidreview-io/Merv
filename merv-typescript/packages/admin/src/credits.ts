@@ -106,13 +106,18 @@ function segment(r: ApiRequest) {
     throw new MervError('invalid_input', 'Malformed person');
   }
 }
+/** The Merv↔Sandboxes bridge: each person's own account, and access to spend what is given. */
+function people(env: AdminEnv) {
+  const bridge = env.ctx.get('sandboxesPeople');
+  check(bridge, 'credits_unavailable', 'Sandbox accounts are not available on this server', 503);
+  return bridge;
+}
 /** A person's own Sandboxes account, which the bridge makes now if it has not yet. */
 async function ownAccount(env: AdminEnv, key: string) {
-  const people = env.ctx.get('sandboxesPeople');
-  check(people, 'credits_unavailable', 'Sandbox accounts are not available on this server', 503);
   const person = await named(env, key);
   const label = personLabel(env.admins, person);
-  return (await people.ensure({ issuer: person.issuer, subject: person.subject, label })).accountId;
+  const { issuer, subject } = person;
+  return (await people(env).ensure({ issuer, subject, label })).accountId;
 }
 
 type Window = keyof CreditUse['used'];
@@ -238,9 +243,9 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
 /** Writes go through each owner alone, and each is kept in the admin audit log. */
 export function creditRoutes(env: AdminEnv): AdminRoutes {
   /** A credit write whose body names its own id, and its account or the person whose own account
-   *  it is: done, it answers that id. */
+   *  it is, which may then spend it: done, it answers that id. */
   const write =
-    <T extends { id: string; accountId?: string; person?: string }>(
+    <T extends { id: string; accountId?: string; person?: string; provider: string }>(
       action: string,
       input: ZodType<T, ZodTypeDef, unknown>,
       apply: (sbx: Sandboxes, body: T & { accountId: string }) => Promise<unknown>,
@@ -250,6 +255,7 @@ export function creditRoutes(env: AdminEnv): AdminRoutes {
       const body = await r.json(input);
       const accountId = body.accountId ?? (await ownAccount(env, body.person!));
       await refusals.call(() => apply(sbx, { ...body, accountId }));
+      await people(env).entitle(accountId, body.provider);
       await env.audit.record(who, action, accountId, body);
       return { id: body.id };
     };

@@ -65,8 +65,23 @@ export class SandboxesPeople implements People {
           expiresAt: null,
           reason: 'Welcome credits',
         });
+        await this.entitle(accountId, provider);
       }
       return { accountId };
+    });
+  }
+
+  entitle(accountId: string, provider: string): Promise<void> {
+    return refusals.call(async () => {
+      const { connections } = this.sbx.providers;
+      const decided = new Set(
+        (await connections.listEntitlements({ accountId }))
+          .filter((entitled) => entitled.scope === 'account')
+          .map((entitled) => entitled.connection_id),
+      );
+      for (const { id, plugin } of await connections.list())
+        if (plugin === provider && !decided.has(id))
+          await connections.setEntitlement({ connectionId: id, accountId, enabled: true });
     });
   }
 

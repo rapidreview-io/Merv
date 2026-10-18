@@ -12,6 +12,9 @@ export interface SandboxesPeople {
     subject: string;
     label?: string;
   }): Promise<{ accountId: string }>;
+  /** Credit is only spent with access: the account's to each operator connection of `provider`
+   *  where no operator has decided it yet, so an access revoked stays revoked. */
+  entitle(accountId: string, provider: string): Promise<void>;
 }
 
 declare module 'cordis' {

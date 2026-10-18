@@ -13,6 +13,7 @@ import type { ApiRequest, MountHandler } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import { ProjectScope } from '@merv/scope';
 import host from '@merv/sandboxes/host';
+import { SandboxesPeople } from '@merv/sandboxes/people';
 import { migrate, openDatabase } from '@sandboxes/db';
 import { advisoryXactLock, Decimal } from '@sandboxes/kernel';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
@@ -66,6 +67,11 @@ async function fixture(t: TestContext, sandboxes = true) {
       plugin: 'fake',
       cloudAccount: 'cloud',
     });
+    const { sbxAuth: auth, sbxAccounts: accounts, sbxBilling: billing, sbxProviders } = ctx;
+    ctx.provide(
+      'sandboxesPeople',
+      new SandboxesPeople({ auth, accounts, billing, providers: sbxProviders }, {}),
+    );
   }
   await ctx.plugin(adminPlugin, { admins: [admin] });
   const call = async (method: string, path: string, body?: unknown, who = human('founder')) =>
@@ -332,22 +338,16 @@ test('a grant may name a person: it lands on their own account, which the bridge
     validFrom,
     reason: 'Base credit',
   };
-  await assert.rejects(
-    f.call('POST', '/admin/credits/grants', grant),
-    f.refused('credits_unavailable', 503),
-  );
-  // The Merv↔Sandboxes bridge, as its builder provides it: the person's own account, made once.
-  const ensured: unknown[] = [];
-  f.ctx.provide('sandboxesPeople', {
-    ensure: async (who) => {
-      ensured.push(who);
-      const person = await f.ctx.sbxAuth.persons.ensureIdentity(who);
-      return { accountId: (await f.ctx.sbxAccounts.namespace(person.home_namespace!)).account_id };
-    },
-  });
+  // Granted to the person, it lands on their own account, made now, which may then spend it.
   assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
-  assert.deepEqual(ensured, [{ issuer, subject: 'carol', label: undefined }]);
   const { accountId, grants, kinds } = (await f.call('GET', drawer('carol'))) as PersonCredits;
+  assert.deepEqual(
+    (await f.ctx.sbxProviders.connections.listEntitlements({ accountId: accountId! })).map((e) => [
+      e.scope,
+      e.enabled,
+    ]),
+    [['account', true]],
+  );
   assert.deepEqual(
     grants.map((g) => [g.id, g.amount, g.available]),
     [['g1', '5', '5']],
