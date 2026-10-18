@@ -155,9 +155,7 @@ async function ceiling(sql: Sql, person: string, fallback: number) {
   return Number(own?.tokens ?? fallback);
 }
 /** A refusal stops new Fleet rent, and new work on a machine already rented, until the UTC
- *  reset or the person changes their limit. Calls in flight when it came settle below their
- *  reservations and free tokens again, but not enough to fund the work it stopped: a relaunch
- *  on those met the ceiling within seconds. */
+ *  reset or the person sets their limit; refunds of calls in flight do not lift it. */
 export async function modelBudgetStatus(state: State, person: string, fallback: number) {
   return await state.read((sql) => budgetIn(sql, person, fallback));
 }

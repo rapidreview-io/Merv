@@ -358,10 +358,8 @@ export class ApiServer {
     for (const socket of this.upgrades) socket.destroy();
     // Responses get drainMs to finish; cutting their sockets then ends every stream still open,
     // since each one ends when its response closes. Existing responses and handlers retain their
-    // providers. While the requests in flight at the stop finish, new ones are still served: a
-    // drain that refused them failed every caller for its whole length on top of the restart,
-    // longer than hosted Codex retries a model call (about 6 s), so live workers' turns ended.
-    // A handler outlives its cut socket, so admission ends at drainMs too.
+    // providers. New requests are served until the requests in flight at the stop have finished,
+    // or until drainMs, since a handler outlives its cut socket.
     const cut = setTimeout(() => {
       this.refusing = true;
       server.closeAllConnections();
