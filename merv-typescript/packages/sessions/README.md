@@ -183,7 +183,6 @@ aws s3 cp --endpoint-url "$MERV_BLOB_ENDPOINT_URL" \
   "s3://$MERV_BLOB_BUCKET/${MERV_BLOB_PREFIX:+$MERV_BLOB_PREFIX/}transcripts-<project_id>/<sha256>" - | tee <session>.jsonl | sha256sum
 ```
 
-
 A continuity provider receives the immutable workflow `version` as well as state, revision,
 role and data. Its optional `conversationGraceMs` (0–300000) delays a producer offer while the
 same source's latest attached, closed visit has not delivered its snapshot. `conversation_pending`
