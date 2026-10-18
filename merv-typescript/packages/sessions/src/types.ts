@@ -51,6 +51,8 @@ import type {
   ThreadQuestion,
   ThreadView,
   UsageRollup,
+  UsageTotals,
+  LeaseLiveness,
   SessionPlatform,
   SessionRole,
   SessionWorkspaceRecord,
@@ -541,6 +543,29 @@ export interface SessionRunningReads {
   marks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
   /** A lease's sidebar, any status; null for a lease the project does not hold. */
   panel(caller: Caller, sessionId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
+  /**
+   * Platform admin read, never exposed through a tool, a lease or a machine key: of each unit of
+   * work named, in any project, its live work visit at that revision and its closed work visits'
+   * totals. An inquiry is no visit of the work.
+   */
+  platform(
+    work: readonly { id: string; projectId: string; revision: number }[],
+  ): Promise<Map<string, SessionsPlatformWork>>;
+}
+/** Why an active lease needs a person: its runner's key, its runner's silence, or its own. */
+export type LeaseNeed = 'key_revoked' | 'machine_offline' | 'quiet';
+export interface SessionsPlatformWork {
+  visit: {
+    role: SessionRole;
+    status: LeaseLiveness['verdict'];
+    need: LeaseNeed | null;
+    /** Its newest Merv call or agent event. */
+    lastActivity: string | null;
+    /** The Fleet allocation it runs on. */
+    allocationId: string | null;
+  } | null;
+  /** Without tool calls, which are not counted here. */
+  usage: Omit<UsageTotals, 'toolCalls' | 'toolPayloadTokensEstimate'> | null;
 }
 export interface ManagedRunners {
   registerValidator(validator: ManagedRunnerValidator): () => void;
