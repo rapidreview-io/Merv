@@ -24,7 +24,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'system.status',
         description:
-          "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (each thread's stage, role and visits: status, times, outcome, harness, whether it resumed, runner) and model-budget wait status.",
+          "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
         readOnly: true,
         inputSchema: z.object({}).strict(),
         handler: async (caller: Caller) => await systemStatus(caller, sessions),
