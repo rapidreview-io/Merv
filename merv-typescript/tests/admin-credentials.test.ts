@@ -379,6 +379,11 @@ test('GET /admin/credentials says which credential serves which purpose and neve
     [fingerprint(rotated), second.at, [], false],
   );
   assert.deepEqual(second.groups[0]!.credentials[0]!.sharedWith, [named[3]]);
+  // Restored, the first key changed again then, and its old refusal does not mark it dead.
+  process.env.ADMIN_TEST_SHARED = openai;
+  const third = await adminCredentials(env);
+  const [restored] = third.groups[1]!.credentials;
+  assert.deepEqual([restored!.lastChanged, restored!.dead], [third.at, false]);
   // Host health is reused within the minute: Cloudflare was asked once per token path.
   assert.equal(asked.filter((url) => url.endsWith('/tokens/verify')).length, 2);
 
