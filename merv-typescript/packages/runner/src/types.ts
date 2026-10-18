@@ -1,6 +1,5 @@
 import type {} from 'cordis';
 
-export type { RunnerProfile } from './profiles.js';
 export interface RunnerSnapshot {
   runnerId: string;
   state:

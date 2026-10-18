@@ -14,7 +14,6 @@ import type { Session } from '@merv/sessions/types';
 import { pathStat, privateDirectory } from '@merv/contracts/private-directory';
 import { LocalLedger, terminalLaunch } from './ledger.js';
 
-export type { WorkspaceHandle } from '@merv/contracts';
 /** The hosted image's unprivileged assignment user, and the wrapper that runs Git as it. */
 export const assignmentUser = {
   uid: 12001,

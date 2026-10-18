@@ -73,13 +73,11 @@ export type {
   SessionRole,
   SessionStatus,
   SessionSummary,
-  SessionWorkspaceRecord,
   SessionsProjectStatus,
   StuckItem,
   StuckKind,
   StuckReport,
   SessionMessage,
-  ProjectThread,
   ProjectThreads,
   LiveFeedFrame,
   ThreadCounts,
@@ -98,7 +96,6 @@ export type {
 } from './models.js';
 export type {
   ManagedBoundSession,
-  ManagedEnrollmentInput,
   ManagedModelWait,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,

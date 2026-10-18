@@ -17,15 +17,7 @@ import {
 } from './running.js';
 import { serveBundle } from './static.js';
 
-export type {
-  RunningContribution,
-  RunningRead,
-  Ui,
-  UiRow,
-  UiRowDescription,
-  UiRowStatus,
-  UiStateWords,
-} from './types.js';
+export type { RunningContribution, RunningRead } from './types.js';
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 const defaultAssets = fileURLToPath(new URL('../dist/', import.meta.url));
