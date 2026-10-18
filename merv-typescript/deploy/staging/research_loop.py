@@ -104,7 +104,13 @@ def modal_blocker(conn):
 
 
 # --- preflight -------------------------------------------------------------------------------
-conn = http("GET", "/sandboxes/connection", who=WHO)
+try:
+    conn = http("GET", "/sandboxes/connection", who=WHO)
+except ApiError as exc:
+    # A deployment that composes no Sandboxes serves no such route: the loop runs on the workspace CPU.
+    if exc.status != 503:
+        raise
+    conn = {"connected": False}
 project = json.load(open(f"{E2E}/{KEYS[WHO]}"))["projectId"]
 log(f"project {project} ({WHO}); Sandboxes connected={conn.get('connected')} funding={conn.get('funding')} "
     f"account={conn.get('accountId')}")
