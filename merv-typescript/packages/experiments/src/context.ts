@@ -243,10 +243,12 @@ export function inputIds(inputs: FrozenInputs): string[] {
 
 /**
  * What a design may do with compute, said in the assignment a planner reads first: its Sandboxes
- * tools come on their own connection, so the declared tools above never list them.
+ * tools come on their own connection, so the declared tools above never list them. A project
+ * with no compute connected gets no connection, and its planner, told to measure, searched
+ * Merv for compute before asking (2026-10-09): it is told to ask at once.
  */
 const PLANNING_COMPUTE =
-  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them.';
+  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them. If this visit has no server named sandboxes, the project has no compute connected: ask the owner to connect it with session.ask_owner, instead of searching for compute, designing without measurements or ending the experiment.';
 
 export async function references(
   ctx: ExperimentsContext,

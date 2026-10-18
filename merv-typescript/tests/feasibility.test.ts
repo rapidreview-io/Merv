@@ -317,6 +317,11 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   );
   // And told that its Sandboxes tools, which the declared tools never list, are its to measure with.
   assert.match(planning.context!.prompt, /"computeAccess":"Your Sandboxes MCP connection/);
+  // A project with no compute connected gets no such connection; its planner asks at once.
+  assert.match(
+    planning.context!.prompt,
+    /If this visit has no server named sandboxes, the project has no compute connected: ask the owner to connect it with session\.ask_owner/,
+  );
   await f.attach(e, 'plan', plan);
   const marked = statement();
   marked.resources[0].basis = 'Row count of inventory FEASIBILITY_BASIS_7731.';
