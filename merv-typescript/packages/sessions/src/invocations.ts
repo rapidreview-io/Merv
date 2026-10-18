@@ -15,7 +15,6 @@ import {
   type WorkflowExecutionReferences,
 } from '@merv/contracts';
 import { admitDispatch, type WorkflowDispatchAdmission } from '@merv/workflows/execution';
-import { runningReads } from '@merv/ui/running';
 import { clone, ordinary, safeError } from './common.js';
 import type { AgentObservations } from './observations.js';
 import type { Session, WorkSession } from './types.js';
@@ -135,19 +134,6 @@ const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
  * since a worker's own tools (`session.ask_owner`) need only read scope.
  */
 const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
-/**
- * Reads that answer only a person, whose handlers refuse every leased worker: Sessions' views of
- * other sessions, threads and dispatch, and the Running page. A worker is not shown them, since
- * it could only be refused; the handler's refusal still answers one that calls them by name.
- */
-const forPeople = new Set([
-  'session.find',
-  'session.threads',
-  'session.thread_messages',
-  'session.observe',
-  'session.stuck',
-  ...runningReads,
-]);
 /** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionToolPolicy {
   readonly instructions =
@@ -168,7 +154,6 @@ export class SessionInvocations implements SessionToolPolicy {
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     ordinary(caller);
     caller = structuredClone(caller);
-    if (forPeople.has(name)) return false;
     const id = caller.session?.id;
     if (!id) return inquiryCalls(name, read);
     let known = this.toolNames.get(id);

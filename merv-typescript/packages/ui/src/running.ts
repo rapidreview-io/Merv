@@ -382,9 +382,6 @@ function workDots(nodes: RunningNode[], alias: ReadonlyMap<string, string>): voi
 
 // ─── The two reads ────────────────────────────────────────────────────────────────────────
 
-/** The Running page's two reads, which every leased worker is refused (`refuseWorkers`): Sessions
- *  lists neither to one. */
-export const runningReads: readonly string[] = ['ui.running', 'ui.running_panel'];
 /** This is a person's monitor. A leased worker or a managed runner reads its own work elsewhere. */
 function refuseWorkers(caller: Caller): void {
   check(

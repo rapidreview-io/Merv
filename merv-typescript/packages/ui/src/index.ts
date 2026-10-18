@@ -221,6 +221,7 @@ export const uiPlugin = {
         inputSchema: z.object({}).strict(),
         readOnly: true,
         conversation: 'never' as const,
+        worker: 'never' as const,
         handler: async (caller: Caller) => await runningBoard(running, caller),
       }),
     );
@@ -232,6 +233,7 @@ export const uiPlugin = {
         inputSchema: z.object({ key: z.string().regex(runningKeyPattern) }).strict(),
         readOnly: true,
         conversation: 'never' as const,
+        worker: 'never' as const,
         handler: async (caller: Caller, input: { key: string }) =>
           await runningPanel(running, caller, input.key),
       }),

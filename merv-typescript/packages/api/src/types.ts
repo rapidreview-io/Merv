@@ -22,6 +22,9 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
    *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
+  /** 'never': a person's read whose handler refuses every leased worker, so no worker is listed
+   *  it; called by name it still answers with that refusal. */
+  worker?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;
   /** What the card of a proposed call says it does, in the product's words ('Submit verdict').
@@ -57,7 +60,7 @@ export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
 /** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`
  *  and never `readOnly`, whatever its server says. */
-export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation'> & {
+export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation' | 'worker'> & {
   remote: boolean;
   readOnly: boolean;
 };

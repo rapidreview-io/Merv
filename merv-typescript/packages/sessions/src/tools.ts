@@ -62,6 +62,7 @@ export const sessionsToolsPlugin = {
         description:
           'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({}).strict(),
         handler: async (caller: Caller) => await sessions.dispatch.stuck(caller),
       }),
@@ -115,6 +116,7 @@ export const sessionsToolsPlugin = {
         description:
           'Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) =>
           await sessions.findSession(caller, input.instanceId),
@@ -166,6 +168,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { threadId: string }) =>
           await sessions.messaging.thread(caller, input.threadId),
@@ -255,6 +258,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { threadId: string }) =>
           await sessions.observations.calls(caller, input.threadId),
@@ -266,6 +270,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who may read the work item, never a leased worker: the threads of one workflow instanceId, the worker of each stage and role, oldest first. Each has its state, role and status (live, dormant or retired) and its visits, oldest first: each session’s status, when it was offered, started and ended, its outcome and close code (why), whether it launched or resumed the thread’s conversation, its harness and runner.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) => ({
           threads: await sessions.threads.list(caller, input.instanceId),

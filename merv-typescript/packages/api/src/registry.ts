@@ -122,13 +122,13 @@ export class ToolRegistry implements Tools {
     // Schema changes require a new registration, keeping validation paired with its catalog.
     // Conversation policy and whether it only reads (which a session may call, as may a platform
     // reader) are likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversation } = definition;
+    const { inputSchema, conversation, worker } = definition;
     const readOnly = definition.readOnly === true;
     return {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema, readOnly }),
-      tool: { name: definition.name, remote: false, conversation, readOnly },
+      tool: { name: definition.name, remote: false, conversation, readOnly, worker },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) =>
@@ -438,10 +438,11 @@ export class ToolRegistry implements Tools {
     for (const entry of offered)
       if (
         (!session ||
-          (await this.fenced(
-            session,
-            session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
-          ))) &&
+          (entry.tool.worker !== 'never' &&
+            (await this.fenced(
+              session,
+              session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
+            )))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
       )
         shown.push(entry);
