@@ -413,6 +413,11 @@ test('report tools present chart and page images to MCP clients', async () => {
   );
   const open = (await tools.get('report.open')!.handler({} as Caller, {})) as { guide: string };
   assert.match(open.guide, /report\.review_visual/);
+  // The front matter states once that a plan with no numeric bar keeps criteria: [].
+  assert.match(
+    open.guide,
+    /no numeric bar[^.]*, keep criteria: \[\] and chart the measured results/,
+  );
   // Agents are told a locked section the plan left as a placeholder is theirs to write: told
   // only that locked sections never change, a healer reported a fixed template as broken.
   assert.match(
