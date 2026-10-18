@@ -634,14 +634,14 @@ test('credits: one row per person, today per kind, and no drawer until a row is 
   // Today's use of each daily limit; a provider's left of what was granted.
   assert.equal(
     [...rows[0]!.querySelectorAll('[role="cell"]')].map((c) => c.textContent).join(' | '),
-    'Mira Chen | 40K of\u00a01M | 120K of\u00a02M | $3.20 of\u00a0$25.00 | — | $95.05 of\u00a0$100.00',
+    'Mira Chen | 40K of 1M | 120K of 2M | $3.20 of $25 | — | $95.05 of $100',
   );
   // Money is in cents: one under a cent says so, never a third decimal.
-  assert.match(rows[1]!.textContent!, /<\$0\.01 of\s\$25\.00/);
+  assert.match(rows[1]!.textContent!, /<\$0\.01 of \$25/);
   const red = [...document.querySelectorAll('[aria-label="Credits"] .status--bad')];
   assert.deepEqual(
     red.map((el) => el.textContent),
-    ['2M of\u00a02M'],
+    ['2M of 2M'],
     'red is a limit reached',
   );
   assert.doesNotMatch(text(), /Design partner pilot/);
@@ -683,18 +683,18 @@ test('credits: a row opens the drawer — one window for every type, Escape and 
   );
   assert.match(
     block('Fleet machines').textContent!,
-    /^Fleet machines\$25\.00 a daySet limit\$3\.20 used\$21\.80 left$/,
+    /^Fleet machines\$25 a daySet limit\$3\.20 used\$21\.80 left$/,
   );
   // A provider's limit is what was granted, and its control gives more.
   assert.match(
     block('Modal').textContent!,
-    /^Modal\$100\.00 grantedGive credit\$0\.50 used\$95\.05 left/,
+    /^Modal\$100 grantedGive credit\$0\.50 used\$95\.05 left/,
   );
   assert.match(block('Modal').textContent!, /Give credit/);
   // Nothing granted yet: no limit, nothing left to draw, still the word that gives.
-  assert.equal(block('Fake').textContent, 'FakeGive credit$0.00 used');
+  assert.equal(block('Fake').textContent, 'FakeGive credit$0 used');
   assert.match(block('Modal').textContent!, /Design partner pilot/);
-  assert.match(block('Modal').textContent!, /\$25\.00 monthlyon/);
+  assert.match(block('Modal').textContent!, /\$25 monthlyon/);
   assert.match(block('Modal').textContent!, /revoked/);
   // The meter stands beside the figure it draws, and only where there is a limit.
   const meter = block('Modal').querySelector<HTMLElement>('.home-meter > span')!;

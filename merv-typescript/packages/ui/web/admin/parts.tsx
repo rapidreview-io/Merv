@@ -17,8 +17,9 @@ export const usePost = <T = { id?: unknown },>(
     validate,
     onSuccess: done,
   });
-/** Dollars as every page states them (`formatMoney`). */
-export const usd = (value: string | number) => formatMoney(Number(value), undefined);
+/** Dollars as every page states them (`formatMoney`), whole ones without their cents. */
+export const usd = (value: string | number) =>
+  formatMoney(Number(value), undefined).replace(/\.00$/, '');
 /** A count a person reads at a glance: 940, 12.5K, 3.1M. */
 export const count = (n: number) =>
   n.toLocaleString('en', { notation: 'compact', maximumFractionDigits: 1 });
@@ -54,9 +55,14 @@ export const Head = (props: { title: string; facts?: Fact[]; ends?: ReactNode })
 type Fact = false | [count: number, noun: string, bad?: boolean];
 /** `used of limit`, the limit faint. */
 export const Of = (props: { used: ReactNode; of?: ReactNode; className?: string }) => (
-  <span className={props.className}>
-    {props.used}
-    {props.of != null && <span className="faint"> of&nbsp;{props.of}</span>}
+  <span className={cx('admin-of', props.className)}>
+    <span>{props.used}</span>
+    {props.of != null && (
+      <>
+        {' '}
+        <span className="faint">of {props.of}</span>
+      </>
+    )}
   </span>
 );
 /** A fact the row does not have. */

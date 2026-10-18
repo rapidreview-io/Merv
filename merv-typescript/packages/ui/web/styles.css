@@ -7705,6 +7705,10 @@ html.modal-open {
 .admin-left {
   font-weight: 600;
 }
+/* A figure and what it is of each stay whole; a narrow column stacks them. */
+.admin-of > span {
+  white-space: nowrap;
+}
 /* What a unit needs, a small line under its name: the owner's word, then its own words. */
 .admin-attn {
   overflow: hidden;
