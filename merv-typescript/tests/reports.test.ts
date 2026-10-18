@@ -516,7 +516,7 @@ test('a drawing failure no check foresaw names the chart and the reason, not int
       error.code === 'report_render_failed' &&
       error.status === 422 &&
       error.message.startsWith(
-        'Merv could not draw chart common-timing: locator.screenshot: Timeout 30000ms exceeded.',
+        'Merv could not draw chart common-timing: locator.screenshot: Timeout 30000ms exceeded. Try once more',
       ) &&
       /smaller height/.test(error.message) &&
       !error.message.includes('Call log') &&

@@ -120,7 +120,8 @@ export interface RenderOptions {
 function drawFailure(error: unknown, chart?: string): MervError {
   if (error instanceof MervError) return error;
   const text = error instanceof Error ? error.message : String(error);
-  const reason = text.split('\n')[0]!.trim().slice(0, 300) || 'unknown error';
+  // Playwright's reasons end with a period of their own; the message below adds one.
+  const reason = text.split('\n')[0]!.trim().slice(0, 300).replace(/\.+$/, '') || 'unknown error';
   process.stderr.write(
     JSON.stringify({
       event: 'report.render_failed',
