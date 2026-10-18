@@ -809,10 +809,11 @@ export class SessionMessages {
             : undefined,
         );
       if (row.acknowledged_at) {
+        // An acknowledgement is written once: a worker with more to say has no second reply.
         check(
           row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
           'request_conflict',
-          'Message was acknowledged with different input',
+          `This message was already acknowledged, with requestId ${row.ack_request_id}, and an acknowledgement and its reply are written once. Put anything more for the people over your work in your work's own records and handoff, or in the reply to the next message you acknowledge; ask with session.ask_owner only when the work cannot go on without their decision.`,
           409,
         );
         return await read(row);

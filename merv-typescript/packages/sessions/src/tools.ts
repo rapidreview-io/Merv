@@ -224,7 +224,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message.ack',
         description:
-          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
+          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement and its reply are durable and written once: the same requestId and reply return it again, and anything else for an acknowledged message is request_conflict, so this is no channel for later notes. It records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
         conversation: 'never',
         inputSchema: z
           .object({

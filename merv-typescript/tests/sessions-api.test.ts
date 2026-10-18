@@ -427,6 +427,16 @@ test('a pending message’s refusal carries it once a batch, and the queue lists
     name: 'session.message.ack',
     arguments: { messageId: sent.id, reply: 'Switching to 2025.', requestId: 'holdout-ack' },
   });
+  // An acknowledgement is written once: a later note through it is refused, saying where it goes.
+  const again = error(
+    await client.callTool({
+      name: 'session.message.ack',
+      arguments: { messageId: sent.id, reply: 'And the run finished.', requestId: 'later-note' },
+    }),
+  );
+  assert.equal(again.code, 'request_conflict');
+  assert.match(again.message, /holdout-ack/);
+  assert.match(again.message, /written once/);
   // Acknowledged, the message leaves the queue, which only counts it; all lists it again.
   assert.deepEqual(await queue(), { messages: [], acknowledged: 1 });
   const history = await queue({ all: true });
