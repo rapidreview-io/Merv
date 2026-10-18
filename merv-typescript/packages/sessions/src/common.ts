@@ -15,6 +15,8 @@ import type { Session } from './types.js';
 export const HOLD_PROVIDER = 'session-dispatch';
 /** The provider of the model budget's wait on work a rented machine would take. */
 export const MODEL_BUDGET_PROVIDER = 'session-model-budget';
+/** The provider of a worker's wait for its compute, on the work it withholds. */
+export const COMPUTE_PROVIDER = 'session-compute';
 export { live } from './rules.js';
 /** Visible text of at most `max` characters and no NUL. */
 export const text = (value: unknown, max = 200) =>

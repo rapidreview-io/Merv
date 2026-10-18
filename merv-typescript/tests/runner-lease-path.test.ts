@@ -411,7 +411,7 @@ test('a guardian no launch reached in time is released as a launch timeout', asy
   assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_launch_timeout');
 });
 
-for (const closeReason of ['handoff', 'asked_owner'])
+for (const closeReason of ['handoff', 'asked_owner', 'awaited_compute'])
   test(`a Codex launch its worker closed by its own hand (${closeReason}) keeps its grace to finish the turn`, async (t) => {
     // A stand-in Codex that lingers, as a turn still finishing after its handoff does.
     const root = mkdtempSync(join(tmpdir(), 'merv-lease-grace-'));
@@ -436,7 +436,7 @@ for (const closeReason of ['handoff', 'asked_owner'])
     Object.assign(fake.sessions.get(work.id)!, {
       status: 'released',
       closeReason,
-      outcome: closeReason === 'handoff' ? 'completed' : 'asked_owner',
+      outcome: closeReason === 'handoff' ? 'completed' : closeReason,
     });
     for (let i = 0; i < 3; i++) await runner.tick();
     assert.equal(runner.snapshot().launches[0]?.status, 'running');

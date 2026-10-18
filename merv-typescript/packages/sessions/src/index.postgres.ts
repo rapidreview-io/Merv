@@ -386,6 +386,46 @@ END;
 $merv$;
 ALTER TABLE session_inquiries DROP COLUMN tokens;
 `;
+/**
+ * A worker's wait for its Sandboxes compute (`session.await_compute`), one per visit that ended
+ * for it: dispatch withholds its revision while it is open and its until is ahead. Only its
+ * targets move while it is open, and it settles once. A new empty table: nothing to count first.
+ */
+const computeWaitsMigration = `
+CREATE TABLE session_compute_waits (
+  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  thread_id TEXT NOT NULL REFERENCES session_threads(id),
+  session_id TEXT NOT NULL UNIQUE REFERENCES worker_sessions(id),
+  instance_id TEXT NOT NULL,
+  revision BIGINT NOT NULL,
+  reason TEXT NOT NULL,
+  targets_json TEXT NOT NULL CHECK (targets_json IS JSON ARRAY),
+  created_at TEXT NOT NULL,
+  wait_until TEXT NOT NULL,
+  settled_at TEXT,
+  outcome TEXT CHECK (outcome IN ('ended','deadline','woken','moved')),
+  CHECK ((settled_at IS NULL) = (outcome IS NULL))
+);
+CREATE INDEX session_compute_waits_open ON session_compute_waits(project_id,instance_id) WHERE settled_at IS NULL;
+CREATE INDEX session_compute_waits_created ON session_compute_waits(project_id,created_at);
+CREATE FUNCTION session_compute_waits_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR OLD.settled_at IS NOT NULL OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.thread_id IS DISTINCT FROM OLD.thread_id OR NEW.session_id IS DISTINCT FROM OLD.session_id OR
+     NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.revision IS DISTINCT FROM OLD.revision OR
+     NEW.reason IS DISTINCT FROM OLD.reason OR NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     NEW.wait_until IS DISTINCT FROM OLD.wait_until THEN
+    RAISE EXCEPTION USING MESSAGE = 'A compute wait is retained; it settles once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_compute_waits_immutable BEFORE UPDATE OR DELETE ON session_compute_waits
+FOR EACH ROW EXECUTE FUNCTION session_compute_waits_guard();
+`;
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE worker_sessions (
@@ -815,4 +855,6 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
   // As with migration 23, this stored scalar rewrites worker_sessions on upgrade.
   24: `ALTER TABLE worker_sessions ADD COLUMN execution_state TEXT
     GENERATED ALWAYS AS (session_json::jsonb#>>'{execution,state}') STORED;`,
+  // (unpublished) Workers' waits for their compute; see `computeWaitsMigration`.
+  25: computeWaitsMigration,
 };

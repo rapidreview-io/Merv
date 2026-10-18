@@ -32,7 +32,7 @@ import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { groups } from './usage.js';
-import { ordinary as unmanaged, text } from './common.js';
+import { COMPUTE_PROVIDER, ordinary as unmanaged, text } from './common.js';
 import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
 import { live, platformPhrase } from './rules.js';
 import type {
@@ -404,6 +404,22 @@ export function questionMarks(
     });
 }
 
+/**
+ * Work whose agent ended its visit to wait for its compute, while the blocker Sessions published
+ * for that wait stands: nothing draws such work otherwise, and it comes back by itself, so its
+ * line is quiet. It links to the thread, where a message brings it back sooner.
+ */
+export function computeMarks(blockers: readonly WorkflowProvidedBlocker[]): RunningMark[] {
+  return blockers
+    .filter((blocker) => blocker.provider === COMPUTE_PROVIDER)
+    .map((blocker) => ({
+      key: runningKey('work', blocker.instanceId),
+      says: ['Waiting for its compute'],
+      quiet: true as const,
+      to: { route: questionRoute(blocker.key), text: 'Open its thread' },
+    }));
+}
+
 /** The brief as the sidebar carries it: whole, or cut at the last line end within the cap. */
 export function briefText(brief: string): { text: string; truncated: boolean } {
   if (brief.length <= briefCap) return { text: brief, truncated: false };
@@ -589,7 +605,11 @@ export class SessionRunning {
           if (!(error instanceof MervError)) throw error;
         }
       return {
-        marks: [...questionMarks(asked, answers), ...dispatchMarks(reading)],
+        marks: [
+          ...questionMarks(asked, answers),
+          ...computeMarks(asked),
+          ...dispatchMarks(reading),
+        ],
         summary: laneSummary(reading),
       };
     });

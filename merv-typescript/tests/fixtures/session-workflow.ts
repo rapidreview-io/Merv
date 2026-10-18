@@ -3,6 +3,7 @@
  * two-step workflow, `<label>-test`: working, then a review that revises or approves, then done.
  * Its owner bootstraps the project `<Label>`. `offer` hands a runner the instance's current step
  * and attaches it, `move` takes an action as the owner, and `ok` is a call that must answer 200.
+ * `references` are the execution references each step grants, such as its compute profile.
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -11,14 +12,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
-import type { Caller, WorkflowPolicy } from '@merv/contracts';
+import type { Caller, WorkflowExecutionReferences, WorkflowPolicy } from '@merv/contracts';
 import type { ApplicationConfig } from '../../src/config.js';
 import { createApp } from './app.js';
 import { s3Blobs } from './s3-blobs.js';
 
 export const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 
-export async function twoStepWorkflow(t: TestContext, label: string) {
+export async function twoStepWorkflow(
+  t: TestContext,
+  label: string,
+  references?: (state: string) => WorkflowExecutionReferences,
+) {
   const directory = await mkdtemp(join(tmpdir(), `merv-${label}-`));
   const env = `MERV_${label.toUpperCase()}_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = randomBytes(48).toString('hex');
@@ -66,6 +71,7 @@ export async function twoStepWorkflow(t: TestContext, label: string) {
       context: null,
     }),
     execution: { readOnly: role === 'reviewer', tools: [] },
+    ...(references && { references: () => references(state) }),
     lease: {
       role: () => role,
       acquire: ({ leaseId }: { leaseId: string }) => ({ leaseId }),

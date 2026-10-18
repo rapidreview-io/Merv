@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema } from './budgets.js';
 import { releaseHoldSchema } from './dispatch.js';
 import type {
+  ComputeWaitInput,
   QuestionResolution,
   SessionBudgetInput,
   SessionMessageInput,
@@ -60,7 +61,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.stuck',
         description:
-          'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target withheld from automatic dispatch after failed launches), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
+          'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target withheld from automatic dispatch after failed launches), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_waiting (work whose agent ended its visit to wait for its Sandboxes compute with session.await_compute; it comes back by itself, so it is listed, not counted in total), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
         readOnly: true,
         worker: 'never' as const,
         inputSchema: z.object({}).strict(),
@@ -126,7 +127,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message refuses the worker's next Merv call, carrying the message, and every one after it until the worker acknowledges it, so put what you have to say in one message rather than several, send none only to ask for status, and ask for a reply only when you need one. Reuse requestId after an uncertain response.",
+          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. It also ends a wait its agent started with session.await_compute, which brings that work back at once. This does not interrupt local computation or prove the worker has read it. A pending message refuses the worker's next Merv call, carrying the message, and every one after it until the worker acknowledges it, so put what you have to say in one message rather than several, send none only to ask for status, and ask for a reply only when you need one. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
             threadId: z.string().min(1).max(200),
@@ -204,6 +205,47 @@ export const sessionsToolsPlugin = {
           question: await sessions.messaging.ask(caller, input),
           ended: true,
           next: 'Your visit has ended. Stop now: the owner’s answer reaches you when the work comes back.',
+        }),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.await_compute',
+        description:
+          'Assigned worker only: end this visit to wait for Sandboxes jobs or workflows of this work that run for more than about 15 minutes, instead of sleeping or polling. Your session closes at once, uncounted, and they keep running. The work comes back to you in this conversation once all have ended or one fails (a workflow once its captures register), when someone messages your thread, or by the result’s until: after minutes, or sooner, 15 minutes before a machine they run on reaches its lease end. Commit first, and release machines that run none of them. Stop after calling it.',
+        conversation: 'never',
+        inputSchema: z
+          .object({
+            jobIds: z
+              .array(z.string().min(1).max(200))
+              .max(20)
+              .optional()
+              .describe('Sandboxes job ids of this work'),
+            workflowIds: z
+              .array(z.string().min(1).max(200))
+              .max(20)
+              .optional()
+              .describe('Sandboxes workflow ids of this work'),
+            reason: z
+              .string()
+              .min(1)
+              .max(1000)
+              .describe(
+                'What runs and what you will do with it; shown to people and given back to you',
+              ),
+            minutes: z
+              .number()
+              .int()
+              .min(1)
+              .max(10_080)
+              .optional()
+              .describe('The longest the wait may last; 1440 (a day) when left out'),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: ComputeWaitInput) => ({
+          wait: await sessions.computeWaits.await(caller, input),
+          ended: true,
+          next: 'Your visit has ended. Stop now: the work comes back to you in this conversation by until.',
         }),
       }),
     );

@@ -38,6 +38,7 @@ import { tokenDigest } from '@merv/identity/credentials';
 import { AgentObservations } from './observations.js';
 import {
   attached,
+  COMPUTE_PROVIDER,
   decoded,
   isoNow,
   live,
@@ -49,6 +50,7 @@ import {
   text,
   type Row,
 } from './common.js';
+import { ComputeWaits } from './compute-waits.js';
 import { ownEnd } from './rules.js';
 import { SessionServiceWork } from './service-work.js';
 import {
@@ -259,9 +261,9 @@ function closed<T extends z.ZodTypeAny>(
 }
 /**
  * Why a session that has already ended is refusing. The reason survives the first refusal
- * because a worker whose response was lost has nothing else to go on: retrying its handoff
- * (or an inquiry visit its reply) must keep telling it that landed, rather than degrading to
- * "closed" and leaving it unable to tell a committed delivery from a halt.
+ * because a worker whose response was lost has nothing else to go on: retrying its handoff, its
+ * question, its wait (or an inquiry visit its reply) must keep telling it that landed, rather
+ * than degrading to "closed" and leaving it unable to tell a committed delivery from a halt.
  */
 const ended = (session: Session): MervError =>
   session.closeReason === 'handoff'
@@ -276,11 +278,25 @@ const ended = (session: Session): MervError =>
           'This inquiry visit’s reply was delivered and the visit has ended; stop now',
           401,
         )
-      : new MervError(
-          'session_closed',
-          session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
-          401,
-        );
+      : session.closeReason === 'asked_owner'
+        ? new MervError(
+            'asked_owner',
+            'Your question was recorded and this visit has ended; stop now',
+            401,
+          )
+        : session.closeReason === 'awaited_compute'
+          ? new MervError(
+              'awaited_compute',
+              'Your wait was recorded and this visit has ended; stop now',
+              401,
+            )
+          : new MervError(
+              'session_closed',
+              session.closeReason
+                ? `Session is closed: ${session.closeReason}`
+                : 'Session is closed',
+              401,
+            );
 /** A work visit, where only one can be: an inquiry visit holds no lease, workspace or launch. */
 const working = (session: Session): WorkSession => {
   check(
@@ -342,6 +358,8 @@ export class LeasedSessions implements Sessions {
   threads!: SessionThreads;
   /** Operator messages to live sessions. */
   messaging!: SessionMessages;
+  /** Workers' waits for their compute, their visits ended. */
+  computeWaits!: ComputeWaits;
   /** A person's questions to any thread's agent, answered by read-only inquiry visits. */
   inquiries!: Inquiries;
   /** How every visit is admitted and written. */
@@ -473,6 +491,19 @@ export class LeasedSessions implements Sessions {
       work: (projectId, instanceIds, tx) => this.workAt(projectId, instanceIds, tx),
       publish: (input, tx) =>
         this.workflows.replaceBlockers({ ...input, provider: QUESTION_PROVIDER }, tx),
+      woken: (tx, projectId, threadId) => this.computeWaits.woken(tx, projectId, threadId),
+    });
+    this.computeWaits = new ComputeWaits(state, scope, this.clock, {
+      transaction: (fn) => this.transaction(fn),
+      reading: (fn) => this.reading(fn),
+      row: (tx, id) => this.row(tx, id),
+      decode: (row) => this.decode(row),
+      awaited: async (session, tx) => {
+        await this.closeSession(session, 'awaited_compute', tx, 'released', 'awaited_compute');
+      },
+      work: (projectId, instanceIds, tx) => this.workAt(projectId, instanceIds, tx),
+      publish: (input, tx) =>
+        this.workflows.replaceBlockers({ ...input, provider: COMPUTE_PROVIDER }, tx),
     });
     this.invocations = new SessionInvocations(this.observations, this.clock, {
       open: () => this.ensureOpen(),
@@ -489,6 +520,7 @@ export class LeasedSessions implements Sessions {
           error: await this.closure(session, error, tx),
         })),
       acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx, true),
+      awaits: (session) => this.computeWaits.available(session),
     });
     this.running = new SessionRunning(
       state,
@@ -1171,6 +1203,14 @@ export class LeasedSessions implements Sessions {
       frozen.execution.policy.maxModelTokens ?? Infinity,
       limits?.modelTokens ?? Infinity,
     );
+    // The wait its work's last visit ended for: this offer ends it if it still stands (by hand),
+    // and the visit is told how it went.
+    const awaited = await this.computeWaits.offered(
+      tx,
+      caller.projectId,
+      input.instanceId,
+      input.expectedRevision,
+    );
     const time = this.clock();
     const hard = Math.min(
       time +
@@ -1204,6 +1244,7 @@ export class LeasedSessions implements Sessions {
       closeReason: null,
       outcome: null,
       ...(thread.continuity && { continuity: thread.continuity }),
+      ...(awaited && { awaited }),
       ...frozen,
       assignment,
     };
@@ -1985,6 +2026,7 @@ export class LeasedSessions implements Sessions {
       await this.alone('threads', () => this.readFirst((tx) => this.threads.expire(tx)));
       await this.alone('inquiries', () => this.readFirst((tx) => this.inquiries.expire(tx)));
       await this.alone('question-responses', () => this.messaging.responders.sweep());
+      await this.alone('compute-waits', () => this.computeWaits.sweep());
       // A process that died left its calls running: past any client's wait, all but our own.
       const abandoned = isoNow(() => this.clock() - 180_000);
       const held = this.invocations.invocationIds;

@@ -400,30 +400,33 @@ test('a worker that ended its own visit hands over its final capture within the 
   );
   assert.equal((await f.lease('ses_2')).generation, 2);
 
-  // Within the grace the final is taken; a visit Sessions ended for it gets no such grace.
-  const g = await fixture(t);
-  await g.lease('ses_1');
-  await g.event('session.workspace_attached', 'ses_1');
-  const work = g.source.commit({ 'a.txt': 'one\n' }, 'first');
-  g.end('ses_1', 'asked_owner');
-  await g.event('session.closed', 'ses_1', true);
-  await g.sweep();
-  assert.equal((await g.unit()).writerState, 'closing', 'the grace has not passed');
-  const final = await g.upload('final', 'ses_1', 1, g.root, g.source.bundle(work, [g.root]));
-  assert.equal(final.status, 'completed');
-  assert.deepEqual(
-    [(await g.unit()).writerState, (await g.unit()).canonicalHead],
-    ['closed', work],
-  );
-  await g.lease('ses_2');
-  await g.event('session.workspace_attached', 'ses_2');
-  const late = g.source.commit({ 'a.txt': 'two\n' }, 'late');
-  g.end('ses_2', 'session_expired');
-  await g.event('session.closed', 'ses_2');
-  await assert.rejects(
-    g.begin('final', 'ses_2', 2, work, g.source.bundle(late, [work])),
-    refused('code_writer_closed'),
-  );
+  // Within the grace the final is taken, after a question or a wait for compute that ended the
+  // visit by its worker's hand; a visit Sessions ended for it gets no such grace.
+  for (const reason of ['asked_owner', 'awaited_compute']) {
+    const g = await fixture(t);
+    await g.lease('ses_1');
+    await g.event('session.workspace_attached', 'ses_1');
+    const work = g.source.commit({ 'a.txt': 'one\n' }, 'first');
+    g.end('ses_1', reason);
+    await g.event('session.closed', 'ses_1', true);
+    await g.sweep();
+    assert.equal((await g.unit()).writerState, 'closing', 'the grace has not passed');
+    const final = await g.upload('final', 'ses_1', 1, g.root, g.source.bundle(work, [g.root]));
+    assert.equal(final.status, 'completed', reason);
+    assert.deepEqual(
+      [(await g.unit()).writerState, (await g.unit()).canonicalHead],
+      ['closed', work],
+    );
+    await g.lease('ses_2');
+    await g.event('session.workspace_attached', 'ses_2');
+    const late = g.source.commit({ 'a.txt': 'two\n' }, 'late');
+    g.end('ses_2', 'session_expired');
+    await g.event('session.closed', 'ses_2');
+    await assert.rejects(
+      g.begin('final', 'ses_2', 2, work, g.source.bundle(late, [work])),
+      refused('code_writer_closed'),
+    );
+  }
 });
 
 test('a checkpoint finishing after its worker ended its own visit leaves the owed final open', async (t) => {

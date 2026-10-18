@@ -1099,6 +1099,7 @@ test('the assembled application offers the stuck report as a read tool and the g
     [
       ['session.ask_owner', false],
       ['session.ask_thread', false],
+      ['session.await_compute', false],
       ['session.dispatch', false],
       ['session.find', true],
       ['session.halt', false],

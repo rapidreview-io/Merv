@@ -12,7 +12,7 @@ import type {
 } from './types.js';
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
-import { HOLD_PROVIDER, isoNow, targetKey } from './common.js';
+import { COMPUTE_PROVIDER, HOLD_PROVIDER, isoNow, targetKey } from './common.js';
 import { STOPPED_WITHOUT_HANDOFF } from './rules.js';
 import { leaseLiveness } from './liveness.js';
 import type { DispatchContext, HoldRow, SessionDispatch } from './dispatch.js';
@@ -75,6 +75,7 @@ const stuckKinds: StuckKind[] = [
   'dispatch_held',
   'dispatch_failing',
   'work_blocked',
+  'work_waiting',
   'work_deferred',
   'ready_quiet',
   'dispatch_disabled',
@@ -216,7 +217,7 @@ async function readingOf(
   const read = { dispatch, fleet, runners, holds };
   if (!admissible)
     return { ...read, queued: 0, waiting: new Map(), deferred: new Map(), quiet: [], stalls: [] };
-  const { all, live: leased, queue, spent, unaccounted, asking } = admissible;
+  const { all, live: leased, queue, spent, unaccounted, asking, awaiting } = admissible;
   // A target with a live session is being tried right now, so it is not waiting on anyone.
   const waiting = new Map(
     all
@@ -246,11 +247,12 @@ async function readingOf(
   const quiet = all.flatMap((item) => {
     const key = targetKey(item),
       step = item.role === 'operator';
-    // With dispatch off, one dispatch_disabled item says why all of them wait.
-    // Work whose agent asked its owner says so through its blocker (work_blocked).
+    // With dispatch off, one dispatch_disabled item says why all of them wait. Work whose agent
+    // asked its owner, or waits for its compute, says so through its blocker.
     if (
       leased.has(key) ||
       asking.has(key) ||
+      awaiting.has(key) ||
       failing.has(key) ||
       deferred.has(key) ||
       Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now ||
@@ -355,7 +357,8 @@ async function attention(
   // Workflows' own rows, so it is still here when that plugin is not.
   for (const blocker of blockers)
     add({
-      kind: 'work_blocked',
+      // A wait for its compute (session.await_compute) ends by itself: listed, never counted.
+      kind: blocker.provider === COMPUTE_PROVIDER ? 'work_waiting' : 'work_blocked',
       instanceId: blocker.instanceId,
       since: blocker.since,
       code: blocker.code,
@@ -462,8 +465,9 @@ async function attention(
   return {
     observedAt,
     thresholds: { ...limits },
-    // A target still being retried needs nobody yet, so it is listed but not counted.
-    total: items.length - counts.dispatch_failing,
+    // A target still being retried, or work waiting for its compute, needs nobody yet, so it is
+    // listed but not counted.
+    total: items.length - counts.dispatch_failing - counts.work_waiting,
     counts,
     items: items.slice(0, stuckLimit),
     truncated: items.length > stuckLimit,

@@ -121,13 +121,16 @@ export interface InvocationHost {
   }>;
   /** Refuses while a queued operator message waits for the worker's acknowledgement. */
   acknowledged(sessionId: string, tx: Transaction): Promise<void>;
+  /** Whether the visit is offered session.await_compute; asked holding no snapshot. */
+  awaits(session: Session): Promise<boolean>;
 }
 
 /**
  * Tools every worker has whatever its assignment names, which need only its live lease:
- * acknowledging a message, and ending its visit with a question for its owner.
+ * acknowledging a message, and ending its visit with a question for its owner or to wait for its
+ * compute.
  */
-const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
+const workerTools = new Set(['session.message.ack', 'session.ask_owner', 'session.await_compute']);
 /**
  * What an inquiry visit may call: the project's reads, and its one write, the reply to the
  * question it answers. Sessions' guard holds its credential to reads; this is the tool rule,
@@ -157,17 +160,17 @@ export class SessionInvocations implements SessionToolPolicy {
     let known = this.toolNames.get(id);
     if (!known || this.clock() - known.at >= 60_000) {
       // The listing's own Scope decision checked the lease; this reads the policy it froze.
-      known = await this.host.reading(async (tx) => {
-        const session = await this.host.callSession(caller, tx);
-        return {
-          names: new Set([
-            ...session.execution.policy.tools.map((tool) => tool.name),
-            // Only a work visit that keeps a conversation can wait for its owner's answer.
-            ...(session.continuity && session.kind === 'work' ? ['session.ask_owner'] : []),
-          ]),
-          at: this.clock(),
-        };
-      });
+      const session = await this.host.reading((tx) => this.host.callSession(caller, tx));
+      known = {
+        names: new Set([
+          ...session.execution.policy.tools.map((tool) => tool.name),
+          // Only a work visit that keeps a conversation can wait for its owner's answer, and one
+          // that also runs long Sandboxes compute for that compute.
+          ...(session.continuity && session.kind === 'work' ? ['session.ask_owner'] : []),
+          ...((await this.host.awaits(session)) ? ['session.await_compute'] : []),
+        ]),
+        at: this.clock(),
+      };
       if (this.toolNames.size >= 1000) this.toolNames.clear();
       this.toolNames.set(id, known);
     }

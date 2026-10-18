@@ -1230,6 +1230,12 @@
       "published": true
     },
     {
+      "component": "sessions",
+      "version": 25,
+      "hash": "1127c0768e31298e8214b559486cda46c4386d9336f6f93e2554b23b7684baf2",
+      "published": false
+    },
+    {
       "component": "fleet_workflow",
       "version": 7,
       "hash": "1bb0457691d829a92e1b1980f7ac405106c98554b45824f256d17809cd613585",

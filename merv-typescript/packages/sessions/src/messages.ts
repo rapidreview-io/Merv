@@ -160,6 +160,8 @@ export interface MessageHost {
     instanceIds: string[],
     tx: Transaction,
   ): Promise<Map<string, { revision: number; ended: boolean }>>;
+  /** Ends the waits for compute the thread's agent started (`session.await_compute`). */
+  woken(tx: Transaction, projectId: string, threadId: string): Promise<void>;
 }
 
 /**
@@ -486,8 +488,9 @@ export class SessionMessages {
   }
   /**
    * A message to a thread waits for its live or next visit. It answers every question the thread
-   * asked that still stands, which lets dispatch offer that work again, and never one that no
-   * longer stands; a thread that takes no message otherwise (`takesMessage`) is refused.
+   * asked that still stands, and ends a wait for compute its agent started, either of which lets
+   * dispatch offer that work again, and never a question that no longer stands; a thread that
+   * takes no message otherwise (`takesMessage`) is refused.
    */
   private async toThread(
     caller: Caller,
@@ -540,6 +543,8 @@ export class SessionMessages {
       subjectId: thread.id,
       data: { messageId: id, threadId: thread.id, instanceId: thread.instance_id },
     });
+    // A message brings back a work whose agent waits for its compute: it reads the message first.
+    await this.host.woken(tx, caller.projectId, thread.id);
     if (open.length) {
       const at = isoNow(this.clock);
       await tx.run(

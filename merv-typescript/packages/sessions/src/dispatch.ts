@@ -74,10 +74,21 @@ const leaseSchema = z
   })
   .strict();
 /**
- * How long an answered question still withholds its work for the asking visit's conversation:
- * its runner declares it when its process ends, within a minute's grace of the question.
+ * How long an answered question, or a settled wait for compute, still withholds its work for the
+ * conversation of the visit that ended for it: its runner declares it when its process ends,
+ * within a minute's grace.
  */
 export const declaredWithinMs = 10 * 60_000;
+/**
+ * Whether the conversation of the visit that row `a` names (its `session_id`, on its `thread_id`)
+ * has yet to reach Merv: until its runner has uploaded it (declared only, the next visit could not
+ * fetch it) or a later visit of the thread ran, the next visit would resume an older one.
+ */
+const conversationPending = (a: string) => `EXISTS (
+  SELECT 1 FROM session_threads t JOIN worker_sessions v ON v.id=${a}.session_id
+   WHERE t.id=${a}.thread_id AND t.status<>'retired'
+     AND (t.latest_session_id IS DISTINCT FROM ${a}.session_id OR t.uploaded_at IS NULL)
+     AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work' AND s._merv_rowid>v._merv_rowid))`;
 /** How many questions one lease tries when its machine is refused one. */
 const INQUIRY_TRIES = 3;
 /** The closes that count against a target: its process failed to launch or to stay up. */
@@ -530,29 +541,42 @@ export class SessionDispatch {
   async candidates(caller: Caller, tx: Transaction) {
     const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
+    /** The project's targets a query of `instance_id,revision` rows names. */
+    const targets = async (sql: string, ...params: string[]) =>
+      new Set(
+        (
+          await tx.all<{ instance_id: string; revision: number | string }>(
+            sql,
+            caller.projectId,
+            ...params,
+          )
+        ).map((row) =>
+          targetKey({ instanceId: row.instance_id, expectedRevision: Number(row.revision) }),
+        ),
+      );
+    const declared = new Date(this.clock() - declaredWithinMs).toISOString();
     // The revision an agent asked its owner at waits for the answer (`session.ask_owner`), and
-    // then for the asking visit's conversation, which the next visit resumes: until its runner
-    // has uploaded it (declared only, the next visit could not fetch it), or a later visit of the
-    // thread ran, or `declaredWithinMs` has passed.
-    const asking = new Set(
-      (
-        await tx.all<{ instance_id: string; revision: number | string }>(
-          `SELECT DISTINCT q.instance_id,q.revision FROM session_questions q WHERE q.project_id=?
-            AND (q.answered_at IS NULL OR (q.asked_at>? AND EXISTS (
-              SELECT 1 FROM session_threads t JOIN worker_sessions a ON a.id=q.session_id
-               WHERE t.id=q.thread_id AND t.status<>'retired'
-                 AND (t.latest_session_id IS DISTINCT FROM q.session_id OR t.uploaded_at IS NULL)
-                 AND NOT EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work' AND s._merv_rowid>a._merv_rowid))))`,
-          caller.projectId,
-          new Date(this.clock() - declaredWithinMs).toISOString(),
-        )
-      ).map((row) =>
-        targetKey({ instanceId: row.instance_id, expectedRevision: Number(row.revision) }),
-      ),
+    // then for the asking visit's conversation, which the next visit resumes, or for
+    // `declaredWithinMs` to pass.
+    const asking = await targets(
+      `SELECT DISTINCT q.instance_id,q.revision FROM session_questions q WHERE q.project_id=?
+        AND (q.answered_at IS NULL OR (q.asked_at>? AND ${conversationPending('q')}))`,
+      declared,
+    );
+    // The revision an agent ended its visit at to wait for its compute (`session.await_compute`)
+    // waits for that wait to settle or its until to pass, then for that visit's conversation too.
+    const awaiting = await targets(
+      `SELECT DISTINCT w.instance_id,w.revision FROM session_compute_waits w WHERE w.project_id=?
+        AND ((w.settled_at IS NULL AND w.wait_until>?) OR (w.created_at>? AND ${conversationPending('w')}))`,
+      isoNow(this.clock),
+      declared,
     );
     const queue = all.filter(
       (item) =>
-        item.role !== 'operator' && !live.has(targetKey(item)) && !asking.has(targetKey(item)),
+        item.role !== 'operator' &&
+        !live.has(targetKey(item)) &&
+        !asking.has(targetKey(item)) &&
+        !awaiting.has(targetKey(item)),
     );
     // A target that keeps failing on one revision is not retried for ever: the backoff only
     // spaces the attempts, so the hold is what ends them. An expiry after activation never
@@ -600,6 +624,7 @@ export class SessionDispatch {
       spent,
       unaccounted,
       asking,
+      awaiting,
     };
   }
   /** Whether the project's own budget holds back every automatic visit, inquiries too. */

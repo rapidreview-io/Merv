@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, pathSegment } from '@merv/contracts';
+import { check, clip, MervError, pathSegment } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
-import type { Session, Sessions } from './types.js';
+import type { ComputeWake, Session, Sessions } from './types.js';
 import { unknownEndpoint } from '@merv/api/errors';
+import { phrase } from './compute-waits.js';
 
 /**
  * What Sessions' HTTP routes and credentials use of Sessions. Each body, and the enrollment's
@@ -18,6 +19,7 @@ export type SessionRoutes = Pick<
   | 'observations'
   | 'threads'
   | 'messaging'
+  | 'computeWaits'
   | 'inquiries'
   | 'dispatch'
   | 'offer'
@@ -51,17 +53,26 @@ const leaseControls = new Set(['attach', 'workspace-result', 'heartbeat', 'relea
  * What a runner tells the worker it launches about the lease, sent with each attach: the runner
  * adds only what its harness and workspace give, then the frozen assignment. Only a visit that
  * keeps a conversation is told it may ask its owner: no later visit would continue another's.
+ * Only one offered session.await_compute (`awaits`) is told it may wait for its compute.
  */
-export const workerPrompt = (session: Session) =>
+export const workerPrompt = (session: Session, awaits = false) =>
   session.kind === 'inquiry'
     ? inquiryPrompt(session.inquiry.messageId)
     : [
+        // A woken visit's conversation ends with "stop now": how the wait went comes first.
+        ...(session.awaited ? [wakeLine(session.awaited)] : []),
         'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
         'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
         'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
         // A visit supervising long remote work was closed mid-turn at a deadline it never saw,
         // and its successor rebuilt what it knew: the deadline is said, with what to keep.
         `This visit's lease ends at ${session.hardDeadline}, ${leaseMinutes(session)} minutes after it was offered. Merv then closes the visit, mid-turn if need be, and a remote job still running does not extend it. Long work outlives a visit: as you go, keep in the project what the next visit needs to go on (the ids of jobs and workflows still running, checkpoints, what is left)${session.continuity ? '; the next visit continues this conversation.' : '; the next visit starts afresh from those records.'}`,
+        // Executors slept and polled for hours on runs they could only watch, visit after visit.
+        ...(awaits
+          ? [
+              'To wait for Sandboxes jobs or workflows that will run more than about 15 minutes, never sleep or poll: commit your work, release machines that run none of them, call session.await_compute with their ids, and stop. Your visit ends without counting against the work, they keep running, and the work comes back to you in this conversation once they have ended or one fails, when someone messages your thread, or by the until its result names, at the latest 15 minutes before a machine they run on reaches its lease end.',
+            ]
+          : []),
         'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
         // A successor resumed a conversation ten hours old as though it were the latest, and
         // rebuilt from the machine what the visit whose conversation never arrived had done.
@@ -70,7 +81,7 @@ export const workerPrompt = (session: Session) =>
           : []),
         // Agents blocked on a person ended their turn and were re-offered the same work, again
         // and again: a stop is no way to wait, so they are told what it does and what does wait.
-        `Do not end your turn without the handoff${session.continuity ? ' or session.ask_owner' : ''}. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.`,
+        `Do not end your turn without ${awaits ? 'the handoff, session.ask_owner or session.await_compute' : session.continuity ? 'the handoff or session.ask_owner' : 'the handoff'}. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.`,
         // Workers read the assignment's tool list as the boundary of what they may look at and
         // then invent what the project already holds. The list binds writes; reads are open.
         'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
@@ -86,6 +97,16 @@ export const workerPrompt = (session: Session) =>
 const missedVisits = ({ visits, from, to }: { visits: number; from: string; to: string }) => {
   const one = visits === 1;
   return `${one ? 'This work’s last visit' : `This work’s last ${visits} visits`}, from ${from} to ${to}, kept no conversation that reached Merv: any conversation you continue ends before ${one ? 'it' : 'them'}, and nothing ${one ? 'it' : 'they'} did is in it. Before you go on, read what ${one ? 'it' : 'they'} left in the project: its records, artifacts and commits, and the machines and jobs still running.`;
+};
+/** What the visit after one that ended to wait for its compute is told first: how the wait went. */
+const wakeLine = ({ awaitedAt, reason, outcome, until, settledAt, targets }: ComputeWake) => {
+  const waited = `the compute your last visit ended to wait for (session.await_compute at ${awaitedAt}: ${clip(reason, 500)})`;
+  const list = targets.map(phrase).join('; ');
+  return outcome === 'ended'
+    ? `Before anything else, read the results of ${waited}: everything it named has ended, or one ended without succeeding: ${list}.`
+    : outcome === 'deadline'
+      ? `Before anything else, check ${waited}: its until, ${until}, came first, and at the last check ${list}. Then go on, or await what still runs again.`
+      : `Before anything else, read any message to your thread, then check ${waited}: a person ended the wait at ${settledAt}, with a message or by starting this visit, and at the last check ${list}. Then go on, or await what still runs again.`;
 };
 /** A lease's length as its worker is told it, in whole minutes from its offer. */
 const leaseMinutes = (session: Session) =>
@@ -216,7 +237,12 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       // attach says so; self-hosted ones may still be running.
       return {
         session,
-        ...(action === 'attach' ? { launchConnections: true, prompt: workerPrompt(session) } : {}),
+        ...(action === 'attach'
+          ? {
+              launchConnections: true,
+              prompt: workerPrompt(session, await sessions.computeWaits.available(session)),
+            }
+          : {}),
       };
     }
   }

@@ -40,6 +40,8 @@ export type SessionOutcome =
   | 'machine_retired'
   /** The worker ended its visit asking its owner a question (`session.ask_owner`). */
   | 'asked_owner'
+  /** The worker ended its visit to wait for its Sandboxes compute (`session.await_compute`). */
+  | 'awaited_compute'
   /**
    * The model relay refused one of the visit's calls because the person they were charged to had
    * no tokens left today (the worker token budget), so it stopped: nothing about the work was
@@ -162,6 +164,7 @@ export type StuckKind =
   | 'dispatch_held'
   | 'dispatch_failing'
   | 'work_blocked'
+  | 'work_waiting'
   | 'work_deferred'
   | 'ready_quiet'
   | 'dispatch_disabled'
@@ -196,7 +199,8 @@ export interface StuckReport {
     /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
     refusalSeconds: number;
   };
-  /** What needs someone: every item except `dispatch_failing`, which is still being retried. */
+  /** What needs someone: every item except `dispatch_failing`, which is still being retried, and
+   *  `work_waiting`, which comes back by itself. */
   total: number;
   /** Every item by kind, before the 200 cap. */
   counts: Record<StuckKind, number>;

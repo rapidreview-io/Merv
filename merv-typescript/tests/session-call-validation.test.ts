@@ -278,3 +278,33 @@ test('a write gated by a read decision is refused when its lease row was release
     { code: 'refused' },
   );
 });
+
+test('a wait for compute is refused when its lease row was released before it commits', async (t) => {
+  const f = await fixture(t);
+  const { sessions } = f.app.ctx;
+  sessions.computeWaits.register({
+    offers: async () => true,
+    states: async ({ targets }) => ({
+      targets: targets.map((target) => ({ ...target, status: 'running' as const })),
+      idle: [],
+    }),
+  });
+  const input = { jobIds: ['job_a'], reason: 'Waited for after the lease ended?' };
+  const invocation = await sessions.invocations.prepare(
+    f.lease.worker,
+    'session.await_compute',
+    input,
+  );
+  await assert.rejects(
+    sessions.invocations.run(invocation, async (caller) => {
+      await ends[1]![1](f, f.lease); // Its lease row released.
+      const head = await f.app.ctx.state.eventHead();
+      await assert.rejects(sessions.computeWaits.await(caller, input), (error: { code?: string }) =>
+        ['session_closed', 'session_completed', 'stale_lease'].includes(error.code ?? ''),
+      );
+      assert.equal(await f.app.ctx.state.eventHead(), head, 'The refused write wrote nothing');
+      throw Object.assign(new Error('refused'), { code: 'refused' });
+    }),
+    { code: 'refused' },
+  );
+});

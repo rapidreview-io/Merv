@@ -407,7 +407,10 @@ export function rewindInquiries(): string {
   const added = [
     ...(sessionMigrations[23]! + sessionMigrations[24]!).matchAll(/ADD COLUMN (\w+)/g),
   ];
-  return `ALTER TABLE worker_sessions ${added.map(([, column]) => `DROP COLUMN ${column}`).join(',')};
+  return `DROP TABLE session_compute_waits;
+DROP FUNCTION session_compute_waits_guard();
+DELETE FROM component_migrations WHERE component='sessions' AND version=25;
+ALTER TABLE worker_sessions ${added.map(([, column]) => `DROP COLUMN ${column}`).join(',')};
 DELETE FROM component_migrations WHERE component='sessions' AND version IN (23,24);
 DROP TABLE session_question_responses;
 DELETE FROM component_migrations WHERE component='sessions' AND version=22;

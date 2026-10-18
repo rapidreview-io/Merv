@@ -44,13 +44,15 @@ export const capabilitiesSchema = z
   .max(16)
   .refine((items) => new Set(items).size === items.length);
 /**
- * A visit its worker ended by its own hand: its handoff, its question to its owner, or an
- * inquiry visit's reply. Hosted
- * Codex may finish the model call it had started for a minute after either, which Sessions and
- * the runner's grace both read here.
+ * A visit its worker ended by its own hand: its handoff, its question to its owner, its wait for
+ * its compute, or an inquiry visit's reply. Hosted Codex may finish the model call it had started
+ * for a minute after any of them, which Sessions and the runner's grace both read here.
  */
 export const ownEnd = (reason: string | null | undefined) =>
-  reason === 'handoff' || reason === 'asked_owner' || reason === 'inquiry_answered';
+  reason === 'handoff' ||
+  reason === 'asked_owner' ||
+  reason === 'awaited_compute' ||
+  reason === 'inquiry_answered';
 /**
  * Why a launch closed whose agent ended its turn with no handoff and no question: its process
  * exited 0. Nothing failed on the machine; the agent stopped, most often to wait for someone, and

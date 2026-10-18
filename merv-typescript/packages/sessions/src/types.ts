@@ -149,6 +149,8 @@ export interface WorkSession extends SessionVisit {
   kind: 'work';
   execution: WorkflowExecution;
   lease: WorkflowLease;
+  /** The wait its work's last visit ended for (`session.await_compute`), and how it ended. */
+  awaited?: ComputeWake;
 }
 /**
  * An inquiry visit: a person's question to its thread's agent. It resumes the thread's
@@ -353,6 +355,86 @@ export type LaunchConnectionsProvider = (
   session: Readonly<WorkSession>,
 ) => Promise<NativeMcpConnection[]>;
 
+/** A Sandboxes job or workflow a worker waits for with `session.await_compute`. */
+export interface ComputeTarget {
+  kind: 'job' | 'workflow';
+  id: string;
+}
+/** Where one stands, as the waiter read it for the waiting visit's own work and compute attempt. */
+export interface ComputeTargetState extends ComputeTarget {
+  /**
+   * `running`, a workflow also while its captures register; `succeeded`; `failed`, any other
+   * ending, a workflow's also when a capture of it was refused; `unknown`, no job or workflow of
+   * this work's current attempt.
+   */
+  status: 'running' | 'succeeded' | 'failed' | 'unknown';
+  /** Sandboxes' word for where it stands (`timed_out`, `registering_captures`, …). */
+  state?: string;
+  /** A finished job's exit code. */
+  exitCode?: number;
+}
+/** What the waiter reads for a wait: its targets, and what bounds how long it may last. */
+export interface ComputeStates {
+  /** One for each target asked about. */
+  targets: ComputeTargetState[];
+  /** The live machine an unfinished target runs on whose lease ends first, when it is deleted. */
+  lease?: { machine: string; endsAt: string };
+  /** When the unfinished target that ends last must have ended; only where each has a deadline. */
+  deadline?: { target: ComputeTarget; at: string };
+  /** The live machines of this work's attempt that run none of the unfinished targets. */
+  idle: string[];
+}
+/**
+ * The one provider Sessions asks where a wait's compute stands. It is called outside every
+ * transaction and bounded in time; a throw means "ask again later", never that a target is gone.
+ */
+export interface ComputeWaiter {
+  /** Whether a project's work can wait for its compute here at all; cheap, as it is cached. */
+  offers(projectId: string): Promise<boolean>;
+  states(input: {
+    projectId: string;
+    instanceId: string;
+    /** The visit that waits: the waiter knows its compute attempt from its own record of it. */
+    sessionId: string;
+    targets: readonly ComputeTarget[];
+  }): Promise<ComputeStates>;
+}
+/** What a woken visit is told of the wait its work's last visit ended for. */
+export interface ComputeWake {
+  /** When that visit ended. */
+  awaitedAt: string;
+  reason: string;
+  /** Everything ended or one failed, its until came first, or a person ended it sooner. */
+  outcome: 'ended' | 'deadline' | 'woken';
+  until: string;
+  settledAt: string;
+  /** Where its targets stood at the last check. */
+  targets: ComputeTargetState[];
+}
+/** A wait as its worker's call answers it: until when, and the bound that set that time. */
+export interface ComputeWaitView {
+  id: string;
+  reason: string;
+  until: string;
+  why: string;
+  targets: ComputeTargetState[];
+}
+export interface ComputeWaitInput {
+  jobIds?: string[];
+  workflowIds?: string[];
+  reason: string;
+  /** How long it may last at most; 1440 when left out. */
+  minutes?: number;
+}
+export interface SessionComputeWaits {
+  /** The one waiter, until disposed; disposing it leaves every wait as it is. */
+  register(waiter: ComputeWaiter): () => void;
+  /** Whether this visit is offered session.await_compute. */
+  available(session: Readonly<Session>): Promise<boolean>;
+  /** The worker ends its visit to wait for its compute; the work waits with it. */
+  await(caller: Caller, input: ComputeWaitInput): Promise<ComputeWaitView>;
+}
+
 export interface Sessions {
   /** One private launch provider; issuance runs outside state transactions. */
   registerLaunchConnections(provider: LaunchConnectionsProvider): () => void;
@@ -437,6 +519,8 @@ export interface Sessions {
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   /** Operator messages to a live session, read and acknowledged by its worker. */
   readonly messaging: SessionMessaging;
+  /** A worker's wait for its Sandboxes compute, its visit ended (`session.await_compute`). */
+  readonly computeWaits: SessionComputeWaits;
   /** A person's questions to any thread's agent, each answered by a read-only inquiry visit. */
   readonly inquiries: SessionInquiries;
   findSession(
