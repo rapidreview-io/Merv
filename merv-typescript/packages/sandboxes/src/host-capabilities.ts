@@ -5,6 +5,7 @@ export const sandboxesHostCapabilities = [
   'sbxPipelines',
   'sbxObjects',
   'sbxAccounts',
+  'sbxAuth',
   'sbxBilling',
   'sbxProviders',
   'sbxVault',

@@ -72,7 +72,7 @@ test('deployment loads the in-process host, integration and standalone console',
   assert.deepEqual(plugin('sandboxes-integration'), {
     id: 'sandboxes-integration',
     name: '@merv/sandboxes/integration',
-    config: { legacyCaptures: { namespace: 'merv-ml' } },
+    config: { legacyCaptures: { namespace: 'merv-ml' }, newPersonCredits: {} },
   });
   assert.deepEqual(plugin('sandboxes-console'), {
     id: 'sandboxes-console',
@@ -110,6 +110,40 @@ test('deployment without a Sandboxes database omits Sandboxes, Fleet and Pi', (t
   assert.ok(
     JSON.parse(readFileSync(output)).plugins.every((p) => !/^(sandboxes|fleet|pi)/.test(p.id)),
   );
+});
+
+test('welcome credits render from MERV_NEW_PERSON_CREDITS: providers to positive USD text', (t) => {
+  const { run, plugin } = renderer(t);
+  const credits = (value) => {
+    const result = run({ MERV_NEW_PERSON_CREDITS: value });
+    return result.status === 0 ? plugin('sandboxes-integration').config.newPersonCredits : null;
+  };
+  assert.deepEqual(credits('{"lambda":"10"}'), { lambda: '10' });
+  assert.deepEqual(credits('{"lambda":"0.5","fake":"2.123456"}'), {
+    lambda: '0.5',
+    fake: '2.123456',
+  });
+  assert.deepEqual(credits('{}'), {});
+  for (const broken of [
+    '',
+    'lambda=10',
+    '[]',
+    'null',
+    '"10"',
+    '{"lambda":10}',
+    '{"lambda":"0"}',
+    '{"lambda":"0.000"}',
+    '{"lambda":"-1"}',
+    '{"lambda":"1e3"}',
+    '{"lambda":" 10"}',
+    '{"lambda":"1.1234567"}',
+    '{"Lambda":"10"}',
+    '{"":"10"}',
+  ]) {
+    const result = run({ MERV_NEW_PERSON_CREDITS: broken });
+    assert.notEqual(result.status, 0, broken);
+    assert.match(result.stderr, /invalid MERV_NEW_PERSON_CREDITS/i, broken);
+  }
 });
 
 test('accepted work lands on main only once MERV_CODE_MAIN_LANDING is on', (t) => {

@@ -1,16 +1,16 @@
 {
   "snapshot": "2026-10-18",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 78,
-  "serviceProviders": 35,
+  "pluginCount": 79,
+  "serviceProviders": 36,
   "toolAdapters": 19,
   "uiAdapters": 16,
   "apiAdapters": 5,
   "defaultEntries": 57,
   "apiEntries": 44,
-  "serverPlugins": 77,
+  "serverPlugins": 78,
   "machinePlugins": 1,
-  "directDependencyCount": 248,
+  "directDependencyCount": 253,
   "optionalDependencyCount": 17,
   "directConsumers": {
     "api": 10,
@@ -38,7 +38,8 @@
     "reviews": 8,
     "runner": 0,
     "sandboxEvidence": 3,
-    "scope": 31,
+    "sandboxesPeople": 0,
+    "scope": 32,
     "secrets": 2,
     "sessions": 10,
     "state": 26,
@@ -50,9 +51,10 @@
     "sbxMerv": 5,
     "sbxPipelines": 2,
     "sbxObjects": 2,
-    "sbxAccounts": 2,
-    "sbxBilling": 1,
-    "sbxProviders": 1,
+    "sbxAccounts": 3,
+    "sbxAuth": 1,
+    "sbxBilling": 2,
+    "sbxProviders": 2,
     "sbxVault": 1,
     "sbxResourceLimits": 1,
     "sbxRegistry": 2,
@@ -946,6 +948,24 @@
       "defaultConfiguration": false
     },
     {
+      "plugin": "merv-sandboxes-people",
+      "source": "packages/sandboxes/src/people.ts",
+      "provides": [
+        "sandboxesPeople"
+      ],
+      "requires": [
+        "scope",
+        "sbxAuth",
+        "sbxAccounts",
+        "sbxBilling",
+        "sbxProviders"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-scope",
       "source": "packages/scope/src/index.ts",
       "provides": [
@@ -1237,6 +1257,7 @@
         "sbxPipelines",
         "sbxObjects",
         "sbxAccounts",
+        "sbxAuth",
         "sbxBilling",
         "sbxProviders",
         "sbxVault",

@@ -56,6 +56,7 @@ flowchart BT
     reviews["reviews"]
     sandboxEvidence["sandboxEvidence"]
     merv_sandboxes_console["merv-sandboxes-console"]
+    sandboxesPeople["sandboxesPeople"]
     scope["scope"]
     merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
@@ -283,6 +284,11 @@ flowchart BT
   merv_sandboxes_console --> sbxMerv
   merv_sandboxes_console --> sbxMerv
   merv_sandboxes_console --> sbxMerv
+  sandboxesPeople --> scope
+  sandboxesPeople --> sbxMerv
+  sandboxesPeople --> sbxMerv
+  sandboxesPeople --> sbxMerv
+  sandboxesPeople --> sbxMerv
   scope --> state
   merv_scope_api --> scope
   merv_scope_api --> api

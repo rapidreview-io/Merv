@@ -269,7 +269,7 @@
         "id": "integrations",
         "label": "External service adapters",
         "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
-        "members": ["mounts", "nisa", "web", "sbxMerv", "sandboxEvidence"]
+        "members": ["mounts", "nisa", "web", "sbxMerv", "sandboxEvidence", "sandboxesPeople"]
       },
       {
         "id": "runtime",
