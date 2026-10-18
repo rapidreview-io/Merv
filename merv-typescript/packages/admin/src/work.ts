@@ -1,7 +1,6 @@
-import type { Context } from 'cordis';
 import type { DelegationSource } from '@merv/contracts';
 import type { AdminWork, AdminWorkRow } from './models.js';
-import { personLabel, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
+import { personLabel, type AdminEnv } from './index.js';
 
 /**
  * The work table: every unit of work running anywhere, and every unit that ended in the last
@@ -11,36 +10,24 @@ import { personLabel, type AdminEnv, type AdminIdentity, type AdminRoutes } from
  * Experiments', an agent's need is Sessions'. Intentionally global: never expose it through
  * project-scoped tools or machine keys.
  */
-export async function adminWork(
-  ctx: Context,
-  admins: readonly AdminIdentity[],
-): Promise<AdminWork> {
+export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
   const at = new Date().toISOString();
   const since = new Date(Date.parse(at) - 86_400_000).toISOString();
-  const [workflows, sessions, fleet, pi, tasks, reflections, customers, scope] = [
-    ctx.get('workflows'),
-    ctx.get('sessions'),
-    ctx.get('fleet'),
-    ctx.get('pi'),
-    ctx.get('tasks'),
-    ctx.get('reflections'),
-    ctx.get('customerExperiments'),
-    ctx.get('scope'),
-  ] as const;
-  const work = (await workflows?.platformWork(since)) ?? [];
-  const all = work.map(({ id }) => id);
-  const turns = (await pi?.platformTurns(since)) ?? [];
-  const visits = await sessions?.running.platform(work);
+  const work = (await ctx.get('workflows')?.platformWork(since)) ?? [];
+  const ids = work.map(({ id }) => id);
+  const turns = (await ctx.get('pi')?.platformTurns(since)) ?? [];
+  const visits = await ctx.get('sessions')?.running.platform(work);
   const machines = new Map(
     // By its id, and by the unit it serves: a unit Sessions has no visit on yet still has one.
-    ((await fleet?.platformAllocations()) ?? []).flatMap((a) => [
+    ((await ctx.get('fleet')?.platformAllocations()) ?? []).flatMap((a) => [
       [a.id, a],
       [a.work ?? a.id, a],
     ]),
   );
-  const types = await tasks?.platformTypes(all);
-  const lenses = await reflections?.platformLenses(all);
-  const standalone = await customers?.customers(work);
+  const types = await ctx.get('tasks')?.platformTypes(ids);
+  const lenses = await ctx.get('reflections')?.platformLenses(ids);
+  const standalone = await ctx.get('customerExperiments')?.customers(work);
+  const scope = ctx.get('scope');
   const { people, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
   const names = new Map(projects.map(({ id, name }) => [id, name]));
 
@@ -73,6 +60,7 @@ export async function adminWork(
       : null;
   const project = (id: string) => ({ id, name: names.get(id) ?? id });
 
+  // Unordered: the page puts what needs someone first.
   const rows: AdminWorkRow[] = [
     ...work.map((unit) => {
       const { visit = null, usage = null } = visits?.get(unit.id) ?? {};
@@ -80,9 +68,9 @@ export async function adminWork(
       return {
         id: unit.id,
         kind: unit.workflow,
-        type: types?.get(unit.id) ?? null,
+        type: types?.get(unit.id),
         title: lenses?.get(unit.id)?.name ?? unit.name,
-        parent: lenses?.get(unit.id)?.reflectionId ?? null,
+        parent: lenses?.get(unit.id)?.reflectionId,
         project: project(unit.projectId),
         // A standalone experiment's person is its customer, by sign-in, else the email they gave.
         person: !found
@@ -93,9 +81,8 @@ export async function adminWork(
         state: unit.state,
         terminal: unit.terminal,
         attention: [
-          ...unit.blockers.map(({ provider, code, message }) => ({
+          ...unit.blockers.map(({ code, message }) => ({
             reason: 'blocker' as const,
-            provider,
             code,
             message,
           })),
@@ -116,25 +103,16 @@ export async function adminWork(
     ...turns.map((turn) => ({
       id: `${turn.conversationId}/${turn.id}`,
       kind: 'pi',
-      type: null,
       title: turn.title,
-      parent: null,
       project: project(turn.projectId),
       person: member(identity(turn.source) ?? byActor.get(turn.source.actorId), turn.projectId),
       state: turn.status,
       terminal: !turn.live,
       attention: [],
-      agent: null,
       machine: machine(machines.get(turn.runtimeId)),
       lastActivity: turn.completedAt ?? turn.startedAt ?? turn.createdAt,
       createdAt: turn.createdAt,
-      cost: null,
     })),
   ];
-  // Unordered: the page puts what needs someone first.
   return { rows, at };
 }
-
-export const workRoutes = (env: AdminEnv): AdminRoutes => ({
-  'GET /admin/work': async () => await adminWork(env.ctx, env.admins),
-});

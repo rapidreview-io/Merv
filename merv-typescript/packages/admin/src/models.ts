@@ -7,8 +7,6 @@ import type { RunningPhrase } from '@merv/contracts/running';
 /** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
 export interface AdminAttention {
   reason: 'blocker' | 'allowance' | 'customer' | 'agent';
-  /** The blocker's publisher. */
-  provider?: string;
   code: string;
   /** The owner's words, where it has any: an agent's need is a phrase Sessions writes. */
   message?: string | RunningPhrase;
@@ -18,17 +16,17 @@ export interface AdminWorkRow {
   /** The owner's workflow name (`task`, `service_experiment`), `pi` for an Agent turn. */
   kind: string;
   /** The owner's type name, where it has one (`task.work`). */
-  type: string | null;
+  type?: string;
   title: string;
   /** The unit it is part of, which the table draws it under: a lens's reflection. */
-  parent: string | null;
+  parent?: string;
   project: { id: string; name: string };
   person: string;
   state: string;
   terminal: boolean;
   attention: AdminAttention[];
   /** The live work visit at the unit's revision. */
-  agent: { role: string; status: string } | null;
+  agent?: { role: string; status: string } | null;
   machine: {
     phase: string;
     profile: string | null;
@@ -38,7 +36,7 @@ export interface AdminWorkRow {
   lastActivity: string;
   createdAt: string;
   /** Its closed work visits; runners report tokens unverified, and no visit reports a price. */
-  cost: {
+  cost?: {
     sessions: number;
     reportedSessions: number;
     wallMs: number;
@@ -53,10 +51,7 @@ export interface AdminWork {
   at: string;
 }
 
-interface Tokens {
-  used: number;
-  limit: number;
-}
+type Tokens = Record<'used' | 'limit', number>;
 /** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
 export interface AdminCredits {
   at: string;
@@ -83,39 +78,18 @@ export interface CreditAccount {
   name: string;
   /** The Merv projects whose agents spend from it. */
   projects: { projectId: string; name: string }[];
-  pools: {
-    provider: string;
-    granted: string;
-    used: string;
-    reserved: string;
-    available: string;
-    expired: string;
-    revoked: string;
-  }[];
-  grants: {
-    id: string;
-    provider: string;
-    amount: string;
-    used: string;
-    reserved: string;
-    available: string;
-    valid_from: string;
-    expires_at: string | null;
-    revoked_at: string | null;
-    schedule_id: string | null;
-    created_at: string;
-    reason: string;
-  }[];
-  schedules: {
-    id: string;
-    provider: string;
-    amount: string;
-    starts_at: string;
+  /** Sandboxes' pools, of which the page reads what is granted and what is left. */
+  pools: { provider: string; granted: string; available: string }[];
+  /** Each grant's money as decimal text, its times as ISO text. */
+  grants: (Record<'id' | 'provider' | 'amount' | 'used' | 'reserved' | 'available', string> &
+    Record<'valid_from' | 'created_at' | 'reason', string> &
+    Record<'expires_at' | 'revoked_at' | 'schedule_id', string | null>)[];
+  schedules: (Record<'id' | 'provider' | 'amount' | 'starts_at', string> & {
     cadence: 'daily' | 'weekly' | 'monthly';
     validity_periods: number | null;
     ends_at: string | null;
     enabled: boolean;
-  }[];
+  })[];
   /** Budget caps (`infra_policies`): a limit of their own, never part of the credits. */
   budgets: {
     id: string;
@@ -126,26 +100,24 @@ export interface CreditAccount {
   }[];
 }
 
-export interface AdminCredential {
-  env: string;
-  /** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
+/** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
+interface EnvName {
   plugin: string;
   field: string;
+  env: string;
+}
+type Outcome = Record<'at' | 'relay' | 'model', string>;
+export interface AdminCredential extends EnvName {
   set: boolean;
   /** The first 8 hex of the value's SHA-256; never the value. */
   fingerprint: string | null;
   /** Every other name and field that holds the same value. */
-  sharedWith: { plugin: string; field: string; env: string }[];
+  sharedWith: EnvName[];
   /** When the value last changed, once this page has seen it change. */
   lastChanged: string | null;
-  lastOk: { at: string; relay: string; model: string } | null;
-  lastFailure: {
-    at: string;
-    relay: string;
-    model: string;
-    status: number | null;
-    code: string | null;
-  } | null;
+  /** Fleet's relay's last call the provider answered, and its last that failed. */
+  lastOk: Outcome | null;
+  lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
   /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
   dead: boolean;
 }
@@ -171,12 +143,6 @@ export interface AdminCredentials {
   at: string;
   groups: AdminCredentialGroup[];
   /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
-  minted: {
-    owner: string;
-    kind: string;
-    live: number | string;
-    soonestExpiry: string | null;
-    revokedLastDay: number | string;
-    newestIssued: string;
-  }[];
+  minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
+    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
 }

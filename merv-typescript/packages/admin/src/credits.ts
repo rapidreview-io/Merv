@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { z } from 'zod';
+import { z, type ZodType, type ZodTypeDef } from 'zod';
 import type {} from '@sandboxes/accounts';
 import type {} from '@sandboxes/auth';
 import type {} from '@sandboxes/billing';
@@ -11,31 +11,25 @@ import { personKey } from '@merv/fleet/model-ledger';
 import type {} from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
 import type { AdminCredits, CreditAccount } from './models.js';
-import { personLabel, type AdminEnv, type AdminRoutes } from './index.js';
+import { personLabel, type AdminEnv, type AdminRoute, type AdminRoutes } from './index.js';
 
 const refusals = mervRefusals(MervError);
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
 /** Syntax alone: CreditService refuses the values, but an amount it cannot parse would be a 500. */
-const usd = z.string().regex(/^\d+(\.\d+)?$/);
+const terms = {
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
+  accountId: z.string().min(1).max(48),
+  provider: z.string(),
+  amount: z.string().regex(/^\d+(\.\d+)?$/),
+};
 const time = z.string().datetime({ offset: true });
-const target = { accountId: z.string().min(1).max(48), provider: z.string() };
 /** `id` is the grant's own, and its idempotency key: reused, it must repeat the same terms. */
 const grantInput = z
-  .object({
-    id,
-    ...target,
-    amount: usd,
-    validFrom: time,
-    expiresAt: time.optional(),
-    reason: z.string(),
-  })
+  .object({ ...terms, validFrom: time, expiresAt: time.nullable().optional(), reason: z.string() })
   .strict();
 /** Terms are immutable: the same `id` only enables or disables the schedule. */
 const scheduleInput = z
   .object({
-    id,
-    ...target,
-    amount: usd,
+    ...terms,
     cadence: z.enum(['daily', 'weekly', 'monthly']),
     startsAt: time,
     validityPeriods: z.number().int().nullable(),
@@ -59,9 +53,8 @@ function sandboxes(ctx: Context) {
   return { billing, accounts, auth, providers };
 }
 type Sandboxes = ReturnType<typeof sandboxes>;
-
-const plugins = async (sbx: Sandboxes) =>
-  [...new Set((await sbx.providers.connections.list()).map((c) => c.plugin))].sort();
+/** An account no credit was ever granted in. */
+const UNFUNDED = { pools: [], grants: [], schedules: [] };
 
 async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
@@ -88,11 +81,7 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   ]);
   const accounts: CreditAccount[] = [];
   for (const accountId of [...ids].sort()) {
-    const { pools, grants, schedules } = balances.get(accountId) ?? {
-      pools: [],
-      grants: [],
-      schedules: [],
-    };
+    const { pools, grants, schedules } = balances.get(accountId) ?? UNFUNDED;
     accounts.push({
       accountId,
       name: (await sbx.accounts.get(accountId)).name,
@@ -112,9 +101,10 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   const keys = people.map((p) => personKey(p, { projectId: '', actorId: '' }));
   const days = await env.ctx.get('fleet')?.peopleToday(keys);
   const tokens = await env.ctx.get('pi')?.tokensToday(keys);
+  const connections = await sbx.providers.connections.list();
   return {
     at: new Date().toISOString(),
-    providers: await plugins(sbx),
+    providers: [...new Set(connections.map((c) => c.plugin))].sort(),
     people: people.map((person, i) => ({
       label:
         personLabel(env.admins, person) ??
@@ -131,52 +121,45 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
 
 /** Writes go through CreditService alone, and each is kept in the admin audit log. */
 export function creditRoutes(env: AdminEnv): AdminRoutes {
+  /** A write whose body names its own id and account: done, it answers that id. */
+  const write =
+    <T extends { id: string; accountId: string }>(
+      action: string,
+      input: ZodType<T, ZodTypeDef, unknown>,
+      apply: (sbx: Sandboxes, body: T) => Promise<unknown>,
+    ): AdminRoute =>
+    async (r, who) => {
+      const sbx = sandboxes(env.ctx);
+      const body = await r.json(input);
+      await refusals.call(() => apply(sbx, body));
+      await env.audit.record(who, action, body.accountId, body);
+      return { id: body.id };
+    };
+  const instant = (at: string | null | undefined) => (at ? Instant.parseIso(at) : null);
   return {
     'GET /admin/credits': async () => await refusals.call(() => credits(env)),
-    'POST /admin/credits/grants': async (r, who) => {
-      const sbx = sandboxes(env.ctx);
-      const input = await r.json(grantInput);
-      await refusals.call(() =>
-        sbx.billing.credits.grant({
-          ...input,
-          amount: Decimal.parse(input.amount),
-          validFrom: Instant.parseIso(input.validFrom),
-          expiresAt: input.expiresAt ? Instant.parseIso(input.expiresAt) : null,
-        }),
-      );
-      await env.audit.record({
-        ...who,
-        action: 'credits.grant',
-        target: input.accountId,
-        detail: input,
-      });
-      return { id: input.id };
-    },
-    'POST /admin/credits/schedules': async (r, who) => {
-      const sbx = sandboxes(env.ctx);
-      const input = await r.json(scheduleInput);
-      await refusals.call(() =>
-        sbx.billing.credits.setSchedule({
-          ...input,
-          amount: Decimal.parse(input.amount),
-          startsAt: Instant.parseIso(input.startsAt),
-          endsAt: input.endsAt ? Instant.parseIso(input.endsAt) : null,
-        }),
-      );
-      await env.audit.record({
-        ...who,
-        action: 'credits.schedule',
-        target: input.accountId,
-        detail: input,
-      });
-      return { id: input.id, enabled: input.enabled };
-    },
+    'POST /admin/credits/grants': write('credits.grant', grantInput, (sbx, input) =>
+      sbx.billing.credits.grant({
+        ...input,
+        amount: Decimal.parse(input.amount),
+        validFrom: Instant.parseIso(input.validFrom),
+        expiresAt: instant(input.expiresAt),
+      }),
+    ),
+    'POST /admin/credits/schedules': write('credits.schedule', scheduleInput, (sbx, input) =>
+      sbx.billing.credits.setSchedule({
+        ...input,
+        amount: Decimal.parse(input.amount),
+        startsAt: Instant.parseIso(input.startsAt),
+        endsAt: instant(input.endsAt),
+      }),
+    ),
     'POST /admin/credits/grants/:id/revoke': async (r, who) => {
       const sbx = sandboxes(env.ctx);
       const grant = pathSegment(r.url.pathname.split('/')[4]!);
       await refusals.call(() => sbx.billing.credits.revokeGrant(grant));
-      await env.audit.record({ ...who, action: 'credits.revoke', target: grant });
-      return { id: grant, revoked: true };
+      await env.audit.record(who, 'credits.revoke', grant);
+      return { id: grant };
     },
   };
 }

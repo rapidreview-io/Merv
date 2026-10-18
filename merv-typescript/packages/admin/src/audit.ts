@@ -1,4 +1,5 @@
 import { newId, type Data, type State } from '@merv/contracts';
+import type { AdminIdentity } from './index.js';
 
 /** Published migrations: production pins each text by its digest, never edit one. */
 export const auditMigrations = {
@@ -14,31 +15,23 @@ export const auditMigrations = {
   CREATE INDEX admin_audit_at ON admin_audit(at);`,
 };
 
-export interface AuditEntry {
-  issuer: string;
-  subject: string;
-  /** What the admin did: `credits.grant`, `project.read`, … */
-  action: string;
-  /** The account, project or record it touched. */
-  target: string;
-  detail?: Data;
-}
-
 /** Who did what as a platform admin, kept for good. */
 export class AdminAudit {
   constructor(private readonly state: State) {}
 
-  async record(entry: AuditEntry): Promise<void> {
+  /** `action` is what `who` did (`credits.grant`, `project.read`, …), `target` the account,
+   *  project or record it touched. */
+  async record(who: AdminIdentity, action: string, target: string, detail: Data = {}) {
     await this.state.transaction((sql) =>
       sql.run(
         'INSERT INTO admin_audit(id,at,issuer,subject,action,target,detail_json) VALUES(?,?,?,?,?,?,?)',
         newId('audit'),
         new Date().toISOString(),
-        entry.issuer,
-        entry.subject,
-        entry.action,
-        entry.target,
-        JSON.stringify(entry.detail ?? {}),
+        who.issuer,
+        who.subject,
+        action,
+        target,
+        JSON.stringify(detail),
       ),
     );
   }

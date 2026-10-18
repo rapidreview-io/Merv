@@ -1,7 +1,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import { check, MervError, type Caller } from '@merv/contracts';
 import type {} from '@merv/customer-experiments/models';
-import type { AdminEnv, AdminIdentity, AdminRoutes } from './index.js';
+import { adminNamed, type AdminEnv, type AdminIdentity, type AdminRoutes } from './index.js';
 
 /** One `project.read` or `standalone.read` entry stands for an admin's reads for this long. */
 const AUDIT_EVERY_MS = 3600_000;
@@ -16,17 +16,14 @@ export function platformRead({ ctx, audit, admins }: AdminEnv): AdminRoutes {
   // Scope asks inside a reader's snapshot, where nothing may write: the audit runs outside it.
   const detached = AsyncResource.bind((fn: () => void) => fn());
   /** One entry an hour per admin, action and target, however often the admin reads. */
-  const read = ({ issuer, subject }: AdminIdentity, action: string, target: string) => {
-    const key = JSON.stringify([issuer, subject, action, target]);
+  const read = (who: AdminIdentity, action: string, target: string) => {
+    const key = JSON.stringify([who.issuer, who.subject, action, target]);
     if (Date.now() - (audited.get(key) ?? 0) < AUDIT_EVERY_MS) return;
     audited.set(key, Date.now());
-    const entry = { issuer, subject, action, target };
-    detached(() => void audit.record(entry).catch(() => audited.delete(key)));
+    detached(() => void audit.record(who, action, target).catch(() => audited.delete(key)));
   };
   const vouches = ({ platform, projectId }: Caller) => {
-    const who = admins.find(
-      (a) => a.issuer === platform?.issuer && a.subject === platform?.subject,
-    );
+    const who = platform && adminNamed(admins, platform);
     if (who) read(who, 'project.read', projectId);
     return !!who;
   };

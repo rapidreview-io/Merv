@@ -163,7 +163,8 @@ test('the work table reads every project’s open and recent work through its ow
       ? { customers: store.customers.bind(store) }
       : app.ctx.get(name as 'state');
 
-  const view = await adminWork({ get } as never, [{ issuer, subject: 'ada', label: 'Ada L.' }]);
+  const admins = [{ issuer, subject: 'ada', label: 'Ada L.' }];
+  const view = await adminWork({ ctx: { get }, admins } as never);
   const row = (id: string) => view.rows.find((item) => item.id === id)!;
   assert.equal(row(old.id), undefined, 'ended more than a day ago');
   assert.equal(row(shipped.id).terminal, true);
@@ -171,7 +172,6 @@ test('the work table reads every project’s open and recent work through its ow
   assert.deepEqual(row(open.id).attention, [
     {
       reason: 'blocker',
-      provider: 'code',
       code: 'code_base_blocked',
       message: 'The base of this unit could not be made (blocked_infra)',
     },
@@ -194,7 +194,9 @@ test('the work table reads every project’s open and recent work through its ow
   assert.equal(leased.machine, null);
   assert.equal(leased.cost, null);
   await sessions.release(owner, { sessionId: visit.id, runnerId: 'machine' });
-  const after = (await adminWork({ get } as never, [])).rows.find((item) => item.id === task.id)!;
+  const after = (await adminWork({ ctx: { get }, admins: [] } as never)).rows.find(
+    (item) => item.id === task.id,
+  )!;
   assert.equal(after.agent, null);
   assert.deepEqual(after.cost, {
     sessions: 1,
@@ -231,7 +233,7 @@ test('Pi turns are rows of the table, with the Fleet machine their host slot run
   const conversation = await f.create();
   const command = await f.send(conversation);
   const get = (name: string) => ({ pi: f.pi, fleet: f.fleet, scope: f.scope })[name as 'pi'];
-  const view = await adminWork({ get } as never, []);
+  const view = await adminWork({ ctx: { get }, admins: [] } as never);
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
   // A command id is unique only within its conversation, so the row's names both.

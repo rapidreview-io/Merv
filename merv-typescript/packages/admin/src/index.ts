@@ -7,7 +7,7 @@ import { AdminAudit, auditMigrations } from './audit.js';
 import { adminCredentials, credentialMigrations } from './credentials.js';
 import { creditRoutes } from './credits.js';
 import { platformRead } from './platform.js';
-import { workRoutes } from './work.js';
+import { adminWork } from './work.js';
 
 const identity = z
   .object({
@@ -18,23 +18,24 @@ const identity = z
   .strict();
 export type AdminIdentity = z.infer<typeof identity>;
 
-/** The configured admin a verified human principal is, if any. */
-export function adminOf(
-  principal: ApiPrincipal | undefined,
+/** The configured admin with this sign-in, if any. */
+export const adminNamed = (
   admins: readonly AdminIdentity[],
-): AdminIdentity | undefined {
-  if (principal?.kind !== 'user' || !('user' in principal)) return undefined;
-  const { issuer, subject } = principal.user;
-  return admins.find((a) => a.issuer === issuer && a.subject === subject);
-}
+  { issuer, subject }: { issuer: string; subject: string },
+) => admins.find((a) => a.issuer === issuer && a.subject === subject);
+/** The configured admin a verified human principal is, if any. */
+export const adminOf = (principal: ApiPrincipal | undefined, admins: readonly AdminIdentity[]) =>
+  principal?.kind === 'user' && 'user' in principal
+    ? adminNamed(admins, principal.user)
+    : undefined;
 /** A person's name on every admin page: their configured admin label, else a name one of their
  *  project actors goes by that is neither their subject nor an identifier. */
 export const personLabel = (
   admins: readonly AdminIdentity[],
-  { issuer, subject, actors }: PlatformDirectory['people'][number],
+  person: PlatformDirectory['people'][number],
 ) =>
-  admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ??
-  actors.find(({ name }) => name !== subject && personName(name))?.name;
+  adminNamed(admins, person)?.label ??
+  person.actors.find(({ name }) => name !== person.subject && personName(name))?.name;
 
 /** What every admin route reads with: the plugin's context, its state, audit and admins. */
 export interface AdminEnv {
@@ -48,17 +49,10 @@ export type AdminRoute = (r: ApiRequest, who: AdminIdentity) => Promise<unknown>
 /** Routes keyed `METHOD /admin/path`; a `:param` segment matches any one segment. */
 export type AdminRoutes = Record<string, AdminRoute>;
 
-const match = (routes: AdminRoutes, method: string, path: string) =>
-  Object.entries(routes).find(([key]) => {
-    const [m, pattern] = key.split(' ');
-    const want = pattern.split('/');
-    const have = path.split('/');
-    return (
-      m === method &&
-      want.length === have.length &&
-      want.every((part, i) => part.startsWith(':') || part === have[i])
-    );
-  })?.[1];
+const match = (routes: AdminRoutes, request: string) =>
+  Object.entries(routes).find(([key]) =>
+    new RegExp(`^${key.replace(/:\w+/g, '[^/]+')}$`).test(request),
+  )?.[1];
 
 /** The platform admin: only the configured human identities, only through `/admin`. */
 export const adminPlugin = {
@@ -77,16 +71,16 @@ export const adminPlugin = {
     ctx.inject(['api', 'scope', 'tools'], (ctx) => {
       const env: AdminEnv = { ctx, state, audit, admins: config.admins };
       const routes: AdminRoutes = {
-        ...workRoutes(env),
-        ...platformRead(env),
-        ...creditRoutes(env),
+        'GET /admin/work': async () => await adminWork(env),
         'GET /admin/credentials': async () => await adminCredentials(env),
+        ...creditRoutes(env),
+        ...platformRead(env),
       };
       ctx.effect(() =>
         ctx.api.mount('/admin', async (req, _res, r) => {
           const who = adminOf(r.principal, env.admins);
           check(who, 'forbidden', 'Platform administrator access required', 403);
-          const route = match(routes, req.method ?? 'GET', r.url.pathname);
+          const route = match(routes, `${req.method ?? 'GET'} ${r.url.pathname}`);
           if (!route) throw new MervError('not_found', 'Route not found', 404);
           return await route(r, who);
         }),

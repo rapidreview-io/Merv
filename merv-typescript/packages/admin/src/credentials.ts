@@ -15,13 +15,17 @@ export const credentialMigrations = {
 };
 
 /** The purpose each plugin entry's credentials serve; every other entry's is a platform service. */
-const services = 'Platform services';
 const purposes: Record<string, string> = {
   pi: 'Pi agents',
   'fleet-workflow': 'Fleet agents',
   fleet: 'Fleet machines',
   sessions: 'Fleet machines',
 };
+const group = (purpose: string, provider?: AdminCredentialGroup['provider']) => ({
+  purpose,
+  provider,
+  credentials: [] as AdminCredential[],
+});
 
 /** Which credential serves which purpose, never a value: the composition root's names, Fleet's
  *  relay outcomes, Identity's ledger and Sandboxes' providers, composed here and nowhere else. */
@@ -35,36 +39,22 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
   const outcomes = (await fleet?.relayOutcomes().catch(() => [])) ?? [];
   const minted = await new CredentialStore(env.state).summary().catch(() => []);
 
-  const groups: AdminCredentialGroup[] = [...new Set(Object.values(purposes)), services].map(
-    (purpose) => ({ purpose, credentials: [] }),
+  // In reading order: the agents' and machines' purposes, each provider, the platform services.
+  const agents = [...new Set(Object.values(purposes))].map((purpose) => group(purpose));
+  const hosts = providers.map((p) =>
+    group('Sandbox provider', { ...p, verified_at: p.verified_at?.toJSON() ?? null }),
   );
+  const services = group('Platform services');
   const named = (composition?.environment() ?? []).map((ref) => ({
     ref,
-    group: groups.find((g) => g.purpose === (purposes[ref.plugin] ?? services))!,
+    group: agents.find((g) => g.purpose === purposes[ref.plugin]) ?? services,
   }));
-  for (const provider of providers) {
-    const group = {
-      purpose: 'Sandbox provider',
-      provider: {
-        name: provider.name,
-        plugin: provider.plugin,
-        source: provider.source,
-        namespaces: provider.namespaces,
-        enabled: provider.enabled,
-        credential_env: provider.credential_env,
-        fields: provider.fields,
-        verified_at: provider.verified_at?.toJSON() ?? null,
-        health: provider.health,
-        health_reason: provider.health_reason,
-      },
-      credentials: [],
-    };
-    // In reading order: before the platform services, which come last.
-    groups.splice(-1, 0, group);
-    const { plugin, name, credential_env: key } = provider;
+  for (const [i, { plugin, name, credential_env: key }] of providers.entries())
     if (key)
-      named.push({ ref: { plugin, field: `providers.${name}.credential`, env: key }, group });
-  }
+      named.push({
+        ref: { plugin, field: `providers.${name}.credential`, env: key },
+        group: hosts[i]!,
+      });
   const digests = new Map<string, string>();
   for (const { ref } of named) {
     const value = process.env[ref.env];
@@ -101,11 +91,9 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
       ...ref,
       set: !!digest,
       fingerprint,
-      sharedWith: digest
-        ? named
-            .map((n) => n.ref)
-            .filter((other) => other !== ref && digests.get(other.env) === digest)
-        : [],
+      sharedWith: named
+        .map((n) => n.ref)
+        .filter((other) => other !== ref && digest && digests.get(other.env) === digest),
       lastChanged,
       lastOk: ok ? { at: ok.lastOkAt!, relay: ok.relay, model: ok.model } : null,
       lastFailure: failed
@@ -124,9 +112,6 @@ export async function adminCredentials(env: AdminEnv): Promise<AdminCredentials>
     };
   };
   for (const { ref, group } of named) group.credentials.push(credential(ref));
-  return {
-    at,
-    groups: groups.filter((g) => g.provider || g.credentials.length),
-    minted,
-  };
+  const groups = [...agents, ...hosts, services];
+  return { at, groups: groups.filter((g) => g.provider || g.credentials.length), minted };
 }
