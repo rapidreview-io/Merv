@@ -52,6 +52,12 @@ export const capabilitiesSchema = z
 export const ownEnd = (reason: string | null | undefined) =>
   reason === 'handoff' || reason === 'asked_owner' || reason === 'inquiry_answered';
 /**
+ * Why a launch closed whose agent ended its turn with no handoff and no question: its process
+ * exited 0. Nothing failed on the machine; the agent stopped, most often to wait for someone, and
+ * a visit that finds nothing new stops the same way. The runner writes it and dispatch reads it.
+ */
+export const STOPPED_WITHOUT_HANDOFF = 'local_process_exit_code_0_without_handoff';
+/**
  * What a runner advertises when it runs an inquiry visit as one (`session.inquiry`): read-only,
  * its conversation restored and never kept. Only such a runner is offered one.
  */

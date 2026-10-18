@@ -47,7 +47,12 @@ import {
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 import type { ManagedBindingRow, ManagedModelWait } from './managed-types.js';
-import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
+import {
+  INQUIRY_CAPABILITY,
+  label,
+  runnerPlatformSchema,
+  STOPPED_WITHOUT_HANDOFF,
+} from './rules.js';
 import { INQUIRY_VISIT_SECONDS, type Inquiries } from './inquiries.js';
 import { withholds } from './budgets.js';
 import { heartbeatSchema, type RunnerRow } from './runners.js';
@@ -277,6 +282,13 @@ export class SessionDispatch {
       target.expectedRevision,
     );
     const time = isoNow(this.clock);
+    // An agent that stopped without a handoff twice running at one revision waits for something
+    // another visit does not bring: the work is held now, for a person to read why, rather than
+    // replayed until the cap.
+    const stoppedAgain =
+      failure.message === STOPPED_WITHOUT_HANDOFF &&
+      !!old?.attempts &&
+      old.last_message === STOPPED_WITHOUT_HANDOFF;
     const row = (await tx.get<HoldRow>(
       'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at) RETURNING *',
       projectId,
@@ -287,7 +299,7 @@ export class SessionDispatch {
       failure.sessionId,
       time,
       time,
-      (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
+      stoppedAgain || (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
     ))!;
     if (!row.held_at || old?.held_at) return undefined;
     await this.reportHold(projectId, target.instanceId, row, tx);
@@ -314,8 +326,15 @@ export class SessionDispatch {
                 key: 'launch',
                 code: 'launch_held',
                 status: 409,
-                message: `Dispatch holds this work after ${row.attempts} failed launches: ${row.last_message}`,
-                next: 'Fix why its launches fail, then release the hold',
+                ...(row.last_message === STOPPED_WITHOUT_HANDOFF
+                  ? {
+                      message: `Dispatch holds this work: its agent ended its visits without a handoff or a question (${row.attempts} at this revision), and another visit would stop the same way`,
+                      next: 'Read its thread for what it waits on, answer there or fix it, then release the hold',
+                    }
+                  : {
+                      message: `Dispatch holds this work after ${row.attempts} failed launches: ${row.last_message}`,
+                      next: 'Fix why its launches fail, then release the hold',
+                    }),
                 whose: 'admin',
                 revision: Number(row.revision),
               },

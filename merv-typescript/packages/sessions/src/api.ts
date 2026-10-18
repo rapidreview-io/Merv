@@ -60,13 +60,18 @@ export const workerPrompt = (session: Session) =>
         'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
         'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
         'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
+        // Agents blocked on a person ended their turn and were re-offered the same work, again
+        // and again: a stop is no way to wait, so they are told what it does and what does wait.
+        session.continuity
+          ? 'Do not end your turn without the handoff or session.ask_owner. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.'
+          : 'Do not end your turn without the handoff. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.',
         // Workers read the assignment's tool list as the boundary of what they may look at and
         // then invent what the project already holds. The list binds writes; reads are open.
         'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
         'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
         ...(session.continuity
           ? [
-              'If the work cannot go on without the owner’s decision and no tool can settle it, call session.ask_owner with one self-contained question and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
+              'If the work cannot go on without the owner’s decision or someone else’s action (an operator’s fix, access, budget or a repair) and no tool can settle it, call session.ask_owner with one self-contained question that says what you wait for, and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
             ]
           : []),
         'A person may send a message to your thread while you work. Until you acknowledge it, every Merv call but session.messages and session.message.ack is refused with session_message_pending, which carries the message: acknowledge it at once with session.message.ack, a stable requestId and a concise reply about what you will do (you may still check things after), then send the refused call again unchanged. Before each handoff, call session.messages (it takes no arguments) and address every message still waiting. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',

@@ -21,7 +21,12 @@ import type {
   SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
-import { INQUIRY_CAPABILITY, live as liveSession, ownEnd } from '@merv/sessions/rules';
+import {
+  INQUIRY_CAPABILITY,
+  live as liveSession,
+  ownEnd,
+  STOPPED_WITHOUT_HANDOFF,
+} from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -159,7 +164,7 @@ function terminalReason(record: LaunchRecord): string {
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
     return record.exitCode === 0
-      ? 'local_process_exit_code_0_without_handoff'
+      ? STOPPED_WITHOUT_HANDOFF
       : `local_process_exit_code_${record.exitCode}`;
   return 'local_process_finished_without_exit_status';
 }
