@@ -100,7 +100,8 @@
           "nisa",
           "web",
           "sbxMerv",
-          "sandboxEvidence"
+          "sandboxEvidence",
+          "sandboxesPeople"
         ]
       },
       {
@@ -310,6 +311,7 @@
         "pi",
         "sandboxEvidence",
         "merv-sandboxes-console",
+        "sandboxesPeople",
         "secrets",
         "sbxMerv"
       ],
@@ -2500,6 +2502,30 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-sandboxes-people",
+      "source": "packages/sandboxes/src/people.ts",
+      "provides": [
+        "sandboxesPeople"
+      ],
+      "requires": [
+        "scope",
+        "sbxAuth",
+        "sbxAccounts",
+        "sbxBilling",
+        "sbxProviders"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "sandboxesPeople",
+      "group": "other",
+      "owner": "sandboxesPeople",
+      "label": "sandboxesPeople",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-scope",
       "source": "packages/scope/src/index.ts",
       "provides": [
@@ -3357,6 +3383,7 @@
         "sbxPipelines",
         "sbxObjects",
         "sbxAccounts",
+        "sbxAuth",
         "sbxBilling",
         "sbxProviders",
         "sbxVault",
@@ -4393,6 +4420,31 @@
       "optional": false
     },
     {
+      "from": "sandboxesPeople",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
       "from": "scope",
       "to": "state",
       "optional": false
@@ -4624,10 +4676,10 @@
     }
   ],
   "counts": {
-    "plugins": 78,
-    "providers": 35,
+    "plugins": 79,
+    "providers": 36,
     "adapters": 43,
-    "dependencies": 248
+    "dependencies": 253
   },
   "network": [
     {
