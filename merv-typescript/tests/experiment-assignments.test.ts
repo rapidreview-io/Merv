@@ -2107,6 +2107,8 @@ test('a resumed visit submits results its cut visit retained before attaching th
   await f.work.release(cut);
   experiment = await f.experiments.get(f.source, experiment.id);
   const resumed = await f.work.lease(experiment);
+  // A successor, not the cut worker resuming, attaches what that visit retained.
+  assert.notEqual(resumed.worker.actorId, cut.worker.actorId);
   const reportArtifact = await f.work.run(
     resumed,
     'artifact.create',

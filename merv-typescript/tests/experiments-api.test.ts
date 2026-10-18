@@ -245,6 +245,11 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     descriptions.find((tool) => tool.name === 'experiment.get_state')?.annotations?.readOnlyHint,
     true,
   );
+  // A successor is told it may attach what a cut visit to the step retained.
+  assert.match(
+    descriptions.find((tool) => tool.name === 'experiment.attach')!.description!,
+    /as a worker, evidence any earlier visit to this step at the same revision created/,
+  );
   const create = {
     name: 'held-out-comparison',
     intent: 'A improves held-out accuracy over B.',
