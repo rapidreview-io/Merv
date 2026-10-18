@@ -139,17 +139,13 @@ export abstract class DriverTransfer extends DriverCheckout {
     env: Record<string, string>,
   ): Promise<void> {
     const cwd = row.path;
+    // The index is fresh, so the copy creates it; a copy that fails leaves none behind.
     const staged = await this.git.run(['ls-files', '--stage', '-z'], { cwd });
-    if (staged.code === 0) {
-      await this.git.ok(['read-tree', '--empty'], { cwd, env });
-      const copy = ['update-index', '-z', '--index-info'];
-      if (
-        !staged.stdout ||
-        (await this.git.run(copy, { cwd, env, stdin: staged.stdout })).code === 0
-      )
-        return;
-    }
-    await this.git.ok(['read-tree', expectedHead], { cwd, env });
+    const copy = ['update-index', '-z', '--index-info'];
+    const copied =
+      staged.code === 0 &&
+      (!staged.stdout || (await this.git.run(copy, { cwd, env, stdin: staged.stdout })).code === 0);
+    if (!copied) await this.git.ok(['read-tree', expectedHead], { cwd, env });
   }
 
   protected async commit(
