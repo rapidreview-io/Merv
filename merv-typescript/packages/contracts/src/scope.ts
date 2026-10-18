@@ -2,6 +2,7 @@
 import type {
   ConversationAuthority,
   ManagedRunnerAuthority,
+  PlatformAuthority,
   SessionAuthority,
   Transaction,
 } from './index.js';
@@ -188,6 +189,7 @@ export interface Scope {
   registerSessionAuthority(authority: SessionAuthority): () => void;
   registerConversationAuthority(authority: ConversationAuthority): () => void;
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
+  registerPlatformAuthority(authority: PlatformAuthority): () => void;
   /** The actor of a Sessions thread, which every visit of the thread acts as. */
   createSessionActor(
     source: DelegationSource,
@@ -223,6 +225,10 @@ export interface Scope {
   /** The caller `principal` is in the project selected, and its read decision. `decide: false`
    *  only names it, for a use that decides where it acts (a tool registry call or listing). */
   caller(principal: Principal, projectId?: string, decide?: boolean): Promise<Caller>;
+  /** A verified person's platform caller in `projectId`, named only. Its decision refuses every
+   *  permission but read and, once the platform authority vouched for the person, an unknown
+   *  project; no actor row backs it. */
+  platformCaller(principal: Principal, projectId?: string): Promise<Caller>;
   projects(principal: Principal): Promise<Project[]>;
   require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor>;
   /** Whether this actor may act with `permission`; with `{ except }`, whether any actor but

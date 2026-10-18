@@ -773,6 +773,11 @@ export interface ConversationAuthority {
 export interface ManagedRunnerAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
+/** Whether a platform caller's person is a platform administrator, asked for each of its
+ *  decisions in its project; only the provider knows who the administrators are. */
+export interface PlatformAuthority {
+  vouches(caller: Caller): boolean | Promise<boolean>;
+}
 /**
  * Append a domain event stamped with the caller's source. That source is audit provenance only:
  * authority is still rechecked by Scope inside the operation.
