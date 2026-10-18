@@ -376,6 +376,49 @@ test('without Fleet the session room draws no Fleet tokens row', async (t) => {
   assert.ok(!text().includes('Fleet tokens a day'));
 });
 
+test('a refused day says tokens are short only when they are', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  for (const [remaining, says, never] of [
+    [100_000, 'Fleet is waiting for model tokens. 100,000 remain.', 'Fleet holds new work'],
+    // Refunds of calls in flight freed enough again; the refusal still holds the day.
+    [
+      1_500_000,
+      'Fleet holds new work since a request that needed a reservation of 340,000 was rejected today; it resumes at the reset, or once you change your limit.',
+      'waiting for model tokens',
+    ],
+  ] as const) {
+    boot('Operator');
+    serve('/account', { body: { kind: 'user', user, projects: [project] } });
+    serve('/tools/fleet.daily_tokens', {
+      body: {
+        result: {
+          tokens: 2_000_000,
+          usedToday: 2_000_000 - remaining,
+          remaining,
+          lastRefusedTokens: 340_000,
+          blocked: true,
+          resetsAt: '2026-10-19T00:00:00.000Z',
+        },
+      },
+    });
+    await open('/settings/session');
+    const status = document.querySelector('form [role="status"]')!.textContent!;
+    assert.ok(status.includes(says), status);
+    assert.ok(!status.includes(never), status);
+    assert.ok(status.includes('Usage resets at 2026-10-19T00:00:00.000Z (UTC).'), status);
+    await unmount();
+  }
+});
+
 test('the only operator is offered no control that would leave the project without one', async (t) => {
   t.after(async () => {
     await unmount();

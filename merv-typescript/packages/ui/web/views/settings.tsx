@@ -182,6 +182,7 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
   });
   const value = draft ?? String(limit.tokens);
   const tokens = Number(value);
+  const refused = limit.lastRefusedTokens;
   return (
     <form
       className="cluster"
@@ -205,9 +206,16 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
       <span className="muted">{limit.usedToday.toLocaleString()} used today</span>
       {limit.blocked && (
         <span role="status">
-          Fleet is waiting for model tokens. {limit.remaining?.toLocaleString()} remain.
-          {limit.lastRefusedTokens != null &&
-            ` The last rejected request needed a reservation of ${limit.lastRefusedTokens.toLocaleString()}.`}
+          {/* A refusal holds the day even once calls in flight have freed enough tokens again. */}
+          {refused != null && (limit.remaining ?? 0) >= refused ? (
+            `Fleet holds new work since a request that needed a reservation of ${refused.toLocaleString()} was rejected today; it resumes at the reset, or once you change your limit.`
+          ) : (
+            <>
+              Fleet is waiting for model tokens. {limit.remaining?.toLocaleString()} remain.
+              {refused != null &&
+                ` The last rejected request needed a reservation of ${refused.toLocaleString()}.`}
+            </>
+          )}
           {limit.resetsAt && ` Usage resets at ${limit.resetsAt} (UTC).`}
         </span>
       )}
