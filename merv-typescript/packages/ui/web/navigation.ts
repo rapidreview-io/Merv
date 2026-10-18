@@ -46,17 +46,17 @@ export const MOVED: Record<string, (rows: UiRowDescription[]) => string> = {
 };
 
 const NO_ROWS: UiRowDescription[] = [];
-/**
- * The rows the shell polls, for whatever on the page links to a row's records: the shell's
- * own read, shared, so asking for them costs no request of its own.
- */
-export const useRows = (): UiRowDescription[] =>
-  useTool<ShellData>(useContext(Records) ? 'ui.shell' : null, {}, { every: 30000 }).data?.rows ??
-  NO_ROWS;
+/** The shell's own read, shared, so asking for it costs no request of its own; none where no
+ *  project's records are known. */
+const useShell = () =>
+  useTool<ShellData>(useContext(Records) ? 'ui.shell' : null, {}, { every: 30000 }).data;
+/** The rows the shell polls, for whatever on the page links to a row's records. */
+export const useRows = (): UiRowDescription[] => useShell()?.rows ?? NO_ROWS;
 
 /**
- * Whether this page knows a project's records: false on a page with no account behind it (the
- * customer page), where text is drawn as written, no id is named or linked and no row is read.
+ * Whether this page knows a project's records: false on a page with no project behind it (the
+ * customer page, the platform admin), where text is drawn as written, no id is named or linked
+ * and no row is read.
  */
 export const Records = createContext(true);
 
@@ -84,8 +84,7 @@ export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>>
   return words;
 }
 /** The state words of the shell's own read, shared as its rows are. */
-export const useStateWords = (): StateWords =>
-  stateWords(useTool<ShellData>('ui.shell', {}, { every: 30000 }).data);
+export const useStateWords = (): StateWords => stateWords(useShell());
 
 const RAILED = new Set(RAIL.flatMap((section) => section.ids));
 

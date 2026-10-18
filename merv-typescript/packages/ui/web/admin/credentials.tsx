@@ -16,12 +16,12 @@ const Env = ({ name }: { name: string }) => (
     ))}
   </span>
 );
-/** Set, missing, or dead: a state a row is in, in its colour. */
+/** Set, unset, or dead: a state a row is in, in its colour; red is a dead key's alone. */
 const state = (set: boolean | null, dead = false) =>
   set === null ? (
     <None />
   ) : (
-    <Word tone={set && !dead ? 'ok' : 'bad'} value={dead ? 'dead' : set ? 'set' : 'missing'} />
+    <Word tone={dead ? 'bad' : set ? 'ok' : 'dim'} value={dead ? 'dead' : set ? 'set' : 'unset'} />
   );
 
 const COLUMNS = [
@@ -54,10 +54,10 @@ const COLUMNS = [
       </span>
     ) : null,
   ),
-  fig<AdminCredential>('failure', 'Last failure', ({ lastFailure: failed }) =>
+  fig<AdminCredential>('failure', 'Last failure', ({ lastFailure: failed, lastOk: ok, dead }) =>
     failed ? (
       <span
-        className="status--bad"
+        className={dead || !ok || failed.at > ok.at ? 'status--bad' : 'faint'}
         title={`${failed.status ?? ''} ${failed.code ?? ''} · ${failed.relay} · ${failed.model}`}
       >
         {failed.code ?? failed.status} <Ago at={failed.at} />
@@ -85,7 +85,7 @@ export function CredentialsView() {
   const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
   const groups = read.data?.groups ?? [];
   const all = groups.flatMap((g) => g.credentials);
-  const missing = all.filter((c) => !c.set).length;
+  const unset = all.filter((c) => !c.set).length;
   const dead = all.filter((c) => c.dead).length;
   return (
     <div className="page-stage stack stack--lg">
@@ -93,8 +93,8 @@ export function CredentialsView() {
         title="Credentials"
         facts={
           read.data && [
-            [all.length - missing, 'set'],
-            missing > 0 && [missing, 'missing', true],
+            [all.length - unset, 'set'],
+            unset > 0 && [unset, 'unset'],
             dead > 0 && [dead, 'dead', true],
           ]
         }
