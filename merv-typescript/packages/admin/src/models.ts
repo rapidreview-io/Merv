@@ -1,0 +1,191 @@
+/**
+ * What the /admin routes answer: types alone, written out rather than borrowed from the owners
+ * they are composed from, so the browser reads the same ones (`@merv/admin/models`).
+ */
+import type { RunningPhrase } from '@merv/contracts/running';
+
+/** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
+export interface AdminAttention {
+  reason: 'blocker' | 'allowance' | 'customer' | 'agent';
+  /** The blocker's publisher. */
+  provider?: string;
+  code: string;
+  /** The owner's words, where it has any: an agent's need is a phrase Sessions writes. */
+  message?: string | RunningPhrase;
+}
+export interface AdminWorkRow {
+  id: string;
+  /** The owner's workflow name (`task`, `service_experiment`), `pi` for an Agent turn. */
+  kind: string;
+  /** The owner's type name, where it has one (`task.work`). */
+  type: string | null;
+  title: string;
+  project: { id: string; name: string };
+  person: string;
+  state: string;
+  terminal: boolean;
+  attention: AdminAttention[];
+  /** The live work visit at the unit's revision. */
+  agent: { role: string; status: string } | null;
+  machine: {
+    phase: string;
+    profile: string | null;
+    provider: string | null;
+    sandboxId: string | null;
+    usdPerHour: number | null;
+  } | null;
+  lastActivity: string;
+  createdAt: string;
+  /** Its last transition. */
+  updatedAt: string;
+  /** Its closed work visits; runners report tokens unverified, and no visit reports a price. */
+  cost: {
+    sessions: number;
+    reportedSessions: number;
+    wallMs: number;
+    inputTokens: number;
+    outputTokens: number;
+  } | null;
+  /** A standalone experiment's request, which its customer's page is opened by. */
+  requestId?: string;
+}
+export interface AdminWork {
+  rows: AdminWorkRow[];
+  at: string;
+  /** The owners not loaded here, whose facts the table lacks. */
+  unavailable: string[];
+}
+
+interface Tokens {
+  used: number;
+  limit: number;
+}
+/** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
+export interface AdminCredits {
+  at: string;
+  /** Provider plugins with an operator connection: the only providers credits may name. */
+  providers: string[];
+  people: CreditPerson[];
+  /** Every account a person belongs to, a project pays from, or credits are held in, once. */
+  accounts: CreditAccount[];
+  /** Owners not loaded here, whose figures are left out: `fleet`, `pi`. */
+  unavailable: string[];
+}
+export interface CreditPerson {
+  label: string;
+  issuer: string;
+  subject: string;
+  /** The Sandboxes accounts they are a member of. */
+  accounts: { accountId: string; role: 'admin' | 'member' }[];
+  /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
+  fleet: { person: string; usd: number; usdCap: number | null; tokens: Tokens | null } | null;
+  /** Today (UTC): their Agent chat model tokens. */
+  pi: (Tokens & { person: string }) | null;
+}
+/** One account's credits per provider, as Sandboxes computes them, and its budget caps beside. */
+export interface CreditAccount {
+  accountId: string;
+  name: string;
+  /** The Merv projects whose agents spend from it. */
+  projects: { projectId: string; name: string }[];
+  pools: {
+    provider: string;
+    granted: string;
+    used: string;
+    reserved: string;
+    available: string;
+    expired: string;
+    revoked: string;
+  }[];
+  grants: {
+    id: string;
+    provider: string;
+    amount: string;
+    used: string;
+    reserved: string;
+    available: string;
+    valid_from: string;
+    expires_at: string | null;
+    revoked_at: string | null;
+    schedule_id: string | null;
+    created_at: string;
+    reason: string;
+  }[];
+  schedules: {
+    id: string;
+    provider: string;
+    amount: string;
+    starts_at: string;
+    cadence: 'daily' | 'weekly' | 'monthly';
+    validity_periods: number | null;
+    ends_at: string | null;
+    enabled: boolean;
+  }[];
+  /** Budget caps (`infra_policies`): a limit of their own, never part of the credits. */
+  budgets: {
+    id: string;
+    window: 'day' | 'month' | 'all_time';
+    metric: 'money' | 'compute_hours';
+    cap: string | null;
+    provider: string | null;
+  }[];
+}
+
+export interface AdminCredential {
+  env: string;
+  /** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
+  plugin: string;
+  field: string;
+  set: boolean;
+  /** The first 8 hex of the value's SHA-256; never the value. */
+  fingerprint: string | null;
+  /** Every other name and field that holds the same value. */
+  sharedWith: { plugin: string; field: string; env: string }[];
+  firstSeen: string | null;
+  /** When the value last changed, once this page has seen it change. */
+  lastChanged: string | null;
+  lastOk: { at: string; relay: string; model: string } | null;
+  lastFailure: {
+    at: string;
+    relay: string;
+    model: string;
+    status: number | null;
+    code: string | null;
+  } | null;
+  /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
+  dead: boolean;
+}
+export interface AdminCredentialGroup {
+  purpose: string;
+  /** A sandbox provider's instance; its credentials are its host key reference, if any. */
+  provider?: {
+    name: string;
+    plugin: string;
+    source: 'host' | 'user';
+    namespaces: readonly string[] | null;
+    enabled: boolean;
+    /** The environment variable a host instance's key reference names, if it names one. */
+    credential_env: string | null;
+    fields: readonly { name: string; present: boolean | null }[];
+    verified_at: string | null;
+    updated_at: string | null;
+    health: { status: string; message: string } | null;
+    health_reason: string | null;
+  };
+  credentials: AdminCredential[];
+}
+export interface AdminCredentials {
+  at: string;
+  groups: AdminCredentialGroup[];
+  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
+  minted: {
+    owner: string;
+    kind: string;
+    live: number | string;
+    soonestExpiry: string | null;
+    revokedLastDay: number | string;
+    newestIssued: string;
+  }[];
+  /** The owners not loaded here, or whose read failed. */
+  unavailable: string[];
+}

@@ -8,7 +8,7 @@ import { Context } from 'cordis';
 import type { ZodType } from 'zod';
 import { createService, MervError, type Principal } from '@merv/contracts';
 import { adminPlugin } from '@merv/admin';
-import type { AdminCredits } from '@merv/admin/credits';
+import type { AdminCredits } from '@merv/admin/models';
 import type { ApiRequest, MountHandler } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import { ProjectScope } from '@merv/scope';
@@ -174,7 +174,6 @@ test('credits read per person, account and provider, as report() computes them, 
       issuer,
       subject: 'alice',
       accounts: [{ accountId: own!.id, role: 'admin' }],
-      projects: [{ projectId: project.id, name: 'Ledger', role: 'operator' }],
       fleet: personKey({ issuer, subject: 'alice' }, { projectId: '', actorId: '' }),
       pi: null,
     },
@@ -184,14 +183,7 @@ test('credits read per person, account and provider, as report() computes them, 
     account(payer.account_id).budgets.map((b) => [b.id, b.window, b.cap, b.provider]),
     [['ops-cap', 'month', '50', 'fake']],
   );
-  assert.deepEqual(account(payer.account_id).projects, [
-    {
-      projectId: project.id,
-      name: 'Ledger',
-      namespace: 'ops',
-      payerMemberId: payer.default_member_id,
-    },
-  ]);
+  assert.deepEqual(account(payer.account_id).projects, [{ projectId: project.id, name: 'Ledger' }]);
   // report() issues the due periods now; only their creation time can differ from the view.
   const issuedAs = (grants: AdminCredits['accounts'][number]['grants']) =>
     grants.map(({ created_at, ...grant }) => grant);

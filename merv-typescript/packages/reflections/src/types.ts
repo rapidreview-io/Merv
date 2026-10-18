@@ -80,8 +80,8 @@ export interface Reflections {
   /** Every wave as Home reads it, newest first: three statements, however many waves. */
   home(caller: Caller): Promise<ReflectionSummary[]>;
   lens(caller: Caller, id: string, tx?: Transaction): Promise<ReflectionLens>;
-  /** Platform admin read, never exposed through a tool or a machine key: what each named lens
-   * is called, its wave's title and its perspective, in any project. */
+  /** Platform admin read, never exposed through a tool or a machine key: each named lens's
+   * perspective, as a person names it, in any project. */
   platformLensNames(lensIds: readonly string[]): Promise<Map<string, string>>;
   submitLens(
     caller: Caller,

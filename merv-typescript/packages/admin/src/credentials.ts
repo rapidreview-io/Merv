@@ -1,7 +1,8 @@
 import { sha256Hex, type ConfiguredEnv } from '@merv/contracts';
 import type {} from '@merv/fleet/types';
-import { CredentialStore, type CredentialSummary } from '@merv/identity/credentials';
-import type { ProviderInventoryEntry } from '@sandboxes/providers';
+import { CredentialStore } from '@merv/identity/credentials';
+import type {} from '@sandboxes/providers';
+import type { AdminCredential, AdminCredentialGroup, AdminCredentials } from './models.js';
 import { loaded, type AdminEnv } from './index.js';
 
 /** Published migrations: production pins each text by its digest, never edit one. */
@@ -23,48 +24,6 @@ const purposes: Record<string, string> = {
   fleet: 'Fleet machines',
   sessions: 'Fleet machines',
 };
-
-export interface AdminCredential {
-  env: string;
-  /** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
-  plugin: string;
-  field: string;
-  set: boolean;
-  /** The first 8 hex of the value's SHA-256; never the value. */
-  fingerprint: string | null;
-  /** Every other name and field that holds the same value. */
-  sharedWith: ConfiguredEnv[];
-  firstSeen: string | null;
-  /** When the value last changed, once this page has seen it change. */
-  lastChanged: string | null;
-  lastOk: { at: string; relay: string; model: string } | null;
-  lastFailure: {
-    at: string;
-    relay: string;
-    model: string;
-    status: number | null;
-    code: string | null;
-  } | null;
-  /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
-  dead: boolean;
-}
-export interface AdminCredentialGroup {
-  purpose: string;
-  /** A sandbox provider's instance; its credentials are its host key reference, if any. */
-  provider?: Omit<ProviderInventoryEntry, 'verified_at' | 'updated_at'> & {
-    verified_at: string | null;
-    updated_at: string | null;
-  };
-  credentials: AdminCredential[];
-}
-export interface AdminCredentials {
-  at: string;
-  groups: AdminCredentialGroup[];
-  /** Machine and agent credentials Merv minted, by owner and kind. */
-  minted: CredentialSummary[];
-  /** The owners not loaded here, or whose read failed. */
-  unavailable: string[];
-}
 
 /** Which credential serves which purpose, never a value: the composition root's names, Fleet's
  *  relay outcomes, Identity's ledger and Sandboxes' providers, composed here and nowhere else. */

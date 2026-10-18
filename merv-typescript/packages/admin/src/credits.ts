@@ -2,50 +2,16 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@sandboxes/accounts';
 import type {} from '@sandboxes/auth';
-import type { CreditBalance, PolicyRow } from '@sandboxes/billing';
+import type {} from '@sandboxes/billing';
 import type {} from '@sandboxes/providers';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host';
-import { check, MervError, pathSegment, type PlatformDirectory } from '@merv/contracts';
+import { check, MervError, pathSegment } from '@merv/contracts';
 import { personKey } from '@merv/fleet/model-ledger';
-import type { FleetPersonDay, ModelTokens } from '@merv/fleet/types';
+import type {} from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
+import type { AdminCredits, CreditAccount } from './models.js';
 import { loaded, type AdminEnv, type AdminRoutes } from './index.js';
-
-/** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
-export interface AdminCredits {
-  at: string;
-  /** Provider plugins with an operator connection: the only providers credits may name. */
-  providers: string[];
-  people: CreditPerson[];
-  /** Every account a person belongs to, a project pays from, or credits are held in, once. */
-  accounts: CreditAccount[];
-  /** Owners not loaded here, whose figures are left out: `fleet`, `pi`. */
-  unavailable: string[];
-}
-export interface CreditPerson {
-  label: string;
-  issuer: string;
-  subject: string;
-  /** The Sandboxes accounts they are a member of. */
-  accounts: { accountId: string; role: 'admin' | 'member' }[];
-  projects: PlatformDirectory['people'][number]['projects'];
-  /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
-  fleet: FleetPersonDay | null;
-  /** Today (UTC): their Agent chat model tokens. */
-  pi: (ModelTokens & { person: string }) | null;
-}
-/** One account's credits per provider, as Sandboxes computes them, and its budget caps beside. */
-export interface CreditAccount extends Omit<CreditBalance, 'account_id' | 'currency'> {
-  accountId: string;
-  name: string;
-  /** The Merv projects whose agents spend from it, each as its payer member. */
-  projects: { projectId: string; name: string; namespace: string; payerMemberId: string }[];
-  /** Budget caps (`infra_policies`): a limit of their own, never part of the credits. */
-  budgets: (Omit<PolicyRow, 'account_id' | 'cap' | 'source' | 'updated_at'> & {
-    cap: string | null;
-  })[];
-}
 
 const refusals = mervRefusals(MervError);
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
@@ -114,10 +80,7 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   ).values()) {
     const link = await sbx.accounts.linked(projectId);
     if (link)
-      links.set(link.account_id, [
-        ...(links.get(link.account_id) ?? []),
-        { projectId, name, namespace: link.name, payerMemberId: link.default_member_id },
-      ]);
+      links.set(link.account_id, [...(links.get(link.account_id) ?? []), { projectId, name }]);
   }
   const balances = new Map(
     (await sbx.billing.credits.overview()).map((balance) => [balance.account_id, balance]),
@@ -156,12 +119,15 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   return {
     at: new Date().toISOString(),
     providers: await plugins(sbx),
-    people: people.map(({ issuer, subject, projects }, i) => ({
-      label: persons[i]?.display_name || persons[i]?.email || subject,
+    people: people.map(({ issuer, subject }, i) => ({
+      label:
+        env.admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ||
+        persons[i]?.display_name ||
+        persons[i]?.email ||
+        'Unnamed',
       issuer,
       subject,
       accounts: memberships[i]!.map((a) => ({ accountId: a.id, role: a.role })),
-      projects,
       fleet: days?.[i] ?? null,
       pi: tokens?.[i] ?? null,
     })),

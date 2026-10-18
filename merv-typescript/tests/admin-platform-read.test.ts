@@ -176,21 +176,19 @@ test('a platform admin reads a project it is not a member of through its pages, 
   );
 
   // Reading is audited once an hour per admin and project, however often the admin reads.
-  const audited = () =>
+  const reads = (action: string) =>
     f.app.ctx.state.read((sql) =>
       sql.all<{ subject: string; target: string }>(
-        "SELECT subject,target FROM admin_audit WHERE action='project.read'",
+        'SELECT subject,target FROM admin_audit WHERE action=?',
+        action,
       ),
     );
+  const audited = () => reads('project.read');
   for (let tries = 0; !(await audited()).length && tries < 200; tries++) await delay(10);
   await f.tool('project.get', {});
   await delay(50);
   assert.deepEqual(await audited(), [{ subject: 'platform-admin', target: f.project.id }]);
 
-  const picker = await f.request('/admin/projects', f.adminToken, { platform: null });
-  assert.equal(picker.status, 200);
-  assert.deepEqual(picker.body.projects, [f.project]);
-  assert.equal((await f.request('/admin/projects', f.strangerToken)).status, 403);
   // A standalone experiment as its customer sees it, from Customer experiments while installed.
   const standalone = (bearer: string) =>
     f.request('/admin/standalone/ce_request', bearer, { platform: null });
@@ -203,6 +201,13 @@ test('a platform admin reads a project it is not a member of through its pages, 
   );
   assert.deepEqual((await standalone(f.adminToken)).body, { id: 'ce_request' });
   assert.equal((await standalone(f.strangerToken)).status, 403);
+  // A customer's page is a read of its own, audited the same way.
+  await standalone(f.adminToken);
+  for (let tries = 0; tries < 200 && !(await reads('standalone.read')).length; tries++)
+    await delay(10);
+  assert.deepEqual(await reads('standalone.read'), [
+    { subject: 'platform-admin', target: 'ce_request' },
+  ]);
 });
 
 test('no other principal or agent path carries platform read, and it fails closed without its provider', async (t) => {

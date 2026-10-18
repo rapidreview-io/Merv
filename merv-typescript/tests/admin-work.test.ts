@@ -182,12 +182,12 @@ test('the work table reads every project’s open and recent work through its ow
   ]);
   assert.deepEqual(
     row(paused.id).attention.map(({ reason, code }) => [reason, code]),
-    [['allowance', 'paused']],
+    [['allowance', 'allowance']],
   );
   assert.equal(row(open.id).kind, 'chore');
   assert.equal(row(open.id).title, 'Open chore');
   assert.deepEqual(row(open.id).project, { id: lab.id, name: 'Lab A' });
-  assert.deepEqual(row(open.id).person, { key: `${issuer}|ada`, label: 'Ada L.' });
+  assert.equal(row(open.id).person, 'Ada L.');
 
   // A task with its live visit at its revision, its type and what its visits have used.
   const leased = row(task.id);
@@ -209,27 +209,17 @@ test('the work table reads every project’s open and recent work through its ow
   });
   assert.equal(row(wave.id).kind, 'reflection');
   for (const lens of wave.lenses) {
-    assert.equal(row(lens.id).kind, 'reflection lens');
-    assert.equal(row(lens.id).title, `Spring: ${lens.perspective.replaceAll('_', ' ')}`);
+    assert.equal(row(lens.id).kind, 'reflection.lens');
+    assert.equal(row(lens.id).title, lens.perspective.replaceAll('_', ' '));
   }
 
-  assert.equal(row(paying.experiment.id).kind, 'standalone experiment');
-  assert.deepEqual(row(paying.experiment.id).person, {
-    key: 'email:customer@example.com',
-    label: 'Customer@Example.com',
-  });
-  assert.deepEqual(
-    row(paying.experiment.id).attention.map(({ reason, code }) => [reason, code]),
-    [['customer', 'approval']],
-  );
-  assert.match(row(guest.experiment.id).person.label, /^Guest · /);
-  assert.equal(row(guest.experiment.id).person.key, `guest:${guest.request.id}`);
-
-  // Every identity is a person, the one with no work too; counts are of the table's rows.
-  const person = view.people.find((p) => p.key === `${issuer}|ada`)!;
-  assert.equal(person.total, view.rows.filter((r) => r.person.key === person.key).length);
-  assert.equal(person.active, person.total - 1);
-  assert.ok(view.people.some((p) => p.label === 'abcd' && p.total === 0));
+  // A standalone experiment names its customer, words left to the page, and opens by its request.
+  assert.equal(row(paying.experiment.id).kind, 'service_experiment');
+  assert.equal(row(paying.experiment.id).person, 'Customer@Example.com');
+  assert.deepEqual(row(paying.experiment.id).attention, [{ reason: 'customer', code: 'approval' }]);
+  assert.equal(row(paying.experiment.id).requestId, paying.request.id);
+  assert.equal(row(guest.experiment.id).person, 'Guest', 'an identifier names nobody');
+  assert.equal(row(open.id).requestId, undefined);
 
   // No capability, checkout or idempotency key of a request reaches the table.
   const json = JSON.stringify(view);
@@ -254,7 +244,7 @@ test('Pi turns are rows of the table, with the Fleet machine their host slot run
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
   assert.equal(turn!.id, command.id);
-  assert.equal(turn!.kind, 'pi turn');
+  assert.equal(turn!.kind, 'pi');
   assert.equal(turn!.title, 'Chat');
   assert.equal(turn!.project.name, 'Pi integration');
   assert.equal(turn!.state, 'waiting');
