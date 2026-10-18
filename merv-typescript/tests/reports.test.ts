@@ -413,6 +413,16 @@ test('report tools present chart and page images to MCP clients', async () => {
   );
   const open = (await tools.get('report.open')!.handler({} as Caller, {})) as { guide: string };
   assert.match(open.guide, /report\.review_visual/);
+  // Agents are told a locked section the plan left as a placeholder is theirs to write: told
+  // only that locked sections never change, a healer reported a fixed template as broken.
+  assert.match(
+    open.guide,
+    /locked, except a locked section the plan left as only a \[\[write: …\]\]/,
+  );
+  assert.match(
+    tools.get('report.write')!.description,
+    /cannot change, except one that still holds only its \[\[write: …\]\] placeholder/,
+  );
 });
 
 test('a locked section the plan left as a placeholder is written once, then stays', async (t) => {
@@ -433,6 +443,11 @@ test('a locked section the plan left as a placeholder is written once, then stay
     sections: [{ name: 'Inquiry', content: 'To shortlist models for a larger evaluation.' }],
   });
   assert.match(written.source, /To shortlist models for a larger evaluation\./);
+  const checked = await f.reports.check(f.operator, subject);
+  assert.ok(
+    !checked.issues.some((i) => i.where?.includes('Inquiry')),
+    JSON.stringify(checked.issues),
+  );
   // The sections the plan did fill stay locked.
   await assert.rejects(
     f.reports.write(f.operator, {

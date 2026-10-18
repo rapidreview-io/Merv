@@ -6,7 +6,7 @@ Flow: report.open → report.write (sections, front matter, data files) → repo
 Front matter: id, date, and criteria: one {metric: "<label>", bar: <min improvement>} or {metric: "<label>", floor: <worst allowed change>} per pre-registered success criterion. Quote metric labels. Keep labels short; they label the result chart's rows.
 
 Sections, in this order (unknown headings, ### headings, captions, quotes, images and HTML are rejected):
-- # title: the question, ≤16 words. Inquiry and Constraints come from the approved plan and are locked.
+- # title: the question, ≤16 words. Inquiry and Constraints come from the approved plan and are locked, except a locked section the plan left as only a [[write: …]] placeholder: write that one from the plan like any other section.
 - Result: one bold-worthy answer line (≤15 words, no caveats), then one chart of every criterion vs its bar, then optionally one description paragraph (≤40 words) for nuance such as intervals that cross a bar.
 - Method (≤80 words; a small table is fine), Execution (≤110 words + charts: what ran, time, cost, every deviation or incident by id), Data (a table: dataset, use, size), Verification (≤60 words), Limitations (≤4 bullets), optional Discussion (≤70 words + one chart, interpretation marked untested), optional Next (a table: proposed follow-ups with cost; mark estimates with ~), optional References (numbered list, each item ending ", YEAR"; cite inline as [n]).
 Bullets stay under 25 words. Write tightly: no helper text, no restating a chart in prose. Compute every number from raw results; never estimate silently.
