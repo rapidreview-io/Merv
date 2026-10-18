@@ -44,9 +44,11 @@ function fixture(computeBudgetUsd: number | null = 250) {
       set: async (
         _account: string,
         _namespace: string,
-        limits: { max_lifetime_seconds: number },
+        limits: { max_lifetime_seconds: number; max_concurrent: number },
       ) => {
         assert.equal(limits.max_lifetime_seconds, 86_400);
+        // The executor's brief promises two machines at once; this limit is what keeps it true.
+        assert.equal(limits.max_concurrent, 2);
         calls.push('limits');
       },
     },

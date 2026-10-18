@@ -754,6 +754,14 @@ test('service_experiment@4 grants the executor the progress its brief asks for',
   };
   assert.match(await brief(4), /post progress with customer_experiment\.progress/);
   assert.doesNotMatch(await brief(3), /customer_experiment\.progress/);
+  // Compute advice follows the live offers, not a fixed provider order: a Modal sandbox cannot
+  // outlive its offer's lifetime, and a machine still deleting holds one of the two slots.
+  for (const version of [3, 4]) {
+    const text = await brief(version);
+    assert.doesNotMatch(text, /Modal first/);
+    assert.match(text, /maximum lifetime against the job/);
+    assert.match(text, /two machines at once, and one still deleting counts/);
+  }
 });
 
 test('only the running worker reports progress, and the customer reads it in order', async (t) => {
