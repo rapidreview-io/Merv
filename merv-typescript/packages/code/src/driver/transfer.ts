@@ -131,25 +131,25 @@ export abstract class DriverTransfer extends DriverCheckout {
    * Fill a commit's fresh index with the checkout's own entries, which are only read, so that
    * what is staged is committed as `git commit` would: a path a merge start materialised, or
    * one the agent force-added, stays though .gitignore names it. `add -A` then adds the rest.
-   * An index Git cannot read starts from the expected head instead.
+   * An index Git cannot read or copy starts from the expected head instead.
    */
   private async seedIndex(
     row: WorkspaceRow,
     expectedHead: string,
     env: Record<string, string>,
   ): Promise<void> {
-    const staged = await this.git.run(['ls-files', '--stage', '-z'], { cwd: row.path });
-    if (staged.code !== 0) {
-      await this.git.ok(['read-tree', expectedHead], { cwd: row.path, env });
-      return;
+    const cwd = row.path;
+    const staged = await this.git.run(['ls-files', '--stage', '-z'], { cwd });
+    if (staged.code === 0) {
+      await this.git.ok(['read-tree', '--empty'], { cwd, env });
+      const copy = ['update-index', '-z', '--index-info'];
+      if (
+        !staged.stdout ||
+        (await this.git.run(copy, { cwd, env, stdin: staged.stdout })).code === 0
+      )
+        return;
     }
-    await this.git.ok(['read-tree', '--empty'], { cwd: row.path, env });
-    if (staged.stdout)
-      await this.git.ok(['update-index', '-z', '--index-info'], {
-        cwd: row.path,
-        env,
-        stdin: staged.stdout,
-      });
+    await this.git.ok(['read-tree', expectedHead], { cwd, env });
   }
 
   protected async commit(
