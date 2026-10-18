@@ -653,6 +653,61 @@ test('native compute captures are scoped to the accepted attempt and frozen into
   );
 });
 
+test('a report rendered final in an earlier session is refused with the advice to render it again here', async (t) => {
+  const f = await fixture(t);
+  const exp = await f.pay();
+  const producer = await f.offer();
+  // The same worker, in an earlier session, rendered the report and wrote other evidence. The
+  // rows are written directly: that session is gone, so the artifact service would refuse it.
+  const earlier = async (id: string) => {
+    await f.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,session_id)
+         VALUES(?,?,?,?,'text/markdown',?,1,?,'ses_earlier')`,
+        id,
+        exp.projectId,
+        producer.worker.actorId,
+        id,
+        '0'.repeat(64),
+        new Date().toISOString(),
+      ),
+    );
+    return { id };
+  };
+  const report = await earlier('art_earlier_report');
+  f.reports.claim(report.id, { kind: 'customer_experiment', id: exp.id });
+  const notes = await earlier('art_earlier_notes');
+  const submit = (artifactIds: string[]) =>
+    f.service.submitResults(producer.worker, {
+      id: exp.id,
+      expectedRevision: exp.workflow.revision,
+      artifactIds,
+      reportArtifactId: report.id,
+      summary: 'Report from an earlier session',
+      requestId: f.id(),
+    });
+  // Only the report is at fault: render it again, with nothing said about other artifacts.
+  await assert.rejects(
+    submit([report.id]),
+    (error: MervError) =>
+      error.code === 'invalid_evidence_origin' &&
+      /render it with final: true again here/.test(error.message) &&
+      !/Leave the others/.test(error.message) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id] }),
+  );
+  // The report and another artifact: each gets its own advice.
+  await assert.rejects(
+    submit([report.id, notes.id]),
+    (error: MervError) =>
+      error.code === 'invalid_evidence_origin' &&
+      error.message.includes(`these are not: ${report.id}, ${notes.id}.`) &&
+      /render it with final: true again here\. Leave the others out of artifactIds/.test(
+        error.message,
+      ) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id, notes.id] }),
+  );
+});
+
 test('readiness rejects incomplete data and training/evaluation byte reuse', () => {
   const requirement = {
     id: 'train',
