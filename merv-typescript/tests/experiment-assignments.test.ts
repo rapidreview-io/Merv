@@ -895,7 +895,8 @@ test('project evidence can be saved without an experiment worker, while a lease 
         path: 'later.md',
         requestId: f.request(),
       }),
-    { code: 'experiment_leased' },
+    // It says how to reach the worker instead: no input adopts someone else's evidence.
+    { code: 'experiment_leased', message: /send it with session\.message/ },
   );
   assert.deepEqual(
     (await f.experiments.get(f.source, experiment.id)).evidence.map(

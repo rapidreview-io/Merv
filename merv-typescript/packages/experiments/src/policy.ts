@@ -183,7 +183,9 @@ export async function assertProducer(
     check(
       !(await activeLease(ctx, experiment, tx)),
       'experiment_leased',
-      'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
+      // Evidence is the worker's own: an operator once asked a worker for a "lease recovery
+      // input" no tool has, to adopt the operator's authorization (2026-09-30).
+      'A worker session holds this revision, and only it attaches evidence, its own. To give the worker information or an authorization, send it with session.message; otherwise the operator who offered it can halt it, or wait for its handoff',
       409,
     );
   }
