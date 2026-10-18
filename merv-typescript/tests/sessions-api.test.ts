@@ -408,6 +408,8 @@ test('a pending message’s refusal carries it once a batch, and the queue lists
   );
   assert.match(carried[0].message, /nothing of it was applied/);
   assert.match(carried[0].message, /session\.message\.ack/);
+  // The call goes again as it was only if the message does not change it.
+  assert.match(carried[0].message, /as it was unless the message changes what it should do/);
   // The queue says what waits and what to do with it.
   const queue = async (input: Record<string, unknown> = {}) => {
     const read = await client.callTool({ name: 'session.messages', arguments: input });

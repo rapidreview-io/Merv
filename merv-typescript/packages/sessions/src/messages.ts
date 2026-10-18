@@ -375,7 +375,7 @@ export class SessionMessages {
         shown
           ? `${one ? 'It is' : 'The oldest is'} in details.message${one ? '' : '; session.messages lists them all'}.`
           : 'You were shown its text moments ago; session.messages reads it again.',
-        `Acknowledge ${one ? 'it' : 'each'} with session.message.ack (messageId, a stable requestId, and a reply saying what you will do), then send this call again unchanged.`,
+        `Acknowledge ${one ? 'it' : 'each'} with session.message.ack (messageId, a stable requestId, and a reply saying what you will do), then send this call again, as it was unless the message changes what it should do.`,
       ].join(' '),
       409,
       {

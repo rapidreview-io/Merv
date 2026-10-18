@@ -572,6 +572,10 @@ test('a worker is told when its lease ends, that nothing extends it, and that a 
   assert.match(fresh, /the next visit starts afresh from those records/);
   assert.match(fresh, /Do not end your turn without the handoff\. Merv counts a visit/);
   assert.doesNotMatch(fresh, /session\.ask_owner/);
+  assert.match(
+    fresh,
+    /send the refused call again, as it was unless the message changes what it should do/,
+  );
   const kept = workerPrompt({ ...session, continuity: { key: 'key_fixture' } });
   assert.match(kept, /the next visit continues this conversation/);
   assert.match(kept, /Do not end your turn without the handoff or session\.ask_owner/);
