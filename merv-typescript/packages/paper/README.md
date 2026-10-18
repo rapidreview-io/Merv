@@ -1,6 +1,6 @@
 # @merv/paper
 
-Paper stores the living project paper: four documents, Problem, Literature, Methods and Results, with citations and immutable revision history. It creates no workflow, assignment or lease. The owner's main agent edits any document with `paper.patch`; scientific reviewers in Experiments and Reflections land their Methods and Results changes inside their own review transaction. The Problem is the source of the project Introduction that every assignment carries. See [Living paper](../../docs/LIVING_PAPER.md).
+Paper stores the living project paper: four documents, Problem, Literature, Methods and Results, with citations and immutable revision history. It creates no workflow, assignment or lease. The owner's main agent edits any document with `paper.patch`; scientific reviewers in Experiments and Reflections land their Methods and Results changes inside their own review transaction. The Problem is the source of the project Introduction that every assignment carries. An edit made against an earlier document revision is merged with the edits made since, line by line, unless both changed the same lines (`merge.ts`); only then is it refused as a revision conflict that names the sections to read again. See [Living paper](../../docs/LIVING_PAPER.md).
 
 ## Where it sits
 

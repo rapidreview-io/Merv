@@ -31,6 +31,7 @@ import type {
 } from './types.js';
 import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { paperInput } from './context.js';
+import { mergeText } from './merge.js';
 import { PROBLEM_SECTIONS } from './rules.js';
 import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
@@ -231,7 +232,7 @@ export class PaperService implements Paper {
     tx: Transaction,
   ): Promise<PaperRevision> {
     check(
-      before.revision === input.expectedRevision,
+      input.expectedRevision <= before.revision,
       'paper_revision_conflict',
       `Expected revision ${input.expectedRevision}, found ${before.revision}; work against the current one`,
       409,
@@ -242,7 +243,11 @@ export class PaperService implements Paper {
       'invalid_paper_input',
       'A section may occur once per patch',
     );
-    for (const change of input.changes) {
+    const changes =
+      before.revision === input.expectedRevision
+        ? input.changes
+        : await this.rebased(caller, input, before, tx);
+    for (const change of changes) {
       if (input.kind === 'problem')
         check(
           (PROBLEM_SECTIONS as readonly string[]).includes(change.id) &&
@@ -322,6 +327,57 @@ export class PaperService implements Paper {
       updatedBy: caller.actorId,
       updatedAt: now(),
     };
+  }
+  /**
+   * Changes made against an earlier revision, as they apply to the current one. Writers who
+   * read the same revision often edit different paragraphs of one shared section: a section
+   * nobody else changed since takes the change as written, and one somebody did takes it merged
+   * line by line with theirs. Editing the lines they edited, or moving, removing or creating a
+   * section they changed, is refused, naming the sections to read again.
+   */
+  private async rebased(
+    caller: Caller,
+    input: PaperEdit | PaperPatch,
+    current: PaperRevision,
+    tx: Transaction,
+  ): Promise<PaperPatch['changes']> {
+    const row = await tx.get<{ record: string }>(
+      'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
+      caller.projectId,
+      input.kind,
+      input.expectedRevision,
+    );
+    const base = row
+      ? (JSON.parse(row.record) as PaperRevision)
+      : blank(caller.projectId, input.kind);
+    const clashed: string[] = [];
+    const changes = input.changes.map((change) => {
+      const was = base.sections.find((s) => s.id === change.id);
+      const now = current.sections.find((s) => s.id === change.id);
+      if (was?.title === now?.title && was?.content === now?.content) return change;
+      const content =
+        change.content === undefined || was?.content === now?.content
+          ? change.content
+          : was && now && mergeText(was.content, change.content, now.content);
+      if (
+        !was ||
+        !now ||
+        change.remove ||
+        change.afterId !== undefined ||
+        content === null ||
+        (change.title !== undefined && was.title !== now.title && change.title !== now.title)
+      )
+        clashed.push(change.id);
+      return { ...change, ...(content !== undefined && { content: content ?? undefined }) };
+    });
+    const read = clashed.map((id) => `paper.read with kind ${input.kind} and section ${id}`);
+    check(
+      !clashed.length,
+      'paper_revision_conflict',
+      `Expected revision ${input.expectedRevision}, found ${current.revision}, and since then ${clashed.length > 1 ? 'sections' : 'section'} ${clashed.join(', ')} changed where your edit does: read ${clashed.length > 1 ? 'them' : 'it'} again (${read.join('; ')}) and resend your ${input.kind} edit at revision ${current.revision}`,
+      409,
+    );
+    return changes;
   }
   async patch(
     caller: Caller,

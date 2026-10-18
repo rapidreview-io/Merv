@@ -1507,7 +1507,11 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
     kind: 'results',
     expectedRevision: 0,
     requestId: 'main-edit',
-    changes: [{ id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' }],
+    // An edit to another section alone would be merged; this one writes the reviewer's too.
+    changes: [
+      { id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' },
+      { id: 'synthesis', title: 'Synthesis', content: 'Pending review.' },
+    ],
   });
   await assert.rejects(f.app.ctx.tools.call('review.submit', reviewer, input), {
     code: 'paper_revision_conflict',

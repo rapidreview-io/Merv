@@ -17,6 +17,7 @@ import { paperToolsPlugin } from '@merv/paper/tools';
 import type { ToolDefinition } from '@merv/api/types';
 import type { Context } from 'cordis';
 import { contextSections, paperInput } from '@merv/paper/context';
+import { mergeText } from '../packages/paper/src/merge.js';
 import { renderItems } from '../packages/context-builder/src/items.js';
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
@@ -400,6 +401,102 @@ test('reviewer edits retain provenance, roll back together, and enforce revision
     f.state.transaction((tx) => tx.run('UPDATE paper_revisions SET record=?', '{}')),
     { code: 'state_constraint' },
   );
+});
+
+test('three-way section merge keeps both writers apart from the lines both changed', () => {
+  const base = ['First.', '', 'Second.', '', 'Third.'].join('\n');
+  // Different paragraphs: both kept.
+  assert.equal(
+    mergeText(base, base.replace('Third.', 'Third, revised.'), base.replace('First.', 'First!')),
+    ['First!', '', 'Second.', '', 'Third, revised.'].join('\n'),
+  );
+  // Both added a paragraph at the top: both kept, ours first.
+  assert.equal(
+    mergeText(base, `Ours.\n\n${base}`, `Theirs.\n\n${base}`),
+    `Ours.\n\nTheirs.\n\n${base}`,
+  );
+  // The same change on both sides is made once.
+  assert.equal(mergeText(base, `${base}\n\nSame.`, `${base}\n\nSame.`), `${base}\n\nSame.`);
+  // The same paragraph, or one next to the other's, changed two ways: no merge.
+  assert.equal(mergeText(base, base.replace('Second.', 'A'), base.replace('Second.', 'B')), null);
+  assert.equal(mergeText('One paragraph.', 'One edited.', 'One changed.'), null);
+  assert.equal(mergeText('a\nb', 'a!\nb', 'a\nb!'), null);
+});
+
+test('an edit against an earlier revision merges with the edits made since, or names what to read again', async (t) => {
+  const f = await fixture(t);
+  const shared = [
+    'Experiment A planned.',
+    '',
+    'Experiment B planned.',
+    '',
+    'Experiment C planned.',
+  ];
+  const start = await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [
+      { id: 'shared', title: 'Shared', content: shared.join('\n') },
+      { id: 'other', title: 'Other', content: 'Untouched.' },
+    ],
+  });
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'x' });
+  /** A reviewer's verdict with its edits to Methods, made against revision `at`. */
+  const review = (at: number, changes: { id: string; title?: string; content?: string }[]) =>
+    f.state.transaction((tx) =>
+      f.paper.applyReview(
+        f.reviewer,
+        {
+          documents: [{ kind: 'methods', expectedRevision: at, changes }],
+          source: { kind: 'experiment', id: `experiment-${f.request()}`, revision: 1 },
+          reviewId: `review-${f.request()}`,
+          verdict: 'pass',
+          evidenceIds: [evidence.id],
+        },
+        tx,
+      ),
+    );
+  const sharedAt = async () =>
+    (await f.paper.document(f.reader, 'methods')).current.sections.find((s) => s.id === 'shared')!;
+  // Two reviewers read the same revision and change different paragraphs of the shared section.
+  await review(start.revision, [
+    { id: 'shared', content: shared.join('\n').replace('A planned.', 'A passed.') },
+  ]);
+  await review(start.revision, [
+    { id: 'shared', content: shared.join('\n').replace('C planned.', 'C failed.') },
+  ]);
+  assert.equal(
+    (await sharedAt()).content,
+    ['Experiment A passed.', '', 'Experiment B planned.', '', 'Experiment C failed.'].join('\n'),
+  );
+  // A section nobody changed since takes the stale edit as written.
+  await review(start.revision, [{ id: 'other', content: 'Rewritten.' }]);
+  const now = (await f.paper.document(f.reader, 'methods')).current;
+  assert.equal(now.revision, start.revision + 3);
+  assert.equal(now.sections.find((s) => s.id === 'other')!.content, 'Rewritten.');
+  // The paragraph another reviewer changed meanwhile is refused, naming what to read again.
+  await assert.rejects(
+    review(start.revision, [
+      { id: 'shared', content: shared.join('\n').replace('A planned.', 'A inconclusive.') },
+    ]),
+    (error: unknown) =>
+      hasCode('paper_revision_conflict')(error) &&
+      /found 4, and since then section shared changed where your edit does: read it again \(paper\.read with kind methods and section shared\)/.test(
+        (error as Error).message,
+      ),
+  );
+  // So is removing or moving a section changed since, and a patch of the main agent alike.
+  await assert.rejects(
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision: start.revision,
+      requestId: f.request(),
+      changes: [{ id: 'shared', remove: true }],
+    }),
+    hasCode('paper_revision_conflict'),
+  );
+  assert.equal((await sharedAt()).content.includes('inconclusive'), false);
 });
 
 test('retired paper proposals stay stored but are no longer read, and an edit drops a stored proposal id', async (t) => {
