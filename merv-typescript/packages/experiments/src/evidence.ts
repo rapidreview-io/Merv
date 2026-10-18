@@ -16,12 +16,19 @@ export const RESULT_FILES = 100;
 function error(condition: unknown, message: string): asserts condition {
   check(condition, 'invalid_experiment_evidence', message);
 }
+/**
+ * Whether evidence read as text is within its bound. Above it, the refusal says what to do with
+ * a larger output, which executors otherwise reduced to a list of ids no reviewer could open.
+ */
+export function boundedEvidence(size: number): void {
+  error(
+    size > 0 && size <= evidenceByteLimit,
+    'Evidence must contain 1–64000 bytes. Compact a JSON result, plan or report; attach a larger or binary output (a checkpoint, an archive, a capture collection) as role result with resultFormat qualitative, which is referenced without being read',
+  );
+}
 /** Retained bytes as the text every other check here reads. */
 export function decodeEvidence(bytes: Uint8Array): string {
-  error(
-    bytes.byteLength > 0 && bytes.byteLength <= evidenceByteLimit,
-    'Evidence must contain 1–64000 bytes',
-  );
+  boundedEvidence(bytes.byteLength);
   // NUL is UTF-8 but no text column takes it: a report's Conclusion is stored as its verdict.
   error(isUtf8(bytes) && !bytes.includes(0), 'Evidence must be valid UTF-8 text without NUL');
   const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');

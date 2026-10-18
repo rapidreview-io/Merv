@@ -91,8 +91,10 @@ required even for replay. Records, events and receipts compose in one State
 transaction, including the owned review transition.
 
 Evidence is retained through Artifacts before attachment. Planning accepts
-`plan` and `feasibility`; execution accepts `result` and `report`. Each input file is
-nonempty UTF-8, at most 64,000 bytes. Draft document sections may be unfinished,
+`plan` and `feasibility`; execution accepts `result` and `report`. Each plan, feasibility
+statement, report and JSON result is nonempty UTF-8, at most 64,000 bytes; a qualitative
+result is referenced without being read, so a checkpoint or an archive of any retained size
+is attached that way. Draft document sections may be unfinished,
 but included figures must already resolve to scoped retained image artifacts.
 Results explicitly distinguish finite JSON from qualitative text. Submission
 and exit guidance share the same document/exhibit gates; guidance creates

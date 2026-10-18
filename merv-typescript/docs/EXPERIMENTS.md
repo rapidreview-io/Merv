@@ -131,11 +131,13 @@ Create retained artifacts first, then attach their IDs. The role rules are:
 | ------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
 | `plan`        | planned        | Exactly one selected plan, with nonempty Summary, Objective & hypothesis, Evaluation sections          |
 | `feasibility` | planned        | Exactly one selected JSON statement whose own figures show no shortfall, absent dependency or blocker  |
-| `result`      | running        | At least one selected result; declared finite JSON or explicitly qualitative text                      |
+| `result`      | running        | At least one selected result; declared finite JSON, or qualitative evidence referenced unread          |
 | `report`      | running        | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
 | `exhibit`     | System only    | Generated and pinned when a submitted result declares JSON                                             |
 
-Each input role accepts nonempty valid UTF-8 at most **64,000 bytes**. Logical
+Each input role accepts nonempty valid UTF-8 at most **64,000 bytes**, except a
+qualitative result: it is referenced without being read, so a checkpoint, an
+archive or a capture collection of any retained size is attached that way. Logical
 paths are bounded relative labels: no absolute paths, traversal, empty segments,
 backslashes or URL syntax. They do not direct filesystem writes. Role and path
 form the replaceable slot within an attempt. Public attachment is refused during

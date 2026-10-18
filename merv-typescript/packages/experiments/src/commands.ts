@@ -33,6 +33,7 @@ import {
   parseExperimentInput,
 } from './input.js';
 import {
+  boundedEvidence,
   buildMetricsExhibit,
   decodeEvidence,
   exhibitBytes,
@@ -224,7 +225,13 @@ export async function attach(
         'Evidence must be authored by this worker or be its exact frozen recovery input',
         403,
       );
-      const text = await evidenceText(ctx, caller, artifact.id, tx);
+      // A qualitative result is referenced, never read: nothing parses it and its exhibit entry
+      // holds no data, so a checkpoint or an archive is evidence the reviewer receives as well.
+      const referenced = input.role === 'result' && input.resultFormat === 'qualitative';
+      check(artifact.size > 0, 'invalid_experiment_evidence', 'Evidence must not be empty');
+      // Measured first, so an output past the inline limit is told this rather than that limit.
+      if (!referenced) boundedEvidence(artifact.size);
+      const text = referenced ? '' : await evidenceText(ctx, caller, artifact.id, tx);
       if (input.role === 'result') {
         // The exhibit pins every current result, so one past its limits could never be submitted.
         const kept = currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path);
@@ -236,7 +243,7 @@ export async function attach(
           resultFormat: input.resultFormat,
           sequence: 0,
         } as ExperimentEvidence;
-        parsed(added, text);
+        if (!referenced) parsed(added, text);
         await buildExhibit(ctx, caller, experiment, [...kept, added], tx).catch((error) => {
           throw error instanceof MervError && error.code === 'invalid_experiment_evidence'
             ? new MervError(
@@ -397,9 +404,12 @@ async function buildExhibit(
     sha256: source.hash,
     submittedAt: source.createdAt,
     resultFormat: source.resultFormat ?? 'json',
-    data: parsedResults.has(resultKey(source))
-      ? kept(source)
-      : parsed(source, await evidenceText(ctx, caller, source.artifactId, tx)),
+    data:
+      source.resultFormat === 'qualitative'
+        ? null
+        : parsedResults.has(resultKey(source))
+          ? kept(source)
+          : parsed(source, await evidenceText(ctx, caller, source.artifactId, tx)),
   }));
   const exhibit = buildMetricsExhibit({
     projectId: experiment.projectId,
