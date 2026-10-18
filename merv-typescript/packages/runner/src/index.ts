@@ -881,7 +881,8 @@ export class MachineRunner implements Runner {
    * What an ended launch owes, in order: its transcript's declaration, its capture (before the
    * release: a session's close ends its writer generation, and Code admits nothing begun after
    * it), its release, owed Code receipts, workspace result, closed checkout and last the
-   * transcript itself; true once nothing is. One whose driver is gone is released and waits.
+   * transcript itself; true once nothing is. One whose driver is gone is released and waits; one
+   * held by a local failure delivers its transcript and conversation meanwhile.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
     this.tallies.delete(record.id); // only a running launch's budget reads on
@@ -897,31 +898,53 @@ export class MachineRunner implements Runner {
     const driver = this.driverOf(record);
     const workspace = driver?.get(record.id);
     const open = !!workspace && workspace.status !== 'closed';
-    if (record.metadata.usageReported !== true) {
-      record = await this.declare(record);
-      // What the session left is captured while its writer generation is still live.
-      if (open) await driver!.capture(record);
-      record = await this.release(record);
+    try {
+      if (record.metadata.usageReported !== true) {
+        record = await this.declare(record);
+        // What the session left is captured while its writer generation is still live.
+        if (open) await driver!.capture(record);
+        record = await this.release(record);
+      }
+      if (!driver) {
+        await this.deliverOwed(record.id);
+        this.lastError = 'workspace_driver_missing';
+        return false;
+      }
+      if (open) {
+        const result = await driver.capture(record);
+        // Work the capture moved aside or rescued is reported, never passed over in silence.
+        const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
+        if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
+        await this.reconcileCodeCommands(record, sessionOf(record));
+        // Only an attached checkout has a result to report; the session is closed by now.
+        if (
+          result &&
+          record.metadata.attached === true &&
+          record.metadata.workspaceReported !== true
+        ) {
+          await this.answer(() =>
+            this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
+          );
+          record = this.save(record.id, { workspaceReported: true });
+        }
+        await driver.close(record);
+      }
+    } catch (error) {
+      // A step that fails on this machine (a capture, a checkout that will not close) is tried
+      // again each tick and may never succeed, holding the release with it until the session
+      // lapses. What the agent printed and the conversation it kept still go, so the work's next
+      // visit continues from this one and not from an older one. A server away is waited for.
+      if (!(error instanceof RunnerControlError)) await this.deliverOwed(record.id);
+      throw error;
     }
-    if (!driver) {
-      this.lastError = 'workspace_driver_missing';
-      return false;
-    }
-    if (!open) return await this.finishAssignment(record);
-    const result = await driver.capture(record);
-    // Work the capture moved aside or rescued is reported, never passed over in silence.
-    const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
-    if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
-    await this.reconcileCodeCommands(record, sessionOf(record));
-    // Only an attached checkout has a result to report; the session is closed by now.
-    if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
-      await this.answer(() =>
-        this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
-      );
-      record = this.save(record.id, { workspaceReported: true });
-    }
-    await driver.close(record);
     return await this.finishAssignment(record);
+  }
+  /** Each owed delivery's next step, whatever else the launch is waiting on. */
+  private async deliverOwed(id: string): Promise<void> {
+    for (const kind of kinds) {
+      const record = this.ledger.get(id);
+      if (record) await this.deliverOne(kind, record).catch(() => false);
+    }
   }
   private async finishAssignment(record: LaunchRecord): Promise<boolean> {
     // Capture helpers touch untrusted checkout content too. Close their descendants and

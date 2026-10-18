@@ -411,6 +411,40 @@ test('a launch declares before its release and delivers after its workspace resu
   assert.deepEqual(open(f), []);
 });
 
+test('a capture that keeps failing holds the release, never the transcript it declared', async (t) => {
+  // Prod 2026-10-16: a visit declared its transcript, then neither released its session nor
+  // delivered what it kept until the session lapsed two hours later, so the next visit took up an
+  // older conversation. A local step that fails each tick no longer holds the delivery.
+  const work = offer('stuck', {
+    workspace: { mode: 'ephemeral', namespace: 'n', retain: false, driver: 'code.v2' },
+  });
+  const queue = [work];
+  const fake = server(() => queue.shift() ?? null);
+  const sessions = transcripts(fake);
+  const f = machine(t, [node('a', `process.stdout.write('{"turn":1}\\n')`)], sessions.fetch);
+  const inner = driver(f.root);
+  const failing: WorkspaceDriverFactory = {
+    name: inner.name,
+    create: (host, transport) => ({
+      ...inner.create(host, transport),
+      capture: async () => {
+        throw Object.assign(new Error('workspace_capture_failed'), {
+          code: 'workspace_capture_failed',
+        });
+      },
+    }),
+  };
+  const runner = f.make([failing]);
+  await runner.start();
+  const id = launchId(work.id);
+  await until(runner, () => transcript(f, id)?.state === 'uploaded', 'the delivered transcript');
+  assert.equal(sessions.of('PUT'), 1);
+  assert.equal(fake.releases(work.id).length, 0, 'the release still waits for the capture');
+  assert.deepEqual(open(f), [id]);
+  await runner.tick();
+  assert.equal(sessions.of('PUT'), 1, 'delivered once');
+});
+
 test('each release try declares once, from one read; a log changed since is not sent', async (t) => {
   let refused = 3;
   const fake = server(
