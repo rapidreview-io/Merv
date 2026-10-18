@@ -116,8 +116,9 @@ export const workflowGates: Partial<Record<ActiveState, string>> = {
     ' The workflow holds two independent reviews: of this design before execution, and of the results after it. It cannot hold any further approval a plan asks for, such as a readiness check before validation or a freeze before test access, so design the run to need none; split a staged evaluation that does need one into separate experiments.',
   design_review:
     ' The workflow holds only this design review and the results review: a plan that requires a further approval during execution, such as a readiness check or a freeze before test access, cannot be carried out as written and needs changes.',
+  // Executors handed live runs on with retry_running before their leases ran out (2026-09-30).
   running:
-    ' Execution has no route back to design. If the approved design proves unworkable, stop, retain what showed it, and submit results whose report says so; the results reviewer returns the experiment to planning for a new design. Each return uses one of its result rounds, which status_and_next shows under limits.',
+    ' Execution has no route back to design. If the approved design proves unworkable, stop, retain what showed it, and submit results whose report says so; the results reviewer returns the experiment to planning for a new design. Each return uses one of its result rounds, which status_and_next shows under limits. To wait for a long run where session.await_compute is offered, end your visit with it rather than sleeping or polling; retry_running is for an infrastructure interruption only, never for waiting or for a lease that is about to end.',
 };
 
 /** The shape a planner fills in, shown beside the design it is asked for. */

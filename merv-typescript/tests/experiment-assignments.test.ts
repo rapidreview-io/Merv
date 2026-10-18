@@ -468,6 +468,9 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.match(executing.brief, /report\.review_visual/);
   assert.match(executing.brief, /report\.clear to start over/);
   assert.match(executing.brief, /Execution has no route back to design/);
+  // It waits for a long run by ending its visit, never by handing it on with retry_running.
+  assert.match(executing.brief, /where session\.await_compute is offered, end your visit with it/);
+  assert.match(executing.brief, /never for waiting or for a lease that is about to end/);
   // It is not sent looking for a replanning route the workflow does not have.
   assert.match(executing.brief, /Follow the approved scope\. Retain the required results/);
   assert.doesNotMatch(executing.brief, /replanning route/);
