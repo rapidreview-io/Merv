@@ -939,6 +939,13 @@ test('Cordis service requirements match the architecture and every accessed capa
         assert.deepEqual(actualProvided, ['customerExperiments']);
         return;
       }
+      if (name.text === 'merv-admin') {
+        // The platform admin reads each owner's service where it is loaded (ctx.get), and
+        // provides none.
+        assert.deepEqual(sorted(declared), ['api', 'state']);
+        assert.deepEqual(actualProvided, []);
+        return;
+      }
       if (name.text === 'merv-fleet-workflow') {
         assert.equal(relative(packagesRoot, path), join('fleet', 'src', 'workflow.ts'));
         assert.deepEqual(sorted(declared), ['api', 'fleet', 'scope', 'sessions', 'state', 'tools']);

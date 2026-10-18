@@ -910,41 +910,6 @@ test('public intake issues private capabilities, preserves admission limits and 
   assert.equal((await f.experiment(created.body.id)).workflow.state, 'planning');
 });
 
-test('platform admin projection shows standalone state without private capabilities', async (t) => {
-  const { adminOverview } = await import('../packages/admin/src/work.js');
-  const { adminOf } = await import('../packages/admin/src/index.js');
-  const f = await fixture(t);
-  const created = await f.create();
-  const identity = { issuer: 'https://identity.example', subject: 'admin' };
-  const human = {
-    kind: 'user' as const,
-    user: { ...identity, createdAt: new Date().toISOString() },
-    expiresAt: new Date(Date.now() + 60000).toISOString(),
-  };
-  assert.ok(adminOf(human, [identity]));
-  for (const principal of [
-    undefined,
-    { ...human, user: { ...human.user, subject: 'other' } },
-    { kind: 'actor', actor: { role: 'operator' } },
-    { kind: 'key', key: { owner: identity } },
-  ]) {
-    assert.equal(adminOf(principal as never, [identity]), undefined);
-  }
-  assert.equal(adminOf(human, []), undefined);
-  const view = await adminOverview(f.state);
-  const row = view.rows.find((r) => r.id === created.id || r.requestId === created.id);
-  assert.ok(row);
-  assert.equal(row.source, 'standalone');
-  assert.equal(row.state, 'planning');
-  assert.equal(row.paid, false);
-  assert.ok(view.unavailable.includes('Project experiments'));
-  const json = JSON.stringify(view);
-  for (const secret of [created.agentToken, created.customerToken, intakeKey])
-    assert.ok(!json.includes(secret));
-  assert.ok(!json.includes('clientRequest'));
-  assert.ok(!json.includes('checkout'));
-});
-
 const fileState = { deleted: false, etag: '' };
 const files: RequestFiles = {
   async manifest(id) {

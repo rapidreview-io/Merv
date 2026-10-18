@@ -4,7 +4,7 @@ import { check, MervError, type State } from '@merv/contracts';
 import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
 import type { AdminIdentity } from './models.js';
-import { adminOverview } from './work.js';
+import { workRoutes } from './work.js';
 
 export type { AdminIdentity } from './models.js';
 
@@ -64,7 +64,7 @@ export const adminPlugin = {
     await state.migrate('admin', auditMigrations);
     const env: AdminEnv = { ctx, state, audit: new AdminAudit(state), admins: config.admins };
     const routes: AdminRoutes = {
-      'GET /admin/experiments': async () => await adminOverview(env.state, env.admins),
+      ...workRoutes(env),
     };
     ctx.effect(() =>
       ctx.api.mount('/admin', async (req, res, r) => {

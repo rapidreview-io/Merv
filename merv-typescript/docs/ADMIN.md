@@ -25,7 +25,10 @@ come from workflow definitions, spend from Fleet, credit arithmetic from Sandbox
 
 - `GET /admin/work` — every nonterminal unit of work across projects, plus units ended in the
   last 24 hours: kind, title, project, person, state, attention, agent, machine, last activity,
-  age, cost so far.
+  age, cost so far. Joined from each owner's platform read: `workflows.platformWork`,
+  `sessions.running.platform`, `fleet.platformAllocations`, `pi.platformTurns`,
+  `tasks.platformTypes`, `reflections.platformLensNames`, `customerExperiments.customers` and
+  `scope.directory`; an owner not loaded is named in `unavailable`.
 - `GET /admin/credits` — per person → sandbox account → provider: granted, used, reserved,
   available; schedules; budget caps; Fleet daily spend and model tokens.
 - `POST /admin/credits/grants`, `POST /admin/credits/schedules`,
