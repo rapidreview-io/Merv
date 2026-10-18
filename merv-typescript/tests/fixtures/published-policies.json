@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. The retirement of 2026-10-05 stopped registering task@31 and @35, experiment@28 and @32, reflection@3 and reflection.lens@2 with their execution policies; production held no instance of any of them, so no records were deleted. The visual-documents change of 2026-10-06 stopped registering experiment.design@11 and experiment.execute@11 for @12, which carry the plan and report templates; an experiment renders with its state's current recipe, so no record depends on them. task.work@4 stays registered for the tasks pinned to it; task.work@5 adds the delivery report. The retirement of 2026-10-07 stopped registering the upload-less twins task@6, task@39 and experiment@36 with their execution policies: every current contract grants the large-upload tools, which refuse where the blob store cannot sign uploads. Production held no instance of any of them, so no records were deleted. experiment@41 (2026-10-07) gives the design and its review a read-only checkout of the experiment's pinned base, the accepted code it depends on; experiment@40 stays registered for the experiments pinned to it, whose designs are told to read the delivery evidence instead. experiment@43 (2026-10-14) writes the one-page report with the report tools and submits its final render; its running state uses experiment.execute@13. experiment@40-42 and experiment.execute@12 stay registered, unchanged, for experiments pinned to them.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. The retirement of 2026-10-05 stopped registering task@31 and @35, experiment@28 and @32, reflection@3 and reflection.lens@2 with their execution policies; production held no instance of any of them, so no records were deleted. The visual-documents change of 2026-10-06 stopped registering experiment.design@11 and experiment.execute@11 for @12, which carry the plan and report templates; an experiment renders with its state's current recipe, so no record depends on them. task.work@4 stays registered for the tasks pinned to it; task.work@5 adds the delivery report. The retirement of 2026-10-07 stopped registering the upload-less twins task@6, task@39 and experiment@36 with their execution policies: every current contract grants the large-upload tools, which refuse where the blob store cannot sign uploads. Production held no instance of any of them, so no records were deleted. experiment@41 (2026-10-07) gives the design and its review a read-only checkout of the experiment's pinned base, the accepted code it depends on; experiment@40 stays registered for the experiments pinned to it, whose designs are told to read the delivery evidence instead. experiment@43 (2026-10-14) writes the one-page report with the report tools and submits its final render; its running state uses experiment.execute@13. experiment@40-42 and experiment.execute@12 stay registered, unchanged, for experiments pinned to them. experiment@43-44, their policies and the recipes experiment.design@13, experiment.design_review@12, experiment.attempt_review@13 and experiment.execute@14-15 verified in production on 2026-10-18.",
   "definitions": [
     {
       "name": "consolidation",
@@ -735,7 +735,13 @@
       "name": "experiment",
       "version": 43,
       "fingerprint": "dffab17d85332df404983596e2e61b19f7e6ce837badef3789481d16c744d907",
-      "published": false
+      "published": true
+    },
+    {
+      "name": "experiment",
+      "version": 44,
+      "fingerprint": "f10efbe8665f12c3416dc01ec72c947c2d2f73af10121da6fcb37286e01482b6",
+      "published": true
     }
   ],
   "policies": [
@@ -3214,28 +3220,56 @@
       "version": 43,
       "state": "design_review",
       "fingerprint": "11fdd7716b08ed8390dfcf2afa2c848bd2b8298c857e98d37805dc145da58f2a",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 43,
       "state": "experiment_review",
       "fingerprint": "5decf3427aa5189f258a2eefde39e032638f3b2b560753d367843df8b035e444",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 43,
       "state": "planned",
       "fingerprint": "e805cd8c7b2b18bdba9c37087eed9a73a3df172825cb26e34ee3c218081b845c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 43,
       "state": "running",
       "fingerprint": "8d0c80bea4828223fc841aed2050f5846bea188ce2d5b0aee61ba48202035397",
-      "published": false
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 44,
+      "state": "design_review",
+      "fingerprint": "11fdd7716b08ed8390dfcf2afa2c848bd2b8298c857e98d37805dc145da58f2a",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 44,
+      "state": "experiment_review",
+      "fingerprint": "5decf3427aa5189f258a2eefde39e032638f3b2b560753d367843df8b035e444",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 44,
+      "state": "planned",
+      "fingerprint": "e805cd8c7b2b18bdba9c37087eed9a73a3df172825cb26e34ee3c218081b845c",
+      "published": true
+    },
+    {
+      "workflow": "experiment",
+      "version": 44,
+      "state": "running",
+      "fingerprint": "8d0c80bea4828223fc841aed2050f5846bea188ce2d5b0aee61ba48202035397",
+      "published": true
     }
   ],
   "recipes": [
@@ -3895,6 +3929,36 @@
       "version": 13,
       "hash": "827e3444089f82265d7a3b7cea5547cf383255a70ed6aa5f90aea4ea81b19db3",
       "published": false
+    },
+    {
+      "type": "experiment.design",
+      "version": 13,
+      "hash": "3dbd9a70c4222e5c5365d7e38433264b66857ecc17844948a8ad7c9459e8713f",
+      "published": true
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 12,
+      "hash": "6a8b839a7a86c926cec67eeb95f29b0aa49b7234f959a195d53387ad94fa0088",
+      "published": true
+    },
+    {
+      "type": "experiment.execute",
+      "version": 14,
+      "hash": "6b40d388d00d52e9eb9e0ee30fef2288234a7a18ebfe5ab0a62c020bfc9692b8",
+      "published": true
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 13,
+      "hash": "55d1c7ffe55a27da177fe141eb40b667db0036e1b03bd2dc84ee15a4104ac8c4",
+      "published": true
+    },
+    {
+      "type": "experiment.execute",
+      "version": 15,
+      "hash": "3954dd38346bd49c3f51fe9ca3296aa9f4c37109ea2814481a659103e62b157d",
+      "published": true
     }
   ]
 }
