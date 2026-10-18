@@ -1118,6 +1118,7 @@ test('a worker is not shown the reads that answer only a person, which still ref
     'ui.running_panel',
     'ui.shell',
     'ui.home',
+    'ui.read',
     'actor.list',
     'pi.list',
     'pi.snapshot',
@@ -1129,7 +1130,7 @@ test('a worker is not shown the reads that answer only a person, which still ref
     [...people, 'profiled.read'].filter((name) => listed.includes(name)),
     [],
   );
-  for (const name of ['session.messages', 'system.status', 'ui.read', 'actor.whoami'])
+  for (const name of ['session.messages', 'system.status', 'actor.whoami'])
     assert.ok(listed.includes(name), name);
   // A person is shown them all.
   const shown = (await f.app.ctx.tools.describe(f.source)).map((tool) => tool.name);

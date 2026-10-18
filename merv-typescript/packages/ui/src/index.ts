@@ -249,6 +249,9 @@ export const uiPlugin = {
           .object({ rowId: z.string().min(1).max(200), params: z.record(z.unknown()).optional() })
           .strict(),
         readOnly: true,
+        // A page's own read, by the row ids ui.shell lists: a leased worker, listed neither, reads
+        // the records with their own tools.
+        worker: 'never' as const,
         handler: async (
           caller: Caller,
           input: { rowId: string; params?: Record<string, unknown> },
