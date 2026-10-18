@@ -1038,6 +1038,47 @@ test('leased mounted calls require source grants and keep upstream project argum
   );
 });
 
+test('a worker is not shown the reads that answer only a person, which still refuse it by name', async (t) => {
+  const f = await fixture(t);
+  await f.app.ctx.plugin(uiPlugin);
+  await f.app.ctx.plugin(sessionsUiPlugin);
+  const offer = await f.offer();
+  const client = await f.connect(offer.secret);
+  const listed = (await client.listTools()).tools.map((tool) => tool.name);
+  const people = [
+    'session.find',
+    'session.threads',
+    'session.thread_messages',
+    'session.observe',
+    'session.stuck',
+    'ui.running',
+    'ui.running_panel',
+  ];
+  assert.deepEqual(
+    people.filter((name) => listed.includes(name)),
+    [],
+  );
+  for (const name of ['session.messages', 'system.status', 'ui.shell', 'ui.read'])
+    assert.ok(listed.includes(name), name);
+  // A person is shown them all.
+  const shown = (await f.app.ctx.tools.describe(f.source)).map((tool) => tool.name);
+  assert.deepEqual(
+    people.filter((name) => !shown.includes(name)),
+    [],
+  );
+  // Called by name, each still answers with its own refusal.
+  assert.equal(
+    errorCode(
+      await client.callTool({ name: 'session.find', arguments: { instanceId: f.instance.id } }),
+    ),
+    'forbidden',
+  );
+  assert.equal(
+    errorCode(await client.callTool({ name: 'ui.running', arguments: {} })),
+    'running_forbidden',
+  );
+});
+
 test('project observers see real MCP call metadata and failures, without worker capabilities or payloads', async (t) => {
   const f = await fixture(t);
   await f.app.ctx.plugin(uiPlugin);

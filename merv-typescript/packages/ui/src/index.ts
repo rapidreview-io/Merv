@@ -101,7 +101,12 @@ export class UiRegistry extends RunningRegistry implements Ui {
     const row = this.byId.get(rowId);
     // A row this composition does not have and a row that carries no read read differently,
     // under the one code a client already knows.
-    check(row, 'row_unreadable', `No row named ${clip(String(rowId), 80)} in this project`, 404);
+    check(
+      row,
+      'row_unreadable',
+      `No row named ${clip(String(rowId), 80)} in this project; ui.shell lists its rows by id`,
+      404,
+    );
     if (row.page) {
       const id = params?.id;
       check(typeof id === 'string' && id.length > 0, 'invalid_input', 'params.id names the record');
@@ -234,7 +239,8 @@ export const uiPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'ui.read',
-        description: 'Read the data a sidebar row owns when it has no dedicated domain tool.',
+        description:
+          'Read the data a sidebar row owns when it has no dedicated domain tool. rowId is a row’s id as ui.shell lists it.',
         inputSchema: z
           .object({ rowId: z.string().min(1).max(200), params: z.record(z.unknown()).optional() })
           .strict(),
