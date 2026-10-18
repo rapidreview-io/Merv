@@ -361,7 +361,11 @@ export class ApiServer {
     // providers. While the requests in flight at the stop finish, new ones are still served: a
     // drain that refused them failed every caller for its whole length on top of the restart,
     // longer than hosted Codex retries a model call (about 6 s), so live workers' turns ended.
-    const cut = setTimeout(() => server.closeAllConnections(), this.drainMs);
+    // A handler outlives its cut socket, so admission ends at drainMs too.
+    const cut = setTimeout(() => {
+      this.refusing = true;
+      server.closeAllConnections();
+    }, this.drainMs);
     await Promise.allSettled([...this.requests]);
     // Admission ends: every later request is answered 503, unrun. One admitted during the drain
     // has lateMs more to finish; a stream still open then is cut below with the rest.

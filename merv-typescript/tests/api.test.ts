@@ -1214,6 +1214,49 @@ test('stop() cuts a stream admitted during the drain soon after the drain ends',
   await tools.close();
 });
 
+/** A `slow` tool that runs until `release()`; a failed test releases it. */
+function gated(tools: ToolRegistry, t: TestContext) {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  tools.register({
+    name: 'slow',
+    description: 'Runs until released',
+    inputSchema: z.object({}).strict(),
+    handler: async () => {
+      entered();
+      await gate;
+      return 'finished';
+    },
+  });
+  t.after(() => release());
+  return { started, release: () => release() };
+}
+
+test('stop() refuses new requests once drainMs has passed, though a tool call in flight at the stop still runs', async (t) => {
+  const { scope, tools } = fixture();
+  const slow = gated(tools, t);
+  const api = new ApiServer(scope, tools, { drainMs: 200 });
+  const url = await api.start();
+  // Its connection is cut at drainMs; the operation itself runs on.
+  const call = fetch(`${url}/tools/slow`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer alice-token', 'content-type': 'application/json' },
+    body: '{}',
+  }).catch(() => undefined);
+  await slow.started;
+  const stopping = api.stop();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const late = await fetch(`${url}/health`);
+  assert.equal(late.status, 503);
+  assert.equal(((await late.json()) as { error: { code: string } }).error.code, 'unavailable');
+  slow.release();
+  await call;
+  await stopping;
+  await tools.close();
+});
+
 test('MCP tools/list failures are JSON-RPC errors without internal text', async (t) => {
   const { scope, tools } = fixture();
   const api = new ApiServer(scope, tools);
