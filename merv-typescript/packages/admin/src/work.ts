@@ -1,157 +1,258 @@
-import type { State } from '@merv/contracts';
+import type { Context } from 'cordis';
+import type { DelegationSource } from '@merv/contracts';
+import type { AdminEnv, AdminRoutes } from './index.js';
+import type { AdminIdentity } from './models.js';
 
-import type { AdminIdentity, AdminExperiment, AdminOverview } from './models.js';
-/** Intentionally global. Never expose this projection through project-scoped tools or machine keys. */
-export async function adminOverview(
-  state: State,
-  identities: readonly AdminIdentity[] = [],
-): Promise<AdminOverview> {
-  return state.read(async (sql) => {
-    const tables = new Set(
-      (
-        await sql.all<{ table_name: string }>(
-          'SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()',
-        )
-      ).map((r) => r.table_name),
-    );
-    const unavailable: string[] = [];
-    const rows: AdminExperiment[] = [];
-    type Row = {
-      id: string;
-      project_id: string;
-      project: string;
-      title: string;
-      customer: string;
-      owner_id: string;
-      state: string;
-      updated_at: string;
-      created_at: string;
-      attempt: number;
-      paid: number | null;
-    };
-    const collect = async (query: string, source: AdminExperiment['source']) => {
-      for (const r of await sql.all<Row>(query))
-        rows.push({
-          id: r.id,
-          projectId: r.project_id,
-          project: r.project,
-          title: r.title,
-          customer: r.customer,
-          customerKey:
-            source === 'project'
-              ? 'actor:' + r.owner_id
-              : r.customer === 'Not provided yet'
-                ? 'guest:' + r.id
-                : 'email:' + r.customer.toLowerCase(),
-          source,
-          state: r.state,
-          updatedAt: r.updated_at,
-          createdAt: r.created_at,
-          attempt: Number(r.attempt),
-          paid: r.paid === null ? null : !!r.paid,
-          activity: r.state.replaceAll('_', ' '),
-          sessions: 0,
-        });
-    };
-    const order =
-      " ORDER BY CASE WHEN w.state IN ('complete','failed','abandoned') THEN 1 ELSE 0 END,w.updated_at DESC LIMIT 1001";
-    if (tables.has('experiments'))
-      await collect(
-        `SELECT e.id,e.owner_id,e.project_id,p.name AS project,e.name AS title,COALESCE(a.name,'Unassigned') AS customer,w.state,w.updated_at,e.created_at,e.attempt_index AS attempt,NULL AS paid FROM experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id LEFT JOIN actors a ON a.id=e.owner_id${order}`,
-        'project',
-      );
-    else unavailable.push('Project experiments');
-    if (tables.has('customer_experiments'))
-      await collect(
-        `SELECT e.id,e.owner_id,e.project_id,p.name AS project,e.title,COALESCE(e.email,'Not provided yet') AS customer,w.state,w.updated_at,e.created_at,e.attempts AS attempt,CASE WHEN e.payment_id IS NULL THEN 0 ELSE 1 END AS paid FROM customer_experiments e JOIN wf_instances w ON w.id=e.id JOIN projects p ON p.id=e.project_id${order}`,
-        'standalone',
-      );
-    else unavailable.push('Standalone experiments');
-    if (tables.has('customer_experiment_requests')) {
-      // Project only these fields; never return the idempotency secret, capabilities or checkout URL.
-      for (const r of await sql.all<{ id: string; experiment_id: string }>(
-        "SELECT id,data_json::jsonb->>'experimentId' AS experiment_id FROM customer_experiment_requests",
-      )) {
-        const row = rows.find((x) => x.id === r.experiment_id);
-        if (row) row.requestId = r.id;
-      }
-    }
-    if (tables.has('worker_sessions')) {
-      const sessions = await sql.all<{ instance_id: string; status: string; expires_at: string }>(
-        "SELECT instance_id,status,session_json::jsonb->>'expiresAt' AS expires_at FROM worker_sessions WHERE status IN ('offered','active')",
-      );
-      for (const s of sessions) {
-        const row = rows.find((r) => r.id === s.instance_id);
-        if (row && Date.parse(s.expires_at) > Date.now()) {
-          row.sessions++;
-          row.activity = s.status === 'active' ? 'Agent working' : 'Agent starting';
-        }
-      }
-    } else unavailable.push('Agent sessions');
-    const short = (id: string) =>
-      (id.match(/[a-f0-9]{8}-[a-f0-9-]{27}/i)?.[0] ?? id.replace(/^[a-z]+_/, '')).slice(0, 4);
-    const opaque = (value: string) =>
-      /[a-f0-9]{8}-[a-f0-9-]{27}/i.test(value) || /^(actor|user|wf|ce)_[a-z0-9_-]+$/i.test(value);
-    const users = new Map<
-      string,
-      { key: string; label: string; experiments: number; active: number }
-    >();
-    if (tables.has('shared_users') && tables.has('member_actors')) {
-      const people = await sql.all<{
-        issuer: string;
-        subject: string;
-        actor_id: string | null;
-        name: string | null;
-      }>(
-        'SELECT u.issuer,u.subject,m.actor_id,a.name FROM shared_users u LEFT JOIN member_actors m ON m.issuer=u.issuer AND m.subject=u.subject LEFT JOIN actors a ON a.id=m.actor_id',
-      );
-      for (const p of people) {
-        const key = p.issuer + '|' + p.subject;
-        const configured = identities.find(
-          (i) => i.issuer === p.issuer && i.subject === p.subject,
-        )?.label;
-        const label =
-          configured ||
-          (p.name && !opaque(p.name) && p.name !== p.subject ? p.name : short(p.subject));
-        if (!users.has(key) || configured || (p.name && !opaque(p.name) && p.name !== p.subject))
-          users.set(key, { key, label, experiments: 0, active: 0 });
-        for (const row of rows)
-          if (row.source === 'project' && row.customerKey === 'actor:' + p.actor_id)
-            row.customerKey = key;
-      }
-    }
-    for (const row of rows) {
-      if (!users.has(row.customerKey))
-        users.set(row.customerKey, {
-          key: row.customerKey,
-          label: row.customerKey.startsWith('guest:')
-            ? 'Guest · ' + short(row.requestId ?? row.id)
-            : opaque(row.customer)
-              ? short(row.customer)
-              : row.customer,
-          experiments: 0,
-          active: 0,
-        });
-      const user = users.get(row.customerKey)!;
-      row.customer = user.label;
-      user.experiments++;
-      if (!['complete', 'failed', 'abandoned'].includes(row.state)) user.active++;
-    }
-    rows.sort(
-      (a, b) =>
-        Number(['complete', 'failed', 'abandoned'].includes(a.state)) -
-          Number(['complete', 'failed', 'abandoned'].includes(b.state)) ||
-        b.updatedAt.localeCompare(a.updatedAt),
-    );
-    return {
-      users: [...users.values()].sort(
-        (a, b) =>
-          b.active - a.active || b.experiments - a.experiments || a.label.localeCompare(b.label),
-      ),
-      at: new Date().toISOString(),
-      rows: rows.slice(0, 1000),
-      truncated: rows.length > 1000,
-      unavailable,
-    };
-  });
+/**
+ * The work table: every unit of work running anywhere, and every unit that ended in the last
+ * day, joined in memory from each owner's platform read. Every fact keeps its owner's rule:
+ * terminal states are each version's own, blockers are what their providers published (a
+ * dispatch hold and a code base's state among them), a customer's move is Customer
+ * Experiments', an agent's need is Sessions'. Intentionally global: never expose it through
+ * project-scoped tools or machine keys.
+ */
+
+/** What the table calls each workflow's units; any other workflow keeps its own name. */
+const KINDS: Record<string, string> = {
+  task: 'task',
+  experiment: 'experiment',
+  service_experiment: 'standalone experiment',
+  reflection: 'reflection',
+  'reflection.lens': 'reflection lens',
+  research: 'research cycle',
+};
+/** What the table says of the moves it names itself, by code, else by reason. */
+const SAYS: Record<string, string> = {
+  allowance: 'Waits for an admin to allow another round',
+  approval: 'Waits for the customer to approve the plan',
+  payment: 'Waits for the customer to pay',
+  key_revoked: 'The key its machine registered with can no longer read the project',
+  machine_offline: 'Its machine stopped reporting',
+  quiet: 'Its agent has made no Merv call for a while',
+};
+const said = (reason: AdminAttention['reason'], code: string | null | undefined) =>
+  code ? [{ reason, code, message: SAYS[code] ?? SAYS[reason]! }] : [];
+
+/** Why a unit may need someone: an owner's blocker, an admin's allowance, a customer, an agent. */
+export interface AdminAttention {
+  reason: 'blocker' | 'allowance' | 'customer' | 'agent';
+  /** The blocker's publisher. */
+  provider?: string;
+  code: string;
+  message: string;
 }
+export interface AdminPerson {
+  /** `issuer|subject` for a signed-in identity, else `email:` or `guest:`. */
+  key: string;
+  label: string;
+  active: number;
+  total: number;
+}
+export interface AdminWorkRow {
+  id: string;
+  kind: string;
+  /** The owner's type name, where it has one (`task.work`). */
+  type: string | null;
+  title: string;
+  project: { id: string; name: string };
+  person: { key: string; label: string };
+  state: string;
+  terminal: boolean;
+  attention: AdminAttention[];
+  /** The live work visit at the unit's revision. */
+  agent: { role: string; status: string } | null;
+  machine: {
+    phase: string;
+    profile: string | null;
+    provider: string | null;
+    sandboxId: string | null;
+    usdPerHour: number | null;
+  } | null;
+  lastActivity: string;
+  createdAt: string;
+  /** Its last transition. */
+  updatedAt: string;
+  /** Its closed work visits; runners report tokens unverified, and no visit reports a price. */
+  cost: {
+    sessions: number;
+    reportedSessions: number;
+    wallMs: number;
+    inputTokens: number;
+    outputTokens: number;
+  } | null;
+}
+export interface AdminWork {
+  rows: AdminWorkRow[];
+  /** Every signed-in identity, with or without work, and every customer on a row. */
+  people: AdminPerson[];
+  at: string;
+  /** The owners not loaded here, whose facts the table lacks. */
+  unavailable: string[];
+}
+
+const uuid = /[a-f0-9]{8}-[a-f0-9-]{27}/i;
+const short = (id: string) => (id.match(uuid)?.[0] ?? id.replace(/^[a-z]+_/, '')).slice(0, 4);
+const opaque = (name: string) => uuid.test(name) || /^(actor|user|wf|ce)_[a-z0-9_-]+$/i.test(name);
+
+export async function adminWork(
+  ctx: Pick<Context, 'get'>,
+  admins: readonly AdminIdentity[],
+): Promise<AdminWork> {
+  const at = new Date().toISOString();
+  const since = new Date(Date.parse(at) - 86_400_000).toISOString();
+  const unavailable: string[] = [];
+  const get = <K extends keyof Context & string>(name: K): Context[K] | undefined =>
+    ctx.get(name) ?? void unavailable.push(name);
+  const [workflows, sessions, fleet, pi, tasks, reflections, customers, scope] = [
+    get('workflows'),
+    get('sessions'),
+    get('fleet'),
+    get('pi'),
+    get('tasks'),
+    get('reflections'),
+    get('customerExperiments'),
+    get('scope'),
+  ] as const;
+  const work = (await workflows?.platformWork(since)) ?? [];
+  const of = (workflow: string) => work.filter((unit) => unit.workflow === workflow);
+  const ids = (workflow: string) => of(workflow).map(({ id }) => id);
+  const turns = (await pi?.platformTurns(since)) ?? [];
+  const visits = await sessions?.running.platform(work);
+  const machines = new Map(
+    ((await fleet?.platformAllocations()) ?? []).flatMap((a) => [
+      [a.id, a],
+      [`${a.owner.kind}:${a.owner.id}`, a],
+    ]),
+  );
+  const types = await tasks?.platformTypes(ids('task'));
+  const lenses = await reflections?.platformLensNames(ids('reflection.lens'));
+  const standalone = await customers?.customers(of('service_experiment'));
+  const { people: members, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
+  const names = new Map(projects.map(({ id, name }) => [id, name]));
+
+  // A person's label: the one configured for an admin, else a name one of their project actors
+  // goes by, else the first characters of their subject.
+  const people = new Map<string, AdminPerson>();
+  const byActor = new Map<string, string>();
+  const person = (key: string, label: string) =>
+    people.get(key) ?? people.set(key, { key, label, active: 0, total: 0 }).get(key)!;
+  for (const { issuer, subject, actors } of members) {
+    const key = `${issuer}|${subject}`;
+    const label =
+      admins.find((a) => a.issuer === issuer && a.subject === subject)?.label ??
+      actors.find(({ name }) => name !== subject && !opaque(name))?.name;
+    people.set(key, { key, label: label ?? short(subject), active: 0, total: 0 });
+    for (const { actorId } of actors) byActor.set(actorId, key);
+  }
+  // Work an agent or a service started, or whose starter is no member, is its project owner's.
+  const identity = (source: DelegationSource) =>
+    source.kind === 'human' ? `${source.issuer}|${source.subject}` : undefined;
+  const owners = new Map(
+    ((await scope?.projectOwners()) ?? []).map(({ projectId, source }) => [
+      projectId,
+      identity(source),
+    ]),
+  );
+  const member = (key: string | undefined, projectId: string) =>
+    person(key || owners.get(projectId) || 'nobody', 'Unassigned');
+  const starter = ({ startedBy, projectId }: (typeof work)[number]) =>
+    member(startedBy ? byActor.get(startedBy) : undefined, projectId);
+  const customer = (unit: (typeof work)[number]) => {
+    const found = standalone?.get(unit.id);
+    if (!found) return starter(unit);
+    if (found.issuer) return person(`${found.issuer}|${found.subject}`, found.email ?? 'Customer');
+    if (found.email) return person(`email:${found.email.toLowerCase()}`, found.email);
+    return person(`guest:${found.requestId}`, `Guest · ${short(found.requestId)}`);
+  };
+  const machine = (a: ReturnType<typeof machines.get>) =>
+    a
+      ? {
+          phase: a.phase,
+          profile: a.profile,
+          provider: a.provider,
+          sandboxId: a.runtime?.sandboxId ?? null,
+          usdPerHour: a.usdPerHour ?? null,
+        }
+      : null;
+  const project = (id: string) => ({ id, name: names.get(id) ?? id });
+
+  const rows: AdminWorkRow[] = [
+    ...work.map((unit) => {
+      const { visit = null, usage = null } = visits?.get(unit.id) ?? {};
+      const owner = unit.workflow === 'service_experiment' ? customer(unit) : starter(unit);
+      return {
+        id: unit.id,
+        kind: KINDS[unit.workflow] ?? unit.workflow,
+        type: types?.get(unit.id) ?? null,
+        title: lenses?.get(unit.id) ?? unit.name,
+        project: project(unit.projectId),
+        person: { key: owner.key, label: owner.label },
+        state: unit.state,
+        terminal: unit.terminal,
+        attention: [
+          ...unit.blockers.map(({ provider, code, message }) => ({
+            reason: 'blocker' as const,
+            provider,
+            code,
+            message,
+          })),
+          ...said('allowance', unit.allowance ? unit.state : null),
+          ...said('customer', standalone?.get(unit.id)?.waits),
+          ...said('agent', visit?.need),
+        ],
+        agent: visit && { role: visit.role, status: visit.status },
+        machine: machine(
+          machines.get(visit?.allocationId ?? '') ?? machines.get(`workflow:work:${unit.id}`),
+        ),
+        lastActivity: visit?.lastActivity ?? unit.updatedAt,
+        createdAt: unit.createdAt,
+        updatedAt: unit.updatedAt,
+        cost: usage,
+      };
+    }),
+    ...turns.map((turn) => {
+      const owner = member(
+        identity(turn.source) ?? byActor.get(turn.source.actorId),
+        turn.projectId,
+      );
+      const moved = turn.completedAt ?? turn.startedAt ?? turn.createdAt;
+      return {
+        id: turn.id,
+        kind: 'pi turn',
+        type: null,
+        title: turn.title,
+        project: project(turn.projectId),
+        person: { key: owner.key, label: owner.label },
+        state: turn.status,
+        terminal: !turn.live,
+        attention: [],
+        agent: null,
+        machine: machine(machines.get(turn.runtimeId)),
+        lastActivity: moved,
+        createdAt: turn.createdAt,
+        updatedAt: moved,
+        cost: null,
+      };
+    }),
+  ];
+  for (const row of rows) {
+    const counted = people.get(row.person.key)!;
+    counted.total++;
+    if (!row.terminal) counted.active++;
+  }
+  return {
+    rows: rows.sort(
+      (a, b) =>
+        Number(a.terminal) - Number(b.terminal) || b.lastActivity.localeCompare(a.lastActivity),
+    ),
+    people: [...people.values()].sort(
+      (a, b) => b.active - a.active || b.total - a.total || a.label.localeCompare(b.label),
+    ),
+    at,
+    unavailable,
+  };
+}
+
+export const workRoutes = (env: AdminEnv): AdminRoutes => ({
+  'GET /admin/work': async () => await adminWork(env.ctx, env.admins),
+});

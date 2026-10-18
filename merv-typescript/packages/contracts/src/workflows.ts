@@ -9,6 +9,7 @@ import type {
   WorkflowExecutionTarget,
   WorkflowLimitStatus,
   WorkflowOverview,
+  WorkflowPlatformWork,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowReference,
@@ -389,6 +390,12 @@ export interface Workflows {
    * recorded one of `values` under one of `keys` of their data.
    */
   open(workflow: string, projectId: string | null, tx?: Transaction): Promise<WorkflowSnapshot[]>;
+  /**
+   * Platform admin read, never exposed through a tool, a lease or a machine key: every project's
+   * work in a nonterminal state of its own pinned version, and work that ended since `since`,
+   * last moved first, each with the blockers published about it at its revision.
+   */
+  platformWork(since: string, tx?: Transaction): Promise<WorkflowPlatformWork[]>;
   movedBy(instanceId: string, revision: number, tx?: Transaction): Promise<string | null>;
   revisions(
     projectId: string,

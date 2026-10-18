@@ -47,12 +47,14 @@ import type {
   PiEvent,
   PiHostRecord,
   PiHostView,
+  PiPlatformTurn,
   PiProposal,
   PiRan,
   PiShow,
   PiSnapshot,
 } from './types.js';
 import {
+  active,
   actOf,
   conversationCaller,
   decode,
@@ -292,6 +294,22 @@ export class PiService implements Pi {
         )
       ).map((row) => publicConversation(decode(row)));
     });
+  }
+
+  async platformTurns(since: string): Promise<PiPlatformTurn[]> {
+    this.core.ready();
+    const rows = await this.core.read((tx) =>
+      tx.all<Omit<PiPlatformTurn, 'live'>>(
+        `SELECT c.id,c.status,c.created_at AS "createdAt",c.data_json::jsonb->>'runtimeId' AS "runtimeId",
+          c.data_json::jsonb->>'startedAt' AS "startedAt",c.data_json::jsonb->>'completedAt' AS "completedAt",
+          v.project_id AS "projectId",v.data_json::jsonb->>'title' AS title,v.data_json::jsonb->'source' AS source
+        FROM pi_commands c JOIN pi_conversations v ON v.id=c.conversation_id
+        WHERE c.status IN (${[...active].map(() => '?').join(',')}) OR c.created_at>? ORDER BY c.created_at DESC`,
+        ...active,
+        since,
+      ),
+    );
+    return rows.map((row) => ({ ...row, live: active.has(row.status) }));
   }
 
   /** Narrow upkeep read for a delegated question; no transcript, catalog, or host refresh. A turn

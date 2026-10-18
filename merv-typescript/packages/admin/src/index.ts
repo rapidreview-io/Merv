@@ -5,8 +5,8 @@ import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
 import { creditRoutes } from './credits.js';
 import type { AdminIdentity } from './models.js';
-import { adminOverview } from './work.js';
 import { platformRead } from './platform.js';
+import { workRoutes } from './work.js';
 
 export type { AdminIdentity } from './models.js';
 
@@ -59,27 +59,31 @@ export const adminPlugin = {
     .object({ admins: z.array(identity).default([]) })
     .strict()
     .default({}),
-  inject: ['api', 'state', 'scope', 'tools'],
+  inject: ['state'],
   async apply(ctx: Context, config: { admins: AdminIdentity[] }) {
     if (!config.admins.length) return;
-    const state: State = ctx.get('state')!;
+    const state: State = ctx.state;
     await state.migrate('admin', auditMigrations);
-    const env: AdminEnv = { ctx, state, audit: new AdminAudit(state), admins: config.admins };
-    const routes: AdminRoutes = {
-      'GET /admin/experiments': async () => await adminOverview(env.state, env.admins),
-      ...platformRead(env),
-      ...creditRoutes(env),
-    };
-    ctx.effect(() =>
-      ctx.api.mount('/admin', async (req, res, r) => {
-        const who = adminOf(r.principal, env.admins);
-        check(who, 'forbidden', 'Platform administrator access required', 403);
-        const route = match(routes, req.method ?? 'GET', r.url.pathname);
-        if (!route) throw new MervError('not_found', 'Route not found', 404);
-        res.setHeader('Cache-Control', 'private, no-store');
-        return await route(r, who);
-      }),
-    );
+    const audit = new AdminAudit(state);
+    // The admin is a page of the API: a composition without it has nothing to serve.
+    ctx.inject(['api', 'scope', 'tools'], (ctx) => {
+      const env: AdminEnv = { ctx, state, audit, admins: config.admins };
+      const routes: AdminRoutes = {
+        ...workRoutes(env),
+        ...platformRead(env),
+        ...creditRoutes(env),
+      };
+      ctx.effect(() =>
+        ctx.api.mount('/admin', async (req, res, r) => {
+          const who = adminOf(r.principal, env.admins);
+          check(who, 'forbidden', 'Platform administrator access required', 403);
+          const route = match(routes, req.method ?? 'GET', r.url.pathname);
+          if (!route) throw new MervError('not_found', 'Route not found', 404);
+          res.setHeader('Cache-Control', 'private, no-store');
+          return await route(r, who);
+        }),
+      );
+    });
   },
 };
 

@@ -145,18 +145,18 @@ export async function clearBlockers(tx: Transaction, instanceId: string): Promis
 }
 
 /**
- * Published blockers of the instances named, or of the whole project when none are. An opinion
- * about one revision is read only while the record stands at it.
+ * Published blockers of the instances named, or of the whole project (null: every project) when
+ * none are. An opinion about one revision is read only while the record stands at it.
  */
 export async function readBlockers(
   sql: Sql,
-  projectId: string,
+  projectId: string | null,
   instanceIds?: readonly string[],
 ): Promise<WorkflowProvidedBlocker[]> {
   if (instanceIds && !instanceIds.length) return [];
   const rows = await sql.all<BlockerRow>(
-    `SELECT b.* FROM wf_blockers b WHERE b.project_id=?${instanceIds ? ` AND b.instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} AND (b.revision IS NULL OR b.revision=(SELECT i.revision FROM wf_instances i WHERE i.id=b.instance_id)) ORDER BY b.since,b.instance_id,b.provider,b.blocker_key`,
-    projectId,
+    `SELECT b.* FROM wf_blockers b WHERE ${projectId === null ? 'TRUE' : 'b.project_id=?'}${instanceIds ? ` AND b.instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} AND (b.revision IS NULL OR b.revision=(SELECT i.revision FROM wf_instances i WHERE i.id=b.instance_id)) ORDER BY b.since,b.instance_id,b.provider,b.blocker_key`,
+    ...(projectId === null ? [] : [projectId]),
     ...(instanceIds ?? []),
   );
   return rows.map((row) => ({

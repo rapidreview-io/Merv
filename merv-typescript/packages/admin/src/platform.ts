@@ -1,5 +1,5 @@
 import { AsyncResource } from 'node:async_hooks';
-import { check, MervError, type Caller, type Project } from '@merv/contracts';
+import { check, MervError, type Caller } from '@merv/contracts';
 import type {} from '@merv/customer-experiments/models';
 import type { AdminEnv, AdminRoutes } from './index.js';
 
@@ -12,7 +12,7 @@ const AUDIT_EVERY_MS = 3600_000;
  * native tools alone. Routes: every project for the drill-in picker, and a standalone experiment
  * as its customer sees it.
  */
-export function platformRead({ ctx, state, audit, admins }: AdminEnv): AdminRoutes {
+export function platformRead({ ctx, audit, admins }: AdminEnv): AdminRoutes {
   const audited = new Map<string, number>();
   // Scope asks inside a reader's snapshot, where nothing may write: the audit runs outside it.
   const detached = AsyncResource.bind((fn: () => void) => fn());
@@ -37,13 +37,7 @@ export function platformRead({ ctx, state, audit, admins }: AdminEnv): AdminRout
     }),
   );
   return {
-    'GET /admin/projects': async () => ({
-      projects: await state.read((sql) =>
-        sql.all<Project>(
-          'SELECT id,name,created_at AS "createdAt" FROM projects ORDER BY created_at DESC,id',
-        ),
-      ),
-    }),
+    'GET /admin/projects': async () => ({ projects: (await ctx.scope.directory()).projects }),
     'GET /admin/standalone/:requestId': async (r) => {
       const customers = ctx.get('customerExperiments');
       check(customers, 'unavailable', 'Standalone experiments are not installed', 503);

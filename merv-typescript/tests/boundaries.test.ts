@@ -936,13 +936,17 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
+        // Its snapshot and work reads for the platform admin, which takes them where loaded.
         assert.deepEqual(actualProvided, ['customerExperiments']);
         return;
       }
       if (name.text === 'merv-admin') {
         assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
-        // The admin routes, its audit's state, and the platform authority and caller rules.
-        assert.deepEqual(sorted(declared), ['api', 'scope', 'state', 'tools']);
+        // Its audit's state; the routes, platform authority and caller rules wait for the API,
+        // Scope and the tools registry. It reads every other owner's service where that is
+        // loaded (ctx.get).
+        assert.deepEqual(sorted(declared), ['state']);
+        assert.deepEqual(sorted([...optional]), ['api', 'scope', 'tools']);
         assert.deepEqual(actualProvided, []);
         return;
       }
@@ -972,15 +976,6 @@ test('Cordis service requirements match the architecture and every accessed capa
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate console orchestration');
         orchestrationAdapters.add(name.text);
-        return;
-      }
-      if (name.text === 'merv-admin') {
-        assert.equal(relative(packagesRoot, path), join('admin', 'src', 'index.ts'));
-        // The platform admin composes owners' reads and provides nothing. Sandboxes, Fleet and
-        // Pi it finds per request (credits.ts), answering without them.
-        assert.deepEqual(sorted(declared), ['api', 'scope', 'state']);
-        assert.deepEqual(sorted([...optional]), []);
-        assert.deepEqual(actualProvided, []);
         return;
       }
       assert.equal(

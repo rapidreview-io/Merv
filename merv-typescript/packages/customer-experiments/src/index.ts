@@ -171,6 +171,7 @@ export const customerExperimentsPlugin = {
       service.access.activity = (id) => files.touch(id);
       const standalone: StandaloneExperiments = {
         snapshot: async (id) => await service.snapshot(await store.get(id)),
+        customers: store.customers.bind(store),
       };
       yield ctx.provide('customerExperiments', standalone);
       // Optional: without identity, service_experiment@3 customers are refused with a 503.

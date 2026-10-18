@@ -35,6 +35,7 @@ async function fixture(t: TestContext, sandboxes = true) {
   ctx.provide('api', {
     mount: (_prefix: string, handler: MountHandler) => ((route = handler), () => {}),
   });
+  ctx.provide('tools', { registerCallerRules: () => () => {} });
   t.after(async () => await state.close());
   if (sandboxes) {
     const schema = schemaFor();

@@ -431,6 +431,12 @@ export class FleetService implements Fleet {
     );
     return rows.map(decode);
   }
+  async platformAllocations() {
+    return (await this.state.read((sql) => this.all(sql))).map((a) => {
+      const profile = this.profiles.find(({ id }) => id === a.profileId);
+      return { ...a, profile: profile?.key ?? null, provider: profile?.provider ?? null };
+    });
+  }
   async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
     return inTransaction(this.state, tx, async (tx) => {
       const allocation = await this.inspectOwned(owner, id, tx);

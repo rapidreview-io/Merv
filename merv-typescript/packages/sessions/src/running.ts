@@ -31,10 +31,18 @@ import { QUESTION_PROVIDER } from './messages.js';
 import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
+import { groups } from './usage.js';
 import { ordinary as unmanaged, text } from './common.js';
 import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
 import { live, platformPhrase } from './rules.js';
-import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
+import type {
+  LeaseNeed,
+  SessionPlatform,
+  SessionRole,
+  SessionsPlatformWork,
+  SessionWorkspace,
+  StuckReport,
+} from './types.js';
 
 /**
  * The Running page's reading of Sessions: a node for every live lease and where it runs, the
@@ -136,6 +144,7 @@ export interface Face {
   look: RunningNode['look'];
   dot?: RunningNode['dot'];
   attention?: RunningAttention;
+  need?: LeaseNeed;
 }
 const presentAt = (machine: NonNullable<Lease['machine']>, now: number) =>
   Date.parse(machine.lastSeenAt) + freshForMs > now;
@@ -145,21 +154,25 @@ const presentAt = (machine: NonNullable<Lease['machine']>, now: number) =>
  * Where no runner ever reported (a hand offer), nothing is known of a machine, so nothing is
  * said of one.
  */
-function needs(lease: Lease, now: number, idleNoticeSeconds: number): RunningAttention | undefined {
+function need(lease: Lease, now: number, idleNoticeSeconds: number): LeaseNeed | undefined {
   const { machine } = lease;
-  if (machine && !machine.authorized) return { says: ['Key revoked'], who: machineWho };
-  if (machine && !presentAt(machine, now))
-    return {
-      says: ['Machine offline · last seen ', { ago: machine.lastSeenAt }],
-      who: machineWho,
-    };
+  if (machine && !machine.authorized) return 'key_revoked';
+  if (machine && !presentAt(machine, now)) return 'machine_offline';
   const last = lastActivity(lease, lease.calls.lastAt ?? undefined);
-  if (!last || Date.parse(last) + idleNoticeSeconds * 1000 > now) return undefined;
-  const { running } = lease.calls;
+  if (last && Date.parse(last) + idleNoticeSeconds * 1000 <= now) return 'quiet';
+}
+/** The words of a need, as the board and the sidebar say it. */
+function needs(lease: Lease, why: LeaseNeed): RunningAttention {
+  const { machine, calls } = lease;
   return {
-    says: running
-      ? [{ mono: running.tool }, ' · ', { since: running.since }]
-      : ['Quiet ', { since: last }],
+    says:
+      why === 'key_revoked'
+        ? ['Key revoked']
+        : why === 'machine_offline'
+          ? ['Machine offline · last seen ', { ago: machine!.lastSeenAt }]
+          : calls.running
+            ? [{ mono: calls.running.tool }, ' · ', { since: calls.running.since }]
+            : ['Quiet ', { since: lastActivity(lease, calls.lastAt ?? undefined)! }],
     who: machineWho,
   };
 }
@@ -178,7 +191,7 @@ export function face(lease: Lease, now: number, idleNoticeSeconds: number): Face
   // The sweep closes it within the second; until then this read saw its window close.
   if (lapsed(lease, now)) return { line: livenessLine(leaseLiveness(lease, now)), look: 'quiet' };
   const { running, lastAt } = lease.calls;
-  const attention = needs(lease, now, idleNoticeSeconds);
+  const why = need(lease, now, idleNoticeSeconds);
   return {
     line: lease.doing
       ? doingLine(lease.doing)
@@ -189,7 +202,7 @@ export function face(lease: Lease, now: number, idleNoticeSeconds: number): Face
           : ['No calls yet · ', { since: lease.activatedAt ?? lease.createdAt }],
     look: 'solid',
     dot: running && now - Date.parse(running.since) >= movingAfterMs ? 'moving' : 'live',
-    ...(attention ? { attention } : {}),
+    ...(why ? { need: why, attention: needs(lease, why) } : {}),
   };
 }
 const machineLine = (lease: Lease): RunningPhrase | null =>
@@ -579,6 +592,51 @@ export class SessionRunning {
         marks: [...questionMarks(asked, answers), ...dispatchMarks(reading)],
         summary: laneSummary(reading),
       };
+    });
+  }
+
+  async platform(
+    work: readonly { id: string; projectId: string; revision: number }[],
+  ): Promise<Map<string, SessionsPlatformWork>> {
+    this.available();
+    const at = new Set(work.map((item) => `${item.projectId}:${item.id}:${item.revision}`));
+    return await this.state.snapshotTransaction(async (tx) => {
+      const rows = await tx.all<LeaseRow & { project_id: string; revision: number }>(
+        `SELECT ${LEASE},s.project_id,s.revision ${FROM} WHERE s.status IN ('offered','active') AND s.kind='work'`,
+      );
+      const now = this.clock();
+      const leases = await this.facts(
+        tx,
+        rows.filter((row) => at.has(`${row.project_id}:${row.instance_id}:${row.revision}`)),
+        true,
+      );
+      const visits = new Map(
+        leases.map((lease) => [
+          lease.instanceId,
+          {
+            role: lease.role,
+            status: leaseLiveness(lease, now).verdict,
+            need: face(lease, now, this.thresholds.idleNoticeSeconds).need ?? null,
+            lastActivity:
+              [lease.calls.lastAt, lease.doing?.at]
+                .filter((at) => !!at)
+                .sort()
+                .at(-1) ?? null,
+            allocationId: lease.fleet,
+          },
+        ]),
+      );
+      const used = new Map<string, SessionsPlatformWork['usage']>();
+      for (const projectId of new Set(work.map((item) => item.projectId))) {
+        const ids = work.filter((item) => item.projectId === projectId).map(({ id }) => id);
+        for (const { row, totals } of await groups(tx, projectId, ids, false)) {
+          const { toolCalls: _calls, toolPayloadTokensEstimate: _payload, ...usage } = totals;
+          used.set(row.instance_id, usage);
+        }
+      }
+      return new Map(
+        work.map(({ id }) => [id, { visit: visits.get(id) ?? null, usage: used.get(id) ?? null }]),
+      );
     });
   }
 

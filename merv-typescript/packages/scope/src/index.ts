@@ -23,6 +23,7 @@ import {
   type Role,
   type Permission,
   type Actor,
+  type PlatformDirectory,
   type Project,
   type Transaction,
   type Sql,
@@ -155,6 +156,45 @@ export class ProjectScope implements Scope {
       ...userKeys,
       ...projectContext,
       ...invitations,
+    });
+  }
+  async directory(tx?: Transaction): Promise<PlatformDirectory> {
+    return await within(this.state, tx, async (sql) => {
+      // Verified sign-ins alone: an invitation names a person who may never have signed in.
+      const people = new Map(
+        (
+          await sql.all<{ issuer: string; subject: string }>(
+            'SELECT issuer,subject FROM shared_users ORDER BY created_at,issuer,subject',
+          )
+        ).map(({ issuer, subject }) => [
+          issuer + '|' + subject,
+          { issuer, subject, actors: [], projects: [] } as PlatformDirectory['people'][number],
+        ]),
+      );
+      for (const { issuer, subject, ...actor } of await sql.all<{
+        issuer: string;
+        subject: string;
+        actorId: string;
+        name: string;
+      }>(
+        'SELECT m.issuer,m.subject,m.actor_id AS "actorId",a.name FROM member_actors m JOIN actors a ON a.id=m.actor_id ORDER BY a.id',
+      ))
+        people.get(issuer + '|' + subject)?.actors.push(actor);
+      for (const { issuer, subject, ...membership } of await sql.all<{
+        issuer: string;
+        subject: string;
+        projectId: string;
+        name: string;
+        role: Role;
+      }>(
+        `SELECT m.issuer,m.subject,m.project_id AS "projectId",p.name,m.role FROM project_memberships m
+         JOIN projects p ON p.id=m.project_id WHERE m.active=1 ORDER BY m.created_at,m.id`,
+      ))
+        people.get(issuer + '|' + subject)?.projects.push(membership);
+      const projects = await sql.all<Project>(
+        'SELECT id,name,created_at AS "createdAt" FROM projects ORDER BY created_at DESC,id',
+      );
+      return { projects, people: [...people.values()] };
     });
   }
   async projectOwners(

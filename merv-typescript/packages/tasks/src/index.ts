@@ -486,6 +486,15 @@ export class TaskService implements Tasks {
       return await this.projectRecord(caller, await this.row(tx, caller, taskId), tx);
     });
   }
+  async platformTypes(taskIds: readonly string[]) {
+    const rows = await this.state.read((sql) =>
+      sql.all<{ id: string; type_name: string }>(
+        'SELECT id,type_name FROM tasks WHERE id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        JSON.stringify(taskIds),
+      ),
+    );
+    return new Map(rows.map((row) => [row.id, row.type_name]));
+  }
   async records(caller: Caller, transaction?: Transaction): Promise<TaskRecord[]> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {

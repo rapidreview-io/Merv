@@ -121,14 +121,6 @@ export interface ScopeMembers {
     projectId: string,
     options?: { repairReason: string },
   ): Promise<ProjectMembership>;
-  /** For the platform admin only, never a route or tool: every verified person, with the
-   * projects they are an active member of. */
-  people(): Promise<ScopePerson[]>;
-}
-export interface ScopePerson {
-  issuer: string;
-  subject: string;
-  projects: { projectId: string; name: string; role: Role }[];
 }
 /** Keys a person issues to their own machines, which act through the person's memberships. */
 export interface ScopeUserKeys {
@@ -178,6 +170,9 @@ export interface Scope {
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
+  /** Platform admin read, never exposed through a tool or a key: every project, newest first, and
+   * every signed-in person with the project actors they are and their active memberships. */
+  directory(tx?: Transaction): Promise<PlatformDirectory>;
   /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
    * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
    * provider may not hold. */
@@ -249,4 +244,13 @@ export interface Scope {
   ): Promise<boolean>;
   project(caller: Caller, tx?: Transaction): Promise<Project>;
   actors(caller: Caller): Promise<Actor[]>;
+}
+export interface PlatformDirectory {
+  projects: Project[];
+  people: {
+    issuer: string;
+    subject: string;
+    actors: { actorId: string; name: string }[];
+    projects: { projectId: string; name: string; role: Role }[];
+  }[];
 }

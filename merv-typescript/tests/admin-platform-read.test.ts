@@ -195,7 +195,12 @@ test('a platform admin reads a project it is not a member of through its pages, 
   const standalone = (bearer: string) =>
     f.request('/admin/standalone/ce_request', bearer, { platform: null });
   assert.equal((await standalone(f.adminToken)).status, 503);
-  t.after(f.app.ctx.provide('customerExperiments', { snapshot: async (id) => ({ id }) }));
+  t.after(
+    f.app.ctx.provide('customerExperiments', {
+      snapshot: async (id: string) => ({ id }),
+      customers: async () => [],
+    }),
+  );
   assert.deepEqual((await standalone(f.adminToken)).body, { id: 'ce_request' });
   assert.equal((await standalone(f.strangerToken)).status, 403);
 });

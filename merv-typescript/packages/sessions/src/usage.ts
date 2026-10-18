@@ -104,7 +104,8 @@ export async function reportUsage(
   return result.changes === 1;
 }
 
-async function groups(
+/** Each instance's closed work visits' totals, in slices; without `observed`, no tool calls. */
+export async function groups(
   tx: Transaction,
   projectId: string,
   instanceIds: string[] | null,

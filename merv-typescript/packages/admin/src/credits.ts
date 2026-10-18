@@ -6,7 +6,7 @@ import type { CreditBalance, PolicyRow } from '@sandboxes/billing';
 import type {} from '@sandboxes/providers';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host';
-import { check, MervError, pathSegment, type ScopePerson } from '@merv/contracts';
+import { check, MervError, pathSegment, type PlatformDirectory } from '@merv/contracts';
 import { personKey } from '@merv/fleet/model-ledger';
 import type { FleetPersonDay, ModelTokens } from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
@@ -29,7 +29,7 @@ export interface CreditPerson {
   subject: string;
   /** The Sandboxes accounts they are a member of. */
   accounts: { accountId: string; role: 'admin' | 'member' }[];
-  projects: ScopePerson['projects'];
+  projects: PlatformDirectory['people'][number]['projects'];
   /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
   fleet: FleetPersonDay | null;
   /** Today (UTC): their Agent chat model tokens. */
@@ -103,7 +103,7 @@ async function credits(env: AdminEnv): Promise<AdminCredits> {
   const sbx = sandboxes(env.ctx);
   const fleet = env.ctx.get('fleet');
   const pi = env.ctx.get('pi');
-  const people = await env.ctx.scope.members.people();
+  const { people } = await env.ctx.scope.directory();
   const persons = await Promise.all(
     people.map((p) => sbx.auth.persons.byIdentity(p.issuer, p.subject)),
   );
