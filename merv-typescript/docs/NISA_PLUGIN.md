@@ -48,9 +48,9 @@ the detail.
   remote tools never reach Pi. It was removed on 2026-09-14. Its bounded HTTP
   client is what this plugin ports; its catalog and grant model are not.
 - The generic route, Nisa's own six-tool MCP server attached through
-  `@merv/mounts` ([history](NISA_PLUGIN_IMPLEMENTATION.md)), still works for a
-  Nisa that runs the unmerged `codex/nisa-mcp-plugin` branch, and
-  `npm run test:nisa-mcp` still exercises it. It is not what production uses:
+  `@merv/mounts` ([history](NISA_PLUGIN_IMPLEMENTATION.md)), works only for a
+  Nisa that runs the unmerged `codex/nisa-mcp-plugin` branch; its scenario
+  (`npm run test:nisa-mcp`) was deleted on 2026-10-17. It is not what production uses:
   mounted tools (`_nisa.*`) need per-actor grants and are never offered to a
   conversation, and that branch's backend is not deployed. Do not compose both
   under the same agents: the native `nisa.*` tools are the supported ones.

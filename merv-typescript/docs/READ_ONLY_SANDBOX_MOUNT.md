@@ -1,5 +1,8 @@
 # Read-only sandbox mount preparation
 
+> Archived 2026-10-17: production reaches Sandboxes in process, and the harness below
+> (`scripts/live-sandbox-mount.ts` and its tests) was deleted. This page is history.
+
 Checked 2026-09-13 for execution-plan step 6. Merv baseline: `3bf8caf7`.
 The independent sandbox source checkout is `merv-sandboxes@c7b9582` beside
 this repository. Initial preparation established public discovery and source behavior.
