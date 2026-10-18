@@ -155,10 +155,37 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.notEqual(records.result.isError, true);
   assert.deepEqual(records.value.project, project);
   assert.equal(Object.hasOwn(records.value, 'archivedClaims'), false);
-  assert.equal(records.value.tasks[0].workflow.state, 'failed');
-  assert.equal(Object.hasOwn(records.value.tasks[0], 'guidance'), false);
+  // With no ids, each record is one index entry: where it stands, not its evidence.
+  assert.deepEqual(records.value.tasks, [
+    {
+      id: task.id,
+      title: 'Retain source data',
+      type: records.value.tasks[0].type,
+      state: 'failed',
+      revision: records.value.tasks[0].revision,
+      settled: false,
+      failed: true,
+      failure: 'This source is no longer available.',
+      reviewId: null,
+      deliveryIds: [],
+      dependencies: [],
+      createdAt: records.value.tasks[0].createdAt,
+      updatedAt: records.value.tasks[0].updatedAt,
+    },
+  ]);
   assert.equal(records.value.experiments[0].id, experiment.id);
+  assert.equal(records.value.experiments[0].intent, 'Compare exact records.');
+  assert.equal(Object.hasOwn(records.value.experiments[0], 'submissions'), false);
   assert.equal(Object.hasOwn(records.value, 'publication'), false);
+  // Named ids read those records whole; an id that is neither task nor experiment is missing.
+  const whole = await f.call(client, 'project.records', {
+    ids: [task.id, artifact.id],
+  });
+  assert.equal(whole.value.tasks[0].workflow.state, 'failed');
+  assert.equal(Object.hasOwn(whole.value.tasks[0], 'guidance'), false);
+  assert.deepEqual(whole.value.experiments, []);
+  assert.deepEqual(whole.value.missing, [artifact.id]);
+  assert.equal((await f.http('project.records', { ids: [] })).status, 400);
   const refs = [
     `task:${task.id}`,
     experiment.id,

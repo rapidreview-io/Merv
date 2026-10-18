@@ -37,7 +37,7 @@ Knowledge exposes two read-only tools:
 
 | Tool                 | Result                                                                  |
 | -------------------- | ----------------------------------------------------------------------- |
-| `project.records`    | Current project metadata, all task records and all experiments          |
+| `project.records`    | Project metadata and one entry per task and experiment; ids read whole  |
 | `project.references` | Up to 200 references resolved in input order to project-scoped metadata |
 
 Inventory includes active and terminal work. It does not render prompts, read

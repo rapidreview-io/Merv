@@ -1,4 +1,4 @@
-import type { Tasks } from '@merv/tasks/types';
+import type { TaskRecord, Tasks } from '@merv/tasks/types';
 import { createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
@@ -15,16 +15,20 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
-import type { Experiments } from '@merv/experiments/types';
+import type { Experiment, Experiments } from '@merv/experiments/types';
 import type { Code } from '@merv/code-work/types';
 import { instanceName } from '@merv/workflows/rules';
 import type {
   Knowledge,
+  KnowledgeExperimentEntry,
+  KnowledgeIndex,
   KnowledgeRecords,
   KnowledgeReference,
   KnowledgeReferenceKind,
+  KnowledgeSelection,
+  KnowledgeTaskEntry,
 } from './types.js';
-import { knowledgeReferencesSchema } from './input.js';
+import { knowledgeRecordsSchema, knowledgeReferencesSchema } from './input.js';
 import { postgresMigrations } from './storage.postgres.js';
 
 export type * from './types.js';
@@ -86,6 +90,37 @@ export class KnowledgeService implements Knowledge {
       await this.scope.require(caller, 'read', tx);
       return structuredClone(result);
     });
+  }
+
+  /**
+   * Whole records grow with every attempt, submission and delivery, so a whole project soon
+   * outgrows an agent's context: the index lists each record by what it is and where it stands,
+   * and the records an agent needs are read whole by id.
+   */
+  async read(
+    caller: Caller,
+    input: { ids?: string[] } = {},
+    transaction?: Transaction,
+  ): Promise<KnowledgeIndex | KnowledgeSelection> {
+    const { ids } = parsed(knowledgeRecordsSchema, input, 'invalid_knowledge_input');
+    const records = await this.records(caller, transaction);
+    if (!ids)
+      return {
+        formatVersion: 1,
+        project: records.project,
+        tasks: records.tasks.map(taskEntry),
+        experiments: records.experiments.map(experimentEntry),
+      };
+    const asked = new Set(ids);
+    const tasks = records.tasks.filter(({ id }) => asked.has(id));
+    const experiments = records.experiments.filter(({ id }) => asked.has(id));
+    const found = new Set([...tasks, ...experiments].map(({ id }) => id));
+    return {
+      ...records,
+      tasks,
+      experiments,
+      missing: [...asked].filter((id) => !found.has(id)),
+    };
   }
 
   async resolve(
@@ -247,6 +282,36 @@ export class KnowledgeService implements Knowledge {
     });
   }
 }
+
+const taskEntry = (task: TaskRecord): KnowledgeTaskEntry => ({
+  id: task.id,
+  title: task.title,
+  type: task.type,
+  state: task.workflow.state,
+  revision: task.workflow.revision,
+  settled: task.settled,
+  failed: task.failed,
+  failure: task.failure?.reason ?? null,
+  reviewId: task.reviewId,
+  deliveryIds: task.deliveryIds,
+  dependencies: task.dependencies.map(({ id }) => id),
+  createdAt: task.createdAt,
+  updatedAt: task.workflow.updatedAt,
+});
+const experimentEntry = (experiment: Experiment): KnowledgeExperimentEntry => ({
+  id: experiment.id,
+  name: experiment.name,
+  intent: experiment.intent,
+  state: experiment.workflow.state,
+  revision: experiment.workflow.revision,
+  settled: experiment.settled,
+  failed: experiment.failed,
+  attempt: experiment.attempt.index,
+  reviewId: experiment.reviewId,
+  conclusion: experiment.conclusion,
+  createdAt: experiment.createdAt,
+  updatedAt: experiment.workflow.updatedAt,
+});
 
 /** A work item as a reference names it: by the program its instance runs, as Workflows does. */
 const workItem = (snapshot: WorkflowSnapshot): Found =>

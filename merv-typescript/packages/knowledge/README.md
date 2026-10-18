@@ -54,8 +54,14 @@ Knowledge is a read-only index over records other plugins own: it lists the proj
 | `@merv/knowledge/tools` | Knowledge, Tools                                                           | `project.records`, `project.references` |
 
 `project.records` returns the current Scope project record (id, name and creation
-time; the Introduction is the paper's Problem, which `paper.read` returns) and all
-task/experiment metadata. It performs no
+time; the Introduction is the paper's Problem, which `paper.read` returns) and an
+index of the project's work: one entry per task (title, type, state, revision,
+settled/failed, failure reason, review, deliveries, dependencies) and per experiment
+(name, intent, state, revision, settled/failed, attempt, review, conclusion). Whole
+records grow with every attempt, submission and delivery, and the whole project once
+reached 576K characters in one call, so they are read only by id: `ids` (up to 20)
+returns those records whole and lists any id that is neither in `missing`.
+`knowledge.records` still returns every record whole for in-process readers. It performs no
 artifact-body reads, prompt rendering, session reconciliation, exit evaluation
 or workflow mutation. Gate and next-action guidance stays in Workflows.
 
@@ -71,7 +77,8 @@ reference can describe a pending observation rather than ready Git evidence.
 ## Service
 
 ```ts
-knowledge.records(caller, tx?);
+knowledge.records(caller, tx?); // every record whole
+knowledge.read(caller, { ids? }, tx?); // the index, or the named records whole
 knowledge.resolve(caller, refs, tx?);
 ```
 
