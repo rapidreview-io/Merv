@@ -48,6 +48,7 @@ import {
   type ConversationFacts,
 } from './conversation.js';
 import { harnessOf, launcherOf } from './harness/index.js';
+import { since } from './harness/shared.js';
 import { claudeLogUsage, claudeTally, type ClaudeTally } from './harness/claude.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
@@ -218,6 +219,8 @@ const checkpointMs = 5 * 60_000;
  *  after the tenth only confirms it. */
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
+/** How much of a conversation's end is read for the running total it last recorded. */
+const recordedTail = 4 << 20;
 /** A declaration's facts: what its route is sent. */
 const factsOf = <Facts extends object>({
   state: _state,
@@ -1101,7 +1104,13 @@ export class MachineRunner implements Runner {
         'Not the conversation Sessions recorded',
       );
       restoreConversation(profile, runDirectory, cwd, resume.conversationId, bytes);
-      this.save(id, { resumed: resume.conversationId });
+      // A resumed harness may report the conversation's whole total: what it had spent is
+      // taken off what this launch reports.
+      const carried = harnessOf(profile)?.recorded?.(
+        Buffer.from(bytes).subarray(-recordedTail).toString('utf8'),
+        'model' in profile ? profile.model : undefined,
+      );
+      this.save(id, { resumed: resume.conversationId, ...(carried && { carried }) });
       return resume.conversationId;
     } catch (error) {
       const code = diagnostic(error);
@@ -1231,10 +1240,27 @@ export class MachineRunner implements Runner {
       const profile = record.metadata.profile as RunnerProfile;
       const model = 'model' in profile ? profile.model : undefined;
       const path = join(record.runDirectory, 'stdout.log');
-      return sessionUsageReportSchema.parse(
+      const harness = harnessOf(profile);
+      // A launch stopped before its output reported (its lease ran out mid-turn) spent what its
+      // kept conversation last recorded: read once the launch settled, never while it runs.
+      const recorded = () => {
+        try {
+          return harness?.recorded?.(
+            read(conversationFile(record.runDirectory), recordedTail, 'tail'),
+            model,
+          );
+        } catch {
+          return undefined;
+        }
+      };
+      const usage =
         profile.harness === 'claude'
           ? claudeLogUsage(path, model, live)
-          : harnessOf(profile)?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model),
+          : (harness?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model) ??
+            (live ? undefined : recorded()));
+      const carried = sessionUsageReportSchema.safeParse(record.metadata.carried);
+      return sessionUsageReportSchema.parse(
+        usage && since(usage, carried.success ? carried.data : undefined),
       );
     } catch {
       return;

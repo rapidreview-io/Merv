@@ -270,6 +270,49 @@ fs.appendFileSync(file, JSON.stringify({ type: 'user', first: input.split('\\n')
   chmodSync(path, 0o755);
   return path;
 };
+/**
+ * A stand-in `codex exec --json`: resumes the named thread's rollout or starts one, spends 1000
+ * input and 10 output tokens, records the thread's running total there as Codex does, and prints
+ * it on `turn.completed`, unless `stop-mid-turn` says its lease ran out first.
+ */
+const codexHarnessScript = (root: string) => {
+  const path = join(root, 'codex-stand-in.cjs');
+  writeFileSync(
+    path,
+    `#!${process.execPath}
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const args = process.argv.slice(2), at = args.indexOf('resume'), home = process.env.CODEX_HOME;
+fs.readFileSync(0, 'utf8');
+const find = (dir, depth, id) => {
+  for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+    const full = path.join(dir, entry.name);
+    if (depth < 3 && entry.isDirectory()) { const found = find(full, depth + 1, id); if (found) return found; }
+    else if (depth === 3 && entry.name.endsWith('-' + id + '.jsonl')) return full;
+  }
+};
+let id = at >= 0 ? args[at + 1] : crypto.randomUUID(), file = at >= 0 && find(path.join(home, 'sessions'), 0, id);
+let total = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+if (at >= 0) {
+  if (!file) { console.log('Error: no rollout found for thread id ' + id); process.exit(1); }
+  for (const line of fs.readFileSync(file, 'utf8').split('\\n').filter(Boolean)) {
+    const event = JSON.parse(line);
+    if (event.payload && event.payload.type === 'token_count' && event.payload.info) total = event.payload.info.total_token_usage;
+  }
+} else {
+  fs.mkdirSync(path.join(home, 'sessions', '2026', '10', '18'), { recursive: true });
+  file = path.join(home, 'sessions', '2026', '10', '18', 'rollout-2026-10-18T00-00-00-' + id + '.jsonl');
+}
+console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
+console.log(JSON.stringify({ type: 'turn.started' }));
+total = { input_tokens: total.input_tokens + 1000, cached_input_tokens: total.cached_input_tokens + 900, output_tokens: total.output_tokens + 10 };
+fs.appendFileSync(file, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: total } } }) + '\\n');
+if (fs.existsSync(${JSON.stringify(join(root, 'stop-mid-turn'))})) process.exit(0);
+console.log(JSON.stringify({ type: 'turn.completed', usage: total }));
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+};
 /** The stand-in server, with the routes a continued session's runner calls and a store. */
 function continuing(
   t: TestContext,
@@ -277,6 +320,7 @@ function continuing(
   recorded = bytes,
   stores = true,
   names = ['continued'],
+  kind: 'claude' | 'codex' = 'claude',
 ) {
   const root = directory(t);
   const config = join(root, 'claude');
@@ -287,17 +331,20 @@ function continuing(
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = before;
   });
+  // A visit named `fresh` keeps a conversation but has none to resume.
   const queue: Body[] = names.map((name) => ({
     ...offer(name),
     continuity: {
       key: 'key',
-      resume: {
-        sessionId: 'session_earlier',
-        harness: 'claude',
-        conversationId: id,
-        sha256: createHash('sha256').update(recorded).digest('hex'),
-        size: recorded.length,
-      },
+      ...(name !== 'fresh' && {
+        resume: {
+          sessionId: 'session_earlier',
+          harness: kind,
+          conversationId: id,
+          sha256: createHash('sha256').update(recorded).digest('hex'),
+          size: recorded.length,
+        },
+      }),
     },
   }));
   const work = queue[0]!;
@@ -322,8 +369,16 @@ function continuing(
     }
     return await fake.fetch(input, init);
   };
-  const f = machine(t, [claude(harness(root))], fetcher as typeof fetch);
-  return { f, work, declared, config, fake };
+  const f = machine(
+    t,
+    [
+      kind === 'claude'
+        ? claude(harness(root))
+        : { ...codex, executable: codexHarnessScript(root) },
+    ],
+    fetcher as typeof fetch,
+  );
+  return { f, work, declared, config, fake, root };
 }
 const settled = (f: ReturnType<typeof machine>, sessionId: string) =>
   metadata(f.config.directory, launchId(sessionId));
@@ -425,4 +480,90 @@ test('a harness that will not take up its restored conversation is put off once,
   // The conversation restored for the launch that refused it was not left behind.
   for (const project of readdirSync(join(config, 'projects')))
     assert.ok(!readdirSync(join(config, 'projects', project)).includes(`${id}.jsonl`));
+});
+
+/** A Codex rollout as a thread's earlier visits left it: its last running total 5000 and 50. */
+const rollout = (input: number, output: number) =>
+  Buffer.from(
+    [
+      { type: 'session_meta', payload: { id } },
+      { type: 'event_msg', payload: { type: 'token_count', info: null } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: input,
+              cached_input_tokens: 0,
+              output_tokens: output,
+            },
+          },
+        },
+      },
+      {
+        type: 'response_item',
+        payload: { type: 'message', text: 'a later "token_count" mention' },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n',
+  );
+
+test('a Codex conversation records its running total, read from its end', () => {
+  assert.deepEqual(codexHarness.recorded!(rollout(5000, 50).toString('utf8'), 'gpt-fixture'), {
+    inputTokens: 5000,
+    outputTokens: 50,
+    model: 'gpt-fixture',
+  });
+  for (const none of ['', '{"type":"event_msg","payload":{"type":"token_count","info":null}}\n'])
+    assert.equal(codexHarness.recorded!(none), undefined);
+  assert.equal(claudeHarness.recorded, undefined);
+});
+
+test('a resumed Codex launch reports what it spent, not its thread’s running total', async (t) => {
+  const { f, work, fake } = continuing(
+    t,
+    rollout(5000, 50),
+    undefined,
+    true,
+    ['continued'],
+    'codex',
+  );
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => settled(f, work.id).conversation?.state === 'uploaded', 'delivery');
+  assert.deepEqual(settled(f, work.id).carried, { inputTokens: 5000, outputTokens: 50 });
+  // The thread's turn.completed said 6000 and 60: the visit itself spent 1000 and 10.
+  assert.deepEqual(
+    fake.releases(work.id).map((call) => call.body?.usage),
+    [{ inputTokens: 1000, outputTokens: 10 }],
+  );
+});
+
+test('a Codex launch stopped mid-turn reports what its conversation recorded by its last model call', async (t) => {
+  const { f, work, fake, root } = continuing(
+    t,
+    rollout(5000, 50),
+    undefined,
+    true,
+    ['continued', 'fresh'],
+    'codex',
+  );
+  writeFileSync(join(root, 'stop-mid-turn'), '');
+  // The first resumes the thread at 5000 and 50; the second has none to resume and starts at 0.
+  const runner = f.make();
+  await runner.start();
+  await until(
+    runner,
+    () => fake.releases(work.id).length > 0 && fake.releases('session_fresh').length > 0,
+    'both releases',
+  );
+  for (const sessionId of [work.id, 'session_fresh'])
+    assert.deepEqual(
+      fake.releases(sessionId).map((call) => call.body?.usage),
+      [{ inputTokens: 1000, outputTokens: 10 }],
+      sessionId,
+    );
+  assert.equal(settled(f, 'session_fresh').carried, undefined);
 });

@@ -3,9 +3,10 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import { check } from '@merv/contracts';
 import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
-import { codexEvents } from '@merv/sessions/agent-stream';
+import { codexEvents, readLine } from '@merv/sessions/agent-stream';
 import type { RunnerProfile } from '../profiles.js';
 import {
+  counted,
   entries,
   firstId,
   type Harness,
@@ -29,7 +30,8 @@ const home = (profile: RunnerProfile, runDirectory: string) =>
 /**
  * Codex. `codex exec --json` runs one thread and ends each turn with `turn.completed`, whose
  * usage is the thread's running total (`input_tokens` includes cached input), so the last one
- * counts; a stream cut off before any turn completed reports nothing. It keeps each thread in its
+ * counts, less what a resumed thread had recorded before; a stream cut off before any turn
+ * completed reports nothing, and its conversation says what it spent. It keeps each thread in its
  * home's databases too and resumes a thread only where it was recorded, so a local launch has a
  * home of its own, taken away whole when it ends; a conversation is a dated
  * `sessions/YYYY/MM/DD/rollout-…-<id>.jsonl` there.
@@ -38,6 +40,7 @@ export const codex: Harness = {
   name: 'codex',
   lines: codexEvents,
   usage: (output, model) => spent(output, 'turn.completed', model),
+  recorded: recordedTotal,
   conversationId: (output) =>
     firstId(
       output,
@@ -74,6 +77,27 @@ export const codex: Harness = {
   },
   forget: (root) => rmSync(root, { recursive: true, force: true }),
 };
+
+/**
+ * A rollout records the thread's running total (`token_count`) after each model call; a resumed
+ * thread's `turn.completed` goes on from the last one. Read from the end, as that is where it is.
+ */
+function recordedTotal(conversation: string, model?: string) {
+  for (let end = conversation.length; end > 0;) {
+    const at = conversation.lastIndexOf('"token_count"', end - 1);
+    if (at < 0) return undefined;
+    const start = conversation.lastIndexOf('\n', at) + 1,
+      stop = conversation.indexOf('\n', at);
+    const event = readLine(conversation.slice(start, stop < 0 ? undefined : stop));
+    const usage =
+      event?.type === 'event_msg' && event.payload?.type === 'token_count'
+        ? counted(event.payload.info?.total_token_usage, [], model)
+        : undefined;
+    if (usage) return usage;
+    end = start;
+  }
+  return undefined;
+}
 
 /** Before a local Codex launch: its own `CODEX_HOME`, holding a link to the machine's login. */
 export function launchCodexHome(
