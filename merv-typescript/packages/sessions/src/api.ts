@@ -65,9 +65,7 @@ export const workerPrompt = (session: Session) =>
         'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
         // Agents blocked on a person ended their turn and were re-offered the same work, again
         // and again: a stop is no way to wait, so they are told what it does and what does wait.
-        session.continuity
-          ? 'Do not end your turn without the handoff or session.ask_owner. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.'
-          : 'Do not end your turn without the handoff. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.',
+        `Do not end your turn without the handoff${session.continuity ? ' or session.ask_owner' : ''}. Merv counts a visit that just stops as a failed launch: it offers the same work again within a minute with nothing changed, and holds it for an admin once a visit stops that way twice.`,
         // Workers read the assignment's tool list as the boundary of what they may look at and
         // then invent what the project already holds. The list binds writes; reads are open.
         'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
