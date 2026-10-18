@@ -32,6 +32,7 @@ import {
   handoffAt,
   recipeKey,
   feasibilityFormat,
+  feasibilityRules,
 } from './definitions.js';
 import { leaseOf, resumedOutputs } from './lease.js';
 import { reviewOf, reviewCapture, admit } from './policy.js';
@@ -145,7 +146,9 @@ export async function inputsOf(
       intent: experiment.intent,
       project: await ctx.scope.project(caller, tx),
       codeCapture: await reviewCapture(ctx, caller, experiment, tx),
-      ...(state === 'planned' ? { feasibilityFormat, computeAccess: PLANNING_COMPUTE } : {}),
+      ...(state === 'planned'
+        ? { feasibilityFormat, feasibilityRules, computeAccess: PLANNING_COMPUTE }
+        : {}),
       selectedEvidence: experiment.evidence.filter((evidence) =>
         selected.includes(evidence.artifactId),
       ),
@@ -393,6 +396,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
               ? {
                   intent: inputs.experiment.intent,
                   feasibilityFormat: inputs.experiment.feasibilityFormat,
+                  feasibilityRules: inputs.experiment.feasibilityRules,
                   computeAccess: inputs.experiment.computeAccess,
                 }
               : {}),

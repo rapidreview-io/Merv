@@ -82,6 +82,11 @@ test('a malformed feasibility statement is refused with the place it went wrong'
     ['another format version', { ...statement(), formatVersion: 2 }, /formatVersion/],
     ['a missing blockers list', { ...statement(), blockers: undefined }, /blockers/],
     ['too many blockers', { ...statement(), blockers: Array(21).fill('Blocked.') }, /blockers/],
+    [
+      'a blocker written as an object',
+      { ...statement(), blockers: [{ name: 'GPU spend', detail: 'awaiting approval' }] },
+      /blockers\.0: Expected string/,
+    ],
   ];
   for (const [name, value, message] of broken)
     assert.throws(
@@ -89,6 +94,14 @@ test('a malformed feasibility statement is refused with the place it went wrong'
       { code: 'invalid_experiment_evidence', message },
       name,
     );
+  // The refusal names the keys the statement takes and where an observation goes instead.
+  assert.throws(
+    () => parseFeasibility(JSON.stringify({ ...statement(), observations: 'cwd /workspace' })),
+    {
+      message:
+        /Unrecognized key\(s\) in object: 'observations'\. It has exactly formatVersion, resources .*blockers \(plain strings\); put other observations in a basis or the plan/,
+    },
+  );
 });
 
 test('each shortfall, absent dependency and known blocker is named', () => {
@@ -291,6 +304,11 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
   assert.equal(planning.context!.typeVersion, 13);
   assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
+  // Beside it, what the shape leaves unsaid: no other keys, and blockers are plain strings.
+  assert.match(
+    planning.context!.prompt,
+    /"feasibilityRules":"Use exactly these keys, and no others at any level.*blockers, a list of plain strings/,
+  );
   // And told that its Sandboxes tools, which the declared tools never list, are its to measure with.
   assert.match(planning.context!.prompt, /"computeAccess":"Your Sandboxes MCP connection/);
   await f.attach(e, 'plan', plan);

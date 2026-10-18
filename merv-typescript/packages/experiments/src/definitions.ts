@@ -126,6 +126,13 @@ export const feasibilityFormat: FeasibilityStatement = {
 };
 
 /**
+ * What feasibilityFormat leaves unsaid, beside it: the statement is strict, and planners added
+ * keys of their own or wrote blockers as objects, each found only when attaching the artifact.
+ */
+export const feasibilityRules =
+  'Use exactly these keys, and no others at any level: formatVersion 1; resources, each with kind (data, compute or time), name, unit, required and available (numbers) and basis; dependencies, each with name, present (true or false) and basis; blockers, a list of plain strings, empty when there are none. Put other observations in a basis or in the plan; experiment.attach refuses any other key.';
+
+/**
  * What a worker may look at. The assignment's own tool list reads as the boundary of it: over
  * one project, 22 of 22 task and experiment workers made no project-level read, while every
  * worker whose recipe named these tools used them.

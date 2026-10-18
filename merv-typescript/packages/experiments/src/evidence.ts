@@ -134,7 +134,7 @@ export function parseFeasibility(text: string): FeasibilityStatement {
   const issue = parsed.error?.issues[0];
   error(
     parsed.success,
-    `Feasibility statement is malformed at ${issue?.path.join('.') || 'the top level'}: ${issue?.message}`,
+    `Feasibility statement is malformed at ${issue?.path.join('.') || 'the top level'}: ${issue?.message}. It has exactly formatVersion, resources (kind, name, unit, required, available, basis), dependencies (name, present, basis) and blockers (plain strings); put other observations in a basis or the plan, then retain and attach a corrected statement`,
   );
   // The observed failure was a corpus too small for the design, so the data is never left unstated.
   error(
