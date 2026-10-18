@@ -20,6 +20,11 @@ export interface HuggingFaceAccess {
   token: string;
   endpoint: string;
 }
+/** A platform secret an admin stored: never its value. */
+export interface PlatformSecretRecord {
+  env: string;
+  updatedAt: string;
+}
 export interface Secrets {
   readonly huggingFaceEndpoint: string | null;
   registerHuggingFaceAuthority(
@@ -30,6 +35,9 @@ export interface Secrets {
   huggingFaceStatus(principal: HumanPrincipal): Promise<HuggingFaceStatus>;
   saveHuggingFace(principal: HumanPrincipal, token: string): Promise<HuggingFaceStatus>;
   removeHuggingFace(principal: HumanPrincipal): Promise<HuggingFaceStatus>;
+  platformSecrets(): Promise<PlatformSecretRecord[]>;
+  platformSecret(env: string): Promise<string | null>;
+  setPlatformSecret(env: string, value: string, by: AccountIdentity): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {

@@ -730,6 +730,46 @@ export function useDismiss(
 }
 
 /**
+ * Where Escape is already someone else's: a guard's Cancel, the Agent's window (another
+ * conversation), a menu or a dialog that shuts itself with it, a field being typed in.
+ */
+const OWN_ESCAPE =
+  '.guard, .pi-dock, [role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], ' +
+  '[role="alertdialog"], dialog, input, textarea, select, [contenteditable="true"]';
+/** A sidebar beside the page (the Work map's, the admin's drawer) shuts on Escape anywhere else. */
+export function useSidebarEscape(open: boolean, shut: () => void) {
+  const closing = useRef(shut);
+  closing.current = shut;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if ((event.target as Element | null)?.closest?.(OWN_ESCAPE)) return;
+      event.preventDefault();
+      closing.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+}
+
+/** A sidebar's name takes the cursor once `ready`; where the sidebar stands under the page rather
+ *  than beside it, its head is brought into view as well. */
+export function useHeadFocus(
+  ready: boolean,
+  heading: RefObject<HTMLElement | null>,
+  head: RefObject<HTMLElement | null> = heading,
+) {
+  useEffect(() => {
+    if (!ready || !head.current) return;
+    heading.current?.focus({ preventScroll: true });
+    const top = head.current.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight - 96) head.current.scrollIntoView?.({ block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+}
+
+/**
  * A page's ⋯ menu: `menu(items)` is the control and the panel it opens, shut by Escape or a
  * press away (`claims` keeps that Escape from also leaving the record), and `item` one entry.
  */

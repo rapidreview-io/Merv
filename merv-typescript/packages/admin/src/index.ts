@@ -4,7 +4,7 @@ import { check, MervError, type PlatformDirectory, type State } from '@merv/cont
 import { personName } from '@merv/contracts/text';
 import type { ApiPrincipal, ApiRequest } from '@merv/api/types';
 import { AdminAudit, auditMigrations } from './audit.js';
-import { adminCredentials, credentialMigrations } from './credentials.js';
+import { credentialMigrations, credentialRoutes } from './credentials.js';
 import { creditRoutes } from './credits.js';
 import { platformRead } from './platform.js';
 import { adminWork } from './work.js';
@@ -72,7 +72,7 @@ export const adminPlugin = {
       const env: AdminEnv = { ctx, state, audit, admins: config.admins };
       const routes: AdminRoutes = {
         'GET /admin/work': async () => await adminWork(env),
-        'GET /admin/credentials': async () => await adminCredentials(env),
+        ...credentialRoutes(env),
         ...creditRoutes(env),
         ...platformRead(env),
       };

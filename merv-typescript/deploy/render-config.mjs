@@ -154,6 +154,21 @@ if (landing !== undefined && !['on', 'off'].includes(landing))
 set('code-work', landing === 'on' ? { mainLanding: true } : {});
 // Code's HTTP routes: without them a deployment that runs Code serves no /code at all.
 set('code-work-api', {});
+// Positive USD, to 6 places, each verified person's own Sandboxes account is granted once per
+// provider; none if unset.
+const newPersonCredits =
+  process.env.MERV_NEW_PERSON_CREDITS === undefined ? {} : json('MERV_NEW_PERSON_CREDITS');
+if (
+  typeof newPersonCredits !== 'object' ||
+  !newPersonCredits ||
+  Array.isArray(newPersonCredits) ||
+  Object.entries(newPersonCredits).some(
+    ([provider, usd]) =>
+      !/^[a-z][a-z0-9_-]{0,63}$/.test(provider) ||
+      !/^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/.test(typeof usd === 'string' ? usd : ''),
+  )
+)
+  throw new Error('Invalid MERV_NEW_PERSON_CREDITS');
 if (sandboxesEnabled)
   config.plugins.push(
     {
@@ -173,7 +188,7 @@ if (sandboxesEnabled)
     {
       id: 'sandboxes-integration',
       name: '@merv/sandboxes/integration',
-      config: { legacyCaptures: { namespace: 'merv-ml' } },
+      config: { legacyCaptures: { namespace: 'merv-ml' }, newPersonCredits },
     },
     {
       id: 'sandboxes-console',

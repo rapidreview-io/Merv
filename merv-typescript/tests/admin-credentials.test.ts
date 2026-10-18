@@ -1,25 +1,37 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import { createService, sha256Hex, type ConfiguredEnv } from '@merv/contracts';
+import type { ZodType } from 'zod';
+import {
+  createService,
+  MervError,
+  type ConfiguredEnv,
+  type Principal,
+  type State,
+} from '@merv/contracts';
+import { adminPlugin } from '@merv/admin';
+import type { AdminCredentials } from '@merv/admin/models';
+import type { ApiRequest, MountHandler } from '@merv/api/types';
 import type { ManagedModelGrant } from '@merv/fleet/types';
 import { CredentialStore } from '@merv/identity/credentials';
 import { ProjectScope } from '@merv/scope';
+import { AccountSecrets } from '@merv/secrets';
 import host from '@merv/sandboxes/host';
 import { migrate, openDatabase } from '@sandboxes/db';
 import { auditMigrations, AdminAudit } from '../packages/admin/src/audit.js';
-import { adminCredentials, credentialMigrations } from '../packages/admin/src/credentials.js';
+import { credentialMigrations, credentialRoutes } from '../packages/admin/src/credentials.js';
 import type { AdminEnv } from '../packages/admin/src/index.js';
 import { codexModelRelay } from '../packages/fleet/src/codex-relay.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { createApp } from './fixtures/app.js';
+import { reads } from './fixtures/env-reader.js';
 import { openState, postgresUrl, schemaFor, stateConfig } from './fixtures/state.js';
 
 /** Sets each variable for the test, and puts back what was there. */
@@ -33,9 +45,18 @@ function environment(t: TestContext, values: Record<string, string>) {
     });
   }
 }
+const secret = () => randomBytes(24).toString('base64url');
+const encryptionKey = () => randomBytes(32).toString('base64url');
+/** No six characters in a row of any value appear in `said`. */
+const undisclosed = (said: unknown, values: string[]) => {
+  const text = JSON.stringify(said);
+  for (const value of values)
+    for (let i = 0; i + 6 <= value.length; i++)
+      assert.ok(!text.includes(value.slice(i, i + 6)), 'a credential value was disclosed');
+};
 
-test('the composition root names each *Env field of its enabled entries, nested and defaulted', async (t) => {
-  environment(t, { ADMIN_TEST_FALLBACK: randomBytes(24).toString('base64url') });
+test('the composition root names each *Env field of its enabled entries by its owner’s words', async (t) => {
+  environment(t, { ADMIN_TEST_FALLBACK: secret() });
   const directory = mkdtempSync(join(tmpdir(), 'merv-admin-environment-'));
   const app = await createApp({
     directory,
@@ -44,6 +65,8 @@ test('the composition root names each *Env field of its enabled entries, nested 
         { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'web', name: '@merv/web', config: { fallback: { keyEnv: 'ADMIN_TEST_FALLBACK' } } },
         { id: 'nisa', name: '@merv/nisa', disabled: true, config: { keyEnv: 'ADMIN_TEST_NISA' } },
+        // A union's branch, and an object's defaults: read where the entry never started.
+        { id: 'blobs', name: '@merv/blobs', required: false, config: { backend: 's3' } },
       ],
     },
   });
@@ -51,10 +74,42 @@ test('the composition root names each *Env field of its enabled entries, nested 
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
+  const blobs = (field: string, env: string, purpose: string) => ({
+    plugin: 'blobs',
+    field,
+    env,
+    purpose: `Stored files · S3 ${purpose}`,
+    overridable: true,
+  });
   assert.deepEqual(app.ctx.get('composition')!.environment(), [
-    { plugin: 'state', field: 'connectionStringEnv', env: 'MERV_TEST_POSTGRES_URL' },
-    { plugin: 'web', field: 'keyEnv', env: 'MERV_TAVILY_API_KEY' },
-    { plugin: 'web', field: 'fallback.keyEnv', env: 'ADMIN_TEST_FALLBACK' },
+    {
+      plugin: 'state',
+      field: 'connectionStringEnv',
+      env: 'MERV_TEST_POSTGRES_URL',
+      purpose: 'Merv database · Postgres connection URL',
+      // State reads it before the stored secrets open.
+      overridable: false,
+    },
+    {
+      plugin: 'web',
+      field: 'keyEnv',
+      env: 'MERV_TAVILY_API_KEY',
+      purpose: 'Web search for agents · Tavily API key',
+      overridable: true,
+    },
+    {
+      plugin: 'web',
+      field: 'fallback.keyEnv',
+      env: 'ADMIN_TEST_FALLBACK',
+      purpose: 'Web search fallback for agents · OpenAI API key',
+      overridable: true,
+    },
+    blobs('bucketEnv', 'MERV_BLOB_BUCKET', 'bucket'),
+    blobs('endpointEnv', 'MERV_BLOB_ENDPOINT_URL', 'endpoint'),
+    blobs('accessKeyIdEnv', 'MERV_BLOB_ACCESS_KEY_ID', 'access key id'),
+    blobs('secretAccessKeyEnv', 'MERV_BLOB_SECRET_ACCESS_KEY', 'secret access key'),
+    blobs('regionEnv', 'MERV_BLOB_REGION', 'region'),
+    blobs('prefixEnv', 'MERV_BLOB_PREFIX', 'key prefix'),
   ]);
 });
 
@@ -68,9 +123,9 @@ const grant: ManagedModelGrant = {
   model: 'gpt-6-luna',
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 };
+const admin = { issuer: 'https://identity.example', subject: 'founder' };
 
-test('GET /admin/credentials says which credential serves which purpose and never a value', async (t) => {
-  const secret = () => randomBytes(24).toString('base64url');
+test('GET /admin/credentials names each secret by purpose, sandbox keys apart, never a value', async (t) => {
   const [openai, rotated, managed, bridge, native, user] = Array.from({ length: 6 }, secret);
   environment(t, {
     // Pi and the web fallback name one variable, Fleet another holding the same key.
@@ -103,6 +158,7 @@ test('GET /admin/credentials says which credential serves which purpose and neve
   const state = await openState();
   await createService(new ProjectScope(state));
   await state.migrate('admin', { ...auditMigrations, ...credentialMigrations });
+  const secrets = await createService(new AccountSecrets(state, encryptionKey()));
 
   // Fleet's relay keeps what the provider did with the key, per day.
   const fleet = await createService(
@@ -254,50 +310,61 @@ test('GET /admin/credentials says which credential serves which purpose and neve
     t.after(() => void (pool[method] = original));
   }
 
-  const named: ConfiguredEnv[] = [
-    { plugin: 'pi', field: 'modelApiKeyEnv', env: 'ADMIN_TEST_PI_KEY' },
-    { plugin: 'fleet-workflow', field: 'modelApiKeyEnv', env: 'ADMIN_TEST_SHARED' },
-    { plugin: 'sessions', field: 'managedSecretEnv', env: 'ADMIN_TEST_MANAGED' },
-    { plugin: 'web', field: 'fallback.keyEnv', env: 'ADMIN_TEST_PI_KEY' },
-    { plugin: 'nisa', field: 'keyEnv', env: 'ADMIN_TEST_UNSET' },
+  const ref = (plugin: string, field: string, env: string, purpose: string): ConfiguredEnv => ({
+    plugin,
+    field,
+    env,
+    purpose,
+    overridable: plugin !== 'state',
+  });
+  const named = [
+    ref('pi', 'modelApiKeyEnv', 'ADMIN_TEST_PI_KEY', 'Agent model calls · OpenAI API key'),
+    ref('fleet-workflow', 'modelApiKeyEnv', 'ADMIN_TEST_SHARED', 'Fleet agent model calls'),
+    ref('sessions', 'managedSecretEnv', 'ADMIN_TEST_MANAGED', 'Fleet machine runner tokens'),
+    ref('web', 'fallback.keyEnv', 'ADMIN_TEST_PI_KEY', 'Web search fallback for agents'),
+    ref('nisa', 'keyEnv', 'ADMIN_TEST_UNSET', 'Literature search for agents'),
+    ref('state', 'connectionStringEnv', 'MERV_TEST_POSTGRES_URL', 'Merv database'),
   ];
   const services: Record<string, unknown> = {
     composition: { status: () => [], environment: () => named },
     fleet,
+    secrets,
     sbxProviders: sandboxes.sbxProviders,
   };
   const env = {
     ctx: { get: (name: string) => services[name] },
     state,
     audit: new AdminAudit(state),
-    admins: [],
+    admins: [admin],
   } as unknown as AdminEnv;
+  const read = async () =>
+    (await credentialRoutes(env)['GET /admin/credentials']!(
+      {} as ApiRequest,
+      admin,
+    )) as AdminCredentials;
 
-  const first = await adminCredentials(env);
-  const fingerprint = (value: string) => sha256Hex(value).slice(0, 8);
+  const first = await read();
+  const name = ({ plugin, field, env }: ConfiguredEnv) => ({ plugin, field, env });
   assert.deepEqual(
-    first.groups.map((group) => [group.purpose, group.provider?.name ?? null]),
+    first.groups.map((group) => [group.purpose, group.secrets.map((s) => s.plugin)]),
     [
-      ['Agent', null],
-      ['Fleet agents', null],
-      ['Fleet machines', null],
-      ['Sandbox provider', 'cf'],
-      ['Sandbox provider', 'mine'],
-      ['Platform services', null],
+      ['Agent', ['pi']],
+      ['Fleet agents', ['fleet-workflow']],
+      ['Fleet machines', ['sessions']],
+      ['Platform services', ['web', 'nisa', 'state']],
     ],
   );
-  const [pi, agents, machines, cf, mine, services_] = first.groups;
-  const [shared] = agents!.credentials;
+  const [pi, agents, machines, platform] = first.groups;
   assert.deepEqual(
-    { ...shared, lastOk: shared!.lastOk?.relay },
+    { ...agents!.secrets[0], lastOk: agents!.secrets[0]!.lastOk?.relay },
     {
       plugin: 'fleet-workflow',
       field: 'modelApiKeyEnv',
       env: 'ADMIN_TEST_SHARED',
+      purpose: 'Fleet agent model calls',
       set: true,
-      fingerprint: fingerprint(openai),
       // The same key under another name, and the same name in another plugin.
-      sharedWith: [named[0], named[3]],
+      sharedWith: [name(named[0]!), name(named[3]!)],
       lastChanged: null,
       lastOk: 'codex',
       lastFailure: {
@@ -309,55 +376,55 @@ test('GET /admin/credentials says which credential serves which purpose and neve
       },
       // Refused as invalid after its last success, and not changed since.
       dead: true,
+      editable: true,
     },
   );
   assert.deepEqual(
-    pi!.credentials.map((c) => [c.env, c.fingerprint, c.sharedWith, c.dead]),
-    [['ADMIN_TEST_PI_KEY', fingerprint(openai), [named[1], named[3]], false]],
+    pi!.secrets.map((s) => [s.env, s.purpose, s.sharedWith, s.dead]),
+    [
+      [
+        'ADMIN_TEST_PI_KEY',
+        'Agent model calls · OpenAI API key',
+        [name(named[1]!), name(named[3]!)],
+        false,
+      ],
+    ],
   );
   assert.deepEqual(
-    machines!.credentials.map((c) => [c.env, c.set, c.sharedWith]),
+    machines!.secrets.map((s) => [s.env, s.set, s.sharedWith]),
     [['ADMIN_TEST_MANAGED', true, []]],
   );
   assert.deepEqual(
-    services_!.credentials.map((c) => [c.plugin, c.field, c.set, c.fingerprint]),
+    platform!.secrets.map((s) => [s.plugin, s.field, s.set, s.editable]),
     [
-      ['web', 'fallback.keyEnv', true, fingerprint(openai)],
+      ['web', 'fallback.keyEnv', true, true],
       // Named in config, unset in the process.
-      ['nisa', 'keyEnv', false, null],
+      ['nisa', 'keyEnv', false, true],
+      // Read before the stored secrets open: shown, never revealed or changed here.
+      ['state', 'connectionStringEnv', true, false],
     ],
   );
-  // A host instance names where its key is read, in Sandboxes' own reference grammar; its health
-  // asks Cloudflare about the native token.
+  // Sandbox provider keys are their own table, the platform's alone: a host instance's health
+  // asks Cloudflare about the native token; a key a person saved is not listed.
   assert.deepEqual(
-    [cf!.provider!.health, cf!.provider!.health_reason, cf!.provider!.credential_env],
-    [
-      {
-        status: 'degraded',
-        message: 'bridge worker 1; Cloudflare rejected the native API token (401)',
-      },
+    first.providers.map((p) => [
+      p.provider,
+      p.field,
+      p.present,
+      p.health,
+      p.healthReason,
+      p.editable,
+    ]),
+    ['bridge_url', 'bridge_token', 'cloudflare_api_token'].map((field) => [
+      'cf',
+      field,
+      true,
+      'degraded',
       'credential_rejected',
-      'ADMIN_TEST_CF',
-    ],
+      true,
+    ]),
   );
-  assert.deepEqual(
-    cf!.provider!.fields.map((field) => [field.name, field.present]),
-    [
-      ['bridge_url', true],
-      ['bridge_token', true],
-      ['cloudflare_api_token', true],
-    ],
-  );
-  assert.deepEqual(
-    cf!.credentials.map((c) => [c.plugin, c.field, c.env, c.set]),
-    [['cloudflare', 'providers.cf.credential', 'ADMIN_TEST_CF', true]],
-  );
-  // A user's own key stays sealed: the listing reads its row, never its secret column.
-  assert.deepEqual(
-    [mine!.provider!.source, mine!.provider!.namespaces, mine!.provider!.health, mine!.credentials],
-    ['user', ['team-a'], null, []],
-  );
-  assert.ok(mine!.provider!.verified_at);
+  assert.equal(first.providers[1]!.description, 'Bearer token the Worker was given');
   assert.ok(statements.some((sql) => sql.includes('FROM provider_credentials')));
   assert.ok(
     statements.every((sql) => !/\bsecret\b/.test(sql)),
@@ -374,38 +441,338 @@ test('GET /admin/credentials says which credential serves which purpose and neve
     ],
   );
 
-  // A rotated key reads as changed, and its earlier refusal no longer marks it dead.
+  // A key changed here reads as changed then, and its earlier refusal no longer marks it dead.
   process.env.ADMIN_TEST_SHARED = rotated;
-  const second = await adminCredentials(env);
-  const [again] = second.groups[1]!.credentials;
-  assert.deepEqual(
-    [again!.fingerprint, again!.lastChanged, again!.sharedWith, again!.dead],
-    [fingerprint(rotated), second.at, [], false],
-  );
-  assert.deepEqual(second.groups[0]!.credentials[0]!.sharedWith, [named[3]]);
-  // Restored, the first key changed again then, and its old refusal does not mark it dead.
-  process.env.ADMIN_TEST_SHARED = openai;
-  const third = await adminCredentials(env);
-  const [restored] = third.groups[1]!.credentials;
-  assert.deepEqual([restored!.lastChanged, restored!.dead], [third.at, false]);
+  await secrets.setPlatformSecret('ADMIN_TEST_SHARED', rotated, admin);
+  const [{ updatedAt }] = await secrets.platformSecrets();
+  const second = await read();
+  const [again] = second.groups[1]!.secrets;
+  assert.deepEqual([again!.lastChanged, again!.sharedWith, again!.dead], [updatedAt, [], false]);
+  assert.deepEqual(second.groups[0]!.secrets[0]!.sharedWith, [name(named[3]!)]);
   // Host health is reused within the minute: Cloudflare was asked once per token path.
   assert.equal(asked.filter((url) => url.endsWith('/tokens/verify')).length, 2);
+  undisclosed(
+    [first, second],
+    [openai, rotated, managed, bridge, native, user, ...minted.map((m) => m.token)],
+  );
+  for (const { credential } of minted)
+    assert.ok(!JSON.stringify(first).includes(credential.tokenHash));
+});
 
-  // Nothing returned or kept holds a value, or more of its digest than the fingerprint.
-  const kept = await state.read(async (sql) => [
-    await sql.all('SELECT * FROM admin_credential_observations'),
-    await sql.all('SELECT * FROM fleet_relay_outcomes'),
-  ]);
-  const said = JSON.stringify([first, second, kept]);
-  const values = [openai, rotated, managed, bridge, native, user, ...minted.map((m) => m.token)];
-  for (const value of values) {
-    for (let i = 0; i + 6 <= value.length; i++)
-      assert.ok(!said.includes(value.slice(i, i + 6)), 'a credential value was disclosed');
-    assert.ok(
-      !said.includes(sha256Hex(value).slice(0, 9)),
-      'more than a fingerprint was disclosed',
+/**
+ * The real composition root over State, Secrets, Scope, two consumers and the in-process Sandboxes host
+ * with one host Cloudflare instance, and the admin's `/admin` mount beside it.
+ */
+async function operable(t: TestContext, directory: string, schema: string, dataDir: string) {
+  const app = await createApp({
+    directory,
+    config: {
+      plugins: [
+        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
+        { id: 'secrets', name: '@merv/secrets', config: { encryptionKeyEnv: 'ADMIN_TEST_KEY' } },
+        { id: 'scope', name: '@merv/scope' },
+        {
+          id: 'reader',
+          name: './tests/fixtures/env-reader.ts',
+          config: { keyEnv: 'ADMIN_TEST_READER' },
+        },
+        { id: 'nisa', name: '@merv/nisa', config: { keyEnv: 'ADMIN_TEST_NISA' } },
+        {
+          id: 'sandboxes-host',
+          name: '@merv/sandboxes/host',
+          config: {
+            databaseUrlEnv: 'MERV_TEST_POSTGRES_URL',
+            schema,
+            vaultKeyEnv: 'ADMIN_TEST_VAULT_KEY',
+            publicOrigin: 'https://sandboxes.example',
+            dataDir,
+            relayEvents: false,
+            settings: {
+              providers: [
+                {
+                  name: 'cf',
+                  plugin: 'cloudflare',
+                  access: 'tunnel',
+                  credential: 'env:ADMIN_TEST_CF',
+                  settings: { account_id: ACCOUNT },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  let route: MountHandler | undefined;
+  const state: State = app.ctx.state;
+  app.ctx.provide('tools', { registerCallerRules: () => () => {} });
+  app.ctx.provide('api', {
+    mount: (_prefix: string, handler: MountHandler) => ((route = handler), () => {}),
+    stop: async () => {},
+  });
+  await app.ctx.plugin(adminPlugin, { admins: [admin] });
+  const principal: Principal = {
+    kind: 'user',
+    user: { ...admin, createdAt: new Date(0).toISOString() },
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  };
+  const call = async <T = unknown>(method: string, path: string, body?: unknown) =>
+    (await route!(
+      { method } as IncomingMessage,
+      { setHeader() {} } as unknown as ServerResponse,
+      {
+        url: new URL(path, 'https://merv.example'),
+        principal,
+        json: async (schema: ZodType) => {
+          const parsed = schema.safeParse(body);
+          if (!parsed.success) throw new MervError('invalid_input', 'Invalid input', 400);
+          return parsed.data;
+        },
+      } as ApiRequest,
+    )) as T;
+  const audit = () =>
+    state.read((sql) =>
+      sql.all<Record<'action' | 'target' | 'detail_json', string>>(
+        'SELECT action,target,detail_json FROM admin_audit ORDER BY at, id',
+      ),
+    );
+  const stored = () =>
+    state.read((sql) =>
+      sql.all<Record<'env' | 'ciphertext' | 'updated_subject', string>>(
+        'SELECT env,ciphertext,updated_subject FROM platform_secrets ORDER BY env',
+      ),
+    );
+  return { app, call, audit, stored };
+}
+const refused = (code: string, status: number) => (error: unknown) =>
+  error instanceof MervError && error.code === code && error.status === status;
+
+/** A data directory, a migrated Sandboxes schema and its data directory, all removed after. */
+async function places(t: TestContext) {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-admin-operable-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'merv-admin-operable-sbx-'));
+  const schema = schemaFor();
+  const db = await openDatabase({ url: postgresUrl, schema });
+  await migrate(db, { schemaExplicit: true });
+  await db.close();
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  return [directory, schema, dataDir] as const;
+}
+/** The bridges' health: each answers the one bearer it accepts, and says which it was sent. */
+function bridges(t: TestContext, accepted: Record<string, string>) {
+  const sent: [string, string | null][] = [];
+  const { fetch: send } = globalThis;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const origin = new URL(url).origin;
+    const token = new Headers(init?.headers).get('authorization')?.replace(/^Bearer /, '') ?? null;
+    if (!(origin in accepted) || !url.endsWith('/health'))
+      throw new Error(`unexpected request to ${url}`);
+    sent.push([origin, token]);
+    return token === accepted[origin]
+      ? Response.json({ status: 'ok', version: '1' })
+      : Response.json({ error: 'unauthorized' }, { status: 401 });
+  }) as typeof fetch;
+  t.after(() => void (globalThis.fetch = send));
+  return sent;
+}
+
+test('a platform secret is revealed and changed here: sealed, applied, its one consumer reloaded, and kept across a restart', async (t) => {
+  const [first, second, nisa] = [secret(), secret(), secret()];
+  environment(t, {
+    ADMIN_TEST_KEY: encryptionKey(),
+    ADMIN_TEST_READER: first,
+    ADMIN_TEST_NISA: nisa,
+    ADMIN_TEST_VAULT_KEY: Buffer.alloc(32, 5).toString('base64url'),
+    ADMIN_TEST_CF: JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: 'h' }),
+  });
+  bridges(t, { 'https://bridge.example.test': 'h' });
+  const [directory, schema, dataDir] = await places(t);
+  const before = reads.length;
+  let f = await operable(t, directory, schema, dataDir);
+  let stopped = false;
+  t.after(async () => {
+    if (!stopped) await f.app.stop();
+  });
+  assert.deepEqual(reads.slice(before), [first]);
+
+  // One click shows the value, and the audit log keeps that it was shown, never what.
+  assert.deepEqual(
+    await f.call('POST', '/admin/credentials/reveal', { env: 'ADMIN_TEST_READER' }),
+    { value: first },
+  );
+  // Only a name a loaded plugin's config gives is read, and never one read before the store.
+  for (const env of ['PATH', 'HOME'])
+    await assert.rejects(
+      f.call('POST', '/admin/credentials/reveal', { env }),
+      refused('not_found', 404),
+    );
+  for (const env of ['MERV_TEST_POSTGRES_URL', 'ADMIN_TEST_KEY'])
+    await assert.rejects(
+      f.call('POST', '/admin/credentials/reveal', { env }),
+      refused('credential_fixed', 409),
+    );
+  await assert.rejects(
+    f.call('POST', '/admin/credentials/change', { env: 'NODE_OPTIONS', value: '--inspect' }),
+    refused('not_found', 404),
+  );
+  await assert.rejects(
+    f.call('POST', '/admin/credentials/change', { env: 'MERV_TEST_POSTGRES_URL', value: 'x' }),
+    refused('credential_fixed', 409),
+  );
+
+  const reader = f.app.getFiber('reader');
+  const unchanged = f.app.getFiber('nisa');
+  assert.deepEqual(
+    await f.call('POST', '/admin/credentials/change', { env: 'ADMIN_TEST_READER', value: second }),
+    { ok: true, reloaded: ['reader'] },
+  );
+  // The new value is the process's, and only the plugin that names it started again.
+  assert.equal(process.env.ADMIN_TEST_READER, second);
+  assert.deepEqual(reads.slice(before), [first, second]);
+  assert.notEqual(f.app.getFiber('reader'), reader);
+  assert.equal(f.app.getFiber('nisa'), unchanged);
+  assert.ok(f.app.status().every((entry) => entry.state === 'active'));
+  const [row] = await f.stored();
+  assert.deepEqual([row!.env, row!.updated_subject], ['ADMIN_TEST_READER', 'founder']);
+  assert.ok(row!.ciphertext !== second && !row!.ciphertext.includes(second));
+  // A value its consumer will not start with is put back at once, and never stored.
+  await assert.rejects(
+    f.call('POST', '/admin/credentials/change', { env: 'ADMIN_TEST_READER', value: 'refused' }),
+    refused('credential_rejected', 422),
+  );
+  assert.equal(process.env.ADMIN_TEST_READER, second);
+  assert.ok(f.app.status().every((entry) => entry.state === 'active'));
+  assert.deepEqual(await f.stored(), [row]);
+
+  const listed = await f.call<AdminCredentials>('GET', '/admin/credentials');
+  const shown = listed.groups.flatMap((group) => group.secrets);
+  assert.deepEqual(
+    shown.map((s) => [s.plugin, s.env, s.purpose, s.set, !!s.lastChanged, s.editable]),
+    [
+      [
+        'state',
+        'MERV_TEST_POSTGRES_URL',
+        'Merv database · Postgres connection URL',
+        true,
+        false,
+        false,
+      ],
+      ['secrets', 'ADMIN_TEST_KEY', 'Stored secrets · encryption key', true, false, false],
+      ['reader', 'ADMIN_TEST_READER', 'Fixture calls · test service key', true, true, true],
+      ['nisa', 'ADMIN_TEST_NISA', 'Literature search for agents · Nisa API key', true, false, true],
+      [
+        'sandboxes-host',
+        'MERV_TEST_POSTGRES_URL',
+        'Sandboxes database · Postgres connection URL',
+        true,
+        false,
+        false,
+      ],
+      [
+        'sandboxes-host',
+        'ADMIN_TEST_VAULT_KEY',
+        'Saved sandbox provider keys · encryption key',
+        true,
+        false,
+        false,
+      ],
+    ],
+  );
+  assert.deepEqual(
+    (await f.audit()).map((entry) => [entry.action, entry.target, entry.detail_json]),
+    [
+      ['credentials.reveal', 'ADMIN_TEST_READER', '{}'],
+      ['credentials.change', 'ADMIN_TEST_READER', '{}'],
+    ],
+  );
+  undisclosed([listed, await f.audit()], [first, second, nisa]);
+
+  // Restarted with the deployment's value, the stored one is applied before the plugin reads it.
+  process.env.ADMIN_TEST_READER = first;
+  await f.app.stop();
+  stopped = true;
+  f = await operable(t, directory, schema, dataDir);
+  stopped = false;
+  assert.deepEqual(reads.slice(before), [first, second, 'refused', second, second]);
+  assert.equal(process.env.ADMIN_TEST_READER, second);
+});
+
+test('a platform sandbox provider key is revealed and changed here, rebound; a key a person saved is theirs', async (t) => {
+  const [host1, host2, user1] = [secret(), secret(), secret()];
+  const cf = (token: string) =>
+    JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: token });
+  environment(t, {
+    ADMIN_TEST_KEY: encryptionKey(),
+    ADMIN_TEST_READER: secret(),
+    ADMIN_TEST_NISA: secret(),
+    ADMIN_TEST_VAULT_KEY: Buffer.alloc(32, 6).toString('base64url'),
+    ADMIN_TEST_CF: cf(host1),
+  });
+  const accepted = { 'https://bridge.example.test': host1 };
+  const sent = bridges(t, accepted);
+  const [directory, schema, dataDir] = await places(t);
+  const f = await operable(t, directory, schema, dataDir);
+  t.after(async () => await f.app.stop());
+  await f.app.ctx.sbxVault.save({
+    namespace: 'team-a',
+    name: 'mine',
+    plugin: 'cloudflare',
+    fields: { bridge_url: 'https://user-bridge.example.test', bridge_token: user1 },
+    settings: {},
+    access: 'tunnel',
+    verified: true,
+  });
+  const reveal = (provider: string, field = 'bridge_token') =>
+    f.call<{ value: string }>('POST', '/admin/credentials/reveal', { provider, field });
+
+  assert.deepEqual(await reveal('cf'), { value: host1 });
+  // A person's own key, a field the provider has not, and a provider nobody configured.
+  for (const [provider, field] of [
+    ['mine', 'bridge_token'],
+    ['cf', 'password'],
+    ['nobody', 'bridge_token'],
+  ] as const) {
+    await assert.rejects(reveal(provider, field), refused('not_found', 404));
+    await assert.rejects(
+      f.call('POST', '/admin/credentials/change', { provider, fields: { [field]: host2 } }),
+      refused('not_found', 404),
     );
   }
-  assert.ok(!said.includes(sha256Hex(process.env.ADMIN_TEST_CF!).slice(0, 9)));
-  for (const { credential } of minted) assert.ok(!said.includes(credential.tokenHash));
+
+  // A host key is an override of its credential env: stored sealed, applied, and the hub
+  // rebinds the instance that reads it, which then calls its bridge with the new key.
+  accepted['https://bridge.example.test'] = host2;
+  const old = await f.app.ctx.sbxProviders.resolve('team-a', 'cf');
+  assert.deepEqual(
+    await f.call('POST', '/admin/credentials/change', {
+      provider: 'cf',
+      fields: { bridge_token: host2 },
+    }),
+    { ok: true, reloaded: ['cf'] },
+  );
+  assert.deepEqual(JSON.parse(process.env.ADMIN_TEST_CF!), JSON.parse(cf(host2)));
+  assert.notEqual(await f.app.ctx.sbxProviders.resolve('team-a', 'cf'), old);
+  const [row] = await f.stored();
+  assert.equal(row!.env, 'ADMIN_TEST_CF');
+  assert.ok(!row!.ciphertext.includes(host2));
+  const listed = await f.call<AdminCredentials>('GET', '/admin/credentials');
+  assert.deepEqual(sent.at(-1), ['https://bridge.example.test', host2]);
+  assert.deepEqual(
+    listed.providers.filter((p) => p.field === 'bridge_token').map((p) => [p.provider, p.health]),
+    [['cf', 'ok']],
+  );
+  assert.deepEqual(await reveal('cf'), { value: host2 });
+  assert.deepEqual(
+    (await f.audit()).map((entry) => [entry.action, entry.target, JSON.parse(entry.detail_json)]),
+    [
+      ['credentials.reveal', 'cf', { field: 'bridge_token' }],
+      ['credentials.change', 'cf', { fields: ['bridge_token'] }],
+      ['credentials.reveal', 'cf', { field: 'bridge_token' }],
+    ],
+  );
+  undisclosed([listed, await f.audit()], [host1, host2, user1]);
 });

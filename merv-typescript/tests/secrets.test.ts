@@ -112,6 +112,64 @@ test('missing or invalid key fails closed for save, remains removable, and does 
     await assert.rejects(operation(), { code: 'forbidden' });
 });
 
+test('platform secrets are sealed to their name, listed without values, and need the key', async (t) => {
+  const state = await openState();
+  t.after(() => state.close());
+  const secrets = await createService(new AccountSecrets(state, key));
+  const by = person().user;
+  const value = 'sk-NONCREDENTIAL-PLATFORM-MARKER';
+  await secrets.setPlatformSecret('MERV_PI_MODEL_API_KEY', value, by);
+  assert.equal(await secrets.platformSecret('MERV_PI_MODEL_API_KEY'), value);
+  assert.equal(await secrets.platformSecret('MERV_NISA_API_KEY'), null);
+  const [listed, ...others] = await secrets.platformSecrets();
+  assert.deepEqual([listed!.env, others], ['MERV_PI_MODEL_API_KEY', []]);
+  const rows = await state.read((sql) =>
+    sql.all<{ env: string; ciphertext: string }>('SELECT * FROM platform_secrets'),
+  );
+  for (const said of [JSON.stringify(rows), JSON.stringify(listed), inspect(secrets)])
+    assert.ok(!said.includes(value) && !said.includes(key));
+  // Sealed to its name: the same ciphertext under another name does not open.
+  await state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO platform_secrets VALUES (?,?,?,?,?)',
+      'MERV_NISA_API_KEY',
+      rows[0]!.ciphertext,
+      new Date().toISOString(),
+      by.issuer,
+      by.subject,
+    ),
+  );
+  await assert.rejects(secrets.platformSecret('MERV_NISA_API_KEY'), {
+    code: 'secrets_unavailable',
+  });
+  // Another deployment key opens nothing; without one nothing is read or stored.
+  const wrong = new AccountSecrets(state, Buffer.alloc(32, 43).toString('base64url'));
+  await assert.rejects(wrong.platformSecret('MERV_PI_MODEL_API_KEY'), {
+    code: 'secrets_unavailable',
+  });
+  const missing = new AccountSecrets(state, undefined);
+  assert.equal((await missing.platformSecrets()).length, 2);
+  assert.equal(await missing.platformSecret('MERV_PI_MODEL_API_KEY'), null);
+  await assert.rejects(missing.setPlatformSecret('MERV_PI_MODEL_API_KEY', value, by), {
+    code: 'secrets_unavailable',
+  });
+  // A refusal repeats no value.
+  for (const [env, text] of [
+    ['not a name', value],
+    ['MERV_PI_MODEL_API_KEY', ''],
+    ['MERV_PI_MODEL_API_KEY', `${value}\0`],
+  ])
+    await assert.rejects(secrets.setPlatformSecret(env!, text!, by), (error) => {
+      assert.equal((error as MervError).code, 'invalid_input');
+      assert.ok(!inspect(error).includes(value));
+      return true;
+    });
+  // Replaced, the name keeps one row.
+  await secrets.setPlatformSecret('MERV_PI_MODEL_API_KEY', 'sk-REPLACEMENT', by);
+  assert.equal(await secrets.platformSecret('MERV_PI_MODEL_API_KEY'), 'sk-REPLACEMENT');
+  assert.equal((await secrets.platformSecrets()).length, 2);
+});
+
 test('HTTP accepts transport humans only, exposes metadata, rejects invalid bodies, and publishes no tools', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));

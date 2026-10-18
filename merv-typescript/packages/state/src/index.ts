@@ -10,17 +10,22 @@ const positive = z.number().int().positive();
 const Config = z
   .object({
     backend: z.literal('postgres').optional(),
-    connectionStringEnv: envName.default('MERV_DB_URL'),
+    connectionStringEnv: envName
+      .describe('Merv database · Postgres connection URL')
+      .default('MERV_DB_URL'),
     schema: schemaName.default(POSTGRES_DEFAULTS.schema),
     /** When this variable is set and nonblank, its value replaces `schema` (local instances, tests). */
-    schemaEnv: envName.optional(),
+    schemaEnv: envName.describe('Merv database · schema name').optional(),
     maxConnections: positive.max(100).default(POSTGRES_DEFAULTS.maxConnections),
     readConnections: positive.max(100).default(POSTGRES_DEFAULTS.readConnections),
     connectionTimeoutMs: positive.default(POSTGRES_DEFAULTS.connectionTimeoutMs),
     statementTimeoutMs: positive.default(POSTGRES_DEFAULTS.statementTimeoutMs),
     lockTimeoutMs: positive.default(POSTGRES_DEFAULTS.lockTimeoutMs),
     ssl: z
-      .object({ rejectUnauthorized: z.literal(true).default(true), caEnv: envName.optional() })
+      .object({
+        rejectUnauthorized: z.literal(true).default(true),
+        caEnv: envName.describe('Merv database · TLS CA certificate').optional(),
+      })
       .strict()
       .optional(),
   })

@@ -51,6 +51,17 @@ IV, and a protected authenticated account binding. Moving ciphertext between
 accounts or modifying it fails closed. State receives only ciphertext and account
 metadata. Decryption errors have a fixed message with no ciphertext or key detail.
 
+## Platform secrets
+
+`platform_secrets` (secrets@2) holds the secrets a platform admin changed on `/ui/admin`, one row
+per environment variable name, sealed the same way under the same key with the name as its
+authenticated binding, beside when and by whom it changed. `setPlatformSecret`,
+`platformSecret` (decrypt; null without the key) and `platformSecrets` (names and times, never
+values) are the whole API; only the admin calls the first, only the composition root the second.
+At boot the composition root loads State and Secrets alone, puts every stored value into the
+process environment, then loads everything else; after a change it applies the value and
+reloads only the entries whose config names it. A record the key cannot open stops the boot.
+
 ## Download broker
 
 Configure `huggingFaceEndpoint` as the deployment's public HTTPS origin plus

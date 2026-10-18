@@ -356,6 +356,52 @@ test('a refused model reservation stops new Fleet rents until its payer has enou
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
 });
 
+test('the platform admin reads Fleet tokens per window and sets each person’s own limit, which the adapter holds them to', async (t) => {
+  const f = await fixture(t);
+  const [ann, bo] = ['ann', 'bo'].map((subject) => digest({ issuer, subject }));
+  const day = (offset: number) =>
+    new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  await f.state.transaction(async (tx) => {
+    for (const [person, offset, tokens] of [
+      [ann, -2, 5],
+      [ann, -1, 7],
+      [ann, 0, 19_990_000],
+      [bo, 0, 500_000],
+    ] as const)
+      await tx.run(
+        'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?)',
+        person,
+        day(offset),
+        tokens,
+      );
+  });
+  const used = (from: string) =>
+    f.state.read(async (sql) => (await f.adapter.modelTokens(ann!, sql, from, day(1))).used);
+  assert.deepEqual(
+    [await used(day(0)), await used(day(-1)), await used('1970-01-01')],
+    [19_990_000, 19_990_007, 19_990_012],
+  );
+  const blocked = async (person: string) =>
+    (await modelBudgetStatus(f.state, person, 20_000_000)).blocked;
+  // Over the default, Ann works again under her own limit; under it, Bo stops at his.
+  assert.deepEqual([await blocked(ann!), await blocked(bo!)], [true, false]);
+  await f.adapter.setModelTokens(ann!, 30_000_000);
+  await f.adapter.setModelTokens(bo!, 400_000);
+  assert.deepEqual([await blocked(ann!), await blocked(bo!)], [false, true]);
+  assert.deepEqual(await f.state.read((sql) => f.adapter.modelTokens(bo!, sql, day(0), day(1))), {
+    used: 500_000,
+    limit: 400_000,
+    own: true,
+  });
+  await f.adapter.setModelTokens(bo!, null);
+  assert.equal(await blocked(bo!), false);
+  assert.deepEqual(await f.state.read((sql) => f.adapter.modelTokens(bo!, sql, day(0), day(1))), {
+    used: 500_000,
+    limit: 20_000_000,
+    own: false,
+  });
+});
+
 test('a rented machine’s person with a spent day gives it no work until their limit allows', async (t) => {
   const f = await fixture(t);
   const person = digest({ issuer, subject: 'founder' });

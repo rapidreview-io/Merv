@@ -37,6 +37,7 @@ import {
   hostedGrant,
   markRelayStart,
   modelBudgetStatus,
+  modelTokensIn,
   relayFaulted,
   setDailyTokens,
 } from './codex-relay.js';
@@ -50,7 +51,10 @@ const workflowConfig = z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))
       .min(1)
       .max(100),
-    modelApiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    modelApiKeyEnv: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .describe('Fleet agent model calls · OpenAI API key'),
     baseUrl: z.string().url().max(2048),
     maxAgents: z.number().int().min(1).max(64).default(10),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
@@ -319,9 +323,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
       who,
     );
   }
-  async modelTokens(person: string, sql: Sql) {
-    const budget = await budgetIn(sql, person, this.config.dailyTokensPerPerson);
-    return { used: budget.usedToday, limit: budget.tokens };
+  modelTokens(person: string, sql: Sql, from: string, to: string) {
+    return modelTokensIn(sql, person, this.config.dailyTokensPerPerson, from, to);
+  }
+  setModelTokens(person: string, tokens: number | null) {
+    return setDailyTokens(this.state, person, tokens);
   }
   /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
    *  machine was rented for; an inquiry visit's, to the person who asked, within its budget. */
@@ -928,6 +934,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
+  Config: workflowConfig,
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
   async apply(ctx: Context, config: FleetWorkflowConfig) {
     const adapter = new FleetWorkflowAdapter(

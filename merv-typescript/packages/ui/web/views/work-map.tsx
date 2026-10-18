@@ -18,7 +18,7 @@ import {
   type RunningNode,
 } from '@merv/contracts/running';
 import { useTool } from '../api';
-import { Ago, LoadState, cx, kindOf, useNow, words } from '../components';
+import { Ago, LoadState, cx, kindOf, useNow, useSidebarEscape, words } from '../components';
 import { clock, duration, type Clock } from '../liveness';
 import { StageMark } from '../process';
 import { useRoomy } from '../theme';
@@ -44,11 +44,6 @@ import { beneath, workMapLayout, type MapBox, type MapEdge } from './work-map-la
  */
 
 const LANES: readonly RunningLaneName[] = ['work', 'sessions', 'hardware'];
-/** Where Escape is already someone else's: a menu or a dialog shuts itself with it. */
-const OWN_ESCAPE =
-  '[role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], [role="alertdialog"], dialog';
-/** Where a key is being typed rather than pressed at the page. */
-const TYPING = 'input, textarea, select, [contenteditable="true"]';
 /** A total not yet known is the em dash, never a zero. */
 const EM = '—';
 /** Wide enough for the sidebar to stand beside the page; narrower, it takes the page over. */
@@ -730,24 +725,8 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     const cards = [...(main.current?.querySelectorAll<HTMLElement>('[data-key]') ?? [])];
     (cards.find((card) => card.dataset.key === key) ?? main.current)?.focus();
   }, [asked]);
-  // Escape restores a maximized sidebar and closes one beside the page, wherever the cursor is — except inside a guard, where it
-  // means Cancel and has already been taken, inside the Agent's window, which is another
-  // conversation, and inside a menu or a dialog, such as the rail's account menu, whose own
-  // Escape shuts it and must not close this as well.
-  const closing = useRef(close);
-  closing.current = full ? () => setFull(false) : close;
-  useEffect(() => {
-    if (!asked) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      const from = event.target as Element | null;
-      if (from?.closest?.(`.guard, .pi-dock, ${OWN_ESCAPE}, ${TYPING}`)) return;
-      event.preventDefault();
-      closing.current();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [asked]);
+  // Escape restores a maximized sidebar and closes one beside the page.
+  useSidebarEscape(!!asked, full ? () => setFull(false) : close);
   const onSelect = (key: RunningKey) => {
     if (key === target) close();
     else select(key, asked ? 'replace' : 'push');

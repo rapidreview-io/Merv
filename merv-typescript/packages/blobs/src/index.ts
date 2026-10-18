@@ -17,12 +17,16 @@ const configuration = z.union([
   z
     .object({
       backend: z.literal('s3'),
-      bucketEnv: envName.default('MERV_BLOB_BUCKET'),
-      endpointEnv: envName.default('MERV_BLOB_ENDPOINT_URL'),
-      accessKeyIdEnv: envName.default('MERV_BLOB_ACCESS_KEY_ID'),
-      secretAccessKeyEnv: envName.default('MERV_BLOB_SECRET_ACCESS_KEY'),
-      regionEnv: envName.default('MERV_BLOB_REGION'),
-      prefixEnv: envName.default('MERV_BLOB_PREFIX'),
+      bucketEnv: envName.describe('Stored files · S3 bucket').default('MERV_BLOB_BUCKET'),
+      endpointEnv: envName.describe('Stored files · S3 endpoint').default('MERV_BLOB_ENDPOINT_URL'),
+      accessKeyIdEnv: envName
+        .describe('Stored files · S3 access key id')
+        .default('MERV_BLOB_ACCESS_KEY_ID'),
+      secretAccessKeyEnv: envName
+        .describe('Stored files · S3 secret access key')
+        .default('MERV_BLOB_SECRET_ACCESS_KEY'),
+      regionEnv: envName.describe('Stored files · S3 region').default('MERV_BLOB_REGION'),
+      prefixEnv: envName.describe('Stored files · S3 key prefix').default('MERV_BLOB_PREFIX'),
       timeoutMs: z.number().int().min(1).max(120_000).default(S3_DEFAULTS.timeoutMs),
       maxAttempts: z.number().int().min(1).max(5).default(S3_DEFAULTS.maxAttempts),
     })

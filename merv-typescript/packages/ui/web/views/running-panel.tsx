@@ -12,7 +12,17 @@ import type {
   RunningStreamItem,
 } from '@merv/contracts/running';
 import { readOnly, refreshTools, useTool } from '../api';
-import { ConfirmAction, LoadState, Ruled, Summary, col, cx, useNow, words } from '../components';
+import {
+  ConfirmAction,
+  LoadState,
+  Ruled,
+  Summary,
+  col,
+  cx,
+  useHeadFocus,
+  useNow,
+  words,
+} from '../components';
 import { Icon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
@@ -479,14 +489,8 @@ export function RunningSidebar({
     if (missing) onMissing?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missing]);
-  // The cursor goes to the name of what opened, once it has one; where the sidebar stands
-  // under the board rather than beside it, its head is brought into view as well.
-  useEffect(() => {
-    if (!loaded || !head.current) return;
-    heading.current?.focus({ preventScroll: true });
-    const top = head.current.getBoundingClientRect().top;
-    if (top < 0 || top > window.innerHeight - 96) head.current.scrollIntoView?.({ block: 'start' });
-  }, [loaded]);
+  // The cursor goes to the name of what opened, once it has one.
+  useHeadFocus(loaded, heading, head);
   const close = (
     <span className="running-ends">
       {onFull && (

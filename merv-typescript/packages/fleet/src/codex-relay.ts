@@ -1,10 +1,15 @@
 import { z } from 'zod';
 import { check, MervError, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
-import { dailyTokens, tokenLedger } from './model-ledger.js';
+import { dailyTokens, ownLimits, tokenLedger } from './model-ledger.js';
 import { fetchesContent, reasoningSummary, toolChoice } from './model-requests.js';
 import type { ManagedBoundSession } from '@merv/sessions/types';
 import { codexHandoffGraceMs, hostedAstraPlatform, hostedCodexPlatform } from './hosted-codex.js';
-import type { ManagedModelGrant, ModelRelayConfig, ModelRelayFailure } from './types.js';
+import type {
+  ManagedModelGrant,
+  ModelRelayConfig,
+  ModelRelayFailure,
+  ModelTokens,
+} from './types.js';
 
 /** Hosted Codex's grant of the model for a session its runner holds: while the session is live,
  *  or within Codex's grace after its own handoff, charged to `person`. Sessions held the machine
@@ -149,13 +154,23 @@ const ledger = dailyTokens('fleet_model_usage');
 /** A grant's own budget, the same ledger keyed by the grant. */
 const grantLedger = tokenLedger('fleet_grant_tokens', ['grant_id']);
 
+/** People's own daily limits (founder ruling 2026-09-25), set by them or the platform admin. */
+const limits = ownLimits('fleet_model_limits', 'tokens');
 /** A person's daily Fleet model tokens: their own limit, else the deployment's. */
 async function ceiling(sql: Sql, person: string, fallback: number) {
-  const own = await sql.get<{ tokens: number | string }>(
-    'SELECT tokens FROM fleet_model_limits WHERE person=?',
-    person,
-  );
-  return Number(own?.tokens ?? fallback);
+  return (await limits.of(sql, [person])).get(person) ?? fallback;
+}
+/** A person's Fleet model tokens over the UTC days [from, to), and the daily limit that holds. */
+export async function modelTokensIn(
+  sql: Sql,
+  person: string,
+  fallback: number,
+  from: string,
+  to: string,
+): Promise<ModelTokens> {
+  const own = (await limits.of(sql, [person])).get(person);
+  const [used] = await ledger.used(sql, [person], from, to);
+  return { used: used!, limit: own ?? fallback, own: own !== undefined };
 }
 /** A refusal stops new Fleet rent, and new work on a machine already rented, until the UTC
  *  reset or the person sets their limit; refunds of calls in flight do not lift it. */
@@ -191,15 +206,12 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
     resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
   };
 }
-/** A person's own limit. Setting it lifts today's refused wait: the next call judges the day
- *  again, and is refused, and waits, if the limit still cannot fund it. */
-export async function setDailyTokens(state: State, person: string, tokens: number) {
+/** A person's own limit, or none (null) so the deployment's holds again. Changing it lifts
+ *  today's refused wait: the next call judges the day again, and is refused, and waits, if the
+ *  limit still cannot fund it. */
+export async function setDailyTokens(state: State, person: string, tokens: number | null) {
   await state.transaction(async (tx) => {
-    await tx.run(
-      'INSERT INTO fleet_model_limits(person,tokens) VALUES(?,?) ON CONFLICT(person) DO UPDATE SET tokens=excluded.tokens',
-      person,
-      tokens,
-    );
+    await limits.set(tx, person, tokens);
     await tx.run('DELETE FROM fleet_model_blockers WHERE person=? AND day=?', person, day());
   });
 }

@@ -81,6 +81,16 @@ export const migrationV5 = {
   );`,
 };
 
+/** A person's own daily machine dollars, set by the platform admin: it replaces dailyUsdPerPerson
+ *  for them, and caps them where the deployment sets none. A new table: no prod count. */
+export const migrationV6 = {
+  version: 6,
+  sql: `CREATE TABLE fleet_usd_limits (
+    person TEXT PRIMARY KEY,
+    usd NUMERIC NOT NULL CHECK (usd > 0)
+  );`,
+};
+
 /** Fleet workflow's own tables (component `fleet_workflow`): its model ledger and retry grants.
  *  Published migration text is immutable after release. */
 export const usageMigration = {

@@ -6,12 +6,14 @@ const origin = z.string().refine(allowedOrigin, 'Expected an https origin or a l
 export const webConfig = z
   .object({
     // Tavily's key is read from this variable on every call.
-    keyEnv: envName.default('MERV_TAVILY_API_KEY'),
+    keyEnv: envName
+      .describe('Web search for agents · Tavily API key')
+      .default('MERV_TAVILY_API_KEY'),
     origin: origin.default('https://api.tavily.com'),
     // OpenAI's hosted web search, used when Tavily has no key or refuses it (Nisa's fallback).
     fallback: z
       .object({
-        keyEnv: envName,
+        keyEnv: envName.describe('Web search fallback for agents · OpenAI API key'),
         // Nisa's fallback runs on its Luna deployment.
         model: z
           .string()

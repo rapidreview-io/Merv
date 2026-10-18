@@ -39,11 +39,21 @@ export interface GitHubConfig {
 /** Where the GitHub app's settings and secrets are read: the Code plugin's `github` config. */
 export const githubEnv = z
   .object({
-    clientIdEnv: envName.default('MERV_GITHUB_CLIENT_ID'),
-    clientSecretEnv: envName.default('MERV_GITHUB_CLIENT_SECRET'),
-    appSlugEnv: envName.default('MERV_GITHUB_APP_SLUG'),
-    encryptionKeyEnv: envName.default('MERV_GITHUB_ENCRYPTION_KEY'),
-    privateKeyEnv: envName.default('MERV_GITHUB_PRIVATE_KEY_BASE64'),
+    clientIdEnv: envName
+      .describe('GitHub connection · GitHub App client id')
+      .default('MERV_GITHUB_CLIENT_ID'),
+    clientSecretEnv: envName
+      .describe('GitHub connection · GitHub App client secret')
+      .default('MERV_GITHUB_CLIENT_SECRET'),
+    appSlugEnv: envName
+      .describe('GitHub connection · GitHub App name')
+      .default('MERV_GITHUB_APP_SLUG'),
+    encryptionKeyEnv: envName
+      .describe('Saved GitHub sign-ins · encryption key')
+      .default('MERV_GITHUB_ENCRYPTION_KEY'),
+    privateKeyEnv: envName
+      .describe('Pull requests and repositories · GitHub App private key')
+      .default('MERV_GITHUB_PRIVATE_KEY_BASE64'),
   })
   .strict()
   .default({});

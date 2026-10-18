@@ -1,7 +1,23 @@
 import type { Context } from 'cordis';
+import { z } from 'zod';
 import { SandboxRuns, sandboxRunMigrations } from './sandbox-runs.js';
 import { SandboxEvidence } from './sandbox-evidence.js';
 import { historicalEvidenceDownloads } from './historical-evidence.js';
+import { sandboxesPeoplePlugin } from './people.js';
+
+const Config = z
+  .object({
+    legacyCaptures: z.object({ namespace: z.string() }).optional(),
+    // Positive USD, to 6 places, each person's own account is granted once per provider.
+    newPersonCredits: z
+      .record(
+        z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+        z.string().regex(/^(?=.*[1-9])\d{1,9}(\.\d{1,6})?$/),
+      )
+      .default({}),
+  })
+  .strict()
+  .default({});
 
 export const sandboxIntegrationPlugin = {
   name: 'merv-sandbox-integration',
@@ -18,7 +34,9 @@ export const sandboxIntegrationPlugin = {
     'sbxAccounts',
     'sbxJobs',
   ],
-  async apply(ctx: Context, config: { legacyCaptures?: { namespace: string } } = {}) {
+  Config,
+  async apply(ctx: Context, config: z.output<typeof Config> = Config.parse({})) {
+    ctx.plugin(sandboxesPeoplePlugin, { newPersonCredits: config.newPersonCredits });
     await ctx.effect(async function* () {
       await ctx.state.migrate('sandbox-runs', sandboxRunMigrations);
       const runs = new SandboxRuns(ctx.state, ctx.scope, ctx.workflows, ctx.sbxMerv);

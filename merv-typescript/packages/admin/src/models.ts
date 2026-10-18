@@ -46,36 +46,75 @@ export interface AdminWork {
   at: string;
 }
 
-type Tokens = Record<'used' | 'limit', number>;
-/** `GET /admin/credits`. Credit money is Sandboxes' USD decimal text; Fleet's is an estimate. */
-export interface AdminCredits {
-  at: string;
-  /** Provider plugins with an operator connection: the only providers credits may name. */
-  providers: string[];
-  people: CreditPerson[];
-  /** Every account a person belongs to, a project pays from, or credits are held in, once. */
-  accounts: CreditAccount[];
+/** The loader entry and the config field that names `env`. */
+interface EnvName {
+  plugin: string;
+  field: string;
+  env: string;
 }
-export interface CreditPerson {
+type Outcome = Record<'at' | 'relay' | 'model', string>;
+
+/** One platform secret named by a plugin's config, by what it is for. Never its value. */
+export interface PlatformSecret extends EnvName {
+  /** The owner's own description of the field (its config schema's `.describe()`). */
+  purpose: string;
+  set: boolean;
+  /** Every other name and field that holds the same value. */
+  sharedWith: EnvName[];
+  lastChanged: string | null;
+  lastOk: Outcome | null;
+  lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
+  dead: boolean;
+  /** The admin may reveal and change it here (a stored override replaces the env value). */
+  editable: boolean;
+}
+/** One credential field of one of the platform's sandbox provider instances. Never its value. */
+export interface ProviderKey {
+  provider: string;
+  field: string;
+  /** The provider plugin's own description of the field. */
+  description: string;
+  present: boolean | null;
+  health: 'ok' | 'degraded' | 'unavailable' | null;
+  healthReason: string | null;
+  editable: boolean;
+}
+export interface AdminCredentials {
+  groups: {
+    purpose: 'Agent' | 'Fleet agents' | 'Fleet machines' | 'Platform services';
+    secrets: PlatformSecret[];
+  }[];
+  providers: ProviderKey[];
+  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
+  minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
+    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
+}
+/** `POST /admin/credentials/reveal` (→ `{ value }`) names one; `/change` (→ `{ ok, reloaded }`,
+ *  the plugin entries reloaded and provider instances rebound) gives an env its `value`, or a
+ *  provider some of its key's `fields`. */
+export type CredentialTarget = { env: string } | { provider: string; field: string };
+
+/** A credit type a person spends: the platform's own, or one sandbox provider's. */
+export type CreditKind = 'agent-tokens' | 'fleet-tokens' | 'fleet-usd' | `provider:${string}`;
+export interface CreditUse {
+  kind: CreditKind;
   label: string;
-  issuer: string;
-  subject: string;
-  /** The Sandboxes accounts they are a member of. */
-  accounts: { accountId: string; role: 'admin' | 'member' }[];
-  /** Today (UTC): their Fleet machines' spend against the daily cap, and Fleet model tokens. */
-  fleet: { usd: number; usdCap: number | null; tokens: Tokens | null } | null;
-  /** Today (UTC): their Agent chat model tokens. */
-  pi: Tokens | null;
+  unit: 'tokens' | 'usd';
+  /** Per day for the platform's own kinds; what is granted (all time) for a provider. */
+  limit: number | null;
+  /** The person's own limit, where it overrides the platform default. */
+  own: boolean;
+  used: Record<'day' | 'week' | 'month' | 'total', number>;
+  /** What is left now: of today's limit, or of a provider's granted credit. */
+  left: number | null;
 }
-/** One account's credits per provider, as Sandboxes computes them, and its budget caps beside. */
-export interface CreditAccount {
-  accountId: string;
-  name: string;
-  /** The Merv projects whose agents spend from it. */
-  projects: { projectId: string; name: string }[];
-  /** Sandboxes' pools, of which the page reads what is granted and what is left. */
-  pools: { provider: string; granted: string; available: string }[];
-  /** Each grant's money as decimal text, its times as ISO text. */
+/** `GET /admin/credits/people/:person` (`:person` is `encodeURIComponent(key)`). */
+export interface PersonCredits {
+  /** `key` is `issuer|subject`, which every credit write names the person by. */
+  person: { key: string; label: string };
+  kinds: CreditUse[];
+  /** The provider grants and schedules on their own Sandboxes account: money as decimal text,
+   *  times as ISO text. */
   grants: (Record<'id' | 'provider' | 'amount' | 'used' | 'reserved' | 'available', string> &
     Record<'valid_from' | 'created_at' | 'reason', string> &
     Record<'expires_at' | 'revoked_at' | 'schedule_id', string | null>)[];
@@ -85,59 +124,13 @@ export interface CreditAccount {
     ends_at: string | null;
     enabled: boolean;
   })[];
-  /** Budget caps (`infra_policies`): a limit of their own, never part of the credits. */
-  budgets: {
-    id: string;
-    window: 'day' | 'month' | 'all_time';
-    metric: 'money' | 'compute_hours';
-    cap: string | null;
-    provider: string | null;
-  }[];
 }
-
-/** The loader entry, or a provider instance's plugin, and the config field that names `env`. */
-interface EnvName {
-  plugin: string;
-  field: string;
-  env: string;
+/** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
+export interface AdminCredits {
+  people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
 }
-type Outcome = Record<'at' | 'relay' | 'model', string>;
-export interface AdminCredential extends EnvName {
-  set: boolean;
-  /** The first 8 hex of the value's SHA-256; never the value. */
-  fingerprint: string | null;
-  /** Every other name and field that holds the same value. */
-  sharedWith: EnvName[];
-  /** When the value last changed, once this page has seen it change. */
-  lastChanged: string | null;
-  /** Fleet's relay's last call the provider answered, and its last that failed. */
-  lastOk: Outcome | null;
-  lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
-  /** Fleet's relay saw the provider refuse this key, and it has neither worked nor changed since. */
-  dead: boolean;
-}
-export interface AdminCredentialGroup {
-  purpose: string;
-  /** A sandbox provider's instance; its credentials are its host key reference, if any. */
-  provider?: {
-    name: string;
-    plugin: string;
-    source: 'host' | 'user';
-    namespaces: readonly string[] | null;
-    enabled: boolean;
-    /** The environment variable a host instance's key reference names, if it names one. */
-    credential_env: string | null;
-    fields: readonly { name: string; present: boolean | null }[];
-    verified_at: string | null;
-    health: { status: string; message: string } | null;
-    health_reason: string | null;
-  };
-  credentials: AdminCredential[];
-}
-export interface AdminCredentials {
-  at: string;
-  groups: AdminCredentialGroup[];
-  /** Machine and agent credentials Merv minted, by owner and kind (Postgres counts as text). */
-  minted: (Record<'owner' | 'kind' | 'newestIssued', string> &
-    Record<'live' | 'revokedLastDay', number | string> & { soonestExpiry: string | null })[];
+/** `POST /admin/credits/people/:person/limits`: null clears the person's own limit. */
+export interface CreditLimitInput {
+  kind: 'agent-tokens' | 'fleet-tokens' | 'fleet-usd';
+  limit: number | null;
 }
