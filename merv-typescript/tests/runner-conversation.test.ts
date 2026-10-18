@@ -705,6 +705,30 @@ test('a Codex rollout holds whole only the prompts sent since its last compactio
   ].join('\n');
   assert.deepEqual(codexHarness.held!(rollout), ['second', 'third']);
   assert.deepEqual(codexHarness.held!(`${user('only')}\n`), ['only']);
+  // A compaction recorded under another name: the next model call reads fewer input tokens than
+  // the one before, which in prod rollouts happened at every compaction and nowhere else.
+  const read = (input_tokens: number | null) =>
+    JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: input_tokens === null ? null : { last_token_usage: { input_tokens } },
+      },
+    });
+  const copy = `Worker prompt.\nFrozen assignment:\n${JSON.stringify(offer('drift').assignment)}\n`;
+  const drifted = [
+    user(copy),
+    read(200_000),
+    read(null),
+    user('resumed'),
+    read(200_400),
+    JSON.stringify({ type: 'response_item', payload: { type: 'compaction', encrypted: 'x' } }),
+    read(20_000),
+    user('after'),
+    read(20_100),
+  ].join('\n');
+  assert.deepEqual(codexHarness.held!(drifted), ['after']);
+  assert.equal(heldAssignment(codexHarness.held!(drifted)), undefined, 'sent whole');
   // Claude Code's compaction is not read: its launches are sent the assignment whole.
   assert.equal(claudeHarness.held, undefined);
 });

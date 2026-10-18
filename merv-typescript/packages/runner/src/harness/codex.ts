@@ -94,16 +94,29 @@ function recordedTotal(conversation: string, model?: string) {
 }
 
 /**
- * A rollout's user prompts (`response_item` messages) since its last `compacted` record: a
- * compaction's replacement history keeps only a cut copy of each earlier prompt.
+ * A rollout's user prompts (`response_item` messages) since its last compaction: a compaction's
+ * replacement history keeps only a cut copy of each earlier prompt. Codex records one as
+ * `compacted`; whatever it is called, the model call after it reads fewer input tokens than the
+ * one before (`token_count`), which in prod rollouts nothing else did.
  */
 function heldPrompts(conversation: string): string[] {
-  let prompts: string[] = [];
+  let prompts: string[] = [],
+    read: number | undefined;
   for (const line of conversation.split('\n')) {
-    if (!line.includes('"compacted"') && !line.includes('"role":"user"')) continue;
+    if (
+      !line.includes('"compacted"') &&
+      !line.includes('"token_count"') &&
+      !line.includes('"role":"user"')
+    )
+      continue;
     const event = readLine(line);
     if (event?.type === 'compacted') prompts = [];
-    else if (
+    else if (event?.type === 'event_msg' && event.payload?.type === 'token_count') {
+      const input: unknown = event.payload.info?.last_token_usage?.input_tokens;
+      if (typeof input !== 'number') continue;
+      if (read !== undefined && input < read) prompts = [];
+      read = input;
+    } else if (
       event?.type === 'response_item' &&
       event.payload?.type === 'message' &&
       event.payload.role === 'user' &&
