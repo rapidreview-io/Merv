@@ -533,6 +533,8 @@ export class LeasedSessions implements Sessions {
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
   private checkedAt = Number.NEGATIVE_INFINITY;
+  /** Whether the last pass could not read, so runners' presence may have gone unrecorded. */
+  private deaf = false;
   /** Each failing sweep subject with the code last logged, cleared by every full pass. */
   private readonly failing = new Map<string, string>();
   private ensureOpen(): void {
@@ -1954,6 +1956,9 @@ export class LeasedSessions implements Sessions {
       this.checkedAt = this.clock();
       this.failing.clear();
     }
+    // After a pass that could not read (the database away) runners may have gone unheard too:
+    // their silence counts from now, or every hosted visit would be lost at once.
+    if (this.deaf) this.managed.heard();
     const { sessions, threads } = await this.reading(async (tx) => ({
       sessions: await this.live(tx, !full),
       threads: full
@@ -1962,7 +1967,11 @@ export class LeasedSessions implements Sessions {
             "SELECT DISTINCT thread_id AS id FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry')",
           )
         : [],
-    }));
+    })).catch((error: unknown) => {
+      this.deaf = true;
+      throw error;
+    });
+    this.deaf = false;
     // A session that failed is retried by the next full pass, not by every tick and lease.
     for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
       await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx)));
@@ -2008,7 +2017,7 @@ export class LeasedSessions implements Sessions {
       (row) => row.expired || (row.kind === 'work' && at.get(row.instance_id) !== row.revision),
     );
   }
-  /** One live session's upkeep: a closure found, or its stranding. */
+  /** One live session's upkeep: a closure found, its stranding, or its runner's loss. */
   private async upkeep(id: string, tx: Transaction) {
     const session = this.decode(await this.row(tx, id));
     if (await this.reconcile(session, tx)) return;
@@ -2021,6 +2030,13 @@ export class LeasedSessions implements Sessions {
         'expired',
         stranded ? 'machine_retired' : 'host_failed',
       );
+    // An inquiry, or an offer no agent took up, ends by its own short deadline.
+    else if (
+      session.kind === 'work' &&
+      session.status === 'active' &&
+      (await this.managed.runnerLost(id, tx))
+    )
+      await this.closeSession(session, 'runner_lost', tx, 'expired', 'host_failed');
   }
   /** One subject on its own: its failure is logged once per code and never stops the rest. */
   private async alone<T>(subject: string, fn: () => Promise<T>): Promise<T | false> {

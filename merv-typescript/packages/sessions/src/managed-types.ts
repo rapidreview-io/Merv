@@ -97,8 +97,8 @@ export interface ManagedRunnerInspection {
     closedAt: string | null;
     outcome: Session['outcome'];
     releaseAcknowledged: boolean;
-    /** A final output the runner still owes: the workspace result, or a transcript declared
-     *  under 30 minutes ago. */
+    /** A final output the runner still owes: the workspace result (none once its runner was
+     *  lost), or a transcript declared under 30 minutes ago. */
     capturePending: boolean;
   } | null;
 }

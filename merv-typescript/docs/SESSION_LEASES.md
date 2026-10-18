@@ -308,6 +308,14 @@ on a read snapshot and recorded in a transaction of its own, so a healthy pass t
 writer lock. One that fails holds back no other: it is logged once as
 `sessions.sweep_failed` with its code and retried by the next full pass.
 
+A rented machine's runner that has sent no presence for over 15 minutes while Fleet still holds
+its machine has died or hung: the full pass closes its activated work visit `runner_lost` with
+outcome `host_failed`, which counts. Fleet then waits for no workspace capture of it, only for a
+transcript its runner declared, so the machine stops after the release acknowledgement's grace
+and another is rented. The silence counts from Fleet's registration and from the recovery of a
+pass that could not read, not only from the runner's last presence, so a Main restart or a
+database outage loses no visit; an inquiry or an offer no agent took up ends by its own deadline.
+
 Run `npm run test:sessions` for deterministic coverage. The separate
 `npm run test:live:sessions -- /absolute/new/run-directory` launches two real
 Codex agents against synthetic local data; it requires model access and local
