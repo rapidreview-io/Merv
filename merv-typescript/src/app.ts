@@ -2,7 +2,7 @@ import { Context, FiberState, type Fiber } from 'cordis';
 import Loader from '@cordisjs/plugin-loader';
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { check, type PluginStatus } from '@merv/contracts';
+import { check, type ConfiguredEnv, type PluginStatus } from '@merv/contracts';
 import type {} from '@merv/api';
 import { loadConfiguration, type ConfigurationOptions } from './config.js';
 
@@ -87,8 +87,23 @@ export async function createApp(options: AppOptions) {
         503,
       );
     };
+    // Config names secrets and never holds them: every `*Env` string field, at any depth, of the
+    // config each enabled entry was given, its plugin's defaults applied where it loaded.
+    const named = (value: unknown, plugin: string, path = ''): ConfiguredEnv[] =>
+      value && typeof value === 'object'
+        ? Object.entries(value).flatMap(([key, child]) => {
+            const field = path ? `${path}.${key}` : key;
+            return typeof child === 'string' && key.endsWith('Env')
+              ? [{ plugin, field, env: child }]
+              : named(child, plugin, field);
+          })
+        : [];
+    const environment = () =>
+      [...loader.entries()]
+        .filter((entry) => !entry.disabled)
+        .flatMap((entry) => named(entry.fiber?.config ?? entry.options.config, entry.id));
     // Plugins read lifecycle state from this report, never by recomputing it from the loader.
-    ctx.provide('composition', { status });
+    ctx.provide('composition', { status, environment });
     // A required flag is Merv readiness policy; do not pass it as a loader/plugin option.
     await loader.root.update(
       configuration.entries.map(({ required: _required, ...entry }) => entry),

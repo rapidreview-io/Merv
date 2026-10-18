@@ -8,7 +8,7 @@ import {
   randomBytes,
   type KeyObject,
 } from 'node:crypto';
-import { check, MervError } from '@merv/contracts';
+import { check, envName, MervError } from '@merv/contracts';
 import type {
   GitHubRepository,
   GitHubBranch,
@@ -36,12 +36,26 @@ export interface GitHubConfig {
   /** Optional server-only RSA key, base64 encoded PEM. Enables repository automation. */
   privateKey?: string;
 }
-export function githubConfig(env = process.env): GitHubConfig | undefined {
-  const clientId = env.MERV_GITHUB_CLIENT_ID;
-  const clientSecret = env.MERV_GITHUB_CLIENT_SECRET;
-  const appSlug = env.MERV_GITHUB_APP_SLUG;
-  const encryptionKey = env.MERV_GITHUB_ENCRYPTION_KEY;
-  const privateKey = env.MERV_GITHUB_PRIVATE_KEY_BASE64;
+/** Where the GitHub app's settings and secrets are read: the Code plugin's `github` config. */
+export const githubEnv = z
+  .object({
+    clientIdEnv: envName.default('MERV_GITHUB_CLIENT_ID'),
+    clientSecretEnv: envName.default('MERV_GITHUB_CLIENT_SECRET'),
+    appSlugEnv: envName.default('MERV_GITHUB_APP_SLUG'),
+    encryptionKeyEnv: envName.default('MERV_GITHUB_ENCRYPTION_KEY'),
+    privateKeyEnv: envName.default('MERV_GITHUB_PRIVATE_KEY_BASE64'),
+  })
+  .strict()
+  .default({});
+export function githubConfig(
+  env = process.env,
+  names = githubEnv.parse(undefined),
+): GitHubConfig | undefined {
+  const clientId = env[names.clientIdEnv];
+  const clientSecret = env[names.clientSecretEnv];
+  const appSlug = env[names.appSlugEnv];
+  const encryptionKey = env[names.encryptionKeyEnv];
+  const privateKey = env[names.privateKeyEnv];
   if (![clientId, clientSecret, appSlug, encryptionKey, privateKey].some(Boolean)) return;
   check(
     clientId && clientSecret && appSlug && encryptionKey && env.MERV_TS_PUBLIC_ORIGIN,
