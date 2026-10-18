@@ -295,20 +295,28 @@ export function planExtract(input: WebExtractInput): ExtractPlan {
 /** ASCII punctuation, which Markdown may escape with a backslash, and such an escape. */
 const PUNCTUATION = /[!-/:-@[-`{-~]/;
 const ESCAPED = new RegExp(`\\\\(${PUNCTUATION.source})`, 'g');
+/** A run of white space; a run of backslashes and the mark after it; any other mark. */
+const PIECE = new RegExp(`\\s+|(\\\\+)(${PUNCTUATION.source})?|${PUNCTUATION.source}`, 'gu');
 
 /**
  * Where `marker` first occurs in `content` at or after `from`, and how long it is there. Tavily
  * answers in Markdown, which escapes punctuation (def soft\_ce\_loss) and reflows white space,
  * while a marker is copied from source code or an excerpt: so a punctuation mark matches with
  * or without its backslash, on either side, and any run of white space matches any other.
+ * A run of k backslashes and the mark after it are one piece, k to 2k+1 backslashes then the
+ * mark: two pieces that could each take the same backslash backtrack exponentially on a miss.
  */
 function find(content: string, marker: string, from: number) {
-  let source = '';
-  for (const char of marker.replace(ESCAPED, '$1'))
-    if (/\s/u.test(char)) source += source.endsWith('\\s+') ? '' : '\\s+';
-    else if (PUNCTUATION.test(char))
-      source += `\\\\?${char.replace(/[$()*+./?[\\\]^{|}]/, '\\$&')}`;
-    else source += char;
+  const quote = (mark: string) => mark.replace(/[$()*+./?[\\\]^{|}]/, '\\$&');
+  const source = marker
+    .replace(ESCAPED, '$1')
+    .replace(PIECE, (piece, run?: string, mark?: string) =>
+      /^\s/u.test(piece)
+        ? '\\s+'
+        : run
+          ? `\\\\{${run.length},${2 * run.length + (mark ? 1 : 0)}}${quote(mark ?? '')}`
+          : `\\\\?${quote(piece)}`,
+    );
   const pattern = new RegExp(source, 'gu');
   pattern.lastIndex = from;
   const match = pattern.exec(content);

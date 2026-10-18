@@ -471,6 +471,26 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   const spaced = await read({ url, start_text: 'Licensing & Personal Information' });
   assert.equal(spaced.section, true);
   assert.match(spaced.content, /The data is public\.$/);
+  // A backslash is matched with or without its escape, alone or before a mark; and a long
+  // marker of backslashes and marks that misses answers at once: each backslash on the page
+  // can be taken by one part of the marker only, so nothing backtracks without end.
+  const slashes = '\\\\_'.repeat(30);
+  extracted = {
+    body: {
+      results: [
+        { url, raw_content: `$\\\\alpha\\_t$ C:\\\\\\_tmp ${slashes}x ${'\\'.repeat(60)}x` },
+      ],
+    },
+  };
+  for (const start_text of ['\\alpha_t', 'C:\\\\_tmp'])
+    assert.equal((await read({ url, start_text })).section, true, start_text);
+  for (const start_text of [`${slashes}y`, `${'\\'.repeat(60)}y`]) {
+    const began = performance.now();
+    const hostile = await read({ url, start_text });
+    assert.ok(performance.now() - began < 1000, `${start_text.length} characters backtracked`);
+    assert.equal(hostile.section, false);
+    assert.match(hostile.normalization_note!, /^start_text ".*" not found on the page/);
+  }
   // Two markers neither found on a page past the cap: the note says so, and offset reads on.
   const chrome = '[Skip to content](#start-of-content) ' + 'n'.repeat(24_000);
   extracted = { body: { results: [{ url, raw_content: chrome }] } };
