@@ -1,11 +1,9 @@
-import { check, type WorkflowDefinition } from '@merv/contracts';
+import { byCodeUnit, check, type WorkflowDefinition } from '@merv/contracts';
 
 /** Names of workflows, states, actions and callbacks. */
 export const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
 /** The public Tools naming contract, including reserved mounted namespaces. */
 export const toolName = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
-/** Code-unit order: the stored definition, and so its fingerprint, never depends on the locale. */
-const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** A program's graph or policy must hold `ok`, else it is refused as invalid. */
 export const valid: (ok: unknown, message: string) => asserts ok = (ok, message) =>

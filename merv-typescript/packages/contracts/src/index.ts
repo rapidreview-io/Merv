@@ -14,7 +14,7 @@ import 'cordis';
 export type { Json, Data } from './data.js';
 export { cleanText, clip, ellipsis, itemTitle, visible } from './text.js';
 export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
-export { ordered } from './order.js';
+export { byCodeUnit, ordered } from './order.js';
 export {
   allowedOrigin,
   allowedUrl,
@@ -259,6 +259,14 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     return result;
   };
   return (value === undefined && limits.undefined !== 'reject' ? undefined : copy(value, 0)) as T;
+}
+/** Freeze a detached data tree; keep live service handles outside this traversal. */
+export function freezeData<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeData(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 /** Parse a detached copy of `value`; refusals carry `code` and name the failing fields. */
 export function parsed<T>(

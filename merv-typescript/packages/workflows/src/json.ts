@@ -35,12 +35,3 @@ export function workflowJson<T>(
     );
   }
 }
-
-/** Freeze a detached data tree; keep live service handles outside this traversal. */
-export function freezeData<T>(value: T): T {
-  if (value && typeof value === 'object') {
-    for (const child of Object.values(value)) freezeData(child);
-    Object.freeze(value);
-  }
-  return value;
-}

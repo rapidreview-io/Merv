@@ -1,4 +1,4 @@
-import { canonical, check, digest, now } from '@merv/contracts';
+import { canonical, check, digest, freezeData, now } from '@merv/contracts';
 import type {
   Sql,
   WorkflowDefinition,
@@ -7,7 +7,6 @@ import type {
   WorkflowPolicy,
 } from '@merv/contracts';
 import { executionFingerprint } from './execution-policy.js';
-import { freezeData } from './json.js';
 
 interface Row {
   name: string;

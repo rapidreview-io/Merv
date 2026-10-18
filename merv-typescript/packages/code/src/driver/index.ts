@@ -15,7 +15,8 @@ import {
 } from '@merv/contracts';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { codeWorkspaceManifestSchema } from '../store/protocol.js';
-import { hash, pathStat, WorkspaceError } from './git.js';
+import { pathStat } from '@merv/contracts/private-directory';
+import { hash, WorkspaceError } from './git.js';
 import { UploadRefused, terminal, deferral } from './core.js';
 import { DriverTransfer } from './transfer.js';
 

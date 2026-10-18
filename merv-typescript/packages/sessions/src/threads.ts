@@ -2,6 +2,7 @@ import {
   check,
   MervError,
   clip,
+  freezeData,
   newId,
   type Blobs,
   type Caller,
@@ -30,7 +31,6 @@ import {
 } from './common.js';
 import { messageInquiry, openInquiry } from './inquiries.js';
 import { takesMessage, type Standing } from './messages.js';
-import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
 import { readsAgents } from './rules.js';
 import { deliver, uploads } from './transcripts.js';
@@ -190,7 +190,7 @@ export class SessionThreads {
       return JSON.stringify([unit.instanceId, unit.state, unit.role, unit.revision]);
     const provider = this.providers.get(unit.workflow);
     if (!provider) return JSON.stringify([unit.instanceId, unit.state, unit.role]);
-    const key = provider(freezeLaunchSnapshot(structuredClone(unit)));
+    const key = provider(freezeData(structuredClone(unit)));
     check(
       key === null || (typeof key === 'string' && key.length > 0 && key.length <= 512),
       'invalid_continuity_key',

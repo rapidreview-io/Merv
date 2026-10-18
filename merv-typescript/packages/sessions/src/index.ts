@@ -1,7 +1,6 @@
-import { freezeLaunchSnapshot } from './launch-connections.js';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
-import { visible, createService, mapAsync } from '@merv/contracts';
+import { visible, createService, freezeData, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
@@ -1551,7 +1550,7 @@ export class LeasedSessions implements Sessions {
       return { connections: [] };
     let issued: unknown;
     try {
-      issued = await provider(freezeLaunchSnapshot(structuredClone(before.session)));
+      issued = await provider(freezeData(structuredClone(before.session)));
     } catch (error) {
       // Provider exceptions can carry upstream response bodies or credentials.
       if (error instanceof MervError && [401, 403].includes(error.status))
