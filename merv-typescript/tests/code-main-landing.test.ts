@@ -517,6 +517,31 @@ test('work a dependent’s base already merges on top of main lands through it, 
   assert.equal(await f.main(), (await f.record([f.a, f.c, f.d, f.e]))!.result!.commit);
 });
 
+test('a joined landing whose base waits on an earlier step’s resolution says so', async (t) => {
+  const f = await baseResolutionFixture(t, false, { mainLanding: true });
+  const landing = landingOf(f.code);
+  // E clashes with A as C does. Work on A and E plans {A,E}, and work on A, C and E builds C
+  // on top of it, so C's landing waits on a conflict its own step does not have.
+  f.source.git('checkout', '--detach', f.main);
+  const e = f.source.commit({ 'f.txt': 'E\n' });
+  f.source.git('push', f.bare, `${e}:refs/heads/e`);
+  const fifth = await f.input('E', e);
+  await f.waiter([f.left, fifth]);
+  await f.waiter([f.left, f.right, fifth]);
+  for (let round = 0; round < 8; round++) {
+    await landing.work(f.admin.projectId);
+    await f.bases.work(f.admin.projectId);
+  }
+  const current = (await f.code.status(f.admin)).landing!.current!;
+  assert.equal(current.unitId, f.right.id);
+  assert.equal(current.baseKey, baseKey([f.a, f.c, e]));
+  assert.equal((await f.record([f.a, f.c, e]))!.state, 'waiting_inputs');
+  const step = (await f.record([f.a, e]))!;
+  assert.equal(step.state, 'awaiting_resolution');
+  assert.equal(current.state, 'awaiting_resolution');
+  assert.equal(current.resolutionTaskId, step.resolutionTaskId);
+});
+
 test('a landing whose joined base is cancelled is offered again and lands on its own', async (t) => {
   const f = await siblings(t);
   t.mock.method(f.landing, 'soon', () => {});

@@ -434,12 +434,12 @@ export class MainLanding {
 
   /** The `landing` section of code.status. */
   async status(projectId: string): Promise<CodeMainLanding> {
-    const { standing, open, landed, base } = await this.state.read(async (sql) => {
+    const { standing, open, landed, path } = await this.state.read(async (sql) => {
       const open = await sql.get<LandingRow>(OPEN, projectId);
       return {
         standing: await this.standing(sql, projectId),
         open,
-        base: open?.base_key ? await this.units.bases.get(sql, projectId, open.base_key) : null,
+        path: open?.base_key ? await this.units.bases.path(sql, projectId, open.base_key) : [],
         landed: await sql.all<LandingRow>(
           'SELECT * FROM code_main_landings WHERE project_id=? AND outcome IS NOT NULL ORDER BY seq DESC LIMIT 50',
           projectId,
@@ -447,6 +447,8 @@ export class MainLanding {
       };
     });
     const order = standing.main ? await this.order(projectId, standing.main).catch(() => []) : [];
+    // A joined base may wait on an earlier step of its plan rather than on its own merge.
+    const base = path.find((record) => record.state === 'awaiting_resolution') ?? path[0];
     return {
       enabled: !standing.reason,
       ...(standing.reason ? { reason: standing.reason } : {}),

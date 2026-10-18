@@ -319,12 +319,6 @@ export class CodeBaseService {
     return this.record(row);
   }
 
-  /** A pure read: the record a key names, if it was ever written. */
-  async get(sql: Sql, projectId: string, key: string): Promise<CodeBaseRecord | null> {
-    const row = await this.row(sql, projectId, key);
-    return row ? this.record(row) : null;
-  }
-
   /**
    * Every base of a project, each one told what its two inputs stand for. The whole project
    * is already in hand, so an input's own record is found in this list rather than read for:
