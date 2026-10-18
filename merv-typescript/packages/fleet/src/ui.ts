@@ -18,10 +18,7 @@ const collection: UiCollectionSpec = {
     { type: 'ago', label: 'Requested', field: 'createdAt' },
     { type: 'countdown', label: 'Time remaining', field: 'deadlineAt' },
   ],
-  empty: {
-    title: 'No agents allocated',
-    hint: 'Agents appear here when a connected workflow or chat requests a machine.',
-  },
+  empty: { title: 'No agents allocated' },
   cadence: { liveMs: 5000, idleMs: 30_000, liveWhen: { field: 'status', in: live } },
 };
 const record: UiRecordSpec = {

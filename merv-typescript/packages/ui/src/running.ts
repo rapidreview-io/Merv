@@ -186,11 +186,6 @@ const parsed =
 const kept = <T>(values: unknown[], of: (value: unknown) => T | null): T[] =>
   values.map(of).filter((value): value is T => value !== null);
 
-/** A key the board can select, a page of this app, or an https page outside it. */
-export const targetOf = parsed(runningSchema.runningTarget);
-/** Words and facts in order, at most sixteen of them; null when any part is not one. */
-export const phraseOf = parsed(runningSchema.runningPhrase);
-export const attentionOf = parsed(runningSchema.runningAttention);
 export const markOf = parsed(runningMark);
 /** A card, as its owner drew it, or null when any of it breaks the contract. */
 export const nodeOf = parsed(runningNode);

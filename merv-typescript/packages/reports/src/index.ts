@@ -48,8 +48,7 @@ import type {
   VisualReview,
 } from './types.js';
 export type * from './types.js';
-export { parseReport, splitReport, joinReport } from './format/parse.js';
-export { PLACEHOLDER } from './format/parse.js';
+export { parseReport } from './format/parse.js';
 
 type SubjectInput = { subjectKind: string; subjectId: string };
 const ref = (input: SubjectInput): ReportSubjectRef => ({
@@ -758,4 +757,3 @@ export const reportsPlugin = {
   },
 };
 export default reportsPlugin;
-export { draftFromPlan, type PlanFacts } from './prefill.js';

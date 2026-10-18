@@ -53,7 +53,6 @@
   --qualifies-rgb: 148, 96, 0;
   --refutes-rgb: 192, 57, 43;
   --active-rgb: 37, 99, 235;
-  --steel-rgb: 71, 85, 105;
   --hover: rgba(var(--active-rgb), 0.06);
   --select: rgba(var(--active-rgb), 0.12);
   --scrim: rgba(17, 24, 39, 0.34);
@@ -117,7 +116,6 @@ html[data-theme='dark'] {
   --qualifies-rgb: 212, 160, 69;
   --refutes-rgb: 229, 103, 90;
   --active-rgb: 96, 165, 250;
-  --steel-rgb: 148, 163, 184;
   --hover: rgba(var(--active-rgb), 0.12);
   --select: rgba(var(--active-rgb), 0.2);
   --scrim: rgba(0, 0, 0, 0.55);
@@ -970,7 +968,6 @@ details.stack > summary {
 .label,
 .status,
 .ev-role,
-.table th,
 .admin-attn-code,
 .rail-group-head,
 .flag,
@@ -1531,42 +1528,6 @@ select.input,
   flex-wrap: wrap;
   overflow-wrap: anywhere;
 }
-/* A table is ruled rows on the ground: the head rule, then a line per row. */
-.table-wrap {
-  overflow-x: auto;
-}
-.table {
-  width: 100%;
-  /* Narrower than this the wrap scrolls instead of shredding words into columns. */
-  min-width: 600px;
-  border-collapse: collapse;
-  font-size: var(--text-base);
-}
-.table th {
-  text-align: left;
-  color: var(--faint);
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.table td {
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-  /* break-word, not anywhere: a column never shrinks below its longest word. */
-  overflow-wrap: break-word;
-}
-/* The first and last columns line up with the page, not with a vanished box. */
-.table :is(th, td):first-child {
-  padding-left: 0;
-}
-.table :is(th, td):last-child {
-  padding-right: 0;
-}
-.table tr:last-child td {
-  border-bottom: 0;
-}
-
 /* Work as the chains it is made of: a row steps in once for each thing it waits behind,
    and an elbow in the hairline colour ties it to the row it follows. */
 .chain {
@@ -4358,10 +4319,9 @@ a.states-clause {
 }
 
 /* Remote rows ------------------------------------------------------------- */
-/* A row a service outside this process published reads in the same anatomy as
-   every other collection: the manifest's columns on one grid, so a fact keeps
-   its x-position down the list, the liveness phrase under them, and what needs
-   a person stated at the end of that line as a clause, never as a badge. */
+/* A row a plugin describes reads in the same anatomy as every other collection:
+   the manifest's columns on one grid, so a fact keeps its x-position down the
+   list, and what needs a person stated under them as a clause, never as a badge. */
 .remote-cols {
   display: grid;
   grid-template-columns: var(--remote-cols);
@@ -4373,10 +4333,6 @@ a.states-clause {
 .remote-cell {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.remote-cell--end {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 .remote-standing {
   display: flex;
@@ -4399,17 +4355,11 @@ a.states-clause {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px var(--space-3);
 }
-.split-list .remote-cell--end {
-  text-align: left;
-}
 /* Narrow: the columns stack into the row rather than shredding into a scroller. */
 @media (max-width: 720px) {
   .remote-cols {
     grid-template-columns: 1fr;
     gap: 2px;
-  }
-  .remote-cell--end {
-    text-align: left;
   }
   .remote-attn {
     margin-left: 0;

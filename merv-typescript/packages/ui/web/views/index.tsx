@@ -11,7 +11,7 @@ import { FeedView } from './feed';
 import { LegacyHistoryView } from './legacy-history';
 import { PaperView } from './paper';
 import { PiView } from './pi';
-import { CollectionView, RecordView } from './remote';
+import { CollectionView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
@@ -52,9 +52,8 @@ const views: Record<string, ComponentType<ViewProps>> = {
   reflections: ReflectionsView,
   work: WorkView,
   'legacy-history': LegacyHistoryView,
-  // Two generic kinds: a row a remote service describes through its manifest.
+  // The generic kind: a row a plugin describes through its manifest.
   collection: CollectionView,
-  record: RecordView,
 };
 
 /** Every view kind this build can draw: what an address may open with and still be ours. */

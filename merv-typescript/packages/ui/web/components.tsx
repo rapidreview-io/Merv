@@ -946,54 +946,13 @@ export interface Column<T> {
   key: string;
   label: string;
   render(row: T): ReactNode;
-  width?: string;
   num?: boolean;
 }
-export const col = <T,>(
-  key: string,
-  label: string,
-  render: (row: T) => ReactNode,
-  width?: string,
-): Column<T> => ({ key, label, render, width });
-
-export function Table<T>({
-  columns,
-  rows,
-  keyOf,
-}: {
-  columns: Column<T>[];
-  rows: T[];
-  keyOf(row: T): string;
-}) {
-  return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                scope="col"
-                style={column.width ? { width: column.width } : undefined}
-              >
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={keyOf(row)}>
-              {columns.map((column) => (
-                <td key={column.key}>{column.render(row)}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+export const col = <T,>(key: string, label: string, render: (row: T) => ReactNode): Column<T> => ({
+  key,
+  label,
+  render,
+});
 
 /**
  * Facts that are not records, ruled on one grid: the head and every row read the
