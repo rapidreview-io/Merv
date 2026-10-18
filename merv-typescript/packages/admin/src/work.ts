@@ -114,7 +114,7 @@ export async function adminWork(
       };
     }),
     ...turns.map((turn) => ({
-      id: turn.id,
+      id: `${turn.conversationId}/${turn.id}`,
       kind: 'pi',
       type: null,
       title: turn.title,

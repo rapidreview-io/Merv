@@ -228,12 +228,14 @@ test('the work table reads every project’s open and recent work through its ow
 
 test('Pi turns are rows of the table, with the Fleet machine their host slot runs on', async (t) => {
   const f = await piFixture(t);
-  const command = await f.send(await f.create());
+  const conversation = await f.create();
+  const command = await f.send(conversation);
   const get = (name: string) => ({ pi: f.pi, fleet: f.fleet, scope: f.scope })[name as 'pi'];
   const view = await adminWork({ get } as never, []);
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
-  assert.equal(turn!.id, command.id);
+  // A command id is unique only within its conversation, so the row's names both.
+  assert.equal(turn!.id, `${conversation.id}/${command.id}`);
   assert.equal(turn!.kind, 'pi');
   assert.equal(turn!.title, 'Chat');
   assert.equal(turn!.project.name, 'Pi integration');

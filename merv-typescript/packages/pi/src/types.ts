@@ -30,6 +30,8 @@ export interface PiPlatformTurn extends Pick<
   'id' | 'status' | 'runtimeId' | 'createdAt'
 > {
   live: boolean;
+  /** A command id is unique only within its conversation. */
+  conversationId: string;
   startedAt: string | null;
   completedAt: string | null;
   projectId: string;
@@ -264,7 +266,8 @@ export interface PiRuntime extends Pi {
   };
   authorizeStream(caller: Caller, id: string): Promise<void>;
   /** Platform admin read, never exposed through a tool or a machine key: every turn still live
-   *  or begun since `since`, newest first, with its conversation's title, project and person. */
+   *  or ended since `since` (begun then, while it has no end), newest first, with its
+   *  conversation's title, project and person. */
   platformTurns(since: string): Promise<PiPlatformTurn[]>;
   /** A `piw_` bearer's caller, once its slot is live. */
   authenticateWorker(token: string): Promise<Caller>;

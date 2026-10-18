@@ -300,11 +300,12 @@ export class PiService implements Pi {
     this.core.ready();
     const rows = await this.core.read((tx) =>
       tx.all<Omit<PiPlatformTurn, 'live'>>(
-        `SELECT c.id,c.status,c.created_at AS "createdAt",c.data_json::jsonb->>'runtimeId' AS "runtimeId",
+        `SELECT c.id,c.conversation_id AS "conversationId",c.status,c.created_at AS "createdAt",c.data_json::jsonb->>'runtimeId' AS "runtimeId",
           c.data_json::jsonb->>'startedAt' AS "startedAt",c.data_json::jsonb->>'completedAt' AS "completedAt",
           v.project_id AS "projectId",v.data_json::jsonb->>'title' AS title,v.data_json::jsonb->'source' AS source
         FROM pi_commands c JOIN pi_conversations v ON v.id=c.conversation_id
-        WHERE c.status IN (${[...active].map(() => '?').join(',')}) OR c.created_at>? ORDER BY c.created_at DESC`,
+        WHERE c.status IN (${[...active].map(() => '?').join(',')})
+          OR COALESCE(c.data_json::jsonb->>'completedAt',c.created_at)>? ORDER BY c.created_at DESC`,
         ...active,
         since,
       ),
