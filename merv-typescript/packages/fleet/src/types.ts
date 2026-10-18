@@ -217,6 +217,23 @@ export interface ModelRelayConfig<
     reserved: R,
   ) => void | Promise<void>;
 }
+/** One day of a model relay's calls on one provider key and model (`Fleet.relayOutcomes`). */
+export interface RelayOutcome {
+  relay: string;
+  /** The environment variable the relay's provider key is read from. */
+  keyEnv: string;
+  model: string;
+  day: string;
+  /** Calls the provider answered, and their input and output tokens. */
+  ok: number;
+  tokens: number;
+  /** Calls the provider failed (`upstream_failed`); one that failed after usage counts in both. */
+  failed: number;
+  lastOkAt: string | null;
+  lastFailureAt: string | null;
+  lastFailureStatus: number | null;
+  lastFailureCode: string | null;
+}
 /** A model relay: its HTTP handler, which answers 404 off its one route and authenticates its own
  *  bearers, so its owner mounts it public; and close(), which ends the calls it is streaming. */
 export interface ModelRelayHandle {
@@ -265,10 +282,15 @@ export interface Fleet {
   /** Sessions must call this inside the same transaction that enrolls or claims work. False for
    * a work machine while work machines are held. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;
-  /** A model relay for workers that hold no provider key; its owner mounts and closes it. */
+  /** A model relay for workers that hold no provider key; its owner mounts and closes it. Its
+   *  calls' outcomes are kept under `keyEnv`, the variable its provider key is read from. */
   modelRelay<G extends ModelRelayGrant, N extends string, R>(
     config: ModelRelayConfig<G, N, R>,
+    keyEnv: string,
   ): ModelRelayHandle;
+  /** Every relay's outcomes of the last 7 UTC days, newest first: the platform admin's read,
+   *  never a tool's. */
+  relayOutcomes(): Promise<RelayOutcome[]>;
 }
 declare module 'cordis' {
   interface Context {

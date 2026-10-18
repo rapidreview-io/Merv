@@ -149,7 +149,9 @@ try {
     authorize: async (token) =>
       hostedGrant(await app.ctx.sessions.managed.boundSession(token), 'local-smoke', Date.now()),
   });
-  app.ctx.api.mount('/codex-model', app.ctx.fleet.modelRelay(relay).handle, { public: true });
+  app.ctx.api.mount('/codex-model', app.ctx.fleet.modelRelay(relay, 'MERV_RUNNER_API_KEY').handle, {
+    public: true,
+  });
   const port = new URL(app.ctx.api.url!).port;
   const image = (
     await docker(['image', 'inspect', '--format', '{{.Id}}', 'merv-hosted-codex:acceptance'])
