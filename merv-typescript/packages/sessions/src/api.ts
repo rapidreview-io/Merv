@@ -69,7 +69,7 @@ export const workerPrompt = (session: Session) =>
               'If the work cannot go on without the owner’s decision and no tool can settle it, call session.ask_owner with one self-contained question and stop: your visit ends, the work waits for the answer, and it comes back to you in this conversation with the answer as a queued message.',
             ]
           : []),
-        'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
+        'A person may send a message to your thread while you work. Until you acknowledge it, every Merv call but session.messages and session.message.ack is refused with session_message_pending, which carries the message: acknowledge it at once with session.message.ack, a stable requestId and a concise reply about what you will do (you may still check things after), then send the refused call again unchanged. Before each handoff, call session.messages (it takes no arguments) and address every message still waiting. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
       ].join('\n');
 /** What an inquiry visit is told instead, the one place that says what an inquiry is: its
  *  assignment carries only the question. */

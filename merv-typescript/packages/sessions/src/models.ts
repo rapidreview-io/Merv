@@ -462,6 +462,16 @@ export interface ThreadQuestion {
    */
   open: boolean;
 }
+/** A leased worker's queue (`session.messages`): what waits for its acknowledgement. */
+export interface WorkerQueue {
+  /** The messages to its thread awaiting its acknowledgement, oldest first; with `all`, every
+   *  message to its thread, the acknowledged ones with their replies. */
+  messages: SessionMessage[];
+  /** How many messages to its thread it has acknowledged, which only `all` lists. */
+  acknowledged: number;
+  /** What to do with the messages that wait, while any does. */
+  next?: string;
+}
 /** What passed between a thread and the people over it, oldest first. */
 export interface ThreadMessages {
   threadId: string;

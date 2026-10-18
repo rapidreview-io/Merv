@@ -32,6 +32,7 @@ import type {
   ThreadQuestion,
   ThreadView,
   VisitView,
+  WorkerQueue,
 } from '../packages/sessions/src/types.js';
 import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
 
@@ -1013,8 +1014,8 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
   await assert.rejects(f.app.ctx.tools.invoke('session.ask_owner', next, { question: 'Again?' }), {
     code: 'session_message_pending',
   });
-  const inbox = (await f.app.ctx.tools.invoke('session.messages', next, {}))
-    .value as SessionMessage[];
+  const inbox = ((await f.app.ctx.tools.invoke('session.messages', next, {})).value as WorkerQueue)
+    .messages;
   assert.deepEqual(
     inbox.map((item) => [item.id, item.body]),
     [[sent.id, answer]],

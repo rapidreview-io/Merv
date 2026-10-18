@@ -362,7 +362,7 @@ export async function seedRunning(
     body: 'Keep the training split exactly as in the p = 97 runs.',
     requestId: 'demo-running-modulus-note',
   });
-  const [note] = await asker.call('session.messages');
+  const [note] = (await asker.call('session.messages')).messages;
   await asker.call('session.message.ack', {
     messageId: note.id,
     reply: 'Understood: the training split stays as it is.',

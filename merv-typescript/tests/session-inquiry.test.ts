@@ -29,6 +29,7 @@ import type {
   SessionMessage,
   ThreadInquiry,
   ThreadMessages,
+  WorkerQueue,
 } from '../packages/sessions/src/types.js';
 import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
 
@@ -235,8 +236,9 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
     assert.ok(tools.includes(name), name);
   for (const name of ['session.ask_owner', 'session.message', 'usage.set_budget', 'submit'])
     assert.equal(tools.includes(name), false, name);
-  const inbox = (await f.app.ctx.tools.invoke('session.messages', worker, {}))
-    .value as SessionMessage[];
+  const inbox = (
+    (await f.app.ctx.tools.invoke('session.messages', worker, {})).value as WorkerQueue
+  ).messages;
   assert.deepEqual(
     inbox.map((item) => [item.id, item.body]),
     [[asked.messageId, question]],
@@ -468,8 +470,9 @@ test("an inquiry never blocks its work: the work's visit is offered alongside, r
   await assert.rejects(f.app.ctx.tools.invoke('session.ask_owner', worker, { question: 'Now?' }), {
     code: 'session_message_pending',
   });
-  const inbox = (await f.app.ctx.tools.invoke('session.messages', worker, {}))
-    .value as SessionMessage[];
+  const inbox = (
+    (await f.app.ctx.tools.invoke('session.messages', worker, {})).value as WorkerQueue
+  ).messages;
   assert.equal(inbox.length, 1);
   assert.ok(inbox[0]!.body.includes(question) && inbox[0]!.body.includes(answer));
   await f.app.ctx.tools.invoke('session.message.ack', worker, {

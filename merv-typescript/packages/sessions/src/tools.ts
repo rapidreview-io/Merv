@@ -124,7 +124,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message refuses the worker's next Merv call, carrying the message, and every one after it until the worker acknowledges it, so put what you have to say in one message rather than several, and ask for a reply only when you need one. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
             threadId: z.string().min(1).max(200),
@@ -140,11 +140,24 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.messages',
         description:
-          "Assigned worker only: read your queue, the durable messages to your thread with their acknowledgements. sessionId, if given, must be your own. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply. A person reads a thread's messages with session.thread_messages.",
+          "Assigned worker only: read your queue, the messages to your thread that await your acknowledgement, oldest first, those sent to its earlier visits included; it takes no arguments. acknowledged counts the messages you have acknowledged, which all: true lists too, with their replies. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
-        inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
-        handler: async (caller: Caller, input: { sessionId?: string }) =>
-          await sessions.messaging.messages(caller, input.sessionId),
+        inputSchema: z
+          .object({
+            all: z
+              .boolean()
+              .optional()
+              .describe('Also list the messages already acknowledged, with their replies'),
+            sessionId: z
+              .string()
+              .min(1)
+              .max(200)
+              .optional()
+              .describe('Not needed: your queue is your own session’s, and one given must be it'),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: { sessionId?: string; all?: boolean }) =>
+          await sessions.messaging.messages(caller, input),
       }),
     );
     ctx.effect(() =>

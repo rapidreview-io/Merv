@@ -183,7 +183,8 @@ automatic offers.
 Pi sends a message to a worker's thread, a stage's worker across its visits, with
 `session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
 with `{body, requestId}`. Project writers may send messages; project readers may read their
-history. Workers may read and acknowledge only their own visit's messages. A message to a
+history. Workers read and acknowledge only the messages to their own thread, those sent to its
+earlier visits included. A message to a
 reviewer does not grant its sender authority to decide the review verdict. Use
 `session.find({instanceId})` to find a work item's current and latest session and its
 `threadId`. A thread that is retired, or whose work has ended, refuses a new message instead
@@ -191,8 +192,9 @@ of claiming delivery, unless it answers a question. Repeating an identical reque
 the retained message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
-them with `session.messages` and acknowledges them with `session.message.ack`,
-optionally including a reply. People, and Pi, read the thread's history with
+the ones awaiting its acknowledgement with `session.messages` (`{messages, acknowledged,
+next}`: `all: true` lists the acknowledged ones too, with their replies) and acknowledges
+each with `session.message.ack`, optionally including a reply. People, and Pi, read the thread's history with
 `session.thread_messages` to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
 that the requested correction was incorporated or independently reviewed.
 
@@ -200,7 +202,11 @@ Pending messages fence worker writes, including submission. The write's authorit
 check and message enqueue use database transactions, so an older preflight cannot
 authorize a submission past a newly queued message. The next tool call directs the
 worker to read and acknowledge the message before continuing, including before
-further evidence lookups. The worker can acknowledge receipt with a reply such as
+further evidence lookups: its `session_message_pending` refusal says nothing of the call was
+applied and carries the oldest waiting message (`details.message`, once a batch of parallel
+calls), so the worker acknowledges it and sends the call again. Sessions' tool description of
+`session.message` asks a sender for one message with everything rather than several. The worker
+can acknowledge receipt with a reply such as
 “I will check the cited procedure,” then inspect the evidence; acknowledgment does
 not require agreeing with the correction. This does not inject text into a running
 shell process or interrupt a long compute command.

@@ -53,6 +53,7 @@ import type {
   ThreadView,
   UsageRollup,
   UsageTotals,
+  WorkerQueue,
   LeaseLiveness,
   SessionPlatform,
   SessionRole,
@@ -93,6 +94,7 @@ export type {
   UsageRollup,
   UsageTotals,
   VisitView,
+  WorkerQueue,
 } from './models.js';
 export type {
   ManagedBoundSession,
@@ -609,7 +611,8 @@ export interface SessionMessaging {
   registerResponder(responder: QuestionResponder): () => Promise<void>;
   resolve(caller: Caller, input: QuestionResolution): Promise<ThreadQuestion>;
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
-  messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
+  /** A leased worker's queue: what awaits its acknowledgement, or with `all` every message. */
+  messages(caller: Caller, input?: { sessionId?: string; all?: boolean }): Promise<WorkerQueue>;
   /** A thread's messages and questions: anyone who may read its work, never a leased worker. */
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
   /** The worker ends its visit asking its owner; the work waits for the answer. */

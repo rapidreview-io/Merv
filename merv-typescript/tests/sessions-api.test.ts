@@ -264,7 +264,9 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.equal(writes, 0);
   const read = await client.callTool({ name: 'session.messages', arguments: {} });
   assert.equal(read.isError, undefined, JSON.stringify(read));
-  const messages = JSON.parse((read.content as { text: string }[])[0].text) as any[];
+  const { messages } = JSON.parse((read.content as { text: string }[])[0].text) as {
+    messages: any[];
+  };
   assert.equal(messages[0].id, sent.id);
   const ack = await client.callTool({
     name: 'session.message.ack',
@@ -363,6 +365,78 @@ test('a message queued after tool admission fences the transaction that submits 
   );
   assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
   assert.equal(writes, 1);
+});
+
+test('a pending message’s refusal carries it once a batch, and the queue lists only what waits', async (t) => {
+  const f = await fixture(t);
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const body = 'Use the 2025 holdout, not the 2024 one.';
+  const sent = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      threadId: issued.session.threadId,
+      body,
+      requestId: 'holdout',
+    })
+  ).value as any;
+  const error = (result: any) => {
+    assert.equal(result.isError, true, JSON.stringify(result));
+    return JSON.parse(result.content[0].text).error;
+  };
+  // A parallel batch of reads is refused, and the message comes with one of the refusals, so the
+  // worker can acknowledge it without reading its queue first.
+  const refused = (
+    await Promise.all(
+      [1, 2, 3].map(() => client.callTool({ name: 'system.status', arguments: {} })),
+    )
+  ).map(error);
+  assert.deepEqual(
+    refused.map((item) => [item.code, item.details.messageId, item.details.pending]),
+    Array(3).fill(['session_message_pending', sent.id, 1]),
+  );
+  const carried = refused.filter((item) => item.details.message);
+  assert.equal(carried.length, 1);
+  assert.deepEqual(
+    [carried[0].details.message.id, carried[0].details.message.body],
+    [sent.id, body],
+  );
+  assert.match(carried[0].message, /nothing of it was applied/);
+  assert.match(carried[0].message, /session\.message\.ack/);
+  // The queue says what waits and what to do with it.
+  const queue = async (input: Record<string, unknown> = {}) => {
+    const read = await client.callTool({ name: 'session.messages', arguments: input });
+    assert.equal(read.isError, undefined, JSON.stringify(read));
+    return JSON.parse((read.content as { text: string }[])[0].text);
+  };
+  const waiting = await queue();
+  assert.deepEqual(
+    [waiting.messages.map((item: any) => item.id), waiting.acknowledged],
+    [[sent.id], 0],
+  );
+  assert.match(waiting.next, /session\.message\.ack/);
+  // A visit's queue is its thread's: another session's id is refused, saying so.
+  const other = error(
+    await client.callTool({
+      name: 'session.messages',
+      arguments: { sessionId: 'session_predecessor' },
+    }),
+  );
+  assert.equal(other.code, 'forbidden');
+  assert.match(other.message, /earlier visits included/);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: sent.id, reply: 'Switching to 2025.', requestId: 'holdout-ack' },
+  });
+  // Acknowledged, the message leaves the queue, which only counts it; all lists it again.
+  assert.deepEqual(await queue(), { messages: [], acknowledged: 1 });
+  const history = await queue({ all: true });
+  assert.deepEqual(
+    history.messages.map((item: any) => [item.id, item.reply]),
+    [[sent.id, 'Switching to 2025.']],
+  );
+  assert.equal(history.next, undefined);
+  const status = await client.callTool({ name: 'system.status', arguments: {} });
+  assert.equal(status.isError, undefined, JSON.stringify(status));
 });
 
 test('only a writer in the project can send, and only the addressed worker can acknowledge', async (t) => {

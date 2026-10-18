@@ -24,6 +24,7 @@ import type {
   SessionMessageInput,
   ThreadMessages,
   ThreadQuestion,
+  WorkerQueue,
 } from './types.js';
 
 interface MessageRow {
@@ -72,6 +73,14 @@ const keyThreads = (session: Pick<Session, 'projectId' | 'threadId'>) => [
 /** What a work visit reads of a thread's messages: all but inquiries' questions, which their
  *  inquiry visits answer; it reads the context of each answer instead. */
 const FOR_WORK = "inquiry_role IS DISTINCT FROM 'question'";
+/** How long a message shown to a visit is not shown again by a refusal: one batch of calls. */
+const SHOWN_MS = 60_000;
+/** What a worker's queue tells it to do with a message that waits, by its visit's kind. */
+const QUEUE_NEXT = {
+  work: 'Acknowledge each message here with session.message.ack (messageId, a stable requestId, and a reply saying what you will do) before any other Merv call: until you do, every other call is refused with session_message_pending.',
+  inquiry:
+    'Answer the question with session.message.ack (messageId, reply, requestId): that reply is your answer, and it ends this visit.',
+};
 /** The provider Sessions publishes an unanswered question as, on the work it withholds. */
 export const QUESTION_PROVIDER = 'session-question';
 /**
@@ -318,6 +327,25 @@ export class SessionMessages {
       ...keyThreads(session),
     );
   }
+  /**
+   * When a visit was last shown each message it has yet to acknowledge, in this process: a
+   * refusal carries a message's text once, not once per call of a parallel batch. Only how much
+   * a refusal says depends on it, so a restart that forgets it costs a repeated text, no more.
+   */
+  private readonly shown = new Map<string, number>();
+  private show(sessionId: string, messageId: string): boolean {
+    const key = `${sessionId} ${messageId}`;
+    const at = this.shown.get(key);
+    if (at !== undefined && this.clock() - at < SHOWN_MS) return false;
+    if (this.shown.size >= 1000) this.shown.clear();
+    this.shown.set(key, this.clock());
+    return true;
+  }
+  /**
+   * Refuses a visit's call while a message to it waits for its acknowledgement. The refusal
+   * carries the oldest such message, so the worker can acknowledge it at once and send its call
+   * again, without first reading its queue.
+   */
   async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
     const session = await tx.get<{ project_id: string; thread_id: string; kind: string }>(
       'SELECT project_id,thread_id,kind FROM worker_sessions WHERE id=?',
@@ -325,19 +353,41 @@ export class SessionMessages {
     );
     // An inquiry visit writes nothing a message could fence, and answers only its question.
     if (!session || session.kind === 'inquiry') return;
-    const row = await tx.get<{ id: string }>(
-      `SELECT id FROM session_messages WHERE project_id=? AND acknowledged_at IS NULL
+    const row = await tx.get<MessageRow & { pending: number | string }>(
+      `SELECT *,COUNT(*) OVER () AS pending FROM session_messages WHERE project_id=? AND acknowledged_at IS NULL
         AND thread_id IN (${KEY_THREADS}) AND ${FOR_WORK} ORDER BY _merv_rowid LIMIT 1`,
       session.project_id,
       ...keyThreads({ projectId: session.project_id, threadId: session.thread_id }),
     );
-    if (row)
-      throw new MervError(
-        'session_message_pending',
-        'A queued session message must be read with session.messages and acknowledged with session.message.ack before continuing.',
-        409,
-        { messageId: row.id },
-      );
+    if (!row) return;
+    const pending = Number(row.pending);
+    const shown = this.show(sessionId, row.id);
+    const one = pending === 1;
+    throw new MervError(
+      'session_message_pending',
+      [
+        one
+          ? 'A message to your thread awaits your acknowledgement, so this call was refused and nothing of it was applied.'
+          : `${pending} messages to your thread await your acknowledgement, so this call was refused and nothing of it was applied.`,
+        shown
+          ? `${one ? 'It is' : 'The oldest is'} in details.message${one ? '' : '; session.messages lists them all'}.`
+          : 'Its text came with a refusal moments ago; session.messages reads it again.',
+        `Acknowledge ${one ? 'it' : 'each'} with session.message.ack (messageId, a stable requestId, and a reply saying what you will do), then send this call again unchanged.`,
+      ].join(' '),
+      409,
+      {
+        messageId: row.id,
+        pending,
+        ...(shown && {
+          message: {
+            id: row.id,
+            senderActorId: row.sender_actor_id,
+            createdAt: row.created_at,
+            body: row.body,
+          },
+        }),
+      },
+    );
   }
   /** A person's message to a thread, which its live visit or its next one reads. */
   async message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage> {
@@ -629,8 +679,14 @@ export class SessionMessages {
       );
     });
   }
-  /** A leased worker's queue: the messages to its thread's. A person reads a thread instead. */
-  async messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]> {
+  /**
+   * A leased worker's queue: the messages to its thread's that await its acknowledgement, or
+   * with `all` every one, its acknowledged ones with their replies. A person reads a thread.
+   */
+  async messages(
+    caller: Caller,
+    input: { sessionId?: string; all?: boolean } = {},
+  ): Promise<WorkerQueue> {
     ordinary(caller);
     check(
       caller.session,
@@ -638,19 +694,27 @@ export class SessionMessages {
       'Only a leased worker reads its queue; read a thread with session.thread_messages',
       403,
     );
+    // A visit's queue is its thread's, so it already holds what was sent to earlier visits.
     check(
-      sessionId === undefined || sessionId === caller.session.id,
+      input.sessionId === undefined || input.sessionId === caller.session.id,
       'forbidden',
-      'Workers can read only their own messages',
+      'Workers read only their own queue, which already holds every message to their thread, those sent to its earlier visits included: call session.messages without sessionId',
       403,
     );
     caller = structuredClone(caller);
     return await this.host.reading(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
-      return (await this.addressed(tx, session)).map((item) =>
-        this.publicMessage(item, session.instanceId),
-      );
+      const rows = await this.addressed(tx, session);
+      const waiting = rows.filter((row) => row.acknowledged_at === null);
+      for (const row of waiting) this.show(session.id, row.id);
+      return {
+        messages: (input.all ? rows : waiting).map((item) =>
+          this.publicMessage(item, session.instanceId),
+        ),
+        acknowledged: rows.length - waiting.length,
+        ...(waiting.length && { next: QUEUE_NEXT[session.kind] }),
+      };
     });
   }
   /** A thread's messages and its questions, oldest first. */
