@@ -100,6 +100,14 @@ test('a malformed, extended or wrongly versioned change specification is refused
   refused(plan({ items: [{ ...task('A') }] }), /items\.0\.key/);
   refused(plan({ items: [{ ...task('a'), title: 'two\nlines' }] }), /items\.0\.title/);
   refused(plan({ items: [{ ...experiment('a'), name: 'no spaces' }] }), /items\.0\.name/);
+  // A name breaking the rule says the rule, once, rather than zod's bare "Invalid".
+  for (const name of ['Pocket four-cell schema-control evaluation', 'n'.repeat(49), 'ab'])
+    refused(
+      plan({ items: [{ ...experiment('a'), name }] }),
+      new RegExp(
+        `^items\\.0\\.name: ".*" \\(${name.length} characters\\) is not an experiment name: use 3 to 48 letters, digits, "\\.", "_" or "-", starting with a letter or digit and with no spaces, such as schema-control-evaluation$`,
+      ),
+    );
   refused(plan({ items: Array.from({ length: 13 }, (_, i) => task(`t${i}`)) }), /items/);
 });
 
