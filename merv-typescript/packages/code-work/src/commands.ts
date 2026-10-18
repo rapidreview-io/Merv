@@ -304,8 +304,8 @@ export class CodeCommandService implements CodeCommands {
         "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
         session.id,
       );
-      // The outstanding command may be the runner's periodic checkpoint, which the agent never
-      // asked for, so the refusal names it and what it commits.
+      // The refusal names the outstanding command: the runner's checkpoint, which the agent
+      // never asked for, by its id; the agent's own also by its first line.
       if (outstanding)
         throw new MervError(
           'code_command_pending',
