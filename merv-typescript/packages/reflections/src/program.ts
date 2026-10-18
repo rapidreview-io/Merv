@@ -440,6 +440,13 @@ export async function references(ctx: ReflectionsContext, context: WorkflowCheck
       : {}),
   };
 }
+/**
+ * Said in every reflection assignment beside its published recipe. A reflection declares no
+ * workspace, so its visit runs in a scratch directory: a methods lens found no source code, and a
+ * reviewer approved on a task review's test run it could not repeat (2026-09-29).
+ */
+const CODE_ACCESS =
+  ' This visit has no checkout of the project’s code. code.files reads the files of main, of a task or experiment by its id, or of any commit, and code.log their history; both only read. Tests are rerun by the task and experiment reviews: where a conclusion rests on a test you did not rerun, cite the review that ran it and say so.';
 export async function build(ctx: ReflectionsContext, context: WorkflowCheckContext) {
   const { lease, ...current } = await admit(ctx, context);
   const { wave, lens } = current;
@@ -456,7 +463,7 @@ export async function build(ctx: ReflectionsContext, context: WorkflowCheckConte
   return {
     role: stage === 'review' ? ('reviewer' as const) : ('producer' as const),
     label: named({ wave, lens }),
-    brief: recipe.recipe.instructions,
+    brief: recipe.recipe.instructions + CODE_ACCESS,
     references: [
       { kind: 'reflection', id: wave.id, label: wave.title },
       ...preview.sources.map((a) => ({ kind: 'artifact', id: a.id, label: a.title })),

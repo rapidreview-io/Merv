@@ -868,6 +868,13 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   ].filter((name) => reads.has(name));
   for (const read of ['research.list', 'research.lineage', 'usage.read', 'project.records'])
     assert.ok(named.includes(read), read);
+  // A lens has no checkout: its brief says so and names the reads of the project's code, which
+  // its session is offered.
+  assert.match(execution.assignment.brief, /This visit has no checkout of the project’s code\./);
+  for (const read of ['code.files', 'code.log']) {
+    assert.ok(execution.assignment.brief.includes(read), read);
+    assert.ok(reads.has(read), read);
+  }
 });
 
 test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {
