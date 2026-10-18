@@ -107,7 +107,7 @@ async function fixture(
   const profiles: PiProfile[] = [];
   const conversations: { id: string; projectId: string; profile?: { version: number } }[] = [];
   const sent: { id: string; input: { commandId: string; text: string } }[] = [];
-  const turns: { id: string }[] = [];
+  const turns: { id: string; text: string }[] = [];
   const pi = {
     registerProfile(profile: PiProfile) {
       profiles.push(profile);
@@ -129,7 +129,8 @@ async function fixture(
     async send(_caller: Caller, id: string, input: { commandId: string; text: string }) {
       if (pi.refuse) throw pi.refuse;
       sent.push({ id, input });
-      if (!turns.some((turn) => turn.id === input.commandId)) turns.push({ id: input.commandId });
+      if (!turns.some((turn) => turn.id === input.commandId))
+        turns.push({ id: input.commandId, text: input.text });
       return { id: input.commandId };
     },
     async snapshot() {
@@ -140,7 +141,7 @@ async function fixture(
             id: 'initial',
             messages: [{ role: 'assistant', text: 'What decision should this experiment settle?' }],
           },
-          ...turns.map((turn) => ({ id: turn.id, messages: [] })),
+          ...turns.map(({ id, text }) => ({ id, messages: [{ role: 'user', text }] })),
         ],
         stage: { name: 'idle' },
       };
@@ -1106,6 +1107,9 @@ test('submit hands the exact revision to the intake agent, which returns it or f
   assert.equal(f.sent[0].id, f.record.conversationId);
   assert.equal(f.sent[0].input.commandId, 'plan-submit-1-1');
   assert.match(f.sent[0].input.text, /submitted plan revision 1 for verification/);
+  // The customer's snapshot reads that turn as their own chat does: their press of Submit.
+  const { conversation } = await f.service.snapshot(await f.store.get(f.a.id));
+  assert.deepEqual(conversation.at(-1), { role: 'user', text: 'Submitted the plan.' });
   // A retry while that turn is under way sends nothing; once it ended without a verdict
   // (stopped, refused or expired), the retry sends a fresh turn.
   f.pi.active = 'plan-submit-1-1';

@@ -9,6 +9,7 @@ import {
   type Scope,
   type Transaction,
 } from '@merv/contracts';
+import type { PiCommand } from '@merv/pi/models';
 import type { PiProfile, PiRuntime } from '@merv/pi/types';
 import type { Tools } from '@merv/api/types';
 import { z } from 'zod';
@@ -36,6 +37,12 @@ import { CustomerAccess } from './access.js';
 /** Commands the server sends into the intake conversation when the customer submits the plan;
  *  no customer or agent message may use the prefix. */
 export const PLAN_SUBMIT = 'plan-submit-';
+/** A turn's words as its customer reads them: the server's instruction to verify a submitted
+ *  plan is the customer's press of Submit. */
+export const customerMessages = ({ id, messages }: Pick<PiCommand, 'id' | 'messages'>) =>
+  id.startsWith(PLAN_SUBMIT)
+    ? messages.map((m) => (m.role === 'user' ? { ...m, text: 'Submitted the plan.' } : m))
+    : messages;
 
 export interface CustomerServiceOptions {
   publicOrigin: string;
@@ -320,7 +327,7 @@ export class CustomerService {
     if (includeConversation && record.conversationId) {
       try {
         const snapshot = await this.pi.snapshot(caller, record.conversationId);
-        conversation = snapshot.commands.flatMap((c) => c.messages);
+        conversation = snapshot.commands.flatMap(customerMessages);
         intakeStatus = snapshot.stage.name;
       } catch (error) {
         if ((error as { status?: number }).status !== 503) throw error;
@@ -358,6 +365,7 @@ export class CustomerService {
         : null;
     return {
       ...exp,
+      email: exp.email ?? record.email ?? null,
       state,
       statusMessage,
       progress,
