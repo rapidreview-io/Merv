@@ -321,11 +321,13 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   );
   // And told that its Sandboxes tools, which the declared tools never list, are its to measure with.
   assert.match(planning.context!.prompt, /"computeAccess":"Your Sandboxes MCP connection/);
-  // A project with no compute connected gets no such connection; its planner asks at once.
+  // A visit with no such connection learns from Merv whether the project has compute connected,
+  // and asks the owner to connect it only when it has none.
   assert.match(
     planning.context!.prompt,
-    /If this visit has no server named sandboxes, the project has no compute connected: ask the owner to connect it with session\.ask_owner/,
+    /If this visit has no server named sandboxes, Merv issued it no connection; call sandboxes\.spend_status on the merv server to learn why before you ask\. A sandbox_not_connected refusal means the project has no compute connected: ask the owner to connect it with session\.ask_owner\. An answer that names the project’s namespace means compute is connected and only this visit lacks its connection: say exactly that in session\.ask_owner, and do not ask the owner to connect compute\./,
   );
+  assert.doesNotMatch(planning.context!.prompt, /sandboxes, the project has no compute connected/);
   await f.attach(e, 'plan', plan);
   const marked = statement();
   marked.resources[0].basis = 'Row count of inventory FEASIBILITY_BASIS_7731.';
