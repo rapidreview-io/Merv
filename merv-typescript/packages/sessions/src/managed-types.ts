@@ -33,8 +33,8 @@ export type ManagedRunnerValidator = {
   /**
    * When the person this machine's work is charged to can spend no more model tokens today, the
    * wait, in the validator's own words: else null. The validator's budget, which Sessions only
-   * reads (before it offers the machine work, and when one of its visits fails) and says on the
-   * work as it is given.
+   * reads (before it offers the machine work, and when a visit its relay refused fails) and says
+   * on the work as it is given.
    */
   modelBudget?(
     binding: ManagedRunnerBindingIdentity,
@@ -45,6 +45,16 @@ export type ManagedRunnerValidator = {
    * outage, or Main restarting while it was live): its failed close is then nobody's fault.
    */
   relayFault?(
+    binding: ManagedRunnerBindingIdentity,
+    visit: { sessionId: string; since: string },
+    tx: Transaction,
+  ): Promise<boolean>;
+  /**
+   * Whether the validator's model relay refused one of this visit's own calls because the person
+   * they are charged to had no model tokens left today: its failed close is then the worker token
+   * budget's, not the work's. A day held by another visit's refusal is not this visit's.
+   */
+  modelBudgetRefused?(
     binding: ManagedRunnerBindingIdentity,
     visit: { sessionId: string; since: string },
     tx: Transaction,

@@ -862,13 +862,14 @@ export class LeasedSessions implements Sessions {
     outcome?: SessionOutcome,
   ): Promise<Session> {
     if (!live(session)) return session;
-    // A rented machine's visit that failed while its person had no model tokens left was cut off
-    // by the model relay: nothing about the work was wrong, so it counts against nothing.
-    const budget =
-      outcome && failureReasons.has(outcome)
-        ? await this.managed.sessionModelWait(session.id, tx)
-        : null;
-    if (budget) outcome = 'budget_exhausted';
+    // A rented machine's visit that failed after the model relay refused one of its own calls at
+    // its person's daily tokens was cut off there: nothing about the work was wrong, so it counts
+    // against nothing. Another visit's failure while that day is held is still its own.
+    const refused =
+      !!outcome &&
+      failureReasons.has(outcome) &&
+      (await this.managed.modelBudgetRefused(session, tx));
+    if (refused) outcome = 'worker_token_budget_exhausted';
     // One the relay or its provider failed (an outage, Main's release) is nobody's either: it is
     // offered again after the backoff, and never held.
     else if (
@@ -902,11 +903,12 @@ export class LeasedSessions implements Sessions {
           ? 'review_unfinished'
           : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
-    if (budget)
+    // The work says the day's wait at once, or none if a changed limit already lifted it.
+    if (refused)
       await this.dispatch.reportModelWait(
         session.projectId,
         session.instanceId,
-        budget,
+        await this.managed.sessionModelWait(session.id, tx),
         session.expectedRevision,
         tx,
       );

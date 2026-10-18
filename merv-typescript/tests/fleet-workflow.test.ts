@@ -396,6 +396,27 @@ test('a rented machine’s person with a spent day gives it no work until their 
   });
   await setDailyTokens(f.state, person, 20_100_000);
   assert.equal(await wait(), null);
+  // Only the visit whose own call the relay refused closes as the budget's, and that is no
+  // relay fault of the visit's. The visits start after Main did.
+  const since = new Date().toISOString();
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO fleet_relay_faults(subject,code,at) VALUES(?,?,?)',
+      'session_refused',
+      'worker_token_budget_exhausted',
+      new Date().toISOString(),
+    ),
+  );
+  const said = (hook: 'modelBudgetRefused' | 'relayFault', sessionId: string) =>
+    f.state.transaction((tx) => f.validator()[hook]!(binding, { sessionId, since }, tx));
+  assert.deepEqual(
+    [
+      await said('modelBudgetRefused', 'session_refused'),
+      await said('modelBudgetRefused', 'session_other'),
+      await said('relayFault', 'session_refused'),
+    ],
+    [true, false, false],
+  );
   // A machine Fleet no longer knows waits on nobody's budget.
   assert.equal(
     await f.state.transaction((tx) =>

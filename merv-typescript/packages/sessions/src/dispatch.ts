@@ -377,7 +377,7 @@ export class SessionDispatch {
             ? [
                 {
                   key: 'model_budget',
-                  code: 'model_budget_exhausted',
+                  code: 'worker_token_budget_exhausted',
                   cause: 'model_budget',
                   status: 429,
                   message: wait.message,
@@ -926,7 +926,7 @@ export class SessionDispatch {
       // A rented machine takes no work while its person has no model tokens left today: the
       // relay would refuse the visit's calls. The wait is said on the work, and lifts with it.
       if (managed && (await this.modelWaits(managed.row, tx)))
-        return { session: null, reason: await decided('model_budget_exhausted') };
+        return { session: null, reason: await decided('worker_token_budget_exhausted') };
       // A hosted machine stops at its allocation's end, so its step must end five minutes
       // before. A work host starts a step only with all of the step's time left (its owner rents
       // a fresh host for the next); another machine, with ten minutes. An inquiry needs only its

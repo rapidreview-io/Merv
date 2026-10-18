@@ -41,9 +41,12 @@ export type SessionOutcome =
   /** The worker ended its visit asking its owner a question (`session.ask_owner`). */
   | 'asked_owner'
   /**
-   * The person the visit's model calls were charged to had no tokens left today, so it stopped:
-   * nothing about the work was wrong, and it waits for the reset or a raised limit.
+   * The model relay refused one of the visit's calls because the person they were charged to had
+   * no tokens left today (the worker token budget), so it stopped: nothing about the work was
+   * wrong, and it waits for the reset or a changed limit.
    */
+  | 'worker_token_budget_exhausted'
+  /** The same, as older closes recorded it; it counts against nothing either. */
   | 'budget_exhausted'
   /**
    * The model relay or its provider failed the visit's calls (an outage, or Main's release cut
@@ -117,6 +120,8 @@ export type DispatchDecision =
   | 'usage_unavailable'
   | 'retries_exhausted'
   /** The person a rented machine's work is charged to has no model tokens left today. */
+  | 'worker_token_budget_exhausted'
+  /** The same, as older runners' last decisions stored it. */
   | 'model_budget_exhausted'
   /** Everything left in the queue needs a workspace driver this runner does not advertise. */
   | 'runner_incompatible'

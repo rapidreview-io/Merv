@@ -861,7 +861,7 @@ test('a wait a plugin names as one person’s is theirs alone, and its Settings 
   const wait = {
     provider: 'session-model-budget',
     key: 'model_budget',
-    code: 'model_budget_exhausted',
+    code: 'worker_token_budget_exhausted',
     message: 'Your daily Fleet model tokens are used up; this work resumes at 2026-10-08 00:00 UTC',
     next: 'Raise your Fleet daily token limit in Settings, or wait until 2026-10-08 00:00 UTC',
     since: at,

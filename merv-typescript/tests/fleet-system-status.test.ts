@@ -16,7 +16,7 @@ const queue = [
 ];
 const budget = (blocked: boolean) => ({
   blocked,
-  blockReason: blocked ? 'last_refused_reservation_unaffordable' : null,
+  blockReason: blocked ? 'worker_token_budget_exhausted' : null,
   resetsAt: '2026-09-27T00:00:00.000Z',
 });
 
@@ -148,7 +148,7 @@ const allocations = [
 ];
 const blocked = {
   blocked: true,
-  reason: 'last_refused_reservation_unaffordable',
+  reason: 'worker_token_budget_exhausted',
   resetsAt: '2026-09-27T00:00:00.000Z',
   next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
 };

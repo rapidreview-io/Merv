@@ -7,6 +7,7 @@ import { ProjectScope } from '@merv/scope';
 import type { ManagedModelGrant } from '@merv/fleet/types';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
+  ceilingRefused,
   codexModelRelay,
   codexPayload,
   hostedGrant,
@@ -438,7 +439,7 @@ test('a call is charged at its most before it goes out and settled when it finis
   // Another call could cost more than the 50 tokens left under the ceiling.
   const refused = await f.call();
   assert.equal(refused.status, 403);
-  assert.deepEqual(await refused.json(), { error: 'fleet_model_ceiling' });
+  assert.deepEqual(await refused.json(), { error: 'worker_token_budget_exhausted' });
   assert.match(f.logs.join(''), /"event":"codex_relay_ceiling"/);
   assert.deepEqual(
     (({ blocked, blockReason, lastRefusedTokens, remaining }) => ({
@@ -449,7 +450,7 @@ test('a call is charged at its most before it goes out and settled when it finis
     }))(await modelBudgetStatus(f.state, grant.person, most + 50)),
     {
       blocked: true,
-      blockReason: 'last_refused_reservation_unaffordable',
+      blockReason: 'worker_token_budget_exhausted',
       lastRefusedTokens: most,
       remaining: most - 60,
     },
@@ -711,12 +712,12 @@ test('only the reset or a raised limit lifts a refused wait: a smaller call that
   );
   const fresh = await modelBudgetStatus(f.state, 'fresh-person', 65_536);
   assert.equal(fresh.blocked, true);
-  assert.equal(fresh.blockReason, 'minimum_reservation_unaffordable');
+  assert.equal(fresh.blockReason, 'worker_token_budget_exhausted');
   assert.equal(fresh.lastRefusedTokens, null);
 });
 
 test('a refused wait outlasts the refunds of calls that were in flight when it was refused', async (t) => {
-  // 2026-10-13 23:10: a visit refused at the ceiling closed budget_exhausted, other visits' calls
+  // 2026-10-13 23:10: a visit refused at the ceiling closed as a spent budget, other visits' calls
   // then settled below their reservations, the day's remaining tokens again covered the refused
   // call, and Sessions relaunched the work 14 s later into the same ceiling.
   const body = codexPayload(codex, grant)!;
@@ -730,7 +731,10 @@ test('a refused wait outlasts the refunds of calls that were in flight when it w
   });
   const other = { ...grant, id: 'session_other' };
   const inFlight = await relay.reserve!(other, body);
-  await assert.rejects(relay.reserve!(grant, body), { code: 'fleet_model_ceiling', status: 403 });
+  await assert.rejects(relay.reserve!(grant, body), {
+    code: 'worker_token_budget_exhausted',
+    status: 403,
+  });
   assert.equal((await modelBudgetStatus(f.state, grant.person, limit)).blocked, true);
   const usage = { model: grant.model, cachedTokens: 0, reasoningTokens: 0 };
   await relay.onUsage!(
@@ -740,14 +744,80 @@ test('a refused wait outlasts the refunds of calls that were in flight when it w
   );
   const settled = await modelBudgetStatus(f.state, grant.person, limit);
   assert.ok(settled.remaining >= most, 'the refused call would fit again');
-  assert.deepEqual(
-    [settled.blocked, settled.blockReason],
-    [true, 'last_refused_reservation_unaffordable'],
-  );
+  assert.deepEqual([settled.blocked, settled.blockReason], [true, 'worker_token_budget_exhausted']);
   // The person changing their limit lets the next call judge the day again.
   await setDailyTokens(f.state, grant.person, limit);
   assert.equal((await modelBudgetStatus(f.state, grant.person, limit)).blocked, false);
   await relay.reserve!(grant, body);
+});
+
+test('one name for a spent worker token budget, and the refusal is said of the refused visit alone', async (t) => {
+  // Owner 2026-10-18: the relay's refusal, Fleet's wait (too few tokens left, or a refusal
+  // today) and Sessions' outcome were four names for one condition; and a visit's crash later
+  // the same day was put down to the budget because the day was held, not because its tokens
+  // were short.
+  const body = codexPayload(codex, grant)!;
+  const most = Math.ceil(JSON.stringify(body).length / 4) + 65_536;
+  const f = await fixture(t, most - 1);
+  const relay = codexModelRelay(f.state, {
+    providerKey: () => key,
+    dailyTokensPerPerson: most - 1,
+    authorize: async () => grant,
+  });
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const refused = (id: string, start = since) =>
+    f.state.read((sql) => ceilingRefused(sql, id, start));
+  // Too few tokens left for any call is the same reason as a call refused today.
+  const short = await modelBudgetStatus(f.state, grant.person, 65_536);
+  assert.deepEqual(
+    [short.blocked, short.blockReason, short.lastRefusedTokens],
+    [true, 'worker_token_budget_exhausted', null],
+  );
+  assert.equal(await refused(grant.id), false);
+  await assert.rejects(relay.reserve!(grant, body), {
+    code: 'worker_token_budget_exhausted',
+    status: 403,
+  });
+  const held = await modelBudgetStatus(f.state, grant.person, most - 1);
+  assert.deepEqual([held.blocked, held.blockReason], [true, 'worker_token_budget_exhausted']);
+  // The refused visit's own record, which no other visit of the person shares; and no relay
+  // fault, whose window and outcome are the relay's own.
+  assert.equal(await refused(grant.id), true);
+  assert.equal(await refused('session_other'), false);
+  assert.equal(await refused(grant.id, new Date(Date.now() + 1000).toISOString()), false);
+  assert.equal(await f.state.read((sql) => relayFaulted(sql, grant.id, since)), false);
+  // A relay fault of the same visit after its refusal leaves the refusal standing, and so does
+  // a changed limit, which lifts the day's wait, not what happened to the visit.
+  await relay.onFailure!(
+    {
+      event: 'codex_relay_failure',
+      phase: 'stream',
+      code: 'upstream_failed',
+      model: grant.model,
+      elapsedMs: 1,
+    },
+    grant,
+  );
+  await setDailyTokens(f.state, grant.person, 10 * most);
+  assert.equal(await refused(grant.id), true);
+  assert.equal(await f.state.read((sql) => relayFaulted(sql, grant.id, since)), false);
+  // Another visit's relay fault is still a fault, and no refusal.
+  await relay.onFailure!(
+    {
+      event: 'codex_relay_failure',
+      phase: 'stream',
+      code: 'upstream_failed',
+      model: grant.model,
+      elapsedMs: 1,
+    },
+    { ...grant, id: 'session_faulted' },
+  );
+  assert.equal(await f.state.read((sql) => relayFaulted(sql, 'session_faulted', since)), true);
+  assert.equal(await refused('session_faulted'), false);
+  // Main's restart is a relay fault of every visit, never a refusal.
+  await markRelayStart(f.state);
+  assert.equal(await refused('session_other'), false);
+  assert.equal(await f.state.read((sql) => relayFaulted(sql, 'session_other', since)), true);
 });
 
 test('the provider key never reaches a response or a log', async (t) => {

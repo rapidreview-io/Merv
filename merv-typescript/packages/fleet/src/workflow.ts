@@ -32,6 +32,7 @@ import {
 } from './hosted-codex.js';
 import {
   budgetIn,
+  ceilingRefused,
   codexModelRelay,
   hostedGrant,
   markRelayStart,
@@ -218,8 +219,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
           huggingFace: (binding) =>
             this.platforms.some((platform) => canonical(binding.platform) === canonical(platform)),
           // The person a machine is rented for pays its model calls: while they have no tokens
-          // left today, it takes no new work, and a visit the relay cut off waits too.
-          // Said to the person whose limit it is, the one who raises it, in Settings.
+          // left today, it takes no new work. Said to the person whose limit it is, the one who
+          // raises it, in Settings.
           modelBudget: async (binding, tx) => {
             const a = await this.fleet
               .inspectOwned(this, binding.allocationId, tx)
@@ -239,6 +240,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
           },
           // A visit whose calls the relay or its provider failed, or that Main's restart cut.
           relayFault: (_binding, visit, tx) => relayFaulted(tx, visit.sessionId, visit.since),
+          // A visit one of whose own calls the relay refused at its person's daily tokens.
+          modelBudgetRefused: (_binding, visit, tx) =>
+            ceilingRefused(tx, visit.sessionId, visit.since),
         }),
       );
       // Fleet's sections of system.status: the project's, and a leased worker's own budget.

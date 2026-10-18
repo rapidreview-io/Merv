@@ -721,10 +721,21 @@ export class ManagedRunnerBindings {
   }
   /** Whether the relay failed the calls of a visit a machine of the validator's ran. */
   async relayFault(session: Session, tx: Transaction): Promise<boolean> {
+    return await this.saysOfVisit('relayFault', session, tx);
+  }
+  /** Whether the relay refused one of that visit's own calls at its person's daily tokens. */
+  async modelBudgetRefused(session: Session, tx: Transaction): Promise<boolean> {
+    return await this.saysOfVisit('modelBudgetRefused', session, tx);
+  }
+  private async saysOfVisit(
+    hook: 'relayFault' | 'modelBudgetRefused',
+    session: Session,
+    tx: Transaction,
+  ): Promise<boolean> {
     const row = await tx.get<ManagedBindingRow>(boundTo, session.id, session.id);
     return (
       !!row &&
-      !!(await this.validator?.relayFault?.(
+      !!(await this.validator?.[hook]?.(
         this.identity(row),
         { sessionId: session.id, since: session.createdAt },
         tx,

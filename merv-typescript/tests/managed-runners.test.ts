@@ -251,6 +251,7 @@ async function fixture(
     huggingFace = true,
     relayFault = false,
     modelBudget: ManagedModelWait | null = null;
+  const refused = new Set<string>();
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
@@ -259,6 +260,7 @@ async function fixture(
     huggingFace: () => huggingFace,
     modelBudget: async () => modelBudget,
     relayFault: async () => relayFault,
+    modelBudgetRefused: async (_binding, visit) => refused.has(visit.sessionId),
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -343,6 +345,8 @@ async function fixture(
     modelBudget: (value: ManagedModelWait | null) => {
       modelBudget = value;
     },
+    /** Fleet's relay refused one of this session's own calls at its person's daily tokens. */
+    refuse: (sessionId: string) => void refused.add(sessionId),
     workflows,
     retire: () => {
       current = false;
@@ -769,7 +773,7 @@ test('a validator Fleet withdraws while it answers is the one that admits, never
   assert.equal((await f.sessions.get(f.source, bound.id)).status, 'offered');
 });
 
-test('a visit the model budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {
+test('a visit the worker token budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -783,12 +787,14 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
   };
   const blockers = () => f.workflows.blockers(f.owner, f.workTarget.id);
-  // Codex exits 1 the moment the relay refuses its call (403 fleet_model_ceiling): more often
-  // than the launches a hold allows, and none of them is the work's failure.
+  // Codex exits 1 the moment the relay refuses its call (403 worker_token_budget_exhausted):
+  // more often than the launches a hold allows, and none of them is the work's failure.
   for (let visit = 0; visit < 6; visit++) {
     f.modelBudget(null);
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
     assert.ok(bound, `visit ${visit} is offered`);
+    // The refusal is said of this visit, and holds its person's day.
+    f.refuse(bound.id);
     f.modelBudget(wait);
     await f.sessions.release(f.caller, {
       sessionId: bound.id,
@@ -797,7 +803,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
       reason: 'local_process_exit_code_1',
     });
     const closed = await f.sessions.get(f.source, bound.id);
-    assert.equal(closed.outcome, 'budget_exhausted');
+    assert.equal(closed.outcome, 'worker_token_budget_exhausted');
     assert.equal(closed.closeReason, 'local_process_exit_code_1');
   }
   const hold = await f.state.read((sql) =>
@@ -809,7 +815,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   assert.equal(Number(hold?.attempts ?? 0), 0, 'a spent budget is no failed launch');
   const [waiting, ...others] = await blockers();
   assert.deepEqual(others, []);
-  assert.equal(waiting?.code, 'model_budget_exhausted');
+  assert.equal(waiting?.code, 'worker_token_budget_exhausted');
   assert.deepEqual(
     [waiting?.message, waiting?.next, waiting?.whose, waiting?.related],
     [wait.message, wait.next, wait.whose, wait.related],
@@ -817,7 +823,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   // The machine takes no new work while the person's day stays spent.
   assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,
-    reason: 'model_budget_exhausted',
+    reason: 'worker_token_budget_exhausted',
   });
   assert.equal((await blockers()).length, 1);
   // The reset (or a raised limit): the same work is offered again, and the wait is withdrawn.
@@ -832,6 +838,56 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     outcome: 'crash_loop',
   });
   assert.equal((await f.sessions.get(f.source, resumed!.id)).outcome, 'crash_loop');
+});
+
+test('only a visit the relay refused closes as worker_token_budget_exhausted: another visit’s crash the same day keeps host_failed', async (t) => {
+  // Owner 2026-10-18: a refusal holds its person's day until the reset, and a close read that
+  // held day, so every later crash of their work that day was hidden as a spent budget.
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const wait = {
+    resetsAt: '2099-01-02T00:00:00.000Z',
+    message: 'Your daily Fleet model tokens are used up; this work resumes at 2099-01-02 00:00 UTC',
+    next: 'Raise your Fleet daily token limit in Settings, or wait until 2099-01-02 00:00 UTC',
+  };
+  const attempts = async () =>
+    Number(
+      (
+        await f.state.read((sql) =>
+          sql.get<{ attempts: number }>(
+            'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+            f.workTarget.id,
+          ),
+        )
+      )?.attempts ?? 0,
+    );
+  const crash = async (sessionId: string) => {
+    await f.sessions.release(f.caller, {
+      sessionId,
+      runnerId: f.runnerId,
+      outcome: 'host_failed',
+      reason: 'local_process_exit_code_1',
+    });
+    return (await f.sessions.get(f.source, sessionId)).outcome;
+  };
+  // A visit live while another visit of the same person is refused, which holds their day.
+  const crashed = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  f.refuse('session_elsewhere');
+  f.modelBudget(wait);
+  assert.equal(await crash(crashed.id), 'host_failed');
+  assert.equal(await attempts(), 1, 'its crash is its own, and counts');
+  // A changed limit lifts the hold; a visit the relay refuses later that day is the budget's.
+  f.modelBudget(null);
+  now += 31_000;
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  const refused = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  assert.ok(refused);
+  f.refuse(refused.id);
+  f.modelBudget(wait);
+  assert.equal(await crash(refused.id), 'worker_token_budget_exhausted');
+  assert.equal(await attempts(), 1, 'a spent budget is no failed launch');
 });
 
 test('a visit the model relay failed counts against nothing and is offered again after the backoff', async (t) => {

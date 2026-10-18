@@ -137,9 +137,12 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   };
 }
 
+/** The worker token budget, the person's daily model tokens, is used up: one name for the
+ *  relay's refusal, Fleet's wait and what Sessions says of the work and its visit. */
+const workerTokensSpent = 'worker_token_budget_exhausted';
 const refusals = {
   budget: ['token_budget_spent', "This session's model tokens are spent"],
-  ceiling: ['fleet_model_ceiling', 'The daily model token ceiling is reached'],
+  ceiling: [workerTokensSpent, "The person's daily model tokens for workers are used up"],
 } as const;
 const day = () => new Date().toISOString().slice(0, 10);
 const ledger = dailyTokens('fleet_model_usage');
@@ -176,19 +179,15 @@ export async function budgetIn(sql: Sql, person: string, fallback: number) {
   const usedToday = Number(used?.tokens ?? 0);
   const lastRefusedTokens = refusal ? Number(refusal.required_tokens) : null;
   const remaining = Math.max(0, tokens - usedToday);
-  const blockReason =
-    remaining <= maxOutputTokens
-      ? 'minimum_reservation_unaffordable'
-      : lastRefusedTokens !== null
-        ? 'last_refused_reservation_unaffordable'
-        : null;
+  // Too few tokens left for any call, or a call refused today, however many refunds freed since.
+  const blocked = remaining <= maxOutputTokens || lastRefusedTokens !== null;
   return {
     tokens,
     usedToday,
     remaining,
     lastRefusedTokens,
-    blocked: blockReason !== null,
-    blockReason,
+    blocked,
+    blockReason: blocked ? workerTokensSpent : null,
     resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
   };
 }
@@ -232,12 +231,15 @@ const relayFault = (record: ModelRelayFailure) =>
     record.upstreamHttpStatus < 500 &&
     ![408, 429].includes(record.upstreamHttpStatus)
   );
+/** A visit's latest relay fault; or the ceiling's refusal of one of its calls, kept in the same
+ *  table under `workerTokensSpent`, which no later fault of the visit replaces. */
 const fault = (sql: Sql, subject: string, code: string, at: string) =>
   sql.run(
-    'INSERT INTO fleet_relay_faults(subject,code,at) VALUES(?,?,?) ON CONFLICT(subject) DO UPDATE SET code=excluded.code,at=excluded.at',
+    'INSERT INTO fleet_relay_faults(subject,code,at) VALUES(?,?,?) ON CONFLICT(subject) DO UPDATE SET code=excluded.code,at=excluded.at WHERE fleet_relay_faults.code<>?',
     subject,
     code,
     at,
+    workerTokensSpent,
   );
 /** Main (and its relay) started: every visit live before now lost its calls in flight. Faults
  *  past their window are let go here. */
@@ -252,13 +254,24 @@ export async function markRelayStart(state: State): Promise<void> {
   });
 }
 /** Whether the relay failed a visit that started at `since` lately: one of its calls, or Main
- *  restarting while it was live. */
+ *  restarting while it was live. A refusal at the ceiling is no fault of the relay's. */
 export async function relayFaulted(sql: Sql, sessionId: string, since: string, now = Date.now()) {
   return !!(await sql.get(
-    "SELECT 1 FROM fleet_relay_faults WHERE subject IN (?,'*') AND at>=? AND at>?",
+    "SELECT 1 FROM fleet_relay_faults WHERE subject IN (?,'*') AND at>=? AND at>? AND code<>?",
     sessionId,
     since,
     new Date(now - relayFaultMs).toISOString(),
+    workerTokensSpent,
+  ));
+}
+/** Whether the ceiling refused one of the calls of a visit that started at `since`: its own
+ *  tokens were short, not merely its person's day held by another visit's refusal. */
+export async function ceilingRefused(sql: Sql, sessionId: string, since: string) {
+  return !!(await sql.get(
+    'SELECT 1 FROM fleet_relay_faults WHERE subject=? AND code=? AND at>=?',
+    sessionId,
+    workerTokensSpent,
+    since,
   ));
 }
 
@@ -306,6 +319,8 @@ export function codexModelRelay(
             today,
             most,
           );
+          // Said of the visit too, so only its own failed close is put down to the budget.
+          await fault(tx, grant.id, workerTokensSpent, new Date().toISOString());
           return 'ceiling';
         }
         if (
