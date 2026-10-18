@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { PaperDocument, PaperRevision } from './types.js';
 import { z } from 'zod';
-import { check, clip } from '@merv/contracts';
+import { check, clip, firstOf } from '@merv/contracts';
 import { citeSchema, id, kind, patchSchema } from './input.js';
 import { paperSnapshot } from './context.js';
 const readSchema = z
@@ -24,8 +24,7 @@ const outlineOf = ({ sections, ...revision }: PaperRevision) => ({
 /** A revision's sections by id and length, as a refusal names them: the first 20, then a count. */
 function listed({ kind, revision, sections }: PaperRevision): string {
   const names = sections.map(({ id, content }) => `${id} (${content.length} characters)`);
-  const more = names.length > 20 ? `, and ${names.length - 20} more` : '';
-  return `${kind} revision ${revision} holds ${names.slice(0, 20).join(', ') || 'no sections'}${more}`;
+  return `${kind} revision ${revision} holds ${firstOf(names, 20) || 'no sections'}`;
 }
 /**
  * A document as an agent is shown it. A reviewed document is most often published at its current

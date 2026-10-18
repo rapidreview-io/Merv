@@ -1,4 +1,4 @@
-import { clip, quoted, visible } from '@merv/contracts/text';
+import { clip, firstOf, quoted, visible } from '@merv/contracts/text';
 import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/types';
 
 // Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them,
@@ -212,7 +212,7 @@ export function synopsisProblem(synopsis: unknown): 'length' | 'format' | 'ident
 function miscited(finding: { evidenceIds?: unknown }, pinned: string[]): string[] {
   if (!Array.isArray(finding.evidenceIds)) return ['gives no evidenceIds array'];
   const seen = new Set<unknown>();
-  const wrong = finding.evidenceIds.flatMap((id: unknown) => {
+  return finding.evidenceIds.flatMap((id: unknown) => {
     const shown = quoted(id, 80);
     const problem =
       typeof id !== 'string' || !pinned.includes(id)
@@ -223,7 +223,6 @@ function miscited(finding: { evidenceIds?: unknown }, pinned: string[]): string[
     seen.add(id);
     return problem;
   });
-  return wrong.length > 5 ? [...wrong.slice(0, 5), `and ${wrong.length - 5} more`] : wrong;
 }
 
 /**
@@ -298,7 +297,7 @@ export function assessmentProblem(
         .sort((a, b) => a.criterionNumber - b.criterionNumber)
         .flatMap((finding) => {
           const wrong = miscited(finding, review.artifactIds);
-          return wrong.length ? [`criterion ${finding.criterionNumber} ${wrong.join(', ')}`] : [];
+          return wrong.length ? [`criterion ${finding.criterionNumber} ${firstOf(wrong, 5)}`] : [];
         });
       return refused(
         'shape',

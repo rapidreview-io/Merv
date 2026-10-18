@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cleanText, clip, ellipsis, markdownSection, plain, quoted } from '@merv/contracts';
+import {
+  cleanText,
+  clip,
+  ellipsis,
+  firstOf,
+  markdownSection,
+  plain,
+  quoted,
+} from '@merv/contracts';
 
 test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
   const refused = (value: unknown, limits = {}) =>
@@ -99,4 +107,10 @@ test('quoted() quotes a string cut within max, and anything else as its JSON', (
   assert.equal(quoted('abcdefg', 6), '"abcde…"');
   assert.equal(quoted({ id: 'abcdefgh' }, 10), '{"id":"ab…');
   assert.equal(quoted(undefined, 80), 'undefined');
+});
+
+test('firstOf() lists the first max items, then how many more', () => {
+  assert.equal(firstOf(['a', 'b'], 2), 'a, b');
+  assert.equal(firstOf(['a', 'b', 'c', 'd'], 2), 'a, b, and 2 more');
+  assert.equal(firstOf([], 2), '');
 });

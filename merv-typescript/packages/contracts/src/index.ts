@@ -12,7 +12,7 @@ import { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
-export { cleanText, clip, ellipsis, itemTitle, quoted, visible } from './text.js';
+export { cleanText, clip, ellipsis, firstOf, itemTitle, quoted, visible } from './text.js';
 export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
 export { byCodeUnit, ordered } from './order.js';
 export {
