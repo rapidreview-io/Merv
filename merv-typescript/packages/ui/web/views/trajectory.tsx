@@ -52,11 +52,13 @@ function useWidth<T extends HTMLElement>() {
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
+    setWidth(Math.floor(element.getBoundingClientRect().width));
+    // A document without ResizeObserver (a test's) keeps the width it was measured at.
+    if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(([entry]) =>
       setWidth(Math.floor(entry?.contentRect.width ?? 0)),
     );
     observer.observe(element);
-    setWidth(Math.floor(element.getBoundingClientRect().width));
     return () => observer.disconnect();
   }, []);
   return [ref, width] as const;
