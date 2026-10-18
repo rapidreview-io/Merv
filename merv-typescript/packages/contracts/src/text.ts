@@ -10,6 +10,13 @@ export const clip = (text: string, max: number) =>
 /** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
 export const ellipsis = (text: string, max: number) =>
   text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/** A server-sent event frame's data: the values of its `data:` lines, joined by newlines. */
+export const eventData = (frame: string) =>
+  frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n');
 /** Text as HTML character data or a quoted attribute value: never markup. */
 export const escapeHtml = (text: string) =>
   text.replace(

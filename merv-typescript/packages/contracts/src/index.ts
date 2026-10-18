@@ -1,5 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
-export { mapAsync, everyAsync } from './async.js';
+export { mapAsync, everyAsync, sleep } from './async.js';
 export type {
   ToolPolicy,
   ToolGrant,

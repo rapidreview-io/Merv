@@ -2,25 +2,11 @@
  * One bounded JSON POST to a search provider (see fetchJson): a deadline over every attempt and
  * at most two retries of what may pass (no answer, 408, 425, 429 or 5xx), or `retries`.
  */
-import { fetchJson, OutboundError } from '@merv/contracts';
+import { fetchJson, OutboundError, sleep } from '@merv/contracts';
 
 export const USER_AGENT = 'merv-web/0.1.0';
 const RETRIES = 2;
 const RETRIED = new Set([408, 425, 429, 500, 502, 503, 504]);
-
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', stop);
-      resolve();
-    }, ms);
-    const stop = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    signal.addEventListener('abort', stop, { once: true });
-  });
 
 /** POSTs `body` until an answer, a failure that will not pass, the retries, or the deadline. The
  * signal's own reason is thrown when it ends the call: a TimeoutError at the deadline. */
