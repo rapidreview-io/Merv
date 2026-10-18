@@ -10,6 +10,13 @@ retires runs and attempts, and projects capture evidence into Merv artifacts. Ta
 Experiments consume `sandboxEvidence`. Fleet owns runtime profiles and rental handles;
 Code Work owns its check recipe.
 
+Each Capture node registers as its own collection once it ends, while the rest of its
+workflow may still run. Its title starts `Compute capture <workflow id> / <node id>` and
+says when the node failed, was skipped or kept nothing; `metadata.outputObjects` names
+its held output objects, which a later workflow of the project stages directly. A
+deterministic refusal is final. A failure that may pass is retried every pass, and after
+ten minutes it is also listed as refused ("Merv keeps retrying") until it registers.
+
 `@merv/sandboxes/console` mounts the authenticated console-session endpoint, proxies
 `/sbx/ui/*` and `/sbx/v1/*` (including Terminal WebSockets), and contributes hardware to
 Running. The host registers the permanent Sandboxes view and tools.

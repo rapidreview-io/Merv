@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Context } from 'cordis';
 import { ArtifactStore } from '@merv/artifacts';
-import { SandboxEvidence } from '@merv/sandboxes/sandbox-evidence';
+import { CAPTURE_STALL_MS, SandboxEvidence } from '@merv/sandboxes/sandbox-evidence';
 import { sandboxIntegrationPlugin } from '@merv/sandboxes/integration';
 import { DiskBlobs } from '@merv/blobs';
 import { createService, sha256Hex } from '@merv/contracts';
@@ -101,8 +101,10 @@ async function fixture(t: TestContext, registerProvider = true) {
     },
   };
   let pendingJobs = false;
+  let now = Date.now();
+  const clock = () => now;
   function service() {
-    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts, Date.now, {
+    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts, clock, {
       listPage: async () => ({ jobs: pendingJobs ? [{} as never] : [], next: null }),
     });
   }
@@ -153,6 +155,9 @@ async function fixture(t: TestContext, registerProvider = true) {
       ),
     );
   return {
+    advance: (ms: number) => {
+      now += ms;
+    },
     pendingJobs: (value: boolean) => {
       pendingJobs = value;
     },
@@ -370,6 +375,61 @@ test('a not-yet-available held object is retried', async (t) => {
   f.retained.set('object', ready);
   await f.evidence.reconcile();
   assert.equal((await f.artifacts.list(f.caller)).length, 1);
+});
+
+test('a capture that keeps failing is shown as refused, and still registers once it can', async (t) => {
+  const f = await fixture(t);
+  f.workflow();
+  const ready = f.retained.get('object')!;
+  f.retained.set('object', { ...ready, state: 'uploading' });
+  const stalls = async () =>
+    (await f.state.events(f.caller.projectId)).filter((e) => e.type === 'sandboxes.capture_stalled')
+      .length;
+  await f.evidence.reconcile();
+  f.advance(CAPTURE_STALL_MS - 1);
+  await f.evidence.reconcile();
+  assert.deepEqual((await f.read()).get('work'), { artifactIds: [], refused: [] });
+  f.advance(1);
+  await f.evidence.reconcile();
+  const shown = (await f.read()).get('work')!;
+  assert.deepEqual(shown.artifactIds, []);
+  assert.equal(shown.refused.length, 1);
+  assert.match(
+    shown.refused[0]!.error,
+    /^Not registered after 10 minutes of failures; Merv keeps retrying: Captured object/,
+  );
+  await f.evidence.reconcile();
+  await (await createService(f.service())).reconcile();
+  assert.equal(await stalls(), 1, 'shown once, across a restart too');
+  f.retained.set('object', ready);
+  await f.evidence.reconcile();
+  const [collection] = await f.artifacts.list(f.caller);
+  assert.deepEqual((await f.read()).get('work'), { artifactIds: [collection!.id], refused: [] });
+});
+
+test('a stalled capture that turns out never to register is refused for good', async (t) => {
+  const f = await fixture(t);
+  f.workflow();
+  const ready = f.retained.get('object')!;
+  f.retained.set('object', { ...ready, state: 'uploading' });
+  await f.evidence.reconcile();
+  f.advance(CAPTURE_STALL_MS);
+  await f.evidence.reconcile();
+  f.retained.set('object', ready);
+  f.held(false);
+  await f.evidence.reconcile();
+  const refused = (await f.read()).get('work')!.refused;
+  assert.equal(refused.length, 1);
+  assert.doesNotMatch(refused[0]!.error, /keeps retrying/);
+  f.held(true);
+  await f.evidence.reconcile();
+  assert.deepEqual(await f.artifacts.list(f.caller), [], 'a refusal is not retried');
+  assert.deepEqual(
+    (await f.state.events(f.caller.projectId))
+      .filter((e) => e.type.startsWith('sandboxes.capture_'))
+      .map((e) => e.type),
+    ['sandboxes.capture_stalled', 'sandboxes.capture_refused'],
+  );
 });
 
 test('a released work is read until its captures settle, then never again, after a restart too', async (t) => {

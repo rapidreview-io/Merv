@@ -63,12 +63,20 @@ CREATE TABLE sandbox_capture_index(
 );
 CREATE INDEX sandbox_capture_work ON sandbox_capture_index(project_id,work_ref,attempt_ref);
 `,
+  // A stalled row shows a lasting failure as refused, yet is retried until it registers.
+  2: `ALTER TABLE sandbox_capture_index ADD COLUMN stalled BOOLEAN NOT NULL DEFAULT false;`,
 };
+
+/** How long a capture may keep failing to register before it is shown as refused; it is still
+ *  retried, so it registers once its cause is fixed. */
+export const CAPTURE_STALL_MS = 10 * 60_000;
 
 export class SandboxEvidence implements SandboxCaptureEvidence {
   private reconciling?: Promise<void>;
   private readonly checkedWorks = new Map<string, number>();
   private readonly doneWorkflows = new Set<string>();
+  /** When each capture that is failing to register first failed, since this process started. */
+  private readonly failing = new Map<string, number>();
 
   constructor(
     private readonly state: State,
@@ -245,15 +253,16 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           )
           .map((node) => node.id);
     if (!finished && !ended.length) return false;
-    const settled = await this.state.read((sql) =>
-      sql.all<{ node_id: string }>(
-        'SELECT node_id FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
+    const rows = await this.state.read((sql) =>
+      sql.all<{ node_id: string; stalled: boolean }>(
+        'SELECT node_id,stalled FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
         work.project_id,
         work.namespace,
         workflow.id,
       ),
     );
-    const indexed = new Set(settled.map((row) => row.node_id));
+    const indexed = new Set(rows.filter((row) => !row.stalled).map((row) => row.node_id));
+    const stalled = new Set(rows.filter((row) => row.stalled).map((row) => row.node_id));
     // A running workflow is read again only when another of its captures has ended.
     if (!finished && ended.every((node) => indexed.has(node))) return false;
     let after: string | null = null;
@@ -265,10 +274,13 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       });
       for (const node of page.captures) {
         if (indexed.has(node.id)) continue;
+        const failing = JSON.stringify([work.namespace, workflow.id, node.id]);
         try {
           await this.register(work, workflow, node);
+          this.failing.delete(failing);
         } catch (error) {
-          pending = !(await this.refuse(work, workflow, node.id, error)) || pending;
+          const refused = await this.refuse(work, workflow, node.id, error, stalled.has(node.id));
+          pending = !refused || pending;
         }
       }
       after = page.next;
@@ -349,9 +361,11 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
         },
         tx,
       );
+      // A capture shown as stalled is no longer refused once it registers.
       await tx.run(
-        `INSERT INTO sandbox_capture_index(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,artifact_id)
-         VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+        `INSERT INTO sandbox_capture_index AS i(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,artifact_id)
+         VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,namespace,workflow_id,node_id)
+         DO UPDATE SET artifact_id=excluded.artifact_id,error=NULL,stalled=false WHERE i.stalled`,
         work.project_id,
         work.namespace,
         work.work_ref,
@@ -363,15 +377,34 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     });
   }
 
-  private async refuse(work: Work, workflow: WorkflowRecord, node: string, error: unknown) {
+  /** Whether the capture is refused for good. A failure that may pass (an outage, a busy or
+   *  unknown error) is retried every pass; once it has lasted CAPTURE_STALL_MS it is also shown as
+   *  refused, so nobody waits on it unseen, until it registers. */
+  private async refuse(
+    work: Work,
+    workflow: WorkflowRecord,
+    node: string,
+    error: unknown,
+    shown: boolean,
+  ) {
     const status = (error as { status?: number })?.status;
-    if (!status || status >= 500 || status === 409 || status === 429) return false;
-    const detail = error instanceof Error ? clip(error.message, 500) : 'Evidence is unavailable';
+    let detail = error instanceof Error ? clip(error.message, 500) : 'Evidence is unavailable';
+    const lasting = !status || status >= 500 || status === 409 || status === 429;
+    const failing = JSON.stringify([work.namespace, workflow.id, node]);
+    if (lasting) {
+      const since = this.failing.get(failing) ?? this.clock();
+      this.failing.set(failing, since);
+      if (shown || this.clock() - since < CAPTURE_STALL_MS) return false;
+      detail = `Not registered after ${CAPTURE_STALL_MS / 60_000} minutes of failures; Merv keeps retrying: ${detail}`;
+    } else this.failing.delete(failing);
     const { id: workflowId, attempt_ref: attempt } = workflow;
     await this.state.transaction(async (tx) => {
+      // A stalled row may still turn into a lasting refusal; a refusal never changes.
       const row = await tx.get(
-        `INSERT INTO sandbox_capture_index(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,error)
-         VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING RETURNING 1`,
+        `INSERT INTO sandbox_capture_index AS i(project_id,namespace,work_ref,workflow_id,node_id,attempt_ref,error,stalled)
+         VALUES(?,?,?,?,?,?,?,${lasting}) ON CONFLICT(project_id,namespace,workflow_id,node_id)
+         DO UPDATE SET error=excluded.error,stalled=false WHERE i.stalled AND NOT excluded.stalled
+         RETURNING 1`,
         work.project_id,
         work.namespace,
         work.work_ref,
@@ -385,12 +418,12 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
           this.state,
           tx,
           await this.scope.serviceActor('sandboxes', work.project_id, tx),
-          'sandboxes.capture_refused',
+          lasting ? 'sandboxes.capture_stalled' : 'sandboxes.capture_refused',
           work.work_ref,
           { workflowId, captureNode: node, attempt, error: detail },
         );
     });
-    return true;
+    return !lasting;
   }
 
   async download(_projectId: string, reference: string) {
