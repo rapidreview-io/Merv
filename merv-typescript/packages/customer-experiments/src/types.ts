@@ -1,4 +1,4 @@
-import type { Caller, ReviewRequest } from '@merv/contracts';
+import { isAgentCaller, type Caller, type ReviewRequest } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { z } from 'zod';
 import type { dataRequirementSchema, planSchema } from './schema.js';
@@ -131,7 +131,7 @@ export function withoutBuyer<T extends { email?: unknown; paymentId?: unknown }>
 }
 /** What `caller` reads of a request: an agent, leased or in a conversation, its work only. */
 export const seenBy = (caller: Caller, exp: CustomerExperiment) =>
-  caller.session || caller.conversation ? withoutBuyer(exp) : exp;
+  isAgentCaller(caller) ? withoutBuyer(exp) : exp;
 
 /** One customer-visible progress line the executing worker reported. */
 export interface ProgressLine {

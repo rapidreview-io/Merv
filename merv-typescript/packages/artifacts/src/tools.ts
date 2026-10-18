@@ -1,6 +1,13 @@
 import type { Context } from 'cordis';
 import type { ToolAct } from '@merv/api/types';
-import { check, MervError, MAX_OBJECT_BYTES, type Artifact, type Caller } from '@merv/contracts';
+import {
+  check,
+  isAgentCaller,
+  MervError,
+  MAX_OBJECT_BYTES,
+  type Artifact,
+  type Caller,
+} from '@merv/contracts';
 import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { z } from 'zod';
 import { MAX_STORED_READ_BYTES } from './content.js';
@@ -147,7 +154,7 @@ export const artifactToolsPlugin = {
       async (c, i) => {
         const artifact = await ctx.artifacts.get(c, i.artifactId);
         // An agent's context holds the whole answer; a person's Files page shows every member.
-        const limit = i.limit ?? (c.session || c.conversation ? agentMembers : undefined);
+        const limit = i.limit ?? (isAgentCaller(c) ? agentMembers : undefined);
         return {
           ...artifact,
           ...(artifact.files ? membersPage(artifact.files, { ...i, limit }) : {}),
@@ -261,7 +268,7 @@ export const artifactToolsPlugin = {
       async (c, i) =>
         (await ctx.artifacts.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
           // An agent's context holds every row; a person's Files page shows a collection's members.
-          ...(c.session || c.conversation ? brief(artifact) : artifact),
+          ...(isAgentCaller(c) ? brief(artifact) : artifact),
           downloadAvailable: ctx.artifacts.downloadAvailable,
         })),
       true,

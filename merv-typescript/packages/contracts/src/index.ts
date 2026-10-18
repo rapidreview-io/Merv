@@ -749,6 +749,8 @@ export const isDirectHuman = (
     caller.conversation,
     caller.service,
   ].every((authority) => !authority);
+/** Merv's own agent: a leased worker or a Pi conversation. Never an agent holding a person's key. */
+export const isAgentCaller = (caller: Caller) => !!(caller.session || caller.conversation);
 /** Refuses (403) anyone but the person themself, signed in: see isDirectHuman. */
 export function requireHuman(
   caller: Caller,
