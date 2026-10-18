@@ -1206,7 +1206,7 @@ test('stop() cuts a stream admitted during the drain soon after the drain ends',
   await streaming;
   hold.release('first');
   assert.equal(await first, 'first');
-  // The drain waited for the first request only; the late stream ends about a second later.
+  // The drain waited for the first request only; the late stream ends within about two seconds.
   const started = Date.now();
   await stopping;
   assert.ok(Date.now() - started < 3000, `stop() took ${Date.now() - started} ms`);
@@ -1214,18 +1214,20 @@ test('stop() cuts a stream admitted during the drain soon after the drain ends',
   await tools.close();
 });
 
-/** A `slow` tool that runs until `release()`; a failed test releases it. */
-function gated(tools: ToolRegistry, t: TestContext) {
+/** A `slow` tool whose calls run until `release()`; `started` once `calls` of them have begun.
+ *  A failed test releases them. */
+function gated(tools: ToolRegistry, t: TestContext, calls = 1) {
   let entered!: () => void;
   let release!: () => void;
   const started = new Promise<void>((resolve) => (entered = resolve));
   const gate = new Promise<void>((resolve) => (release = resolve));
+  let begun = 0;
   tools.register({
     name: 'slow',
     description: 'Runs until released',
     inputSchema: z.object({}).strict(),
     handler: async () => {
-      entered();
+      if (++begun === calls) entered();
       await gate;
       return 'finished';
     },
@@ -1253,6 +1255,44 @@ test('stop() refuses new requests once drainMs has passed, though a tool call in
   assert.equal(((await late.json()) as { error: { code: string } }).error.code, 'unavailable');
   slow.release();
   await call;
+  await stopping;
+  await tools.close();
+});
+
+test('stop() delivers the reply of a tool call admitted during the drain that outlasts it', async (t) => {
+  const { scope, tools } = fixture();
+  const slow = gated(tools, t, 2);
+  const api = new ApiServer(scope, tools);
+  const hold = holding(api, t);
+  const url = await api.start();
+  const first = fetch(`${url}/hold?first`).then((response) => response.text());
+  await hold.arrived('first');
+  const stopping = api.stop();
+  const headers = { authorization: 'Bearer alice-token', 'content-type': 'application/json' };
+  const viaTools = fetch(`${url}/tools/slow`, { method: 'POST', headers, body: '{}' }).then(
+    (response) => response.json(),
+  );
+  const viaMcp = fetch(`${url}/mcp`, {
+    method: 'POST',
+    headers: { ...headers, accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'slow', arguments: {} },
+    }),
+  }).then((response) => response.json());
+  await slow.started;
+  hold.release('first');
+  assert.equal(await first, 'first');
+  // Still running when the second after the drain is over: its work lands, so must its reply.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  slow.release();
+  assert.deepEqual(await viaTools, { result: 'finished' });
+  assert.equal(
+    ((await viaMcp) as { result: { content: { text: string }[] } }).result.content[0].text,
+    '"finished"',
+  );
   await stopping;
   await tools.close();
 });

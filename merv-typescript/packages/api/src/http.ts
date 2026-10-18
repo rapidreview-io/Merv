@@ -370,12 +370,7 @@ export class ApiServer {
     // Admission ends: every later request is answered 503, unrun. One admitted during the drain
     // has lateMs more to finish; a stream still open then is cut below with the rest.
     this.refusing = true;
-    const late = new AbortController();
-    await Promise.race([
-      Promise.allSettled([...this.requests]),
-      sleep(lateMs, late.signal).catch(() => undefined),
-    ]);
-    late.abort();
+    await this.settled(lateMs);
     clearTimeout(cut);
     // Only now: close() also ends every connection whose response has ended, even while its
     // bytes are still reaching a slow reader.
@@ -383,10 +378,22 @@ export class ApiServer {
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await Promise.allSettled([...this.calls]);
+    // A tool call admitted late may have only just finished: its reply gets lateMs to leave.
+    await this.settled(lateMs);
     // Only idle keep-alive connections, and streams admitted late, remain.
     server.closeAllConnections();
     await closed;
     this.server = undefined;
+  }
+
+  /** Waits until the requests open now have ended, or `ms` have passed. */
+  private async settled(ms: number): Promise<void> {
+    const timer = new AbortController();
+    await Promise.race([
+      Promise.allSettled([...this.requests]),
+      sleep(ms, timer.signal).catch(() => undefined),
+    ]);
+    timer.abort();
   }
 
   /** Serves one lowercase path segment; the disposer withdraws it, and it then answers 503. */
