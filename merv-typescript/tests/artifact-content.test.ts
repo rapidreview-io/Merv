@@ -200,12 +200,22 @@ test('create and uploadBegin refuse malformed media types and request IDs with c
       app.ctx.artifacts.create(caller, { title: title as string, content: 'x' }),
       { code: 'invalid_artifact' },
     );
-  for (const requestId of [42, '', 'r'.repeat(129)])
+  for (const requestId of [42, '', 'r'.repeat(129)]) {
+    await assert.rejects(
+      app.ctx.artifacts.create(caller, {
+        title: 'Typed',
+        content: 'x',
+        requestId: requestId as string,
+      }),
+      { code: 'invalid_artifact' },
+      String(requestId),
+    );
     await assert.rejects(
       app.ctx.artifacts.uploadBegin(caller, { ...upload, requestId: requestId as string }),
       { code: 'invalid_artifact' },
       String(requestId),
     );
+  }
   assert.deepEqual(server.requests, []);
   // Whitespace is a request ID like any other: it is only hashed.
   const blank = await app.ctx.artifacts.uploadBegin(caller, { ...upload, requestId: '  ' });
@@ -265,12 +275,6 @@ test('create with a requestId stores one artifact however often the call is retr
   const plain = { title: 'Notes', content: 'x' };
   assert.notEqual((await create(plain)).id, (await create(plain)).id);
   assert.equal(await created(), 4);
-  for (const requestId of [42, '', 'r'.repeat(129)]) {
-    await assert.rejects(
-      app.ctx.artifacts.create(caller, { ...plain, requestId: requestId as string }),
-      { code: 'invalid_artifact' },
-      String(requestId),
-    );
+  for (const requestId of [42, '', 'r'.repeat(129)])
     await assert.rejects(create({ ...plain, requestId }), { code: 'invalid_input' });
-  }
 });

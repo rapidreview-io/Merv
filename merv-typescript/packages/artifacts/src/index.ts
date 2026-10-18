@@ -10,6 +10,7 @@ import {
   isText,
   json,
   meta,
+  requestIdOf,
   span,
   view,
 } from './content.js';
@@ -375,14 +376,7 @@ export class ArtifactStore implements Artifacts {
     // Without a declared type, bytes that read back as text are Markdown; others are opaque.
     const type = input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream');
     const fields = { ...meta(input.title, type), hash: sha256Hex(bytes), size: bytes.length };
-    const { requestId } = input;
-    // The tool schema's rule and no stricter, because the value is only hashed.
-    check(
-      requestId === undefined ||
-        (typeof requestId === 'string' && requestId.length >= 1 && requestId.length <= 128),
-      'invalid_artifact',
-      'requestId must be a string of 1-128 characters',
-    );
+    const requestId = requestIdOf(input.requestId);
     // A retry finds its actor's artifact by this key; another actor's same requestId stores its
     // own. It shares the project-unique source keys of collections, none of which is request:.
     const sourceKey =

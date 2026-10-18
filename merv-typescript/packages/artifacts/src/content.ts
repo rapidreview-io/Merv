@@ -97,6 +97,16 @@ export function meta(title: unknown, mediaType: unknown) {
   return { title: title.trim(), mediaType: mediaType.toLowerCase() };
 }
 
+/** An optional requestId: the tool schema's rule and no stricter, because it is only hashed. */
+export function requestIdOf(value: unknown): string | undefined {
+  check(
+    value === undefined || (typeof value === 'string' && value.length >= 1 && value.length <= 128),
+    'invalid_artifact',
+    'requestId must be a string of 1-128 characters',
+  );
+  return value;
+}
+
 /** The bytes of a new inline artifact: 1..MAX_ARTIFACT_BYTES, from utf8 or canonical base64. */
 export function decode(input: ArtifactInput): Buffer {
   check(typeof input.content === 'string', 'invalid_artifact', 'Content must be a string');
