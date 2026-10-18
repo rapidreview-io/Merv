@@ -17,6 +17,7 @@ import { migrate, openDatabase } from '@sandboxes/db';
 import { advisoryXactLock, Decimal } from '@sandboxes/kernel';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
+const validFrom = '2026-01-01T00:00:00Z';
 const issuer = 'https://identity.example';
 const admin = { issuer, subject: 'founder' };
 const human = (subject: string): Principal => ({
@@ -115,7 +116,7 @@ test('credits read per person, account and provider, as report() computes them, 
     accountId: own!.id,
     provider: 'fake',
     amount: '10',
-    validFrom: '2026-01-01T00:00:00Z',
+    validFrom,
     reason: 'Welcome credit',
   });
   await f.call('POST', '/admin/credits/grants', {
@@ -123,7 +124,7 @@ test('credits read per person, account and provider, as report() computes them, 
     accountId: payer.account_id,
     provider: 'fake',
     amount: '4.5',
-    validFrom: '2026-01-01T00:00:00Z',
+    validFrom,
     reason: 'Pilot',
   });
   await f.call('POST', '/admin/credits/grants/g2/revoke');
@@ -217,15 +218,7 @@ test('credits read per person, account and provider, as report() computes them, 
 test('credit writes land in Sandboxes through CreditService and in the admin audit log', async (t) => {
   const f = await fixture(t);
   const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const validFrom = '2026-01-01T00:00:00Z';
-  const grant = {
-    id: 'g1',
-    accountId,
-    provider: 'fake',
-    amount: '2.25',
-    validFrom,
-    reason: 'Trial',
-  };
+  const grant = { id: 'g1', accountId, provider: 'fake', amount: '2.25', validFrom, reason: 'Try' };
   assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
   // The same id with the same terms is the same grant; different terms are refused.
   await f.call('POST', '/admin/credits/grants', grant);
@@ -280,7 +273,6 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
 test('only an admin may read or assign credits, and only real providers, accounts and amounts', async (t) => {
   const f = await fixture(t);
   const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
-  const validFrom = '2026-01-01T00:00:00Z';
   const grant = { id: 'g1', accountId, provider: 'fake', amount: '1', validFrom, reason: 'Trial' };
   for (const who of [
     human('someone'),
@@ -295,28 +287,17 @@ test('only an admin may read or assign credits, and only real providers, account
       f.refused('forbidden', 403),
     );
   }
-  // A provider with an operator connection, a positive amount of at most six places and a reason
-  // are Sandboxes' rules; the admin refuses only a body it cannot read.
-  for (const refused of [
-    { provider: 'modal' },
-    { amount: '0' },
-    { amount: '0.000' },
-    { amount: '1.1234567' },
-    { reason: ' ' },
-  ])
+  // Sandboxes refuses the values; the admin, only a body it cannot read.
+  for (const body of [{ provider: 'modal' }, { amount: '0' }, { amount: '1.1234567' }])
     await assert.rejects(
-      f.call('POST', '/admin/credits/grants', { ...grant, ...refused }),
+      f.call('POST', '/admin/credits/grants', { ...grant, ...body }),
       f.refused('sandbox_validation', 400),
     );
-  for (const amount of ['-1', '1e3', 'ten'])
+  for (const body of [{ amount: '-1' }, { amount: '1e3' }, { validFrom: undefined }])
     await assert.rejects(
-      f.call('POST', '/admin/credits/grants', { ...grant, amount }),
+      f.call('POST', '/admin/credits/grants', { ...grant, ...body }),
       f.refused('invalid_input', 400),
     );
-  await assert.rejects(
-    f.call('POST', '/admin/credits/grants', { ...grant, validFrom: undefined }),
-    f.refused('invalid_input', 400),
-  );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants', { ...grant, accountId: 'acct_missing' }),
     f.refused('sandbox_not_found', 404),

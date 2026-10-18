@@ -157,11 +157,8 @@ test('GET /admin/credentials says which credential serves which purpose and neve
   await call();
   await call();
   let outcomes = await fleet.relayOutcomes();
-  for (
-    let tries = 0;
-    tries < 100 && !(outcomes[0]?.lastOkAt && outcomes[0]?.lastFailureAt);
-    tries++
-  ) {
+  const settled = () => outcomes[0]?.lastOkAt && outcomes[0].lastFailureAt;
+  for (let tries = 0; tries < 100 && !settled(); tries++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
     outcomes = await fleet.relayOutcomes();
   }
