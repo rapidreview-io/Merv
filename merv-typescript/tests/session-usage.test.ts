@@ -303,6 +303,8 @@ test('usage rolls up over a dependency closure and the children a policy names',
   );
   assert.equal(cycle.accounting.tokens, 'runner_reported');
   assert.match(cycle.accounting.method, /not verified/);
+  // Merv prices no session; a worker is pointed at the limit that does bound its model use.
+  assert.match(cycle.accounting.method, /daily Fleet token limit \(system\.status modelBudget/);
   assert.ok(cycle.accounting.since);
 
   const alone = await f.sessions.usage(f.owner, {

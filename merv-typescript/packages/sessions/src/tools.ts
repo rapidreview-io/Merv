@@ -34,7 +34,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'usage.read',
         description:
-          'Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded.',
+          "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
         readOnly: true,
         inputSchema: z
           .object({
