@@ -537,6 +537,22 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   });
 });
 
+test('a worker is told when its lease ends, that nothing extends it, and that a stop is no way to wait', () => {
+  const { session } = request();
+  const fresh = workerPrompt(session);
+  assert.match(
+    fresh,
+    /lease ends at 2026-09-15T04:00:00Z, 240 minutes after it was offered\. Merv then closes the visit, mid-turn if need be/,
+  );
+  assert.match(fresh, /the next visit starts afresh from those records/);
+  assert.match(fresh, /Do not end your turn without the handoff\. Merv counts a visit/);
+  assert.doesNotMatch(fresh, /session\.ask_owner/);
+  const kept = workerPrompt({ ...session, continuity: { key: 'key_fixture' } });
+  assert.match(kept, /the next visit continues this conversation/);
+  assert.match(kept, /Do not end your turn without the handoff or session\.ask_owner/);
+  assert.match(kept, /someone else’s action .* call session\.ask_owner/);
+});
+
 test('a launch adds no research guidance of its own: source verification arrives in the assignment, and in Pi guidance', () => {
   const producer = request();
   const reviewer = request(true);

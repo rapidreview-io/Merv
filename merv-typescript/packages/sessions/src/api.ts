@@ -59,6 +59,9 @@ export const workerPrompt = (session: Session) =>
         'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
         'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
         'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
+        // A visit supervising long remote work was closed mid-turn at a deadline it never saw,
+        // and its successor rebuilt what it knew: the deadline is said, with what to keep.
+        `This visit's lease ends at ${session.hardDeadline}, ${leaseMinutes(session)} minutes after it was offered. Merv then closes the visit, mid-turn if need be, and a remote job still running does not extend it. Long work outlives a visit: as you go, keep in the project what the next visit needs to go on (the ids of jobs and workflows still running, checkpoints, what is left)${session.continuity ? '; the next visit continues this conversation.' : '; the next visit starts afresh from those records.'}`,
         'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
         // Agents blocked on a person ended their turn and were re-offered the same work, again
         // and again: a stop is no way to wait, so they are told what it does and what does wait.
@@ -76,6 +79,12 @@ export const workerPrompt = (session: Session) =>
           : []),
         'A person may send a message to your thread while you work. Until you acknowledge it, every Merv call but session.messages and session.message.ack is refused with session_message_pending, which carries the message: acknowledge it at once with session.message.ack, a stable requestId and a concise reply about what you will do (you may still check things after), then send the refused call again unchanged. Before each handoff, call session.messages (it takes no arguments) and address every message still waiting. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
       ].join('\n');
+/** A lease's length as its worker is told it, in whole minutes from its offer. */
+const leaseMinutes = (session: Session) =>
+  Math.max(
+    0,
+    Math.round((Date.parse(session.hardDeadline) - Date.parse(session.createdAt)) / 60_000),
+  );
 /** What an inquiry visit is told instead, the one place that says what an inquiry is: its
  *  assignment carries only the question. */
 const inquiryPrompt = (messageId: string) =>
