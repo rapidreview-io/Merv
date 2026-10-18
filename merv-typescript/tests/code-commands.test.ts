@@ -194,11 +194,14 @@ async function fixture(
     capacity: 4,
     capabilities: ['code.v2'],
   });
-  const offer = async () => {
-    const instance = await handle.start(source, {
-      workflow: definition.name,
-      requestId: randomBytes(10).toString('hex'),
-    });
+  /** A new unit of work's session, or a later one of `instanceId`'s. */
+  const offer = async (instanceId?: string) => {
+    const instance = instanceId
+      ? { id: instanceId }
+      : await handle.start(source, {
+          workflow: definition.name,
+          requestId: randomBytes(10).toString('hex'),
+        });
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
     const session = await sessions.offer(source, {
       instanceId: instance.id,
@@ -257,8 +260,8 @@ async function fixture(
     },
     source,
     offer,
-    async ready() {
-      const lease = await offer();
+    async ready(instanceId?: string) {
+      const lease = await offer(instanceId);
       await lease.attach();
       return { ...lease, caller: await lease.activate() };
     },
@@ -596,6 +599,29 @@ test('project readers can inspect while worker reads and runner control preserve
   await f.sessions.release(f.source, release);
   await assert.rejects(async () => await f.code.operation(worker.caller, queued.command.id));
   assert.equal((await f.code.operation(f.source, queued.command.id)).status, 'queued');
+});
+
+test('a later session of the same unit, as its reviewer is, reads the commands that unit made', async (t) => {
+  const f = await fixture(t),
+    worker = await f.ready();
+  const queued = await f.code.commit(worker.caller, input());
+  const { hostRef: _hostRef, ...release } = worker.control;
+  await f.sessions.release(f.source, release);
+  const later = await f.ready(worker.session.instanceId);
+  assert.equal(
+    (await f.code.operation(later.caller, queued.command.id)).command.id,
+    queued.command.id,
+  );
+  // Another unit's worker still sees none of it, and is told which commands it may read.
+  const other = await f.ready();
+  await assert.rejects(f.code.operation(other.caller, queued.command.id), {
+    code: 'code_command_not_found',
+    message: /its unit of work/,
+  });
+  await assert.rejects(f.code.operation(later.caller, `cop_${'a'.repeat(32)}`), {
+    code: 'code_command_not_found',
+    message: /codecmd_ id code\.commit or code\.merge returned/,
+  });
 });
 
 test('runner controls authorize their caller themselves: a revoked source credential is refused', async (t) => {

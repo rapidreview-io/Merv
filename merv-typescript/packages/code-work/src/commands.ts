@@ -116,9 +116,9 @@ export class CodeCommandService implements CodeCommands {
     check(row, 'code_command_not_found', 'Code command not found', 404);
     return row;
   }
-  private async reader(caller: Caller, tx: Transaction): Promise<string | undefined> {
+  private async reader(caller: Caller, tx: Transaction): Promise<Session | undefined> {
     await this.scope.require(caller, 'read', tx);
-    return caller.session ? (await this.sessions.session(caller)).id : undefined;
+    return caller.session ? await this.sessions.session(caller) : undefined;
   }
   private writable(session: Session): void {
     check(session.status === 'active', 'session_closed', 'An active session is required', 409);
@@ -197,7 +197,7 @@ export class CodeCommandService implements CodeCommands {
   async list(caller: Caller): Promise<CodeCommandRecord[]> {
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
-      const sessionId = await this.reader(caller, tx);
+      const sessionId = (await this.reader(caller, tx))?.id;
       return (
         await tx.all<Row>(
           `SELECT * FROM code_commands WHERE project_id=?${sessionId ? ' AND session_id=?' : ''} ORDER BY _merv_rowid DESC LIMIT 100`,
@@ -230,15 +230,23 @@ export class CodeCommandService implements CodeCommands {
     caller = structuredClone(caller);
     const id = parse(idSchema, commandId);
     return await this.transaction(async (tx) => {
-      const sessionId = await this.reader(caller, tx);
-      const row = await this.row(tx, id);
+      const session = await this.reader(caller, tx);
+      const row = await tx.get<Row>('SELECT * FROM code_commands WHERE id=?', id);
+      // A worker reads the commands of its own unit of work: its own, earlier rounds', and,
+      // for the unit's reviewer, the commit the delivery it checks names.
+      const record = row && row.project_id === caller.projectId ? this.decode(row) : null;
       check(
-        row.project_id === caller.projectId && (!sessionId || row.session_id === sessionId),
+        record &&
+          (!session ||
+            row!.session_id === session.id ||
+            record.command.instanceId === session.instanceId),
         'code_command_not_found',
-        'Code command not found',
+        id.startsWith('cop_')
+          ? 'code.operation reads the codecmd_ id code.commit or code.merge returned; a cop_ id is one of Code’s store operations, which code.status lists'
+          : 'No code command with this id belongs to this project, or, for a worker, to its unit of work',
         404,
       );
-      return this.decode(row);
+      return record!;
     });
   }
   async commit(caller: Caller, value: CodeCommitInput): Promise<CodeCommandRecord> {

@@ -127,7 +127,7 @@ export const codeToolsPlugin = {
       {
         name: 'code.operation',
         description:
-          'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed head, tree, parent and stats; command.workspace only names the checkout. It does not authorize central publication.',
+          'Inspect a durable code operation and its immutable commit receipt, by the codecmd_ id code.commit or code.merge returned. A leased worker reads the operations of its own unit of work, its reviewer included. A succeeded receipt identifies the exact committed head, tree, parent and stats; command.workspace only names the checkout. It does not authorize central publication.',
         inputSchema: z.object({ commandId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { commandId: string }) =>
