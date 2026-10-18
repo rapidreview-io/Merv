@@ -100,6 +100,9 @@ test('a drill-in the server refuses keeps the sign-in it was refused to', async 
   await settle(20);
   assert.match(text(), /Live platform administrator authority is required/);
   assert.equal(sessionStorage.getItem('merv:token'), 'fixture-token');
+  // No sign-in form for an admin still signed in: the way back to the admin instead.
+  assert.equal(document.querySelector('form'), null);
+  assert.equal(document.querySelector('a')!.getAttribute('href'), '/ui/admin');
 });
 
 test('in the drill-in the verb primitives draw nothing', async (t) => {

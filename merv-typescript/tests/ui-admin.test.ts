@@ -35,7 +35,6 @@ const unit = (id: string, over: Record<string, unknown> = {}) => ({
   machine: null,
   lastActivity: ago(5),
   createdAt: ago(600),
-  updatedAt: ago(5),
   cost: null,
   ...over,
 });
@@ -58,7 +57,6 @@ const work = {
         phase: 'running',
         profile: 'gpu-l4',
         provider: 'modal',
-        sandboxId: 'sbx_1',
         usdPerHour: 0.8,
       },
       cost: {
@@ -79,7 +77,6 @@ const work = {
     unit('wf_done', { state: 'done', terminal: true, title: 'Finished task' }),
   ],
   at: new Date().toISOString(),
-  unavailable: ['fleet'],
 };
 function boot() {
   serve('/auth/config', { body: { enabled: false } });
@@ -122,8 +119,6 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
   await open('/admin');
   assert.match(text(), /3 running/);
   assert.match(text(), /1 need attention/);
-  // An owner that is not loaded is no fact of the table's.
-  assert.doesNotMatch(text(), /unavailable/);
   assert.match(rows()[0]!.textContent!, /Decay sweep/, 'the unit that needs someone leads');
   assert.match(rows()[0]!.textContent!, /agent question/i);
   assert.match(rows()[0]!.textContent!, /Its agent asked its owner/, 'the phrase, read as words');
@@ -139,11 +134,7 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
   const alone = rows().find((row) => /Customer study/.test(row.textContent!))!;
   assert.equal(alone.querySelector('a')!.getAttribute('href'), '/admin/standalone/ce_request');
   assert.doesNotMatch(alone.textContent!, /\b0 · 0s|\b0s\b/, 'no cost where nothing was measured');
-  assert.doesNotMatch(
-    text(),
-    /wf_|project_a|sbx_1|ce_request/,
-    'ids live in routes and titles only',
-  );
+  assert.doesNotMatch(text(), /wf_|project_a|ce_request/, 'ids live in routes and titles only');
   assert.doesNotMatch(text(), /Finished task/);
   await click('Filter');
   await click('Ended today');
@@ -226,7 +217,6 @@ const credits = {
     account('acct_mira', 'Personal account'),
     account('acct_lab', 'merv-lab', { pools: [] }),
   ],
-  unavailable: [],
 };
 
 test('credits: left of granted per provider, an unfolded person, and a grant that keeps its key', async (t) => {
@@ -332,7 +322,6 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
     set: true,
     fingerprint: 'a1b2c3d4',
     sharedWith: [],
-    firstSeen: ago(900),
     lastChanged: null,
     lastOk: null,
     lastFailure: null,
@@ -345,10 +334,6 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
     body: {
       at: new Date().toISOString(),
       groups: [
-        {
-          purpose: 'Platform services',
-          credentials: [credential('MERV_DB_URL', { plugin: 'state' })],
-        },
         {
           purpose: 'Pi agents',
           credentials: [
@@ -386,6 +371,10 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
           },
           credentials: [credential('MODAL_TOKEN', { set: false, fingerprint: null })],
         },
+        {
+          purpose: 'Platform services',
+          credentials: [credential('MERV_DB_URL', { plugin: 'state' })],
+        },
       ],
       minted: [
         {
@@ -397,7 +386,6 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
           newestIssued: ago(1),
         },
       ],
-      unavailable: ['identity'],
     },
   });
   await open('/admin/credentials');
@@ -414,5 +402,4 @@ test('credentials: purposes in order, a fingerprint and what shares it, a dead k
   assert.match(text(), /missing/);
   assert.match(text(), /degraded/);
   assert.match(text(), /in 3h/, 'an expiry still to come');
-  assert.doesNotMatch(text(), /unavailable|identity/);
 });

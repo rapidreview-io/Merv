@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { personName } from '@merv/contracts/text';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useActor, useSession, type Actor } from '../session';
 import { EmptyState, term } from '../components';
@@ -6,11 +7,6 @@ import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 import { Invitations } from '../invitations';
 
-/** A directory entry whose name is an identifier names nobody, so the page says nothing. */
-const IDENTIFIER = /[0-9a-f]{8}-[0-9a-f]{4}|[0-9a-f]{16,}|\|/;
-/** A name nobody wrote is not one: an identifier names nobody. */
-export const personName = (name: string | undefined) =>
-  name && !IDENTIFIER.test(name) ? name : undefined;
 /**
  * Up to two initials for the disc that stands for a person, in the rail's account
  * row and beside a post: the first letters of the first two words, and a dot for

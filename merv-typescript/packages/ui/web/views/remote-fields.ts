@@ -72,8 +72,6 @@ export const phrase = (data: Json, parts: UiPhrasePart[], separator = ' · ') =>
     .filter(Boolean)
     .join(separator);
 
-const SYMBOL: Record<string, string> = { USD: '$', EUR: '€', GBP: '£' };
-
 /**
  * What it has cost so far — against its cap, where it has one — over what it costs per
  * hour, and the one word for a rate of zero: `$2.10 of $8.00 · $2.49/h`, or `free`.
@@ -87,7 +85,12 @@ export function formatMoney(
   if (rate === 0 && !total) return 'free';
   // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it.
   const cash = (value: number) =>
-    `${SYMBOL[currency] ?? `${currency} `}${value.toFixed(value && value < 0.1 ? 3 : 2)}`;
+    value.toLocaleString('en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: value && Math.abs(value) < 0.1 ? 3 : 2,
+    });
   return [
     total !== undefined && `${cash(total)}${of === undefined ? '' : ` of ${cash(of)}`}`,
     rate !== undefined && `${cash(rate)}/h`,

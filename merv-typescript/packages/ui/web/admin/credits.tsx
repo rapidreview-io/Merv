@@ -206,7 +206,7 @@ function Account({
     fig('more', '', (s) => more(s.id, s.enabled ? 'Pause schedule' : 'Resume schedule')),
   ];
   return (
-    <section className="admin-account stack" aria-label={account.name}>
+    <section className="stack" aria-label={account.name}>
       <h3 className="admin-account-head">
         {account.name}
         <span className="faint">{clauses.map((clause) => ` · ${clause}`)}</span>

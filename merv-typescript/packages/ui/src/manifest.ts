@@ -61,7 +61,10 @@ const column = z.discriminatedUnion('type', [
     type: z.literal('money'),
     total: field.optional(),
     rate: field.optional(),
-    currency: text(8).optional(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
   }),
   /** One phrase composed from several fields, absent parts skipped: hardware, location. */
   z.object({

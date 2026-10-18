@@ -618,6 +618,13 @@ export function SessionProvider({
   };
   if (state.phase === 'checking' || ('epoch' in state && state.epoch !== epoch))
     return <main className="signin empty">Connecting…</main>;
+  // A drill-in the server refused keeps its credential: it says why and leads back to the admin.
+  if (state.phase === 'anonymous' && readOnly() && hasToken())
+    return (
+      <main className="signin empty">
+        {state.error} <a href="/ui/admin">← Admin</a>
+      </main>
+    );
   if (state.phase === 'anonymous')
     return (
       <SignIn

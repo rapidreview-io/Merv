@@ -2,19 +2,13 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { col, stamp, type Column } from '../components';
 import { elapsed } from '../liveness';
+import { formatMoney } from '../views/remote-fields';
 
-/** Dollars as a table states them: two places, more where a sub-dime amount would read 0. */
-export function usd(value: string | number | null | undefined): string {
-  const n = Number(value);
-  if (value === null || value === undefined || !Number.isFinite(n)) return '—';
-  const places = n && Math.abs(n) < 0.1 ? 3 : 2;
-  return n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: places,
-  });
-}
+/** Dollars as every page states them (`formatMoney`), and a dash where there is no figure. */
+export const usd = (value: string | number | null | undefined) =>
+  value === null || value === undefined || !Number.isFinite(Number(value))
+    ? '—'
+    : formatMoney(Number(value), undefined);
 /** A count a person reads at a glance: 940, 12.5k, 3.1M. */
 export function count(n: number): string {
   const [div, unit] = n >= 1e6 ? [1e6, 'M'] : n >= 1e3 ? [1e3, 'k'] : [1, ''];

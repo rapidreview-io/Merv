@@ -3,6 +3,7 @@ import { useTool } from '../api';
 import { KV, PageLoad, RecordPage, StatusPill, timeRows } from '../components';
 import type { Delivered, Progress } from '../customer/status';
 import { Markdown } from '../markdown';
+import { formatMoney } from '../views/remote-fields';
 import { usd } from './parts';
 
 /** What a standalone experiment's customer is shown (Customer experiments' snapshot), as read here. */
@@ -101,7 +102,7 @@ export function StandaloneView() {
             !!p && ['Stage', `${p.stage} · attempt ${p.attempt} of ${p.maxAttempts}`],
             !!p?.compute && [
               'Compute',
-              `${usd(p.compute.usd)}${p.compute.limitUsd === null ? '' : ` of ${usd(p.compute.limitUsd)}`}`,
+              formatMoney(p.compute.usd, undefined, 'USD', p.compute.limitUsd ?? undefined),
             ],
             ['Now', p?.now],
             ...timeRows(s.createdAt, s.workflow?.updatedAt),

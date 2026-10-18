@@ -4,16 +4,6 @@ import { useTool } from '../api';
 import { Ago, KV, LoadState, PageHeader, Ruled, Word, col, cx, toneOf, words } from '../components';
 import { Facts, In, None, fig } from './parts';
 
-/** The sections in the order a credential's purpose is read: agents, machines, then the rest. */
-const ORDER = [
-  'Pi agents',
-  'Fleet agents',
-  'Fleet machines',
-  'Sandbox provider',
-  'Platform services',
-];
-const place = (purpose: string) => (ORDER.indexOf(purpose) + ORDER.length + 1) % (ORDER.length + 1);
-
 /** An env name, which may break after an underscore and nowhere inside a word. */
 const Env = ({ name }: { name: string }) => (
   <span className="mono">
@@ -85,7 +75,7 @@ type Minted = AdminCredentials['minted'][number];
 export function CredentialsView() {
   const read = useTool<AdminCredentials>('/admin/credentials', {}, { every: 60_000 });
   const data = read.data;
-  const groups = [...(data?.groups ?? [])].sort((a, b) => place(a.purpose) - place(b.purpose));
+  const groups = data?.groups ?? [];
   const all = groups.flatMap((g) => g.credentials);
   const missing = all.filter((c) => !c.set).length;
   const dead = all.filter((c) => c.dead).length;

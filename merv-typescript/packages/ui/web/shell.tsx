@@ -1,3 +1,4 @@
+import { personName } from '@merv/contracts/text';
 import type { UiRowDescription } from '@merv/ui/rows';
 import {
   createContext,
@@ -16,7 +17,7 @@ import { cx } from './components';
 import { ChevronsIcon, RowIcon, SidebarIcon } from './icons';
 import { signedInEmail } from './auth';
 import { onWorn, wear, worn } from './theme';
-import { initials, personName } from './views/people';
+import { initials } from './views/people';
 import { accountLines, documentTitle, holds as held, railSections } from './navigation';
 import { useMenu } from './record-picker';
 import { useTrail } from './trail';
