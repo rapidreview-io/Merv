@@ -25,6 +25,7 @@ import {
   type State,
   type Transaction,
   idSchema,
+  isCheckpointRequestId,
   type Workflows,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
@@ -66,7 +67,7 @@ const checkpointMessage = (name: string | undefined) =>
   name ? cleanText(`Checkpoint: ${name}`, 200) : 'Checkpoint: work in progress';
 /** Whether a command is one of the runner's periodic checkpoints, as `checkpoint` queues them. */
 const automatic = (row: Row) =>
-  /^checkpoint-\d+$/.test(row.request_id) &&
+  isCheckpointRequestId(row.request_id) &&
   (JSON.parse(row.command_json) as CodeCommitCommand).message.startsWith('Checkpoint: ');
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;

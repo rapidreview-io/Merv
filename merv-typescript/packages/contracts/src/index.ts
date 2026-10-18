@@ -58,6 +58,8 @@ export {
   codeCommitInputSchema,
   codeMergeInputSchema,
   codeCommandControlSchema,
+  checkpointRequestId,
+  isCheckpointRequestId,
   codeCommitCommandSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,

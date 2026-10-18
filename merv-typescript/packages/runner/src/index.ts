@@ -5,6 +5,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
   check,
+  checkpointRequestId,
   effectiveWorkspace,
   sessionSecretPattern,
   sessionUsageReportSchema,
@@ -871,7 +872,7 @@ export class MachineRunner implements Runner {
     const expectedHead = await workspaces.checkpointHead(record.id);
     if (!expectedHead) return undefined;
     const count = Number(record.metadata.checkpoints ?? 0) + 1;
-    const checkpoint = { expectedHead, requestId: `checkpoint-${count}` };
+    const checkpoint = { expectedHead, requestId: checkpointRequestId(count) };
     this.save(record.id, { checkpoints: count, checkpoint });
     return checkpoint;
   }
