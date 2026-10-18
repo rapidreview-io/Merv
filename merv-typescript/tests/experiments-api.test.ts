@@ -12,6 +12,8 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import type { Caller } from '@merv/contracts';
 import { feasibilityStatement } from './feasibility-fixture.js';
+import { EXHIBIT_SHOWN_BYTES, exhibitPreview } from '@merv/experiments/tools';
+import type { ExperimentEvidence } from '@merv/experiments/types';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiments-api-'));
@@ -80,6 +82,36 @@ async function fixture(t: TestContext) {
   };
   return { app, source, boot, producer, reviewer, reader, http, connect, call, work };
 }
+
+test('an agent is shown a large exhibit by its result files, without its content', () => {
+  const data = { scores: Array.from({ length: 4000 }, (_, index) => index / 4000) };
+  const content = JSON.stringify({ kind: 'metrics_exhibit', resultFiles: [{ data }] });
+  const preview = exhibitPreview({
+    experimentId: 'wf_large',
+    attemptIndex: 1,
+    path: 'experiments/large/metrics_exhibit.json',
+    content,
+    hash: 'a'.repeat(64),
+    willPin: true,
+    startedAt: '2026-10-13T00:00:00.000Z',
+    sources: [
+      {
+        path: 'scores.json',
+        artifactId: 'art_scores',
+        hash: 'b'.repeat(64),
+        resultFormat: 'json',
+      } as ExperimentEvidence,
+    ],
+  });
+  assert.ok(Buffer.byteLength(content) > EXHIBIT_SHOWN_BYTES);
+  assert.equal(preview.bytes, Buffer.byteLength(content));
+  assert.deepEqual(preview.resultFiles, [
+    { path: 'scores.json', artifactId: 'art_scores', sha256: 'b'.repeat(64), resultFormat: 'json' },
+  ]);
+  assert.ok('omitted' in preview && !('exhibit' in preview));
+  assert.match(preview.omitted, /artifact\.read/);
+  assert.ok(JSON.stringify(preview).length < 1000);
+});
 
 const plan =
   '# Comparison plan\n\n## Summary\nCompare two fixed classifiers on one retained held-out test set.\n\n## Objective & hypothesis\nA improves accuracy over B on the same 100 held-out examples.\n\n## Evaluation\nRun both fixed methods on the same held-out examples. Retain all predictions, including errors. Compute correct predictions divided by 100 for each method and report the paired difference without changing the evaluation set.\n';
@@ -361,6 +393,13 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   const preview = await f.call(producer, 'experiment.exhibit', { experimentId: e.id });
   assert.equal(preview.willPin, true);
   assert.ok(preview.startedAt);
+  // An agent is shown the exhibit's files by id, and a small exhibit itself, never its escaped bytes.
+  assert.deepEqual(
+    preview.resultFiles.map(({ path }: { path: string }) => path),
+    ['results.json'],
+  );
+  assert.equal(preview.exhibit.kind, 'metrics_exhibit');
+  assert.equal('content' in preview, false);
   await attach(
     'report',
     'report.md',

@@ -5,6 +5,7 @@ import type {
   Experiment,
   ExperimentAttach,
   ExperimentCreate,
+  ExperimentExhibit,
   ExperimentTransition,
 } from './types.js';
 import {
@@ -15,6 +16,38 @@ import {
   experimentListSchema,
   experimentTransitionSchema,
 } from './input.js';
+
+/** The largest exhibit an agent is shown whole; Merv's page reads every exhibit whole. */
+export const EXHIBIT_SHOWN_BYTES = 16_000;
+
+/**
+ * What an agent is shown of an exhibit preview: its name, hash and result files by id, and its
+ * content only while small. The content repeats every result file's data, so a large one
+ * (0.5–1.3 MB, escaped inside the JSON) filled executors' contexts at each call (2026-10).
+ */
+export function exhibitPreview(exhibit: ExperimentExhibit) {
+  const bytes = Buffer.byteLength(exhibit.content);
+  return {
+    experimentId: exhibit.experimentId,
+    attemptIndex: exhibit.attemptIndex,
+    path: exhibit.path,
+    hash: exhibit.hash,
+    bytes,
+    willPin: exhibit.willPin,
+    startedAt: exhibit.startedAt,
+    resultFiles: exhibit.sources.map((source) => ({
+      path: source.path,
+      artifactId: source.artifactId,
+      sha256: source.hash,
+      resultFormat: source.resultFormat ?? 'json',
+    })),
+    ...(bytes <= EXHIBIT_SHOWN_BYTES
+      ? { exhibit: JSON.parse(exhibit.content) as unknown }
+      : {
+          omitted: `The exhibit's ${bytes} bytes are not shown: they hold each JSON result file's data exactly as attached, under resultFiles in path order. Read a result with artifact.read by its artifactId.`,
+        }),
+  };
+}
 
 export const experimentsToolsPlugin = {
   name: 'merv-experiments-tools',
@@ -89,11 +122,14 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.exhibit',
         description:
-          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.',
+          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round. You get its path (the filename a report names), hash, size, whether submission pins it and its result files by artifactId; its content, which repeats those files’ data, only up to 16,000 bytes.',
         inputSchema: experimentExhibitSchema,
         readOnly: true,
         handler: async (caller: Caller, input: { experimentId: string }) =>
           await experiments.exhibit(caller, input.experimentId),
+        present: (exhibit: ExperimentExhibit) => ({
+          content: [{ type: 'text' as const, text: JSON.stringify(exhibitPreview(exhibit)) }],
+        }),
       },
     ])
       ctx.effect(() => ctx.tools.register(definition));
