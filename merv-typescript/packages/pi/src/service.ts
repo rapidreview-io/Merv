@@ -143,7 +143,10 @@ export class PiService implements Pi {
         );
   };
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
-  readonly tokensToday: PiCore['tokens']['today'] = (persons) => this.core.tokens.today(persons);
+  readonly tokensUsed: PiCore['tokens']['used'] = (persons, from, to) =>
+    this.core.tokens.used(persons, from, to);
+  readonly setTokenLimit: PiCore['tokens']['setLimit'] = (person, tokens) =>
+    this.core.tokens.setLimit(person, tokens);
   async initialize(): Promise<void> {
     await this.core.credentials.initialize();
     await this.core.state.migrate('pi', piMigrations);

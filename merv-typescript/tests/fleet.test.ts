@@ -1126,19 +1126,107 @@ test('today’s compute counts open machines to now at the price they were reser
   f.advance(30 * 60_000);
   // Two hours of the open machine; the queued request has no machine yet.
   assert.equal((await f.get(queued.id)).phase, 'queued');
-  // An owner that meters model tokens answers for each person asked.
+  // An owner that meters model tokens answers for each person asked, over the window asked.
+  const asked: string[] = [];
   f.fleet.registerOwner('meter', {
     ...f.owner,
-    modelTokens: async (person) => ({ used: person === 'person_a' ? 7 : 0, limit: 9 }),
+    modelTokens: async (person, _sql, from, to) => {
+      asked.push(`${person} ${from} ${to}`);
+      return { used: person === 'person_a' ? 7 : 0, limit: 9, own: false };
+    },
   });
-  assert.deepEqual(await f.fleet.peopleToday(['person_a', 'person_z']), [
-    { usd: 2, usdCap: 2, tokens: { used: 7, limit: 9 } },
-    { usd: 0, usdCap: 2, tokens: { used: 0, limit: 9 } },
-  ]);
+  assert.deepEqual(
+    await f.fleet.peopleUsage(['person_a', 'person_z'], '2026-09-22', '2026-09-23'),
+    [
+      { usd: { used: 2, limit: 2, own: false }, tokens: { used: 7, limit: 9, own: false } },
+      { usd: { used: 0, limit: 2, own: false }, tokens: { used: 0, limit: 9, own: false } },
+    ],
+  );
+  assert.deepEqual(asked, ['person_a 2026-09-22 2026-09-23', 'person_z 2026-09-22 2026-09-23']);
   await assert.rejects(f.ask('a_4'), { code: 'fleet_compute_cap' });
   // A new UTC day starts from nothing, though the machine is still open.
   f.advance(22 * 3_600_000);
   assert.equal((await f.ask('a_5')).person, 'person_a');
+});
+
+test('a person’s machine dollars count in each window for the hours they ran inside it', async (t) => {
+  const f = await capped(t);
+  f.price(1);
+  // Rented at 23:00 and still open at 01:00: an hour on each side of midnight.
+  f.advance(23 * 3_600_000);
+  await f.ask('a_1');
+  await f.fleet.tick();
+  f.advance(2 * 3_600_000);
+  const used = async (from: string, to: string, persons = ['person_a']) =>
+    (await f.fleet.peopleUsage(persons, from, to)).map(({ usd }) => usd.used);
+  assert.deepEqual(await used('2026-09-22', '2026-09-23'), [1]);
+  assert.deepEqual(await used('2026-09-23', '2026-09-24'), [1]);
+  assert.deepEqual(await used('2026-09-17', '2026-09-24'), [2]);
+  assert.deepEqual(await used('1970-01-01', '2026-09-24'), [2]);
+  assert.deepEqual(await used('2026-09-23', '2026-09-24', ['person_a', 'person_b']), [1, 0]);
+  // Today's cap counts today alone: the hour before midnight is yesterday's.
+  assert.equal((await f.ask('a_2')).person, 'person_a');
+});
+
+test('a person’s own daily dollars replace the deployment’s cap, above it or below it, until cleared', async (t) => {
+  const f = await capped(t);
+  f.price(1);
+  await f.ask('a_1');
+  await f.ask('b_1');
+  await f.fleet.tick();
+  f.advance(2 * 3_600_000);
+  // Each has spent the $2 default: Ann's own $5 lets her rent again; Bo's own $1 would not have.
+  await assert.rejects(f.ask('a_2'), { code: 'fleet_compute_cap' });
+  await f.fleet.setPersonLimit('person_a', 'usd', 5);
+  assert.equal((await f.ask('a_2')).person, 'person_a');
+  await f.fleet.setPersonLimit('person_b', 'usd', 1);
+  await assert.rejects(f.ask('b_2'), { code: 'fleet_compute_cap' });
+  const [ann, bo] = await f.fleet.peopleUsage(['person_a', 'person_b'], '2026-09-22', '2026-09-23');
+  assert.deepEqual(
+    [ann!.usd, bo!.usd],
+    [
+      { used: 2, limit: 5, own: true },
+      { used: 2, limit: 1, own: true },
+    ],
+  );
+  // Cleared, the deployment's cap holds again.
+  await f.fleet.setPersonLimit('person_a', 'usd', null);
+  await assert.rejects(f.ask('a_3'), { code: 'fleet_compute_cap' });
+  assert.deepEqual((await f.fleet.peopleUsage(['person_a'], '2026-09-22', '2026-09-23'))[0]!.usd, {
+    used: 2,
+    limit: 2,
+    own: false,
+  });
+});
+
+test('where the deployment caps nobody, a person’s own cap prices and admits their machines alone', async (t) => {
+  const f = await capped(t, { dailyUsdPerPerson: undefined });
+  f.price(1);
+  await f.fleet.setPersonLimit('person_a', 'usd', 1);
+  const own = await f.ask('a_1');
+  const free = await f.ask('b_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(own.id)).usdPerHour, 1);
+  assert.equal((await f.get(free.id)).usdPerHour, undefined);
+  f.advance(3_600_000);
+  await assert.rejects(f.ask('a_2'), { code: 'fleet_compute_cap' });
+  assert.equal((await f.ask('b_2')).person, 'person_b');
+  // Model tokens are the metering owner's own limit, which Fleet only forwards.
+  await assert.rejects(f.fleet.setPersonLimit('person_a', 'tokens', 10), {
+    code: 'fleet_owner_unavailable',
+  });
+  const set: unknown[] = [];
+  f.fleet.registerOwner('meter', {
+    ...f.owner,
+    modelTokens: async () => ({ used: 0, limit: 9, own: false }),
+    setModelTokens: async (...limit) => void set.push(limit),
+  });
+  await f.fleet.setPersonLimit('person_a', 'tokens', 10);
+  await f.fleet.setPersonLimit('person_a', 'tokens', null);
+  assert.deepEqual(set, [
+    ['person_a', 10],
+    ['person_a', null],
+  ]);
 });
 
 test('a capped request waits for its offer’s price, then is refused ten minutes after Fleet could first read it', async (t) => {
@@ -1338,12 +1426,15 @@ test('the reads every pass makes walk their indexes, not the whole history', asy
       (await tx.all<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, ...params))
         .map((row) => row['QUERY PLAN'])
         .join('\n');
-    /** EXPLAIN the one statement `read` sends, exactly as Fleet sends it. */
+    /** EXPLAIN the one statement on allocations `read` sends, exactly as Fleet sends it. */
     const plan = async (read: () => Promise<unknown>) => {
       all.mock.resetCalls();
       await read();
-      assert.equal(all.mock.callCount(), 1);
-      const [sql, ...params] = all.mock.calls[0]!.arguments;
+      const reads = all.mock.calls.filter(({ arguments: [sql] }) =>
+        sql.includes('FROM fleet_allocations'),
+      );
+      assert.equal(reads.length, 1);
+      const [sql, ...params] = reads[0]!.arguments;
       return explain(sql, ...params);
     };
     return {

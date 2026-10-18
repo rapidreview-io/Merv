@@ -281,8 +281,12 @@ export interface PiRuntime extends Pi {
   /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it
    *  public and closes it with the mount. */
   modelRelay(): ModelRelayHandle;
-  /** For the platform admin only, never a tool: each of `persons`' Agent tokens today (UTC). */
-  tokensToday(persons: readonly string[]): Promise<ModelTokens[]>;
+  /** For the platform admin only, never a tool: each of `persons`' Agent tokens over the UTC
+   *  days [from, to), with the daily limit that holds for them now. */
+  tokensUsed(persons: readonly string[], from: string, to: string): Promise<ModelTokens[]>;
+  /** For the platform admin only, never a tool: sets `person`'s own daily Agent tokens, or clears
+   *  them (null) so the deployment's ceiling holds again. */
+  setTokenLimit(person: string, tokens: number | null): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {

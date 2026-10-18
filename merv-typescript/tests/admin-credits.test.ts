@@ -8,7 +8,7 @@ import { Context } from 'cordis';
 import type { ZodType } from 'zod';
 import { createService, MervError, type Principal } from '@merv/contracts';
 import { adminPlugin } from '@merv/admin';
-import type { AdminCredits } from '@merv/admin/models';
+import type { AdminCredits, CreditUse, PersonCredits } from '@merv/admin/models';
 import type { ApiRequest, MountHandler } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import { ProjectScope } from '@merv/scope';
@@ -84,33 +84,41 @@ async function fixture(t: TestContext, sandboxes = true) {
     );
   const refused = (code: string, status: number) => (error: unknown) =>
     error instanceof MervError && error.code === code && error.status === status;
-  return { ctx, state, call, refused };
+  /** A verified sign-in: a person of the directory. */
+  const signIn = (subject: string) =>
+    ctx.scope.members.acceptVerifiedIdentity({
+      issuer,
+      subject,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+  const audit = () =>
+    state.read((sql) =>
+      sql.all<{ subject: string; action: string; target: string; detail_json: string }>(
+        'SELECT subject,action,target,detail_json FROM admin_audit ORDER BY at,id',
+      ),
+    );
+  return { ctx, state, call, refused, signIn, audit };
 }
+const keyOf = (subject: string) => personKey({ issuer, subject }, { projectId: '', actorId: '' });
+const drawer = (subject: string) =>
+  `/admin/credits/people/${encodeURIComponent(`${issuer}|${subject}`)}`;
+/** UTC day `offset` days from today's. */
+const day = (offset: number) =>
+  new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** Each window's start, as the drawer asks its owners: today, 7 days, 30 days, all time. */
+const windows = () => ({ [day(0)]: 1, [day(-6)]: 2, [day(-29)]: 3, '1970-01-01': 4 });
 
-test('credits read per person, account and provider, as report() computes them, with no lock or write', async (t) => {
+test('the list and the drawer read each credit type from its owner per window, and Sandboxes with no lock or write', async (t) => {
   const f = await fixture(t);
-  const scope = f.ctx.scope;
-  const alice = await scope.members.acceptVerifiedIdentity({
-    issuer,
-    subject: 'alice',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  });
-  const project = await scope.members.createProject(alice, { name: 'Ledger', requestId: 'p' });
-  // Alice signed in to Sandboxes, with her own account; her project pays from an operator's.
+  await f.signIn('alice');
+  await f.signIn('bob');
+  // Alice signed in to Sandboxes, with her own account; Bob has none yet.
   const person = await f.ctx.sbxAuth.persons.ensureIdentity({
     issuer,
     subject: 'alice',
     displayName: 'Alice',
   });
   const [own] = await f.ctx.sbxAccounts.accountsOf(person.id);
-  const payer = await f.ctx.sbxAccounts.ensureNativeNamespace('ops');
-  await f.ctx.sbxDb.transaction((q) =>
-    f.ctx.sbxAccounts.setLink(q, 'ops', {
-      projectId: project.id,
-      memberId: payer.default_member_id,
-    }),
-  );
-  const credits = f.ctx.sbxBilling.credits;
   await f.call('POST', '/admin/credits/grants', {
     id: 'g1',
     accountId: own!.id,
@@ -119,90 +127,143 @@ test('credits read per person, account and provider, as report() computes them, 
     validFrom,
     reason: 'Welcome credit',
   });
-  await f.call('POST', '/admin/credits/grants', {
-    id: 'g2',
-    accountId: payer.account_id,
-    provider: 'fake',
-    amount: '4.5',
-    validFrom,
-    reason: 'Pilot',
-  });
-  await f.call('POST', '/admin/credits/grants/g2/revoke');
   // Started two days ago, the schedule has three periods due that nothing has issued yet.
-  const day = 86_400_000;
   await f.call('POST', '/admin/credits/schedules', {
     id: 's1',
-    accountId: payer.account_id,
+    accountId: own!.id,
     provider: 'fake',
     amount: '1',
     cadence: 'daily',
-    startsAt: new Date(Date.now() - 2 * day - 1000).toISOString(),
+    startsAt: new Date(Date.now() - 2 * 86_400_000 - 1000).toISOString(),
     validityPeriods: null,
     enabled: true,
   });
-  // A budget cap is its own limit, listed beside the credits and never in them.
-  await f.ctx.sbxBilling.setPolicy(payer.account_id, 'ops-cap', {
-    scope: 'namespace',
-    target: 'ops',
-    window: 'month',
-    metric: 'money',
-    currency: 'USD',
-    cap: Decimal.fromInt(50),
-    provider: 'fake',
-    source: null,
+  // Pi and Fleet answer each window they are asked for: its number, from 1 (today) to 4 (all).
+  const asked: string[] = [];
+  const reading = (owner: string, from: string, to: string) => {
+    asked.push(`${owner} ${from} ${to}`);
+    return windows()[from]!;
+  };
+  const alice = keyOf('alice');
+  f.ctx.provide('pi', {
+    tokensUsed: async (keys: string[], from: string, to: string) => {
+      const n = reading('pi', from, to);
+      return keys.map((k) => ({ used: k === alice ? 100 * n : 0, limit: 1000, own: k === alice }));
+    },
   });
-  // Fleet is asked for each person by the key it charges them under; Pi is not loaded here.
-  const key = personKey({ issuer, subject: 'alice' }, { projectId: '', actorId: '' });
   f.ctx.provide('fleet', {
-    peopleToday: async (keys: string[]) =>
-      keys.map((k) => ({ usd: k === key ? 1.5 : 0, usdCap: 20, tokens: { used: 3, limit: 9 } })),
+    peopleUsage: async (keys: string[], from: string, to: string) => {
+      const n = reading('fleet', from, to);
+      return keys.map((k) => ({
+        usd: { used: k === alice ? 1.5 * n : 0, limit: 20, own: false },
+        tokens: { used: k === alice ? 10 * n : 0, limit: 50, own: false },
+      }));
+    },
   });
   const issued = () => f.ctx.sbxDb.get('SELECT count(*)::int AS n FROM infra_credit_grants');
   const before = await issued();
-  const view = (await f.ctx.sbxDb.transaction(async (q) => {
-    await f.ctx.sbxAccounts.lock(q, payer.account_id);
+  const [list, drawn, none] = await f.ctx.sbxDb.transaction(async (q) => {
+    // Holding the account and operator locks would stall anything that takes them.
+    await f.ctx.sbxAccounts.lock(q, own!.id);
     await advisoryXactLock(q, f.ctx.sbxDb.lockText('operator-credit-admission'), 0);
-    return await f.call('GET', '/admin/credits');
-  })) as AdminCredits;
+    return [
+      (await f.call('GET', '/admin/credits')) as AdminCredits,
+      (await f.call('GET', drawer('alice'))) as PersonCredits,
+      (await f.call('GET', drawer('bob'))) as PersonCredits,
+    ];
+  });
   assert.deepEqual(await issued(), before);
-  assert.deepEqual(view.providers, ['fake']);
-  assert.deepEqual(view.people, [
-    {
-      label: 'Alice',
-      issuer,
-      subject: 'alice',
-      accounts: [{ accountId: own!.id, role: 'admin' }],
-      fleet: { usd: 1.5, usdCap: 20, tokens: { used: 3, limit: 9 } },
-      pi: null,
-    },
+  const tomorrow = day(1);
+  assert.deepEqual(asked, [
+    // The list asks for today alone, the drawer for each window, every one ending tomorrow.
+    ...['pi', 'fleet'].map((owner) => `${owner} ${day(0)} ${tomorrow}`),
+    ...['pi', 'fleet'].flatMap((owner) =>
+      Object.keys(windows()).map((from) => `${owner} ${from} ${tomorrow}`),
+    ),
+    ...['pi', 'fleet'].flatMap((owner) =>
+      Object.keys(windows()).map((from) => `${owner} ${from} ${tomorrow}`),
+    ),
   ]);
-  const account = (id: string) => view.accounts.find((a) => a.accountId === id)!;
-  assert.deepEqual(
-    account(payer.account_id).budgets.map((b) => [b.id, b.window, b.cap, b.provider]),
-    [['ops-cap', 'month', '50', 'fake']],
-  );
-  assert.deepEqual(account(payer.account_id).projects, [{ projectId: project.id, name: 'Ledger' }]);
-  // report() issues the due periods now; only their creation time can differ from the view.
-  const issuedAs = (grants: AdminCredits['accounts'][number]['grants']) =>
+  const used = (n: number) => ({ day: n, week: 2 * n, month: 3 * n, total: 4 * n });
+  const kinds: CreditUse[] = [
+    {
+      kind: 'agent-tokens',
+      label: 'Agent tokens',
+      unit: 'tokens',
+      limit: 1000,
+      own: true,
+      used: used(100),
+      left: 900,
+    },
+    {
+      kind: 'fleet-tokens',
+      label: 'Fleet agent tokens',
+      unit: 'tokens',
+      limit: 50,
+      own: false,
+      used: used(10),
+      left: 40,
+    },
+    {
+      kind: 'fleet-usd',
+      label: 'Fleet machines',
+      unit: 'usd',
+      limit: 20,
+      own: false,
+      used: used(1.5),
+      left: 18.5,
+    },
+    // The grant and the three periods due: granted is the provider's limit, available what is left.
+    {
+      kind: 'provider:fake',
+      label: 'Fake',
+      unit: 'usd',
+      limit: 13,
+      own: false,
+      used: used(0),
+      left: 13,
+    },
+  ];
+  const { settlements, pools, account_id, currency, ...held } =
+    await f.ctx.sbxBilling.credits.report(own!.id);
+  // report() issues the due periods now; only their creation time can differ from the drawer.
+  const issuedAs = (grants: PersonCredits['grants']) =>
     grants.map(({ created_at, ...grant }) => grant);
-  for (const id of [own!.id, payer.account_id]) {
-    const { pools, grants, schedules } = await credits.report(id);
-    assert.deepEqual(
-      { ...account(id), grants: issuedAs(account(id).grants) },
-      { ...account(id), pools, schedules, grants: issuedAs(grants) },
-    );
-  }
-  assert.deepEqual(account(payer.account_id).pools, [
+  assert.deepEqual(
+    { ...drawn, grants: issuedAs(drawn.grants) },
     {
-      provider: 'fake',
-      granted: '7.5',
-      used: '0',
-      reserved: '0',
-      available: '3',
-      expired: '0',
-      revoked: '4.5',
+      person: { key: `${issuer}|alice`, label: 'Alice', issuer, subject: 'alice' },
+      accountId: own!.id,
+      kinds,
+      grants: issuedAs(held.grants),
+      schedules: held.schedules,
     },
-  ]);
+  );
+  // A person without an account sees every connected provider, with nothing granted.
+  assert.deepEqual(none, {
+    person: { key: `${issuer}|bob`, label: 'Unnamed', issuer, subject: 'bob' },
+    accountId: null,
+    kinds: [
+      ...kinds.slice(0, 3).map((kind) => ({
+        ...kind,
+        own: false,
+        used: used(0),
+        left: kind.limit,
+      })),
+      { ...kinds[3]!, limit: 0, left: 0 },
+    ],
+    grants: [],
+    schedules: [],
+  });
+  // The list: one row per person with today's use of each type.
+  assert.deepEqual(list.providers, ['fake']);
+  assert.deepEqual(
+    list.people.map(({ kinds, ...person }) => [person, kinds]),
+    [drawn, none].map(({ person, kinds }) => [
+      person,
+      kinds.map(({ used, ...kind }) => ({ ...kind, used: used.day })),
+    ]),
+  );
 });
 
 test('credit writes land in Sandboxes through CreditService and in the admin audit log', async (t) => {
@@ -260,6 +321,103 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
   assert.deepEqual(JSON.parse(audit[0]!.detail_json), grant);
 });
 
+test('a grant may name a person: it lands on their own account, which the bridge makes sure of', async (t) => {
+  const f = await fixture(t);
+  await f.signIn('carol');
+  const grant = {
+    id: 'g1',
+    person: `${issuer}|carol`,
+    provider: 'fake',
+    amount: '5',
+    validFrom,
+    reason: 'Base credit',
+  };
+  await assert.rejects(
+    f.call('POST', '/admin/credits/grants', grant),
+    f.refused('credits_unavailable', 503),
+  );
+  // The Merv↔Sandboxes bridge, as its builder provides it: the person's own account, made once.
+  const ensured: unknown[] = [];
+  f.ctx.provide('sandboxesPeople', {
+    ensure: async (who) => {
+      ensured.push(who);
+      const person = await f.ctx.sbxAuth.persons.ensureIdentity(who);
+      return { accountId: (await f.ctx.sbxAccounts.namespace(person.home_namespace!)).account_id };
+    },
+  });
+  assert.deepEqual(await f.call('POST', '/admin/credits/grants', grant), { id: 'g1' });
+  assert.deepEqual(ensured, [{ issuer, subject: 'carol', label: undefined }]);
+  const { accountId, grants, kinds } = (await f.call('GET', drawer('carol'))) as PersonCredits;
+  assert.deepEqual(
+    grants.map((g) => [g.id, g.amount, g.available]),
+    [['g1', '5', '5']],
+  );
+  assert.deepEqual(
+    kinds.map(({ kind, limit, left }) => [kind, limit, left]),
+    [['provider:fake', 5, 5]],
+  );
+  const [row] = await f.audit();
+  assert.deepEqual([row!.action, row!.target], ['credits.grant', accountId]);
+  assert.deepEqual(JSON.parse(row!.detail_json), grant);
+  // An account and a person at once, or neither, is refused; so is a person nobody signed in as.
+  const { person: _, ...unnamed } = grant;
+  for (const body of [{ ...grant, accountId }, unnamed])
+    await assert.rejects(
+      f.call('POST', '/admin/credits/grants', body),
+      f.refused('invalid_input', 400),
+    );
+  await assert.rejects(
+    f.call('POST', '/admin/credits/grants', { ...grant, person: `${issuer}|nobody` }),
+    f.refused('not_found', 404),
+  );
+  assert.equal((await f.audit()).length, 1);
+});
+
+test('a person’s own limits are set and cleared in their owners, each recorded as credits.limit', async (t) => {
+  const f = await fixture(t);
+  await f.signIn('dana');
+  const path = `${drawer('dana')}/limits`;
+  await assert.rejects(
+    f.call('POST', path, { kind: 'agent-tokens', limit: 5 }),
+    f.refused('credits_unavailable', 503),
+  );
+  const set: unknown[] = [];
+  f.ctx.provide('pi', { setTokenLimit: async (...limit: unknown[]) => void set.push(limit) });
+  f.ctx.provide('fleet', { setPersonLimit: async (...limit: unknown[]) => void set.push(limit) });
+  const bodies = [
+    { kind: 'agent-tokens', limit: 2_000_000 },
+    { kind: 'fleet-tokens', limit: 500 },
+    { kind: 'fleet-usd', limit: 12.5 },
+    { kind: 'fleet-usd', limit: null },
+  ];
+  for (const body of bodies) assert.deepEqual(await f.call('POST', path, body), body);
+  const key = keyOf('dana');
+  assert.deepEqual(set, [
+    [key, 2_000_000],
+    [key, 'tokens', 500],
+    [key, 'usd', 12.5],
+    [key, 'usd', null],
+  ]);
+  // A value its owner would not take is refused before the owner is asked.
+  for (const body of [
+    { kind: 'agent-tokens', limit: 1.5 },
+    { kind: 'fleet-tokens', limit: 0 },
+    { kind: 'fleet-usd', limit: -1 },
+    { kind: 'provider:fake', limit: 5 },
+    { kind: 'fleet-usd' },
+  ])
+    await assert.rejects(f.call('POST', path, body), f.refused('invalid_input', 400));
+  await assert.rejects(
+    f.call('POST', `${drawer('nobody')}/limits`, bodies[0]),
+    f.refused('not_found', 404),
+  );
+  assert.equal(set.length, 4);
+  assert.deepEqual(
+    (await f.audit()).map((row) => [row.action, row.target, JSON.parse(row.detail_json)]),
+    bodies.map((body) => ['credits.limit', `${issuer}|dana`, body]),
+  );
+});
+
 test('only an admin may read or assign credits, and only real providers, accounts and amounts', async (t) => {
   const f = await fixture(t);
   const { account_id: accountId } = await f.ctx.sbxAccounts.ensureNativeNamespace('team');
@@ -274,6 +432,14 @@ test('only an admin may read or assign credits, and only real providers, account
     );
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', grant, who),
+      f.refused('forbidden', 403),
+    );
+    await assert.rejects(
+      f.call('GET', drawer('founder'), undefined, who),
+      f.refused('forbidden', 403),
+    );
+    await assert.rejects(
+      f.call('POST', `${drawer('founder')}/limits`, { kind: 'fleet-usd', limit: 9 }, who),
       f.refused('forbidden', 403),
     );
   }
@@ -304,6 +470,7 @@ test('without Sandboxes the credit routes answer 503 credits_unavailable', async
   const f = await fixture(t, false);
   for (const [method, path] of [
     ['GET', '/admin/credits'],
+    ['GET', drawer('founder')],
     ['POST', '/admin/credits/grants'],
     ['POST', '/admin/credits/schedules'],
     ['POST', '/admin/credits/grants/g1/revoke'],
