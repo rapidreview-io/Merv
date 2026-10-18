@@ -26,6 +26,7 @@ import {
   type StageSpan,
 } from '../trajectory';
 import { StepBody } from './agent-live';
+import { useReadsAgents } from '../session';
 import { readParts } from './threads';
 
 /**
@@ -52,11 +53,12 @@ function useWidth<T extends HTMLElement>() {
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    setWidth(Math.floor(element.getBoundingClientRect().width));
+    // A container that cannot be measured (a test's document) is drawn at a plain width.
+    setWidth(Math.floor(element.getBoundingClientRect().width) || 720);
     // A document without ResizeObserver (a test's) keeps the width it was measured at.
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(([entry]) =>
-      setWidth(Math.floor(entry?.contentRect.width ?? 0)),
+      setWidth(Math.floor(entry?.contentRect.width ?? 0) || 720),
     );
     observer.observe(element);
     return () => observer.disconnect();
@@ -68,7 +70,7 @@ function useWidth<T extends HTMLElement>() {
  * Every kept visit's events, read thread by thread, part after part, and read again when a
  * visit ends (its stream becomes a kept one). The live visit's blocks come from its stream.
  */
-function useKeptBlocks(threads: readonly ThreadView[]) {
+function useKeptBlocks(threads: readonly ThreadView[], reads: boolean) {
   const [kept, setKept] = useState(new Map<string, AgentBlock[]>());
   const key = threads
     .map(
@@ -77,6 +79,7 @@ function useKeptBlocks(threads: readonly ThreadView[]) {
     )
     .join(',');
   useEffect(() => {
+    if (!reads) return;
     const events = new Map<string, AgentStreamEvent[]>();
     const stops = threads.map((thread) =>
       readParts(
@@ -98,7 +101,7 @@ function useKeptBlocks(threads: readonly ThreadView[]) {
     return () => stops.forEach((stop) => stop());
     // Read anew only when a thread joins or a visit's liveness changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, reads]);
   return kept;
 }
 
@@ -131,7 +134,9 @@ export function Trajectory({
   /** Opens a thread's conversation. */
   onOpen(threadId: string): void;
 }) {
-  const kept = useKeptBlocks(threads);
+  // A reader short of operator sees the visits, never what was said in them.
+  const reads = useReadsAgents();
+  const kept = useKeptBlocks(threads, reads);
   const [live, setLive] = useState(new Map<string, AgentBlock[]>());
   const onBlocks = (sessionId: string, blocks: AgentBlock[]) =>
     setLive((was) => (was.get(sessionId) === blocks ? was : new Map(was).set(sessionId, blocks)));
@@ -250,13 +255,14 @@ export function Trajectory({
   const showList = !pickedMoment && (!!selection || !!listKind);
   return (
     <div className="traj" ref={frame}>
-      {threads.flatMap((thread) =>
-        thread.visits
-          .filter((visit) => visit.status === 'active')
-          .map((visit) => (
-            <LiveBlocks key={visit.sessionId} sessionId={visit.sessionId} onBlocks={onBlocks} />
-          )),
-      )}
+      {reads &&
+        threads.flatMap((thread) =>
+          thread.visits
+            .filter((visit) => visit.status === 'active')
+            .map((visit) => (
+              <LiveBlocks key={visit.sessionId} sessionId={visit.sessionId} onBlocks={onBlocks} />
+            )),
+        )}
       {width > 0 && (
         <svg
           className={cx('traj-svg', dragging.current && 'traj-svg--brushing')}

@@ -46,6 +46,15 @@ const press = async (element: Element | null | undefined) => {
   await act(async () => void (element as HTMLElement).click());
   await settle(10);
 };
+/** A press on an SVG control, which has no click() of its own. */
+const tap = async (element: Element | null | undefined) => {
+  assert.ok(element, 'the control is drawn');
+  await act(
+    async () => void element!.dispatchEvent(new window.MouseEvent('click', { bubbles: true })),
+  );
+  await settle(10);
+};
+const lanes = () => all('.traj-when').map((label) => label.textContent);
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(
     (item) => item.textContent?.trim() === label || item.getAttribute('aria-label') === label,
@@ -465,30 +474,28 @@ test('a browser that keeps nothing still opens on the document and switches tabs
   assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
 });
 
-test('Agents lists every thread by stage in stage order, and reads one in place', async (t) => {
+test('Agents draws one lane a visit in time order under its stage, and opens a conversation in place', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());
   localStorage.clear();
   await sidebar(panel(unitOf()));
   await press(tab('Agents'));
-  // Each thread is the card the Agents page draws: its name, its stage and standing, and at its
-  // foot its role, its visits and when it was last active.
-  const groups = all('.unit-group').map((group) => [
-    group.querySelector('.unit-group-head')!.textContent,
-    [...group.querySelectorAll('.agent-card')].map((card) => [
-      card.querySelector('.agent-card-word')!.textContent,
-      card.querySelector('.agent-card-sub')!.textContent,
-      [...card.querySelector('.agent-card-meta')!.children]
-        .map((cell) => cell.textContent)
-        .slice(0, 2),
-    ]),
-  ]);
-  assert.deepEqual(groups, [
-    ['Planned', [['Producer', 'planned · dormant', ['P', '1 visit']]]],
-    ['Design review', [['Reviewer', 'design review · retired', ['R', '1 visit']]]],
-  ]);
-  assert.ok(all('.agent-card-meta time').length === 2, 'each card says when it was last active');
-  await press(button('Producer · planned · dormant'));
+  // The stages run along the top and each visit is one lane, in the order they ran, labelled
+  // by its stage and how long it took; what was said is read and counted in the chips.
+  assert.deepEqual(
+    all('.traj-stage text').map((label) => label.textContent),
+    ['Planned · 1s', 'Design review · 1s'],
+  );
+  assert.deepEqual(lanes(), ['Planned · 0s', 'Design review · 0s']);
+  await settle(30);
+  assert.ok(
+    all('.traj-chip').some((chip) => chip.textContent === '1 message'),
+    'the chips count what the agents said',
+  );
+  // A lane's label takes that session in hand; its conversation opens in place, no dialog.
+  await tap($('.traj-who'));
+  assert.match($('.traj-list .traj-picked-label')!.textContent!, /Producer · planned/);
+  await press(button('Open conversation'));
   assert.equal($('dialog[open]'), null, 'no dialog opens');
   await settle(30);
   assert.match(reading().textContent!, /Drafted the warmup plan\./);
@@ -497,10 +504,10 @@ test('Agents lists every thread by stage in stage order, and reads one in place'
     /Producer · Planned · dormant/,
   );
   await press(button('← Agents'));
-  assert.equal(all('.agent-card').length, 2);
+  assert.equal(all('.traj-who').length, 2);
 });
 
-test('Agents also lists the threads of the records its owner names inside the unit', async (t) => {
+test('Agents also draws the visits of the records its owner names inside the unit', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());
   localStorage.clear();
@@ -525,15 +532,8 @@ test('Agents also lists the threads of the records its owner names inside the un
   );
   assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
   await press(tab('Agents'));
-  assert.deepEqual(
-    all('.unit-group-head').map((head) => head.textContent),
-    ['Planned', 'Design review', 'Reflecting'],
-  );
-  // A lens's agent is named by its lens, as its owner names it in the unit.
-  assert.deepEqual(
-    all('.agent-card .agent-card-word').map((name) => name.textContent),
-    ['Producer', 'Reviewer', 'Evidence lens'],
-  );
+  // A lens's visit stands among the unit's own, in the order they ran, under its own stage.
+  assert.deepEqual(lanes(), ['Planned · 0s', 'Reflecting · 0s', 'Design review · 0s']);
   // One read for the unit and every record inside it, not one per record.
   assert.ok(requests.includes('GET /sessions/threads?instanceId=wf_1&instanceId=wf_lens'));
   assert.ok(!requests.includes('GET /sessions/threads?instanceId=wf_lens'));
@@ -580,7 +580,7 @@ test('an address naming a thread opens Agents on it, a thread of a record inside
   assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · Reflecting/);
 });
 
-test('a thread a later record inside the unit resumed is listed once, under the record it is on', async (t) => {
+test('a thread a later record inside the unit resumed draws each of its visits once', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());
   localStorage.clear();
@@ -605,18 +605,24 @@ test('a thread a later record inside the unit resumed is listed once, under the 
   );
   assert.deepEqual(tabs(), ['Document', 'Agents3', 'Artifacts3']);
   await press(tab('Agents'));
-  assert.deepEqual(
-    all('.agent-card .agent-card-word').map((name) => name.textContent),
-    ['Producer', 'Reviewer', 'Evidence lens'],
-  );
+  // Each of its visits is one lane, once, among the unit's own.
+  assert.deepEqual(lanes(), [
+    'Planned · 0s',
+    'Reflecting · 0s',
+    'Reflecting · 0s',
+    'Design review · 0s',
+  ]);
 });
 
-test('a reader who is not an operator reads a thread’s visits in place, never its conversation', async (t) => {
+test('a reader who is not an operator sees the visits as lanes, never what was said in them', async (t) => {
   t.after(unmount);
   t.after(() => localStorage.clear());
   localStorage.setItem('merv:unit-tab:experiment', 'agents');
   await sidebar(panel(unitOf()), true, 'reader');
-  await press(button('Producer · planned · dormant'));
+  assert.deepEqual(lanes(), ['Planned · 0s', 'Design review · 0s']);
+  assert.ok(!all('.traj-chip').length, 'nothing said is counted');
+  await tap($('.traj-who'));
+  await press(button('Open conversation'));
   // Its visits are the timeline's dividers; what the agent said is never asked for.
   assert.match(reading().querySelector('.agent-divider')!.textContent!, /^Visit 1/);
   assert.equal(button('Conversation'), undefined);

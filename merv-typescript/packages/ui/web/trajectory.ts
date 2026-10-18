@@ -313,10 +313,12 @@ export function stageSpans(lanes: readonly Lane[]): StageSpan[] {
   const spans: StageSpan[] = [];
   for (const lane of [...lanes].sort((a, b) => a.start - b.start)) {
     const last = spans.at(-1);
+    // A visit lasts at least the second the axis gives it, so its stage has a band to stand on.
+    const end = Math.max(lane.end, lane.start + 1000);
     if (last && last.state === lane.stage) {
       last.lanes.push(lane);
-      last.end = Math.max(last.end, lane.end);
-    } else spans.push({ state: lane.stage, start: lane.start, end: lane.end, lanes: [lane] });
+      last.end = Math.max(last.end, end);
+    } else spans.push({ state: lane.stage, start: lane.start, end, lanes: [lane] });
   }
   return spans;
 }
