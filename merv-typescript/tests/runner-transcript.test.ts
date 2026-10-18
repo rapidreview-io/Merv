@@ -308,6 +308,7 @@ function seed(
   fake: ReturnType<typeof server>,
   name: string,
   printed?: string,
+  extra: Body = {},
 ) {
   const ledger = f.ledger();
   const session: Body = { ...offer(name), runnerId: ledger.runnerId };
@@ -315,7 +316,7 @@ function seed(
     id: launchId(session.id),
     sessionId: session.id,
     deadline: Date.now() + 3_600_000,
-    metadata: { platform: 'a', requestId: `request_${name}` },
+    metadata: { platform: 'a', requestId: `request_${name}`, ...extra },
   });
   ledger.close();
   ended(f.config.directory, record.id, { status: 'exited', reason: null, exitCode: 0 });
@@ -450,6 +451,19 @@ test('a capture that keeps failing holds the release, never the transcript it de
     assert.equal(sessions.of('PUT'), 1, 'delivered once');
     await runner.stop();
   }
+});
+
+test('a launch whose driver is not composed delivers what it declared while it waits for it', async (t) => {
+  const fake = server(() => null);
+  const sessions = transcripts(fake);
+  const f = machine(t, [node('a')], sessions.fetch);
+  const { session, id } = seed(f, fake, 'driverless', 'printed\n', { workspaceDriver: 'code.v2' });
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => transcript(f, id)?.state === 'uploaded', 'the delivered transcript');
+  assert.equal(fake.releases(session.id).length, 1);
+  assert.equal(runner.snapshot().lastError, 'workspace_driver_missing');
+  assert.deepEqual(open(f), [id], 'it settles once its driver is back');
 });
 
 test('each release try declares once, from one read; a log changed since is not sent', async (t) => {
