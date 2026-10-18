@@ -134,10 +134,12 @@ const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
  * since a worker's own tools (`session.ask_owner`) need only read scope.
  */
 const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
-/** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
+/**
+ * Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once.
+ * It gives a worker's connection no MCP instructions: Codex repeats a server's instructions at
+ * the head of every tool it lists, about a hundred times, and the worker prompt already says them.
+ */
 export class SessionInvocations implements SessionToolPolicy {
-  readonly instructions =
-    'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.';
   /** The invocation whose handler runs, which Sessions' guard reads. */
   readonly toolHandler = new AsyncLocalStorage<string>();
   private readonly invocations = new WeakMap<SessionToolInvocation, InvocationState>();

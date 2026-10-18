@@ -20,9 +20,18 @@ export const scopeToolsPlugin = {
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
       conversation?: 'never',
+      worker?: 'never',
     ) =>
       ctx.effect(() =>
-        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+        ctx.tools.register({
+          name,
+          description,
+          inputSchema,
+          handler,
+          readOnly,
+          conversation,
+          worker,
+        }),
       );
     register(
       'project.get',
@@ -44,6 +53,9 @@ export const scopeToolsPlugin = {
       z.object({}).strict(),
       async (c) => await ctx.scope.actors(c),
       true,
+      undefined,
+      // An operator's read: a leased worker never holds admin.
+      'never',
     );
     register(
       'actor.create',

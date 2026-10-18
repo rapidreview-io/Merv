@@ -122,8 +122,10 @@ export class ToolRegistry implements Tools {
     // Schema changes require a new registration, keeping validation paired with its catalog.
     // Conversation policy and whether it only reads (which a session may call, as may a platform
     // reader) are likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversation, worker } = definition;
+    const { inputSchema, conversation, conversationProfile } = definition;
     const readOnly = definition.readOnly === true;
+    // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
+    const worker = conversationProfile ? 'never' : definition.worker;
     return {
       name: definition.name,
       definition,
@@ -451,9 +453,13 @@ export class ToolRegistry implements Tools {
 
   /** agent: a person's own agent over MCP, never a leased worker. */
   async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
-    return (await this.visible(caller, agent && !caller?.session)).map((entry) =>
-      structuredClone(entry.description),
-    );
+    return (await this.visible(caller, agent && !caller?.session)).map((entry) => {
+      const description = structuredClone(entry.description);
+      // A session's project is fixed by its lease, so a native tool is listed to it without the
+      // projectId people choose one with, which every tool would otherwise repeat.
+      if (caller?.session && !entry.remote) delete description.inputSchema.properties?.projectId;
+      return description;
+    });
   }
 
   async list(): Promise<ListedTool[]> {

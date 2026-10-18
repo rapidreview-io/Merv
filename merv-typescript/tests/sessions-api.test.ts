@@ -12,6 +12,7 @@ import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session, WorkSession } from '@merv/sessions/types';
 import { sessionsUiPlugin } from '@merv/sessions/ui';
 import { uiPlugin } from '@merv/ui';
+import { piToolsPlugin } from '../packages/pi/src/tools.js';
 import { CredentialStore } from '@merv/identity/credentials';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
@@ -1092,6 +1093,18 @@ test('a worker is not shown the reads that answer only a person, which still ref
   const f = await fixture(t);
   await f.app.ctx.plugin(uiPlugin);
   await f.app.ctx.plugin(sessionsUiPlugin);
+  // Pi's tools as registered; the listing never reaches its service.
+  f.app.ctx.provide('pi', {});
+  await f.app.ctx.plugin(piToolsPlugin);
+  // A Pi profile's own read answers only that profile's conversation.
+  f.app.ctx.tools.register({
+    name: 'profiled.read',
+    description: 'A profile read',
+    conversationProfile: 'some-profile',
+    readOnly: true,
+    inputSchema: z.object({}).strict(),
+    handler: () => ({}),
+  });
   const offer = await f.offer();
   const client = await f.connect(offer.secret);
   const listed = (await client.listTools()).tools.map((tool) => tool.name);
@@ -1103,12 +1116,20 @@ test('a worker is not shown the reads that answer only a person, which still ref
     'session.stuck',
     'ui.running',
     'ui.running_panel',
+    'ui.shell',
+    'ui.home',
+    'actor.list',
+    'pi.list',
+    'pi.snapshot',
+    'pi.prompt',
+    'screen.look',
+    'screen.show',
   ];
   assert.deepEqual(
-    people.filter((name) => listed.includes(name)),
+    [...people, 'profiled.read'].filter((name) => listed.includes(name)),
     [],
   );
-  for (const name of ['session.messages', 'system.status', 'ui.shell', 'ui.read'])
+  for (const name of ['session.messages', 'system.status', 'ui.read', 'actor.whoami'])
     assert.ok(listed.includes(name), name);
   // A person is shown them all.
   const shown = (await f.app.ctx.tools.describe(f.source)).map((tool) => tool.name);
@@ -1126,6 +1147,44 @@ test('a worker is not shown the reads that answer only a person, which still ref
   assert.equal(
     errorCode(await client.callTool({ name: 'ui.running', arguments: {} })),
     'running_forbidden',
+  );
+  assert.equal(
+    errorCode(await client.callTool({ name: 'actor.list', arguments: {} })),
+    'forbidden',
+  );
+  // A page's own read still answers a worker that calls it by name.
+  const shell = await client.callTool({ name: 'ui.shell', arguments: {} });
+  assert.equal(shell.isError, undefined, JSON.stringify(shell));
+});
+
+test("a worker's listing carries no MCP instructions and no project selection, which a call may still pass", async (t) => {
+  const f = await fixture(t);
+  const offer = await f.offer();
+  const client = await f.connect(offer.secret);
+  // Codex repeats a server's instructions at the head of every tool it lists.
+  assert.equal(client.getInstructions(), undefined);
+  const tools = (await client.listTools()).tools;
+  assert.ok(tools.some((tool) => tool.name === 'system.status'));
+  assert.deepEqual(
+    tools.filter((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'projectId')),
+    [],
+  );
+  // A person still selects a project by it.
+  const person = (await f.app.ctx.tools.describe(f.source)).find(
+    (tool) => tool.name === 'system.status',
+  )!;
+  assert.ok(Object.hasOwn(person.inputSchema.properties!, 'projectId'));
+  // A worker that passes its own project anyway is answered; another one is refused by name.
+  const own = await client.callTool({
+    name: 'system.status',
+    arguments: { projectId: f.source.projectId },
+  });
+  assert.equal(own.isError, undefined, JSON.stringify(own));
+  assert.equal(
+    errorCode(
+      await client.callTool({ name: 'system.status', arguments: { projectId: 'project_other' } }),
+    ),
+    'invalid_input',
   );
 });
 

@@ -22,8 +22,10 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
    *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
-  /** 'never': a person's read whose handler refuses every leased worker, so no worker is listed
-   *  it; called by name it still answers with that refusal. */
+  /** 'never': a read no leased worker is listed. It is a person's, whose handler refuses every
+   *  worker, or a page's own (ui.home), whose records a worker reads with their own tools; a Pi
+   *  profile's tool (conversationProfile) is never listed either. Called by name it still answers
+   *  as it would. */
   worker?: 'never';
   /** Offer only to this server-owned Pi profile. Handlers must still enforce their bound scope. */
   conversationProfile?: string;

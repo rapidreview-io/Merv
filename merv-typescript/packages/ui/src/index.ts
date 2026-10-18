@@ -144,9 +144,10 @@ export const uiPlugin = {
         description:
           'Read your actor identity and selected project, the sidebar rows currently registered by active plugins with live row status, and the plugin lifecycle table.',
         inputSchema: z.object({}).strict(),
-        // The page's own read: a person's agent reads the records themselves.
+        // The page's own read: a person's agent and a leased worker read the records directly.
         conversation: 'never',
         readOnly: true,
+        worker: 'never' as const,
         handler: async (caller: Caller) => ({
           ...(await identityOf(ctx.tools, caller)),
           rows: await ui.describe(caller, isolated),
@@ -163,9 +164,10 @@ export const uiPlugin = {
         // One snapshot for every part: sequential reads on one connection cost tens of
         // milliseconds; parallel parts each queued on the writer lock cost seconds. Each part
         // reads behind its own savepoint, so one that fails, a timeout included, is null alone.
-        // The page's own read: a person's agent reads the records themselves.
+        // The page's own read: a person's agent and a leased worker read the records directly.
         conversation: 'never',
         readOnly: true,
+        worker: 'never' as const,
         handler: async (caller: Caller) =>
           await homeRead(
             {
