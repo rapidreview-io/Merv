@@ -1008,6 +1008,7 @@ export function effectiveWorkspace(policy: WorkflowExecutionPolicy): WorkflowWor
 export type * from './reviews.js';
 import type { Reviews } from './reviews.js';
 export type * from './context.js';
+export { contextBlock, CONTEXT_BLOCK } from './context.js';
 import type { ContextBuilder } from './context.js';
 declare module 'cordis' {
   interface Context {

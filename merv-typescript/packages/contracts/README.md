@@ -10,6 +10,7 @@ It owns no table and no migration: the retirement ledger it once held is Workflo
 - Helpers that run SQL on the caller's own table, in the caller's transaction: the command receipts (`receipted`, `replayed`) and `withoutTriggers`, which builds migration text. Lease rows belong to Workflows (`@merv/workflows/lease-rows`).
 - Event provenance: `recorded`, `eventSource`.
 - The caller rules over the shared `Caller`: `isDirectHuman`, `requireHuman`, `isAgentCaller`.
+- `contextBlock` and `CONTEXT_BLOCK`, how Context Builder embeds an item and how the runner finds one again in a frozen assignment.
 - `effectiveWorkspace`, the default of an execution policy's workspace, which Code and the runner run, and they may depend on Contracts alone.
 - `outbound.ts`: `fetchJson`, `outboundFailure` and `Slots`, which bound concurrent outside calls in memory, for Web, Nisa, Sandboxes, Fleet and Sessions.
 - The zod schemas of wire shapes that cross plugins (code transfers, workspaces, session inputs, the UI manifest, Running keys).

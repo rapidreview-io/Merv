@@ -8,6 +8,8 @@ import { z } from 'zod';
 import {
   canonical,
   check,
+  CONTEXT_BLOCK,
+  contextBlock,
   effectiveWorkspace,
   MervError,
   sessionSecretPattern,
@@ -363,8 +365,6 @@ const RECOVER =
   'If that copy is gone from this conversation, read context.prompt from workflow.assignment in parts: a long output is cut.';
 /** What a context block a resumed conversation holds unchanged is sent in place of its body. */
 const UNCHANGED = '(unchanged: as in the copy of this assignment earlier in this conversation)';
-/** An item Context Builder embeds: a `###` heading over a body fenced longer than any run in it. */
-const contextBlock = /\n### ([^\n]*)\n(~{3,})\n([\s\S]*?)\n\2\n/g;
 
 /** The last whole copy of a frozen assignment these prompts hold (the line after its header),
  *  and whether a changed one was sent after it. */
@@ -423,14 +423,14 @@ function frozen(
     before = earlier.context?.prompt;
   if (typeof prompt !== 'string' || typeof before !== 'string') return whole;
   const kept = new Set<string>();
-  for (const [, heading, , body] of before.matchAll(contextBlock)) kept.add(`${heading}\n${body}`);
+  for (const [, heading, , body] of before.matchAll(CONTEXT_BLOCK)) kept.add(`${heading}\n${body}`);
   let cut = 0;
   const changed = prompt.replace(
-    contextBlock,
+    CONTEXT_BLOCK,
     (block, heading: string, fence: string, body: string) => {
       if (body.length <= UNCHANGED.length || !kept.has(`${heading}\n${body}`)) return block;
       cut++;
-      return `\n### ${heading}\n${fence}\n${UNCHANGED}\n${fence}\n`;
+      return contextBlock(heading, UNCHANGED, fence);
     },
   );
   if (!cut) return whole;

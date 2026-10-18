@@ -6,6 +6,7 @@
  */
 import {
   check,
+  contextBlock,
   digest,
   sha256Hex,
   type Artifact,
@@ -57,13 +58,7 @@ const json = (value: unknown) =>
     /[\u0085\u2028\u2029]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
-/** A fence longer than any run of tildes in the body, so nothing inside can close it. */
-const fence = (body: string) =>
-  '~'.repeat((body.match(/~+/g) ?? []).reduce((n, run) => Math.max(n, run.length + 1), 3));
-const block = (unit: Unit, body: string) => {
-  const f = fence(body);
-  return `\n### ${unit.label}\n${f}\n${body}\n${f}\n`;
-};
+const block = (unit: Unit, body: string) => contextBlock(unit.label, body);
 /** The shortest block the unit can have: its frame around an empty body. */
 const frame = (unit: Unit) => block(unit, '').length;
 
