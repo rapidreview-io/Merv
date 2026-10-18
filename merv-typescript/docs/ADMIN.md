@@ -44,13 +44,30 @@ come from workflow definitions, spend from Fleet, credit arithmetic from Sandbox
 - Tool calls with `x-merv-platform: read` — the user UI's own record pages for any project,
   read-only.
 
+## Pages (`packages/ui/web/admin/`)
+
+`/ui/admin` is an app of its own beside the projects (`AdminApp`, no project selected): a rail
+with Work, Credits and Credentials and the admin's label at its foot. Work polls `/admin/work`
+every 15 s into one table, attention first, with `Ended today` and the narrowing behind `Filter`
+(`/` opens it); a row opens its record in the drill-in, a standalone experiment its customer
+snapshot at `/ui/admin/standalone/:requestId`. Credits and Credentials read on load and on
+`Refresh`; a person's row unfolds their accounts, grants (⋯ revokes), schedules (⋯ pauses or
+resumes), budget caps and the one form that grants or schedules credit. The response types the
+pages read are mirrored in `admin/types.ts`, since the server's own sit beside its composition.
+
 ## Drill-in
 
-The admin opens a record in the member shell mounted at `/ui/admin/p/:projectId/…`. Every tool
-call carries `x-merv-platform: read`; the API asks Scope for a platform caller, Scope asks the
-installed platform authority (the admin plugin) to vouch for the verified identity, and allows
-`read` only. The registry refuses every tool that is not read-only for platform callers before
-its handler runs. The shell hides verbs when the session is read-only; the server is the control.
+The admin opens a record in the member shell mounted at `/ui/admin/p/:projectId/…`: `main.tsx`
+takes that prefix as the router's base (`drillIn`), so every path a page links to stays inside
+it. Every tool call and stream carries `x-merv-platform: read` (`scopeHeaders`); the API asks
+Scope for a platform caller, Scope asks the installed platform authority (the admin plugin) to
+vouch for the verified identity, and allows `read` only. The registry refuses every tool that is
+not read-only for platform callers before its handler runs. The session opens the named project
+without membership; one line above the shell reads `← Admin  <project>`. One flag, `readOnly()`,
+hides the verbs: the pages that are only verbs (Agent chat, boards, Settings, the sandbox console)
+lose their rows and routes, the dock is not mounted, and `Submit`, `ConfirmAction`,
+`ResearchCommand`, a list's creation control, a running panel's act and the file upload draw
+nothing. The server is the control.
 The caller acts as `PLATFORM_ACTOR`, a reader no actor row backs; it never delegates, so it starts
 no session, conversation or lease. Any other principal sending the header, and every MCP request
 with it, is refused `403 platform_forbidden`. The first read of a project in an hour records
