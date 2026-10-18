@@ -7727,27 +7727,73 @@ html.modal-open {
 .admin-parts > :not(.ghost) {
   white-space: nowrap;
 }
-/* A person unfolded: their accounts, then the word that grants, under the person's row. */
-.admin-holding {
-  padding: var(--space-4) 0 var(--space-5);
-  border-bottom: 1px solid var(--line);
-}
-.admin-account-head {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
 /* The purposes share one grid, which the first names. */
 .admin-purpose ~ .admin-purpose .ruled-head {
   display: none;
 }
-/* A row's act waits behind ⋯, drawn as the pointer reaches the row; its guard opens under it. */
+/* What a credential is for leads; the name it is kept under stands beneath, faint. */
+.admin-env {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+/* A row's acts wait behind ⋯ or its quiet words, drawn as the pointer reaches the row and kept
+   while what they opened is open; a guard, a form or a value opens under the row. */
+.admin-acts {
+  display: inline-flex;
+  gap: var(--space-3);
+}
 .ruled > .guard {
   margin-block: var(--space-3);
 }
 @media (hover: hover) {
-  .ruled-row:not(:hover) > * > .admin-more:not([aria-expanded='true'], :focus-visible) {
+  :is(.ruled-row, .admin-ledger > li):not(:hover)
+    .admin-more:not([aria-expanded='true'], :focus-visible),
+  .ruled-row:not(:hover, :focus-within, .admin-unfolded) .admin-acts {
     opacity: 0;
   }
+}
+.admin-said {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.admin-secret {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+/* The drawer's credit types, ruled off from each other; a type's grants under its figures. */
+.admin-credit {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.admin-credit-name {
+  font-weight: 600;
+}
+.admin-ledger {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.admin-ledger > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  padding: var(--space-1) 0;
+  font-variant-numeric: tabular-nums;
+}
+.admin-ledger .admin-more {
+  margin-left: auto;
+}
+.admin-ledger .guard {
+  flex-basis: 100%;
 }
 /* The drill-in: one thin line above the member shell, which stands below it. */
 :root {

@@ -1,11 +1,12 @@
 /**
  * The platform admin (/ui/admin) through the real sign-in and fetch layer: the work table, the
- * credits and their grant form, and the credentials, each against the /admin routes' fixtures.
- * Each test states what a page must say, never invent, or send.
+ * credentials by purpose with their reveal and change, and the credits with each person's
+ * drawer, each against the /admin routes' fixtures (docs/ADMIN.md, v2). Each test states what a
+ * page must say, never invent, or send.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import { click, jump, mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
 
@@ -219,262 +220,643 @@ test('standalone: its title, the plan it was accepted on, its customer, the chat
   assert.ok(!requests.some((r) => r.includes('/tools/')), requests.join('\n'));
 });
 
-const account = (accountId: string, name: string, over: Record<string, unknown> = {}) => ({
-  accountId,
-  name,
-  projects: [{ projectId: 'project_a', name: 'Grokking replication' }],
-  pools: [
-    {
-      provider: 'modal',
-      granted: '100.000000',
-      used: '4.950000',
-      reserved: '0',
-      available: '95.050000',
-      expired: '0',
-      revoked: '0',
-    },
-  ],
-  grants: [
-    {
-      id: 'grant_pilot',
-      provider: 'modal',
-      amount: '100',
-      used: '4.95',
-      reserved: '0',
-      available: '95.05',
-      valid_from: ago(60),
-      expires_at: null,
-      revoked_at: null,
-      schedule_id: null,
-      created_at: ago(60),
-      reason: 'Design partner pilot',
-    },
-  ],
-  schedules: [],
-  budgets: [{ id: 'cap_1', window: 'month', metric: 'money', cap: '75', provider: null }],
+/** Press the button reading `label` inside `scope`: a page holds many `Change` words. */
+const press = async (scope: Element, label: string) => {
+  const button = [...scope.querySelectorAll('button')].find(
+    (b) => b.textContent === label || b.getAttribute('aria-label') === label,
+  );
+  assert.ok(button, `No “${label}” in ${scope.textContent}`);
+  await act(async () => button.click());
+  await settle(0);
+};
+/** Type into the field labelled `label` (an input or a select) inside `form`. */
+const fill = async (form: Element, label: string, value: string) => {
+  const input = [...form.querySelectorAll('label')]
+    .find((l) => l.textContent!.startsWith(label))!
+    .querySelector('input, select') as HTMLInputElement;
+  await act(async () => {
+    const proto =
+      input instanceof window.HTMLSelectElement
+        ? window.HTMLSelectElement
+        : window.HTMLInputElement;
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(
+      new window.Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }),
+    );
+  });
+};
+const send = async (form: HTMLFormElement) => {
+  await act(async () => form.requestSubmit());
+  await settle(10);
+};
+const escape = async () => {
+  await act(async () => {
+    document.body.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+  });
+  await settle(0);
+};
+const signedIn = () => {
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', { body: { kind: 'user', user, projects: [] } });
+};
+
+// ── Credentials (v2): by purpose, a separate table of provider keys, reveal and change ──
+
+const secret = (env: string, purpose: string, over: Record<string, unknown> = {}) => ({
+  env,
+  purpose,
+  plugin: 'pi',
+  field: 'model.keyEnv',
+  set: true,
+  sharedWith: [],
+  lastChanged: null,
+  lastOk: null,
+  lastFailure: null,
+  dead: false,
+  editable: true,
   ...over,
 });
+const failure = (minutes: number, code: string, status: number) => ({
+  at: ago(minutes),
+  relay: 'openai',
+  model: 'gpt-5',
+  status,
+  code,
+});
+const providerKey = (field: string, description: string, over: Record<string, unknown> = {}) => ({
+  provider: 'modal-main',
+  plugin: 'modal',
+  source: 'host',
+  namespace: null,
+  field,
+  description,
+  secret: true,
+  present: true,
+  health: 'degraded',
+  healthReason: 'slow to answer',
+  verifiedAt: ago(2),
+  editable: true,
+  ...over,
+});
+const credentials = {
+  at: new Date().toISOString(),
+  groups: [
+    {
+      purpose: 'Agent',
+      secrets: [
+        secret('OPENAI_API_KEY', 'Agent model calls · OpenAI', {
+          lastChanged: ago(3 * 24 * 60),
+          // Overloaded once, and answered since.
+          lastOk: { at: ago(1), relay: 'pi', model: 'gpt-5' },
+          lastFailure: failure(5, 'overloaded', 529),
+        }),
+      ],
+    },
+    {
+      purpose: 'Fleet agents',
+      secrets: [
+        secret('FLEET_OPENAI_KEY', 'Fleet agent model calls · OpenAI', {
+          plugin: 'fleet',
+          dead: true,
+          lastFailure: failure(30, 'invalid_api_key', 401),
+        }),
+      ],
+    },
+    {
+      purpose: 'Fleet machines',
+      secrets: [
+        secret('CLOUDFLARE_API_TOKEN', 'Fleet machines · Cloudflare', {
+          plugin: 'fleet',
+          lastOk: { at: ago(10), relay: 'cloudflare', model: 'vm' },
+          lastFailure: failure(2, 'expired', 403),
+        }),
+      ],
+    },
+    {
+      purpose: 'Platform services',
+      secrets: [
+        secret('MERV_DB_URL', 'Database', { plugin: 'state', editable: false }),
+        secret('RESEND_API_KEY', 'Invitation email · Resend', { plugin: 'mail', set: false }),
+      ],
+    },
+  ],
+  providers: [
+    providerKey('token_id', 'Modal token id', { secret: false }),
+    providerKey('token_secret', 'Modal token secret'),
+  ],
+  minted: [
+    {
+      owner: 'sessions',
+      kind: 'session-execution',
+      live: '8',
+      soonestExpiry: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+      revokedLastDay: '0',
+      newestIssued: ago(1),
+    },
+  ],
+};
+const rowOf = (table: string, reads: RegExp) =>
+  [...document.querySelectorAll(`[aria-label="${table}"] .ruled-row`)].find((row) =>
+    reads.test(row.textContent!),
+  )!;
+
+test('credentials: purposes lead, names faint, no fingerprint, provider keys their own table', async (t) => {
+  t.after(async () => await unmount());
+  signedIn();
+  serve('/admin/credentials', { body: credentials });
+  await open('/admin/credentials');
+  const groups = [...document.querySelectorAll('.admin-group')].map((h) => h.textContent);
+  assert.deepEqual(groups, [
+    'Agent',
+    'Fleet agents',
+    'Fleet machines',
+    'Platform services',
+    'Sandbox providers',
+  ]);
+  // What it is for, then the name it is kept under, faint and in the mono, beneath.
+  const agent = rowOf('Agent', /OPENAI_API_KEY/);
+  const first = agent.querySelector('[role="cell"]')!;
+  assert.equal(first.textContent, 'Agent model calls · OpenAIOPENAI_API_KEY');
+  assert.equal(first.querySelector('.admin-env')!.textContent, 'OPENAI_API_KEY');
+  assert.ok(first.querySelector('.admin-env')!.classList.contains('mono'));
+  const head = [...document.querySelectorAll('[aria-label="Agent"] .ruled-head > *')].map(
+    (th) => th.textContent,
+  );
+  assert.deepEqual(head, ['Purpose', 'State', 'Changed', 'Last ok', 'Last failure', '']);
+  assert.doesNotMatch(text(), /fingerprint|a1b2c3d4|model\.keyEnv/i, 'no hash, no config path');
+  // A failure since answered is no failing key: red is dead, or a failure newer than the last ok.
+  assert.match(agent.textContent!, /set/);
+  const red = [...document.querySelectorAll('.ruled .status--bad')].map((el) => el.textContent);
+  assert.deepEqual(red, ['dead', 'failing']);
+  assert.match(rowOf('Platform services', /RESEND/).textContent!, /unset/);
+  assert.match(text(), /4 set\s*1 unset\s*1 dead\s*1 failing/);
+  // Only an editable key has its words; an unset one cannot be revealed.
+  assert.doesNotMatch(rowOf('Platform services', /MERV_DB_URL/).textContent!, /Reveal|Change/);
+  assert.doesNotMatch(rowOf('Platform services', /RESEND/).textContent!, /Reveal/);
+  assert.match(rowOf('Platform services', /RESEND/).textContent!, /Change/);
+  // The provider keys: provider and its health, what the key is, present, verified.
+  const keys = [...document.querySelectorAll('[aria-label="Sandbox providers"] .ruled-head > *')];
+  assert.deepEqual(
+    keys.map((th) => th.textContent),
+    ['Provider', 'Key', 'Present', 'Verified', ''],
+  );
+  const modal = rowOf('Sandbox providers', /token_secret/);
+  assert.match(modal.textContent!, /^modal-main degraded/);
+  assert.match(modal.textContent!, /Modal token secrettoken_secret/);
+  assert.match(modal.textContent!, /2m ago/);
+  assert.ok(modal.querySelector('[title="slow to answer"]'), 'the health reason is its title');
+  assert.equal(document.querySelectorAll('[aria-label="Agent"] .ruled-row').length, 1);
+  // Machine credentials stand at the foot.
+  assert.match(text(), /Machine credentials/);
+  assert.match(text(), /in 3h/, 'an expiry still to come');
+});
+
+test('credentials: Reveal shows the value for 30 s with Copy, then takes it off the page', async (t) => {
+  t.after(async () => await unmount());
+  const copied: string[] = [];
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (value: string) => void copied.push(value) },
+  });
+  t.after(() => void Reflect.deleteProperty(window.navigator, 'clipboard'));
+  signedIn();
+  serve('/admin/credentials', { body: credentials });
+  const asked: Record<string, unknown>[] = [];
+  serve('/admin/credentials/reveal', (_call, body) => {
+    asked.push(body);
+    return { body: { value: 'env' in body ? 'sk-agent-1234' : 'as-secret-5678' } };
+  });
+  await open('/admin/credentials');
+  await press(rowOf('Agent', /OPENAI_API_KEY/), 'Reveal');
+  await settle(10);
+  assert.deepEqual(asked, [{ env: 'OPENAI_API_KEY' }], 'one secret per call, by its name');
+  assert.match(text(), /sk-agent-1234/);
+  const shown = document.querySelector('.admin-secret')!;
+  assert.ok(shown.classList.contains('mono'));
+  assert.match(shown.parentElement!.textContent!, /Copy30s/);
+  await press(shown.parentElement!, 'Copy');
+  await settle(10);
+  assert.deepEqual(copied, ['sk-agent-1234']);
+  await jump(10_000);
+  assert.match(shown.parentElement!.textContent!, /1[89]s$/, 'a quiet countdown');
+  await jump(21_000);
+  assert.doesNotMatch(text(), /sk-agent-1234/, 'hidden at 30 s');
+  assert.equal(document.querySelector('.admin-secret'), null);
+  // A provider key is named by its provider, namespace and field; Hide takes it away early.
+  await press(rowOf('Sandbox providers', /token_secret/), 'Reveal');
+  await settle(10);
+  assert.deepEqual(asked[1], { provider: 'modal-main', namespace: null, field: 'token_secret' });
+  assert.match(text(), /as-secret-5678/);
+  await press(rowOf('Sandbox providers', /token_secret/), 'Hide');
+  assert.doesNotMatch(text(), /as-secret-5678/);
+  assert.equal(asked.length, 2, 'hiding asks nothing');
+});
+
+test('credentials: Change sends the new value, states a refusal verbatim, then what reloaded', async (t) => {
+  t.after(async () => await unmount());
+  signedIn();
+  serve('/admin/credentials', { body: credentials });
+  const changes: Record<string, unknown>[] = [];
+  serve('/admin/credentials/change', (call, body) => {
+    changes.push(body);
+    return call === 1
+      ? {
+          status: 422,
+          body: {
+            error: { code: 'credential_rejected', message: 'OpenAI refused the key (401).' },
+          },
+        }
+      : { body: { ok: true, reloaded: ['pi', 'fleet'] } };
+  });
+  await open('/admin/credentials');
+  assert.equal(document.querySelector('form'), null, 'the form waits for its word');
+  await press(rowOf('Agent', /OPENAI_API_KEY/), 'Change');
+  const form = document.querySelector<HTMLFormElement>(
+    'form[aria-label="Change Agent model calls · OpenAI"]',
+  )!;
+  assert.ok(form.classList.contains('guard'));
+  assert.equal(form.querySelector('input')!.type, 'password');
+  await fill(form, 'OPENAI_API_KEY', 'sk-new');
+  await send(form);
+  assert.match(text(), /OpenAI refused the key \(401\)\./, 'the server’s own words');
+  assert.ok(document.querySelector('form'), 'a refusal keeps the form open');
+  await send(form);
+  assert.deepEqual(changes, [
+    { env: 'OPENAI_API_KEY', value: 'sk-new' },
+    { env: 'OPENAI_API_KEY', value: 'sk-new' },
+  ]);
+  assert.equal(document.querySelector('form'), null, 'saved, the form closes');
+  assert.match(text(), /Reloaded pi · fleet/);
+  assert.ok(requests.filter((r) => r === 'GET /admin/credentials').length >= 2, 'read again');
+  // A provider key changes through its provider's fields.
+  await press(rowOf('Sandbox providers', /token_id/), 'Change');
+  const key = document.querySelector<HTMLFormElement>('form[aria-label^="Change modal-main"]')!;
+  await fill(key, 'token_id', 'ak-1');
+  await send(key);
+  assert.deepEqual(changes[2], {
+    provider: 'modal-main',
+    namespace: null,
+    fields: { token_id: 'ak-1' },
+  });
+});
+
+// ── Credits (v2): one row per person, a drawer per person with its windows and controls ──
+
+const grant = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  provider: 'modal',
+  amount: '100',
+  used: '4.95',
+  reserved: '0',
+  available: '95.05',
+  valid_from: ago(60),
+  expires_at: null,
+  revoked_at: null,
+  schedule_id: null,
+  created_at: ago(60),
+  reason: 'Design partner pilot',
+  ...over,
+});
+const use = (kind: string, label: string, unit: string, over: Record<string, unknown>) => ({
+  kind,
+  label,
+  unit,
+  limit: null,
+  own: false,
+  used: { day: 0, week: 0, month: 0, total: 0 },
+  left: null,
+  ...over,
+});
+/** The list's row of a type: the drawer's, with today's use alone. */
+const listed = (kinds: ReturnType<typeof use>[]) =>
+  kinds.map((kind) => ({ ...kind, used: kind.used.day }));
+const tomasKinds = [
+  use('agent-tokens', 'Agent tokens', 'tokens', { limit: 1_000_000, left: 1_000_000 }),
+  // At its limit: the one figure in red.
+  use('fleet-tokens', 'Fleet agent tokens', 'tokens', {
+    limit: 2_000_000,
+    used: { day: 2_000_000, week: 2_000_000, month: 2_000_000, total: 2_000_000 },
+    left: 0,
+  }),
+  use('fleet-usd', 'Fleet machines', 'usd', {
+    limit: 25,
+    used: { day: 0.004, week: 0.004, month: 0.004, total: 0.004 },
+    left: 24.996,
+  }),
+  // Nothing granted of either provider yet.
+  use('provider:fake', 'Fake', 'usd', { limit: 0, left: 0 }),
+  use('provider:modal', 'Modal', 'usd', { limit: 0, left: 0 }),
+];
+const miraKey = `${user.issuer}|mira`;
+const miraPath = `/admin/credits/people/${encodeURIComponent(miraKey)}`;
+const mira = {
+  person: { key: miraKey, label: 'Mira Chen', issuer: user.issuer, subject: 'mira' },
+  accountId: 'acct_mira',
+  kinds: [
+    use('agent-tokens', 'Agent tokens', 'tokens', {
+      limit: 1_000_000,
+      own: true,
+      used: { day: 40_000, week: 250_000, month: 900_000, total: 4_200_000 },
+      left: 960_000,
+    }),
+    use('fleet-tokens', 'Fleet agent tokens', 'tokens', {
+      limit: 2_000_000,
+      used: { day: 120_000, week: 600_000, month: 1_500_000, total: 3_000_000 },
+      left: 1_880_000,
+    }),
+    use('fleet-usd', 'Fleet machines', 'usd', {
+      limit: 25,
+      used: { day: 3.2, week: 18.4, month: 61, total: 140.5 },
+      left: 21.8,
+    }),
+    use('provider:fake', 'Fake', 'usd', { limit: 0, left: 0 }),
+    use('provider:modal', 'Modal', 'usd', {
+      limit: 100,
+      used: { day: 0.5, week: 2.1, month: 4.95, total: 4.95 },
+      left: 95.05,
+    }),
+  ],
+  grants: [grant('grant_pilot'), grant('grant_old', { revoked_at: ago(30), reason: 'Trial' })],
+  schedules: [
+    {
+      id: 'sched_monthly',
+      provider: 'modal',
+      amount: '25',
+      starts_at: ago(60),
+      cadence: 'monthly',
+      validity_periods: 1,
+      ends_at: null,
+      enabled: true,
+    },
+  ],
+};
 const credits = {
   at: new Date().toISOString(),
   providers: ['fake', 'modal'],
   people: [
     {
+      key: miraKey,
       label: 'Mira Chen',
       issuer: user.issuer,
       subject: 'mira',
-      accounts: [{ accountId: 'acct_mira', role: 'admin' }],
-      fleet: { usd: 3.2, usdCap: 25, tokens: { used: 120_000, limit: 2_000_000 } },
-      pi: { used: 40_000, limit: 1_000_000 },
+      kinds: listed(mira.kinds),
     },
     {
+      key: `${user.issuer}|tomas`,
       label: 'Tomás Ruiz',
       issuer: user.issuer,
       subject: 'tomas',
-      accounts: [],
-      fleet: { usd: 0.004, usdCap: 25, tokens: null },
-      pi: null,
+      kinds: listed(tomasKinds),
     },
   ],
-  accounts: [
-    account('acct_mira', 'Personal account'),
-    account('acct_lab', 'merv-lab', { pools: [] }),
-  ],
+};
+const tomasPath = `/admin/credits/people/${encodeURIComponent(`${user.issuer}|tomas`)}`;
+const drawer = () => document.querySelector<HTMLElement>('#admin-drawer')!;
+const block = (label: string) => drawer().querySelector(`section[aria-label="${label}"]`)!;
+const bootCredits = () => {
+  signedIn();
+  serve('/admin/credits', { body: credits });
+  serve(miraPath, { body: mira });
+  serve(tomasPath, {
+    body: {
+      person: {
+        key: `${user.issuer}|tomas`,
+        label: 'Tomás Ruiz',
+        issuer: user.issuer,
+        subject: 'tomas',
+      },
+      accountId: null,
+      kinds: [],
+      grants: [],
+      schedules: [],
+    },
+  });
+};
+/** The whole row opens the drawer, not only the name. */
+const openRowOf = async (at = 0) => {
+  const row = document.querySelectorAll('[aria-label="Credits"] .ruled-row')[at]!;
+  await act(async () => (row.querySelectorAll('[role="cell"]')[2] as HTMLElement).click());
+  await settle(10);
+};
+const openMira = async () => {
+  await open('/admin/credits');
+  await openRowOf(0);
 };
 
-test('credits: left of granted per provider, an unfolded person, and a grant that keeps its key', async (t) => {
+test('credits: one row per person, today per kind, and no drawer until a row is opened', async (t) => {
   t.after(async () => await unmount());
-  serve('/auth/config', { body: { enabled: false } });
-  serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/credits', { body: credits });
-  const sent: Record<string, unknown>[] = [];
-  serve('/admin/credits/grants', (call, body) => {
-    sent.push(body);
-    // The first answer is lost: the retry must be the same grant.
-    return call === 1 ? { status: 502, body: null } : { body: { id: body.id } };
-  });
+  bootCredits();
   await open('/admin/credits');
   const head = [...document.querySelectorAll('[aria-label="Credits"] .ruled-head > *')].map(
     (th) => th.textContent,
   );
+  // A column per type, named by what it is for, in the order the server gives them.
   assert.deepEqual(head, [
     'Person',
-    'fake',
-    'modal',
-    'Fleet today',
-    'Fleet tokens',
     'Agent tokens',
+    'Fleet agent tokens',
+    'Fleet machines',
+    'Fake',
+    'Modal',
   ]);
-  const mira = document.querySelector('[aria-label="Credits"] .ruled-row')!;
-  assert.match(mira.textContent!, /\$95\.05 of\s\$100\.00/);
-  assert.match(mira.textContent!, /\$3\.20 of\s\$25\.00/);
-  assert.match(mira.textContent!, /120K of\s2M/);
+  const rows = [...document.querySelectorAll('[aria-label="Credits"] .ruled-row')];
+  assert.equal(rows.length, 2);
+  // Today's use of each daily limit; a provider's left of what was granted.
+  assert.equal(
+    [...rows[0]!.querySelectorAll('[role="cell"]')].map((c) => c.textContent).join(' | '),
+    'Mira Chen | 40K of\u00a01M | 120K of\u00a02M | $3.20 of\u00a0$25.00 | — | $95.05 of\u00a0$100.00',
+  );
   // Money is in cents: one under a cent says so, never a third decimal.
-  assert.match(text(), /Tomás Ruiz——<\$0\.01 of\s\$25\.00/);
-  assert.match(text(), /merv-lab/, 'an account nobody belongs to is still a row');
-  assert.ok(!requests.some((r) => r.includes('/admin/work')), 'the rail reads no work table');
+  assert.match(rows[1]!.textContent!, /<\$0\.01 of\s\$25\.00/);
+  const red = [...document.querySelectorAll('[aria-label="Credits"] .status--bad')];
+  assert.deepEqual(
+    red.map((el) => el.textContent),
+    ['2M of\u00a02M'],
+    'red is a limit reached',
+  );
   assert.doesNotMatch(text(), /Design partner pilot/);
-  await click('Mira Chen');
-  assert.match(text(), /Design partner pilot/);
-  assert.match(text(), /modal \$95\.05 of \$100\.00 · cap \$75\.00 a month/, 'pools, then caps');
-  assert.doesNotMatch(text(), /acct_|grant_pilot|namespace|money/);
-  assert.equal(document.querySelector('form'), null, 'the grant form waits for its word');
-  await click('Grant');
-  const form = document.querySelector<HTMLFormElement>(
-    'form[aria-label="Grant credits to Mira Chen"]',
-  )!;
-  const fill = async (label: string, value: string) => {
-    const input = [...form.querySelectorAll('label')]
-      .find((l) => l.textContent!.startsWith(label))!
-      .querySelector('input, select') as HTMLInputElement;
-    await act(async () => {
-      const proto =
-        input instanceof window.HTMLSelectElement
-          ? window.HTMLSelectElement
-          : window.HTMLInputElement;
-      Object.getOwnPropertyDescriptor(proto.prototype, 'value')!.set!.call(input, value);
-      input.dispatchEvent(
-        new window.Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }),
-      );
-    });
-  };
-  await fill('Provider', 'modal');
-  await fill('Amount', ' 25 ');
-  await fill('Reason', 'Burst for the sweep');
+  assert.match(text(), /2 people/);
+  assert.ok(drawer().hidden);
+  assert.ok(
+    !requests.some((r) => r.includes('/admin/credits/people/')),
+    'nothing read until opened',
+  );
+});
+
+test('credits: a row opens the drawer — one window for every type, Escape and ↑↓', async (t) => {
+  t.after(async () => await unmount());
+  bootCredits();
+  await openMira();
+  assert.ok(!drawer().hidden);
+  assert.equal(drawer().querySelector('h2')!.textContent, 'Mira Chen');
+  assert.equal(document.activeElement, drawer().querySelector('h2'), 'the cursor goes to the name');
+  assert.ok(requests.includes(`GET ${miraPath}`), requests.join('\n'));
+  const windows = drawer().querySelectorAll('[role="group"][aria-label="Window"] button');
+  assert.deepEqual(
+    [...windows].map((b) => [b.textContent, b.getAttribute('aria-pressed')]),
+    [
+      ['1D', 'true'],
+      ['1W', 'false'],
+      ['1M', 'false'],
+      ['Total', 'false'],
+    ],
+  );
+  assert.deepEqual(
+    [...drawer().querySelectorAll('section')].map((s) => s.getAttribute('aria-label')),
+    ['Agent tokens', 'Fleet agent tokens', 'Fleet machines', 'Fake', 'Modal'],
+  );
+  // The limit beside the word that changes it (a day's for the platform's own kinds), then
+  // what was used in the window and what is left.
+  assert.match(
+    block('Agent tokens').textContent!,
+    /^Agent tokens1M a dayownSet limit40K used960K left$/,
+  );
+  assert.match(
+    block('Fleet machines').textContent!,
+    /^Fleet machines\$25\.00 a daySet limit\$3\.20 used\$21\.80 left$/,
+  );
+  // A provider's limit is what was granted, and its control gives more.
+  assert.match(
+    block('Modal').textContent!,
+    /^Modal\$100\.00 grantedGive credit\$0\.50 used\$95\.05 left/,
+  );
+  assert.match(block('Modal').textContent!, /Give credit/);
+  // Nothing granted yet: no limit, nothing left to draw, still the word that gives.
+  assert.equal(block('Fake').textContent, 'FakeGive credit$0.00 used');
+  assert.match(block('Modal').textContent!, /Design partner pilot/);
+  assert.match(block('Modal').textContent!, /\$25\.00 monthlyon/);
+  assert.match(block('Modal').textContent!, /revoked/);
+  // The meter stands beside the figure it draws, and only where there is a limit.
+  const meter = block('Modal').querySelector<HTMLElement>('.home-meter > span')!;
+  assert.equal(meter.style.width, '95.05%');
+  // One window, at the top, for every type.
+  await press(drawer(), '1W');
+  assert.match(block('Agent tokens').textContent!, /250K used/);
+  assert.match(block('Modal').textContent!, /\$2\.10 used/);
+  await press(drawer(), 'Total');
+  assert.match(block('Fleet machines').textContent!, /\$140\.50 used/);
+  assert.doesNotMatch(drawer().textContent!, /acct_|grant_|sched_|auth\.example|mira\b/);
+  // ↓ opens the next person; Escape closes and hands the cursor back to the name.
   await act(async () => {
-    form.requestSubmit();
+    document.body.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
   });
   await settle(10);
+  assert.equal(drawer().querySelector('h2')!.textContent, 'Tomás Ruiz');
+  assert.ok(requests.includes(`GET ${tomasPath}`));
+  await escape();
+  assert.ok(drawer().hidden);
+  assert.equal(document.activeElement!.textContent, 'Tomás Ruiz');
+  // Close, too, returns to the list.
+  await openRowOf(0);
+  assert.equal(drawer().querySelector('h2')!.textContent, 'Mira Chen');
+  await press(drawer(), 'Close');
+  assert.ok(drawer().hidden);
+});
+
+test('credits: on a phone the drawer takes the page', async (t) => {
+  t.after(async () => await unmount());
+  bootCredits();
+  await resize(false);
+  await openMira();
+  assert.ok(document.querySelector<HTMLElement>('.work-main')!.hidden, 'the list steps aside');
+  assert.ok(!drawer().hidden);
+  await escape();
+  assert.ok(!document.querySelector<HTMLElement>('.work-main')!.hidden);
+});
+
+test('credits: Set limit posts the person’s own limit, and Clear returns to the default', async (t) => {
+  t.after(async () => await unmount());
+  bootCredits();
+  const limits: Record<string, unknown>[] = [];
+  serve(`${miraPath}/limits`, (_call, body) => {
+    limits.push(body);
+    return { body: { kind: body.kind, limit: body.limit } };
+  });
+  await openMira();
+  await press(block('Agent tokens'), 'Set limit');
+  const form = block('Agent tokens').querySelector('form')!;
+  const input = form.querySelector('input')!;
+  assert.equal(input.value, '1000000', 'its own limit, to change');
+  assert.equal(input.type, 'number');
+  assert.deepEqual([input.min, input.max, input.step], ['1', '1000000000', '1'], 'whole tokens');
+  await fill(form, 'Tokens a day', '2000000');
+  await send(form);
+  assert.deepEqual(limits, [{ kind: 'agent-tokens', limit: 2_000_000 }]);
+  assert.equal(block('Agent tokens').querySelector('form'), null, 'saved, the form closes');
+  assert.equal(requests.filter((r) => r === `GET ${miraPath}`).length, 2, 'the drawer reads again');
+  await press(block('Agent tokens'), 'Set limit');
+  await press(block('Agent tokens'), 'Clear');
+  await settle(10);
+  assert.deepEqual(limits[1], { kind: 'agent-tokens', limit: null });
+  // A kind on the platform's default has nothing to clear.
+  await press(block('Fleet machines'), 'Set limit');
+  const usdForm = block('Fleet machines').querySelector('form')!;
+  assert.match(usdForm.textContent!, /Dollars a day/);
+  assert.doesNotMatch(usdForm.textContent!, /Clear/);
+  const dollars = usdForm.querySelector('input')!;
+  assert.deepEqual([dollars.min, dollars.max, dollars.step], ['0.01', '100000', '0.01']);
+  await fill(usdForm, 'Dollars a day', '40');
+  await send(usdForm);
+  assert.deepEqual(limits[2], { kind: 'fleet-usd', limit: 40 });
+});
+
+test('credits: Give credit grants the person, keeps its key through a retry; ⋯ revokes', async (t) => {
+  t.after(async () => await unmount());
+  bootCredits();
+  const grants: Record<string, unknown>[] = [];
+  serve('/admin/credits/grants', (call, body) => {
+    grants.push(body);
+    // The first answer is lost: the retry must be the same grant.
+    return call === 1 ? { status: 502, body: null } : { body: { id: body.id } };
+  });
+  serve('/admin/credits/grants/grant_pilot/revoke', { body: { id: 'grant_pilot', revoked: true } });
+  await openMira();
+  await press(block('Modal'), 'Give credit');
+  const form = block('Modal').querySelector<HTMLFormElement>(
+    'form[aria-label="Give credit · modal"]',
+  )!;
+  await fill(form, 'Amount', ' 25 ');
+  await fill(form, 'Reason', 'Burst for the sweep');
+  await send(form);
   assert.match(text(), /Retry same request/);
   await click('Retry same request');
   await settle(10);
-  assert.equal(sent.length, 2);
-  assert.deepEqual(sent[1], sent[0], 'the retry is the same grant: its id and its validFrom');
-  assert.equal(sent[0]!.accountId, 'acct_mira');
-  assert.equal(sent[0]!.provider, 'modal');
-  assert.equal(sent[0]!.amount, '25');
-  assert.equal(typeof sent[0]!.id, 'string');
-  assert.ok(!Number.isNaN(Date.parse(String(sent[0]!.validFrom))), 'validFrom is always sent');
-  assert.equal(document.querySelector('form'), null, 'granted, the form closes');
-});
-
-test('credits: ⋯ on a grant opens its guard, which revokes it', async (t) => {
-  t.after(async () => await unmount());
-  serve('/auth/config', { body: { enabled: false } });
-  serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/credits', { body: credits });
-  serve('/admin/credits/grants/grant_pilot/revoke', { body: { id: 'grant_pilot', revoked: true } });
-  await open('/admin/credits');
-  await click('Mira Chen');
-  const more = document.querySelector<HTMLButtonElement>('button[aria-label="Revoke grant"]')!;
-  await act(async () => more.click());
+  assert.equal(grants.length, 2);
+  assert.deepEqual(grants[1], grants[0], 'the retry is the same grant: its id and its validFrom');
+  const { id, validFrom, ...terms } = grants[0]!;
+  assert.equal(typeof id, 'string');
+  assert.ok(!Number.isNaN(Date.parse(String(validFrom))), 'validFrom is always sent');
+  assert.deepEqual(terms, {
+    provider: 'modal',
+    amount: '25',
+    person: miraKey,
+    expiresAt: null,
+    reason: 'Burst for the sweep',
+  });
+  assert.equal(block('Modal').querySelector('form'), null, 'given, the form closes');
+  // A revoked grant has no ⋯; the live one's opens its guard.
+  assert.equal(block('Modal').querySelectorAll('button[aria-label="Revoke grant"]').length, 1);
+  await press(block('Modal'), 'Revoke grant');
+  // Escape inside the guard is its Cancel, not the drawer's.
+  await act(async () => {
+    document
+      .querySelector('[role="alertdialog"] button')!
+      .dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  assert.equal(document.querySelector('[role="alertdialog"]'), null);
+  assert.ok(!drawer().hidden, 'the drawer stays');
+  await press(block('Modal'), 'Revoke grant');
   assert.ok(document.querySelector('[role="alertdialog"][aria-label="Revoke grant?"]'));
-  await click('Revoke grant');
+  await press(document.querySelector('[role="alertdialog"]')!, 'Revoke grant');
   await settle(10);
   assert.ok(
     requests.includes('POST /admin/credits/grants/grant_pilot/revoke'),
     requests.join('\n'),
   );
   assert.equal(document.querySelector('[role="alertdialog"]'), null, 'done, the guard closes');
-});
-
-test('credentials: purposes in order, a fingerprint and what shares it, a dead key in red', async (t) => {
-  t.after(async () => await unmount());
-  const credential = (env: string, over: Record<string, unknown> = {}) => ({
-    env,
-    plugin: 'pi',
-    field: 'model.keyEnv',
-    set: true,
-    fingerprint: 'a1b2c3d4',
-    sharedWith: [],
-    lastChanged: null,
-    lastOk: null,
-    lastFailure: null,
-    dead: false,
-    ...over,
-  });
-  serve('/auth/config', { body: { enabled: false } });
-  serve('/account', { body: { kind: 'user', user, projects: [] } });
-  serve('/admin/credentials', {
-    body: {
-      at: new Date().toISOString(),
-      groups: [
-        {
-          purpose: 'Agent',
-          credentials: [
-            credential('OPENAI_API_KEY', {
-              sharedWith: [{ plugin: 'fleet', field: 'relay.keyEnv', env: 'FLEET_OPENAI_KEY' }],
-              // Overloaded once, and answered since.
-              lastOk: { at: ago(1), relay: 'pi', model: 'gpt-5' },
-              lastFailure: {
-                at: ago(5),
-                relay: 'pi',
-                model: 'gpt-5',
-                status: 529,
-                code: 'overloaded',
-              },
-            }),
-          ],
-        },
-        {
-          purpose: 'Fleet agents',
-          credentials: [
-            credential('FLEET_OPENAI_KEY', {
-              dead: true,
-              lastFailure: {
-                at: ago(30),
-                relay: 'openai',
-                model: 'gpt-5',
-                status: 401,
-                code: 'invalid_api_key',
-              },
-            }),
-          ],
-        },
-        {
-          purpose: 'Sandbox provider',
-          provider: {
-            name: 'modal-main',
-            plugin: 'modal',
-            source: 'host',
-            enabled: true,
-            fields: [],
-            verified_at: ago(2),
-            health: { status: 'degraded', message: 'slow' },
-            health_reason: null,
-          },
-          credentials: [credential('MODAL_TOKEN', { set: false, fingerprint: null })],
-        },
-        {
-          purpose: 'Platform services',
-          credentials: [credential('MERV_DB_URL', { plugin: 'state' })],
-        },
-      ],
-      minted: [
-        {
-          owner: 'sessions',
-          kind: 'session-execution',
-          live: '8',
-          soonestExpiry: new Date(Date.now() + 3 * 3_600_000).toISOString(),
-          revokedLastDay: '0',
-          newestIssued: ago(1),
-        },
-      ],
-    },
-  });
-  await open('/admin/credentials');
-  const groups = [...document.querySelectorAll('.admin-group')].map((row) => row.textContent);
-  assert.deepEqual(
-    groups.map((g) => g!.replace(/ degraded.*/, '')),
-    ['Agent', 'Fleet agents', 'modal-main', 'Platform services'],
-  );
-  assert.match(text(), /a1b2c3d4 = FLEET_OPENAI_KEY/);
-  assert.doesNotMatch(text(), /model\.keyEnv|same as/, 'a config path is a hover title');
-  const dead = document.querySelector('.admin-dead')!;
-  assert.match(dead.textContent!, /dead/);
-  assert.match(dead.textContent!, /invalid_api_key/);
-  assert.match(text(), /3 set\s*1 unset\s*1 dead/, 'unset is no failure');
-  const red = [...document.querySelectorAll('.ruled .status--bad')].map((el) => el.textContent);
-  assert.deepEqual(red, ['dead', 'invalid_api_key 30m ago'], 'a recovered failure is faint');
-  assert.match(text(), /degraded/);
-  assert.match(text(), /in 3h/, 'an expiry still to come');
+  assert.ok(!drawer().hidden);
 });
