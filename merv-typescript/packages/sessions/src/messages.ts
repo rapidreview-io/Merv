@@ -789,8 +789,10 @@ export class SessionMessages {
       answer_message_id: string;
       body: string;
     }>(
-      `SELECT q.id,q.thread_id,t.state,t.role,q.revision,q.asked_at,q.question,q.answered_at,q.answer_message_id,m.body
-        FROM session_questions q JOIN session_threads t ON t.id=q.thread_id JOIN session_messages m ON m.id=q.answer_message_id
+      // The stage of the visit that asked: a continuing thread's own state moves on with it.
+      `SELECT q.id,q.thread_id,COALESCE(s.execution_state,t.state) AS state,t.role,q.revision,q.asked_at,q.question,q.answered_at,q.answer_message_id,m.body
+        FROM session_questions q JOIN session_threads t ON t.id=q.thread_id JOIN worker_sessions s ON s.id=q.session_id
+          JOIN session_messages m ON m.id=q.answer_message_id
         WHERE q.project_id=? AND q.instance_id=? AND q.answered_at IS NOT NULL
         ORDER BY q.answered_at DESC,q._merv_rowid DESC LIMIT 10`,
       projectId,

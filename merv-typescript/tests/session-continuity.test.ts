@@ -1614,6 +1614,11 @@ test('every later visit to the work, its reviewer’s too, is offered what its o
   const second = await f.offer(unit.id, 'runner-b');
   assert.deepEqual(answered(second.session.assignment), expected);
   await f.release(second.session);
+  // Continuity carries a producer's thread on to a later stage (threads.open rewrites its
+  // state); an answer keeps the stage its question was asked in.
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run("UPDATE session_threads SET state='later' WHERE id=?", first.session.threadId),
+  );
   // A reviewer reads no other thread's messages: the answer reaches it with its assignment.
   await f.move(unit.id, 'submit');
   const review = await f.offer(unit.id, 'runner-c');

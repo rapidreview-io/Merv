@@ -491,7 +491,7 @@ export interface ThreadMessages {
  */
 export interface OwnerAnswer {
   questionId: string;
-  /** The asking thread, and the stage and role it works in. */
+  /** The asking thread, the stage its question was asked in, and the thread's role. */
   threadId: string;
   state: string;
   role: string;
