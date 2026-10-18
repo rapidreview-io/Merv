@@ -14,6 +14,7 @@ import type {
   WorkflowWorkStart,
   WorkflowDependency,
   WorkflowLimitStatus,
+  WorkflowPlatformWork,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowRelations,
@@ -23,7 +24,7 @@ import { readBlockers, replaceBlockers } from './blockers.js';
 import { persistContract, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
-import { extendsAt } from './rules.js';
+import { extendsAt, instanceName } from './rules.js';
 import { readWorkStarts } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
 import {
@@ -175,6 +176,44 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
         )
       ).map(this.snapshot),
     );
+  }
+
+  async platformWork(since: string, tx?: Transaction): Promise<WorkflowPlatformWork[]> {
+    this.assertOpen();
+    return await this.read(tx, async (tx) => {
+      // As open() reads terminal states; the start is revision 0's move.
+      const rows = await tx.all<
+        Omit<InstanceRow, 'data_json'> & {
+          title: unknown;
+          name: unknown;
+          started_by: string | null;
+          terminal: boolean;
+        }
+      >(
+        `WITH d AS MATERIALIZED (SELECT name,version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions)
+        SELECT i.id,i.project_id,i.workflow,i.version,i.state,i.revision,i.created_at,i.updated_at,i.data_json::jsonb->'title' AS title,
+          i.data_json::jsonb->'name' AS name,h.actor_id AS started_by,d.terminal @> to_jsonb(i.state) AS terminal
+        FROM wf_instances i JOIN d ON d.name=i.workflow AND d.version=i.version
+        LEFT JOIN wf_history h ON h.instance_id=i.id AND h.revision=0
+        WHERE NOT d.terminal @> to_jsonb(i.state) OR i.updated_at>? ORDER BY i.updated_at DESC,i.id`,
+        since,
+      );
+      const blockers = new Map<string, WorkflowProvidedBlocker[]>();
+      for (const item of await readBlockers(tx, null))
+        blockers.get(item.instanceId)?.push(item) ?? blockers.set(item.instanceId, [item]);
+      return rows.map(({ title, name, started_by, terminal, ...row }) => {
+        const { data: _data, ...snapshot } = this.snapshot({ ...row, data_json: '{}' });
+        const { policy } = this.registrations.get(`${row.workflow}@${row.version}`) ?? {};
+        return {
+          ...snapshot,
+          name: instanceName({ title, name }, row.workflow),
+          startedBy: started_by,
+          terminal,
+          allowance: !terminal && extendsAt(policy, row.state),
+          blockers: blockers.get(row.id) ?? [],
+        };
+      });
+    });
   }
 
   async movedBy(instanceId: string, revision: number, tx?: Transaction) {
