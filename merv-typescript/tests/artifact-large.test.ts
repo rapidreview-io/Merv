@@ -247,6 +247,12 @@ test('a file over the inline limit stays in blobs and downloads through a signed
     f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
     { code: 'blob_corrupt' },
   );
+  // Bytes that storage has lost are a server fault, never a 404.
+  f.server.objects.delete(f.key(f.owner.projectId, artifact.hash));
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
+    { code: 'artifact_bytes_missing', status: 500 },
+  );
   await assert.rejects(
     f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
     { code: 'forbidden' },

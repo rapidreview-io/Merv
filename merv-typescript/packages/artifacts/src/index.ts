@@ -124,6 +124,12 @@ function readable(
       details,
     );
 }
+/** A row implies its bytes: storage that has lost them is a server fault, never a 404. */
+const bytesLost = (error: unknown) => {
+  throw error instanceof MervError && error.code === 'blob_not_found'
+    ? new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500)
+    : error;
+};
 /** The rows a read may return: a SQL condition on `artifacts` and its parameters. */
 type Visible = { sql: string; params: string[] };
 const EVERY: Visible = { sql: 'TRUE', params: [] };
@@ -430,12 +436,7 @@ export class ArtifactStore implements Artifacts {
         throw error instanceof MervError ? error : unavailable();
       })
       .finally(() => reader.releaseLock());
-    check(
-      bytes.length === size && sha256Hex(bytes) === hash,
-      'blob_corrupt',
-      corrupt().message,
-      500,
-    );
+    if (bytes.length !== size || sha256Hex(bytes) !== hash) throw corrupt();
     return bytes;
   }
   async downloadFiles(caller: Caller, artifactId: string, fileNames: readonly string[]) {
@@ -497,11 +498,7 @@ export class ArtifactStore implements Artifacts {
       );
     const { url } = await this.blobs
       .download(caller.projectId, artifact.hash, artifact.size)
-      .catch((error: unknown) => {
-        throw error instanceof MervError && error.code === 'blob_not_found'
-          ? new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500)
-          : error;
-      });
+      .catch(bytesLost);
     return view(artifact, await this.fetched(url, artifact.size, artifact.hash), range);
   }
   /** `saveAs` names the downloaded file; it defaults to the artifact's title. */
@@ -560,13 +557,7 @@ export class ArtifactStore implements Artifacts {
         503,
       );
     }
-    // A row implies its bytes: storage that has lost them is a server fault, never a 404.
-    const download = await sign().catch((error: unknown) => {
-      throw error instanceof MervError && error.code === 'blob_not_found'
-        ? new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500)
-        : error;
-    });
-    return { artifact, download };
+    return { artifact, download: await sign().catch(bytesLost) };
   }
   async bytes(
     caller: Caller,
