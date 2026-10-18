@@ -128,7 +128,8 @@ export function renderDeliveredCommit(
     `- Producing session: ${provenance.sessionId}`,
     `- Changes: ${JSON.stringify(workspace.stats)}`,
     '',
-    'The reviewer’s read-only checkout is pinned to exactly this commit. It exists only on a machine whose runner repository holds these objects.',
+    // Runners have kept no repository since 2026-10-06: every checkout comes from Code's server.
+    'The reviewer’s read-only checkout is pinned to exactly this commit, which Code keeps on its server: a review on any machine gets a checkout of it, and code.files with this commit as ref reads its files from any assignment in the project.',
     '',
   ].join('\n');
 }
