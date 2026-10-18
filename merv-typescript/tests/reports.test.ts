@@ -418,6 +418,8 @@ test('report tools present chart and page images to MCP clients', async () => {
     open.guide,
     /no numeric bar[^.]*, keep criteria: \[\] and chart the measured results/,
   );
+  // Without criteria the result chart still shows its uncertainty.
+  assert.match(open.guide, /With criteria: \[\], give the measured values their intervals/);
   // Agents are told a locked section the plan left as a placeholder is theirs to write: told
   // only that locked sections never change, a healer reported a fixed template as broken.
   assert.match(
