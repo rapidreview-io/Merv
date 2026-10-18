@@ -1821,14 +1821,40 @@ test('a context embeds only the newest interruptions, each clipped, and counts t
   const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
   const feedback = JSON.parse(
     prompt.slice(prompt.indexOf('{"interruptions":')).split('\n')[0]!,
-  ) as { interruptions: string[]; earlierInterruptions: number };
-  assert.equal(feedback.earlierInterruptions, 6);
+  ) as { interruptions: string[]; earlierNotes: number };
+  assert.equal(feedback.earlierNotes, 6);
   assert.deepEqual(
     feedback.interruptions.map((note) => note.slice(0, 38)),
     [6, 7, 8, 9, 10].map((index) => `Infrastructure recovery: Interruption ${index}`.slice(0, 38)),
   );
   assert.ok(feedback.interruptions.every((note) => note.length <= 2000));
   assert.ok(!prompt.includes('Interruption 5.'), 'older notes stay with experiment.get_state');
+});
+
+test('a context labels the notes of a review that returned the attempt as review notes, never as interruptions', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.verdict(await f.results(await f.running()), 'needs_changes', 'running');
+  experiment = await f.experiments.transition(f.source, {
+    experimentId: experiment.id,
+    expectedRevision: experiment.workflow.revision,
+    transition: 'retry_running',
+    requestId: 'host-lost',
+    evidence: { reason: 'The host was lost' },
+  });
+  const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
+  assert.match(
+    prompt,
+    /\n### attemptNotes:\S+ — Notes on this attempt: review notes that returned it, and infrastructure interruptions \(/,
+  );
+  const notes = JSON.parse(prompt.slice(prompt.indexOf('{"reviewNotes":')).split('\n')[0]!) as {
+    reviewNotes: string[];
+    interruptions: string[];
+  };
+  assert.deepEqual(notes.reviewNotes, [
+    'Independent fixture verification of the exact retained evidence.',
+  ]);
+  assert.equal(notes.interruptions.length, 1);
+  assert.match(notes.interruptions[0]!, /^Infrastructure recovery: The host was lost\./);
 });
 
 test('a results review whose final capture never landed takes the last admitted commit once its session closed', async (t) => {

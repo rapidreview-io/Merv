@@ -62,7 +62,7 @@ import {
   writesReport,
 } from './program.js';
 import { designCriteria, feasibilityCriterion, resultsCriteriaAt } from './definitions.js';
-import { allowedArtifacts } from './context.js';
+import { allowedArtifacts, RECOVERY_NOTE } from './context.js';
 import { pinnedRecovery, holds, resumedOutputs } from './lease.js';
 import {
   handleFor,
@@ -545,7 +545,7 @@ export async function transition(
       if (input.transition === 'retry_running')
         await feedback(
           experiment,
-          `Infrastructure recovery: ${input.evidence?.reason}. ${input.evidence?.detail ?? ''} Recover existing jobs and retained outputs before starting new work.`,
+          `${RECOVERY_NOTE}${input.evidence?.reason}. ${input.evidence?.detail ?? ''} Recover existing jobs and retained outputs before starting new work.`,
           tx,
         );
       else {

@@ -61,6 +61,12 @@ const REVIEW_HISTORY_CHARS = 8000;
 /** The newest interruption and revision notes a context embeds, each clipped; get_state has all. */
 const FEEDBACK_KEPT = 5;
 
+/**
+ * How the note retry_running adds to an attempt begins. Every other note an attempt holds is the
+ * notes of a review that returned it, which the frozen inputs keep under `interruptions` too.
+ */
+export const RECOVERY_NOTE = 'Infrastructure recovery: ';
+
 const FEEDBACK_CHARS = 2000;
 
 export function approvedPlan(experiment: Experiment): string[] {
@@ -494,16 +500,21 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   };
   if (!reviewing(state)) {
     sources.feedback!.items.push(...(await artifactItems(inputs.historicalArtifacts, 700)));
-    const interruptions = inputs.feedback.interruptions;
-    if (Array.isArray(interruptions) && interruptions.length) {
+    // Labeled as what each note is: reviewers' notes read as interruptions (2026-10-13) left an
+    // executor unable to tell a verdict from the infrastructure failure retry_running is for.
+    const notes = inputs.feedback.interruptions as string[] | undefined;
+    if (Array.isArray(notes) && notes.length) {
+      const interruptions = notes.filter((note) => note.startsWith(RECOVERY_NOTE));
+      const reviewNotes = notes.filter((note) => !note.startsWith(RECOVERY_NOTE));
       sources.feedback!.items.push(
         textItem(
-          `interruptions:${experiment.id}`,
-          'Current interruption notes',
+          `attemptNotes:${experiment.id}`,
+          'Notes on this attempt: review notes that returned it, and infrastructure interruptions',
           JSON.stringify({
-            interruptions,
+            ...(reviewNotes.length ? { reviewNotes } : {}),
+            ...(interruptions.length ? { interruptions } : {}),
             ...(inputs.feedback.earlierInterruptions
-              ? { earlierInterruptions: inputs.feedback.earlierInterruptions }
+              ? { earlierNotes: inputs.feedback.earlierInterruptions }
               : {}),
           }),
           { refs: [stateRef] },
