@@ -85,6 +85,12 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     assert.match(dockerfile, /-path '\*\/vendor\/\*\/bin\/codex'.*\n.*\n.*exec %s "\$@"/);
     assert.doesNotMatch(dockerfile, /codex\.js/);
     assert.match(dockerfile, /ln -s "\$native" \/usr\/bin\/apply_patch/);
+    // The shell's Python tooling, on its fixed PATH: pip and venv, uv pinned by digest, and the
+    // CPython 3.12 projects pin.
+    assert.match(dockerfile, /apt-get install .* python3-pip python3-venv python-is-python3 /);
+    assert.match(dockerfile, /^FROM ghcr\.io\/astral-sh\/uv:[0-9.]+@sha256:[0-9a-f]{64} AS uv$/m);
+    assert.match(dockerfile, /^COPY --from=uv \/uv \/uvx \/usr\/bin\/$/m);
+    assert.match(dockerfile, /--managed-python "\$python"\)" \/usr\/bin\/python3\.12 /);
     // A networked assignment can reach sshd on loopback, which takes no password; and the step's
     // server-side deadline, not a clock in the supervisor, ends a hosted launch.
     assert.match(dockerfile, /'PasswordAuthentication no\\nKbdInteractiveAuthentication no\\n'/);

@@ -287,6 +287,17 @@ test('isolated Codex launcher receives the scoped command, environment, stdin an
   assert.equal(observed.stdin.includes('source-bearer-must-stay-with-runner'), false);
   assert.match(config(observed.args)['shell_environment_policy.set'], /\/home\/assignment/);
   assert.doesNotMatch(config(observed.args)['shell_environment_policy.set'], /\/home\/worker/);
+  // Its home is read-only to its shell: temporary files, sockets and caches go to the machine's
+  // own /tmp, and uv's cache, which Git ignores by itself, to the workspace.
+  const shell = config(observed.args);
+  assert.equal(shell['sandbox_workspace_write.exclude_slash_tmp'], 'false');
+  assert.equal(shell['sandbox_workspace_write.writable_roots'], '[]');
+  for (const variable of [
+    '"TMPDIR"="/tmp"',
+    '"XDG_CACHE_HOME"="/tmp/cache"',
+    '"UV_CACHE_DIR"="/tmp/merv-profile-workspace/.uv-cache"',
+  ])
+    assert.ok(shell['shell_environment_policy.set'].includes(variable), variable);
 });
 
 test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no implicit model override', () => {
@@ -307,6 +318,7 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.equal(settings['sandbox_workspace_write.writable_roots'], '[]');
   assert.equal(settings['sandbox_workspace_write.exclude_tmpdir_env_var'], 'true');
   assert.equal(settings['sandbox_workspace_write.exclude_slash_tmp'], 'true');
+  assert.doesNotMatch(settings['shell_environment_policy.set'], /XDG_CACHE_HOME|UV_CACHE_DIR/);
   for (const feature of [
     'apps',
     'plugins',
@@ -409,6 +421,19 @@ test('a hosted Codex profile calls the model through Main with its session beare
   assert.equal(disabled(review), true);
   assert.match(reviewLaunch.stdin, /outside sources/);
   assert.doesNotMatch(reviewLaunch.stdin, /web\.search/);
+  // A worker on the machine is told what its shell has, where scratch goes and what of its
+  // directory follows the work, which workers learned by failing (prod, 2026-09-29..10-16).
+  for (const told of [
+    /python3\.12 and uv\. Make Python environments in the workspace with uv/,
+    /\/tmp is yours for temporary files and sockets .* SSH ControlPath/,
+    /caches such as pip’s and Hugging Face’s go to \/tmp\/cache/,
+    /may hold files an earlier agent left/,
+    /only what Code admitted moves with it .*: environments, downloads, keys and other ignored files stay behind/,
+  ])
+    assert.match(spec.stdin, told);
+  // Not a sealed review, which writes nothing, nor a launch on the person's own machine.
+  for (const other of [reviewLaunch, buildLaunch(codex, request(), safeEnv)])
+    assert.doesNotMatch(other.stdin, /\/tmp is yours/);
 });
 
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
@@ -1079,6 +1104,8 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     { ...safeEnv, HF_TOKEN: 'ambient-token' },
   );
   assert.equal(launch.env.HF_TOKEN, marker);
+  // The libraries read the variables, but the machine does not have them until installed.
+  assert.match(launch.stdin, /once installed in your Python environment \(none is preinstalled\)/);
   const settings = config(launch.args);
   assert.equal(settings['shell_environment_policy.inherit'], '"all"');
   assert.deepEqual(JSON.parse(settings['shell_environment_policy.include_only']), [
@@ -1087,6 +1114,8 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     'USER',
     'TMPDIR',
     'LANG',
+    'XDG_CACHE_HOME',
+    'UV_CACHE_DIR',
     'HF_TOKEN',
     'HF_ENDPOINT',
   ]);

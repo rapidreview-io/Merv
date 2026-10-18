@@ -310,6 +310,14 @@ const internet = (profile: RunnerProfile, session: LaunchRequest['session']): bo
 const searching = (web: boolean): string =>
   `For what this project does not hold, use the tools you are listed for outside sources rather than your memory, and cite what you rely on as each tool's description says.${web ? ' web.search and web.extract find and read the public web.' : ''}`;
 
+/**
+ * What a worker on a hosted machine is told of it, which workers otherwise learned by failing:
+ * what its shell has, where scratch and caches go (codex.ts), and what of its directory follows
+ * the work to another machine (only what Code holds).
+ */
+const workHost =
+  'Your shell has git, curl, ssh, unzip, python3 (Debian’s 3.11, with pip and venv; python is the same), python3.12 and uv. Make Python environments in the workspace with uv (uv venv --python 3.12 .venv, then uv pip install --python .venv/bin/python <packages>): uv marks them ignored by Git, and an environment made any other way must be listed in .gitignore, or commits of this directory take it in. /tmp is yours for temporary files and sockets (TMPDIR; put SSH ControlPath sockets there, since the workspace path is too long for one), and caches such as pip’s and Hugging Face’s go to /tmp/cache; /tmp is emptied when this visit ends. Every visit to this work on this machine runs in this same directory, so it may hold files an earlier agent left. If the work moves to another machine, only what Code admitted moves with it (code.commit, the runner’s checkpoints and the final capture of what Git does not ignore): environments, downloads, keys and other ignored files stay behind.';
+
 /** How long a launch whose own handoff closed its session may take to end by itself. */
 export const handoffGraceMs = (profile: RunnerProfile) => launcherOf(profile).handoffGraceMs;
 
@@ -403,9 +411,10 @@ export function buildLaunch(
         ]
       : []),
     ...(launcher.agent ? [searching(internet(profile, session))] : []),
+    ...(launcher.isolated(profile) && !sealed(session) ? [workHost] : []),
     ...(launcher.huggingface(profile) && !sealed(session) && request.hfToken && request.hfEndpoint
       ? [
-          'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment. Use huggingface_hub, datasets, transformers or hf download normally; do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
+          'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment: huggingface_hub, datasets, transformers and hf download use them as they are, once installed in your Python environment (none is preinstalled); do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
         ]
       : []),
     inquiry

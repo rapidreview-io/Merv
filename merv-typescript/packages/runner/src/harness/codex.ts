@@ -210,6 +210,16 @@ function codexArgs(
   const shellEnvironment = { ...safeEnvironment };
   delete shellEnvironment.CODEX_HOME;
   delete shellEnvironment.CLAUDE_CONFIG_DIR;
+  // The assignment's home is read-only to its shell, which writes only the workspace and /tmp,
+  // emptied by the hosted reset after every step: temporary files, sockets (the workspace path
+  // is too long for one) and the caches tools keep in the home go there. uv's, which marks itself
+  // ignored by Git and holds packages unpacked, in more files than that reset may walk, stays in
+  // the workspace for the next step on this machine.
+  if (profile.isolatedLauncher)
+    Object.assign(shellEnvironment, {
+      XDG_CACHE_HOME: '/tmp/cache',
+      UV_CACHE_DIR: join(request.cwd, '.uv-cache'),
+    });
   // Codex applies include_only after set; retain the safe override names as well.
   // Default exclusions remove *TOKEN*, so bypass them only behind this exact name list.
   if (hfShell)
@@ -224,7 +234,9 @@ function codexArgs(
   // disabled, and a sealed review stays read-only and offline.
   config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
-  config('sandbox_workspace_write.exclude_slash_tmp', 'true');
+  // An isolated assignment's /tmp is its own machine's, emptied after every step; anywhere else it
+  // is shared with the person's own programs.
+  config('sandbox_workspace_write.exclude_slash_tmp', profile.isolatedLauncher ? 'false' : 'true');
   // Codex sees what Merv's server lists to this session, as Claude does through the whole
   // mcp__merv prefix: every read in the project and the writes this lease was granted. Sessions
   // enforce the manifest and its argument bindings on every call, and a fixed list here hid the

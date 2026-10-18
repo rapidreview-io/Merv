@@ -11,12 +11,24 @@ WORKDIR /opt/merv/pi
 COPY pi/package.json pi/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --engine-strict --no-audit --no-fund \
  && find node_modules -type d -name .bin -prune -exec rm -rf {} +
+FROM ghcr.io/astral-sh/uv:0.12.22@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc AS uv
 FROM ${SANDBOX_IMAGE}
 # The Sandboxes base only warns when its agent is missing; this image refuses to build without it.
 # A hosted assignment's shell has the network, so it can reach sshd on loopback: no passwords.
+# Its shell's python3 is Debian's, with pip and venv (python is the same): without them workers
+# fetched get-pip.py, unpacked wheels by hand or moved plain CPU checks to rented machines.
 RUN test -x /usr/local/bin/sandboxes-agent \
- && apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+ && apt-get update && apt-get install -y --no-install-recommends git python3-pip python3-venv python-is-python3 unzip \
+ && rm -rf /var/lib/apt/lists/* \
  && printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' >/etc/ssh/sshd_config.d/00-merv.conf
+# Projects pin CPython 3.12, which Debian 12 lacks: uv installs its checksummed build where every
+# assignment reads it, and the shell's fixed PATH (/usr/bin:/bin) reaches it as python3.12.
+COPY --from=uv /uv /uvx /usr/bin/
+RUN python="cpython-3.12-linux-$(uname -m)-gnu" \
+ && UV_PYTHON_INSTALL_DIR=/opt/python uv python install --no-bin "$python" \
+ && ln -s "$(UV_PYTHON_INSTALL_DIR=/opt/python uv python find --managed-python "$python")" /usr/bin/python3.12 \
+ && /usr/bin/python3.12 -c 'import ensurepip, sqlite3, ssl, venv' \
+ && rm -rf /root/.cache
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=pi-deps /opt/merv/pi/node_modules /opt/merv/pi/node_modules
