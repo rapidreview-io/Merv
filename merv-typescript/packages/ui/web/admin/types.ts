@@ -24,7 +24,6 @@ export interface AdminWorkRow {
   } | null;
   lastActivity: string;
   createdAt: string;
-  updatedAt: string;
   cost: {
     sessions: number;
     reportedSessions: number;
@@ -37,8 +36,7 @@ export interface AdminWorkRow {
 }
 export interface AdminWork {
   rows: AdminWorkRow[];
-  people: { key: string; label: string; active: number; total: number }[];
-  at: string;
+  people: { key: string; label: string }[];
   unavailable: string[];
 }
 
@@ -70,7 +68,6 @@ export interface CreditAccount {
     expires_at: string | null;
     revoked_at: string | null;
     schedule_id: string | null;
-    created_at: string;
     reason: string;
   }[];
   schedules: {
@@ -88,13 +85,11 @@ export interface CreditAccount {
     scope: string;
     window: string;
     metric: string;
-    currency: string | null;
     cap: string | null;
     provider: string | null;
   }[];
 }
 export interface AdminCredits {
-  at: string;
   providers: string[];
   people: {
     label: string;
@@ -115,7 +110,6 @@ export interface AdminCredential {
   set: boolean;
   fingerprint: string | null;
   sharedWith: { plugin: string; field: string; env: string }[];
-  firstSeen: string | null;
   lastChanged: string | null;
   lastOk: { at: string; relay: string; model: string } | null;
   lastFailure: {
@@ -128,7 +122,6 @@ export interface AdminCredential {
   dead: boolean;
 }
 export interface AdminCredentials {
-  at: string;
   groups: {
     purpose: string;
     provider?: {

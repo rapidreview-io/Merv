@@ -971,6 +971,8 @@ details.stack > summary {
 .status,
 .ev-role,
 .table th,
+.admin-table th,
+.admin-attn-code,
 .rail-group-head,
 .flag,
 .bg-kind {
@@ -7876,11 +7878,7 @@ html.modal-open {
   padding: 9px 8px;
   border-bottom: 1px solid var(--line);
   color: var(--faint);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
   text-align: left;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 .admin-table td {
@@ -7918,7 +7916,8 @@ html.modal-open {
   max-width: 0;
 }
 .admin-line,
-.admin-clip {
+.admin-clip,
+.admin-used {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -7970,9 +7969,6 @@ button.admin-name {
 }
 .admin-attn-code {
   color: var(--qualifies);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 .admin-attn--bad .admin-attn-code {
   color: var(--refutes);
@@ -8078,8 +8074,6 @@ tbody:first-of-type > .admin-group > th {
 }
 .admin-used {
   min-width: 8em;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .admin-said {
   display: grid;
