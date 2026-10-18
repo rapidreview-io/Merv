@@ -658,9 +658,10 @@ export class ApiServer {
       { name: 'merv', version: '0.1.0' },
       {
         capabilities: { tools: {} },
+        // A leased worker is given none: Codex repeats a server's instructions at every tool.
         instructions:
           principal.kind === 'session'
-            ? this.tools.instructions('session')
+            ? undefined
             : [
                 this.tools.instructions(),
                 'Human sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.',

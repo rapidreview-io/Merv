@@ -335,8 +335,7 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  instructions(caller?: 'session'): string {
-    if (caller === 'session') return this.sessions?.provider.instructions ?? '';
+  instructions(): string {
     return [...this.guide.map(({ text }) => text), toolsGuide].join('\n\n');
   }
 

@@ -134,11 +134,7 @@ const workerTools = new Set(['session.message.ack', 'session.ask_owner']);
  * since a worker's own tools (`session.ask_owner`) need only read scope.
  */
 const inquiryCalls = (tool: string, read?: boolean) => !!read || tool === 'session.message.ack';
-/**
- * Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once.
- * It gives a worker's connection no MCP instructions: Codex repeats a server's instructions at
- * the head of every tool it lists, about a hundred times, and the worker prompt already says them.
- */
+/** Sessions' tool policy: each MCP call of a leased worker, admitted, validated and run once. */
 export class SessionInvocations implements SessionToolPolicy {
   /** The invocation whose handler runs, which Sessions' guard reads. */
   readonly toolHandler = new AsyncLocalStorage<string>();
