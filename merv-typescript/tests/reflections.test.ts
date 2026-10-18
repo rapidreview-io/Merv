@@ -875,6 +875,9 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
     assert.ok(execution.assignment.brief.includes(read), read);
     assert.ok(reads.has(read), read);
   }
+  // The pinned recipe still says task.list repeats project.records; the brief says it is an index.
+  assert.match(execution.assignment.brief, /project\.records lists only an index/);
+  for (const read of ['task.get', 'experiment.get_state']) assert.ok(reads.has(read), read);
 });
 
 test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {

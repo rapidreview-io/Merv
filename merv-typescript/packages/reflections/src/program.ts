@@ -447,6 +447,12 @@ export async function references(ctx: ReflectionsContext, context: WorkflowCheck
  */
 const CODE_ACCESS =
   ' This visit has no checkout of the project’s code. code.files reads the files of main, of a task or experiment by its id, or of any commit, and code.log their history; both only read. Tests are rerun by the task and experiment reviews: where a conclusion rests on a test you did not rerun, cite the review that ran it and say so.';
+/**
+ * Said beside the published recipe too, which still has task.list repeat project.records' task
+ * records: project.records has listed only an index since 2026-10-18 unless given ids.
+ */
+const RECORDS_INDEX =
+  ' project.records lists only an index of the tasks and experiments; pass it up to 20 ids, or use task.get or experiment.get_state, to read those records whole.';
 export async function build(ctx: ReflectionsContext, context: WorkflowCheckContext) {
   const { lease, ...current } = await admit(ctx, context);
   const { wave, lens } = current;
@@ -463,7 +469,7 @@ export async function build(ctx: ReflectionsContext, context: WorkflowCheckConte
   return {
     role: stage === 'review' ? ('reviewer' as const) : ('producer' as const),
     label: named({ wave, lens }),
-    brief: recipe.recipe.instructions + CODE_ACCESS,
+    brief: recipe.recipe.instructions + RECORDS_INDEX + CODE_ACCESS,
     references: [
       { kind: 'reflection', id: wave.id, label: wave.title },
       ...preview.sources.map((a) => ({ kind: 'artifact', id: a.id, label: a.title })),
