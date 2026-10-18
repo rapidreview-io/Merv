@@ -12,6 +12,7 @@ import {
 } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
 import type { CaptureSummary, SbxPipelines, WorkflowRecord } from '@sandboxes/pipelines';
+import { nodeTerminal, workflowTerminal } from '@sandboxes/pipelines/graph';
 import type { SbxJobs } from '@sandboxes/jobs';
 import type { SbxObjects } from '@sandboxes/storage';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
@@ -227,12 +228,23 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
     return done;
   }
 
-  /** Whether every capture of a finished workflow has settled, registering those not yet. */
+  /** Whether every capture of a finished workflow has settled, registering those not yet. A
+   *  capture node is final once it ends, so it registers then, while the rest of its workflow
+   *  still runs: its agent need not wait for the whole pipeline to find its evidence. */
   private async workflow(work: Work, workflow: WorkflowRecord) {
-    if (!workflow.attempt_ref || !['completed', 'failed', 'cancelled'].includes(workflow.state))
-      return false;
+    if (!workflow.attempt_ref) return false;
+    const finished = workflowTerminal(workflow.state);
     const key = JSON.stringify([work.namespace, workflow.id]);
     if (this.doneWorkflows.has(key)) return true;
+    const ended = finished
+      ? []
+      : workflow.request.nodes
+          .filter(
+            (node) =>
+              node.kind === 'capture' && nodeTerminal(workflow.nodes[node.id]?.state ?? 'pending'),
+          )
+          .map((node) => node.id);
+    if (!finished && !ended.length) return false;
     const settled = await this.state.read((sql) =>
       sql.all<{ node_id: string }>(
         'SELECT node_id FROM sandbox_capture_index WHERE project_id=? AND namespace=? AND workflow_id=?',
@@ -242,6 +254,8 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       ),
     );
     const indexed = new Set(settled.map((row) => row.node_id));
+    // A running workflow is read again only when another of its captures has ended.
+    if (!finished && ended.every((node) => indexed.has(node))) return false;
     let after: string | null = null;
     let pending = false;
     do {
@@ -259,6 +273,7 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       }
       after = page.next;
     } while (after !== null);
+    if (!finished) return false;
     if (!pending) this.doneWorkflows.add(key);
     return !pending;
   }
@@ -299,7 +314,13 @@ export class SandboxEvidence implements SandboxCaptureEvidence {
       const artifact = await this.artifacts.createCollection(
         caller,
         {
-          title: clip(`Compute capture — ${workflow.name || workflow.id} / ${node.id}`, 200),
+          // Ids first, so a clipped title still says which capture this is.
+          title: clip(
+            `Compute capture ${workflow.id} / ${node.id}${
+              workflow.name && workflow.name !== workflow.id ? ` — ${workflow.name}` : ''
+            }`,
+            200,
+          ),
           sourceKey: `sbx:${digest([work.namespace, workflow.id, node.id])}`,
           files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
           metadata: {

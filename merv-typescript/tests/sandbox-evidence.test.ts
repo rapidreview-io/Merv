@@ -118,6 +118,8 @@ async function fixture(t: TestContext, registerProvider = true) {
       state: 'completed',
       name: 'Training',
       evidence_limitations: [],
+      request: { nodes: [{ id: 'output', kind: 'capture' }] },
+      nodes: { output: { state: 'succeeded' } },
     } as unknown as WorkflowRecord;
     workflows.set(id, value);
     captures.set(id, [
@@ -207,10 +209,14 @@ test('replay and crash backfill create one immutable collection; bulk epoch read
   );
 });
 
-test('cleanup waits, failed captures retain partial files, and empty captures remain explicit', async (t) => {
+test('an unfinished capture waits, failed captures retain partial files, and empty captures remain explicit', async (t) => {
   const f = await fixture(t);
   const original = f.workflow();
-  f.workflows.set(original.id, { ...original, state: 'cleaning_up' });
+  f.workflows.set(original.id, {
+    ...original,
+    state: 'cleaning_up',
+    nodes: { output: { state: 'running' } },
+  } as unknown as WorkflowRecord);
   await f.evidence.reconcile();
   assert.deepEqual(await f.artifacts.list(f.caller), []);
   assert.equal(f.calls.includes('captures'), false);
@@ -225,6 +231,49 @@ test('cleanup waits, failed captures retain partial files, and empty captures re
   assert.equal(collections.length, 2);
   assert.equal(collections.find((a) => a.metadata?.captureNode === 'partial')!.files!.length, 1);
   assert.equal(collections.find((a) => a.metadata?.captureNode === 'empty')!.files!.length, 0);
+});
+
+test('a capture registers once its node ends, while the rest of its workflow still runs', async (t) => {
+  const f = await fixture(t);
+  const original = f.workflow();
+  const running = (nodes: Record<string, string>) =>
+    f.workflows.set(original.id, {
+      ...original,
+      state: 'running',
+      request: {
+        nodes: Object.keys(nodes).map((id) => ({ id, kind: id === 'train' ? 'run' : 'capture' })),
+      },
+      nodes: Object.fromEntries(Object.entries(nodes).map(([id, state]) => [id, { state }])),
+    } as unknown as WorkflowRecord);
+  const captureReads = () => f.calls.filter((call) => call === 'captures').length;
+  running({ output: 'running', train: 'succeeded', later: 'pending' });
+  await f.evidence.reconcile();
+  assert.equal(captureReads(), 0, 'no capture has ended');
+  running({ output: 'succeeded', train: 'succeeded', later: 'running' });
+  await f.evidence.reconcile();
+  const [collection, ...rest] = await f.artifacts.list(f.caller);
+  assert.equal(rest.length, 0);
+  assert.equal(collection!.title, 'Compute capture pipeline-1 / output — Training');
+  assert.equal(collection!.metadata?.workflowId, 'pipeline-1');
+  assert.deepEqual((await f.read()).get('work')!.artifactIds, [collection!.id]);
+  const reads = captureReads();
+  await f.evidence.reconcile();
+  assert.equal(
+    captureReads(),
+    reads,
+    'a running workflow whose ended captures are kept is not read',
+  );
+  const settled = () =>
+    f.state.snapshotTransaction((tx) =>
+      f.evidence.settled(f.caller.projectId, 'work', 'epoch-1', new Date(0).toISOString(), tx),
+    );
+  await f.state.transaction((tx) => tx.run('UPDATE sandbox_run_intents SET retired=1,target=1'));
+  await f.evidence.reconcile();
+  assert.equal(await settled(), false, 'its workflow has not finished');
+  f.workflows.set(original.id, original);
+  await f.evidence.reconcile();
+  assert.equal(await settled(), true);
+  assert.equal((await f.artifacts.list(f.caller)).length, 1);
 });
 
 test('bulk receipts retain both epochs and select only the requested attempts', async (t) => {
