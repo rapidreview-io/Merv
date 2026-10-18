@@ -303,12 +303,14 @@ export class CodeCommandService implements CodeCommands {
         "SELECT * FROM code_commands WHERE session_id=? AND status IN ('queued','dispatched')",
         session.id,
       );
+      // The outstanding command may be the runner's periodic checkpoint, which the agent never
+      // asked for, so the refusal names it and what it commits.
       if (outstanding)
         throw new MervError(
           'code_command_pending',
           automatic(outstanding)
             ? `The runner's automatic checkpoint ${outstanding.id} of this checkout is still running: call code.commit again in a few seconds, with the same input, and it lands on top of that checkpoint`
-            : `The session already has an outstanding code command, ${outstanding.id}: call code.commit again once code.operation reports that it ended`,
+            : `The session already has an outstanding code command, ${outstanding.id} (“${cleanText(this.decode(outstanding).command.message.split('\n')[0]!, 80)}”): poll code.operation with that commandId and call code.commit again once it has ended`,
           409,
           { commandId: outstanding.id, automatic: automatic(outstanding) },
         );

@@ -371,10 +371,13 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
   );
   // A lost reply asks again: the same command, already dispatched.
   assert.deepEqual(await asked('checkpoint-1'), checkpoint);
-  // While it is outstanding the agent's own commit waits, and no second checkpoint is made.
+  // While it is outstanding the agent's own commit waits, told which command it waits on, and
+  // no second checkpoint is made.
   await assert.rejects(async () => await f.code.commit(worker.caller, input()), {
     code: 'code_command_pending',
+    message: `The session already has an outstanding code command, ${checkpoint.id} (“Checkpoint: Fold both sweeps”). Poll code.operation with that commandId and request this commit again once it has ended.`,
   });
+  assert.equal((await f.code.operation(worker.caller, checkpoint.id)).status, 'dispatched');
   assert.deepEqual(await asked('checkpoint-2'), checkpoint);
   await f.code.completeCommand(f.source, {
     ...worker.control,

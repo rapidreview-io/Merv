@@ -78,3 +78,10 @@ test('a file Code will not keep is refused with the limit and how to find it', a
   assert.match(seen.next, /new requestId/);
   assert.equal((await tools(record('workspace_head_conflict'))('code.operation')).next, undefined);
 });
+
+test('a commit refused for a credential-shaped file says where the findings are and who may exempt them', async () => {
+  const seen = await tools(record('code_capture_quarantined'))('code.operation');
+  assert.match(seen.next, /code\.status lists the refused upload/);
+  assert.match(seen.next, /secretExemptGlobs in code\.repository\.configure/);
+  assert.match(seen.next, /session\.ask_owner/);
+});

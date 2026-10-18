@@ -35,6 +35,8 @@ import type { CodeMirrorRetryInput, CodeUnitFenceInput } from './models.js';
 const REFUSALS: Record<string, string> = {
   workspace_file_too_large:
     'Code keeps no file over 50 MiB, and a new or changed file in the checkout that is not ignored is larger. List the large files with `find . -path ./.git -prune -o -type f -size +50M -print`; each one `git check-ignore` does not name must be ignored in .gitignore or removed (retain data you need with artifact.upload_begin). Then commit again with a new requestId.',
+  code_capture_quarantined:
+    'Code refused the commit because a file in it matches a credential pattern. code.status lists the refused upload under operations, with the path and rule of each finding but never the text. A real credential must leave the checkout: remove it and commit again with a new requestId. Data that only looks like one (public datasets, fixtures) stays out of Git (retain it with artifact.upload_begin) unless a project administrator exempts its paths with secretExemptGlobs in code.repository.configure; ask with session.ask_owner.',
   workspace_foreign_path:
     'A new or changed path in the checkout lies under a symbolic link that leads outside it. Replace the link with the files themselves or remove it, then commit again with a new requestId.',
 };
