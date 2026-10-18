@@ -413,6 +413,23 @@ test('report tools present chart and page images to MCP clients', async () => {
   );
   const open = (await tools.get('report.open')!.handler({} as Caller, {})) as { guide: string };
   assert.match(open.guide, /report\.review_visual/);
+  // The front matter states once that a plan with no numeric bar keeps criteria: [].
+  assert.match(
+    open.guide,
+    /no numeric bar[^.]*, keep criteria: \[\] and chart the measured results/,
+  );
+  // Without criteria the result chart still shows its uncertainty.
+  assert.match(open.guide, /With criteria: \[\], give the measured values their intervals/);
+  // Agents are told a locked section the plan left as a placeholder is theirs to write: told
+  // only that locked sections never change, a healer reported a fixed template as broken.
+  assert.match(
+    open.guide,
+    /locked, except a locked section the plan left as only a \[\[write: …\]\]/,
+  );
+  assert.match(
+    tools.get('report.write')!.description,
+    /cannot change, except one that still holds only its \[\[write: …\]\] placeholder/,
+  );
 });
 
 test('a locked section the plan left as a placeholder is written once, then stays', async (t) => {
@@ -433,6 +450,11 @@ test('a locked section the plan left as a placeholder is written once, then stay
     sections: [{ name: 'Inquiry', content: 'To shortlist models for a larger evaluation.' }],
   });
   assert.match(written.source, /To shortlist models for a larger evaluation\./);
+  const checked = await f.reports.check(f.operator, subject);
+  assert.ok(
+    !checked.issues.some((i) => i.where?.includes('Inquiry')),
+    JSON.stringify(checked.issues),
+  );
   // The sections the plan did fill stay locked.
   await assert.rejects(
     f.reports.write(f.operator, {
@@ -442,5 +464,77 @@ test('a locked section the plan left as a placeholder is written once, then stay
       sections: [{ name: 'title', content: 'Another question?' }],
     }),
     hasCode('report_locked_section'),
+  );
+});
+
+test('a plan that set no numeric bar charts its measured results with criteria: []', async (t) => {
+  const f = await fixture(t);
+  f.allowed.add('exp_x');
+  const first = await f.reports.open(f.operator, f.subject('exp_x'));
+  assert.match(first.source, /^criteria: \[\]$/m);
+  const leaderboard = `Kev-9B and Kev-27B tie for the most correct answers.
+
+\`\`\`chart
+{"id": "leaderboard", "message": "Two checkpoints tie at 22 of 24.", "data": {"values": [{"model": "Kev-9B", "correct": 22}, {"model": "Kev-27B", "correct": 22}, {"model": "JEV", "correct": 20}]},
+ "y": {"field": "model"}, "x": {"field": "correct", "title": "correct of 24", "domain": [0, 24]},
+ "layer": [{"mark": "bar", "color": "result"}]}
+\`\`\``;
+  const written = await f.reports.write(f.operator, {
+    ...f.subject('exp_x'),
+    expectedRevision: first.revision,
+    requestId: f.request(),
+    ...COMPLETE,
+    frontMatter: 'id: "EXP-1"\ndate: "2026-10-14"\ncriteria: []',
+    sections: [{ name: 'Result', content: leaderboard }, ...COMPLETE.sections.slice(1)],
+  });
+  // No invented bar is needed: the chart is checked as it stands, and a warning names the rule.
+  const checked = await f.reports.check(f.operator, f.subject('exp_x'));
+  assert.deepEqual(
+    checked.issues.filter((i) => i.level === 'error'),
+    [],
+  );
+  assert.ok(
+    checked.issues.some((i) => i.where === 'front matter' && /no numeric bar/.test(i.message)),
+    JSON.stringify(checked.issues),
+  );
+  if (!browser) return;
+  const review = await f.reports.reviewVisual(f.operator, {
+    ...f.subject('exp_x'),
+    chartId: 'leaderboard',
+  });
+  assert.equal(review.revision, written.revision);
+  assert.deepEqual(
+    review.issues.filter((i) => i.level === 'error'),
+    [],
+  );
+});
+
+test('a drawing failure no check foresaw names the chart and the reason, not internal_error', async (t) => {
+  const renderer = new ReportRenderer(browser);
+  t.after(() => renderer.close());
+  // What Playwright throws when the page cannot capture a chart: a plain Error, not a MervError.
+  (renderer as unknown as { renderNow: () => Promise<never> }).renderNow = async () => {
+    throw new Error('locator.screenshot: Timeout 30000ms exceeded.\nCall log: waiting for element');
+  };
+  const report = parseReport('---\nid: X\ndate: Y\n---\n# Q?\n');
+  await assert.rejects(
+    renderer.render(report, new Map(), { visual: 'common-timing' }),
+    (error: MervError) =>
+      error.code === 'report_render_failed' &&
+      error.status === 422 &&
+      error.message.startsWith(
+        'Merv could not draw chart common-timing: locator.screenshot: Timeout 30000ms exceeded. Try once more',
+      ) &&
+      /smaller height/.test(error.message) &&
+      !error.message.includes('Call log') &&
+      JSON.stringify(error.details) === JSON.stringify({ chart: 'common-timing' }),
+  );
+  // A refusal the renderer already typed passes through unchanged, and the queue keeps going.
+  (renderer as unknown as { renderNow: () => Promise<never> }).renderNow = async () => {
+    throw new MervError('report_chart_failed', 'Chart x could not be drawn: bad spec', 422);
+  };
+  await assert.rejects(
+    renderer.render(report, new Map(), { pages: true }),
+    hasCode('report_chart_failed'),
   );
 });

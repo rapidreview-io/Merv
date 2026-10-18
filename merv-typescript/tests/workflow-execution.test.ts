@@ -1,5 +1,5 @@
 import { currentTask, currentWork } from './fixtures/current-work.js';
-import { createService } from '@merv/contracts';
+import { createService, type MervError } from '@merv/contracts';
 import { admitDispatch } from '@merv/workflows/execution';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +11,7 @@ import {
   type Caller,
   type Data,
   type WorkflowDefinition,
+  type WorkflowExecution,
   type WorkflowExecutionPolicy,
   type WorkflowLeaseOffer,
   type WorkflowPolicy,
@@ -291,13 +292,90 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
   assert.deepEqual((await f.admit(offered, 'checkpoint', { artifactIds: [] })).input, {
     artifactIds: [],
   });
+  // The refusal names each value outside the reference, so the caller drops exactly those.
   await assert.rejects(
-    async () => await f.admit(offered, 'checkpoint', { artifactIds: ['review-b'] }),
-    { code: 'execution_arguments_forbidden' },
+    async () =>
+      await f.admit(offered, 'checkpoint', { artifactIds: ['task-a', 'review-b', 'gone'] }),
+    (error: MervError) => {
+      assert.equal(error.code, 'execution_arguments_forbidden');
+      assert.match(error.message, /^artifactIds is outside the declared execution references: /);
+      assert.match(error.message, /review-b, gone are not among this assignment's taskArtifacts/);
+      assert.doesNotMatch(error.message, /task-a/);
+      assert.deepEqual(error.details, {
+        field: 'artifactIds',
+        reference: 'taskArtifacts',
+        outside: ['review-b', 'gone'],
+      });
+      return true;
+    },
+  );
+  await assert.rejects(
+    async () => await f.admit(offered, 'checkpoint', { artifactIds: 'task-a' }),
+    { code: 'execution_arguments_forbidden', message: /must be a list chosen from/ },
+  );
+  await assert.rejects(
+    async () => await f.admit(offered, 'artifact.read', { artifactId: 'gone' }),
+    (error: MervError) =>
+      error.code === 'execution_arguments_forbidden' &&
+      /: gone is not among/.test(error.message) &&
+      !/Leave/.test(error.message),
   );
   assert.deepEqual((await f.admit(offered, '_nisa.search', { query: 'cordis' })).input, {
     query: 'cordis',
   });
+});
+test('a refused oneOf says what its reference holds; only a subset is told to leave values out', () => {
+  const execution: WorkflowExecution = {
+    instanceId: 'instance',
+    projectId: 'project',
+    actorId: 'actor',
+    workflow: 'execution-test',
+    version: 1,
+    state: 'working',
+    revision: 0,
+    policyHash: 'hash',
+    registrationId: 'registration',
+    policy: {
+      readOnly: true,
+      tools: [
+        {
+          name: 'artifact.read',
+          alternatives: [{ artifactId: { kind: 'oneOf', name: 'artifacts' } }],
+        },
+        { name: 'submit', alternatives: [{ artifactIds: { kind: 'subset', name: 'artifacts' } }] },
+      ],
+    },
+    references: { artifacts: ['own'] },
+  };
+  // Reading an earlier session's artifact: there is nothing to leave out, and citing it in a new
+  // artifact would not make it readable.
+  assert.throws(
+    () => admitDispatch(execution, 'artifact.read', { artifactId: 'art_old' }),
+    (error: MervError) => {
+      assert.equal(error.code, 'execution_arguments_forbidden');
+      assert.equal(
+        error.message,
+        "artifactId is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created.",
+      );
+      return true;
+    },
+  );
+  // A subset names a repeated id once, and is told to drop it or cite it.
+  assert.throws(
+    () => admitDispatch(execution, 'submit', { artifactIds: ['own', 'art_old', 'art_old'] }),
+    (error: MervError) => {
+      assert.equal(
+        error.message,
+        "artifactIds is outside the declared execution references: art_old is not among this assignment's artifacts, which hold what the assignment declared and the artifacts this session created. Leave it out of artifactIds; to rely on an artifact from an earlier session, cite its id in one this session creates.",
+      );
+      assert.deepEqual(error.details, {
+        field: 'artifactIds',
+        reference: 'artifacts',
+        outside: ['art_old'],
+      });
+      return true;
+    },
+  );
 });
 
 test('a lease check fences its worker, revision, policy and active registration, even inside an existing transaction', async (t) => {

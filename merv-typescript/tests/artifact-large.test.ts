@@ -67,6 +67,12 @@ const file = (bytes: Buffer, requestId?: string) => ({
 
 test('an upload is one signed PUT of exactly the declared bytes, and a stored file needs none', async (t) => {
   const f = await largeApp(t);
+  // A file already on disk goes up this way, not pasted or base64-encoded into artifact.create.
+  const create = (await f.app.ctx.tools.describe()).find((tool) => tool.name === 'artifact.create');
+  assert.match(
+    create!.description!,
+    /For a file already on disk, do not cat or base64 it into content: artifact\.upload_begin stores it/,
+  );
   assert.deepEqual(await f.app.ctx.tools.call('artifact.storage_status', f.owner, {}), {
     available: true,
   });
@@ -207,7 +213,20 @@ test('a file over the inline limit stays in blobs and downloads through a signed
   });
   await assert.rejects(
     f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id }),
-    { code: 'artifact_size', message: /; use artifact\.read with mode download$/ },
+    {
+      code: 'artifact_size',
+      message:
+        /; give a length to read a range of it; artifact\.read with mode download fetches it whole$/,
+    },
+  );
+  // A range of it is read from storage, verified whole first.
+  assert.deepEqual(
+    await f.app.ctx.tools.call('artifact.read', f.owner, {
+      artifactId: artifact.id,
+      offset: 1_999_990,
+      length: 20,
+    }),
+    { artifact, content: 'L'.repeat(11), encoding: 'utf8', offset: 1_999_990, total: 2_000_001 },
   );
   const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
     name: 'Reviewer',
@@ -221,7 +240,19 @@ test('a file over the inline limit stays in blobs and downloads through a signed
   const response = await fetch(download.url);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), large.bytes);
   // Saved under the artifact's title.
-  assert.match(response.headers.get('content-disposition')!, /^attachment; filename="Rows\.csv";/);
+  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="Rows.csv"');
+  // Stored bytes that are not the retained ones are never returned.
+  f.server.objects.set(f.key(f.owner.projectId, artifact.hash), Buffer.alloc(2_000_001, 'X'));
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
+    { code: 'blob_corrupt' },
+  );
+  // Bytes that storage has lost are a server fault, never a 404.
+  f.server.objects.delete(f.key(f.owner.projectId, artifact.hash));
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id, length: 20 }),
+    { code: 'artifact_bytes_missing', status: 500 },
+  );
   await assert.rejects(
     f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
     { code: 'forbidden' },

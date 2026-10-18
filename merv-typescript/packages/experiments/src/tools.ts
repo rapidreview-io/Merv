@@ -5,6 +5,7 @@ import type {
   Experiment,
   ExperimentAttach,
   ExperimentCreate,
+  ExperimentExhibit,
   ExperimentTransition,
 } from './types.js';
 import {
@@ -15,6 +16,38 @@ import {
   experimentListSchema,
   experimentTransitionSchema,
 } from './input.js';
+
+/** The largest exhibit an agent is shown whole; Merv's page reads every exhibit whole. */
+export const EXHIBIT_SHOWN_BYTES = 16_000;
+
+/**
+ * What an agent is shown of an exhibit preview: its name, hash and result files by id, and its
+ * content only while small. The content repeats every result file's data, so a large one
+ * (0.5–1.3 MB, escaped inside the JSON) filled executors' contexts at each call (2026-10).
+ */
+export function exhibitPreview(exhibit: ExperimentExhibit) {
+  const bytes = Buffer.byteLength(exhibit.content);
+  return {
+    experimentId: exhibit.experimentId,
+    attemptIndex: exhibit.attemptIndex,
+    path: exhibit.path,
+    hash: exhibit.hash,
+    bytes,
+    willPin: exhibit.willPin,
+    startedAt: exhibit.startedAt,
+    resultFiles: exhibit.sources.map((source) => ({
+      path: source.path,
+      artifactId: source.artifactId,
+      sha256: source.hash,
+      resultFormat: source.resultFormat ?? 'json',
+    })),
+    ...(bytes <= EXHIBIT_SHOWN_BYTES
+      ? { exhibit: JSON.parse(exhibit.content) as unknown }
+      : {
+          omitted: `The exhibit's ${bytes} bytes are not shown: they hold each JSON result file's data exactly as attached, under resultFiles in path order. Read a result with artifact.read by its artifactId.`,
+        }),
+  };
+}
 
 export const experimentsToolsPlugin = {
   name: 'merv-experiments-tools',
@@ -50,7 +83,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.attach',
         description:
-          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Attached JSON or Markdown evidence must be valid UTF-8 and at most 64,000 bytes; compact JSON before upload without dropping run-level evidence. Larger supplementary files can remain standalone artifacts. An attempt keeps at most 100 result files; attaching at a path it already holds replaces that one. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.',
+          'Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. A plan, feasibility statement, report or JSON result must be valid UTF-8 and at most 64,000 bytes; compact JSON before upload without dropping run-level evidence. A result with resultFormat qualitative is referenced without being read, so attach a larger or binary output (a checkpoint, an archive, a capture collection) that way and the reviewer receives it with the submission. An attempt keeps at most 100 result files. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence; to give it information or an authorization meanwhile, send it with session.message. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[string]}, with no other keys, at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A result at a path the attempt already holds replaces that result, and a plan, feasibility statement or report replaces the attempt’s current one at any path, so put an addendum in the report itself or attach it as a qualitative result; earlier versions stay retained, and the response lists under replaced what left the selection. A caller attaches evidence it created or, as a worker, evidence any earlier visit to this step at the same revision created, this attempt’s Sandboxes capture or evidence the step had selected when the visit began; the plan or report a submission is made with must still be the submitting worker’s own. The metrics exhibit is system-generated.',
         inputSchema: experimentAttachSchema,
         handler: async (caller: Caller, input: ExperimentAttach) =>
           await experiments.attach(caller, input),
@@ -69,7 +102,7 @@ export const experimentsToolsPlugin = {
           says: 'transition',
         },
         description:
-          'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. submit_results comes only from the leased worker session that ran the attempt. retry_running, for an infrastructure interruption, preserves the approved plan and attempt and requires the interruption’s reason in evidence.reason, as terminal closure requires a specific reason there. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
+          'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals the evidence attached with experiment.attach and queues independent review atomically, so submit_design and submit_results take no evidence argument; reviewers alone apply their verdict through review.submit. submit_results comes only from the leased worker session that ran the attempt. retry_running, for an infrastructure interruption, preserves the approved plan and attempt and requires the interruption’s reason in evidence.reason, as terminal closure requires a specific reason there. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
         inputSchema: experimentTransitionSchema,
         // Ending an experiment cannot be undone: the person does it.
         conversation: (input: ExperimentTransition) =>
@@ -89,11 +122,14 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.exhibit',
         description:
-          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round.',
+          'Preview the deterministic metrics exhibit for this attempt from retained result data, source hashes and the first execution start. JSON data is preserved as observations; this does not calculate a score or decide scientific success. Result submission pins the applicable exhibit with its immutable review round. You get its path (the filename a report names), hash, bytes, willPin (whether submission pins it) and resultFiles by artifactId; the exhibit itself, which repeats those files’ data, comes under exhibit only up to 16,000 bytes, and otherwise omitted says so.',
         inputSchema: experimentExhibitSchema,
         readOnly: true,
         handler: async (caller: Caller, input: { experimentId: string }) =>
           await experiments.exhibit(caller, input.experimentId),
+        present: (exhibit: ExperimentExhibit) => ({
+          content: [{ type: 'text' as const, text: JSON.stringify(exhibitPreview(exhibit)) }],
+        }),
       },
     ])
       ctx.effect(() => ctx.tools.register(definition));

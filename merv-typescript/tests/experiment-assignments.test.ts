@@ -441,16 +441,17 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(planned.execution.readOnly, true);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.match(planned.brief, /Investigate uncertain assumptions with primary sources/);
+  // Each stage is told what the workflow can hold: no approval gate beyond the two reviews.
+  assert.match(planned.brief, /It cannot hold any further approval a plan asks for/);
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
     ),
   );
   const pending = (await f.design(experiment)).experiment;
-  assert.equal(
-    (await f.workflows.assignment(f.reviewer, pending.id)).context!.type,
-    'experiment.design_review',
-  );
+  const designReview = await f.workflows.assignment(f.reviewer, pending.id);
+  assert.equal(designReview.context!.type, 'experiment.design_review');
+  assert.match(designReview.brief, /cannot be carried out as written and needs changes/);
   assert.ok(
     !(await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
@@ -466,6 +467,10 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.match(executing.brief, /choose the form by the shape of the content/);
   assert.match(executing.brief, /report\.review_visual/);
   assert.match(executing.brief, /report\.clear to start over/);
+  assert.match(executing.brief, /Execution has no route back to design/);
+  // It is not sent looking for a replanning route the workflow does not have.
+  assert.match(executing.brief, /Follow the approved scope\. Retain the required results/);
+  assert.doesNotMatch(executing.brief, /replanning route/);
   assert.doesNotMatch(planned.brief, /choose the form by the shape of the content/);
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
@@ -802,6 +807,11 @@ test('results review references JSON observations and the generated exhibit with
     ),
   );
   assert.doesNotMatch(packet.context!.prompt, /"resultFiles":/);
+  // It says what the exhibit holds, so a reviewer checks its sources instead of paging it whole.
+  assert.match(
+    packet.context!.prompt,
+    /exhibit experiments\/[^ ]+\/metrics_exhibit\.json: each JSON result's data exactly as attached, in path order, with its artifactId and sha256 under source/,
+  );
   assert.ok(packet.context!.sources.some((artifact) => artifact.id === exhibit.artifactId));
   assert.equal(JSON.parse(exhibitRead.content).resultFiles[0].data.coverage, 0.9);
 });
@@ -895,7 +905,8 @@ test('project evidence can be saved without an experiment worker, while a lease 
         path: 'later.md',
         requestId: f.request(),
       }),
-    { code: 'experiment_leased' },
+    // It says how to reach the worker instead: no input adopts someone else's evidence.
+    { code: 'experiment_leased', message: /send it with session\.message/ },
   );
   assert.deepEqual(
     (await f.experiments.get(f.source, experiment.id)).evidence.map(
@@ -1810,14 +1821,40 @@ test('a context embeds only the newest interruptions, each clipped, and counts t
   const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
   const feedback = JSON.parse(
     prompt.slice(prompt.indexOf('{"interruptions":')).split('\n')[0]!,
-  ) as { interruptions: string[]; earlierInterruptions: number };
-  assert.equal(feedback.earlierInterruptions, 6);
+  ) as { interruptions: string[]; earlierNotes: number };
+  assert.equal(feedback.earlierNotes, 6);
   assert.deepEqual(
     feedback.interruptions.map((note) => note.slice(0, 38)),
     [6, 7, 8, 9, 10].map((index) => `Infrastructure recovery: Interruption ${index}`.slice(0, 38)),
   );
   assert.ok(feedback.interruptions.every((note) => note.length <= 2000));
   assert.ok(!prompt.includes('Interruption 5.'), 'older notes stay with experiment.get_state');
+});
+
+test('a context labels the notes of a review that returned the attempt as review notes, never as interruptions', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.verdict(await f.results(await f.running()), 'needs_changes', 'running');
+  experiment = await f.experiments.transition(f.source, {
+    experimentId: experiment.id,
+    expectedRevision: experiment.workflow.revision,
+    transition: 'retry_running',
+    requestId: 'host-lost',
+    evidence: { reason: 'The host was lost' },
+  });
+  const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
+  assert.match(
+    prompt,
+    /\n### attemptNotes:\S+ — Notes on this attempt: review notes that returned it, and infrastructure interruptions \(/,
+  );
+  const notes = JSON.parse(prompt.slice(prompt.indexOf('{"reviewNotes":')).split('\n')[0]!) as {
+    reviewNotes: string[];
+    interruptions: string[];
+  };
+  assert.deepEqual(notes.reviewNotes, [
+    'Independent fixture verification of the exact retained evidence.',
+  ]);
+  assert.equal(notes.interruptions.length, 1);
+  assert.match(notes.interruptions[0]!, /^Infrastructure recovery: The host was lost\./);
 });
 
 test('a results review whose final capture never landed takes the last admitted commit once its session closed', async (t) => {
@@ -2096,6 +2133,8 @@ test('a resumed visit submits results its cut visit retained before attaching th
   await f.work.release(cut);
   experiment = await f.experiments.get(f.source, experiment.id);
   const resumed = await f.work.lease(experiment);
+  // A successor, not the cut worker resuming, attaches what that visit retained.
+  assert.notEqual(resumed.worker.actorId, cut.worker.actorId);
   const reportArtifact = await f.work.run(
     resumed,
     'artifact.create',
@@ -2129,6 +2168,76 @@ test('a resumed visit submits results its cut visit retained before attaching th
   assert.equal(submitted.workflow.state, 'experiment_review');
   assert.ok(submitted.submissions.at(-1)!.evidence.some((item) => item.artifactId === retained.id));
   await f.work.release(resumed);
+});
+
+test('a resumed visit of the same worker submits the report its cut visit attached; a successor does not', async (t) => {
+  const f = await fixture(t);
+  // A visit attaches its result and report, and is cut before its submission lands.
+  const cutVisit = async (experiment: Experiment) => {
+    const cut = await f.work.lease(experiment);
+    for (const [role, content] of [
+      ['result', 'The observation is unchanged.'],
+      ['report', report],
+    ] as const) {
+      const artifact = await f.work.run(
+        cut,
+        'artifact.create',
+        { title: role, content, mediaType: 'text/markdown' },
+        (caller, input) => f.artifacts.create(caller, input as never),
+      );
+      await f.work.run(
+        cut,
+        'experiment.attach',
+        {
+          artifactId: artifact.id,
+          role,
+          path: `${role}.md`,
+          attemptIndex: experiment.attempt.index,
+          requestId: f.request(),
+          ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+        },
+        (caller, input) => f.experiments.attach(caller, input as never),
+      );
+    }
+    return cut;
+  };
+  const submitBlockers = async (lease: Awaited<ReturnType<typeof f.work.lease>>, id: string) =>
+    (await f.workflows.evaluate(lease.worker, id)).actions
+      .find((action) => action.action === 'submit_results')!
+      .blockers.map((blocker) => blocker.code);
+
+  let experiment = await f.running();
+  const cut = await cutVisit(experiment);
+  // Its runner delivered its conversation, so the next offer resumes the same worker's thread.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE session_threads SET harness='codex',conversation_id='conversation-1',sha256=?,size=1,uploaded_at=? WHERE actor_id=?",
+      'a'.repeat(64),
+      new Date().toISOString(),
+      cut.worker.actorId,
+    );
+  });
+  await f.work.release(cut);
+  experiment = await f.experiments.get(f.source, experiment.id);
+  const resumed = await f.work.lease(experiment);
+  assert.equal(resumed.worker.actorId, cut.worker.actorId, 'the same worker resumes');
+  assert.deepEqual(await submitBlockers(resumed, experiment.id), []);
+  const submitted = await f.work.run(
+    resumed,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  assert.equal(submitted.workflow.state, 'experiment_review');
+  await f.work.release(resumed);
+
+  // Without a conversation to resume, a new worker takes the step: it writes its own report.
+  let other = await f.running();
+  await f.work.release(await cutVisit(other));
+  other = await f.experiments.get(f.source, other.id);
+  const successor = await f.work.lease(other);
+  assert.deepEqual(await submitBlockers(successor, other.id), ['invalid_evidence_author']);
+  await f.work.release(successor);
 });
 
 test('a re-planned attempt designs against the code its execution resumes from', async (t) => {

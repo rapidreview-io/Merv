@@ -39,6 +39,7 @@ import { request, supersede } from './requests.js';
 import {
   actorPermissionsChanged,
   actorRevoked,
+  checkClaim,
   checkStart,
   checkSubmit,
   release,
@@ -83,6 +84,7 @@ export class ReviewService implements Reviews {
   readonly request = bound(this, request);
   readonly supersede = bound(this, supersede);
   readonly checkStart = bound(this, checkStart);
+  readonly checkClaim = bound(this, checkClaim);
   readonly start = bound(this, start);
   readonly checkSubmit = bound(this, checkSubmit);
   readonly submit = bound(this, submit);

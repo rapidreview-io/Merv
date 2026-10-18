@@ -552,3 +552,65 @@ test('a version prepares the reads of many instances in one pass, and a refusal 
   prepare = 'write';
   await assert.rejects(workflows.overview(caller), { code: 'invalid_workflow_policy' });
 });
+
+test('status_and_next says a preflight did nothing, and an unknown action is not a state problem', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-preflight-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const a = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Preflight',
+      actorName: 'Operator',
+    });
+    const caller = { actorId: a.actor.id, projectId: a.project.id };
+    const graph: WorkflowDefinition = {
+      name: 'preflight',
+      version: 1,
+      initial: 'draft',
+      states: ['draft', 'review', 'done'],
+      terminal: ['done'],
+      edges: [
+        { from: 'draft', action: 'submit', to: 'review' },
+        { from: 'review', action: 'accept', to: 'done' },
+      ],
+    };
+    const rule = (name: string, state: string) => ({
+      name,
+      states: [state],
+      transitions: [name],
+      tool: `preflight.${name}`,
+      instruction: `Take ${name}.`,
+      check: () => {},
+    });
+    const registration = await app.ctx.workflows.register(graph, {
+      actions: [rule('submit', 'draft'), rule('accept', 'review')],
+    });
+    const instance = await registration.start(caller, { workflow: graph.name, requestId: 'start' });
+    const status = (input: Record<string, unknown>) =>
+      app.ctx.tools.call('workflow.status_and_next', caller, { instanceId: instance.id, ...input });
+    const answered = (await status({ action: 'submit', input: { expectedRevision: 0 } })) as {
+      revision: number;
+      preflight: string;
+    };
+    assert.equal(answered.revision, 0);
+    assert.equal(
+      answered.preflight,
+      'Nothing was done: this only checks submit. Call preflight.submit to take it.',
+    );
+    assert.equal((await app.ctx.workflows.get(caller, instance.id)).revision, 0);
+    assert.equal('preflight' in ((await status({})) as object), false);
+    // A tool name is no action, and says so; another state's action names this state's.
+    await assert.rejects(status({ action: 'preflight.submit' }), {
+      code: 'invalid_action',
+      message:
+        'Unknown action "preflight.submit": action names one of this state\'s actions (submit), not a tool',
+    });
+    await assert.rejects(status({ action: 'accept' }), {
+      code: 'invalid_action',
+      message:
+        'Action accept is unavailable in this workflow state (draft); its actions are submit',
+    });
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

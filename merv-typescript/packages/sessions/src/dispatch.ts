@@ -47,7 +47,12 @@ import {
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 import type { ManagedBindingRow, ManagedModelWait } from './managed-types.js';
-import { INQUIRY_CAPABILITY, label, runnerPlatformSchema } from './rules.js';
+import {
+  INQUIRY_CAPABILITY,
+  label,
+  runnerPlatformSchema,
+  STOPPED_WITHOUT_HANDOFF,
+} from './rules.js';
 import { INQUIRY_VISIT_SECONDS, type Inquiries } from './inquiries.js';
 import { withholds } from './budgets.js';
 import { heartbeatSchema, type RunnerRow } from './runners.js';
@@ -277,6 +282,13 @@ export class SessionDispatch {
       target.expectedRevision,
     );
     const time = isoNow(this.clock);
+    // An agent that stopped without a handoff twice running at one revision waits for something
+    // another visit does not bring: the work is held now, for a person to read why, rather than
+    // replayed until the cap.
+    const stoppedAgain =
+      failure.message === STOPPED_WITHOUT_HANDOFF &&
+      !!old?.attempts &&
+      old.last_message === STOPPED_WITHOUT_HANDOFF;
     const row = (await tx.get<HoldRow>(
       'INSERT INTO session_dispatch_holds(project_id,instance_id,revision,attempts,last_code,last_message,last_session_id,first_at,last_at,held_at) VALUES(?,?,?,1,?,?,?,?,?,?) ON CONFLICT(project_id,instance_id,revision) DO UPDATE SET attempts=session_dispatch_holds.attempts+1,last_code=excluded.last_code,last_message=excluded.last_message,last_session_id=excluded.last_session_id,last_at=excluded.last_at,held_at=COALESCE(session_dispatch_holds.held_at,excluded.held_at) RETURNING *',
       projectId,
@@ -287,7 +299,7 @@ export class SessionDispatch {
       failure.sessionId,
       time,
       time,
-      (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
+      stoppedAgain || (old?.attempts ?? 0) + 1 >= this.thresholds.maxLaunchFailures ? time : null,
     ))!;
     if (!row.held_at || old?.held_at) return undefined;
     await this.reportHold(projectId, target.instanceId, row, tx);
@@ -314,8 +326,15 @@ export class SessionDispatch {
                 key: 'launch',
                 code: 'launch_held',
                 status: 409,
-                message: `Dispatch holds this work after ${row.attempts} failed launches: ${row.last_message}`,
-                next: 'Fix why its launches fail, then release the hold',
+                ...(row.last_message === STOPPED_WITHOUT_HANDOFF
+                  ? {
+                      message: `Dispatch holds this work after ${row.attempts} failed launches, the last its agent ending its visit without a handoff or a question`,
+                      next: 'Read its thread for what it waits on, answer there or fix it, then release the hold',
+                    }
+                  : {
+                      message: `Dispatch holds this work after ${row.attempts} failed launches: ${row.last_message}`,
+                      next: 'Fix why its launches fail, then release the hold',
+                    }),
                 whose: 'admin',
                 revision: Number(row.revision),
               },
@@ -358,7 +377,7 @@ export class SessionDispatch {
             ? [
                 {
                   key: 'model_budget',
-                  code: 'model_budget_exhausted',
+                  code: 'worker_token_budget_exhausted',
                   cause: 'model_budget',
                   status: 429,
                   message: wait.message,
@@ -907,7 +926,7 @@ export class SessionDispatch {
       // A rented machine takes no work while its person has no model tokens left today: the
       // relay would refuse the visit's calls. The wait is said on the work, and lifts with it.
       if (managed && (await this.modelWaits(managed.row, tx)))
-        return { session: null, reason: await decided('model_budget_exhausted') };
+        return { session: null, reason: await decided('worker_token_budget_exhausted') };
       // A hosted machine stops at its allocation's end, so its step must end five minutes
       // before. A work host starts a step only with all of the step's time left (its owner rents
       // a fresh host for the next); another machine, with ten minutes. An inquiry needs only its

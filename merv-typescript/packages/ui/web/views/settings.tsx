@@ -162,8 +162,7 @@ function Plugins({ shell }: ViewProps) {
 interface TokenLimit {
   tokens: number;
   usedToday: number;
-  remaining?: number;
-  lastRefusedTokens?: number | null;
+  /** Fleet's own judgement of the day: it holds new work while this stands. */
   blocked?: boolean;
   resetsAt?: string;
 }
@@ -205,9 +204,8 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
       <span className="muted">{limit.usedToday.toLocaleString()} used today</span>
       {limit.blocked && (
         <span role="status">
-          Fleet is waiting for model tokens. {limit.remaining?.toLocaleString()} remain.
-          {limit.lastRefusedTokens != null &&
-            ` The last rejected request needed a reservation of ${limit.lastRefusedTokens.toLocaleString()}.`}
+          Your daily tokens are used up, so Fleet holds new work: it resumes at the reset, or once
+          you change your limit.
           {limit.resetsAt && ` Usage resets at ${limit.resetsAt} (UTC).`}
         </span>
       )}

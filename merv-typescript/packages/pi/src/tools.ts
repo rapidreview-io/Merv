@@ -34,6 +34,7 @@ export const piToolsPlugin = {
         description: 'List your private agent conversations in this project.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
+        worker: 'never' as const,
         handler: (caller: Caller) => ctx.pi.list(caller),
       },
       {
@@ -42,6 +43,7 @@ export const piToolsPlugin = {
           'Read the canonical messages and available transient stream tail of your conversation.',
         inputSchema: z.object({ id }).strict(),
         readOnly: true,
+        worker: 'never' as const,
         handler: (caller: Caller, input: { id: string }) => ctx.pi.snapshot(caller, input.id),
       },
       {
@@ -50,6 +52,7 @@ export const piToolsPlugin = {
           "Read what your conversation's agent is given: the instructions every turn shares, and the latest turn's appended notes and offered tools as that turn was served.",
         inputSchema: z.object({ id }).strict(),
         readOnly: true,
+        worker: 'never' as const,
         handler: (caller: Caller, input: { id: string }) => ctx.pi.prompt(caller, input.id),
       },
       {
@@ -73,6 +76,7 @@ export const piToolsPlugin = {
           "See the screen the person is looking at in Merv right now, and get what it shows in words. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them; at.focus (a board's shape or frame id) zooms to that part so it reads at full size. A record that draws itself, such as a board, is drawn directly with at, without the person's screen or tab, so prefer at for a board even when it is open. For a record's contents, its own tool reads it exactly.",
         inputSchema: lookInput,
         readOnly: true,
+        worker: 'never' as const,
         // Waits on the person's page, Cloudflare and the model, then writes its charge: no snapshot.
         openWorld: true,
         handler: (caller: Caller, input: unknown) => ctx.pi.look(caller, input),
@@ -83,6 +87,7 @@ export const piToolsPlugin = {
           "Put something on the person's screen in Merv, as following a link would: a record by its id (`record`: a file, task, experiment, review, cycle or any id project.references resolves), or a page by its name in the sidebar (`page`: Work, Files, Paper, Code…). Use it when they ask to see, open or pull up something. focus (a board's shape or frame id) opens it zoomed to that part. It only navigates; their back button returns them. Answers where it went, or why it could not.",
         inputSchema: showInput,
         readOnly: true,
+        worker: 'never' as const,
         // Waits on the person's page, holding no read snapshot meanwhile.
         openWorld: true,
         handler: (caller: Caller, input: unknown) => ctx.pi.show(caller, input),

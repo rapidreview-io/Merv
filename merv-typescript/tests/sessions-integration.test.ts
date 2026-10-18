@@ -347,14 +347,65 @@ test('leased workers must deliberately range-read or download large artifacts', 
   assert.equal(ranged.content, content.slice(-10));
   assert.equal(ranged.offset, content.length - 10);
   assert.equal(ranged.total, content.length);
-  const oversizedRange = await worker.callTool({
-    name: 'artifact.read',
-    arguments: { artifactId: artifact.id, length: 8193 },
+  // A wider range is cut to the most a worker reads at once, not refused.
+  const wide = await f.call<{ content: string; offset: number; total: number }>(
+    worker,
+    'artifact.read',
+    { artifactId: artifact.id, offset: 100, length: 16_000 },
+  );
+  assert.deepEqual(
+    [wide.content, wide.offset, wide.total],
+    [content.slice(100, 100 + 8192), 100, content.length],
+  );
+
+  // A collection member of the same bytes is held to its own size, not the manifest's, and
+  // its provider's link is always there to download it.
+  const memberUrl = 'https://storage.example/run/predictions.json';
+  f.app.ctx.artifacts.registerFileProvider('test-files', {
+    download: async () => ({ url: memberUrl, expiresAt: new Date().toISOString() }),
   });
-  assert.equal(oversizedRange.isError, true);
-  assert.equal(
-    JSON.parse((oversizedRange.content as { text: string }[])[0]!.text).error.code,
-    'artifact_read_requires_range',
+  const realFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', (url: string | URL | Request, init?: RequestInit) =>
+    String(url) === memberUrl ? Promise.resolve(new Response(content)) : realFetch(url, init),
+  );
+  const collection = await f.app.ctx.artifacts.createCollection(source, {
+    title: 'Prediction capture',
+    sourceKey: 'predictions',
+    files: [
+      {
+        name: 'run/predictions.json',
+        size: artifact.size,
+        hash: artifact.hash,
+        provider: 'test-files',
+        reference: 'predictions',
+      },
+    ],
+  });
+  assert.ok(collection.size < 64_000);
+  const member = { artifactId: collection.id, fileName: 'run/predictions.json' };
+  const unranged = await worker.callTool({ name: 'artifact.read', arguments: member });
+  assert.equal(unranged.isError, true);
+  const memberError = JSON.parse((unranged.content as { text: string }[])[0]!.text).error;
+  assert.equal(memberError.code, 'artifact_read_requires_range');
+  assert.match(
+    memberError.message,
+    /^Collection file is \d+ bytes; .*, or use artifact\.read mode download/,
+  );
+  assert.deepEqual(memberError.details, {
+    ...member,
+    size: artifact.size,
+    sha256: artifact.hash,
+    downloadAvailable: true,
+    maxRangeCharacters: 8192,
+  });
+  const memberWide = await f.call<{ content: string; offset: number; total: number }>(
+    worker,
+    'artifact.read',
+    { ...member, offset: 100, length: 16_000 },
+  );
+  assert.deepEqual(
+    [memberWide.content, memberWide.offset, memberWide.total],
+    [content.slice(100, 100 + 8192), 100, content.length],
   );
 
   assert.equal((await f.app.ctx.artifacts.read(source, artifact.id)).content, content);
@@ -370,7 +421,11 @@ test('leased workers must deliberately range-read or download large artifacts', 
   // Download mode remains callable by the authenticated worker and returns its private URL.
   const url = 'https://storage.example/predictions?signature=test';
   const blobs = f.app.ctx.blobs;
-  blobs.download = async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const names: (string | undefined)[] = [];
+  blobs.download = async (_namespace, _hash, _size, name) => {
+    names.push(name);
+    return { url, expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  };
   t.after(() => delete blobs.download);
   const link = await f.call<{ artifact: Artifact; download: { url: string } }>(
     worker,
@@ -379,6 +434,10 @@ test('leased workers must deliberately range-read or download large artifacts', 
   );
   assert.equal(link.artifact.id, artifact.id);
   assert.equal(link.download.url, url);
+  // The worker saves it under a name of its own, so its link carries a short plain one; a
+  // person's carries the title.
+  await f.app.ctx.artifacts.download(source, artifact.id);
+  assert.deepEqual(names, ['Prediction_arrays', 'Prediction arrays']);
 });
 
 test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces; the application retains their work and reflection metadata across restart', async (t) => {

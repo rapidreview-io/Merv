@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Context } from 'cordis';
 import { ArtifactStore } from '@merv/artifacts';
-import { SandboxEvidence } from '@merv/sandboxes/sandbox-evidence';
+import { CAPTURE_STALL_MS, SandboxEvidence } from '@merv/sandboxes/sandbox-evidence';
 import { sandboxIntegrationPlugin } from '@merv/sandboxes/integration';
 import { DiskBlobs } from '@merv/blobs';
 import { createService, sha256Hex } from '@merv/contracts';
@@ -101,8 +101,10 @@ async function fixture(t: TestContext, registerProvider = true) {
     },
   };
   let pendingJobs = false;
+  let now = Date.now();
+  const clock = () => now;
   function service() {
-    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts, Date.now, {
+    return new SandboxEvidence(state, scope, artifacts, pipelines, objects, accounts, clock, {
       listPage: async () => ({ jobs: pendingJobs ? [{} as never] : [], next: null }),
     });
   }
@@ -118,6 +120,8 @@ async function fixture(t: TestContext, registerProvider = true) {
       state: 'completed',
       name: 'Training',
       evidence_limitations: [],
+      request: { nodes: [{ id: 'output', kind: 'capture' }] },
+      nodes: { output: { state: 'succeeded' } },
     } as unknown as WorkflowRecord;
     workflows.set(id, value);
     captures.set(id, [
@@ -151,6 +155,9 @@ async function fixture(t: TestContext, registerProvider = true) {
       ),
     );
   return {
+    advance: (ms: number) => {
+      now += ms;
+    },
     pendingJobs: (value: boolean) => {
       pendingJobs = value;
     },
@@ -207,10 +214,29 @@ test('replay and crash backfill create one immutable collection; bulk epoch read
   );
 });
 
-test('cleanup waits, failed captures retain partial files, and empty captures remain explicit', async (t) => {
+test('a collection names its output objects, so a later workflow can stage them', async (t) => {
+  const f = await fixture(t);
+  const w = f.workflow();
+  f.captures.set(w.id, [
+    {
+      id: 'output',
+      state: 'succeeded',
+      result: { outputs: { metrics: 'obj_metrics', bad: 7 }, output_state: 'committed' },
+    },
+  ]);
+  await f.evidence.reconcile();
+  const [collection] = await f.artifacts.list(f.caller);
+  assert.deepEqual(collection!.metadata?.outputObjects, { metrics: 'obj_metrics' });
+});
+
+test('an unfinished capture waits, failed captures retain partial files, and empty captures remain explicit', async (t) => {
   const f = await fixture(t);
   const original = f.workflow();
-  f.workflows.set(original.id, { ...original, state: 'cleaning_up' });
+  f.workflows.set(original.id, {
+    ...original,
+    state: 'cleaning_up',
+    nodes: { output: { state: 'running' } },
+  } as unknown as WorkflowRecord);
   await f.evidence.reconcile();
   assert.deepEqual(await f.artifacts.list(f.caller), []);
   assert.equal(f.calls.includes('captures'), false);
@@ -223,8 +249,97 @@ test('cleanup waits, failed captures retain partial files, and empty captures re
   await f.evidence.reconcile();
   const collections = await f.artifacts.list(f.caller);
   assert.equal(collections.length, 2);
-  assert.equal(collections.find((a) => a.metadata?.captureNode === 'partial')!.files!.length, 1);
-  assert.equal(collections.find((a) => a.metadata?.captureNode === 'empty')!.files!.length, 0);
+  const partial = collections.find((a) => a.metadata?.captureNode === 'partial')!;
+  const empty = collections.find((a) => a.metadata?.captureNode === 'empty')!;
+  assert.equal(partial.files!.length, 1);
+  assert.equal(empty.files!.length, 0);
+  // Where they are listed they say they are records of a failure, not evidence of results.
+  assert.equal(
+    partial.title,
+    'Compute capture pipeline-1 / partial (failed, 1 file retained) — Training',
+  );
+  assert.equal(
+    empty.title,
+    'Compute capture pipeline-1 / empty (skipped, nothing retained) — Training',
+  );
+  assert.equal(
+    empty.metadata?.outputState,
+    'failed',
+    'nothing was retained, so nothing is partial',
+  );
+  assert.equal(partial.metadata?.outputState, 'partial');
+});
+
+test('a capture registers once its node ends, while the rest of its workflow still runs', async (t) => {
+  const f = await fixture(t);
+  const original = f.workflow();
+  const running = (nodes: Record<string, string>) =>
+    f.workflows.set(original.id, {
+      ...original,
+      state: 'running',
+      request: {
+        nodes: Object.keys(nodes).map((id) => ({ id, kind: id === 'train' ? 'run' : 'capture' })),
+      },
+      nodes: Object.fromEntries(Object.entries(nodes).map(([id, state]) => [id, { state }])),
+    } as unknown as WorkflowRecord);
+  const captureReads = () => f.calls.filter((call) => call === 'captures').length;
+  running({ output: 'running', train: 'succeeded', later: 'pending' });
+  await f.evidence.reconcile();
+  assert.equal(captureReads(), 0, 'no capture has ended');
+  running({ output: 'succeeded', train: 'succeeded', later: 'running' });
+  await f.evidence.reconcile();
+  const [collection, ...rest] = await f.artifacts.list(f.caller);
+  assert.equal(rest.length, 0);
+  assert.equal(collection!.title, 'Compute capture pipeline-1 / output — Training');
+  assert.equal(collection!.metadata?.workflowId, 'pipeline-1');
+  assert.deepEqual((await f.read()).get('work')!.artifactIds, [collection!.id]);
+  const reads = captureReads();
+  await f.evidence.reconcile();
+  assert.equal(
+    captureReads(),
+    reads,
+    'a running workflow whose ended captures are kept is not read',
+  );
+  const settled = () =>
+    f.state.snapshotTransaction((tx) =>
+      f.evidence.settled(f.caller.projectId, 'work', 'epoch-1', new Date(0).toISOString(), tx),
+    );
+  await f.state.transaction((tx) => tx.run('UPDATE sandbox_run_intents SET retired=1,target=1'));
+  await f.evidence.reconcile();
+  assert.equal(await settled(), false, 'its workflow has not finished');
+  f.workflows.set(original.id, original);
+  await f.evidence.reconcile();
+  assert.equal(await settled(), true);
+  assert.equal((await f.artifacts.list(f.caller)).length, 1);
+});
+
+test('a capture that did not succeed waits for its workflow, whose cleanup may still recover its files', async (t) => {
+  const f = await fixture(t);
+  const original = f.workflow();
+  f.captures.set(original.id, [
+    { id: 'output', state: 'failed', result: { outputs: {}, output_state: 'partial' } },
+  ]);
+  f.files.set(`${original.id}/output`, []);
+  for (const state of ['running', 'cleaning_up']) {
+    f.workflows.set(original.id, {
+      ...original,
+      state,
+      nodes: { output: { state: 'failed' } },
+    } as unknown as WorkflowRecord);
+    await f.evidence.reconcile();
+    assert.deepEqual(await f.artifacts.list(f.caller), [], state);
+  }
+  // Cleanup recovered a file that was published but not yet marked committed.
+  f.files.set(`${original.id}/output`, [{ name: 'metrics.json', object_id: 'object' }]);
+  f.workflows.set(original.id, {
+    ...original,
+    state: 'failed',
+    nodes: { output: { state: 'failed' } },
+  } as unknown as WorkflowRecord);
+  await f.evidence.reconcile();
+  const [collection, ...rest] = await f.artifacts.list(f.caller);
+  assert.equal(rest.length, 0);
+  assert.equal(collection!.files!.length, 1);
 });
 
 test('bulk receipts retain both epochs and select only the requested attempts', async (t) => {
@@ -289,6 +404,63 @@ test('a not-yet-available held object is retried', async (t) => {
   f.retained.set('object', ready);
   await f.evidence.reconcile();
   assert.equal((await f.artifacts.list(f.caller)).length, 1);
+});
+
+test('a capture that keeps failing is shown as refused, and still registers once it can', async (t) => {
+  const f = await fixture(t);
+  f.workflow();
+  const ready = f.retained.get('object')!;
+  f.retained.set('object', { ...ready, state: 'uploading' });
+  const stalls = async () =>
+    (await f.state.events(f.caller.projectId)).filter((e) => e.type === 'sandboxes.capture_stalled')
+      .length;
+  await f.evidence.reconcile();
+  f.advance(CAPTURE_STALL_MS - 1);
+  await f.evidence.reconcile();
+  assert.deepEqual((await f.read()).get('work'), { artifactIds: [], refused: [] });
+  f.advance(1);
+  await f.evidence.reconcile();
+  const shown = (await f.read()).get('work')!;
+  assert.deepEqual(shown.artifactIds, []);
+  assert.equal(shown.refused.length, 1);
+  assert.match(
+    shown.refused[0]!.error,
+    /^Not registered after 10 minutes of failures; Merv keeps retrying: Captured object/,
+  );
+  assert.equal(shown.refused[0]!.retrying, true, 'a reader tells it from a final refusal');
+  await f.evidence.reconcile();
+  await (await createService(f.service())).reconcile();
+  assert.equal(await stalls(), 1, 'shown once, across a restart too');
+  f.retained.set('object', ready);
+  await f.evidence.reconcile();
+  const [collection] = await f.artifacts.list(f.caller);
+  assert.deepEqual((await f.read()).get('work'), { artifactIds: [collection!.id], refused: [] });
+});
+
+test('a stalled capture that turns out never to register is refused for good', async (t) => {
+  const f = await fixture(t);
+  f.workflow();
+  const ready = f.retained.get('object')!;
+  f.retained.set('object', { ...ready, state: 'uploading' });
+  await f.evidence.reconcile();
+  f.advance(CAPTURE_STALL_MS);
+  await f.evidence.reconcile();
+  f.retained.set('object', ready);
+  f.held(false);
+  await f.evidence.reconcile();
+  const refused = (await f.read()).get('work')!.refused;
+  assert.equal(refused.length, 1);
+  assert.doesNotMatch(refused[0]!.error, /keeps retrying/);
+  assert.equal(refused[0]!.retrying, undefined);
+  f.held(true);
+  await f.evidence.reconcile();
+  assert.deepEqual(await f.artifacts.list(f.caller), [], 'a refusal is not retried');
+  assert.deepEqual(
+    (await f.state.events(f.caller.projectId))
+      .filter((e) => e.type.startsWith('sandboxes.capture_'))
+      .map((e) => e.type),
+    ['sandboxes.capture_stalled', 'sandboxes.capture_refused'],
+  );
 });
 
 test('a released work is read until its captures settle, then never again, after a restart too', async (t) => {

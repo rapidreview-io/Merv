@@ -1,4 +1,4 @@
-import { clip, visible } from '@merv/contracts/text';
+import { clip, firstOf, quoted, visible } from '@merv/contracts/text';
 import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/types';
 
 // Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them,
@@ -28,14 +28,15 @@ interface ReviewActionContext {
  * review through review.start, and `submit` hands in the verdict through review.submit, which
  * takes the step's `transitions`. The owner names the step's review (`current`), checks a
  * verdict (`submit`), and may refuse a claim for reasons of its own (`start`) before Reviews'
- * own claim check. Where `current` reads a named reviewId, it refuses one that is not current.
+ * own claim check, which also blocks `start` once the caller holds the claim: its verdict is
+ * what comes next. Where `current` reads a named reviewId, it refuses one that is not current.
  */
 export function reviewActions<C extends ReviewActionContext>(owner: {
   names: { submit: string; start: string };
   states: string[];
   transitions: string[];
   instructions: { submit: string; start: string };
-  reviews: { checkStart(caller: C['caller'], reviewId: string, tx: C['tx']): Promise<unknown> };
+  reviews: { checkClaim(caller: C['caller'], reviewId: string, tx: C['tx']): Promise<unknown> };
   current(context: C): Promise<{ id: string; claimId: string | null }>;
   submit(context: C): Promise<void>;
   start?(context: C, review: { id: string }): Promise<void>;
@@ -67,7 +68,7 @@ export function reviewActions<C extends ReviewActionContext>(owner: {
       check: async (context: C) => {
         const review = await owner.current(context);
         await owner.start?.(context, review);
-        await owner.reviews.checkStart(context.caller, review.id, context.tx);
+        await owner.reviews.checkClaim(context.caller, review.id, context.tx);
       },
     },
   ];
@@ -207,6 +208,23 @@ export function synopsisProblem(synopsis: unknown): 'length' | 'format' | 'ident
   return entityId.test(synopsis) ? 'identifier' : undefined;
 }
 
+/** What a finding's evidenceIds get wrong: each id that is not pinned, and each given twice. */
+function miscited(finding: { evidenceIds?: unknown }, pinned: string[]): string[] {
+  if (!Array.isArray(finding.evidenceIds)) return ['gives no evidenceIds array'];
+  const seen = new Set<unknown>();
+  return finding.evidenceIds.flatMap((id: unknown) => {
+    const shown = quoted(id, 80);
+    const problem =
+      typeof id !== 'string' || !pinned.includes(id)
+        ? [`cites ${shown}, which is not pinned`]
+        : seen.has(id)
+          ? [`cites ${shown} twice`]
+          : [];
+    seen.add(id);
+    return problem;
+  });
+}
+
 /**
  * The first rule of review.submit a verdict's findings break, in the order it checks them, or
  * undefined. `rule` is which: the findings' own shape, a criterion left without a word or notes,
@@ -271,18 +289,22 @@ export function assessmentProblem(
         `Criterion ${number} needs assessment notes (1–16000 characters)`,
         number,
       );
-    if (!(
-      Array.isArray(item.evidenceIds) &&
-      new Set(item.evidenceIds).size === item.evidenceIds.length &&
-      item.evidenceIds.every(
-        (id: unknown) => typeof id === 'string' && review.artifactIds.includes(id),
-      )
-    ))
+    if (miscited(item, review.artifactIds).length) {
+      // Models garble long ids, often in several findings at once: name every one, so that one
+      // resubmission repairs them all.
+      const cited = value
+        .filter((finding) => Number.isSafeInteger(finding?.criterionNumber))
+        .sort((a, b) => a.criterionNumber - b.criterionNumber)
+        .flatMap((finding) => {
+          const wrong = miscited(finding, review.artifactIds);
+          return wrong.length ? [`criterion ${finding.criterionNumber} ${firstOf(wrong, 5)}`] : [];
+        });
       return refused(
         'shape',
-        `Criterion ${number} must refer only to distinct pinned artifact IDs`,
+        `Each finding's evidenceIds must name this review's pinned artifactIds, each once (review.get lists them): ${cited.slice(0, 12).join('; ')}${cited.length > 12 ? `; and ${cited.length - 12} more criteria` : ''}`,
         number,
       );
+    }
     if (item.status === 'met' && !item.evidenceIds.length)
       return refused(
         'uncited',

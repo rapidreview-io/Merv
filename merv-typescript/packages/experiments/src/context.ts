@@ -32,6 +32,8 @@ import {
   handoffAt,
   recipeKey,
   feasibilityFormat,
+  feasibilityRules,
+  workflowGates,
 } from './definitions.js';
 import { leaseOf, resumedOutputs } from './lease.js';
 import { reviewOf, reviewCapture, admit } from './policy.js';
@@ -58,6 +60,12 @@ const REVIEW_HISTORY_CHARS = 8000;
 
 /** The newest interruption and revision notes a context embeds, each clipped; get_state has all. */
 const FEEDBACK_KEPT = 5;
+
+/**
+ * How the note retry_running adds to an attempt begins. Every other note an attempt holds is the
+ * notes of a review that returned it, which the frozen inputs keep under `interruptions` too.
+ */
+export const RECOVERY_NOTE = 'Infrastructure recovery: ';
 
 const FEEDBACK_CHARS = 2000;
 
@@ -145,7 +153,9 @@ export async function inputsOf(
       intent: experiment.intent,
       project: await ctx.scope.project(caller, tx),
       codeCapture: await reviewCapture(ctx, caller, experiment, tx),
-      ...(state === 'planned' ? { feasibilityFormat, computeAccess: PLANNING_COMPUTE } : {}),
+      ...(state === 'planned'
+        ? { feasibilityFormat, feasibilityRules, computeAccess: PLANNING_COMPUTE }
+        : {}),
       selectedEvidence: experiment.evidence.filter((evidence) =>
         selected.includes(evidence.artifactId),
       ),
@@ -240,10 +250,15 @@ export function inputIds(inputs: FrozenInputs): string[] {
 
 /**
  * What a design may do with compute, said in the assignment a planner reads first: its Sandboxes
- * tools come on their own connection, so the declared tools above never list them.
+ * tools come on their own connection, so the declared tools above never list them. A project
+ * with no compute connected gets no connection, and its planner, told to measure, searched
+ * Merv for compute before asking (2026-10-09). But a visit can lack the connection while the
+ * project has compute connected (2026-10-13), so the planner learns which from Merv's own
+ * sandboxes.spend_status before it asks, rather than asking the owner to connect compute that is
+ * connected.
  */
 const PLANNING_COMPUTE =
-  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them.';
+  'Your Sandboxes MCP connection (the server named sandboxes) is separate from the Merv tools this assignment declares, so its tools are not listed here; they are granted to this planning lease. Use them, GPUs and storage included, to measure what the design needs: a bounded feasibility probe such as loading the pinned base and timing a few training steps for memory and step time, within an hour and a few dollars, releasing the machine after. Do not run full training or evaluation or keep a probe checkpoint as the model. Retain the measurements as feasibility evidence instead of asking for them. If this visit has no server named sandboxes, Merv issued it no connection; call sandboxes.spend_status on the merv server to learn why before you ask. A sandbox_not_connected refusal means the project has no compute connected: ask the owner to connect it with session.ask_owner. An answer that names the project’s namespace means compute is connected and only this visit lacks its connection: say exactly that in session.ask_owner, and do not ask the owner to connect compute. Either way, ask instead of searching for compute, designing without measurements or ending the experiment.';
 
 export async function references(
   ctx: ExperimentsContext,
@@ -354,7 +369,14 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
         priority,
         embed: 'never',
         ...(record
-          ? { note: `${record.role} ${record.path}` }
+          ? {
+              // A large exhibit repeats every result's data; a reviewer paged one of 795 KB
+              // in 98 reads (2026-10-13) to check what its sources already say.
+              note:
+                id === exhibit
+                  ? `${record.role} ${record.path}: each JSON result's data exactly as attached, in path order, with its artifactId and sha256 under source; check that mapping against the result evidence rather than reading this file whole`
+                  : `${record.role} ${record.path}`,
+            }
           : figures.has(id)
             ? { note: 'figure' }
             : {}),
@@ -393,6 +415,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
               ? {
                   intent: inputs.experiment.intent,
                   feasibilityFormat: inputs.experiment.feasibilityFormat,
+                  feasibilityRules: inputs.experiment.feasibilityRules,
                   computeAccess: inputs.experiment.computeAccess,
                 }
               : {}),
@@ -480,16 +503,21 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
   };
   if (!reviewing(state)) {
     sources.feedback!.items.push(...(await artifactItems(inputs.historicalArtifacts, 700)));
-    const interruptions = inputs.feedback.interruptions;
-    if (Array.isArray(interruptions) && interruptions.length) {
+    // Labeled as what each note is: reviewers' notes read as interruptions (2026-10-13) left an
+    // executor unable to tell a verdict from the infrastructure failure retry_running is for.
+    const notes = inputs.feedback.interruptions as string[] | undefined;
+    if (Array.isArray(notes) && notes.length) {
+      const interruptions = notes.filter((note) => note.startsWith(RECOVERY_NOTE));
+      const reviewNotes = notes.filter((note) => !note.startsWith(RECOVERY_NOTE));
       sources.feedback!.items.push(
         textItem(
-          `interruptions:${experiment.id}`,
-          'Current interruption notes',
+          `attemptNotes:${experiment.id}`,
+          'Notes on this attempt: review notes that returned it, and infrastructure interruptions',
           JSON.stringify({
-            interruptions,
+            ...(reviewNotes.length ? { reviewNotes } : {}),
+            ...(interruptions.length ? { interruptions } : {}),
             ...(inputs.feedback.earlierInterruptions
-              ? { earlierInterruptions: inputs.feedback.earlierInterruptions }
+              ? { earlierNotes: inputs.feedback.earlierInterruptions }
               : {}),
           }),
           { refs: [stateRef] },
@@ -523,7 +551,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
       : undefined;
   const continuation =
     continuousProducer(context.snapshot.version) && !reviewing(state)
-      ? `\n\nCurrent stage: ${state === 'running' ? 'execution (running), after independent design approval' : 'design (planned)'}. This is a fresh visit with a new lease, credential, execution policy and workspace. The current assignment, authoritative experiment record and frozen inputs supersede all earlier conversation, plans and permissions. Use only this visit's granted tools, limits and configured workspace; old credentials and paths are not authority.${state === 'running' ? ` Execute only the exact approved design submission ${experiment.attempt.approvedSubmissionId} (revision ${approved!.subjectRevision}, round ${approved!.round}, manifest ${approved!.manifestHash}), approved by review ${experiment.attempt.approvedReviewId}, for attempt ${experiment.attempt.index}. Read the pinned approvedPlan artifacts and feasibility limits, and the reviewer findings in feedback before executing; if feedback is omitted for space, call review.get for the approved review above. Follow the approved scope; if it needs changing, use the declared interruption/replanning route. Retain the required results and final report and submit them for independent review.` : ' Read current reviewer findings and recovery references before revising the design; execution requires a new independent design approval.'}`
+      ? `\n\nCurrent stage: ${state === 'running' ? 'execution (running), after independent design approval' : 'design (planned)'}. This is a fresh visit with a new lease, credential, execution policy and workspace. The current assignment, authoritative experiment record and frozen inputs supersede all earlier conversation, plans and permissions. Use only this visit's granted tools, limits and configured workspace; old credentials and paths are not authority.${state === 'running' ? ` Execute only the exact approved design submission ${experiment.attempt.approvedSubmissionId} (revision ${approved!.subjectRevision}, round ${approved!.round}, manifest ${approved!.manifestHash}), approved by review ${experiment.attempt.approvedReviewId}, for attempt ${experiment.attempt.index}. Read the pinned approvedPlan artifacts and feasibility limits, and the reviewer findings in feedback before executing; if feedback is omitted for space, call review.get for the approved review above. Follow the approved scope. Retain the required results and final report and submit them for independent review.` : ' Read current reviewer findings and recovery references before revising the design; execution requires a new independent design approval.'}`
       : '';
   const preview = await recipe.preview(
     context.caller,
@@ -541,7 +569,7 @@ export async function build(ctx: ExperimentsContext, context: WorkflowCheckConte
     role: reviewing(state) ? 'reviewer' : 'producer',
     label: `${recipeNames[state]}: ${experiment.name}`,
     name: experiment.name,
-    brief: `${instructions[state]}${speedGuidance}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
+    brief: `${instructions[state]}${speedGuidance}${workflowGates[state] ?? ''}${continuation}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}${state === 'running' ? `\n\n${presentationAt(context.snapshot.version)}` : ''}`,
     references: [
       { kind: 'experiment', id: experiment.id, label: experiment.name },
       ...preview.sources.map((artifact) => ({

@@ -5,6 +5,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
   check,
+  checkpointRequestId,
   effectiveWorkspace,
   sessionSecretPattern,
   sessionUsageReportSchema,
@@ -21,7 +22,12 @@ import type {
   SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
-import { INQUIRY_CAPABILITY, live as liveSession, ownEnd } from '@merv/sessions/rules';
+import {
+  INQUIRY_CAPABILITY,
+  live as liveSession,
+  ownEnd,
+  STOPPED_WITHOUT_HANDOFF,
+} from '@merv/sessions/rules';
 import { RunnerClient, RunnerControlError } from './client.js';
 import {
   LocalLedger,
@@ -43,15 +49,18 @@ import {
   type ConversationFacts,
 } from './conversation.js';
 import { harnessOf, launcherOf } from './harness/index.js';
+import { since } from './harness/shared.js';
 import { claudeLogUsage, claudeTally, type ClaudeTally } from './harness/claude.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
+  heldAssignment,
   sealed,
   inquiring,
   collectRepositorySkillPaths,
   handoffGraceMs,
   validateProfile,
+  type LaunchRequest,
   type RunnerProfile,
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
@@ -159,7 +168,7 @@ function terminalReason(record: LaunchRecord): string {
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
     return record.exitCode === 0
-      ? 'local_process_exit_code_0_without_handoff'
+      ? STOPPED_WITHOUT_HANDOFF
       : `local_process_exit_code_${record.exitCode}`;
   return 'local_process_finished_without_exit_status';
 }
@@ -213,6 +222,8 @@ const checkpointMs = 5 * 60_000;
  *  after the tenth only confirms it. */
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
+/** How much of a conversation's end is read for the running total it last recorded. */
+const recordedTail = 4 << 20;
 /** A declaration's facts: what its route is sent. */
 const factsOf = <Facts extends object>({
   state: _state,
@@ -747,7 +758,7 @@ export class MachineRunner implements Runner {
               ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
               : {}),
             shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
-            ...(resume && { resume }),
+            ...(resume && { resume: resume.id, ...(resume.held && { held: resume.held }) }),
           },
           home ? { ...process.env, ...home } : process.env,
         );
@@ -863,7 +874,7 @@ export class MachineRunner implements Runner {
     const expectedHead = await workspaces.checkpointHead(record.id);
     if (!expectedHead) return undefined;
     const count = Number(record.metadata.checkpoints ?? 0) + 1;
-    const checkpoint = { expectedHead, requestId: `checkpoint-${count}` };
+    const checkpoint = { expectedHead, requestId: checkpointRequestId(count) };
     this.save(record.id, { checkpoints: count, checkpoint });
     return checkpoint;
   }
@@ -871,7 +882,8 @@ export class MachineRunner implements Runner {
    * What an ended launch owes, in order: its transcript's declaration, its capture (before the
    * release: a session's close ends its writer generation, and Code admits nothing begun after
    * it), its release, owed Code receipts, workspace result, closed checkout and last the
-   * transcript itself; true once nothing is. One whose driver is gone is released and waits.
+   * transcript itself; true once nothing is. One whose driver is gone is released and waits; one
+   * held by a local failure or a final refusal delivers its transcript and conversation meanwhile.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
     this.tallies.delete(record.id); // only a running launch's budget reads on
@@ -887,31 +899,54 @@ export class MachineRunner implements Runner {
     const driver = this.driverOf(record);
     const workspace = driver?.get(record.id);
     const open = !!workspace && workspace.status !== 'closed';
-    if (record.metadata.usageReported !== true) {
-      record = await this.declare(record);
-      // What the session left is captured while its writer generation is still live.
-      if (open) await driver!.capture(record);
-      record = await this.release(record);
+    try {
+      if (record.metadata.usageReported !== true) {
+        record = await this.declare(record);
+        // What the session left is captured while its writer generation is still live.
+        if (open) await driver!.capture(record);
+        record = await this.release(record);
+      }
+      if (!driver) {
+        await this.deliverOwed(record.id);
+        this.lastError = 'workspace_driver_missing';
+        return false;
+      }
+      if (open) {
+        const result = await driver.capture(record);
+        // Work the capture moved aside or rescued is reported, never passed over in silence.
+        const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
+        if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
+        await this.reconcileCodeCommands(record, sessionOf(record));
+        // Only an attached checkout has a result to report; the session is closed by now.
+        if (
+          result &&
+          record.metadata.attached === true &&
+          record.metadata.workspaceReported !== true
+        ) {
+          await this.answer(() =>
+            this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
+          );
+          record = this.save(record.id, { workspaceReported: true });
+        }
+        await driver.close(record);
+      }
+    } catch (error) {
+      // A step that fails on this machine (a capture, a checkout that will not close) or that Code
+      // refuses for good is tried again each tick and may never succeed, holding the release with
+      // it until the session lapses. What the agent printed and the conversation it kept still
+      // go, so the work's next visit continues from this one and not from an older one. Only a
+      // server's temporary refusal is waited for.
+      if (!(error instanceof RunnerControlError) || error.final) await this.deliverOwed(record.id);
+      throw error;
     }
-    if (!driver) {
-      this.lastError = 'workspace_driver_missing';
-      return false;
-    }
-    if (!open) return await this.finishAssignment(record);
-    const result = await driver.capture(record);
-    // Work the capture moved aside or rescued is reported, never passed over in silence.
-    const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
-    if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
-    await this.reconcileCodeCommands(record, sessionOf(record));
-    // Only an attached checkout has a result to report; the session is closed by now.
-    if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
-      await this.answer(() =>
-        this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
-      );
-      record = this.save(record.id, { workspaceReported: true });
-    }
-    await driver.close(record);
     return await this.finishAssignment(record);
+  }
+  /** Each owed delivery's next step, whatever else the launch is waiting on. */
+  private async deliverOwed(id: string): Promise<void> {
+    for (const kind of kinds) {
+      const record = this.ledger.get(id);
+      if (record) await this.deliverOne(kind, record).catch(() => false);
+    }
   }
   private async finishAssignment(record: LaunchRecord): Promise<boolean> {
     // Capture helpers touch untrusted checkout content too. Close their descendants and
@@ -1078,7 +1113,7 @@ export class MachineRunner implements Runner {
     profile: RunnerProfile,
     session: Session,
     cwd: string,
-  ): Promise<string | undefined> {
+  ): Promise<{ id: string; held?: LaunchRequest['held'] } | undefined> {
     const resume = session.continuity?.resume;
     if (!resume) return undefined;
     try {
@@ -1096,13 +1131,28 @@ export class MachineRunner implements Runner {
         'Not the conversation Sessions recorded',
       );
       restoreConversation(profile, runDirectory, cwd, resume.conversationId, bytes);
-      this.save(id, { resumed: resume.conversationId });
-      return resume.conversationId;
+      // A resumed harness may report the conversation's whole total: what it had spent is
+      // taken off what this launch reports.
+      const carried = harnessOf(profile)?.recorded?.(
+        bytes.subarray(-recordedTail).toString('utf8'),
+      );
+      this.save(id, { resumed: resume.conversationId, ...(carried && { carried }) });
+      return { id: resume.conversationId, held: this.held(profile, session, bytes) };
     } catch (error) {
       const code = diagnostic(error);
       this.save(id, { resumed: { unavailable: code } });
       this.lastError = 'resume_unavailable';
       process.stderr.write(`merv-runner: launch ${id} resume unavailable: ${code}\n`);
+      return undefined;
+    }
+  }
+  /** What a restored conversation still holds of a frozen assignment, so a resumed launch is
+   *  sent only what changed; nothing, and it is sent whole, where that cannot be read. */
+  private held(profile: RunnerProfile, session: Session, bytes: Buffer): LaunchRequest['held'] {
+    if (inquiring(session)) return undefined;
+    try {
+      return heldAssignment(harnessOf(profile)?.held?.(bytes.toString('utf8')) ?? []);
+    } catch {
       return undefined;
     }
   }
@@ -1226,10 +1276,22 @@ export class MachineRunner implements Runner {
       const profile = record.metadata.profile as RunnerProfile;
       const model = 'model' in profile ? profile.model : undefined;
       const path = join(record.runDirectory, 'stdout.log');
-      return sessionUsageReportSchema.parse(
+      const harness = harnessOf(profile);
+      // A launch stopped before its output reported (its lease ran out mid-turn) spent what its
+      // kept conversation last recorded: read once the launch settled, never while it runs.
+      const usage =
         profile.harness === 'claude'
           ? claudeLogUsage(path, model, live)
-          : harnessOf(profile)?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model),
+          : (harness?.usage(read(path, live ? 16 << 20 : 1 << 20, 'tail'), model) ??
+            (live
+              ? undefined
+              : harness?.recorded?.(
+                  read(conversationFile(record.runDirectory), recordedTail, 'tail'),
+                  model,
+                )));
+      const carried = sessionUsageReportSchema.safeParse(record.metadata.carried);
+      return sessionUsageReportSchema.parse(
+        usage && since(usage, carried.success ? carried.data : undefined),
       );
     } catch {
       return;

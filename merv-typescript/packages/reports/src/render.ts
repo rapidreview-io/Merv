@@ -114,6 +114,31 @@ export interface RenderOptions {
   visual?: string;
 }
 
+/** A failure while drawing that no check foresaw, as a refusal the agent can act on: what failed
+ *  and the browser's own reason, not an opaque internal error (2026-10-17: a chart report.check
+ *  accepted failed review_visual twice with only "Internal server error"). Logged for operators. */
+function drawFailure(error: unknown, chart?: string): MervError {
+  if (error instanceof MervError) return error;
+  const text = error instanceof Error ? error.message : String(error);
+  // Playwright's reasons end with a period of their own; the message below adds one.
+  const reason = text.split('\n')[0]!.trim().slice(0, 300).replace(/\.+$/, '') || 'unknown error';
+  process.stderr.write(
+    JSON.stringify({
+      event: 'report.render_failed',
+      chart: chart ?? null,
+      reason,
+      stack: error instanceof Error ? error.stack?.slice(0, 2000) : undefined,
+    }) + '\n',
+  );
+  const what = chart ? `chart ${chart}` : 'the report';
+  return new MervError(
+    'report_render_failed',
+    `Merv could not draw ${what}: ${reason}. Try once more; if it fails the same way, simplify ${chart ? 'that chart' : 'its largest chart'} (fewer rows or layers, a smaller height) with report.write and review it again`,
+    422,
+    chart ? { chart } : undefined,
+  );
+}
+
 function allowedSpans(section: Section): number[] {
   const charts = section.blocks.filter((b) => b.type === 'chart');
   if (charts.some((b) => b.chart!.spec.wide)) return [2, 3];
@@ -138,7 +163,11 @@ export class ReportRenderer {
   }
 
   render(report: Report, files: DataFiles, options: RenderOptions): Promise<Rendered> {
-    const run = this.queue.then(() => this.renderNow(report, files, options));
+    const run = this.queue
+      .then(() => this.renderNow(report, files, options))
+      .catch((error: unknown) => {
+        throw drawFailure(error, options.visual);
+      });
     this.queue = run.catch(() => {});
     return run;
   }

@@ -278,10 +278,7 @@ test('S3 large downloads sign one immutable key for sixty minutes with attachmen
   assert.equal(server.requests.at(-1)!.method, 'HEAD');
   const response = await fetch(url);
   assert.equal(response.status, 200);
-  assert.equal(
-    response.headers.get('content-disposition'),
-    `attachment; filename="${keyHash}"; filename*=UTF-8''${keyHash}`,
-  );
+  assert.equal(response.headers.get('content-disposition'), `attachment; filename="${keyHash}"`);
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal(response.headers.get('content-type'), 'application/octet-stream');
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
@@ -314,6 +311,28 @@ test('S3 downloads are saved under the name asked for, with an ASCII fallback', 
     (await fetch(link.url)).headers.get('content-disposition'),
     `attachment; filename="R_sum_ _v2_ (100_)*.pdf"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22%20%28100%25%29%2A.pdf`,
   );
+});
+
+test('S3 signs a plain ASCII name once, and keeps only the start and extension of a long one', async (t) => {
+  const { blobs, server } = await fixture(t);
+  server.objects.set(`evidence/v1/project_1/${hash}`, content);
+  const saved = async (name: string) => {
+    const link = await blobs.download('project_1', hash, content.length, name);
+    return { url: link.url, saved: (await fetch(link.url)).headers.get('content-disposition') };
+  };
+  const plain = await saved('Rows.csv');
+  assert.equal(plain.saved, 'attachment; filename="Rows.csv"');
+  // The name is signed into the link: one plain parameter, not the name encoded twice.
+  assert.equal(new URL(plain.url).searchParams.get('response-content-disposition'), plain.saved);
+  const title = 'Evidence — '.repeat(20);
+  const long = await saved(`${title}final.tar.gz`);
+  // 100 characters: the first 97 of the title, then the extension.
+  const kept = `${title.slice(0, 97)}.gz`;
+  assert.equal(
+    long.saved,
+    `attachment; filename="${kept.replaceAll('—', '_')}"; filename*=UTF-8''${encodeURIComponent(kept)}`,
+  );
+  assert.ok(long.url.length < 1200);
 });
 
 test('S3 downloads a retained zero-byte object after checking its exact HEAD length', async (t) => {

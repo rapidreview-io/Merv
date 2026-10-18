@@ -287,6 +287,17 @@ test('isolated Codex launcher receives the scoped command, environment, stdin an
   assert.equal(observed.stdin.includes('source-bearer-must-stay-with-runner'), false);
   assert.match(config(observed.args)['shell_environment_policy.set'], /\/home\/assignment/);
   assert.doesNotMatch(config(observed.args)['shell_environment_policy.set'], /\/home\/worker/);
+  // Its home is read-only to its shell: temporary files, sockets and caches go to the machine's
+  // own /tmp, and uv's cache, which Git ignores by itself, to the workspace.
+  const shell = config(observed.args);
+  assert.equal(shell['sandbox_workspace_write.exclude_slash_tmp'], 'false');
+  assert.equal(shell['sandbox_workspace_write.writable_roots'], '[]');
+  for (const variable of [
+    '"TMPDIR"="/tmp"',
+    '"XDG_CACHE_HOME"="/tmp/cache"',
+    '"UV_CACHE_DIR"="/tmp/merv-profile-workspace/.uv-cache"',
+  ])
+    assert.ok(shell['shell_environment_policy.set'].includes(variable), variable);
 });
 
 test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no implicit model override', () => {
@@ -307,6 +318,7 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.equal(settings['sandbox_workspace_write.writable_roots'], '[]');
   assert.equal(settings['sandbox_workspace_write.exclude_tmpdir_env_var'], 'true');
   assert.equal(settings['sandbox_workspace_write.exclude_slash_tmp'], 'true');
+  assert.doesNotMatch(settings['shell_environment_policy.set'], /XDG_CACHE_HOME|UV_CACHE_DIR/);
   for (const feature of [
     'apps',
     'plugins',
@@ -409,6 +421,22 @@ test('a hosted Codex profile calls the model through Main with its session beare
   assert.equal(disabled(review), true);
   assert.match(reviewLaunch.stdin, /outside sources/);
   assert.doesNotMatch(reviewLaunch.stdin, /web\.search/);
+  // A worker on the machine is told what its shell has, where scratch goes and what of its
+  // directory follows the work, which workers learned by failing (prod, 2026-09-29..10-16).
+  for (const told of [
+    /python3\.12 and uv\. A commit, a runner checkpoint and the final capture take in every file of this directory Git does not ignore, so read git status before you commit/,
+    /Make Python environments in the workspace with uv .*, which marks them ignored; list any other environment in \.gitignore/,
+    /\/tmp is yours for temporary files and sockets .* SSH ControlPath/,
+    /caches such as pip’s and Hugging Face’s go to \/tmp\/cache/,
+    // Its reset runs before the final capture and walks at most 100,000 files.
+    /Keep \/tmp well under 100,000 files: .* fails the machine’s reset and loses what no commit holds yet/,
+    /may hold files an earlier agent left, in no commit until one takes them in/,
+    /only what was committed moves with it: environments, downloads, keys and other ignored files stay behind/,
+  ])
+    assert.match(spec.stdin, told);
+  // Not a sealed review, which writes nothing, nor a launch on the person's own machine.
+  for (const other of [reviewLaunch, buildLaunch(codex, request(), safeEnv)])
+    assert.doesNotMatch(other.stdin, /\/tmp is yours/);
 });
 
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
@@ -510,9 +538,12 @@ test('Codex disables exact repository SKILL.md paths using literal config withou
 
 test('read-only Codex still receives explicitly authorized protocol writes, while command refuses the lease', () => {
   // readOnly is about the record. A reviewer on scratch space may run what it is judging.
+  const judging = request(true);
+  judging.session.role = 'reviewer';
+  assert.match(buildLaunch(codex, judging, safeEnv).stdin, /workspace is yours to compute in/);
   const spec = buildLaunch(codex, request(true), safeEnv);
   assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'workspace-write');
-  assert.match(spec.stdin, /workspace is yours to compute in/);
+  assert.match(spec.stdin, /workspace is yours to read and compute in, but nothing you write/);
   // Nothing in the launch hides the lease's writes: Codex sees them as the server lists them.
   assert.doesNotMatch(config(spec.args).mcp_servers, /enabled_tools/);
   assert.match(config(spec.args).mcp_servers, /default_tools_approval_mode="approve"/);
@@ -535,6 +566,95 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   assert.throws(() => buildLaunch(command, request(true), safeEnv), {
     code: 'unsupported_read_only',
   });
+});
+
+test('a producer on a lease that keeps no workspace is told what lasts, and a resumed one that its checkout is new', () => {
+  // Prod 2026-10-07..13: experiment.design producers were told the reviewer's "your handoff is the
+  // only thing this lease writes" while they made and attached their plan and feasibility
+  // artifacts, and a resumed design found its probe files gone without being told why.
+  const design: WorkflowWorkspacePolicy = {
+    mode: 'ephemeral',
+    namespace: 'experiment-designs',
+    base: 'reference:base',
+    retain: false,
+    driver: 'code.v2',
+  };
+  const hosted = validateProfile({
+    ...codex,
+    isolatedLauncher: '/opt/launcher',
+    model: 'gpt-6-luna',
+    hosted: true,
+  });
+  const producer = request(true, design);
+  const fresh = buildLaunch(hosted, producer, safeEnv).stdin;
+  assert.match(
+    fresh,
+    /The workspace is yours to read and compute in, but nothing you write there is kept: it is a fresh checkout each visit, and a later visit will not find what you leave in it\. What must last goes into the project through the assignment’s tools, as the artifacts you create and attach\./,
+  );
+  assert.doesNotMatch(fresh, /Run what you are judging|the only thing this lease writes/);
+  // Nobody commits such a checkout, and no later visit finds it on this machine either.
+  assert.match(fresh, /This checkout is made afresh for each visit and no commit takes it in/);
+  assert.doesNotMatch(fresh, /before you commit|in no commit until one takes them in|\.gitignore/);
+  assert.match(
+    fresh,
+    /Keep \/tmp well under 100,000 files: a visit that leaves more there fails the machine’s reset, so put/,
+  );
+  const resumed = buildLaunch(
+    hosted,
+    { ...producer, resume: '0199a0b2-1111-7222-8333-944445555666' },
+    safeEnv,
+  ).stdin;
+  assert.match(
+    resumed.split('\n')[0]!,
+    /^You are continuing your earlier work on this unit\. .* This visit’s checkout is a fresh one: what earlier visits wrote in theirs is gone, and what they kept is in the project\.$/,
+  );
+  // A reviewer on the same checkout still runs what it judges; a writer's directory is kept.
+  const reviewer = request(true, design);
+  reviewer.session.role = 'reviewer';
+  const judging = buildLaunch(hosted, reviewer, safeEnv).stdin;
+  assert.match(judging, /Run what you are judging rather than reading about it/);
+  assert.match(judging, /This checkout is made afresh for each visit/);
+  const writer = buildLaunch(
+    hosted,
+    {
+      ...request(false, {
+        mode: 'persistent',
+        namespace: 'experiments',
+        base: 'reference:base',
+        perBase: false,
+        retain: true,
+        advancesCentral: false,
+        driver: 'code.v2',
+      }),
+      resume: '0199a0b2-1111-7222-8333-944445555666',
+    },
+    safeEnv,
+  ).stdin;
+  assert.doesNotMatch(writer, /fresh checkout|made afresh/);
+  assert.match(
+    writer,
+    /may hold files an earlier agent left, in no commit until one takes them in/,
+  );
+});
+
+test('a worker is told when its lease ends, that nothing extends it, and that a stop is no way to wait', () => {
+  const { session } = request();
+  const fresh = workerPrompt(session);
+  assert.match(
+    fresh,
+    /lease ends at 2026-09-15T04:00:00Z, 240 minutes after it was offered\. Merv then closes the visit, mid-turn if need be/,
+  );
+  assert.match(fresh, /the next visit starts afresh from those records/);
+  assert.match(fresh, /Do not end your turn without the handoff\. Merv counts a visit/);
+  assert.doesNotMatch(fresh, /session\.ask_owner/);
+  assert.match(
+    fresh,
+    /send the refused call again, as it was unless the message changes what it should do/,
+  );
+  const kept = workerPrompt({ ...session, continuity: { key: 'key_fixture' } });
+  assert.match(kept, /the next visit continues this conversation/);
+  assert.match(kept, /Do not end your turn without the handoff or session\.ask_owner/);
+  assert.match(kept, /someone else’s action .* call session\.ask_owner/);
 });
 
 test('a launch adds no research guidance of its own: source verification arrives in the assignment, and in Pi guidance', () => {
@@ -1063,6 +1183,8 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     { ...safeEnv, HF_TOKEN: 'ambient-token' },
   );
   assert.equal(launch.env.HF_TOKEN, marker);
+  // The libraries read the variables, but the machine does not have them until installed.
+  assert.match(launch.stdin, /once installed in your Python environment \(none is preinstalled\)/);
   const settings = config(launch.args);
   assert.equal(settings['shell_environment_policy.inherit'], '"all"');
   assert.deepEqual(JSON.parse(settings['shell_environment_policy.include_only']), [
@@ -1071,6 +1193,8 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     'USER',
     'TMPDIR',
     'LANG',
+    'XDG_CACHE_HOME',
+    'UV_CACHE_DIR',
     'HF_TOKEN',
     'HF_ENDPOINT',
   ]);

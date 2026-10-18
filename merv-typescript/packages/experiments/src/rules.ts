@@ -12,6 +12,9 @@ export const roleRank = (role: string): number => {
 };
 /** At most this many experiments may be active in a project. */
 export const MAX_ACTIVE_EXPERIMENTS = 7;
+/** experimentName's rule in words, for where its schema is not shown: keep the two together. */
+export const EXPERIMENT_NAME_RULE =
+  '3 to 48 letters, digits, ".", "_" or "-", starting with a letter or digit';
 /** An experiment's name, checked on `text` (which may trim first). */
 export const experimentName = (text = z.string()) =>
   text

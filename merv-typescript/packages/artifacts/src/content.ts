@@ -18,6 +18,10 @@ import {
 const MEDIA = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
+/** The largest file a range is read from when its bytes are not in the row: each read fetches
+ * and verifies the whole file. */
+export const MAX_STORED_READ_BYTES = 16 * 1024 * 1024;
+
 /** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
 export const META =
   'id,project_id,created_by,title,media_type,hash,size,created_at,files_json,metadata_json';
@@ -35,13 +39,15 @@ export const fromRow = (row: any): Artifact => ({
   ...(row.metadata_json != null ? { metadata: json(row.metadata_json) } : {}),
 });
 
-/** Inserts a new artifact row with its bytes (null: they are only in blobs) and session. */
+/** Inserts a new artifact row with its bytes (null: they are only in blobs), session and the
+ * project-unique key a retry finds it by, if any. */
 export async function insert(
   state: State,
   tx: Transaction,
   caller: Caller,
   fields: Pick<Artifact, 'title' | 'mediaType' | 'hash' | 'size'>,
   content: Buffer | null,
+  sourceKey: string | null = null,
 ): Promise<Artifact> {
   const artifact: Artifact = {
     id: newId('art'),
@@ -51,8 +57,8 @@ export async function insert(
     createdAt: now(),
   };
   await tx.run(
-    `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id)
-     VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id,source_key)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     artifact.id,
     artifact.projectId,
     artifact.createdBy,
@@ -63,6 +69,7 @@ export async function insert(
     artifact.createdAt,
     content,
     caller.session?.id ?? null,
+    sourceKey,
   );
   await recorded(state, tx, caller, 'artifact.created', artifact.id, {
     hash: artifact.hash,
@@ -88,6 +95,16 @@ export function meta(title: unknown, mediaType: unknown) {
     'Invalid media type',
   );
   return { title: title.trim(), mediaType: mediaType.toLowerCase() };
+}
+
+/** An optional requestId: the tool schema's rule and no stricter, because it is only hashed. */
+export function requestIdOf(value: unknown): string | undefined {
+  check(
+    value === undefined || (typeof value === 'string' && value.length >= 1 && value.length <= 128),
+    'invalid_artifact',
+    'requestId must be a string of 1-128 characters',
+  );
+  return value;
 }
 
 /** The bytes of a new inline artifact: 1..MAX_ARTIFACT_BYTES, from utf8 or canonical base64. */

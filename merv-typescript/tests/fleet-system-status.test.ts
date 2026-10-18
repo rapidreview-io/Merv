@@ -16,7 +16,7 @@ const queue = [
 ];
 const budget = (blocked: boolean) => ({
   blocked,
-  blockReason: blocked ? 'last_refused_reservation_unaffordable' : null,
+  blockReason: blocked ? 'worker_token_budget_exhausted' : null,
   resetsAt: '2026-09-27T00:00:00.000Z',
 });
 
@@ -45,6 +45,7 @@ async function status(t: TestContext) {
       }),
     },
     session: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
+    threads: { lineage: async () => ({ instanceId: 'task-1', threads: [] }) },
   } as unknown as Sessions;
   const fleet = {
     allocationSeconds: 86_400,
@@ -147,12 +148,12 @@ const allocations = [
 ];
 const blocked = {
   blocked: true,
-  reason: 'last_refused_reservation_unaffordable',
+  reason: 'worker_token_budget_exhausted',
   resetsAt: '2026-09-27T00:00:00.000Z',
   next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
 };
 const projectKeys = ['scope', 'projectId', 'observedAt', 'dispatch', 'workers'];
-const sessionKeys = ['scope', 'projectId', 'session'];
+const sessionKeys = ['scope', 'projectId', 'session', 'lineage'];
 const rest = ['sessions', 'waiting', 'blockers'];
 
 test('Fleet contributes its system.status sections where Sessions put them', async (t) => {

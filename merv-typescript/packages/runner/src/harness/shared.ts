@@ -99,6 +99,18 @@ export interface Harness {
   lines(): (text: string, at: number) => AgentEvent[];
   /** What the run spent, from the last report the output holds, for the profile's model. */
   usage(output: string, model?: string): SessionUsageReport | undefined;
+  /**
+   * The running total its conversation file last recorded, where the harness records one: what a
+   * conversation restored for a launch had spent already, and what a launch stopped before its
+   * output reported anything had spent by its last model call.
+   */
+  recorded?(conversation: string, model?: string): SessionUsageReport | undefined;
+  /**
+   * The prompts a conversation file still holds whole, oldest first: those sent since its last
+   * compaction, which leaves the model a summary and cut copies of what came before. A harness
+   * without it is sent its frozen assignment whole on every visit.
+   */
+  held?(conversation: string): string[];
   /** The conversation id it printed first. */
   conversationId(output: string): string | undefined;
   /** What it prints when it finds no conversation to resume. */
@@ -130,7 +142,7 @@ export const entries = (directory: string) => {
 };
 
 /** The JSON lines of `output` that hold `marker`. */
-function* events(output: string, marker: string) {
+export function* events(output: string, marker: string) {
   for (const line of output.split('\n')) if (line.includes(marker)) yield read(line) ?? {};
 }
 /** The first id `pick` finds on a line holding `marker`, if it is a conversation id. */
@@ -161,4 +173,18 @@ export function spent(output: string, type: string, model?: string, cache: strin
   for (const event of events(output, `"${type}"`))
     if (event.type === type) usage = counted(event.usage, cache, model) ?? usage;
   return usage;
+}
+/**
+ * What a launch spent of a running total that stood at `before` when it began, as a resumed
+ * conversation's harness reports the conversation's whole total. A total below `before` was
+ * counted afresh, and is the launch's own.
+ */
+export function since(usage: SessionUsageReport, before?: SessionUsageReport): SessionUsageReport {
+  if (!before || usage.inputTokens < before.inputTokens || usage.outputTokens < before.outputTokens)
+    return usage;
+  return {
+    ...usage,
+    inputTokens: usage.inputTokens - before.inputTokens,
+    outputTokens: usage.outputTokens - before.outputTokens,
+  };
 }

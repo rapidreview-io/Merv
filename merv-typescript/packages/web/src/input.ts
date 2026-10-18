@@ -60,7 +60,7 @@ export const searchInput = z
     query: z
       .union([z.string().max(400), z.array(z.string().max(400)).max(8)])
       .describe(
-        'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 phrasings is combined with OR into one search.',
+        'What to search for, in descriptive words; a site: filter alone is not a query. A list of up to 4 queries runs each as its own search, and each result names the query that found it.',
       ),
     max_results: z.number().nullish().describe('Number of results to return (1-20, default 5).'),
     search_depth: choice('"basic" (fast, 1 credit) or "advanced" (deeper, 2 credits).'),
@@ -76,7 +76,19 @@ export const extractInput = z
       .string()
       .max(500)
       .nullish()
-      .describe('Text marking the start of the section to return, copied from the page.'),
-    end_text: z.string().max(500).nullish().describe('Text marking the end of the section.'),
+      .describe(
+        'Text marking the start of the section to return, copied from the page; alone, the page from there on.',
+      ),
+    end_text: z
+      .string()
+      .max(500)
+      .nullish()
+      .describe('Text marking the end of the section; alone, the page up to there.'),
+    offset: z
+      .number()
+      .nullish()
+      .describe(
+        'Characters of the text to skip, to read on past a cut: the next_offset an earlier answer gave, with the same url and markers.',
+      ),
   })
   .strict();

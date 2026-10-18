@@ -42,6 +42,10 @@ export const heartbeatSchema = z
   .strict();
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
+/** How long a rented machine's runner may be silent before its live visit is lost: a healthy
+ *  runner sends presence only between ticks, and one tick can run a large code.commit or final
+ *  capture for minutes. */
+export const lostAfterMs = 15 * 60_000;
 export const rented =
   'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
 export interface RunnerRow {

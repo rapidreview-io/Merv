@@ -70,12 +70,15 @@ mounts a fixed-origin Hugging Face reverse proxy using pinned `httpxy` (no new
 service, vault, CA, or database table). It streams responses and leaves cross-host
 CDN/Xet downloads direct. Native `huggingface_hub`, `datasets`, `transformers` and
 `hf download` use the supplied `HF_ENDPOINT` and `HF_TOKEN` environment variables.
-Use a fine-grained **read-only** account token. Model/dataset reads, Xet read
-credentials and `paths-info` POSTs are allowed; pushes, account settings, whoami,
-Spaces and OAuth are refused. Raw Git authentication is not supported.
+Use a fine-grained **read-only** account token. Model/dataset reads (search and
+listing on `/api/models` and `/api/datasets` included), Xet read credentials and
+`paths-info` POSTs are allowed; pushes, account settings, whoami, Spaces and OAuth
+are refused. Raw Git authentication is not supported.
 The first version also refuses slash-containing revisions, filenames with spaces,
 `#`, `?` or `%`, and encoded nested-file redirects in old repos without a namespace.
-These fail explicitly; expand the path policy only with native-client evidence.
+These fail explicitly: every refusal says why in `X-Error-Message`, which
+`huggingface_hub` prints after the status. Expand the path policy only with
+native-client evidence.
 
 New managed hosted Codex workers receive a readable, session-bound capability in
 `HF_TOKEN`, never the account token. A grant is `{binding, exp}`: Secrets checks

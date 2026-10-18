@@ -91,6 +91,8 @@ export interface AcceptedCandidates {
     acceptanceHash: string;
     acceptedAt: string;
   }[];
+  /** The commits of work a closed pull request rejected, which is never offered. */
+  rejected: string[];
 }
 /** The publication facts of one unit, read by the id its acceptance sealed. */
 export interface PublicationRow {
@@ -388,10 +390,15 @@ export class WorkUnitRecords {
         if (row) pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
       }
     const candidates: AcceptedCandidates['candidates'] = [];
+    const refused: string[] = [];
     for (const row of rows) {
       const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
       // A code-less success is nothing main could be missing.
-      if (!accepted.code || rejected.has(row.unit_id)) continue;
+      if (!accepted.code) continue;
+      if (rejected.has(row.unit_id)) {
+        refused.push(accepted.code.commit);
+        continue;
+      }
       candidates.push({
         unitId: row.unit_id,
         commit: accepted.code.commit,
@@ -400,7 +407,7 @@ export class WorkUnitRecords {
         acceptedAt: row.accepted_at!,
       });
     }
-    return { main: project.main.oid, candidates };
+    return { main: project.main.oid, candidates, rejected: refused };
   }
 
   async unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit> {

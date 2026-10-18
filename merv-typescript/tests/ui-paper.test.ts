@@ -304,6 +304,26 @@ test('the main agent UI can save Methods and Results directly', async (t) => {
   assert.deepEqual(sent, ['methods', 'results']);
 });
 
+test('an edit saved after someone else wrote the document is saved, not doubted', async (t) => {
+  t.after(async () => await unmount());
+  const held = workspace([section('s_problem', 'Problem', 'Text.')]);
+  boot(held);
+  await open();
+  const edit = tools().find((tool) => tool.getAttribute('aria-label') === 'Edit Problem')!;
+  await act(async () => edit.click());
+  // A reviewer writes revision 2 while the form is open; the server merges this edit as 3.
+  serve('/tools/paper.patch', (_call, body) => {
+    assert.equal(body.expectedRevision, 1);
+    held.documents.problem.current = { ...held.documents.problem.current, revision: 3 };
+    return { body: { result: held.documents.problem.current } };
+  });
+  const form = document.querySelector<HTMLFormElement>('form[aria-label="Edit Problem"]')!;
+  await act(async () => form.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+  await settle(10);
+  assert.ok(!text().includes('did not confirm'), 'the saved edit is reported as unknown');
+  assert.ok(!document.querySelector('form[aria-label="Edit Problem"]'), 'the form stays open');
+});
+
 test('the paper names its sources and reviews through their owners, and reads no list to do it', async (t) => {
   const EXPERIMENT = `wf_${'e'.repeat(32)}`;
   const REVIEW = `review_${'a'.repeat(32)}`;

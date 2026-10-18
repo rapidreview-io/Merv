@@ -10,6 +10,14 @@ export const clip = (text: string, max: number) =>
 /** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
 export const ellipsis = (text: string, max: number) =>
   text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/** A value as a refusal quotes it: a string as JSON, anything else as its JSON, within `max`. */
+export const quoted = (value: unknown, max: number) =>
+  typeof value === 'string'
+    ? JSON.stringify(ellipsis(value, max))
+    : ellipsis(JSON.stringify(value) ?? String(value), max);
+/** The first `max` items, joined by commas, then how many more there are. */
+export const firstOf = (items: readonly string[], max: number) =>
+  items.slice(0, max).join(', ') + (items.length > max ? `, and ${items.length - max} more` : '');
 /** A server-sent event frame's data: the values of its `data:` lines, joined by newlines. */
 export const eventData = (frame: string) =>
   frame

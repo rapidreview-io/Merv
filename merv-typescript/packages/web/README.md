@@ -71,8 +71,15 @@ what it sends leaves Merv (see [Privacy](#privacy)).
 
 `web.search { query, max_results?, search_depth?, topic?, time_range? }`
 
-- `query` is a string of at most 400 characters, or up to 4 phrasings joined
-  with OR into one request while they fit Tavily's 400 characters. An empty
+- `query` is a string of at most 400 characters, or a list of up to 4, each
+  run as its own search in parallel and counted as its own call against the
+  day's budgets. Agents list unrelated queries far more often than phrasings of
+  one, and Nisa's single request that ORs them answered none of them well (a
+  dataset-license search returned basketball pages). A list's answer has
+  `query` as the list run and each result's `query` naming the query that found
+  it; the content caps below are shared alike among its queries. A query that
+  fails is named in `normalization_note` with why, and the others' results
+  still come back; the call fails only when every query does. An empty
   query, or one that is only a `site:` filter, is answered with
   `status: "needs_query_terms"` and a `fallback_hint`, and no request; a `site:`
   filter naming an exact page becomes that page's path terms.
@@ -94,7 +101,7 @@ result_count }`, with `normalization_note`, and `content_truncated` with
   sources, with empty content and scores of 1/(i+1). Nisa also copies the answer
   into the first result; Web does not, so the answer is counted once.
 
-`web.extract { url, extract_depth?, start_text?, end_text? }`
+`web.extract { url, extract_depth?, start_text?, end_text?, offset? }`
 
 - Tavily reads the page. Merv never fetches it: Main sits on a network with
   services no caller may address, so a direct fetch would be a request forgery
@@ -103,11 +110,24 @@ result_count }`, with `normalization_note`, and `content_truncated` with
 - `url` must be an absolute http(s) address without credentials, or the answer
   is `status: "needs_valid_url"` and no request is made.
 - With both markers, only the text between them is returned, with 200
-  characters either side; a marker that misses returns the page with a warning.
-  The content is always capped at 20,000 characters, and at 28,000 bytes of
-  JSON for the whole answer.
-- A page Tavily could not read is `status: "error"` with its reason and a hint
-  to search instead.
+  characters either side; `start_text` alone returns the page from 200
+  characters before it on, and `end_text` alone the page up to 200 characters
+  past it. Tavily answers in Markdown, which escapes punctuation
+  (`def soft\_ce\_loss`) and reflows lines, while agents copy markers from
+  source code or excerpts: a punctuation mark matches with or without its
+  backslash, on either side, and any run of white space matches any other. A
+  marker that misses returns the rest of the page whole, `section: false`, and
+  names the marker in `normalization_note` (never at the end of the text, where
+  the cap would cut it off).
+- The content is always capped at 20,000 characters, and at 28,000 bytes of
+  JSON for the whole answer. A longer text ends with a note of what is left,
+  and the answer's `next_offset`, passed back as `offset` with the same url and
+  markers, returns the text from there.
+- A page Tavily could not read, or returned without text, is asked for once
+  more after 1 s, with advanced extraction: Tavily fails pages
+  it reads a minute later, and advanced extraction renders some basic cannot.
+  A page neither read gets is `status: "error"` with its reason and a hint to
+  search instead.
 
 ### Reading pages
 

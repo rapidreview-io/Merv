@@ -194,11 +194,14 @@ async function fixture(
     capacity: 4,
     capabilities: ['code.v2'],
   });
-  const offer = async () => {
-    const instance = await handle.start(source, {
-      workflow: definition.name,
-      requestId: randomBytes(10).toString('hex'),
-    });
+  /** A new unit of work's session, or a later one of `instanceId`'s. */
+  const offer = async (instanceId?: string) => {
+    const instance = instanceId
+      ? { id: instanceId }
+      : await handle.start(source, {
+          workflow: definition.name,
+          requestId: randomBytes(10).toString('hex'),
+        });
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
     const session = await sessions.offer(source, {
       instanceId: instance.id,
@@ -257,8 +260,8 @@ async function fixture(
     },
     source,
     offer,
-    async ready() {
-      const lease = await offer();
+    async ready(instanceId?: string) {
+      const lease = await offer(instanceId);
       await lease.attach();
       return { ...lease, caller: await lease.activate() };
     },
@@ -368,10 +371,13 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
   );
   // A lost reply asks again: the same command, already dispatched.
   assert.deepEqual(await asked('checkpoint-1'), checkpoint);
-  // While it is outstanding the agent's own commit waits, and no second checkpoint is made.
+  // While it is outstanding the agent's own commit waits, told which command it waits on, and
+  // no second checkpoint is made.
   await assert.rejects(async () => await f.code.commit(worker.caller, input()), {
     code: 'code_command_pending',
+    message: `The runner's automatic checkpoint ${checkpoint.id} of this checkout is still running: call code.commit again in a few seconds, with the same input, and it lands on top of that checkpoint`,
   });
+  assert.equal((await f.code.operation(worker.caller, checkpoint.id)).status, 'dispatched');
   assert.deepEqual(await asked('checkpoint-2'), checkpoint);
   await f.code.completeCommand(f.source, {
     ...worker.control,
@@ -391,6 +397,69 @@ test('a runner asks for a periodic checkpoint: one command at the head it names,
     }),
     { ...own.command },
   );
+});
+
+test('an agent commit on the head runner checkpoints moved past lands on them; one running is named', async (t) => {
+  // Prod, 2026-10-13..16: an agent read HEAD, a checkpoint moved it, and its code.commit failed
+  // with a bare code_command_pending or, once queued, with workspace_head_conflict.
+  const f = await fixture(t),
+    worker = await f.ready();
+  const checkpoint = async (requestId: string, parent: string, head: string) => {
+    const command = (await f.code.nextCommand(f.source, {
+      ...worker.control,
+      checkpoint: { expectedHead: parent, requestId },
+    }))!;
+    await assert.rejects(
+      async () => await f.code.commit(worker.caller, input()),
+      (error: any) => {
+        assert.equal(error.code, 'code_command_pending');
+        assert.match(
+          error.message,
+          new RegExp(`automatic checkpoint ${command.id} .*call code.commit again`),
+        );
+        assert.deepEqual(error.details, { commandId: command.id, automatic: true });
+        return true;
+      },
+    );
+    await f.code.completeCommand(f.source, {
+      ...worker.control,
+      commandId: command.id,
+      receipt: { ...receipt(command), headOid: head },
+    });
+  };
+  await checkpoint('checkpoint-1', oid('a'), oid('b'));
+  await checkpoint('checkpoint-2', oid('b'), oid('d'));
+  // The head the agent read before both: its commit follows the newest checkpoint.
+  const own = await f.code.commit(worker.caller, input());
+  assert.equal(own.command.expectedHead, oid('d'));
+  assert.equal((await f.code.commit(worker.caller, input())).command.id, own.command.id);
+  // An outstanding command of the agent's own is named too.
+  await assert.rejects(async () => await f.code.commit(worker.caller, input('another')), {
+    code: 'code_command_pending',
+    message: new RegExp(
+      `outstanding code command, ${own.command.id} \\(“Capture an independently reviewable implementation”\\): poll code\\.operation`,
+    ),
+  });
+  const dispatched = (await f.code.nextCommand(f.source, worker.control))!;
+  await f.code.completeCommand(f.source, {
+    ...worker.control,
+    commandId: dispatched.id,
+    receipt: { ...receipt(dispatched), headOid: oid('e') },
+  });
+  // A head no checkpoint moved past, the agent's own stale one included, is kept as named.
+  for (const [requestId, head] of [
+    ['own-stale', oid('d')],
+    ['unknown', oid('9')],
+  ] as const) {
+    const named = await f.code.commit(worker.caller, { ...input(requestId), expectedHead: head });
+    assert.equal(named.command.expectedHead, head);
+    const next = (await f.code.nextCommand(f.source, worker.control))!;
+    await f.code.completeCommand(f.source, {
+      ...worker.control,
+      commandId: next.id,
+      error: 'workspace_head_conflict',
+    });
+  }
 });
 
 test('a checkpoint message is one the runner accepts, whatever the title it names holds', async (t) => {
@@ -535,6 +604,29 @@ test('project readers can inspect while worker reads and runner control preserve
   await f.sessions.release(f.source, release);
   await assert.rejects(async () => await f.code.operation(worker.caller, queued.command.id));
   assert.equal((await f.code.operation(f.source, queued.command.id)).status, 'queued');
+});
+
+test('a later session of the same unit, as its reviewer is, reads the commands that unit made', async (t) => {
+  const f = await fixture(t),
+    worker = await f.ready();
+  const queued = await f.code.commit(worker.caller, input());
+  const { hostRef: _hostRef, ...release } = worker.control;
+  await f.sessions.release(f.source, release);
+  const later = await f.ready(worker.session.instanceId);
+  assert.equal(
+    (await f.code.operation(later.caller, queued.command.id)).command.id,
+    queued.command.id,
+  );
+  // Another unit's worker still sees none of it, and is told which commands it may read.
+  const other = await f.ready();
+  await assert.rejects(f.code.operation(other.caller, queued.command.id), {
+    code: 'code_command_not_found',
+    message: /its unit of work/,
+  });
+  await assert.rejects(f.code.operation(later.caller, `cop_${'a'.repeat(32)}`), {
+    code: 'code_command_not_found',
+    message: /codecmd_ id code\.commit or code\.merge returned/,
+  });
 });
 
 test('runner controls authorize their caller themselves: a revoked source credential is refused', async (t) => {

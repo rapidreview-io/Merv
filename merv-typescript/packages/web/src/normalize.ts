@@ -22,10 +22,14 @@ const TIME_RANGES: Record<string, string> = {
   year: 'year',
 };
 
-/** A search Tavily can take, or the answer that no request should be made. */
+/** The most queries one call runs, each its own search. */
+export const MAX_QUERIES = 4;
+
+/** The searches Tavily can take, or the answer that no request should be made. */
 type SearchPlan =
   | {
-      query: string;
+      /** Each runs as its own search, in this order. */
+      queries: string[];
       max_results: number;
       search_depth: 'basic' | 'advanced';
       topic: 'general' | 'news' | 'finance';
@@ -34,37 +38,63 @@ type SearchPlan =
     }
   | { answer: WebSearch };
 
+/**
+ * A query as Tavily takes it, or the hint to give instead. A bare site: operator is no query:
+ * an exact page's path becomes its terms, anything else is answered with what to add instead of
+ * a request Tavily would refuse.
+ */
+function searchable(query: string, notes: string[]): { query: string } | { hint: string } {
+  const terms = query.split(/\s+/).filter(Boolean);
+  if (!terms.every((term) => term.toLowerCase().startsWith('site:'))) return { query };
+  const target = terms[0].slice(5).replace(/^\/+|\/+$/g, '');
+  const slash = target.indexOf('/');
+  const host = slash < 0 ? target : target.slice(0, slash);
+  const path =
+    slash < 0
+      ? ''
+      : target
+          .slice(slash + 1)
+          .split(/[^A-Za-z0-9.]+/)
+          .filter(Boolean)
+          .join(' ');
+  if (!host || !path)
+    return {
+      hint: `A site: filter needs descriptive search terms, for example ${query} transformer benchmark.`,
+    };
+  notes.push(`expanded exact site target ${JSON.stringify(query)} into searchable path terms`);
+  return { query: `site:${host} ${path}`.slice(0, MAX_QUERY_CHARS) };
+}
+
 export function planSearch(input: WebSearchInput): SearchPlan {
   const notes: string[] = [];
-  let query: string;
-  if (Array.isArray(input.query)) {
-    const given = input.query.map((item) => item.trim()).filter(Boolean);
-    const parts = given.slice(0, 4);
-    // Every phrasing in parentheses, joined with OR, as long as Tavily takes it.
-    const joined = (count: number) =>
-      count === 1
-        ? parts[0]
-        : parts
-            .slice(0, count)
-            .map((part) => `(${part})`)
-            .join(' OR ');
-    let count = parts.length;
-    while (count > 1 && joined(count).length > MAX_QUERY_CHARS) count--;
-    query = count ? joined(count) : '';
-    if (count)
-      notes.push(
-        `combined ${count} query variant${count === 1 ? '' : 's'} into one web request` +
-          (count < given.length ? ` (of ${given.length} given)` : ''),
-      );
-  } else query = input.query.trim();
-  if (!query)
+  const given = [
+    ...new Set((Array.isArray(input.query) ? input.query : [input.query]).map((q) => q.trim())),
+  ].filter(Boolean);
+  // Agents list unrelated queries far more often than phrasings of one, and one request that
+  // ORs them answers none of them well: each runs as its own search.
+  const asked = given.slice(0, MAX_QUERIES);
+  const queries: string[] = [];
+  let hint: string | undefined;
+  for (const query of asked) {
+    const plan = searchable(query, notes);
+    if ('query' in plan) queries.push(plan.query);
+    else if (asked.length > 1) notes.push(`skipped ${JSON.stringify(query)}: ${plan.hint}`);
+    else hint = plan.hint;
+  }
+  if (given.length > asked.length)
+    notes.unshift(`ran only the first ${asked.length} of the ${given.length} queries given`);
+  if (queries.length > 1)
+    notes.unshift(
+      `ran ${queries.length} queries as separate searches, each result naming its query`,
+    );
+  if (!queries.length)
     return {
       answer: {
-        query: '',
+        query: asked.length === 1 ? asked[0]! : '',
         results: [],
         result_count: 0,
         status: 'needs_query_terms',
-        fallback_hint: 'Provide at least one descriptive search term.',
+        fallback_hint: hint ?? 'Provide at least one descriptive search term.',
       },
     };
 
@@ -85,37 +115,8 @@ export function planSearch(input: WebSearchInput): SearchPlan {
   const range = (input.time_range ?? '').trim().toLowerCase();
   const time_range = Object.hasOwn(TIME_RANGES, range) ? TIME_RANGES[range] : undefined;
   if (range && !time_range) notes.push(`unsupported time_range=${JSON.stringify(range)} omitted`);
-
-  // A bare site: operator is no query: an exact page's path becomes its terms, anything else
-  // is answered with what to add instead of a request Tavily would refuse.
-  const terms = query.split(/\s+/).filter(Boolean);
-  if (terms.every((term) => term.toLowerCase().startsWith('site:'))) {
-    const target = terms[0].slice(5).replace(/^\/+|\/+$/g, '');
-    const slash = target.indexOf('/');
-    const host = slash < 0 ? target : target.slice(0, slash);
-    const path =
-      slash < 0
-        ? ''
-        : target
-            .slice(slash + 1)
-            .split(/[^A-Za-z0-9.]+/)
-            .filter(Boolean)
-            .join(' ');
-    if (!host || !path)
-      return {
-        answer: {
-          query,
-          results: [],
-          result_count: 0,
-          status: 'needs_query_terms',
-          fallback_hint: `A site: filter needs descriptive search terms, for example ${query} transformer benchmark.`,
-        },
-      };
-    notes.push(`expanded exact site target ${JSON.stringify(query)} into searchable path terms`);
-    query = `site:${host} ${path}`.slice(0, MAX_QUERY_CHARS);
-  }
   return {
-    query,
+    queries,
     max_results: clamped,
     search_depth: depth === 'advanced' ? 'advanced' : 'basic',
     topic: topic === 'news' || topic === 'finance' ? topic : 'general',
@@ -227,7 +228,10 @@ export function fallbackSearch(
 }
 
 /** The fallback's instruction for one search, as Nisa words it. */
-export function fallbackPrompt(plan: Exclude<SearchPlan, { answer: WebSearch }>): string {
+export function fallbackPrompt(
+  plan: Exclude<SearchPlan, { answer: WebSearch }>,
+  query: string,
+): string {
   const constraints = [
     ...(plan.topic === 'general' ? [] : [`Prioritize ${plan.topic} sources.`]),
     ...(plan.time_range ? [`Prioritize results from the last ${plan.time_range}.`] : []),
@@ -237,7 +241,7 @@ export function fallbackPrompt(plan: Exclude<SearchPlan, { answer: WebSearch }>)
     'citations and use authoritative primary sources when possible. ' +
     `Return no more than ${plan.max_results} distinct sources. ` +
     constraints.join(' ') +
-    `\n\nQuery: ${plan.query}`
+    `\n\nQuery: ${query}`
   );
 }
 
@@ -248,6 +252,8 @@ type ExtractPlan =
       extract_depth: 'basic' | 'advanced';
       start: string;
       end: string;
+      /** Characters of the page, or of its section, skipped before the text returned. */
+      offset: number;
       notes: string[];
     }
   | { answer: WebPage };
@@ -271,47 +277,114 @@ export function planExtract(input: WebExtractInput): ExtractPlan {
     notes.push(`unsupported extract_depth=${JSON.stringify(depth)} replaced with 'basic'`);
   const start = (input.start_text ?? '').trim();
   const end = (input.end_text ?? '').trim();
-  if (!start !== !end) notes.push('start_text and end_text select a section only together');
+  let offset = input.offset ?? 0;
+  if (!Number.isFinite(offset) || offset < 0) {
+    notes.push(`invalid offset=${offset} replaced with 0`);
+    offset = 0;
+  }
   return {
     url,
     extract_depth: depth === 'advanced' ? 'advanced' : 'basic',
     start,
     end,
+    offset: Math.trunc(offset),
     notes,
   };
 }
 
-/** The text between the markers with 200 characters either side, or the whole page with a
- * warning when a marker is missing. A cut never leaves half a character at either end. */
-function section(content: string, start: string, end: string): string {
-  const from = content.indexOf(start);
-  if (from < 0)
-    return `${content}\n\n[WARNING: start marker "${clip(start, 50)}" not found — returning full content]`;
-  const to = content.indexOf(end, from + start.length);
-  const cut = (text: string) => text.replace(/^\p{Surrogate}|\p{Surrogate}$/gu, '');
-  if (to < 0)
-    return `${cut(content.slice(Math.max(0, from - 200)))}\n\n[WARNING: end marker "${clip(end, 50)}" not found — returning from start marker to end]`;
-  return cut(content.slice(Math.max(0, from - 200), to + end.length + 200));
+/** ASCII punctuation, which Markdown may escape with a backslash, and such an escape. */
+const PUNCTUATION = /[!-/:-@[-`{-~]/;
+const ESCAPED = new RegExp(`\\\\(${PUNCTUATION.source})`, 'g');
+/** A run of white space; a run of backslashes and the mark after it; any other mark. */
+const PIECE = new RegExp(`\\s+|(\\\\+)(${PUNCTUATION.source})?|${PUNCTUATION.source}`, 'gu');
+
+/**
+ * Where `marker` first occurs in `content` at or after `from`, and how long it is there. Tavily
+ * answers in Markdown, which escapes punctuation (def soft\_ce\_loss) and reflows white space,
+ * while a marker is copied from source code or an excerpt: so a punctuation mark matches with
+ * or without its backslash, on either side, and any run of white space matches any other.
+ * A run of k backslashes and the mark after it are one piece, k to 2k+1 backslashes then the
+ * mark: two pieces that could each take the same backslash backtrack exponentially on a miss.
+ */
+function find(content: string, marker: string, from: number) {
+  const quote = (mark: string) => mark.replace(/[$()*+./?[\\\]^{|}]/, '\\$&');
+  const source = marker
+    .replace(ESCAPED, '$1')
+    .replace(PIECE, (piece, run?: string, mark?: string) =>
+      /^\s/u.test(piece)
+        ? '\\s+'
+        : run
+          ? `\\\\{${run.length},${2 * run.length + (mark ? 1 : 0)}}${quote(mark ?? '')}`
+          : `\\\\?${quote(piece)}`,
+    );
+  const pattern = new RegExp(source, 'gu');
+  pattern.lastIndex = from;
+  const match = pattern.exec(content);
+  return match ? { at: match.index, length: match[0].length } : undefined;
 }
 
-/** The page's text, cut to its section when both markers are given, and always capped at `limit`
- * (20,000) characters: a marker that misses must not put the whole page into the model's context. */
-export function pageText(
+/**
+ * The page's text from the start marker to the end marker with 200 characters either side;
+ * with one marker alone, the page from the start marker on or up to the end marker. A marker
+ * that is not found leaves the rest whole, and `section` says whether every marker given was
+ * found. Each miss is a note, never text appended to the page, where the cap would cut it off.
+ * A cut never leaves half a character at either end.
+ */
+export function pageSection(
   raw: unknown,
   start: string,
   end: string,
+): { text: string; section: boolean; notes: string[] } {
+  const content = cleanText(raw, Number.MAX_SAFE_INTEGER);
+  if (!start && !end) return { text: content, section: false, notes: [] };
+  const trim = (text: string) => text.replace(/^\p{Surrogate}|\p{Surrogate}$/gu, '');
+  const missed = (field: 'start_text' | 'end_text', marker: string, rest: string) =>
+    `${field} ${JSON.stringify(clip(marker, 50))} not found on the page, even ignoring Markdown escapes and spacing: ${rest}`;
+  const from = start ? find(content, start, 0) : { at: 0, length: 0 };
+  if (!from)
+    return {
+      text: content,
+      section: false,
+      notes: [missed('start_text', start, 'returned the page from its beginning')],
+    };
+  const head = start ? Math.max(0, from.at - 200) : 0;
+  if (!end) return { text: trim(content.slice(head)), section: true, notes: [] };
+  const to = find(content, end, from.at + from.length);
+  if (!to)
+    return {
+      text: trim(content.slice(head)),
+      section: false,
+      notes: [
+        missed(
+          'end_text',
+          end,
+          `returned the page from ${start ? 'start_text' : 'its beginning'} to its end`,
+        ),
+      ],
+    };
+  return { text: trim(content.slice(head, to.at + to.length + 200)), section: true, notes: [] };
+}
+
+/**
+ * At most `limit` (20,000) characters of `text` from `offset` on: a marker that misses must not
+ * put the whole page into the model's context, and next_offset reads on past the cut.
+ */
+export function pageWindow(
+  text: string,
+  offset: number,
   limit = MAX_EXTRACT_CHARS,
-): { content: string; section: boolean } {
-  let content = cleanText(raw, Number.MAX_SAFE_INTEGER);
-  let applied = false;
-  if (start && end) {
-    const from = content.indexOf(start);
-    applied = from >= 0 && content.indexOf(end, from + start.length) >= 0;
-    content = section(content, start, end);
-  }
-  if (content.length > limit)
-    content = `${clip(content, limit)}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters]`;
-  return { content, section: applied };
+): { content: string; next_offset?: number } {
+  // An offset inside a character starts after it.
+  const skipped = text.length - text.slice(offset).replace(/^\p{Surrogate}/u, '').length;
+  const rest = text.slice(skipped);
+  if (rest.length <= limit) return { content: rest };
+  const shown = clip(rest, limit);
+  const next = skipped + shown.length;
+  const more = (text.length - next).toLocaleString('en-US');
+  return {
+    content: `${shown}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters, ${more} more: offset ${next} reads on]`,
+    next_offset: next,
+  };
 }
 
 /** Tavily's reason a page failed, as short plain text. */

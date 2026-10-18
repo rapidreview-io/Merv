@@ -12,6 +12,7 @@ import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session, WorkSession } from '@merv/sessions/types';
 import { sessionsUiPlugin } from '@merv/sessions/ui';
 import { uiPlugin } from '@merv/ui';
+import { piToolsPlugin } from '../packages/pi/src/tools.js';
 import { CredentialStore } from '@merv/identity/credentials';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
@@ -264,7 +265,9 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.equal(writes, 0);
   const read = await client.callTool({ name: 'session.messages', arguments: {} });
   assert.equal(read.isError, undefined, JSON.stringify(read));
-  const messages = JSON.parse((read.content as { text: string }[])[0].text) as any[];
+  const { messages } = JSON.parse((read.content as { text: string }[])[0].text) as {
+    messages: any[];
+  };
   assert.equal(messages[0].id, sent.id);
   const ack = await client.callTool({
     name: 'session.message.ack',
@@ -350,7 +353,13 @@ test('a message queued after tool admission fences the transaction that submits 
     })
   ).value as any;
   release();
-  assert.equal(errorCode(await submitting), 'session_message_pending');
+  const fenced = await submitting;
+  assert.equal(errorCode(fenced), 'session_message_pending');
+  // Its handler had started: what the refusal stopped is the write it was about to commit.
+  assert.match(
+    JSON.parse((fenced.content as { text: string }[])[0].text).error.message,
+    /the write this call was about to commit was refused/,
+  );
   assert.equal(writes, 0);
   assert.equal(
     (
@@ -363,6 +372,132 @@ test('a message queued after tool admission fences the transaction that submits 
   );
   assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
   assert.equal(writes, 1);
+});
+
+test('a pending message’s refusal carries it once a batch, and the queue lists only what waits', async (t) => {
+  const f = await fixture(t);
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const body = 'Use the 2025 holdout, not the 2024 one.';
+  const sent = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      threadId: issued.session.threadId,
+      body,
+      requestId: 'holdout',
+    })
+  ).value as any;
+  const error = (result: any) => {
+    assert.equal(result.isError, true, JSON.stringify(result));
+    return JSON.parse(result.content[0].text).error;
+  };
+  // A parallel batch of reads is refused, and the message comes with one of the refusals, so the
+  // worker can acknowledge it without reading its queue first.
+  const refused = (
+    await Promise.all(
+      [1, 2, 3].map(() => client.callTool({ name: 'system.status', arguments: {} })),
+    )
+  ).map(error);
+  assert.deepEqual(
+    refused.map((item) => [item.code, item.details.messageId, item.details.pending]),
+    Array(3).fill(['session_message_pending', sent.id, 1]),
+  );
+  const carried = refused.filter((item) => item.details.message);
+  assert.equal(carried.length, 1);
+  assert.deepEqual(
+    [carried[0].details.message.id, carried[0].details.message.body],
+    [sent.id, body],
+  );
+  assert.match(carried[0].message, /nothing of it was applied/);
+  assert.match(carried[0].message, /session\.message\.ack/);
+  // The call goes again as it was only if the message does not change it.
+  assert.match(carried[0].message, /as it was unless the message changes what it should do/);
+  // The queue says what waits and what to do with it.
+  const queue = async (input: Record<string, unknown> = {}) => {
+    const read = await client.callTool({ name: 'session.messages', arguments: input });
+    assert.equal(read.isError, undefined, JSON.stringify(read));
+    return JSON.parse((read.content as { text: string }[])[0].text);
+  };
+  const waiting = await queue();
+  assert.deepEqual(
+    [waiting.messages.map((item: any) => item.id), waiting.acknowledged],
+    [[sent.id], 0],
+  );
+  assert.match(waiting.next, /session\.message\.ack/);
+  // Read moments ago, the message holds the next call without its text again.
+  const held = error(await client.callTool({ name: 'system.status', arguments: {} }));
+  assert.deepEqual([held.code, held.details.message], ['session_message_pending', undefined]);
+  assert.match(held.message, /shown its text moments ago/);
+  // A visit's queue is its thread's: another session's id is refused, saying so.
+  const other = error(
+    await client.callTool({
+      name: 'session.messages',
+      arguments: { sessionId: 'session_predecessor' },
+    }),
+  );
+  assert.equal(other.code, 'forbidden');
+  assert.match(other.message, /earlier visits included/);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: sent.id, reply: 'Switching to 2025.', requestId: 'holdout-ack' },
+  });
+  // An acknowledgement is written once: a later note through it is refused, saying where it goes.
+  const again = error(
+    await client.callTool({
+      name: 'session.message.ack',
+      arguments: { messageId: sent.id, reply: 'And the run finished.', requestId: 'later-note' },
+    }),
+  );
+  assert.equal(again.code, 'request_conflict');
+  assert.match(again.message, /holdout-ack/);
+  assert.match(again.message, /written once/);
+  // Acknowledged, the message leaves the queue, which only counts it; all lists it again.
+  assert.deepEqual(await queue(), { messages: [], acknowledged: 1 });
+  const history = await queue({ all: true });
+  assert.deepEqual(
+    history.messages.map((item: any) => [item.id, item.reply]),
+    [[sent.id, 'Switching to 2025.']],
+  );
+  assert.equal(history.next, undefined);
+  // Two waiting, a refusal counts them and carries the older; once it is acknowledged, the other.
+  const send = async (requestId: string, text: string) =>
+    (
+      (
+        await f.app.ctx.tools.invoke('session.message', f.source, {
+          threadId: issued.session.threadId,
+          body: text,
+          requestId,
+        })
+      ).value as any
+    ).id as string;
+  const older = await send('older', 'Cite the 2025 holdout.');
+  const newer = await send('newer', 'And give its size.');
+  const refuse = async () => error(await client.callTool({ name: 'system.status', arguments: {} }));
+  const two = await refuse();
+  assert.deepEqual([two.details.pending, two.details.message?.id], [2, older]);
+  assert.match(two.message, /^2 messages to your thread await/);
+  assert.match(two.message, /The oldest is in details\.message; session\.messages lists them all/);
+  assert.match(two.message, /Acknowledge each/);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: older, reply: 'Citing it.', requestId: 'older-ack' },
+  });
+  const one = await refuse();
+  assert.deepEqual(
+    [one.details.pending, one.details.message?.id, one.details.message?.body],
+    [1, newer, 'And give its size.'],
+  );
+  // Its text is left out for a batch of calls, and carried again once a minute has passed (here,
+  // as though each showing had been a minute ago).
+  assert.equal((await refuse()).details.message, undefined);
+  const shown = (f.app.ctx.sessions.messaging as unknown as { shown: Map<string, number> }).shown;
+  for (const [key, at] of shown) shown.set(key, at - 61_000);
+  assert.equal((await refuse()).details.message?.id, newer);
+  await client.callTool({
+    name: 'session.message.ack',
+    arguments: { messageId: newer, reply: 'Giving it.', requestId: 'newer-ack' },
+  });
+  const status = await client.callTool({ name: 'system.status', arguments: {} });
+  assert.equal(status.isError, undefined, JSON.stringify(status));
 });
 
 test('only a writer in the project can send, and only the addressed worker can acknowledge', async (t) => {
@@ -951,6 +1086,106 @@ test('leased mounted calls require source grants and keep upstream project argum
     upstream.callAttempts,
     2,
     'A released lease cannot dispatch an already connected call',
+  );
+});
+
+test('a worker is not shown the reads that answer only a person, which still refuse it by name', async (t) => {
+  const f = await fixture(t);
+  await f.app.ctx.plugin(uiPlugin);
+  await f.app.ctx.plugin(sessionsUiPlugin);
+  // Pi's tools as registered; the listing never reaches its service.
+  f.app.ctx.provide('pi', {});
+  await f.app.ctx.plugin(piToolsPlugin);
+  // A Pi profile's own read answers only that profile's conversation.
+  f.app.ctx.tools.register({
+    name: 'profiled.read',
+    description: 'A profile read',
+    conversationProfile: 'some-profile',
+    readOnly: true,
+    inputSchema: z.object({}).strict(),
+    handler: () => ({}),
+  });
+  const offer = await f.offer();
+  const client = await f.connect(offer.secret);
+  const listed = (await client.listTools()).tools.map((tool) => tool.name);
+  const people = [
+    'session.find',
+    'session.threads',
+    'session.thread_messages',
+    'session.observe',
+    'session.stuck',
+    'ui.running',
+    'ui.running_panel',
+    'ui.shell',
+    'ui.home',
+    'ui.read',
+    'actor.list',
+    'pi.list',
+    'pi.snapshot',
+    'pi.prompt',
+    'screen.look',
+    'screen.show',
+  ];
+  assert.deepEqual(
+    [...people, 'profiled.read'].filter((name) => listed.includes(name)),
+    [],
+  );
+  for (const name of ['session.messages', 'system.status', 'actor.whoami'])
+    assert.ok(listed.includes(name), name);
+  // A person is shown them all.
+  const shown = (await f.app.ctx.tools.describe(f.source)).map((tool) => tool.name);
+  assert.deepEqual(
+    people.filter((name) => !shown.includes(name)),
+    [],
+  );
+  // Called by name, each still answers with its own refusal.
+  assert.equal(
+    errorCode(
+      await client.callTool({ name: 'session.find', arguments: { instanceId: f.instance.id } }),
+    ),
+    'forbidden',
+  );
+  assert.equal(
+    errorCode(await client.callTool({ name: 'ui.running', arguments: {} })),
+    'running_forbidden',
+  );
+  assert.equal(
+    errorCode(await client.callTool({ name: 'actor.list', arguments: {} })),
+    'forbidden',
+  );
+  // A page's own read still answers a worker that calls it by name.
+  const shell = await client.callTool({ name: 'ui.shell', arguments: {} });
+  assert.equal(shell.isError, undefined, JSON.stringify(shell));
+});
+
+test("a worker's listing carries no MCP instructions and no project selection, which a call may still pass", async (t) => {
+  const f = await fixture(t);
+  const offer = await f.offer();
+  const client = await f.connect(offer.secret);
+  // Codex repeats a server's instructions at the head of every tool it lists.
+  assert.equal(client.getInstructions(), undefined);
+  const tools = (await client.listTools()).tools;
+  assert.ok(tools.some((tool) => tool.name === 'system.status'));
+  assert.deepEqual(
+    tools.filter((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'projectId')),
+    [],
+  );
+  // A person still selects a project by it.
+  const person = (await f.app.ctx.tools.describe(f.source)).find(
+    (tool) => tool.name === 'system.status',
+  )!;
+  assert.ok(Object.hasOwn(person.inputSchema.properties!, 'projectId'));
+  // A worker that passes its own project anyway is answered; another one is refused by name.
+  const own = await client.callTool({
+    name: 'system.status',
+    arguments: { projectId: f.source.projectId },
+  });
+  assert.equal(own.isError, undefined, JSON.stringify(own));
+  assert.equal(
+    errorCode(
+      await client.callTool({ name: 'system.status', arguments: { projectId: 'project_other' } }),
+    ),
+    'invalid_input',
   );
 });
 

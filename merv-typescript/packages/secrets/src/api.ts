@@ -92,13 +92,23 @@ export function huggingFaceRead(method: string, path: string): boolean {
   if (/\/xet-write-token(?:\/|$)/.test(pathname)) return false;
   if (method === 'POST')
     return /^\/api\/(?:models|datasets)\/[^/]+(?:\/[^/]+)?\/paths-info\/[^/]+$/.test(pathname);
+  // Bare /api/models and /api/datasets are search and listing (HfApi.list_datasets(search=…)).
   return (
     (method === 'GET' || method === 'HEAD') &&
-    (/^\/api\/(?:models|datasets|resolve-cache)\//.test(pathname) ||
+    (/^\/api\/(?:models|datasets)(?:\/|$)/.test(pathname) ||
+      /^\/api\/resolve-cache\//.test(pathname) ||
       (!/^\/(?:api|settings|oauth|spaces)(?:\/|$)/.test(pathname) &&
         /^\/(?:datasets\/)?[^/]+(?:\/[^/]+)?\/resolve\//.test(pathname)))
   );
 }
+
+/** Why the broker refused, in X-Error-Message, which huggingface_hub prints after the status
+ *  (it appends the full stop). Without it the client says only "Forbidden: None". */
+const refusal = {
+  400: 'Merv Hugging Face proxy: this path is refused; use a plain path without encoded separators, dot segments, spaces, # or ? in it',
+  401: "Merv Hugging Face proxy: this session's HF_TOKEN is missing, expired or revoked, or its account has no Hugging Face token saved in Merv Settings",
+  403: 'Merv Hugging Face proxy: only model and dataset reads are served (search and listing, repo info, tree, paths-info and file downloads); uploads, Spaces, account and whoami APIs are refused',
+} as const;
 
 /** Streaming fixed-origin proxy. The target override is only a synthetic-upstream test seam. */
 export function huggingFaceProxy(
@@ -142,9 +152,13 @@ export function huggingFaceProxy(
     res.end('Hugging Face unavailable');
   });
   return async (req, res) => {
-    const refuse = (status: number) => {
-      res.writeHead(status, { 'cache-control': 'no-store' });
-      res.end('Hugging Face access unavailable');
+    const refuse = (status: keyof typeof refusal) => {
+      res.writeHead(status, {
+        'cache-control': 'no-store',
+        'content-type': 'text/plain; charset=utf-8',
+        'x-error-message': refusal[status],
+      });
+      res.end(`Hugging Face access unavailable. ${refusal[status]}.\n`);
     };
     const path = huggingFacePath(req.url ?? '');
     if (!path) return refuse(400);

@@ -630,13 +630,20 @@ async function ownDecision(
   // A worker received its assignment with its lease and holds no workflow.begin, so begin is
   // neither offered to it nor answered for it.
   const beginRule = context.caller.session ? undefined : assignment;
-  if (query.action)
+  if (query.action) {
+    const offered = [...rules.map((rule) => rule.name), ...(beginRule ? ['begin'] : [])];
+    // A tool name is no action: a worker that passed experiment.transition was told only that
+    // its state could not take it, as though the state were the problem.
+    const known = query.action === 'begin' || policy.actions.some((r) => r.name === query.action);
     check(
-      rules.some((rule) => rule.name === query.action) || (query.action === 'begin' && beginRule),
+      offered.includes(query.action),
       'invalid_action',
-      'Action is unavailable in this workflow state',
+      known
+        ? `Action ${query.action} is unavailable in this workflow state (${snapshot.state}); its actions are ${offered.join(', ') || 'none'}`
+        : `Unknown action ${JSON.stringify(query.action)}: action names one of this state's actions (${offered.join(', ') || 'none'}), not a tool`,
       409,
     );
+  }
   // Unchecked, the record alone says where the work stands: no action carries a status, and
   // the gate is the state, or a prerequisite still open or failed where every step offered
   // here waits on it, or every return used.

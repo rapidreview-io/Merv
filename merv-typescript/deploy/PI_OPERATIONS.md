@@ -191,6 +191,20 @@ one-machine-per-step machine still running; release in a quiet window.
   visit on it would die; the hosted release drains work machines first (below).
   `MERV_FLEET_WORKFLOW_ENABLED=false` with Fleet on stops them.
   Schedule the change for a quiet window all the same.
+- Every Main release recreates its container. The stopping server keeps serving
+  while the requests in flight at the stop finish (up to 45 s), then answers new
+  ones 503 `unavailable` ("Merv is restarting and did not run this request; retry
+  it in a minute") and cuts what is still open within two seconds, after letting
+  a tool call still running finish and send its reply. Until the new container
+  has mounted its routes, callers get the proxy's 502 or 503
+  `This route is unavailable`. Hosted Codex retries a model call for about 6 s,
+  so a worker whose call meets a longer outage ends its turn: Sessions closes the
+  visit `model_interrupted`, uncounted, and resumes it on its thread. A hosted
+  worker's model stream cut by the stop keeps its whole reservation (its request
+  plus 65,536 output tokens) on its person's day, since the relay never sees its
+  usage: a release costs each busy worker about one reservation, and a refusal
+  it causes holds that person's new Fleet work until the UTC reset or until they
+  set their limit.
 - `render-config.mjs` runs on every start, and the restart policy is
   `unless-stopped`, so a bad env value crash-loops Main. The rollback in
   `release.mjs` restores only the image, not the env. Keep a backup of the env

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { taskActors } from './fixtures/task-actors.js';
-import { validateConfirmations } from '@merv/tasks/evidence';
+import { renderDeliveredCommit, validateConfirmations } from '@merv/tasks/evidence';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 
@@ -343,4 +343,24 @@ test('a confirmation cites at most 50 evidence artifacts', () => {
   assert.throws(() => validateConfirmations(confirmations(ids), ['One.'], ids), {
     code: 'invalid_confirmations',
   });
+});
+
+test('a delivered commit record says Code serves its checkout, never that one machine holds it', () => {
+  const record = renderDeliveredCommit('Adder', {
+    ref: { kind: 'code-commit', commandId: 'command_1' },
+    provenance: { sessionId: 'session_1' },
+    parentOid: 'b'.repeat(40),
+    workspace: {
+      headOid: 'a'.repeat(40),
+      treeOid: 'c'.repeat(40),
+      baseOid: 'b'.repeat(40),
+      repositoryId: 'repo_1',
+      workspaceId: 'workspace_1',
+      branch: 'merv/work/wf_1',
+      stats: { files: 1 },
+    },
+  } as unknown as Parameters<typeof renderDeliveredCommit>[1]);
+  assert.match(record, /pinned to exactly this commit, which Code keeps on its server/);
+  assert.match(record, /code\.files with this commit as ref/);
+  assert.doesNotMatch(record, /runner repository/);
 });

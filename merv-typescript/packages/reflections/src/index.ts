@@ -27,7 +27,7 @@ import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import type { Paper } from '@merv/paper/types';
-import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
+import { PAPER_EDITS_INSTRUCTION, PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type {} from '@merv/sessions/types';
 import * as running from './running.js';
 import * as program from './program.js';
@@ -56,7 +56,7 @@ const artifactOf = (lens: { artifact: string | null }): string[] =>
   lens.artifact ? [(JSON.parse(lens.artifact) as Artifact).id] : [];
 
 /** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} ${PAPER_EDITS_INSTRUCTION} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
 /**
  * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting

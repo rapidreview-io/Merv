@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { PaperService } from '@merv/paper';
+import { PaperService, type PaperDocument, type PaperPatch } from '@merv/paper';
 import { BoardService } from '@merv/board';
 import { introductionFrom } from '@merv/paper/rules';
 import { MervError, type Caller } from '@merv/contracts';
@@ -17,6 +17,7 @@ import { paperToolsPlugin } from '@merv/paper/tools';
 import type { ToolDefinition } from '@merv/api/types';
 import type { Context } from 'cordis';
 import { contextSections, paperInput } from '@merv/paper/context';
+import { mergeText } from '../packages/paper/src/merge.js';
 import { renderItems } from '../packages/context-builder/src/items.js';
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
@@ -402,6 +403,102 @@ test('reviewer edits retain provenance, roll back together, and enforce revision
   );
 });
 
+test('three-way section merge keeps both writers apart from the lines both changed', () => {
+  const base = ['First.', '', 'Second.', '', 'Third.'].join('\n');
+  // Different paragraphs: both kept.
+  assert.equal(
+    mergeText(base, base.replace('Third.', 'Third, revised.'), base.replace('First.', 'First!')),
+    ['First!', '', 'Second.', '', 'Third, revised.'].join('\n'),
+  );
+  // Both added a paragraph at the top: both kept, ours first.
+  assert.equal(
+    mergeText(base, `Ours.\n\n${base}`, `Theirs.\n\n${base}`),
+    `Ours.\n\nTheirs.\n\n${base}`,
+  );
+  // The same change on both sides is made once.
+  assert.equal(mergeText(base, `${base}\n\nSame.`, `${base}\n\nSame.`), `${base}\n\nSame.`);
+  // The same paragraph, or one next to the other's, changed two ways: no merge.
+  assert.equal(mergeText(base, base.replace('Second.', 'A'), base.replace('Second.', 'B')), null);
+  assert.equal(mergeText('One paragraph.', 'One edited.', 'One changed.'), null);
+  assert.equal(mergeText('a\nb', 'a!\nb', 'a\nb!'), null);
+});
+
+test('an edit against an earlier revision merges with the edits made since, or names what to read again', async (t) => {
+  const f = await fixture(t);
+  const shared = [
+    'Experiment A planned.',
+    '',
+    'Experiment B planned.',
+    '',
+    'Experiment C planned.',
+  ];
+  const start = await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [
+      { id: 'shared', title: 'Shared', content: shared.join('\n') },
+      { id: 'other', title: 'Other', content: 'Untouched.' },
+    ],
+  });
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'x' });
+  /** A reviewer's verdict with its edits to Methods, made against revision `at`. */
+  const review = (at: number, changes: { id: string; title?: string; content?: string }[]) =>
+    f.state.transaction((tx) =>
+      f.paper.applyReview(
+        f.reviewer,
+        {
+          documents: [{ kind: 'methods', expectedRevision: at, changes }],
+          source: { kind: 'experiment', id: `experiment-${f.request()}`, revision: 1 },
+          reviewId: `review-${f.request()}`,
+          verdict: 'pass',
+          evidenceIds: [evidence.id],
+        },
+        tx,
+      ),
+    );
+  const sharedAt = async () =>
+    (await f.paper.document(f.reader, 'methods')).current.sections.find((s) => s.id === 'shared')!;
+  // Two reviewers read the same revision and change different paragraphs of the shared section.
+  await review(start.revision, [
+    { id: 'shared', content: shared.join('\n').replace('A planned.', 'A passed.') },
+  ]);
+  await review(start.revision, [
+    { id: 'shared', content: shared.join('\n').replace('C planned.', 'C failed.') },
+  ]);
+  assert.equal(
+    (await sharedAt()).content,
+    ['Experiment A passed.', '', 'Experiment B planned.', '', 'Experiment C failed.'].join('\n'),
+  );
+  // A section nobody changed since takes the stale edit as written.
+  await review(start.revision, [{ id: 'other', content: 'Rewritten.' }]);
+  const now = (await f.paper.document(f.reader, 'methods')).current;
+  assert.equal(now.revision, start.revision + 3);
+  assert.equal(now.sections.find((s) => s.id === 'other')!.content, 'Rewritten.');
+  // The paragraph another reviewer changed meanwhile is refused, naming what to read again.
+  await assert.rejects(
+    review(start.revision, [
+      { id: 'shared', content: shared.join('\n').replace('A planned.', 'A inconclusive.') },
+    ]),
+    (error: unknown) =>
+      hasCode('paper_revision_conflict')(error) &&
+      /found 4, and since then section shared changed where your edit does: read it again \(paper\.read with kind methods and section shared\)/.test(
+        (error as Error).message,
+      ),
+  );
+  // So is removing or moving a section changed since, and a patch of the main agent alike.
+  await assert.rejects(
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision: start.revision,
+      requestId: f.request(),
+      changes: [{ id: 'shared', remove: true }],
+    }),
+    hasCode('paper_revision_conflict'),
+  );
+  assert.equal((await sharedAt()).content.includes('inconclusive'), false);
+});
+
 test('retired paper proposals stay stored but are no longer read, and an edit drops a stored proposal id', async (t) => {
   const f = await fixture(t);
   const legacy = {
@@ -742,4 +839,297 @@ test('a revision past exact integers is refused as input; a section range ends w
   // Two characters would end in half the emoji: the range stops before it.
   const part = await read.handler(f.reader, { kind: 'methods', section: 'm', length: 2 });
   assert.equal((part as { content: string }).content, 'a');
+});
+
+test('paper.read refuses a range without its section, outlines a document, and shows an agent each published section once', async (t) => {
+  const f = await fixture(t);
+  const tools = new Map<string, ToolDefinition>();
+  paperToolsPlugin.apply({
+    paper: f.paper,
+    effect: (fn: () => unknown) => fn(),
+    tools: {
+      register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      contributeInstructions() {},
+      contributeContext() {},
+    },
+  } as unknown as Context);
+  const read = tools.get('paper.read')!;
+  const call = async (input: object) => await read.handler(f.reader, read.inputSchema.parse(input));
+  const shown = async (input: object) =>
+    JSON.parse((read.present!(await call(input)).content[0] as { text: string }).text);
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
+  // A reviewer publishes Methods at revision 1, as review.submit's paperChanges do.
+  await f.state.transaction((tx) =>
+    f.paper.applyReview(
+      f.reviewer,
+      {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 0,
+            changes: [
+              { id: 'design', title: 'Design', content: 'Planned design.' },
+              { id: 'data', title: 'Data', content: 'Held-out split.' },
+            ],
+          },
+        ],
+        source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
+        reviewId: 'review-1',
+        verdict: 'pass',
+        evidenceIds: [evidence.id],
+      },
+      tx,
+    ),
+  );
+  // offset and length without a section were dropped and the whole document returned; now
+  // they are refused, naming each section and its length, at the current or a given revision.
+  for (const input of [
+    { kind: 'methods', length: 100 },
+    { kind: 'methods', revision: 1, offset: 5 },
+  ])
+    await assert.rejects(
+      call(input),
+      (error: MervError) =>
+        error.code === 'invalid_paper_input' &&
+        error.message ===
+          'offset and length read part of one section’s content, so name its section too: methods revision 1 holds design (15 characters), data (15 characters)',
+    );
+  await assert.rejects(
+    call({ kind: 'methods', section: 'results' }),
+    (error: MervError) =>
+      error.code === 'not_found' &&
+      /^Section results is not in the document: methods revision 1 holds design/.test(
+        error.message,
+      ),
+  );
+  // Neither history nor outline takes what it would drop, and neither reads without a kind.
+  for (const input of [
+    { history: true },
+    { outline: true },
+    { kind: 'methods', history: true, revision: 1 },
+    { kind: 'methods', outline: true, section: 'design' },
+    { kind: 'methods', outline: true, length: 10 },
+  ])
+    await assert.rejects(call(input), { code: 'invalid_paper_input' });
+  // The outline: ids, titles and lengths, no content, and the revision last published.
+  const outline = (await call({ kind: 'methods', outline: true })) as Record<string, unknown>;
+  assert.deepEqual(
+    [outline.revision, outline.sections, outline.publishedRevision],
+    [
+      1,
+      [
+        { id: 'design', title: 'Design', length: 15 },
+        { id: 'data', title: 'Data', length: 15 },
+      ],
+      1,
+    ],
+  );
+  assert.equal(
+    ((await call({ kind: 'methods', revision: 1, outline: true })) as Record<string, unknown>)
+      .publishedRevision,
+    undefined,
+  );
+  // Published at the current revision, every published section reads as the current one: an
+  // agent is shown each once, while the JSON answer (Merv's page) keeps them whole.
+  const same = await shown({ kind: 'methods' });
+  assert.deepEqual(
+    same.current.sections.map(({ content }: { content: string }) => content),
+    ['Planned design.', 'Held-out split.'],
+  );
+  assert.deepEqual(same.published.document.sections, [
+    { id: 'design', title: 'Design', sameAsCurrent: true },
+    { id: 'data', title: 'Data', sameAsCurrent: true },
+  ]);
+  assert.equal(same.published.publication.reviewId, 'review-1');
+  const whole = (await call({ kind: 'methods' })) as PaperDocument;
+  assert.equal(whole.published!.document.sections[0].content, 'Planned design.');
+  // A later direct edit: only the section it changed is shown in both revisions.
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 1,
+    requestId: f.request(),
+    changes: [{ id: 'design', content: 'Revised design.' }],
+  });
+  for (const document of [await shown({ kind: 'methods' }), (await shown({})).documents.methods])
+    assert.deepEqual(document.published.document.sections, [
+      { id: 'design', title: 'Design', content: 'Planned design.' },
+      { id: 'data', title: 'Data', sameAsCurrent: true },
+    ]);
+  // Other answers are shown as they are.
+  assert.deepEqual(
+    await shown({ kind: 'methods', section: 'data' }),
+    await call({ kind: 'methods', section: 'data' }),
+  );
+});
+
+test('a section changes in part by edits, each find quoted once, also past the edits made since', async (t) => {
+  const f = await fixture(t);
+  const text = ['First paragraph.', 'Second paragraph.', 'Third paragraph.'].join('\n\n');
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'design', title: 'Design', content: text }],
+  });
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  const planned = 'Planned: experiment X tests whether Y holds.';
+  // One sentence added after the second paragraph: only it is sent.
+  const added = await patch(1, [
+    {
+      id: 'design',
+      edits: [{ find: 'Second paragraph.', replace: `Second paragraph.\n\n${planned}` }],
+    },
+  ]);
+  assert.deepEqual(added.sections, [
+    {
+      id: 'design',
+      title: 'Design',
+      content: ['First paragraph.', 'Second paragraph.', planned, 'Third paragraph.'].join('\n\n'),
+    },
+  ]);
+  // A find that is not there, or not once, is refused by its number and quoted.
+  const refused = async (changes: PaperPatch['changes'], message: string | RegExp) =>
+    await assert.rejects(
+      patch(2, changes),
+      (error: MervError) =>
+        error.code === 'invalid_paper_input' &&
+        (typeof message === 'string' ? error.message === message : message.test(error.message)),
+    );
+  await refused(
+    [{ id: 'design', edits: [{ find: 'Fourth paragraph.', replace: 'x' }] }],
+    'Edit 1 of section design finds "Fourth paragraph." nowhere in methods revision 2: each find quotes text that occurs exactly once in the section as paper.read with kind methods and section design returns it',
+  );
+  await refused(
+    [{ id: 'design', edits: [{ find: ' paragraph.', replace: 'x' }] }],
+    /finds " paragraph\." more than once in methods revision 2: .*, so quote more of the text around it$/,
+  );
+  await refused(
+    [
+      {
+        id: 'design',
+        edits: [
+          { find: 'First paragraph.', replace: 'Opening.' },
+          { find: 'First paragraph.', replace: 'Again.' },
+        ],
+      },
+    ],
+    /^Edit 2 of section design finds "First paragraph\." nowhere in methods revision 2, after the edits before it: /,
+  );
+  await refused(
+    [{ id: 'design', content: 'Whole.', edits: [{ find: 'First', replace: 'x' }] }],
+    'Section design takes content, which replaces it whole, or edits, which change part of it, not both',
+  );
+  await refused(
+    [{ id: 'results', edits: [{ find: 'First', replace: 'x' }] }],
+    'edits change an existing section, and methods revision 2 has no section results: a new section needs title and content',
+  );
+  await refused(
+    [{ id: 'design', remove: true, edits: [{ find: 'First', replace: 'x' }] }],
+    'Remove must name one existing section without other changes',
+  );
+  // Another writer changed the first paragraph meanwhile: an edit read at revision 2 applies
+  // to theirs wherever its find still occurs once.
+  await patch(2, [{ id: 'design', edits: [{ find: 'First paragraph.', replace: 'Opening.' }] }]);
+  const merged = await patch(2, [
+    { id: 'design', edits: [{ find: 'Third paragraph.', replace: 'Closing.' }] },
+  ]);
+  assert.equal(
+    merged.sections[0].content,
+    ['Opening.', 'Second paragraph.', planned, 'Closing.'].join('\n\n'),
+  );
+  // Quoting text changed since, at an earlier revision, is a conflict that names the section.
+  await assert.rejects(
+    patch(2, [{ id: 'design', edits: [{ find: 'First paragraph.', replace: 'Start.' }] }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message ===
+        'Expected revision 2, found 4, and since then section design changed where your edit does: read it again (paper.read with kind methods and section design) and resend your methods edit at revision 4',
+  );
+  // A whole section resent into a conflict is told what edits spare.
+  await assert.rejects(
+    patch(2, [{ id: 'design', content: text.replace('First paragraph.', 'Start.') }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message.endsWith(
+        'resend your methods edit at revision 4, with edits [{find, replace}] for only what you change rather than content to replace a section whole',
+      ),
+  );
+  // A reviewer's paperChanges take edits as well, and publish the section they changed.
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
+  const [publication] = await f.state.transaction((tx) =>
+    f.paper.applyReview(
+      f.reviewer,
+      {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 4,
+            changes: [
+              { id: 'design', edits: [{ find: planned, replace: `${planned} Approved.` }] },
+            ],
+          },
+        ],
+        source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
+        reviewId: 'review-1',
+        verdict: 'pass',
+        evidenceIds: [evidence.id],
+      },
+      tx,
+    ),
+  );
+  assert.deepEqual([publication.revision, publication.sectionIds], [5, ['design']]);
+  assert.match(
+    (await f.paper.document(f.reader, 'methods')).current.sections[0].content,
+    /Approved\.\n\nClosing\.$/,
+  );
+});
+
+test('edits keep a section within the 100,000 characters its whole content may have', async (t) => {
+  const f = await fixture(t);
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'results',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  await patch(0, [{ id: 'long', title: 'Long', content: `${'a'.repeat(99_986)}End.` }]);
+  await assert.rejects(
+    patch(1, [{ id: 'long', edits: [{ find: 'End.', replace: 'End. One sentence more.' }] }]),
+    (error: MervError) =>
+      error.code === 'paper_too_large' &&
+      error.message ===
+        'Section long would hold 100009 characters after its edits, and a section holds at most 100,000: put the rest in a section of its own',
+  );
+  const kept = await patch(1, [{ id: 'long', edits: [{ find: 'End.', replace: 'End. Ten.' }] }]);
+  assert.equal(kept.sections[0].content.length, 99_995);
+});
+
+test('a conflict over a section removed since does not suggest edits, which it cannot take', async (t) => {
+  const f = await fixture(t);
+  const patch = (expectedRevision: number, changes: PaperPatch['changes']) =>
+    f.paper.patch(f.producer, {
+      kind: 'methods',
+      expectedRevision,
+      requestId: f.request(),
+      changes,
+    });
+  await patch(0, [
+    { id: 'kept', title: 'Kept', content: 'Stays.' },
+    { id: 'gone', title: 'Gone', content: 'Goes.' },
+  ]);
+  await patch(1, [{ id: 'gone', remove: true }]);
+  await assert.rejects(
+    patch(1, [{ id: 'gone', content: 'Goes, revised.' }]),
+    (error: MervError) =>
+      error.code === 'paper_revision_conflict' &&
+      error.message ===
+        'Expected revision 1, found 2, and since then section gone changed where your edit does: read it again (paper.read with kind methods and section gone) and resend your methods edit at revision 2',
+  );
 });

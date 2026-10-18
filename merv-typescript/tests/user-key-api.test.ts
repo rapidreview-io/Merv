@@ -185,7 +185,10 @@ test('only the verified owner manages key metadata, rotation lineage and strict 
   assert.equal(blank.status, 400);
   assert.equal(blank.body.error.message, 'projectId must be a non-empty string');
   const conflicting = await f.request(`/projects/${f.project.id}/members`, { projectId: 'other' });
-  assert.equal(conflicting.body.error.message, 'Conflicting Merv project selections');
+  assert.equal(
+    conflicting.body.error.message,
+    `Conflicting Merv project selections: "other" and "${f.project.id}". A request works in one project, and a session, actor token or project key already selects its own: omit projectId, or pass exactly that id`,
+  );
   for (const extra of [
     { owner: { issuer, subject: 'bob' } },
     { role: 'operator' },

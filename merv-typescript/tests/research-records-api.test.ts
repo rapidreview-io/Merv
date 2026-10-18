@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
+import { projectSelection } from '../packages/api/src/errors.js';
 import type {} from '@merv/knowledge/types';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
@@ -102,6 +103,28 @@ test('Scope holds no Introduction: project.get carries none and no tool writes o
   );
 });
 
+test("a tool call whose projectId is not its credential's project names both ids", async (t) => {
+  const f = await fixture(t),
+    client = await f.connect(f.producer.token);
+  // As a model garbles a long id: one segment dropped.
+  const garbled = f.caller.projectId.slice(0, 12) + f.caller.projectId.slice(16);
+  const refused = await f.call(client, 'project.get', { projectId: garbled });
+  assert.equal(refused.result.isError, true);
+  assert.deepEqual(refused.value.error, {
+    code: 'forbidden',
+    message: `Actor credentials are bound to their original project ${f.caller.projectId}, not "${garbled}": omit projectId, or pass exactly that id`,
+  });
+  // A worker session's caller is fixed before its call, and the selections it carries are compared.
+  assert.throws(
+    () => projectSelection(f.caller.projectId, garbled),
+    (error: unknown) =>
+      error instanceof MervError &&
+      error.code === 'invalid_input' &&
+      error.message ===
+        `Conflicting Merv project selections: "${f.caller.projectId}" and "${garbled}". A request works in one project, and a session, actor token or project key already selects its own: omit projectId, or pass exactly that id`,
+  );
+});
+
 test('Knowledge transport reads complete scoped metadata, exposes unresolved states and withdraws with its provider', async (t) => {
   const f = await fixture(t);
   const project = await f.app.ctx.scope.project(f.caller);
@@ -155,10 +178,37 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.notEqual(records.result.isError, true);
   assert.deepEqual(records.value.project, project);
   assert.equal(Object.hasOwn(records.value, 'archivedClaims'), false);
-  assert.equal(records.value.tasks[0].workflow.state, 'failed');
-  assert.equal(Object.hasOwn(records.value.tasks[0], 'guidance'), false);
+  // With no ids, each record is one index entry: where it stands, not its evidence.
+  assert.deepEqual(records.value.tasks, [
+    {
+      id: task.id,
+      title: 'Retain source data',
+      type: records.value.tasks[0].type,
+      state: 'failed',
+      revision: records.value.tasks[0].revision,
+      settled: false,
+      failed: true,
+      failure: 'This source is no longer available.',
+      reviewId: null,
+      deliveryIds: [],
+      dependencies: [],
+      createdAt: records.value.tasks[0].createdAt,
+      updatedAt: records.value.tasks[0].updatedAt,
+    },
+  ]);
   assert.equal(records.value.experiments[0].id, experiment.id);
+  assert.equal(records.value.experiments[0].intent, 'Compare exact records.');
+  assert.equal(Object.hasOwn(records.value.experiments[0], 'submissions'), false);
   assert.equal(Object.hasOwn(records.value, 'publication'), false);
+  // Named ids read those records whole; an id that is neither task nor experiment is missing.
+  const whole = await f.call(client, 'project.records', {
+    ids: [task.id, artifact.id],
+  });
+  assert.equal(whole.value.tasks[0].workflow.state, 'failed');
+  assert.equal(Object.hasOwn(whole.value.tasks[0], 'guidance'), false);
+  assert.deepEqual(whole.value.experiments, []);
+  assert.deepEqual(whole.value.missing, [artifact.id]);
+  assert.equal((await f.http('project.records', { ids: [] })).status, 400);
   const refs = [
     `task:${task.id}`,
     experiment.id,

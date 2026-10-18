@@ -122,13 +122,15 @@ export class ToolRegistry implements Tools {
     // Schema changes require a new registration, keeping validation paired with its catalog.
     // Conversation policy and whether it only reads (which a session may call, as may a platform
     // reader) are likewise the registration's: mutating the definition changes none of them.
-    const { inputSchema, conversation } = definition;
+    const { inputSchema, conversation, conversationProfile } = definition;
     const readOnly = definition.readOnly === true;
+    // A Pi profile's own tool answers only that profile's conversation, so no worker is listed it.
+    const worker = conversationProfile ? 'never' : definition.worker;
     return {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema, readOnly }),
-      tool: { name: definition.name, remote: false, conversation, readOnly },
+      tool: { name: definition.name, remote: false, conversation, readOnly, worker },
       parse: async (input) =>
         validated(await inputSchema.safeParseAsync(input), 'Tool input failed validation'),
       complete: (value) =>
@@ -333,8 +335,7 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  instructions(caller?: 'session'): string {
-    if (caller === 'session') return this.sessions?.provider.instructions ?? '';
+  instructions(): string {
     return [...this.guide.map(({ text }) => text), toolsGuide].join('\n\n');
   }
 
@@ -438,10 +439,11 @@ export class ToolRegistry implements Tools {
     for (const entry of offered)
       if (
         (!session ||
-          (await this.fenced(
-            session,
-            session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
-          ))) &&
+          (entry.tool.worker !== 'never' &&
+            (await this.fenced(
+              session,
+              session.provider.allowsTool(caller!, entry.name, entry.tool.readOnly),
+            )))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true)
       )
         shown.push(entry);
@@ -450,9 +452,13 @@ export class ToolRegistry implements Tools {
 
   /** agent: a person's own agent over MCP, never a leased worker. */
   async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
-    return (await this.visible(caller, agent && !caller?.session)).map((entry) =>
-      structuredClone(entry.description),
-    );
+    return (await this.visible(caller, agent && !caller?.session)).map((entry) => {
+      const description = structuredClone(entry.description);
+      // A session's project is fixed by its lease, so a native tool is listed to it without the
+      // projectId people choose one with, which every tool would otherwise repeat.
+      if (caller?.session && !entry.remote) delete description.inputSchema.properties?.projectId;
+      return description;
+    });
   }
 
   async list(): Promise<ListedTool[]> {

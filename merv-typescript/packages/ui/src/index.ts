@@ -101,7 +101,12 @@ export class UiRegistry extends RunningRegistry implements Ui {
     const row = this.byId.get(rowId);
     // A row this composition does not have and a row that carries no read read differently,
     // under the one code a client already knows.
-    check(row, 'row_unreadable', `No row named ${clip(String(rowId), 80)} in this project`, 404);
+    check(
+      row,
+      'row_unreadable',
+      `No row named ${clip(String(rowId), 80)} in this project; ui.shell lists its rows by id`,
+      404,
+    );
     if (row.page) {
       const id = params?.id;
       check(typeof id === 'string' && id.length > 0, 'invalid_input', 'params.id names the record');
@@ -139,9 +144,10 @@ export const uiPlugin = {
         description:
           'Read your actor identity and selected project, the sidebar rows currently registered by active plugins with live row status, and the plugin lifecycle table.',
         inputSchema: z.object({}).strict(),
-        // The page's own read: a person's agent reads the records themselves.
+        // The page's own read: a person's agent and a leased worker read the records directly.
         conversation: 'never',
         readOnly: true,
+        worker: 'never' as const,
         handler: async (caller: Caller) => ({
           ...(await identityOf(ctx.tools, caller)),
           rows: await ui.describe(caller, isolated),
@@ -158,9 +164,10 @@ export const uiPlugin = {
         // One snapshot for every part: sequential reads on one connection cost tens of
         // milliseconds; parallel parts each queued on the writer lock cost seconds. Each part
         // reads behind its own savepoint, so one that fails, a timeout included, is null alone.
-        // The page's own read: a person's agent reads the records themselves.
+        // The page's own read: a person's agent and a leased worker read the records directly.
         conversation: 'never',
         readOnly: true,
+        worker: 'never' as const,
         handler: async (caller: Caller) =>
           await homeRead(
             {
@@ -216,6 +223,7 @@ export const uiPlugin = {
         inputSchema: z.object({}).strict(),
         readOnly: true,
         conversation: 'never' as const,
+        worker: 'never' as const,
         handler: async (caller: Caller) => await runningBoard(running, caller),
       }),
     );
@@ -227,6 +235,7 @@ export const uiPlugin = {
         inputSchema: z.object({ key: z.string().regex(runningKeyPattern) }).strict(),
         readOnly: true,
         conversation: 'never' as const,
+        worker: 'never' as const,
         handler: async (caller: Caller, input: { key: string }) =>
           await runningPanel(running, caller, input.key),
       }),
@@ -234,11 +243,15 @@ export const uiPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'ui.read',
-        description: 'Read the data a sidebar row owns when it has no dedicated domain tool.',
+        description:
+          'Read the data a sidebar row owns when it has no dedicated domain tool. rowId is a row’s id as ui.shell lists it.',
         inputSchema: z
           .object({ rowId: z.string().min(1).max(200), params: z.record(z.unknown()).optional() })
           .strict(),
         readOnly: true,
+        // A page's own read, by the row ids ui.shell lists: a leased worker, listed neither, reads
+        // the records with their own tools.
+        worker: 'never' as const,
         handler: async (
           caller: Caller,
           input: { rowId: string; params?: Record<string, unknown> },

@@ -39,7 +39,13 @@ import {
   experimentPanel,
   type ExperimentStanding,
 } from './running.js';
-import type { Experiment, ExperimentEvidence, ExperimentReview, Experiments } from './types.js';
+import type {
+  Experiment,
+  ExperimentEvidence,
+  ExperimentReview,
+  Experiments,
+  RefusedCapture,
+} from './types.js';
 import { experimentGetSchema, parseExperimentInput } from './input.js';
 import {
   captureEpochs,
@@ -61,7 +67,7 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
-import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
+import { PAPER_EDITS_INSTRUCTION, PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type { Paper } from '@merv/paper/types';
 export type * from './types.js';
 
@@ -85,13 +91,13 @@ interface StandingContext {
   waitsOn?: ReadonlyMap<string, WorkflowDependency[]>;
   /** Experiments back in a producing state they were in before. */
   again: ReadonlySet<string>;
-  /** Captures Sandboxes refused under each open experiment's current attempt, where any. */
-  refused?: ReadonlyMap<string, number>;
+  /** Captures Sandboxes refused or still retries under each open experiment's current attempt. */
+  refused?: ReadonlyMap<string, readonly RefusedCapture[]>;
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: ${PAPER_REVIEWER_INSTRUCTION} ${PAPER_EDITS_INSTRUCTION} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.`;
 
 /** What the modules (policy.ts, lease.ts, context.ts, commands.ts) read of the service. */
 export type ExperimentsContext = Pick<
@@ -291,7 +297,7 @@ export class ExperimentService implements Experiments {
         blocked: new Set(
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
         ),
-        refused: new Map([[id, experiment.refusedCaptures?.length ?? 0]]),
+        refused: new Map([[id, experiment.refusedCaptures ?? []]]),
       };
       // Every submission's review, for the history and the verdict on what it handed in.
       const reviews = await this.reviews.find(
@@ -386,14 +392,14 @@ export class ExperimentService implements Experiments {
     );
   }
   /**
-   * How many Captures Sandboxes refused under each open experiment's current attempt: two reads
-   * for the whole board, and none without Sandboxes.
+   * The Captures Sandboxes refused or still retries under each open experiment's current
+   * attempt: two reads for the whole board, and none without Sandboxes.
    */
   private async refusals(
     caller: Caller,
     rows: StandingRow[],
     tx: Transaction,
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, readonly RefusedCapture[]>> {
     const open = new Map(
       rows.filter((row) => !terminal.has(row.state)).map((row) => [row.id, row]),
     );
@@ -416,7 +422,7 @@ export class ExperimentService implements Experiments {
       })),
       tx,
     );
-    return new Map([...found].map(([id, evidence]) => [id, evidence.refused.length]));
+    return new Map([...found].map(([id, evidence]) => [id, evidence.refused]));
   }
   /**
    * Which cards are back where they were, counted from their moves without the moves' data. A
@@ -443,6 +449,8 @@ export class ExperimentService implements Experiments {
     const ended = terminal.has(row.state);
     const review = reviewing(row.state) && row.review_id;
     const released = context.released.get(row.id);
+    const refused = context.refused?.get(row.id) ?? [];
+    const lost = refused.filter((capture) => !capture.retrying).length;
     return {
       id: row.id,
       name: row.name,
@@ -460,7 +468,8 @@ export class ExperimentService implements Experiments {
       // dangling row costs its own card its reviewer and nothing else on the board.
       review: review ? await this.reviews.get(caller, review, tx).catch(absent) : null,
       ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
-      ...(context.refused?.get(row.id) ? { refusedCaptures: context.refused.get(row.id) } : {}),
+      ...(lost ? { refusedCaptures: lost } : {}),
+      ...(refused.length > lost ? { retryingCaptures: refused.length - lost } : {}),
     };
   }
   /** Domain records only. Never evaluate guidance or render context in this read. */

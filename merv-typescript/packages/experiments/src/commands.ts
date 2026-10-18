@@ -19,6 +19,7 @@ import type { CodeCaptureRef } from '@merv/code-work/types';
 import type {
   Experiment,
   ExperimentAttach,
+  ExperimentAttached,
   ExperimentCreate,
   ExperimentEvidence,
   ExperimentExhibit,
@@ -33,6 +34,7 @@ import {
   parseExperimentInput,
 } from './input.js';
 import {
+  boundedEvidence,
   buildMetricsExhibit,
   decodeEvidence,
   exhibitBytes,
@@ -60,7 +62,7 @@ import {
   writesReport,
 } from './program.js';
 import { designCriteria, feasibilityCriterion, resultsCriteriaAt } from './definitions.js';
-import { allowedArtifacts } from './context.js';
+import { allowedArtifacts, RECOVERY_NOTE } from './context.js';
 import { pinnedRecovery, holds, resumedOutputs } from './lease.js';
 import {
   handleFor,
@@ -179,7 +181,7 @@ export async function attach(
   caller: Caller,
   value: ExperimentAttach,
   transaction?: Transaction,
-): Promise<ExperimentEvidence> {
+): Promise<ExperimentAttached> {
   ctx.open();
   caller = structuredClone(caller);
   const input = parseExperimentInput(experimentAttachSchema, value);
@@ -224,7 +226,13 @@ export async function attach(
         'Evidence must be authored by this worker or be its exact frozen recovery input',
         403,
       );
-      const text = await evidenceText(ctx, caller, artifact.id, tx);
+      // A qualitative result is referenced, never read: nothing parses it and its exhibit entry
+      // holds no data, so a checkpoint or an archive is evidence the reviewer receives as well.
+      const referenced = input.role === 'result' && input.resultFormat === 'qualitative';
+      check(artifact.size > 0, 'invalid_experiment_evidence', 'Evidence must not be empty');
+      // Measured first, so an output past the inline limit is told this rather than that limit.
+      if (!referenced) boundedEvidence(artifact.size);
+      const text = referenced ? '' : await evidenceText(ctx, caller, artifact.id, tx);
       if (input.role === 'result') {
         // The exhibit pins every current result, so one past its limits could never be submitted.
         const kept = currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path);
@@ -236,7 +244,7 @@ export async function attach(
           resultFormat: input.resultFormat,
           sequence: 0,
         } as ExperimentEvidence;
-        parsed(added, text);
+        if (!referenced) parsed(added, text);
         await buildExhibit(ctx, caller, experiment, [...kept, added], tx).catch((error) => {
           throw error instanceof MervError && error.code === 'invalid_experiment_evidence'
             ? new MervError(
@@ -250,6 +258,13 @@ export async function attach(
       const figureIds = ['plan', 'report'].includes(input.role)
         ? await figures(ctx, caller, text, experiment, tx)
         : [];
+      // An attempt holds one plan, feasibility statement and report, and one result per path.
+      // The response names what this displaces: an executor that attached a supplement as a
+      // second report was never told its full report had left the submission (2026-10-06).
+      const replaced = currentEvidence(experiment, [input.role])
+        .filter((e) => input.role !== 'result' || e.path === input.path)
+        .filter((e) => e.path !== input.path || e.artifactId !== artifact.id)
+        .map(({ path, artifactId }) => ({ path, artifactId }));
       const association = await saveEvidence(
         caller,
         experiment,
@@ -268,7 +283,7 @@ export async function attach(
         path: input.path,
         attemptIndex: input.attemptIndex,
       });
-      return association;
+      return replaced.length ? { ...association, replaced } : association;
     });
   });
 }
@@ -397,9 +412,12 @@ async function buildExhibit(
     sha256: source.hash,
     submittedAt: source.createdAt,
     resultFormat: source.resultFormat ?? 'json',
-    data: parsedResults.has(resultKey(source))
-      ? kept(source)
-      : parsed(source, await evidenceText(ctx, caller, source.artifactId, tx)),
+    data:
+      source.resultFormat === 'qualitative'
+        ? null
+        : parsedResults.has(resultKey(source))
+          ? kept(source)
+          : parsed(source, await evidenceText(ctx, caller, source.artifactId, tx)),
   }));
   const exhibit = buildMetricsExhibit({
     projectId: experiment.projectId,
@@ -527,7 +545,7 @@ export async function transition(
       if (input.transition === 'retry_running')
         await feedback(
           experiment,
-          `Infrastructure recovery: ${input.evidence?.reason}. ${input.evidence?.detail ?? ''} Recover existing jobs and retained outputs before starting new work.`,
+          `${RECOVERY_NOTE}${input.evidence?.reason}. ${input.evidence?.detail ?? ''} Recover existing jobs and retained outputs before starting new work.`,
           tx,
         );
       else {
@@ -576,12 +594,13 @@ async function prepareSubmission(
     const statement = parseFeasibility(
       await evidenceText(ctx, caller, one(evidence, 'feasibility').artifactId, tx),
     );
-    // The cheap check: a design whose own figures fall short never reaches a reviewer.
+    // The cheap check: a design whose own figures fall short never reaches a reviewer. A blocker
+    // only the owner can lift is asked of them: "shrink or end" left such waits unannounced.
     const shortfalls = feasibilityShortfalls(statement);
     check(
       shortfalls.length === 0,
       'experiment_infeasible',
-      `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason`,
+      `This design's own feasibility statement does not admit it: ${shortfalls.join('; ')}. Redesign within what is available, or end the experiment with a reason. Where only the owner can remove a blocker (a spending approval, connecting compute or a provider, fixing the workspace), ask with session.ask_owner and wait for the answer instead`,
       409,
     );
   } else {
@@ -1000,8 +1019,13 @@ export async function checkAction(
     );
     const own = one(selection, action === 'submit_design' ? 'plan' : 'report');
     const authored = await authorship(ctx, caller, tx);
+    const document = await ctx.artifacts.get(caller, own.artifactId, tx);
     check(
-      authored(await ctx.artifacts.get(caller, own.artifactId, tx)),
+      authored(document) ||
+        // The same worker's own earlier visit to this step wrote it and was cut before its
+        // submission landed: resuming is that worker going on, not a successor reusing a report.
+        (document.createdBy === caller.actorId &&
+          (await resumedOutputs(ctx, caller, experiment.workflow, tx)).includes(document.id)),
       'invalid_evidence_author',
       'The submitting worker must retain and attach its own plan or report after verifying any inherited evidence',
       403,

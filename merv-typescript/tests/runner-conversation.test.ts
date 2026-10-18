@@ -29,7 +29,13 @@ import {
 import { launchCodexHome } from '../packages/runner/src/harness/codex.js';
 import { claude as claudeHarness } from '../packages/runner/src/harness/claude.js';
 import { codex as codexHarness } from '../packages/runner/src/harness/codex.js';
-import { buildLaunch, type RunnerProfile } from '../packages/runner/src/profiles.js';
+import { since } from '../packages/runner/src/harness/shared.js';
+import {
+  buildLaunch,
+  heldAssignment,
+  type LaunchRequest,
+  type RunnerProfile,
+} from '../packages/runner/src/profiles.js';
 import {
   launchId,
   machine,
@@ -270,6 +276,52 @@ fs.appendFileSync(file, JSON.stringify({ type: 'user', first: input.split('\\n')
   chmodSync(path, 0o755);
   return path;
 };
+/**
+ * A stand-in `codex exec --json`: resumes the named thread's rollout or starts one, records its
+ * prompt there and in `prompts.jsonl`, spends 1000 input and 10 output tokens, records the
+ * thread's running total there as Codex does, and prints it on `turn.completed`, unless
+ * `stop-mid-turn` says its lease ran out first.
+ */
+const codexHarnessScript = (root: string) => {
+  const path = join(root, 'codex-stand-in.cjs');
+  writeFileSync(
+    path,
+    `#!${process.execPath}
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const args = process.argv.slice(2), at = args.indexOf('resume'), home = process.env.CODEX_HOME;
+const input = fs.readFileSync(0, 'utf8');
+fs.appendFileSync(${JSON.stringify(join(root, 'prompts.jsonl'))}, JSON.stringify(input) + '\\n');
+const find = (dir, depth, id) => {
+  for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+    const full = path.join(dir, entry.name);
+    if (depth < 3 && entry.isDirectory()) { const found = find(full, depth + 1, id); if (found) return found; }
+    else if (depth === 3 && entry.name.endsWith('-' + id + '.jsonl')) return full;
+  }
+};
+let id = at >= 0 ? args[at + 1] : crypto.randomUUID(), file = at >= 0 && find(path.join(home, 'sessions'), 0, id);
+let total = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+if (at >= 0) {
+  if (!file) { console.log('Error: no rollout found for thread id ' + id); process.exit(1); }
+  for (const line of fs.readFileSync(file, 'utf8').split('\\n').filter(Boolean)) {
+    const event = JSON.parse(line);
+    if (event.payload && event.payload.type === 'token_count' && event.payload.info) total = event.payload.info.total_token_usage;
+  }
+} else {
+  fs.mkdirSync(path.join(home, 'sessions', '2026', '10', '18'), { recursive: true });
+  file = path.join(home, 'sessions', '2026', '10', '18', 'rollout-2026-10-18T00-00-00-' + id + '.jsonl');
+}
+console.log(JSON.stringify({ type: 'thread.started', thread_id: id }));
+console.log(JSON.stringify({ type: 'turn.started' }));
+fs.appendFileSync(file, JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: input }] } }) + '\\n');
+total = { input_tokens: total.input_tokens + 1000, cached_input_tokens: total.cached_input_tokens + 900, output_tokens: total.output_tokens + 10 };
+fs.appendFileSync(file, JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: total } } }) + '\\n');
+if (fs.existsSync(${JSON.stringify(join(root, 'stop-mid-turn'))})) process.exit(0);
+console.log(JSON.stringify({ type: 'turn.completed', usage: total }));
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+};
 /** The stand-in server, with the routes a continued session's runner calls and a store. */
 function continuing(
   t: TestContext,
@@ -277,6 +329,7 @@ function continuing(
   recorded = bytes,
   stores = true,
   names = ['continued'],
+  kind: 'claude' | 'codex' = 'claude',
 ) {
   const root = directory(t);
   const config = join(root, 'claude');
@@ -287,17 +340,20 @@ function continuing(
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = before;
   });
+  // A visit named `fresh` keeps a conversation but has none to resume.
   const queue: Body[] = names.map((name) => ({
     ...offer(name),
     continuity: {
       key: 'key',
-      resume: {
-        sessionId: 'session_earlier',
-        harness: 'claude',
-        conversationId: id,
-        sha256: createHash('sha256').update(recorded).digest('hex'),
-        size: recorded.length,
-      },
+      ...(name !== 'fresh' && {
+        resume: {
+          sessionId: 'session_earlier',
+          harness: kind,
+          conversationId: id,
+          sha256: createHash('sha256').update(recorded).digest('hex'),
+          size: recorded.length,
+        },
+      }),
     },
   }));
   const work = queue[0]!;
@@ -322,8 +378,16 @@ function continuing(
     }
     return await fake.fetch(input, init);
   };
-  const f = machine(t, [claude(harness(root))], fetcher as typeof fetch);
-  return { f, work, declared, config, fake };
+  const f = machine(
+    t,
+    [
+      kind === 'claude'
+        ? claude(harness(root))
+        : { ...codex, executable: codexHarnessScript(root) },
+    ],
+    fetcher as typeof fetch,
+  );
+  return { f, work, declared, config, fake, root };
 }
 const settled = (f: ReturnType<typeof machine>, sessionId: string) =>
   metadata(f.config.directory, launchId(sessionId));
@@ -425,4 +489,292 @@ test('a harness that will not take up its restored conversation is put off once,
   // The conversation restored for the launch that refused it was not left behind.
   for (const project of readdirSync(join(config, 'projects')))
     assert.ok(!readdirSync(join(config, 'projects', project)).includes(`${id}.jsonl`));
+});
+
+/** A Codex rollout as a thread's earlier visits left it: its last running total 5000 and 50. */
+const rollout = (input: number, output: number) =>
+  Buffer.from(
+    [
+      { type: 'session_meta', payload: { id } },
+      { type: 'event_msg', payload: { type: 'token_count', info: null } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: input,
+              cached_input_tokens: 0,
+              output_tokens: output,
+            },
+          },
+        },
+      },
+      {
+        type: 'response_item',
+        payload: { type: 'message', text: 'a later "token_count" mention' },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n',
+  );
+
+test('a Codex conversation records its running total, read from its end', () => {
+  assert.deepEqual(codexHarness.recorded!(rollout(5000, 50).toString('utf8'), 'gpt-fixture'), {
+    inputTokens: 5000,
+    outputTokens: 50,
+    model: 'gpt-fixture',
+  });
+  for (const none of ['', '{"type":"event_msg","payload":{"type":"token_count","info":null}}\n'])
+    assert.equal(codexHarness.recorded!(none), undefined);
+  assert.equal(claudeHarness.recorded, undefined);
+});
+
+test('a launch reports what it spent of a carried total, and a total below it as its own', () => {
+  const carried = { inputTokens: 5000, outputTokens: 50 };
+  assert.deepEqual(since({ inputTokens: 6000, outputTokens: 60, model: 'm' }, carried), {
+    inputTokens: 1000,
+    outputTokens: 10,
+    model: 'm',
+  });
+  // A harness that resumed without its running total, or started a fresh thread, counted afresh.
+  for (const fresh of [
+    { inputTokens: 800, outputTokens: 5 },
+    { inputTokens: 6000, outputTokens: 5 },
+  ])
+    assert.deepEqual(since(fresh, carried), fresh);
+  assert.deepEqual(since(carried), carried);
+});
+
+test('a resumed Codex launch reports what it spent, not its thread’s running total', async (t) => {
+  const { f, work, fake } = continuing(
+    t,
+    rollout(5000, 50),
+    undefined,
+    true,
+    ['continued'],
+    'codex',
+  );
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => settled(f, work.id).conversation?.state === 'uploaded', 'delivery');
+  assert.deepEqual(settled(f, work.id).carried, { inputTokens: 5000, outputTokens: 50 });
+  // The thread's turn.completed said 6000 and 60: the visit itself spent 1000 and 10.
+  assert.deepEqual(
+    fake.releases(work.id).map((call) => call.body?.usage),
+    [{ inputTokens: 1000, outputTokens: 10 }],
+  );
+});
+
+test('a Codex launch stopped mid-turn reports what its conversation recorded by its last model call', async (t) => {
+  const { f, work, fake, root } = continuing(
+    t,
+    rollout(5000, 50),
+    undefined,
+    true,
+    ['continued', 'fresh'],
+    'codex',
+  );
+  writeFileSync(join(root, 'stop-mid-turn'), '');
+  // The first resumes the thread at 5000 and 50; the second has none to resume and starts at 0.
+  const runner = f.make();
+  await runner.start();
+  await until(
+    runner,
+    () => fake.releases(work.id).length > 0 && fake.releases('session_fresh').length > 0,
+    'both releases',
+  );
+  for (const sessionId of [work.id, 'session_fresh'])
+    assert.deepEqual(
+      fake.releases(sessionId).map((call) => call.body?.usage),
+      [{ inputTokens: 1000, outputTokens: 10 }],
+      sessionId,
+    );
+  assert.equal(settled(f, 'session_fresh').carried, undefined);
+});
+
+/** A context as Context Builder renders one: sections, and items embedded under fences. */
+const rendered = (feedback: string) => {
+  const block = (heading: string, body: string) => `\n### ${heading}\n~~~\n${body}\n~~~\n`;
+  return `Do the work.\n\nAssignment: {"id":"instance_argv"}\n\n## Paper${block('paper:methods — Methods (text, 600 characters)', 'M'.repeat(600))}${block('paper:empty — Empty (text, 0 characters)', '')}\n## Previous reviews${block('feedback:instance_argv — Previous reviews (text)', feedback)}\n## Expected output\nSay what changed.\n`;
+};
+const visit = (feedback: string, registrationId: string) => {
+  const base = offer('argv');
+  return {
+    ...base,
+    continuity: { key: 'key' },
+    assignment: {
+      ...base.assignment,
+      execution: { readOnly: false, registrationId, tools: [] },
+      context: { hash: 'h', prompt: rendered(feedback), sources: [], omitted: [] },
+    },
+  } as unknown as Session;
+};
+const sent = (session: Session, held?: LaunchRequest['held'], resume: string | null = id) =>
+  buildLaunch(
+    codex,
+    {
+      session,
+      prompt: 'Worker prompt.',
+      secret: bearer,
+      mcpUrl: 'http://127.0.0.1:9/mcp',
+      cwd: '/tmp',
+      shellEnvFile: '/tmp/shell-env.sh',
+      ...(resume && { resume }),
+      ...(held !== undefined && { held }),
+    },
+    { PATH: '/usr/bin' },
+  ).stdin;
+
+test('a resumed launch is sent only what changed of the assignment its conversation holds whole', () => {
+  // Prod 2026-10-06..13: every resume sent the whole frozen assignment again, 20-135K characters
+  // and often the same bytes, into a conversation that held it already.
+  const earlier = visit('Round one: spell out RLCD.', 'execution_a');
+  const fresh = sent(earlier, undefined, null);
+  const copy = heldAssignment([fresh])!;
+  assert.deepEqual(copy, { copy: JSON.stringify(earlier.assignment) });
+  // The same assignment, but for the registration a deploy renewed: a line, not the assignment.
+  const same = sent(visit('Round one: spell out RLCD.', 'execution_b'), copy);
+  assert.ok(
+    same.startsWith(
+      'You are continuing your earlier work on this unit, under the same assignment: nothing in it has changed since the copy earlier in this conversation.\nWorker prompt.',
+    ),
+  );
+  assert.match(
+    same,
+    /\nFrozen assignment: unchanged since the copy earlier in this conversation, which is this lease's frozen assignment as it stands\. If that copy is gone from this conversation, read context\.prompt from workflow\.assignment in parts: a long output is cut\.\n$/,
+  );
+  assert.ok(!same.includes('MMMM') && !same.includes('Round one'));
+  assert.ok(same.length < 2_000, `${same.length} characters`);
+  // Returned with new feedback: what the conversation holds as it is is cut to a line.
+  const returned = visit('Round two: also cite the source.', 'execution_b');
+  const changed = sent(returned, copy);
+  assert.ok(changed.startsWith(`${continued}\nWorker prompt.`));
+  const [header, json] = changed.slice(changed.indexOf('\nFrozen assignment, ') + 1).split('\n');
+  assert.match(
+    header!,
+    /^Frozen assignment, as it stands now: each context block whose body reads only "\(unchanged: as in the copy of this assignment earlier in this conversation\)" has the body it had in the copy earlier in this conversation, and everything else here supersedes that copy\. If that copy is gone from this conversation, read context\.prompt from workflow\.assignment in parts: a long output is cut\.$/,
+  );
+  const now = JSON.parse(json!);
+  assert.deepEqual({ ...now, context: null }, { ...returned.assignment, context: null });
+  assert.equal(
+    now.context.prompt,
+    rendered('Round two: also cite the source.').replace(
+      'M'.repeat(600),
+      '(unchanged: as in the copy of this assignment earlier in this conversation)',
+    ),
+  );
+  // Neither is a whole copy, so a later visit is compared with the one the conversation holds.
+  assert.deepEqual(heldAssignment([fresh, same]), copy);
+  const since = heldAssignment([fresh, same, changed])!;
+  assert.deepEqual(since, { ...copy, changed: true });
+  // Once a changed one was sent, the agent reads that as the newer: an assignment equal to the
+  // copy again is not said to be unchanged, but restated with what the copy holds cut.
+  const reverted = sent(visit('Round one: spell out RLCD.', 'execution_c'), since);
+  assert.ok(reverted.startsWith(`${continued}\nWorker prompt.`));
+  assert.ok(!reverted.includes('unchanged since the copy'));
+  assert.ok(reverted.includes('\nFrozen assignment, as it stands now: '));
+  assert.ok(!reverted.includes('MMMM'));
+  // Whole, as before: nothing held, a copy that does not read, nothing it holds unchanged, or
+  // a launch that resumes nothing.
+  const whole = `\nFrozen assignment:\n${JSON.stringify(returned.assignment)}\n`;
+  const other = { ...returned, assignment: { ...returned.assignment, context: null } } as Session;
+  for (const launch of [
+    sent(returned),
+    sent(returned, { copy: 'not json' }),
+    sent(returned, { copy: JSON.stringify(other.assignment) }),
+    sent(returned, copy, null),
+  ])
+    assert.ok(launch.endsWith(whole));
+  assert.ok(sent(returned).startsWith(`${continued}\n`));
+});
+
+test('a Codex rollout holds whole only the prompts sent since its last compaction', () => {
+  const user = (text: string) =>
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+  const rollout = [
+    user('first'),
+    // A compaction keeps cut copies of earlier prompts in its replacement history.
+    JSON.stringify({
+      type: 'compacted',
+      payload: {
+        message: 'summary',
+        replacement_history: [{ type: 'message', role: 'user', content: [{ text: 'fir' }] }],
+      },
+    }),
+    user('second'),
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ text: '"role":"user"' }] },
+    }),
+    JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'second' } }),
+    user('third'),
+  ].join('\n');
+  assert.deepEqual(codexHarness.held!(rollout), ['second', 'third']);
+  assert.deepEqual(codexHarness.held!(`${user('only')}\n`), ['only']);
+  // A compaction recorded under another name: the next model call reads fewer input tokens than
+  // the one before, which in prod rollouts happened at every compaction and nowhere else.
+  const read = (input_tokens: number | null) =>
+    JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: input_tokens === null ? null : { last_token_usage: { input_tokens } },
+      },
+    });
+  const copy = `Worker prompt.\nFrozen assignment:\n${JSON.stringify(offer('drift').assignment)}\n`;
+  const drifted = [
+    user(copy),
+    read(200_000),
+    read(null),
+    user('resumed'),
+    read(200_400),
+    JSON.stringify({ type: 'response_item', payload: { type: 'compaction', encrypted: 'x' } }),
+    read(20_000),
+    user('after'),
+    read(20_100),
+  ].join('\n');
+  assert.deepEqual(codexHarness.held!(drifted), ['after']);
+  assert.equal(heldAssignment(codexHarness.held!(drifted)), undefined, 'sent whole');
+  // Claude Code's compaction is not read: its launches are sent the assignment whole.
+  assert.equal(claudeHarness.held, undefined);
+});
+
+test('a resumed Codex launch whose assignment has not changed is told so, unless a compaction came since', async (t) => {
+  const prompt = (text: string) =>
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+  const assignment = JSON.stringify(offer('continued').assignment);
+  const earlier = `${prompt(`Worker prompt.\nFrozen assignment:\n${assignment}\n`)}\n`;
+  for (const [conversation, unchanged] of [
+    [earlier, true],
+    [
+      `${earlier}${JSON.stringify({ type: 'compacted', payload: { message: 'summary' } })}\n`,
+      false,
+    ],
+  ] as const) {
+    const { f, work, root } = continuing(
+      t,
+      Buffer.from(conversation),
+      undefined,
+      true,
+      ['continued'],
+      'codex',
+    );
+    const runner = f.make();
+    await runner.start();
+    await until(runner, () => settled(f, work.id).conversation?.state === 'uploaded', 'delivery');
+    const [stdin] = readFileSync(join(root, 'prompts.jsonl'), 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as string);
+    assert.equal(/\nFrozen assignment:\n\{.*"brief":"Do the work\."/.test(stdin!), !unchanged);
+    assert.equal(stdin!.includes('\nFrozen assignment: unchanged since the copy'), unchanged);
+    await runner.stop();
+  }
 });

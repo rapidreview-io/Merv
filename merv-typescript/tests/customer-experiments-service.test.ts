@@ -719,6 +719,26 @@ test('intake reads work in a read-only snapshot but ordinary project callers can
   );
 });
 
+test('the healer reaches only a thread whose worker asked about its run', async (t) => {
+  const f = await fixture(t);
+  const request = await f.create();
+  const record = await f.store.get(request.id);
+  const caller = await f.service.caller(record);
+  const binding = { id: 'customer-experiments-healer', version: 2, requestId: request.id };
+  const healer = f.profiles.find((p) => p.id === binding.id && p.version === binding.version)!;
+  // Not a session tool: no thread to check.
+  await healer.authorizeTool!({ binding, caller, name: 'web.search', input: { query: 'x' } });
+  await assert.rejects(
+    healer.authorizeTool!({
+      binding,
+      caller,
+      name: 'session.message',
+      input: { threadId: 'thread_never_asked', body: 'x' },
+    }),
+    { code: 'forbidden', message: "The healer may only reach its run's worker thread" },
+  );
+});
+
 test('checkout rollover keeps the previous session across provider failures so retries cannot charge again', async (t) => {
   const f = await fixture(t);
   const request = await f.create();
@@ -1341,6 +1361,21 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
   exp = await f.experiment(f.a.id);
   assert.equal(exp.workflow.state, 'running');
   assert.equal(exp.email, 'customer@example.com');
+  assert.equal(exp.paymentId, 'pi_v3');
+  // The customer's page shows their email; the interviewer and the healer read the request
+  // without the buyer's email or payment id.
+  assert.equal((await f.service.snapshot(await f.store.get(f.a.id))).email, 'customer@example.com');
+  const agentContext = (id: string, version: number) =>
+    f.profiles.find((p) => p.id === id && p.version === version)!.context!({
+      binding: { id, version, requestId: f.a.id },
+      caller: { projectId: f.record.projectId!, actorId: 'actor' } as Caller,
+    });
+  for (const text of [
+    JSON.stringify(await f.tool('read', {})),
+    await agentContext('customer-experiments-intake', 8),
+    await agentContext('customer-experiments-healer', 2),
+  ])
+    assert.doesNotMatch(text, /customer@example\.com|pi_v3/);
   assert.equal(f.emails.length, 0);
   assert.equal((await f.store.get(f.a.id)).submissionEmailPending, true);
   f.delivery.fail = false;

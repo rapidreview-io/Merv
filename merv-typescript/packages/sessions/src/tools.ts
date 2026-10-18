@@ -24,7 +24,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'system.status',
         description:
-          'Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session and model-budget wait status.',
+          "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session, its work item's lineage (its threads and their visits, with runners) and model-budget wait status.",
         readOnly: true,
         inputSchema: z.object({}).strict(),
         handler: async (caller: Caller) => await systemStatus(caller, sessions),
@@ -34,7 +34,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'usage.read',
         description:
-          'Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded.',
+          "Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded. Merv prices no session in money: a Fleet-hosted worker's model use is bounded by its person's daily Fleet token limit (system.status modelBudget), so unpriced worker, model or review charges are no reason to ask the owner.",
         readOnly: true,
         inputSchema: z
           .object({
@@ -60,8 +60,9 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.stuck',
         description:
-          'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
+          'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target withheld from automatic dispatch after failed launches), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({}).strict(),
         handler: async (caller: Caller) => await sessions.dispatch.stuck(caller),
       }),
@@ -115,6 +116,7 @@ export const sessionsToolsPlugin = {
         description:
           'Find the current and latest worker session for one workflow instanceId. Use its threadId as the destination for session.message, which its live visit or its next one reads; no current session means no worker is live right now.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) =>
           await sessions.findSession(caller, input.instanceId),
@@ -124,7 +126,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message',
         description:
-          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "Queue a durable message for a worker by threadId (a stage's worker, from session.find or session.threads), which its live visit or, once its work comes back, its next visit reads. A thread whose work has ended takes a message only as an answer. A message answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message refuses the worker's next Merv call, carrying the message, and every one after it until the worker acknowledges it, so put what you have to say in one message rather than several, send none only to ask for status, and ask for a reply only when you need one. Reuse requestId after an uncertain response.",
         inputSchema: z
           .object({
             threadId: z.string().min(1).max(200),
@@ -139,12 +141,26 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.messages',
+        conversation: 'never' as const,
         description:
-          "Assigned worker only: read your queue, the durable messages to your thread with their acknowledgements. sessionId, if given, must be your own. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply. A person reads a thread's messages with session.thread_messages.",
+          "Assigned worker only: read your queue, oldest first: the messages to your thread that await your acknowledgement, those sent to its earlier visits included, and, in a visit that did not continue the thread's conversation, the ones earlier visits acknowledged, with their replies; call it without sessionId. acknowledged counts the thread's acknowledged messages, which all: true lists in full. While a message waits, every other Merv call you make is refused with session_message_pending: acknowledge each with session.message.ack, whose reply may say what you will do. A person reads a thread's messages with session.thread_messages.",
         readOnly: true,
-        inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
-        handler: async (caller: Caller, input: { sessionId?: string }) =>
-          await sessions.messaging.messages(caller, input.sessionId),
+        inputSchema: z
+          .object({
+            all: z
+              .boolean()
+              .optional()
+              .describe('Also list the messages already acknowledged, with their replies'),
+            sessionId: z
+              .string()
+              .min(1)
+              .max(200)
+              .optional()
+              .describe('Not needed: your queue is your own session’s, and one given must be it'),
+          })
+          .strict(),
+        handler: async (caller: Caller, input: { sessionId?: string; all?: boolean }) =>
+          await sessions.messaging.messages(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -153,6 +169,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { threadId: string }) =>
           await sessions.messaging.thread(caller, input.threadId),
@@ -180,7 +197,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.ask_owner',
         description:
-          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.',
+          'Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision or an action only a person can take (an operator’s fix, access, budget) and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until an answer is queued to your thread. An optional responder may investigate and answer on the owner’s behalf; otherwise the question goes to the owner. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation cannot ask.',
         conversation: 'never',
         inputSchema: z.object({ question: z.string().min(1).max(4000) }).strict(),
         handler: async (caller: Caller, input: { question: string }) => ({
@@ -211,7 +228,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.message.ack',
         description:
-          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
+          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement and its reply are durable and written once: the same requestId and reply return it again, and anything else for an acknowledged message is request_conflict, so this is no channel for later notes. It records receipt, not incorporation into submitted evidence. An inquiry visit answers its question with this reply, which ends the visit.',
         conversation: 'never',
         inputSchema: z
           .object({
@@ -242,6 +259,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who can read the project, never a leased worker: the Merv calls of one thread (session.threads), its newest 100 with in-flight ones first, each with its visit, tool, status, timing and payload-size token estimates, and totals over all of them. Metadata only: never arguments or results.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ threadId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { threadId: string }) =>
           await sessions.observations.calls(caller, input.threadId),
@@ -253,6 +271,7 @@ export const sessionsToolsPlugin = {
         description:
           'Anyone who may read the work item, never a leased worker: the threads of one workflow instanceId, the worker of each stage and role, oldest first. Each has its state, role and status (live, dormant or retired) and its visits, oldest first: each session’s status, when it was offered, started and ended, its outcome and close code (why), whether it launched or resumed the thread’s conversation, its harness and runner.',
         readOnly: true,
+        worker: 'never' as const,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) => ({
           threads: await sessions.threads.list(caller, input.instanceId),
@@ -261,7 +280,7 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        "To steer an assigned agent, use session.find with the work's instanceId to find its thread, then session.message with that threadId, which its live visit or its next one reads. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
+        "To steer an assigned agent, use session.find with the work's instanceId to find its thread, then session.message with that threadId, which its live visit or its next one reads. A thread's messages and the questions its agent asked are in session.thread_messages; a message to the thread answers them. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
       ),
     );
   },

@@ -29,7 +29,7 @@ Already prepared invocations, claims, workspace observations, command receipts a
 
 An offer opens a new thread, or continues the dormant thread that holds the same work ([Sessions README](../packages/sessions/README.md#continuity)). A thread retires when its visit closes unless that visit may be continued; then it stays dormant until its work comes back, an offer that cannot resume it supersedes it, or 14 days pass. Runner recovery and workspace capture stay keyed by session id; snapshots also name the thread. There is no automatic process handoff.
 
-Halting a session (`POST /sessions/:sessionId/halt`) closes its live visit; a thread without continuity retires with it, which revokes its actor. `GET /sessions/threads?instanceId=…` lists a work item's threads and their visits; `GET /sessions/threads/:id/conversation` is an operator's read of what the thread's agent did ([Sessions README](../packages/sessions/README.md#continuity)).
+Halting a session (`POST /sessions/:sessionId/halt`) closes its live visit; a thread without continuity retires with it, which revokes its actor. `GET /sessions/threads?instanceId=…` lists a work item's threads and their visits, for people; a leased worker reads its own work item's as `lineage` in `system.status`, never another item's; `GET /sessions/threads/:id/conversation` is an operator's read of what the thread's agent did ([Sessions README](../packages/sessions/README.md#continuity)).
 
 ## Inquiry visits
 

@@ -27,14 +27,14 @@ export function resolutionBrief(work: ResolutionWork): {
     inputs
       .map(
         (input) =>
-          `${input.commit}: ${(input.units.length ? input.units.map((unit) => `${unit.name ?? unit.id} (${unit.id})`) : ['Accepted input']).join('; ')}`,
+          `${input.commit}: ${(input.units.length ? input.units.map((unit) => `${unit.name ?? unit.id} (${unit.id})`) : [input.main ? 'Merv main' : 'Accepted input']).join('; ')}`,
       )
       .join('\n');
   const titleSide = (inputs: typeof left.inputs) => {
     const items = inputs.flatMap((input) =>
       input.units.length
         ? input.units.map((unit) => unit.name ?? 'Accepted work')
-        : ['Accepted work'],
+        : [input.main ? 'Merv main' : 'Accepted work'],
     );
     const first = items[0] ?? 'Accepted work';
     const label = ellipsis(first, 80);

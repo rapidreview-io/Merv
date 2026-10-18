@@ -63,7 +63,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
     (await tools.call('web.search', caller, input)) as WebSearch;
 
   const result = await search({
-    query: [' flash attention ', '', 'FA3'],
+    query: ' flash attention ',
     max_results: 25,
     search_depth: 'Deep',
     topic: 'sports',
@@ -76,7 +76,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
         'POST',
         '/search',
         {
-          query: '(flash attention) OR (FA3)',
+          query: 'flash attention',
           max_results: 20,
           search_depth: 'basic',
           topic: 'general',
@@ -99,7 +99,7 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
   assert.equal(result.provider, 'tavily');
   assert.equal(
     result.normalization_note,
-    'combined 2 query variants into one web request; max_results=25 replaced with 20; ' +
+    'max_results=25 replaced with 20; ' +
       `search_depth="deep" replaced with 'basic'; topic="sports" replaced with 'general'`,
   );
   // Four results fill the 24,000 characters at 6,000 each; later ones keep their links only.
@@ -147,15 +147,64 @@ test('a search reaches Tavily as Nisa sends it and returns within Nisa’s caps,
     topic: 'general',
   });
   assert.match(site.normalization_note!, /expanded exact site target/);
-  // Phrasings are combined only while Tavily's 400 characters allow.
-  const long = await search({ query: ['a'.repeat(300), 'b'.repeat(300)], time_range: 'decade' });
-  assert.equal(tavily.seen.at(-1)!.body.query, 'a'.repeat(300));
-  assert.equal(
-    long.normalization_note,
-    `combined 1 query variant into one web request (of 2 given); unsupported time_range="decade" omitted`,
+  // A list runs each query as its own search, never ORed into one request that answers none
+  // of them: each result names its query, and the content budget is shared alike.
+  const before = tavily.seen.length;
+  const list = await search({
+    query: ['dataset license', ' ', 'NBA scores', 'dataset license', 'site:example.com', 'c', 'd'],
+    max_results: 2,
+    time_range: 'decade',
+  });
+  assert.deepEqual(
+    tavily.seen
+      .slice(before)
+      .map(({ body }) => body.query)
+      .sort(),
+    ['NBA scores', 'c', 'dataset license'],
   );
+  assert.deepEqual(list.query, ['dataset license', 'NBA scores', 'c']);
+  assert.equal(
+    list.normalization_note,
+    'ran 3 queries as separate searches, each result naming its query; ' +
+      'ran only the first 4 of the 5 queries given; ' +
+      'skipped "site:example.com": A site: filter needs descriptive search terms, for example site:example.com transformer benchmark.; ' +
+      'unsupported time_range="decade" omitted',
+  );
+  assert.deepEqual(
+    list.results.map(({ query, content }) => [query, content.length]),
+    [
+      ['dataset license', 6000],
+      ['dataset license', 2000],
+      ['NBA scores', 6000],
+      ['NBA scores', 2000],
+      ['c', 6000],
+      ['c', 2000],
+    ],
+  );
+  assert.equal(list.content_budget_chars, 24_000);
   await assert.rejects(search({ query: 'x'.repeat(401) }), { code: 'invalid_input' });
   await assert.rejects(search({ query: 'x', site: 'example.com' }), { code: 'invalid_input' });
+});
+
+test('a listed query that fails is named, and the others’ results still come back', async (t) => {
+  const tavily = await provider(t, ({ body }) =>
+    body.query.startsWith('broken') ? { status: 400, body: {} } : { body: tavilyResults(1) },
+  );
+  const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
+  const found = await web.search(caller, { query: ['flash attention', 'broken one'] });
+  assert.deepEqual(
+    found.results.map(({ query }) => query),
+    ['flash attention'],
+  );
+  assert.equal(
+    found.normalization_note,
+    'ran 2 queries as separate searches, each result naming its query; ' +
+      'query "broken one" failed: Tavily refused this request (HTTP 400)',
+  );
+  // Only when every query fails is the call refused.
+  await assert.rejects(web.search(caller, { query: ['broken one', 'broken two'] }), {
+    code: 'web_request_refused',
+  });
 });
 
 /** An OpenAI Responses answer from the hosted web_search tool. */
@@ -327,9 +376,11 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   // The page's own server: Merv must never reach it.
   const page = await provider(t);
   let extracted: Reply = {};
-  const tavily = await provider(t, () => extracted);
+  /** Replies for the next reads, before `extracted` answers again. */
+  const queued: Reply[] = [];
+  const tavily = await provider(t, () => queued.shift() ?? extracted);
   const tavilyEnv = keyEnv(t, 'tvly-fixture');
-  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin });
+  const web = new WebService({ keyEnv: tavilyEnv, origin: tavily.origin }, { extractRetryMs: 0 });
   const tools = registry(t, web);
   const read = async (input: object) => (await tools.call('web.extract', caller, input)) as WebPage;
   const url = `${page.origin}/article`;
@@ -342,12 +393,21 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
     { ...whole, content: whole.content.length },
     {
       url,
-      content: 20_000 + '\n\n... [truncated at 20,000 characters]'.length,
+      content:
+        20_000 +
+        '\n\n... [truncated at 20,000 characters, 5,000 more: offset 20000 reads on]'.length,
+      next_offset: 20_000,
       section: false,
       status: 'success',
       provider: 'tavily',
       normalization_note: `unsupported extract_depth="thorough" replaced with 'basic'`,
     },
+  );
+  // The rest of a cut page is read by passing its next_offset back.
+  const rest = await read({ url, offset: whole.next_offset });
+  assert.deepEqual(
+    { ...rest, content: rest.content.length },
+    { url, content: 5000, section: false, status: 'success', provider: 'tavily' },
   );
   const text = 'a'.repeat(1000) + '## Methods' + 'm'.repeat(100) + '## Results' + 'r'.repeat(1000);
   extracted = { body: { results: [{ url, raw_content: '', content: text }] } };
@@ -362,23 +422,159 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(methods.content, text.slice(800, 1000 + 10 + 100 + 10 + 200));
   const missed = await read({ url, start_text: '## Discussion', end_text: '## Results' });
   assert.equal(missed.section, false);
-  assert.ok(missed.content.startsWith(text));
-  assert.match(missed.content, /start marker "## Discussion" not found/);
-  const one = await read({ url, start_text: '## Methods' });
-  assert.equal(one.content, text);
-  assert.equal(one.normalization_note, 'start_text and end_text select a section only together');
+  assert.equal(missed.content, text);
+  assert.match(
+    missed.normalization_note!,
+    /^start_text "## Discussion" not found on the page, .*: returned the page from its beginning$/,
+  );
+  // One marker alone cuts the page there: from the start marker on, or up to the end marker.
+  const from = await read({ url, start_text: '## Methods' });
+  assert.deepEqual(
+    { ...from, url: undefined },
+    {
+      url: undefined,
+      content: text.slice(800),
+      section: true,
+      status: 'success',
+      provider: 'tavily',
+    },
+  );
+  const upTo = await read({ url, end_text: '## Methods' });
+  assert.equal(upTo.section, true);
+  assert.equal(upTo.content, text.slice(0, 1000 + 10 + 200));
+  const unfound = await read({ url, end_text: '## Discussion' });
+  assert.equal(unfound.section, false);
+  assert.equal(unfound.content, text);
+  assert.match(
+    unfound.normalization_note!,
+    /end_text "## Discussion" not found .*: returned the page from its beginning to its end/,
+  );
+  // Tavily's Markdown escapes punctuation and reflows lines; a marker copied from source code
+  // or an excerpt still finds its place, as does one the agent escaped itself.
+  const code =
+    'nav '.repeat(100) +
+    'def soft\\_ce\\_loss(logits, target):\n    return \\-(target \\* logp)\n\n' +
+    'def td\\_lambda\\_targets(rewards):\n    pass\n' +
+    'Licensing &\nPersonal   Information\n\nThe data is public.';
+  extracted = { body: { results: [{ url, raw_content: code }] } };
+  const loss = await read({
+    url,
+    start_text: 'def soft_ce_loss',
+    end_text: 'def td_lambda_targets',
+  });
+  assert.equal(loss.section, true);
+  assert.equal(loss.normalization_note, undefined);
+  assert.equal(loss.content, code.slice(code.indexOf('def soft') - 200));
+  const escaped = await read({ url, start_text: 'return \\-(target \\* logp)' });
+  assert.equal(escaped.section, true);
+  assert.ok(escaped.content.includes('return \\-(target'));
+  const spaced = await read({ url, start_text: 'Licensing & Personal Information' });
+  assert.equal(spaced.section, true);
+  assert.match(spaced.content, /The data is public\.$/);
+  // A mark the agent escaped matches the page's plain one; a backslash is matched with or
+  // without its escape, alone or before a mark; and a long marker of backslashes and marks that
+  // misses answers at once: each backslash on the page can be taken by one part of the marker
+  // only, so nothing backtracks without end.
+  const slashes = '\\\\_'.repeat(30);
+  extracted = {
+    body: {
+      results: [
+        {
+          url,
+          raw_content: `def soft_ce_loss() $\\\\alpha\\_t$ C:\\\\\\_tmp ${slashes}x ${'\\'.repeat(60)}x`,
+        },
+      ],
+    },
+  };
+  for (const start_text of ['def soft\\_ce\\_loss', '\\alpha_t', 'C:\\\\_tmp'])
+    assert.equal((await read({ url, start_text })).section, true, start_text);
+  for (const start_text of [`${slashes}y`, `${'\\'.repeat(60)}y`]) {
+    const began = performance.now();
+    const hostile = await read({ url, start_text });
+    assert.ok(performance.now() - began < 1000, `${start_text.length} characters backtracked`);
+    assert.equal(hostile.section, false);
+    assert.match(hostile.normalization_note!, /^start_text ".*" not found on the page/);
+  }
+  // Two markers neither found on a page past the cap: the note says so, and offset reads on.
+  const chrome = '[Skip to content](#start-of-content) ' + 'n'.repeat(24_000);
+  extracted = { body: { results: [{ url, raw_content: chrome }] } };
+  const lost = await read({ url, start_text: 'def rlcd_loss', end_text: 'def sigma_at' });
+  assert.equal(lost.section, false);
+  assert.match(lost.normalization_note!, /^start_text "def rlcd_loss" not found on the page/);
+  assert.ok(lost.content.startsWith('[Skip to content]'));
+  assert.equal(lost.next_offset, 20_000);
+  const on = await read({
+    url,
+    start_text: 'def rlcd_loss',
+    end_text: 'def sigma_at',
+    offset: 20_000,
+  });
+  assert.equal(on.content, chrome.slice(20_000));
+  assert.equal(on.next_offset, undefined);
+  // So does an end marker missing after a found start.
+  const tail = await read({ url, start_text: 'Skip to content', end_text: 'Acknowledgments' });
+  assert.equal(tail.section, false);
+  assert.match(
+    tail.normalization_note!,
+    /^end_text "Acknowledgments" not found .*: returned the page from start_text to its end$/,
+  );
+  assert.equal(tail.next_offset, 20_000);
+  // An offset past the text, or one that is no offset, is reported, never refused.
+  const past = await read({ url, offset: 30_000 });
+  assert.equal(past.content, '');
+  assert.equal(
+    past.normalization_note,
+    `offset=30000 is past the end of the text (${chrome.length} characters)`,
+  );
+  const negative = await read({ url, offset: -5 });
+  assert.equal(negative.normalization_note, 'invalid offset=-5 replaced with 0');
+  assert.equal(negative.next_offset, 20_000);
   // The 200 characters either side never leave half a character at a cut.
   const astral = `${'😀'.repeat(200)}x## Methods ## Resultsy${'😀'.repeat(200)}`;
   extracted = { body: { results: [{ url, raw_content: astral }] } };
   const cut = await read({ url, start_text: '## Methods', end_text: '## Results' });
+  assert.equal(cut.status, 'success');
+  assert.equal(cut.section, true);
   assert.ok(!/\p{Surrogate}/u.test(cut.content), 'a cut split a character');
+  // So does an offset inside a character: the text starts after it.
+  assert.equal((await read({ url, offset: 1 })).content, astral.slice(2));
+  // A page that starts with a line break or an emoji was read: one request, not two.
+  for (const raw_content of ['\n# Title\n\nBody text.', '😀 emoji first']) {
+    extracted = { body: { results: [{ url, raw_content }] } };
+    const before = tavily.seen.length;
+    const opened = await read({ url });
+    assert.equal(opened.status, 'success', JSON.stringify(raw_content));
+    assert.equal(opened.content, raw_content);
+    assert.equal(tavily.seen.length, before + 1);
+  }
 
   extracted = { body: { results: [], failed_results: [{ url, error: 'Blocked by robots.txt' }] } };
+  const tries = tavily.seen.length;
   const failed = await read({ url });
   assert.equal(failed.status, 'error');
   assert.equal(failed.error, 'Blocked by robots.txt');
   assert.equal(failed.content, '');
   assert.ok(failed.fallback_hint);
+  // A page Tavily could not read is asked for once more, with advanced extraction.
+  assert.deepEqual(
+    tavily.seen.slice(tries).map(({ body }) => body.extract_depth),
+    ['basic', 'advanced'],
+  );
+  // A page it failed, or returned empty, may read the second time.
+  for (const first of [
+    { body: { results: [], failed_results: [{ url, error: 'Error fetching content' }] } },
+    { body: { results: [{ url, raw_content: '', content: ' ' }] } },
+  ]) {
+    queued.push(first, { body: { results: [{ url, raw_content: 'The abstract.' }] } });
+    assert.deepEqual(await read({ url }), {
+      url,
+      content: 'The abstract.',
+      section: false,
+      status: 'success',
+      provider: 'tavily',
+      normalization_note: 'Tavily could not read the page at first; a second, advanced read did',
+    });
+  }
 
   // An address Tavily should not be given is refused before any request.
   const asked = tavily.seen.length;
@@ -473,6 +669,14 @@ test('a project’s day, the deployment’s and its fallback searches’ are bou
   // The next UTC day starts afresh.
   now = Date.parse('2026-09-27T00:00:01Z');
   await web.search(caller, { query: 'query-tomorrow' });
+  // Each query of a list is its own search and its own call: one left is not enough for two.
+  await assert.rejects(web.search(caller, { query: ['query-x', 'query-y'] }), {
+    code: 'web_budget_exhausted',
+    status: 429,
+    message:
+      'This project has 1 of its 2 web calls left for today, and these 2 queries need one each: search fewer at once, or after 00:00 UTC',
+  });
+  assert.equal(tavily.seen.length, 4);
   // One line for each call a provider was asked for: who, which, how long, never what.
   assert.deepEqual(
     logged.map(({ ms, ...rest }) => (assert.equal(typeof ms, 'number'), rest)),
@@ -664,7 +868,11 @@ test('an answer at Nisa’s caps still fits what Pi shows of one result, whateve
   const page = await web.extract(caller, { url: 'https://example.com/page' });
   assert.equal(page.status, 'success');
   assert.deepEqual(fit('web.extract', page), page);
-  assert.match(page.content, /\n\n\.\.\. \[truncated at [\d,]+ characters\]$/);
+  assert.match(
+    page.content,
+    /\n\n\.\.\. \[truncated at [\d,]+ characters, [\d,]+ more: offset \d+ reads on\]$/,
+  );
+  assert.equal(page.next_offset, page.content.indexOf('\n\n... [truncated'));
   reply = { status: 401, body: {} };
   const grounded_ = await web.search(caller, { query: 'q' });
   assert.equal(grounded_.provider, 'openai_web_search');
@@ -909,8 +1117,8 @@ test('the render composes web search into Main, where MCP clients list and call 
     }),
   );
   const catalog = (await mcp.listTools()).tools;
-  // A reader's agent is offered the default composition's 42 reads, and these two.
-  assert.equal(catalog.length, 44);
+  // A reader's agent is offered the default composition's 41 reads, and these two.
+  assert.equal(catalog.length, 43);
   for (const name of ['web.search', 'web.extract'])
     assert.deepEqual(catalog.find((tool) => tool.name === name)?.annotations, {
       readOnlyHint: true,

@@ -13,7 +13,7 @@ export const workflowToolsPlugin = {
       {
         name: 'workflow.status_and_next',
         description:
-          'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
+          'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action (a name from actions[].action, never a tool name) with proposed input; this never executes it or reserves permission, and the answer’s preflight says which tool takes it. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
         readOnly: true,
         inputSchema: z
           .object({
@@ -34,13 +34,20 @@ export const workflowToolsPlugin = {
         handler: async (
           caller: Caller,
           input: { instanceId?: string; action?: string; input?: Data },
-        ) =>
-          input.instanceId
-            ? await workflows.evaluate(caller, input.instanceId, {
-                action: input.action,
-                input: input.input,
-              })
-            : await workflows.overview(caller),
+        ) => {
+          if (!input.instanceId) return await workflows.overview(caller);
+          const decision = await workflows.evaluate(caller, input.instanceId, {
+            action: input.action,
+            input: input.input,
+          });
+          if (!input.action) return decision;
+          // A submission's input passed here once came back unchanged and was taken for done.
+          const tool = decision.actions.find((action) => action.action === input.action)?.tool;
+          return {
+            ...decision,
+            preflight: `Nothing was done: this only checks ${input.action}.${tool ? ` Call ${tool} to take it.` : ''}`,
+          };
+        },
       },
       {
         name: 'workflow.catalog',

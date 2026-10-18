@@ -15,7 +15,7 @@ import {
   type Scope,
   type State,
 } from '@merv/contracts';
-import { META, fromRow, insert, meta } from './content.js';
+import { META, fromRow, insert, meta, requestIdOf } from './content.js';
 
 type UploadRow = {
   upload_id: string;
@@ -73,14 +73,7 @@ export class Uploads {
       'invalid_artifact',
       'Artifact requires a lowercase SHA-256 digest',
     );
-    const { requestId } = input;
-    // The tool schema's rule and no stricter, because the value is only hashed.
-    check(
-      requestId === undefined ||
-        (typeof requestId === 'string' && requestId.length >= 1 && requestId.length <= 128),
-      'invalid_artifact',
-      'requestId must be a string of 1-128 characters',
-    );
+    const requestId = requestIdOf(input.requestId);
     this.large();
     // A retry finds its actor's upload; another actor's same requestId begins its own.
     const uploadId =

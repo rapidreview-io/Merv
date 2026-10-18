@@ -32,6 +32,8 @@ import type {
   ThreadQuestion,
   ThreadView,
   VisitView,
+  WorkerLineage,
+  WorkerQueue,
 } from '../packages/sessions/src/types.js';
 import { secret, twoStepWorkflow } from './fixtures/session-workflow.js';
 
@@ -71,6 +73,25 @@ async function fixture(t: TestContext) {
     assert.equal(typeof stamped.uploadedAt, 'string');
     return { bytes, facts };
   };
+  // The message that answered each thread's last question, which its next visit acknowledges.
+  const answers = new Map<string, string>();
+  /** A visit to the work whose agent asks its owner, and the owner's answer to its thread. */
+  const asked = async (instanceId: string, question: string, answer: string) => {
+    const visit = await offer(instanceId);
+    const worker = await sessions.authenticate(visit.input.secret);
+    const pending = answers.get(visit.session.threadId!);
+    if (pending)
+      await app.ctx.tools.invoke('session.message.ack', worker, {
+        messageId: pending,
+        requestId: randomUUID(),
+      });
+    await app.ctx.tools.invoke('session.ask_owner', worker, { question });
+    await keep(visit.session, visit.control);
+    await release(visit.session);
+    const path = `/sessions/threads/${visit.session.threadId}/messages`;
+    const sent = await ok('POST', path, token, { body: answer, requestId: randomUUID() });
+    answers.set(visit.session.threadId!, (sent.message as SessionMessage).id);
+  };
   // A thread is active until it retires, live or dormant.
   const agent = async (id: string) => {
     const thread = (await sessions.threads.project(owner)).threads.find((item) => item.id === id)!;
@@ -88,6 +109,7 @@ async function fixture(t: TestContext) {
     release,
     move,
     keep,
+    asked,
     agent,
     start,
     /** The owner's move on the work, as its gate answers Needs you. */
@@ -222,6 +244,63 @@ test('a conversation declared and never delivered leaves the last delivered one 
     sessionId: third.session.id,
     ...newer.facts,
   });
+});
+
+test('a successor whose conversation lacks the visits after it is told so, from when to when', async (t) => {
+  // Prod 2026-10-16: a visit's conversation was declared and never delivered; the next visit
+  // took up the one ten hours older as though it were the latest and rebuilt from the machine.
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.sessions.authenticate(first.input.secret);
+  await f.release(first.session);
+  const kept = await f.keep(first.session, first.control);
+  // The second visit's agent ran; its conversation is declared and never arrives.
+  const second = await f.offer(unit.id);
+  await f.sessions.authenticate(second.input.secret);
+  await f.release(second.session);
+  const bytes = Buffer.from('{"type":"user","text":"never delivered"}\n');
+  await f.ok('POST', `/sessions/${second.session.id}/conversation`, f.token, {
+    ...second.control,
+    harness: 'codex',
+    conversationId: '0199a0b2-1111-7222-8333-944445555777',
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  });
+  // A third that fails before its agent runs did nothing the conversation lacks.
+  const third = await f.offer(unit.id);
+  await f.ok('POST', `/sessions/${third.session.id}/release`, f.token, {
+    runnerId: third.session.runnerId,
+    outcome: 'launch_failed',
+  });
+  const ran = await f.sessions.get(f.owner, second.session.id);
+  const fourth = await f.offer(unit.id);
+  assert.deepEqual(fourth.session.continuity?.resume, {
+    sessionId: first.session.id,
+    ...kept.facts,
+    missed: { visits: 1, from: ran.activatedAt, to: ran.closedAt },
+  });
+  const { prompt } = await f.ok('POST', `/sessions/${fourth.session.id}/attach`, f.token, {
+    ...fourth.control,
+  });
+  assert.ok(
+    prompt.includes(
+      `This work’s last visit, from ${ran.activatedAt} to ${ran.closedAt}, kept no conversation that reached Merv: any conversation you continue ends before it, and nothing it did is in it. Before you go on, read what it left in the project`,
+    ),
+  );
+  // Once the newest visit delivers its conversation, nothing is missed.
+  await f.sessions.authenticate(fourth.input.secret);
+  await f.release(fourth.session);
+  const newer = await f.keep(fourth.session, fourth.control);
+  const fifth = await f.offer(unit.id);
+  assert.deepEqual(fifth.session.continuity?.resume, {
+    sessionId: fourth.session.id,
+    ...newer.facts,
+  });
+  const reply = await f.ok('POST', `/sessions/${fifth.session.id}/attach`, f.token, {
+    ...fifth.control,
+  });
+  assert.doesNotMatch(reply.prompt, /kept no conversation that reached Merv/);
 });
 
 test('a cut reviewer resumes its own conversation within its round; a new round starts fresh', async (t) => {
@@ -1013,8 +1092,8 @@ test('an agent asks its owner: its visit ends uncounted, the work waits, and a m
   await assert.rejects(f.app.ctx.tools.invoke('session.ask_owner', next, { question: 'Again?' }), {
     code: 'session_message_pending',
   });
-  const inbox = (await f.app.ctx.tools.invoke('session.messages', next, {}))
-    .value as SessionMessage[];
+  const inbox = ((await f.app.ctx.tools.invoke('session.messages', next, {})).value as WorkerQueue)
+    .messages;
   assert.deepEqual(
     inbox.map((item) => [item.id, item.body]),
     [[sent.id, answer]],
@@ -1511,6 +1590,136 @@ test('a stored transcript’s long text is cut a whole character at a time', asy
   });
 });
 
+test('every later visit to the work, its reviewer’s too, is offered what its owner answered, with the assignment', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  // Nothing answered yet: the assignment is Workflows' own.
+  assert.equal(Object.hasOwn(first.session.assignment, 'ownerAnswers'), false);
+  const worker = await f.sessions.authenticate(first.input.secret);
+  const question = 'May the final evaluation reuse the native final suite?';
+  await f.app.ctx.tools.invoke('session.ask_owner', worker, { question });
+  await f.keep(first.session, first.control);
+  await f.release(first.session);
+  const answer = 'Yes: reuse the native final suite, and say so in the report.';
+  const sent = (
+    await f.ok('POST', `/sessions/threads/${first.session.threadId}/messages`, f.token, {
+      body: answer,
+      requestId: 'answer',
+    })
+  ).message as SessionMessage;
+  const answered = (assignment: Session['assignment']) =>
+    assignment.ownerAnswers?.map((item) => [
+      item.threadId,
+      item.state,
+      item.role,
+      item.revision,
+      item.question,
+      item.messageId,
+      item.answer,
+      typeof item.askedAt === 'string' && typeof item.answeredAt === 'string',
+    ]);
+  const expected = [
+    [
+      first.session.threadId,
+      'working',
+      'producer',
+      first.session.expectedRevision,
+      question,
+      sent.id,
+      answer,
+      true,
+    ],
+  ];
+  const second = await f.offer(unit.id, 'runner-b');
+  assert.deepEqual(answered(second.session.assignment), expected);
+  await f.release(second.session);
+  // Continuity carries a producer's thread on to a later stage (threads.open rewrites its
+  // state); an answer keeps the stage its question was asked in.
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run("UPDATE session_threads SET state='later' WHERE id=?", first.session.threadId),
+  );
+  // A reviewer reads no other thread's messages: the answer reaches it with its assignment.
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-c');
+  assert.equal(review.session.role, 'reviewer');
+  assert.notEqual(review.session.threadId, first.session.threadId);
+  assert.deepEqual(answered(review.session.assignment), expected);
+  const reviewer = await f.sessions.authenticate(review.input.secret);
+  const read = (
+    await f.app.ctx.tools.invoke('workflow.assignment', reviewer, { instanceId: unit.id })
+  ).value as Session['assignment'];
+  assert.deepEqual(answered(read), expected);
+});
+
+test('an owner’s answers fit the assignment’s 512 KiB, the oldest left out first, and never refuse its work’s offers', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  await f.asked(unit.id, 'Which suite?', 'x'.repeat(8000));
+  await f.asked(unit.id, 'Which seed?', 'Seed 7.');
+  // An assignment that fits alone, with room for the short answer and not for the long one too.
+  const { workflows } = f.app.ctx;
+  const offerLease = workflows.offerLease.bind(workflows);
+  t.mock.method(workflows, 'offerLease', async (...args: Parameters<typeof offerLease>) => {
+    const offered = await offerLease(...args);
+    const room = 524_288 - Buffer.byteLength(JSON.stringify(offered.assignment)) - 4_000;
+    const brief = offered.assignment.brief + 'b'.repeat(room);
+    return { ...offered, assignment: { ...offered.assignment, brief } };
+  });
+  const next = await f.offer(unit.id);
+  assert.deepEqual(
+    next.session.assignment.ownerAnswers?.map((item) => item.question),
+    ['Which seed?'],
+  );
+  assert.ok(Buffer.byteLength(JSON.stringify(next.session.assignment)) <= 524_288);
+});
+
+test('a work item is offered its own ten newest answers, oldest first, never another item’s', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const other = await f.start();
+  await f.asked(other.id, 'Which cohort elsewhere?', 'The 2025 cohort.');
+  for (let n = 1; n <= 11; n++) await f.asked(unit.id, `Question ${n}?`, `Answer ${n}.`);
+  const next = await f.offer(unit.id);
+  assert.deepEqual(
+    next.session.assignment.ownerAnswers?.map((item) => [item.question, item.answer]),
+    Array.from({ length: 10 }, (_, i) => [`Question ${i + 2}?`, `Answer ${i + 2}.`]),
+  );
+  const elsewhere = await f.offer(other.id);
+  assert.deepEqual(
+    elsewhere.session.assignment.ownerAnswers?.map((item) => item.question),
+    ['Which cohort elsewhere?'],
+  );
+});
+
+test('a reviewer reads its work item’s lineage in system.status: each stage’s visits and their runners', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const work = await f.offer(unit.id, 'runner-a');
+  await f.release(work.session);
+  // Another work item's thread is never in this one's lineage.
+  const other = await f.offer((await f.start()).id, 'runner-c');
+  await f.release(other.session);
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-b');
+  const reviewer = await f.sessions.authenticate(review.input.secret);
+  const { lineage } = (await f.app.ctx.tools.invoke('system.status', reviewer, {})).value as {
+    lineage: WorkerLineage;
+  };
+  assert.equal(lineage.instanceId, unit.id);
+  assert.deepEqual(
+    lineage.threads.map((thread) => [
+      thread.id,
+      thread.role,
+      thread.visits.map((visit) => [visit.sessionId, visit.status, visit.runnerId]),
+    ]),
+    [
+      [work.session.threadId, 'producer', [[work.session.id, 'released', 'runner-a']]],
+      [review.session.threadId, 'reviewer', [[review.session.id, 'active', 'runner-b']]],
+    ],
+  );
+});
+
 test('a question answered needs its work readable, and one on ended work keeps neither its card nor its thread', async (t) => {
   const f = await fixture(t);
   const leased = f.sessions as unknown as LeasedSessions;
@@ -1773,6 +1982,47 @@ test('a visit’s message check reads only its own project’s pending messages 
   };
   walk((plan as { Plan: Record<string, unknown> }[])[0]!.Plan);
   assert.ok(threads < 10, `the check read ${threads} thread rows`);
+});
+
+test('a visit that starts afresh lists what its key’s earlier visits acknowledged; one that resumes has read it', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const queue = async (offered: { input: { secret: string } }) =>
+    (
+      await f.app.ctx.tools.invoke(
+        'session.messages',
+        await f.sessions.authenticate(offered.input.secret),
+        {},
+      )
+    ).value as WorkerQueue;
+  const first = await f.offer(unit.id);
+  const sent = await f.sessions.messaging.message(f.owner, {
+    threadId: first.session.threadId,
+    body: 'Use the 2025 holdout.',
+    requestId: 'holdout',
+  });
+  await f.app.ctx.tools.invoke(
+    'session.message.ack',
+    await f.sessions.authenticate(first.input.secret),
+    { messageId: sent.id, reply: 'Switching to 2025.', requestId: 'holdout-ack' },
+  );
+  // What a visit acknowledges leaves its own queue, which only counts it.
+  assert.deepEqual(await queue(first), { messages: [], acknowledged: 1 });
+  await f.release(first.session);
+  // Nothing delivered, the key's next visit is a new agent, which has not read the correction.
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.continuity?.resume, undefined);
+  const fresh = await queue(second);
+  assert.deepEqual(
+    [fresh.messages.map((item) => [item.id, item.reply]), fresh.acknowledged, fresh.next],
+    [[[sent.id, 'Switching to 2025.']], 1, undefined],
+  );
+  // A visit that resumes the conversation it was read in leaves it out.
+  await f.release(second.session);
+  await f.keep(second.session, second.control);
+  const third = await f.offer(unit.id);
+  assert.equal(third.session.continuity?.resume?.sessionId, second.session.id);
+  assert.deepEqual(await queue(third), { messages: [], acknowledged: 1 });
 });
 
 test('the sweep reads a bounded page of waiting questions a pass, and every one of them in turn', async (t) => {

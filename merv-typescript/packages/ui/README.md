@@ -52,7 +52,7 @@ The server plugin owns no research or work records: research and foundation plug
 
 - `ctx.ui.register(row)`: a sidebar row with an id, group, order, path and view, and an optional live `status` and `read`, and for a row that lists a workflow's records, the owner's `states` words and the workflows its records `holds` (a lens opens on its wave's page); disposing it removes the row at once.
 - `ctx.ui.contribute(part)`: one owner's part of the Running page. An owner of work records declares their `workflows`, and a `work:` key's sidebar is asked only of the owner of its record's workflow.
-- Tools: `ui.shell`, `ui.home`, `ui.running` and `ui.running_panel`, which no agent conversation is offered, and `ui.read`, which returns a row's data when the row has no domain tool of its own.
+- Tools: `ui.shell`, `ui.home`, `ui.running` and `ui.running_panel`, which no agent conversation is offered, and `ui.read`, which returns a row's data when the row has no domain tool of its own. No leased worker is listed any of them: it reads the records with their own tools.
 - Route: `/ui`, public, serving the built bundle.
 - `@merv/ui/manifest`: the types of the remote-row manifest a plugin (Fleet) describes its row with and the browser renders.
 - Row: `settings`.

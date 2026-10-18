@@ -7,6 +7,7 @@ import type { Transaction } from '@merv/contracts';
 import { git } from './fixtures/code-store.js';
 import { codePublishFixture } from './fixtures/code-publish.js';
 import { baseResolutionFixture } from './fixtures/base-resolution.js';
+import { baseKey } from '../packages/code-work/src/base-plan.js';
 
 /**
  * Accepted work lands on Merv's main (founder decision 2026-10-11): in a hosted project with no
@@ -453,6 +454,153 @@ test('a conflict with main is one resolution task, and main takes its reviewed r
       .sort(),
     [resolved, f.d].sort(),
   );
+});
+
+/**
+ * A, C and E clash on f.txt, D touches g.txt, all accepted; main is A, and C's landing waits on
+ * its resolution, which work that needs all four builds on.
+ */
+async function siblings(t: TestContext) {
+  const f = await baseResolutionFixture(t, false, { mainLanding: true });
+  const landing = landingOf(f.code);
+  const project = f.admin.projectId;
+  const drive = async () => {
+    for (let round = 0; round < 8; round++) {
+      await landing.work(project);
+      await f.bases.work(project);
+    }
+  };
+  const main = async () => (await f.code.status(f.admin)).project!.main.oid;
+  const resolutions = () =>
+    f.state.read((sql) =>
+      sql.all<{ base_key: string; members_json: string; state: string }>(
+        'SELECT base_key,members_json,state FROM code_bases WHERE resolution_task_id IS NOT NULL ORDER BY base_key',
+      ),
+    );
+  f.source.git('checkout', '--detach', f.main);
+  const e = f.source.commit({ 'f.txt': 'E\n' });
+  f.source.git('push', f.bare, `${e}:refs/heads/e`);
+  const fifth = await f.input('E', e);
+  await drive();
+  assert.equal(await main(), f.a);
+  await f.waiter([f.left, f.right, f.extra, fifth]);
+  await drive();
+  await f.acceptResolution(await f.resolveCommit());
+  await drive();
+  return { ...f, landing, project, drive, main, resolutions, e, fifth };
+}
+
+test('work a dependent’s base already merges on top of main lands through it, so no conflict is resolved twice', async (t) => {
+  const f = await siblings(t);
+  // D and E land through that work's base: E's clash is one task, for the work and main alike.
+  const open = (await f.resolutions()).filter((task) => task.state === 'awaiting_resolution');
+  assert.equal((await f.resolutions()).length, 2);
+  assert.equal(open.length, 1);
+  const members = JSON.parse(open[0]!.members_json) as string[];
+  // One side of this step is a server merge, which only the project's repository holds.
+  const [left, right] = await f.state.read(async (sql) =>
+    f.bases.inputs(sql, f.project, (await f.record(members))!),
+  );
+  const resolved = git(f.bare, [
+    'commit-tree',
+    `${f.a}^{tree}`,
+    '-p',
+    left!,
+    '-p',
+    right!,
+    '-m',
+    'Resolve E',
+  ]);
+  await f.acceptResolution(resolved, members);
+  await f.drive();
+  assert.equal((await f.resolutions()).length, 2);
+  assert.equal(await f.main(), (await f.record([f.a, f.c, f.d, f.e]))!.result!.commit);
+});
+
+test('a joined landing whose base waits on an earlier step’s resolution says so', async (t) => {
+  const f = await baseResolutionFixture(t, false, { mainLanding: true });
+  const landing = landingOf(f.code);
+  // E clashes with A as C does. Work on A and E plans {A,E}, and work on A, C and E builds C
+  // on top of it, so C's landing waits on a conflict its own step does not have.
+  f.source.git('checkout', '--detach', f.main);
+  const e = f.source.commit({ 'f.txt': 'E\n' });
+  f.source.git('push', f.bare, `${e}:refs/heads/e`);
+  const fifth = await f.input('E', e);
+  await f.waiter([f.left, fifth]);
+  await f.waiter([f.left, f.right, fifth]);
+  for (let round = 0; round < 8; round++) {
+    await landing.work(f.admin.projectId);
+    await f.bases.work(f.admin.projectId);
+  }
+  const current = (await f.code.status(f.admin)).landing!.current!;
+  assert.equal(current.unitId, f.right.id);
+  assert.equal(current.baseKey, baseKey([f.a, f.c, e]));
+  assert.equal((await f.record([f.a, f.c, e]))!.state, 'waiting_inputs');
+  const step = (await f.record([f.a, e]))!;
+  assert.equal(step.state, 'awaiting_resolution');
+  assert.equal(current.state, 'awaiting_resolution');
+  assert.equal(current.resolutionTaskId, step.resolutionTaskId);
+});
+
+test('a landing never joins a base that carries work whose pull request was closed unmerged', async (t) => {
+  const f = await baseResolutionFixture(t, false, { mainLanding: true });
+  const landing = landingOf(f.code);
+  // Work on A and D plans {A,D}, and work on A, C and D builds C on top of it.
+  await f.waiter([f.left, f.extra]);
+  await f.waiter([f.left, f.right, f.extra]);
+  // D published to main, its pull request was closed unmerged, and GitHub was unlinked since.
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE code_units SET publishes_at='now',publication_id='closed-d' WHERE project_id=? AND unit_id=?",
+      f.admin.projectId,
+      f.extra.id,
+    );
+    await tx.run(
+      "INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json,pull_json,settled) VALUES ('closed-d',?,'{}','null',?,1)",
+      f.admin.projectId,
+      JSON.stringify({
+        number: 7,
+        url: 'https://example.invalid/7',
+        state: 'closed',
+        merged: false,
+      }),
+    );
+  });
+  for (let round = 0; round < 4; round++) {
+    await landing.work(f.admin.projectId);
+    await f.bases.work(f.admin.projectId);
+  }
+  const { project, landing: status } = await f.code.status(f.admin);
+  assert.equal(project!.main.oid, f.a);
+  assert.equal(status!.current?.unitId, f.right.id);
+  assert.equal(status!.current?.baseKey, baseKey([f.a, f.c]));
+  assert.ok(!status!.waiting.some((item) => item.unitId === f.extra.id));
+});
+
+test('a landing whose joined base is cancelled is offered again and lands on its own', async (t) => {
+  const f = await siblings(t);
+  t.mock.method(f.landing, 'soon', () => {});
+  const open = (await f.resolutions()).find((task) => task.state === 'awaiting_resolution')!;
+  const current = (await f.code.status(f.admin)).landing!.current!;
+  assert.notEqual(current.baseKey, baseKey([current.mainOid, current.headOid]));
+  await f.code.controlBase(f.admin, {
+    key: open.base_key,
+    action: 'cancel',
+    reason: 'The dependent work is replanned.',
+    requestId: 'cancel-joined',
+  });
+  await f.drive();
+  const status = (await f.code.status(f.admin)).landing!;
+  const superseded = status.landed.find((item) => item.unitId === current.unitId)!;
+  assert.equal(superseded.outcome, 'superseded');
+  assert.equal(superseded.reason, 'base_cancelled');
+  // The unit is not given up: it now lands on main through its own base.
+  const again = status.current!;
+  assert.equal(again.unitId, current.unitId);
+  assert.equal(again.baseKey, baseKey([again.mainOid, again.headOid]));
+  // Its resolution names main and the work main holds, never a nested merge title.
+  const { title } = await f.tasks.get(f.admin, again.resolutionTaskId!);
+  assert.ok(!/Accepted work|Merge ‘Merge/.test(title), title);
 });
 
 test('history says which work each commit came from, though Git carries no record names', async (t) => {

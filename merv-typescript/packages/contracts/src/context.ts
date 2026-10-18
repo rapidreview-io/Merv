@@ -40,6 +40,14 @@ export interface ContextItem {
 export interface ContextInput {
   items: ContextItem[];
 }
+/** A fence longer than any run of tildes in the body, so nothing inside can close it. */
+const fenceFor = (body: string) =>
+  '~'.repeat((body.match(/~+/g) ?? []).reduce((n, run) => Math.max(n, run.length + 1), 3));
+/** An item Context Builder embeds: a `###` heading over its fenced body. */
+export const contextBlock = (label: string, body: string, fence = fenceFor(body)) =>
+  `\n### ${label}\n${fence}\n${body}\n${fence}\n`;
+/** Every contextBlock in a prompt: its label, fence and body. */
+export const CONTEXT_BLOCK = /\n### ([^\n]*)\n(~{3,})\n([\s\S]*?)\n\2\n/g;
 export interface ContextBuild {
   subject: { id: string; revision: number; claimId?: string };
   inputs: Record<string, ContextInput>;

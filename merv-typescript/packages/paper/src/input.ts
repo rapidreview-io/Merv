@@ -17,6 +17,18 @@ export const patchSchema = z
             id,
             title: z.string().trim().min(1).max(300).refine(visible).optional(),
             content: z.string().max(100_000).optional(),
+            edits: z
+              .array(
+                z
+                  .object({
+                    find: z.string().min(1).max(100_000),
+                    replace: z.string().max(100_000),
+                  })
+                  .strict(),
+              )
+              .min(1)
+              .max(50)
+              .optional(),
             afterId: id.nullable().optional(),
             remove: z.boolean().optional(),
           })

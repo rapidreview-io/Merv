@@ -13,6 +13,7 @@ import type {
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
 import { HOLD_PROVIDER, isoNow, targetKey } from './common.js';
+import { STOPPED_WITHOUT_HANDOFF } from './rules.js';
 import { leaseLiveness } from './liveness.js';
 import type { DispatchContext, HoldRow, SessionDispatch } from './dispatch.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
@@ -346,7 +347,7 @@ async function attention(
       why: row.last_message,
       next: row.held_at
         ? 'Fix the cause, then an admin calls session.release_hold; or end or revise the record, because a hold names one revision. The hold stops automatic offers only: an offer made by hand still runs, and its failure counts.'
-        : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts.`,
+        : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts${row.last_message === STOPPED_WITHOUT_HANDOFF ? ', or as soon as its agent stops again without a handoff' : ''}.`,
     });
   }
   // Work its owner refuses to lease never becomes a candidate, so nothing above or below can

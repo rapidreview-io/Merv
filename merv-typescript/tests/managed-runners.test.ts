@@ -36,6 +36,7 @@ async function fixture(
     codeWorkspace?: boolean;
     reviewWorkspace?: 'ephemeral' | 'retained';
     clock?: () => number;
+    stepSeconds?: number;
   } = {},
 ) {
   const env = `MERV_MANAGED_TEST_${randomUUID().replaceAll('-', '')}`;
@@ -251,6 +252,7 @@ async function fixture(
     huggingFace = true,
     relayFault = false,
     modelBudget: ManagedModelWait | null = null;
+  const refused = new Set<string>();
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
@@ -259,6 +261,7 @@ async function fixture(
     huggingFace: () => huggingFace,
     modelBudget: async () => modelBudget,
     relayFault: async () => relayFault,
+    modelBudgetRefused: async (_binding, visit) => refused.has(visit.sessionId),
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -285,7 +288,7 @@ async function fixture(
   const input = {
     allocationId,
     workInstanceId: workTarget.id,
-    stepSeconds: 900,
+    stepSeconds: options.stepSeconds ?? 900,
     epoch: 1,
     source: sourceIdentity,
     runtimeProfileId: 'codex-profile',
@@ -343,6 +346,8 @@ async function fixture(
     modelBudget: (value: ManagedModelWait | null) => {
       modelBudget = value;
     },
+    /** Fleet's relay refused one of this session's own calls at its person's daily tokens. */
+    refuse: (sessionId: string) => void refused.add(sessionId),
     workflows,
     retire: () => {
       current = false;
@@ -769,7 +774,7 @@ test('a validator Fleet withdraws while it answers is the one that admits, never
   assert.equal((await f.sessions.get(f.source, bound.id)).status, 'offered');
 });
 
-test('a visit the model budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {
+test('a visit the worker token budget cut off counts against nothing; the work waits for the reset, said in Needs you', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -783,12 +788,14 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     related: [{ kind: 'settings', id: 'session', label: 'Fleet tokens a day' }],
   };
   const blockers = () => f.workflows.blockers(f.owner, f.workTarget.id);
-  // Codex exits 1 the moment the relay refuses its call (403 fleet_model_ceiling): more often
-  // than the launches a hold allows, and none of them is the work's failure.
+  // Codex exits 1 the moment the relay refuses its call (403 worker_token_budget_exhausted):
+  // more often than the launches a hold allows, and none of them is the work's failure.
   for (let visit = 0; visit < 6; visit++) {
     f.modelBudget(null);
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session;
     assert.ok(bound, `visit ${visit} is offered`);
+    // The refusal is said of this visit, and holds its person's day.
+    f.refuse(bound.id);
     f.modelBudget(wait);
     await f.sessions.release(f.caller, {
       sessionId: bound.id,
@@ -797,7 +804,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
       reason: 'local_process_exit_code_1',
     });
     const closed = await f.sessions.get(f.source, bound.id);
-    assert.equal(closed.outcome, 'budget_exhausted');
+    assert.equal(closed.outcome, 'worker_token_budget_exhausted');
     assert.equal(closed.closeReason, 'local_process_exit_code_1');
   }
   const hold = await f.state.read((sql) =>
@@ -809,7 +816,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   assert.equal(Number(hold?.attempts ?? 0), 0, 'a spent budget is no failed launch');
   const [waiting, ...others] = await blockers();
   assert.deepEqual(others, []);
-  assert.equal(waiting?.code, 'model_budget_exhausted');
+  assert.equal(waiting?.code, 'worker_token_budget_exhausted');
   assert.deepEqual(
     [waiting?.message, waiting?.next, waiting?.whose, waiting?.related],
     [wait.message, wait.next, wait.whose, wait.related],
@@ -817,7 +824,7 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
   // The machine takes no new work while the person's day stays spent.
   assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,
-    reason: 'model_budget_exhausted',
+    reason: 'worker_token_budget_exhausted',
   });
   assert.equal((await blockers()).length, 1);
   // The reset (or a raised limit): the same work is offered again, and the wait is withdrawn.
@@ -832,6 +839,56 @@ test('a visit the model budget cut off counts against nothing; the work waits fo
     outcome: 'crash_loop',
   });
   assert.equal((await f.sessions.get(f.source, resumed!.id)).outcome, 'crash_loop');
+});
+
+test('only a visit the relay refused closes as worker_token_budget_exhausted: another visit’s crash the same day keeps host_failed', async (t) => {
+  // Owner 2026-10-18: a refusal holds its person's day until the reset, and a close read that
+  // held day, so every later crash of their work that day was hidden as a spent budget.
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const wait = {
+    resetsAt: '2099-01-02T00:00:00.000Z',
+    message: 'Your daily Fleet model tokens are used up; this work resumes at 2099-01-02 00:00 UTC',
+    next: 'Raise your Fleet daily token limit in Settings, or wait until 2099-01-02 00:00 UTC',
+  };
+  const attempts = async () =>
+    Number(
+      (
+        await f.state.read((sql) =>
+          sql.get<{ attempts: number }>(
+            'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+            f.workTarget.id,
+          ),
+        )
+      )?.attempts ?? 0,
+    );
+  const crash = async (sessionId: string) => {
+    await f.sessions.release(f.caller, {
+      sessionId,
+      runnerId: f.runnerId,
+      outcome: 'host_failed',
+      reason: 'local_process_exit_code_1',
+    });
+    return (await f.sessions.get(f.source, sessionId)).outcome;
+  };
+  // A visit live while another visit of the same person is refused, which holds their day.
+  const crashed = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  f.refuse('session_elsewhere');
+  f.modelBudget(wait);
+  assert.equal(await crash(crashed.id), 'host_failed');
+  assert.equal(await attempts(), 1, 'its crash is its own, and counts');
+  // A changed limit lifts the hold; a visit the relay refuses later that day is the budget's.
+  f.modelBudget(null);
+  now += 31_000;
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  const refused = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
+  assert.ok(refused);
+  f.refuse(refused.id);
+  f.modelBudget(wait);
+  assert.equal(await crash(refused.id), 'worker_token_budget_exhausted');
+  assert.equal(await attempts(), 1, 'a spent budget is no failed launch');
 });
 
 test('a visit the model relay failed counts against nothing and is offered again after the backoff', async (t) => {
@@ -968,6 +1025,310 @@ test('the sweep ends a bound session once its machine is no longer current', asy
   await f.sessions.sweep();
   assert.equal((await bound())?.status, 'expired');
   assert.equal((await bound())?.outcome, 'host_failed');
+});
+
+/**
+ * A visit its agent took up on a rented machine whose step is half an hour, on a checkout its
+ * runner owes the final capture of; the runner was last heard as it leased.
+ */
+async function takenUp(t: TestContext, clock: () => number) {
+  const f = await fixture(t, { reviewWorkspace: 'retained', clock, stepSeconds: 1800 });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const request = f.lease();
+  const leased = await f.sessions.dispatch.lease(f.caller, request);
+  assert.ok(leased.session, leased.reason);
+  const control = { sessionId: leased.session.id, runnerId: f.runnerId };
+  await f.sessions.attach(f.caller, {
+    ...control,
+    hostRef: 'launch-managed',
+    workspace: {
+      repositoryId: 'repository-managed',
+      workspaceId: 'workspace-managed',
+      mode: 'persistent',
+      branch: 'merv/review/managed',
+      baseOid: 'a'.repeat(40),
+      headOid: 'a'.repeat(40),
+      stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+    },
+  });
+  await f.sessions.authenticate(request.secret);
+  const attempts = async () =>
+    Number(
+      (
+        await f.state.read((sql) =>
+          sql.get<{ attempts: number }>(
+            'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+            f.workTarget.id,
+          ),
+        )
+      )?.attempts ?? 0,
+    );
+  const inspect = async () => (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
+  return { ...f, session: leased.session, control, attempts, inspect };
+}
+const closeOf = (session: { status: string; closeReason: string | null; outcome?: unknown }) => [
+  session.status,
+  session.closeReason,
+  session.outcome,
+];
+/** As though the machine's runner had last been heard `ago` milliseconds back. */
+const heardAgo = (f: Awaited<ReturnType<typeof fixture>>, now: number, ago: number) =>
+  f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE session_runners SET last_seen_at=? WHERE runner_id=?',
+      new Date(now - ago).toISOString(),
+      f.runnerId,
+    ),
+  );
+
+test('a runner silent past fifteen minutes on a machine still current loses its visit, counted, and Fleet waits for no capture', async (t) => {
+  // Production transcripts, 2026-10-18: a runner that died on a live container left its visit
+  // running to its hard deadline, then its host waiting for a capture that never came, and the
+  // close counted against nothing.
+  let now = Date.now();
+  const f = await takenUp(t, () => now);
+  const read = () => f.sessions.get(f.source, f.session.id);
+  // A runner heard lately keeps its visit, however long the visit has run.
+  now += 10 * 60_000;
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  now += 15 * 60_000;
+  await f.sessions.sweep();
+  assert.equal((await read()).status, 'active', 'silent fifteen minutes, not yet past them');
+  now += 1;
+  await f.sessions.sweep();
+  assert.deepEqual(closeOf(await read()), ['expired', 'runner_lost', 'host_failed']);
+  assert.equal(await f.attempts(), 1, 'a lost runner is a failed attempt');
+  // No runner is left to capture the checkout, so Fleet lets the machine go after the
+  // acknowledgement's grace instead of waiting half an hour for it.
+  const inspected = await f.inspect();
+  assert.deepEqual(
+    [inspected?.status, inspected?.releaseAcknowledged, inspected?.capturePending],
+    ['expired', false, false],
+  );
+});
+
+test('a runner that was only slow is still heard after its visit was lost: its release, transcript and conversation land', async (t) => {
+  let now = Date.now();
+  const f = await takenUp(t, () => now);
+  const stored = new Map<string, number>();
+  f.sessions.transcripts.blobs = f.sessions.threads.blobs = {
+    put: async () => assert.fail('no bytes pass through Main'),
+    get: async () => assert.fail('nothing reads them back'),
+    upload: async (_namespace, hash) => ({
+      url: `https://store.test/${hash}`,
+      headers: {},
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    }),
+    stored: async (namespace, hash) => stored.get(`${namespace}/${hash}`) ?? null,
+  };
+  now += 15 * 60_000 + 1;
+  await f.sessions.sweep();
+  assert.deepEqual(closeOf(await f.sessions.get(f.source, f.session.id)), [
+    'expired',
+    'runner_lost',
+    'host_failed',
+  ]);
+  const host = { ...f.control, hostRef: 'launch-managed' };
+  const transcript = { ...host, sha256: 'a'.repeat(64), size: 10, logBytes: 10, truncated: false };
+  const conversation = {
+    ...host,
+    harness: 'codex' as const,
+    conversationId: '0199a0b2-1111-7222-8333-944445555666',
+    sha256: 'b'.repeat(64),
+    size: 20,
+  };
+  await f.sessions.transcript(f.caller, transcript);
+  await f.sessions.conversation(f.caller, conversation);
+  const released = await f.sessions.release(f.caller, f.control);
+  assert.deepEqual(closeOf(released), ['expired', 'runner_lost', 'host_failed']);
+  const owed = await f.inspect();
+  assert.deepEqual([owed?.releaseAcknowledged, owed?.capturePending], [true, true]);
+  // Each is delivered as ever: handed its PUT, then stamped once the store holds it.
+  assert.ok((await f.sessions.transcript(f.caller, { ...transcript, deliver: true })).upload);
+  assert.ok((await f.sessions.conversation(f.caller, { ...conversation, deliver: true })).upload);
+  stored.set(`transcripts-${f.session.projectId}/${transcript.sha256}`, transcript.size);
+  stored.set(`conversations-${f.session.projectId}/${conversation.sha256}`, conversation.size);
+  const delivered = { ...transcript, deliver: true as const };
+  assert.ok((await f.sessions.transcript(f.caller, delivered)).uploadedAt);
+  const kept = { ...conversation, deliver: true as const };
+  assert.ok((await f.sessions.conversation(f.caller, kept)).uploadedAt);
+  assert.equal((await f.inspect())?.capturePending, false);
+});
+
+test('right after Sessions starts, and once failing sweeps recover, a silent runner is lost only fifteen minutes later', async (t) => {
+  await t.test('a restart', async (subtest) => {
+    let now = Date.now();
+    const f = await takenUp(subtest, () => now);
+    now += 10 * 60_000;
+    // Until Fleet registers again its runners cannot be heard, so their silence starts over.
+    const sessions = await f.restart();
+    now += 15 * 60_000;
+    await sessions.sweep();
+    assert.equal((await sessions.get(f.source, f.session.id)).status, 'active');
+    now += 1;
+    await sessions.sweep();
+    assert.deepEqual(closeOf(await sessions.get(f.source, f.session.id)), [
+      'expired',
+      'runner_lost',
+      'host_failed',
+    ]);
+  });
+  await t.test('a database outage', async (subtest) => {
+    let now = Date.now();
+    const f = await takenUp(subtest, () => now);
+    now += 10 * 60_000;
+    const outage = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+    subtest.mock.method(f.state, 'snapshot', async () => await Promise.reject(outage), {
+      times: 2,
+    });
+    await assert.rejects(f.sessions.sweep(), outage);
+    now += 60_000;
+    await assert.rejects(f.sessions.sweep(), outage);
+    // The sweeps recover; what runners sent meanwhile may never have been recorded.
+    now += 60_000;
+    await f.sessions.sweep();
+    now += 15 * 60_000;
+    await f.sessions.sweep();
+    assert.equal((await f.sessions.get(f.source, f.session.id)).status, 'active');
+    now += 1;
+    await f.sessions.sweep();
+    assert.deepEqual(closeOf(await f.sessions.get(f.source, f.session.id)), [
+      'expired',
+      'runner_lost',
+      'host_failed',
+    ]);
+  });
+  await t.test('a pass whose read began before another failed', async (subtest) => {
+    let now = Date.now();
+    const f = await takenUp(subtest, () => now);
+    // The runner's presence went unrecorded for twenty minutes, the database away.
+    now += 20 * 60_000;
+    const outage = new Error('connect ECONNREFUSED 127.0.0.1:5432');
+    const snapshot = f.state.snapshot.bind(f.state);
+    let fail!: () => void, recover!: () => void;
+    const failed = new Promise<void>((resolve) => (fail = resolve));
+    const recovered = new Promise<void>((resolve) => (recover = resolve));
+    let calls = 0;
+    subtest.mock.method(f.state, 'snapshot', (async (fn: () => Promise<unknown>) => {
+      calls += 1;
+      if (calls === 1) return await failed.then(() => Promise.reject(outage));
+      if (calls === 2) await recovered;
+      return await snapshot(fn);
+    }) as typeof f.state.snapshot);
+    // One pass's read fails while another's, begun before that, still waits for the database.
+    const first = f.sessions.sweep();
+    const second = f.sessions.sweep();
+    fail();
+    await assert.rejects(first, outage);
+    recover();
+    await second;
+    // Its silence counts from that recovery, as it does after any failing pass.
+    assert.equal((await f.sessions.get(f.source, f.session.id)).status, 'active');
+  });
+});
+
+test('a silent runner closes no offer its agent never took up, and no visit whose handoff landed', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now, stepSeconds: 1800 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  now += 16 * 60_000;
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  const request = f.lease();
+  const { session } = await f.sessions.dispatch.lease(f.caller, request);
+  assert.ok(session);
+  // As though its runner had been silent since Fleet registered, sixteen minutes ago.
+  const silent = () => heardAgo(f, now, 16 * 60_000);
+  const stored = async () =>
+    (await f.state.read((sql) =>
+      sql.get<{ status: string }>('SELECT status FROM worker_sessions WHERE id=?', session.id),
+    ))!.status;
+  await silent();
+  await f.sessions.sweep();
+  assert.equal(await stored(), 'offered', 'an offer is left to its own five minutes');
+  // Its agent hands off and the runner says nothing more: the handoff, still to be recorded,
+  // is what closes the visit, and it counts against nothing.
+  const worker = await f.sessions.authenticate(request.secret);
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(prepared, (caller) =>
+    f.state.transaction((tx) =>
+      f.handle.transition(
+        caller,
+        {
+          instanceId: session.instanceId,
+          expectedRevision: session.expectedRevision,
+          action: 'finish',
+          requestId: 'finish',
+        },
+        tx,
+      ),
+    ),
+  );
+  await silent();
+  assert.equal(await stored(), 'active');
+  await f.sessions.sweep();
+  assert.deepEqual(closeOf(await f.sessions.get(f.source, session.id)), [
+    'released',
+    'handoff',
+    'completed',
+  ]);
+});
+
+test('a silent runner closes no inquiry visit: a question is left to its own ten minutes', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now, stepSeconds: 1800 });
+  const delivered = new Set<string>();
+  f.sessions.threads.blobs = {
+    put: async () => assert.fail('no bytes pass through Main'),
+    get: async () => assert.fail('nothing reads the conversation back'),
+    upload: async (_namespace, hash) => ({
+      url: `https://store.test/${hash}`,
+      headers: {},
+      expiresAt: new Date(now + 3_600_000).toISOString(),
+    }),
+    stored: async (namespace, hash) => (delivered.has(`${namespace}/${hash}`) ? 20 : null),
+  };
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  now += 16 * 60_000;
+  // Its image runs questions to its work's agents too.
+  const present = {
+    ...f.heartbeat(1),
+    capabilities: [...f.heartbeat(1).capabilities, 'inquiry.1'],
+  };
+  await f.sessions.dispatch.heartbeatRunner(f.caller, present);
+  // The work's visit keeps its conversation, then ends.
+  const work = f.lease();
+  const { session } = await f.sessions.dispatch.lease(f.caller, work);
+  assert.ok(session);
+  const control = { sessionId: session.id, runnerId: f.runnerId };
+  await f.sessions.attach(f.caller, { ...control, hostRef: 'launch-managed' });
+  await f.sessions.authenticate(work.secret);
+  const conversation = {
+    ...control,
+    hostRef: 'launch-managed',
+    harness: 'codex' as const,
+    conversationId: '0199a0b2-1111-7222-8333-944445555666',
+    sha256: 'c'.repeat(64),
+    size: 20,
+  };
+  await f.sessions.conversation(f.caller, conversation);
+  delivered.add(`conversations-${session.projectId}/${conversation.sha256}`);
+  await f.sessions.conversation(f.caller, { ...conversation, deliver: true });
+  await f.sessions.release(f.caller, control);
+  await f.sessions.inquiries.ask(f.owner, {
+    threadId: session.threadId,
+    body: 'Which seed did you use?',
+    requestId: randomUUID(),
+  });
+  const question = f.lease();
+  const visit = (await f.sessions.dispatch.lease(f.caller, question)).session;
+  assert.ok(visit);
+  assert.equal(visit.kind, 'inquiry');
+  await f.sessions.authenticate(question.secret);
+  // As though its runner had been silent since Fleet registered, sixteen minutes ago.
+  await heardAgo(f, now, 16 * 60_000);
+  await f.sessions.sweep();
+  assert.equal((await f.sessions.get(f.source, visit.id)).status, 'active');
 });
 
 test('managed Code v2 runner attaches its bound checkout using its verified source capability', async (t) => {

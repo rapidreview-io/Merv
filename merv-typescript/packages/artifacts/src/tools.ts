@@ -1,11 +1,44 @@
 import type { Context } from 'cordis';
 import type { ToolAct } from '@merv/api/types';
-import { MervError, MAX_ARTIFACT_BYTES, MAX_OBJECT_BYTES, type Caller } from '@merv/contracts';
+import {
+  check,
+  isAgentCaller,
+  MervError,
+  MAX_OBJECT_BYTES,
+  type Artifact,
+  type Caller,
+} from '@merv/contracts';
+import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { z } from 'zod';
+import { MAX_STORED_READ_BYTES } from './content.js';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
 const workerInlineBytes = 64_000;
 const workerRangeCharacters = 8_192;
+/** A collection's record without its member list, which artifact.get pages: an answer about
+ * one member, or a listing, should not repeat every member of it. */
+const brief = (artifact: Artifact) => {
+  if (!artifact.files) return artifact;
+  const { files, ...rest } = artifact;
+  return { ...rest, fileCount: files.length };
+};
+/** The members artifact.get gives an agent that names no limit: a capture can hold thousands. */
+const agentMembers = 100;
+/** One page of a collection's members: those under `prefix`, from `offset`, at most `limit`. */
+function membersPage(
+  files: ArtifactFile[],
+  { prefix, offset = 0, limit }: { prefix?: string; offset?: number; limit?: number },
+) {
+  const matching =
+    prefix === undefined ? files : files.filter((file) => file.name.startsWith(prefix));
+  const end = limit === undefined ? matching.length : Math.min(matching.length, offset + limit);
+  return {
+    files: matching.slice(offset, end),
+    fileCount: files.length,
+    ...(prefix === undefined ? {} : { matchCount: matching.length }),
+    ...(end < matching.length ? { nextOffset: end } : {}),
+  };
+}
 /** Service errors name no tools; the tool adds how to go on after a refusal with this code. */
 async function hinted<T>(
   run: () => Promise<T>,
@@ -52,13 +85,14 @@ export const artifactToolsPlugin = {
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
+      'Store a completed immutable document or file given inline (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. For a file already on disk, do not cat or base64 it into content: artifact.upload_begin stores it from disk with one curl PUT (any size up to 512 MiB). Returns an artifact ID other records can reference. Pass a requestId so a retry after an uncertain result (a timeout, an HTTP 502) is safe: the same call returns the artifact already stored.',
       z
         .object({
           title: z.string().min(1).max(300),
           content: z.string().min(1).max(2_700_000),
           mediaType: z.string().optional(),
           encoding: z.enum(['utf8', 'base64']).optional(),
+          requestId: z.string().min(1).max(128).optional(),
         })
         .strict(),
       async (c, i) => await ctx.artifacts.create(c, i),
@@ -108,11 +142,24 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.get',
-      'Read immutable artifact metadata.',
-      z.object({ artifactId: z.string().min(1) }).strict(),
+      'Read immutable artifact metadata. For a collection, files lists its members (name, size, SHA-256) in order: limit of them (default 100 for an agent) from offset; fileCount is the total and nextOffset is set when more follow. prefix keeps names starting with it, such as "run-a/"; matchCount counts them.',
+      z
+        .object({
+          artifactId: z.string().min(1),
+          prefix: z.string().min(1).max(4096).optional(),
+          offset: z.number().int().min(0).optional(),
+          limit: z.number().int().min(1).max(1000).optional(),
+        })
+        .strict(),
       async (c, i) => {
         const artifact = await ctx.artifacts.get(c, i.artifactId);
-        return { ...artifact, downloadAvailable: ctx.artifacts.downloadAvailable };
+        // An agent's context holds the whole answer; a person's Files page shows every member.
+        const limit = i.limit ?? (isAgentCaller(c) ? agentMembers : undefined);
+        return {
+          ...artifact,
+          ...(artifact.files ? membersPage(artifact.files, { ...i, limit }) : {}),
+          downloadAvailable: ctx.artifacts.downloadAvailable,
+        };
       },
       true,
     );
@@ -126,58 +173,92 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private URL; for a collection, optional fileName selects one member by its exact relative path and signs a fresh provider link. Without fileName, download retrieves the manifest.',
+      'Read immutable artifact content: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from the returned offset + content.length. A file of up to 2 MB reads whole; a larger one, up to 16 MiB, only by a range with a length. Leased workers read files over 64,000 bytes only by a range with a length; a length over 8192 characters is cut to 8192. For a collection, fileName reads one member the same way, by its exact path from the collection’s files (artifact.get). With mode download, get private URLs to fetch with curl instead: of the file, of one collection member by fileName, or of up to 100 members at once by fileNames; for a collection without either, of its manifest.',
       z
         .object({
           artifactId: z.string().min(1),
           mode: z.literal('download').optional(),
           fileName: z.string().min(1).max(4096).optional(),
+          fileNames: z.array(z.string().min(1).max(4096)).min(1).max(100).optional(),
           offset: z.number().int().min(0).optional(),
           length: z.number().int().min(1).optional(),
         })
         .strict(),
       async (c, i) => {
-        if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId, i.fileName);
-        if (i.fileName !== undefined)
-          throw new MervError('invalid_artifact', 'fileName requires mode download', 400);
-        // Only a worker's unbounded or wide read can be refused, so only it reads the size first.
+        if (i.mode === 'download') {
+          if (i.fileNames !== undefined) {
+            check(
+              i.fileName === undefined,
+              'invalid_artifact',
+              'Give fileName or fileNames, not both',
+            );
+            const { artifact, downloads } = await ctx.artifacts.downloadFiles(
+              c,
+              i.artifactId,
+              i.fileNames,
+            );
+            return { artifact: brief(artifact), downloads };
+          }
+          const { artifact, download } = await ctx.artifacts.download(c, i.artifactId, i.fileName);
+          return { artifact: brief(artifact), download };
+        }
+        check(
+          i.fileNames === undefined,
+          'invalid_artifact',
+          'fileNames requires mode download; read one member inline with fileName',
+        );
+        const range = { fileName: i.fileName, offset: i.offset, length: i.length };
+        // Only a worker's unbounded or wide read is refused or cut, so only it reads the size first.
         if (c.session && (i.length === undefined || i.length > workerRangeCharacters)) {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
-          if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {
-            const downloadAvailable = ctx.artifacts.downloadAvailable;
-            throw new MervError(
-              'artifact_read_requires_range',
-              `Artifact is ${artifact.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
-              413,
-              {
-                artifactId: artifact.id,
-                size: artifact.size,
-                sha256: artifact.hash,
-                downloadAvailable,
-                maxRangeCharacters: workerRangeCharacters,
-              },
-            );
+          const file =
+            i.fileName === undefined
+              ? { size: artifact.size, hash: artifact.hash }
+              : artifact.files?.find((member) => member.name === i.fileName);
+          // A member that is not there, or a file too large for any range, is the read's to refuse.
+          if (file && file.size > workerInlineBytes && file.size <= MAX_STORED_READ_BYTES) {
+            if (i.length === undefined) {
+              const downloadAvailable = i.fileName !== undefined || ctx.artifacts.downloadAvailable;
+              throw new MervError(
+                'artifact_read_requires_range',
+                `${i.fileName === undefined ? 'Artifact' : 'Collection file'} is ${file.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
+                413,
+                {
+                  artifactId: artifact.id,
+                  ...(i.fileName === undefined ? {} : { fileName: i.fileName }),
+                  size: file.size,
+                  sha256: file.hash,
+                  downloadAvailable,
+                  maxRangeCharacters: workerRangeCharacters,
+                },
+              );
+            }
+            range.length = workerRangeCharacters;
           }
         }
-        return await hinted(
-          () => ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
+        const read = await hinted(
+          () => ctx.artifacts.readStored(c, i.artifactId, range),
           'artifact_size',
           async () =>
-            ctx.artifacts.downloadAvailable ? 'use artifact.read with mode download' : undefined,
+            i.fileName !== undefined || ctx.artifacts.downloadAvailable
+              ? 'artifact.read with mode download fetches it whole'
+              : undefined,
         );
+        return { ...read, artifact: brief(read.artifact) };
       },
       true,
       // In a Pi conversation a signed URL is shown only to the person; a leased worker may
       // request its own URL to download and inspect an artifact in its workspace.
       (i) => (i.mode === 'download' ? 'secret' : undefined),
-      // Open world: download's storage I/O (signing, the download mirror) waits holding
-      // no reader snapshot, since artifacts runs each database read in a short transaction.
+      // Open world: download's storage I/O (signing, the download mirror) and a stored read's
+      // fetch wait holding no reader snapshot, since artifacts runs each database read in a
+      // short transaction.
       true,
       { title: ({ mode }) => (mode === 'download' ? 'Download file' : 'Read file'), says: 'mode' },
     );
     register(
       'artifact.list',
-      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID.',
+      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID. For an agent a collection shows fileCount instead of its files; artifact.get lists them a page at a time.',
       z
         .object({
           before: z.string().min(1).optional(),
@@ -186,7 +267,8 @@ export const artifactToolsPlugin = {
         .strict(),
       async (c, i) =>
         (await ctx.artifacts.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
-          ...artifact,
+          // An agent's context holds every row; a person's Files page shows a collection's members.
+          ...(isAgentCaller(c) ? brief(artifact) : artifact),
           downloadAvailable: ctx.artifacts.downloadAvailable,
         })),
       true,

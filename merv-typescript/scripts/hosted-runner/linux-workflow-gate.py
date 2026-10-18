@@ -186,10 +186,13 @@ patch='*** Begin Patch\n*** Update File: gate-native-patch\n@@\n-first\n+second\
 updated=subprocess.run(['apply_patch'],input=patch,text=True,capture_output=True)
 assert updated.returncode==0 and Path('gate-native-patch').read_text()=='second\n'
 Path('gate-native-patch').unlink()
-patch='*** Begin Patch\n*** Add File: /tmp/merv-gate-outside-patch\n+outside\n*** End Patch\n'
+patch='*** Begin Patch\n*** Add File: /home/assignment/merv-gate-outside-patch\n+outside\n*** End Patch\n'
 outside=subprocess.run(['apply_patch'],input=patch,text=True,capture_output=True)
 print('native-patch-workspace-ok')
-print('native-patch-outside-blocked' if outside.returncode!=0 and not Path('/tmp/merv-gate-outside-patch').exists() else 'native-patch-outside-allowed')
+print('native-patch-outside-blocked' if outside.returncode!=0 and not Path('/home/assignment/merv-gate-outside-patch').exists() else 'native-patch-outside-allowed')
+# The machine's /tmp is the step's scratch, and caches the home would hold go under it.
+import tempfile
+print('tmp-writable' if tempfile.gettempdir()=='/tmp' and os.environ.get('XDG_CACHE_HOME')=='/tmp/cache' else 'tmp-unwritable')
 """
 
 
@@ -462,13 +465,14 @@ work.mkdir(mode=0o700)
 # The hosted profile's own settings (runner/src/profiles.ts), but for Merv's MCP server.
 settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_search="disabled"', 'features.shell_tool=true',
             'features.multi_agent=false', 'agents.enabled=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
-            'shell_environment_policy.inherit="all"', 'shell_environment_policy.include_only=["PATH","HOME","USER","TMPDIR","LANG","HF_TOKEN","HF_ENDPOINT"]', 'shell_environment_policy.ignore_default_excludes=true',
+            'shell_environment_policy.inherit="all"', 'shell_environment_policy.include_only=["PATH","HOME","USER","TMPDIR","LANG","XDG_CACHE_HOME","UV_CACHE_DIR","HF_TOKEN","HF_ENDPOINT"]', 'shell_environment_policy.ignore_default_excludes=true',
             'shell_environment_policy.experimental_use_profile=false',
             'shell_environment_policy.set={"PATH"="/usr/bin:/bin","HOME"="/home/assignment",'
-            '"USER"="assignment","TMPDIR"="/tmp","LANG"="C.UTF-8"}',
+            '"USER"="assignment","TMPDIR"="/tmp","LANG"="C.UTF-8","XDG_CACHE_HOME"="/tmp/cache",'
+            '"UV_CACHE_DIR"="%s/.uv-cache"}' % work,
             'sandbox_workspace_write.writable_roots=[]',
             'sandbox_workspace_write.exclude_tmpdir_env_var=true',
-            'sandbox_workspace_write.exclude_slash_tmp=true',
+            'sandbox_workspace_write.exclude_slash_tmp=false',
             'sandbox_workspace_write.network_access=true', 'model_provider="merv"',
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
@@ -503,8 +507,9 @@ def checked_launch():
     assert 'uid 12001 probe-done' in probe, probe
     assert 'native-patch-workspace-ok' in probe, probe
     assert not sandboxed or ('native-patch-outside-blocked' in probe and
-                             not Path('/tmp/merv-gate-outside-patch').exists()), probe
-    Path('/tmp/merv-gate-outside-patch').unlink(missing_ok=True)
+                             not Path('/home/assignment/merv-gate-outside-patch').exists()), probe
+    Path('/home/assignment/merv-gate-outside-patch').unlink(missing_ok=True)
+    assert 'tmp-writable' in probe, probe
     assert not sandboxed or ('readable ' not in probe and holders), probe
     assert 'network-on' in probe and 'hf-token-inherited' in probe, probe
     assert hf_token not in json.dumps(settings)
@@ -560,11 +565,11 @@ while True: time.sleep(1)
 
 # Positive control: the official helper permits this exact path for the assignment UID
 # outside Codex. A denied tool-shell write below therefore proves the sandbox boundary.
-outside_path = Path('/tmp/merv-gate-outside-patch')
+outside_path = Path('/home/assignment/merv-gate-outside-patch')
 assert not outside_path.exists()
 control = subprocess.run(
     ['/usr/bin/apply_patch'],
-    input=b'*** Begin Patch\n*** Add File: /tmp/merv-gate-outside-patch\n+control\n*** End Patch\n',
+    input=b'*** Begin Patch\n*** Add File: /home/assignment/merv-gate-outside-patch\n+control\n*** End Patch\n',
     capture_output=True, user=12001, group=12001, extra_groups=[], cwd=work,
     env={'PATH': '/usr/bin:/bin'}, timeout=10,
 )

@@ -53,7 +53,10 @@ import type {
   ThreadView,
   UsageRollup,
   UsageTotals,
+  WorkerQueue,
+  WorkerLineage,
   LeaseLiveness,
+  OwnerAnswer,
   SessionPlatform,
   SessionRole,
   SessionWorkspaceRecord,
@@ -87,12 +90,15 @@ export type {
   ThreadMessages,
   InquiryStatus,
   MessageInquiry,
+  OwnerAnswer,
   ThreadInquiry,
   ThreadQuestion,
   ThreadView,
   UsageRollup,
   UsageTotals,
   VisitView,
+  WorkerLineage,
+  WorkerQueue,
 } from './models.js';
 export type {
   ManagedBoundSession,
@@ -126,7 +132,8 @@ interface SessionVisit {
   outcome?: SessionOutcome | null;
   /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
   deferral?: SessionDeferral | null;
-  assignment: WorkflowAssignment;
+  /** The work's assignment as Workflows gave it, with what its owner answered on it so far. */
+  assignment: WorkflowAssignment & { ownerAnswers?: OwnerAnswer[] };
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;
@@ -176,6 +183,11 @@ export interface SessionResume {
   conversationId: string;
   sha256: string;
   size: number;
+  /**
+   * The visits after `sessionId` that ran their agent and whose conversation never reached Merv
+   * (from the first one's activation to the last one's close): what they did is not in this one.
+   */
+  missed?: { visits: number; from: string; to: string };
 }
 /** Which earlier work a session continues: an opaque key, and the conversation it resumes. */
 export interface SessionContinuity {
@@ -383,6 +395,8 @@ export interface Sessions {
      * for anyone who may read each; never a worker.
      */
     list(caller: Caller, instanceIds: string | readonly string[]): Promise<ThreadView[]>;
+    /** A leased worker's own work item's threads and visits, never another item's. */
+    lineage(caller: Caller): Promise<WorkerLineage>;
     /**
      * The project's threads that want attention, then its newest others, older than `before`, a
      * page at a time.
@@ -609,17 +623,30 @@ export interface SessionMessaging {
   registerResponder(responder: QuestionResponder): () => Promise<void>;
   resolve(caller: Caller, input: QuestionResolution): Promise<ThreadQuestion>;
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
-  messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
+  /** A leased worker's queue: what awaits its acknowledgement (and, in a visit that starts
+   *  afresh, what earlier visits acknowledged), or with `all` every message. */
+  messages(caller: Caller, input?: { sessionId?: string; all?: boolean }): Promise<WorkerQueue>;
   /** A thread's messages and questions: anyone who may read its work, never a leased worker. */
   thread(caller: Caller, threadId: string): Promise<ThreadMessages>;
   /** The worker ends its visit asking its owner; the work waits for the answer. */
   ask(caller: Caller, input: { question: string }): Promise<ThreadQuestion>;
+  /** Server-only: whether `threadId` asked any question about the work item `instanceId`. */
+  threadAsked(threadId: string, instanceId: string): Promise<boolean>;
+  /** Server-only: the newest question about the work item that no message has answered. */
+  unansweredQuestion(
+    instanceId: string,
+  ): Promise<Pick<ThreadQuestion, 'id' | 'threadId' | 'askedAt' | 'question'> | null>;
   acknowledgeMessage(
     caller: Caller,
     input: { messageId: string; reply?: string; requestId: string },
   ): Promise<SessionMessage>;
-  /** Refuses while a queued message waits for the worker's acknowledgement. */
-  requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void>;
+  /** Refuses while a queued message waits for the worker's acknowledgement: `unstarted` before
+   *  the call's handler runs, else the write it is about to commit. */
+  requireMessagesAcknowledged(
+    sessionId: string,
+    tx: Transaction,
+    unstarted?: boolean,
+  ): Promise<void>;
 }
 /** The input of `session.ask_thread`: one question to one thread's agent. */
 export interface ThreadInquiryInput {

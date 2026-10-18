@@ -68,6 +68,26 @@ export async function checkStart(
   });
 }
 
+/**
+ * checkStart for a claim still to be made: start takes its holder's claim again as a retry, but
+ * a step that offers the claim must not call it ready once the caller holds it.
+ */
+export async function checkClaim(
+  ctx: ReviewsContext,
+  caller: Caller,
+  reviewId: string,
+  transaction?: Transaction,
+): Promise<ReviewRequest> {
+  const current = await checkStart(ctx, caller, reviewId, transaction);
+  check(
+    current.status !== 'started',
+    'review_claimed',
+    `You already hold this review’s claim ${current.claimId}: what comes next is its verdict, review.submit with that claimId`,
+    409,
+  );
+  return current;
+}
+
 export async function start(
   ctx: ReviewsContext,
   caller: Caller,

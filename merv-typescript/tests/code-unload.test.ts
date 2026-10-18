@@ -207,10 +207,17 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     ).body.error.code,
     'code_human_required',
   );
+  // A worker reads a command without the head and stats its workspace had when it attached.
+  const view = ({ command, ...rest }: CodeCommandRecord) => {
+    const { headOid: _head, stats: _stats, ...attached } = command.workspace;
+    return { ...rest, command: { ...command, workspace: attached } };
+  };
   const queued = await invoke('code.commit', input);
   assert.equal(queued.status, 'queued');
   assert.equal(queued.command.actorId, session.actorId);
-  assert.deepEqual(await commands(), [queued]);
+  const [stored] = await commands();
+  assert.deepEqual(stored.command.workspace, workspace);
+  assert.deepEqual(queued, view(stored));
   const originalProvider = app.ctx.codeWork;
   const originalSessions = app.ctx.sessions;
   const eventTypes = async () =>
@@ -256,10 +263,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     'session.message.ack',
   ]);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
-  assert.deepEqual(await commands(), [queued]);
+  assert.deepEqual(await commands(), [stored]);
   assert.deepEqual(await invoke('code.commit', input), queued);
-  assert.deepEqual((await ok('/code/commands/next', control)).command, queued.command);
-  assert.deepEqual((await ok('/code/commands/next', control)).command, queued.command);
+  assert.deepEqual((await ok('/code/commands/next', control)).command, stored.command);
+  assert.deepEqual((await ok('/code/commands/next', control)).command, stored.command);
   const receipt: CodeCommitReceipt = {
     commandId: queued.command.id,
     repositoryId: workspace.repositoryId,
@@ -271,7 +278,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     stats: { commitCount: 1, filesChanged: 1, insertions: 2, deletions: 1 },
   };
   const completion = { ...control, commandId: queued.command.id, receipt };
-  await admitUpload(app.ctx.state, queued.command, receipt);
+  await admitUpload(app.ctx.state, stored.command, receipt);
   const finished = (await ok('/code/commands/complete', completion)).operation as CodeCommandRecord;
   assert.equal(finished.status, 'succeeded');
   assert.deepEqual(finished.receipt, receipt);
@@ -285,8 +292,11 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
   ]);
   await app.setEnabled('code', false);
   await app.setEnabled('code', true);
-  assert.deepEqual(await invoke('code.operation', { commandId: queued.command.id }), finished);
-  assert.deepEqual(await invoke('code.commit', input), finished);
+  assert.deepEqual(
+    await invoke('code.operation', { commandId: queued.command.id }),
+    view(finished),
+  );
+  assert.deepEqual(await invoke('code.commit', input), view(finished));
   assert.deepEqual((await ok('/code/commands/complete', completion)).operation, finished);
   const conflict = await http('/code/commands/complete', {
     ...completion,

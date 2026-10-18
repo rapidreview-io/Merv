@@ -387,6 +387,48 @@ test('Knowledge keeps one caller throughout its inventory and evidence reads', a
   await assert.rejects(f.knowledge.records(f.reader), { code: 'forbidden' });
 });
 
+test('The project index lists each record without its evidence, and ids read records whole', async (t) => {
+  const f = await fixture(t);
+  const task = await f.completeTask(),
+    experiment = await f.createExperiment();
+  const records = await f.knowledge.records(f.reader);
+  const index = await f.knowledge.read(f.reader);
+  assert.equal(Object.hasOwn(index, 'missing'), false);
+  const [entry] = index.tasks;
+  assert.deepEqual(
+    { ...entry, createdAt: undefined, updatedAt: undefined },
+    {
+      id: task.id,
+      title: task.title,
+      type: task.type,
+      state: task.workflow.state,
+      revision: task.workflow.revision,
+      settled: true,
+      failed: false,
+      failure: null,
+      reviewId: task.reviewId,
+      deliveryIds: task.deliveryIds,
+      dependencies: [],
+      createdAt: undefined,
+      updatedAt: undefined,
+    },
+  );
+  assert.equal(index.experiments[0]!.id, experiment.id);
+  assert.equal(Object.hasOwn(index.experiments[0]!, 'attempts'), false);
+  assert.ok(JSON.stringify(index).length < JSON.stringify(records).length / 2);
+  // Whole records are the ones the ids name, as records() holds them; others are missing.
+  const whole = await f.knowledge.read(f.reader, { ids: [experiment.id, 'wf_absent'] });
+  assert.deepEqual(whole, {
+    ...records,
+    tasks: [],
+    experiments: records.experiments,
+    missing: ['wf_absent'],
+  });
+  await assert.rejects(f.knowledge.read(f.reader, { ids: Array(21).fill(task.id) }), {
+    code: 'invalid_knowledge_input',
+  });
+});
+
 test('Historical session capture reference resolves for current readers without reauthorizing the former source', async (t) => {
   const f = await fixture(t);
   const task = await f.createTask();

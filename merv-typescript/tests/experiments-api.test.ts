@@ -12,6 +12,8 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import type { Caller } from '@merv/contracts';
 import { feasibilityStatement } from './feasibility-fixture.js';
+import { EXHIBIT_SHOWN_BYTES, exhibitPreview } from '@merv/experiments/tools';
+import type { ExperimentEvidence } from '@merv/experiments/types';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-experiments-api-'));
@@ -80,6 +82,36 @@ async function fixture(t: TestContext) {
   };
   return { app, source, boot, producer, reviewer, reader, http, connect, call, work };
 }
+
+test('an agent is shown a large exhibit by its result files, without its content', () => {
+  const data = { scores: Array.from({ length: 4000 }, (_, index) => index / 4000) };
+  const content = JSON.stringify({ kind: 'metrics_exhibit', resultFiles: [{ data }] });
+  const preview = exhibitPreview({
+    experimentId: 'wf_large',
+    attemptIndex: 1,
+    path: 'experiments/large/metrics_exhibit.json',
+    content,
+    hash: 'a'.repeat(64),
+    willPin: true,
+    startedAt: '2026-10-13T00:00:00.000Z',
+    sources: [
+      {
+        path: 'scores.json',
+        artifactId: 'art_scores',
+        hash: 'b'.repeat(64),
+        resultFormat: 'json',
+      } as ExperimentEvidence,
+    ],
+  });
+  assert.ok(Buffer.byteLength(content) > EXHIBIT_SHOWN_BYTES);
+  assert.equal(preview.bytes, Buffer.byteLength(content));
+  assert.deepEqual(preview.resultFiles, [
+    { path: 'scores.json', artifactId: 'art_scores', sha256: 'b'.repeat(64), resultFormat: 'json' },
+  ]);
+  assert.ok('omitted' in preview && !('exhibit' in preview));
+  assert.match(preview.omitted, /artifact\.read/);
+  assert.ok(JSON.stringify(preview).length < 1000);
+});
 
 const plan =
   '# Comparison plan\n\n## Summary\nCompare two fixed classifiers on one retained held-out test set.\n\n## Objective & hypothesis\nA improves accuracy over B on the same 100 held-out examples.\n\n## Evaluation\nRun both fixed methods on the same held-out examples. Retain all predictions, including errors. Compute correct predictions divided by 100 for each method and report the paired difference without changing the evaluation set.\n';
@@ -213,6 +245,16 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     descriptions.find((tool) => tool.name === 'experiment.get_state')?.annotations?.readOnlyHint,
     true,
   );
+  // A successor is told it may attach what a cut visit to the step retained.
+  assert.match(
+    descriptions.find((tool) => tool.name === 'experiment.attach')!.description!,
+    /as a worker, evidence any earlier visit to this step at the same revision created/,
+  );
+  // The exhibit's description names the fields its preview has, and no content field.
+  const exhibitTool = descriptions.find((tool) => tool.name === 'experiment.exhibit')!;
+  for (const field of ['bytes', 'willPin', 'resultFiles', 'under exhibit', 'omitted'])
+    assert.ok(exhibitTool.description!.includes(field), field);
+  assert.doesNotMatch(exhibitTool.description!, /content/);
   const create = {
     name: 'held-out-comparison',
     intent: 'A improves held-out accuracy over B.',
@@ -240,6 +282,28 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   };
   const planArtifact = await attach('plan', 'plan.md', plan);
   const statement = await attach('feasibility', 'feasibility.json', feasibilityStatement());
+  // The schema an agent sees says a submission takes no evidence, and the refusal says what to
+  // do: every producer once passed a summary there and some stopped at the refusal.
+  const transitionTool = descriptions.find((tool) => tool.name === 'experiment.transition')!;
+  assert.match(
+    (transitionTool.inputSchema.properties!.evidence as { description: string }).description,
+    /Omit it for submit_design and submit_results/,
+  );
+  const refused = await producer.callTool({
+    name: 'experiment.transition',
+    arguments: {
+      experimentId: e.id,
+      transition: 'submit_design',
+      expectedRevision: e.workflow.revision,
+      requestId: 'design',
+      evidence: { detail: 'A summary of the design.' },
+    },
+  });
+  assert.equal(refused.isError, true);
+  assert.match(
+    (refused.content as { text: string }[])[0].text,
+    /Omit evidence for submit_design and submit_results and call again with the same requestId; nothing was submitted/,
+  );
   e = await f.call(producer, 'experiment.transition', {
     experimentId: e.id,
     transition: 'submit_design',
@@ -274,6 +338,16 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     for (const artifactId of review.artifactIds)
       await f.call(reviewer, 'artifact.read', { artifactId });
     const claimed = await f.call(reviewer, 'review.start', { reviewId: review.id });
+    // Claimed, the review's step is its verdict: its claim is no longer offered as ready.
+    const next = await f.call(reviewer, 'workflow.status_and_next', { instanceId: e.id });
+    const start = next.actions.find((action: any) => action.tool === 'review.start');
+    assert.deepEqual(
+      [start.status, start.blockers.map((blocker: any) => blocker.code)],
+      ['blocked', ['review_claimed']],
+    );
+    assert.match(start.blockers[0].message, new RegExp(claimed.claimId));
+    const submit = next.actions.find((action: any) => action.tool === 'review.submit');
+    assert.equal(submit.status, 'needs_input');
     const input = {
       reviewId: review.id,
       claimId: claimed.claimId,
@@ -339,6 +413,13 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   const preview = await f.call(producer, 'experiment.exhibit', { experimentId: e.id });
   assert.equal(preview.willPin, true);
   assert.ok(preview.startedAt);
+  // An agent is shown the exhibit's files by id, and a small exhibit itself, never its escaped bytes.
+  assert.deepEqual(
+    preview.resultFiles.map(({ path }: { path: string }) => path),
+    ['results.json'],
+  );
+  assert.equal(preview.exhibit.kind, 'metrics_exhibit');
+  assert.equal('content' in preview, false);
   await attach(
     'report',
     'report.md',

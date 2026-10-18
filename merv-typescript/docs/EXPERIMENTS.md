@@ -131,14 +131,18 @@ Create retained artifacts first, then attach their IDs. The role rules are:
 | ------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
 | `plan`        | planned        | Exactly one selected plan, with nonempty Summary, Objective & hypothesis, Evaluation sections          |
 | `feasibility` | planned        | Exactly one selected JSON statement whose own figures show no shortfall, absent dependency or blocker  |
-| `result`      | running        | At least one selected result; declared finite JSON or explicitly qualitative text                      |
+| `result`      | running        | At least one selected result; declared finite JSON, or qualitative evidence referenced unread          |
 | `report`      | running        | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
 | `exhibit`     | System only    | Generated and pinned when a submitted result declares JSON                                             |
 
-Each input role accepts nonempty valid UTF-8 at most **64,000 bytes**. Logical
+Each input role accepts nonempty valid UTF-8 at most **64,000 bytes**, except a
+qualitative result: it is referenced without being read, so a checkpoint, an
+archive or a capture collection of any retained size is attached that way. Logical
 paths are bounded relative labels: no absolute paths, traversal, empty segments,
 backslashes or URL syntax. They do not direct filesystem writes. Role and path
-form the replaceable slot within an attempt. Public attachment is refused during
+form the replaceable slot within an attempt; a plan, feasibility statement or
+report at another path replaces the attempt's current one too, and the attach
+response lists what it displaced under `replaced`. Public attachment is refused during
 review and after termination.
 
 ### Feasibility statement
@@ -178,7 +182,10 @@ checked at attachment (`invalid_experiment_evidence`) and again at submission.
 `available` below `required`, any dependency with `present: false` and any
 listed blocker refuses the submission with `experiment_infeasible` (409) and
 names each shortfall; `workflow.status_and_next` shows the same blocker. The way
-forward is a smaller design or ending the experiment with the reason.
+forward is a smaller design or ending the experiment with the reason; a blocker
+only the owner can remove (a spending approval, connecting compute, a workspace
+fault) is asked of them with `session.ask_owner`, and the work waits for the
+answer.
 
 The server does not measure anything, so an overstated figure or an omitted
 requirement passes this check. That is what the required review criterion is

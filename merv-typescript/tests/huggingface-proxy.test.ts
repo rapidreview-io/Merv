@@ -44,6 +44,14 @@ test('HF read boundary rejects ambiguous paths and account/write APIs', () => {
   );
   assert.ok(huggingFaceRead('GET', '/api/models/org/repo/xet-read-token/main'));
   assert.ok(huggingFaceRead('POST', '/api/datasets/org/repo/paths-info/main'));
+  // Search and listing are reads: HfApi.list_datasets(search=…) and list_models.
+  assert.ok(huggingFacePath('/hf/api/datasets?search=banking&limit=12'));
+  assert.ok(huggingFaceRead('GET', '/api/datasets?search=banking&limit=12'));
+  assert.ok(huggingFaceRead('GET', '/api/models?search=qwen&sort=downloads'));
+  assert.ok(huggingFaceRead('HEAD', '/api/datasets'));
+  assert.equal(huggingFaceRead('GET', '/api/datasetsx'), false);
+  assert.equal(huggingFaceRead('POST', '/api/datasets'), false);
+  assert.equal(huggingFaceRead('GET', '/api/spaces?search=x'), false);
 });
 
 test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and secret isolation', async (t) => {
@@ -187,14 +195,23 @@ test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and
   assert.equal(redirect.headers['set-cookie'], undefined);
   assert.match(String(redirect.headers.link), /merv.example\/hf\/api\/models\/next/);
   const before = upstreamCalls;
-  assert.equal((await call('/hf/api/settings/webhooks')).status, 403);
+  const forbidden = await call('/hf/api/settings/webhooks');
+  assert.equal(forbidden.status, 403);
   assert.equal(upstreamCalls, before);
+  // huggingface_hub prints X-Error-Message after the status; without it, 'Forbidden: None'.
+  assert.match(String(forbidden.headers['x-error-message']), /only model and dataset reads/);
+  assert.match(forbidden.body.toString(), /only model and dataset reads/);
+  assert.equal((await call('/hf/api/datasets?search=banking&limit=12')).status, 200);
   expected = 'hf_ROTATED_SYNTHETIC';
   await secrets.saveHuggingFace(person, expected);
   assert.equal((await call()).status, 200);
   live = false;
   const denied = await call();
   assert.equal(denied.status, 401);
+  assert.match(
+    String(denied.headers['x-error-message']),
+    /HF_TOKEN is missing, expired or revoked/,
+  );
   assert.equal(denied.reused, true);
   live = true;
   await secrets.removeHuggingFace(person);

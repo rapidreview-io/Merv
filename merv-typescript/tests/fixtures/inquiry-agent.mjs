@@ -54,7 +54,7 @@ const call = async (name, input) => {
   }
 };
 const inbox = await call('session.messages', {});
-const question = Array.isArray(inbox) ? inbox[0] : undefined;
+const question = Array.isArray(inbox?.messages) ? inbox.messages[0] : undefined;
 // Asked to spend: one model call past the visit's budget, printed as Claude Code prints it, and
 // no answer: it runs on until its runner stops it.
 if (/spend/i.test(question?.body ?? '')) {

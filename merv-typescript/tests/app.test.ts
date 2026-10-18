@@ -54,7 +54,7 @@ test('assembled Cordis application preserves current MCP task closure across two
       });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 99);
+    assert.equal(catalog.length, 98);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
@@ -67,12 +67,13 @@ test('assembled Cordis application preserves current MCP task closure across two
       'session.threads',
       'session.find',
       'session.message',
-      'session.messages',
     ])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,
       );
+    // A worker's queue refuses every person, so a person's agent is not offered it.
+    assert.ok(!catalog.some((tool) => tool.name === 'session.messages'));
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     // Credentials are managed from Merv's own pages: an agent over MCP is not offered them.
@@ -381,11 +382,11 @@ test('each paper-keeping review owner tells its reviewers the one paper instruct
       .owners;
     assert.equal(
       owners.get('experiments')?.guidance,
-      'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
+      'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. To change part of a long section, give its change edits: [{find, replace}] in place of content. Each find quotes text that occurs exactly once in the section as paper.read returns it, and replace takes its place; to add a sentence, find the end of the paragraph it follows and replace that with itself plus your sentence. Only what you change is sent, and an edit made at an earlier revision still applies wherever its find occurs once. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
     );
     assert.equal(
       owners.get('reflections')?.guidance,
-      'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
+      'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers keep the paper: You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes. To change part of a long section, give its change edits: [{find, replace}] in place of content. Each find quotes text that occurs exactly once in the section as paper.read returns it, and replace takes its place; to add a sentence, find the end of the paragraph it follows and replace that with itself plus your sentence. Only what you change is sent, and an edit made at an earlier revision still applies wherever its find occurs once. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next.',
     );
   } finally {
     await app.stop();
@@ -451,6 +452,13 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         today: '2026-09-25',
       }),
     ].join('\n');
+    // A budget Pi or an MCP client writes into a brief is one Merv holds, said once, in the
+    // guide both get: Sandboxes' USD caps, a dispatch budget in wall minutes or tokens, the
+    // person's daily tokens; never agents' or reviews' dollars.
+    assert.match(researchGuide, /usage\.set_budget/);
+    assert.match(researchGuide, /Fleet daily token limit/);
+    assert.match(researchGuide, /Never write a dollar cap for agents or reviews/);
+    assert.equal(named.split('Never write a dollar cap').length, 2);
     const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);
     assert.ok(names.length > 10);
     for (const name of names)

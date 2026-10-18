@@ -50,6 +50,7 @@ import type {
   ThreadCounts,
   ThreadView,
   VisitView,
+  WorkerLineage,
 } from './types.js';
 
 type Row = {
@@ -277,10 +278,12 @@ export class SessionThreads {
           at,
           held.id,
         );
+        const resume = resumeOf(held),
+          missed = await this.missed(held.id, resume.sessionId, tx);
         return {
           id: held.id,
           actorId: held.actor_id,
-          continuity: { key: key!, resume: resumeOf(held) },
+          continuity: { key: key!, resume: { ...resume, ...(missed && { missed }) } },
         };
       }
       await this.retire(held, 'superseded', tx);
@@ -321,6 +324,29 @@ export class SessionThreads {
       data: { threadId: id, workerActorId: actor.id },
     });
     return { id, actorId: actor.id, ...(key !== null && { continuity: { key } }) };
+  }
+  /**
+   * The work visits after the one whose conversation a resume takes up that ran their agent: a
+   * runner that died, or never got its conversation delivered, left what they did out of it, and
+   * the successor is told so rather than taking up a conversation hours old as its latest.
+   */
+  private async missed(
+    threadId: string,
+    sessionId: string,
+    tx: Transaction,
+  ): Promise<SessionResume['missed']> {
+    const row = await tx.get<{ n: number | string; since: string | null; until: string | null }>(
+      `SELECT count(*) AS n,min(s.activated_at) AS since,max(s.closed_at) AS until FROM worker_sessions s
+        WHERE s.thread_id=? AND s.kind='work' AND s.activated_at IS NOT NULL AND s.closed_at IS NOT NULL
+          AND COALESCE(s.outcome,'') NOT IN ('launch_failed','workspace_failed','preparation_deferred')
+          AND s._merv_rowid>(SELECT r._merv_rowid FROM worker_sessions r WHERE r.id=?)`,
+      threadId,
+      sessionId,
+    );
+    const visits = Number(row?.n ?? 0);
+    return visits > 0 && row?.since && row.until
+      ? { visits, from: row.since, to: row.until }
+      : undefined;
   }
   /** Its actor goes with it, unless a visit still holds it: that visit's close retires it. */
   private async retire(thread: Row, reason: string, tx: Transaction): Promise<void> {
@@ -568,16 +594,38 @@ export class SessionThreads {
     );
     return await this.reading(caller, async (tx) => {
       for (const id of ids) await this.host.readable(caller, id, tx);
-      const threads = await tx.all<Row>(
-        'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
-        caller.projectId,
-        caller.projectId,
-        JSON.stringify(ids),
-      );
-      const standing = await this.standingOf(tx, caller.projectId, threads);
-      return (await this.viewed(tx, threads, standing)).map(
+      return (await this.ofWork(tx, caller.projectId, ids)).map(
         ({ name: _name, workflow: _workflow, ...view }) => view,
       );
+    });
+  }
+  /**
+   * A leased worker's lineage: the threads of its own work item, its own included, with each
+   * visit's status, times, outcome, harness and runner, as session.threads gives a person them;
+   * never another item's. A reviewer cites it for which machine each stage ran on.
+   */
+  async lineage(caller: Caller): Promise<WorkerLineage> {
+    ordinary(caller);
+    this.host.available();
+    check(caller.session, 'session_required', 'Only a leased worker reads its lineage', 403);
+    caller = structuredClone(caller);
+    return await this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const own = await tx.get<{ instance_id: string }>(
+        'SELECT instance_id FROM worker_sessions WHERE id=? AND project_id=? AND actor_id=?',
+        caller.session!.id,
+        caller.projectId,
+        caller.actorId,
+      );
+      check(own, 'session_not_found', 'Session not found', 404);
+      // Whether a person may message or ask a thread is theirs to read, not its worker's.
+      return {
+        instanceId: own.instance_id,
+        threads: (await this.ofWork(tx, caller.projectId, [own.instance_id])).map(
+          ({ name: _name, workflow: _workflow, takesMessage: _takes, asks: _asks, ...view }) =>
+            view,
+        ),
+      };
     });
   }
   /**
@@ -737,6 +785,16 @@ export class SessionThreads {
       threads: threads.map((thread) => thread.id),
       instances: threads.map((thread) => thread.instance_id),
     });
+  }
+  /** Every thread with a visit on any of these work items, oldest first, viewed. */
+  private async ofWork(tx: Transaction, projectId: string, instanceIds: string[]) {
+    const threads = await tx.all<Row>(
+      'SELECT * FROM session_threads WHERE project_id=? AND id IN (SELECT thread_id FROM worker_sessions WHERE project_id=? AND instance_id IN (SELECT jsonb_array_elements_text(?::jsonb))) ORDER BY _merv_rowid',
+      projectId,
+      projectId,
+      JSON.stringify(instanceIds),
+    );
+    return await this.viewed(tx, threads, await this.standingOf(tx, projectId, threads));
   }
   /** A read of the project's threads by a person or their key, never a worker. */
   private async reading<T>(caller: Caller, read: (tx: Transaction) => Promise<T>): Promise<T> {

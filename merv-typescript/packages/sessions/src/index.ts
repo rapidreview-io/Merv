@@ -488,7 +488,7 @@ export class LeasedSessions implements Sessions {
         this.valid(session, tx, frozen).catch(async (error) => ({
           error: await this.closure(session, error, tx),
         })),
-      acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
+      acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx, true),
     });
     this.running = new SessionRunning(
       state,
@@ -534,6 +534,8 @@ export class LeasedSessions implements Sessions {
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
   private checkedAt = Number.NEGATIVE_INFINITY;
+  /** Whether the last pass could not read, so runners' presence may have gone unrecorded. */
+  private deaf = false;
   /** Each failing sweep subject with the code last logged, cleared by every full pass. */
   private readonly failing = new Map<string, string>();
   private ensureOpen(): void {
@@ -863,13 +865,14 @@ export class LeasedSessions implements Sessions {
     outcome?: SessionOutcome,
   ): Promise<Session> {
     if (!live(session)) return session;
-    // A rented machine's visit that failed while its person had no model tokens left was cut off
-    // by the model relay: nothing about the work was wrong, so it counts against nothing.
-    const budget =
-      outcome && failureReasons.has(outcome)
-        ? await this.managed.sessionModelWait(session.id, tx)
-        : null;
-    if (budget) outcome = 'budget_exhausted';
+    // A rented machine's visit that failed after the model relay refused one of its own calls at
+    // its person's daily tokens was cut off there: nothing about the work was wrong, so it counts
+    // against nothing. Another visit's failure while that day is held is still its own.
+    const refused =
+      !!outcome &&
+      failureReasons.has(outcome) &&
+      (await this.managed.modelBudgetRefused(session, tx));
+    if (refused) outcome = 'worker_token_budget_exhausted';
     // One the relay or its provider failed (an outage, Main's release) is nobody's either: it is
     // offered again after the backoff, and never held.
     else if (
@@ -903,11 +906,12 @@ export class LeasedSessions implements Sessions {
           ? 'review_unfinished'
           : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
-    if (budget)
+    // The work says the day's wait at once, or none if a changed limit already lifted it.
+    if (refused)
       await this.dispatch.reportModelWait(
         session.projectId,
         session.instanceId,
-        budget,
+        await this.managed.sessionModelWait(session.id, tx),
         session.expectedRevision,
         tx,
       );
@@ -1128,19 +1132,32 @@ export class LeasedSessions implements Sessions {
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
     if (!dispatched && workspace.mode !== 'none')
       await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx);
+    // The review standards travel in the assignment text, and a task review carries its
+    // delivery, so a packet of a real task runs past 64 KiB.
+    const fits = (packet: unknown) => Buffer.byteLength(JSON.stringify(packet)) <= 524_288;
     for (const packet of [
       frozen.assignment,
       frozen.execution.policy,
       frozen.execution.references,
       frozen.lease.receipt,
     ])
-      // The review standards travel in the assignment text, and a task review carries
-      // its delivery, so a packet of a real task runs past 64 KiB.
       check(
-        Buffer.byteLength(JSON.stringify(packet)) <= 524_288,
+        fits(packet),
         'session_packet_large',
         'Each frozen assignment, policy, reference set and receipt must fit 512 KiB',
       );
+    // What the owner answered on this work, from any of its threads, travels with the assignment:
+    // a reviewer or a later stage reads the decisions that bind it, not the asker's copy of them.
+    // They share its 512 KiB, the oldest left out first: an answer never refuses an offer.
+    const ownerAnswers = await this.messaging.ownerAnswers(tx, caller.projectId, input.instanceId);
+    let assignment: WorkSession['assignment'] = frozen.assignment;
+    for (let from = 0; from < ownerAnswers.length; from++) {
+      const answered = { ...frozen.assignment, ownerAnswers: ownerAnswers.slice(from) };
+      if (fits(answered)) {
+        assignment = answered;
+        break;
+      }
+    }
     const limits = frozen.lease.receipt.sessionLimits as
       { durationSeconds?: number; modelTokens?: number } | undefined;
     for (const limit of [limits?.durationSeconds, limits?.modelTokens])
@@ -1188,6 +1205,7 @@ export class LeasedSessions implements Sessions {
       outcome: null,
       ...(thread.continuity && { continuity: thread.continuity }),
       ...frozen,
+      assignment,
     };
     return await this.visits.insert(session, owner, input, fingerprint, caller, tx);
   }
@@ -1947,7 +1965,15 @@ export class LeasedSessions implements Sessions {
             "SELECT DISTINCT thread_id AS id FROM worker_sessions WHERE status IN ('offered','active') AND (kind='work' OR kind='inquiry')",
           )
         : [],
-    }));
+    })).catch((error: unknown) => {
+      this.deaf = true;
+      throw error;
+    });
+    // After a pass that could not read (the database away) runners may have gone unheard too:
+    // their silence counts from now, or every hosted visit would be lost at once. Said once a
+    // read succeeds, so a concurrent pass's read that began before the failure cannot skip it.
+    if (this.deaf) this.managed.heard();
+    this.deaf = false;
     // A session that failed is retried by the next full pass, not by every tick and lease.
     for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
       await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx)));
@@ -1993,7 +2019,7 @@ export class LeasedSessions implements Sessions {
       (row) => row.expired || (row.kind === 'work' && at.get(row.instance_id) !== row.revision),
     );
   }
-  /** One live session's upkeep: a closure found, or its stranding. */
+  /** One live session's upkeep: a closure found, its stranding, or its runner's loss. */
   private async upkeep(id: string, tx: Transaction) {
     const session = this.decode(await this.row(tx, id));
     if (await this.reconcile(session, tx)) return;
@@ -2006,6 +2032,13 @@ export class LeasedSessions implements Sessions {
         'expired',
         stranded ? 'machine_retired' : 'host_failed',
       );
+    // An inquiry, or an offer no agent took up, ends by its own short deadline.
+    else if (
+      session.kind === 'work' &&
+      session.status === 'active' &&
+      (await this.managed.runnerLost(id, tx))
+    )
+      await this.closeSession(session, 'runner_lost', tx, 'expired', 'host_failed');
   }
   /** One subject on its own: its failure is logged once per code and never stops the rest. */
   private async alone<T>(subject: string, fn: () => Promise<T>): Promise<T | false> {

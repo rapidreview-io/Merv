@@ -36,7 +36,7 @@ export const reportsToolsPlugin = {
     });
     register({
       name: 'report.write',
-      description: `Edit the report draft at expectedRevision: replace section bodies by name (sections: [{name: "Result", content}]; name "title" sets the title), the front matter YAML (frontMatter), or the whole Markdown (source), and add or replace data files charts name (files: [{name: "x.csv", content}], content null removes one). Locked sections from the approved plan cannot change. Changing a chart's spec or data withdraws its approval. ${SUBJECT}`,
+      description: `Edit the report draft at expectedRevision: replace section bodies by name (sections: [{name: "Result", content}]; name "title" sets the title), the front matter YAML (frontMatter), or the whole Markdown (source), and add or replace data files charts name (files: [{name: "x.csv", content}], content null removes one). Locked sections from the approved plan cannot change, except one that still holds only its [[write: …]] placeholder, which you write. Changing a chart's spec or data withdraws its approval. ${SUBJECT}`,
       inputSchema: writeSchema,
       handler: async (caller, input) => await reports.write(caller, input),
     });

@@ -3,10 +3,13 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import { check } from '@merv/contracts';
 import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
-import { codexEvents } from '@merv/sessions/agent-stream';
+import { codexEvents, readLine } from '@merv/sessions/agent-stream';
+import type { SessionUsageReport } from '@merv/sessions/types';
 import type { RunnerProfile } from '../profiles.js';
 import {
+  counted,
   entries,
+  events,
   firstId,
   type Harness,
   INTERNET_READS,
@@ -29,7 +32,8 @@ const home = (profile: RunnerProfile, runDirectory: string) =>
 /**
  * Codex. `codex exec --json` runs one thread and ends each turn with `turn.completed`, whose
  * usage is the thread's running total (`input_tokens` includes cached input), so the last one
- * counts; a stream cut off before any turn completed reports nothing. It keeps each thread in its
+ * counts, less what a resumed thread had recorded before; a stream cut off before any turn
+ * completed reports nothing, and its conversation says what it spent. It keeps each thread in its
  * home's databases too and resumes a thread only where it was recorded, so a local launch has a
  * home of its own, taken away whole when it ends; a conversation is a dated
  * `sessions/YYYY/MM/DD/rollout-…-<id>.jsonl` there.
@@ -38,6 +42,8 @@ export const codex: Harness = {
   name: 'codex',
   lines: codexEvents,
   usage: (output, model) => spent(output, 'turn.completed', model),
+  recorded: recordedTotal,
+  held: heldPrompts,
   conversationId: (output) =>
     firstId(
       output,
@@ -74,6 +80,56 @@ export const codex: Harness = {
   },
   forget: (root) => rmSync(root, { recursive: true, force: true }),
 };
+
+/**
+ * A rollout records the thread's running total (`token_count`) after each model call; a resumed
+ * thread's `turn.completed` goes on from the last one.
+ */
+function recordedTotal(conversation: string, model?: string) {
+  let usage: SessionUsageReport | undefined;
+  for (const event of events(conversation, '"token_count"'))
+    if (event.type === 'event_msg' && event.payload?.type === 'token_count')
+      usage = counted(event.payload.info?.total_token_usage, [], model) ?? usage;
+  return usage;
+}
+
+/**
+ * A rollout's user prompts (`response_item` messages) since its last compaction: a compaction's
+ * replacement history keeps only a cut copy of each earlier prompt. Codex records one as
+ * `compacted`; whatever it is called, the model call after it reads fewer input tokens than the
+ * one before (`token_count`), which in prod rollouts nothing else did.
+ */
+function heldPrompts(conversation: string): string[] {
+  let prompts: string[] = [],
+    read: number | undefined;
+  for (const line of conversation.split('\n')) {
+    if (
+      !line.includes('"compacted"') &&
+      !line.includes('"token_count"') &&
+      !line.includes('"role":"user"')
+    )
+      continue;
+    const event = readLine(line);
+    if (event?.type === 'compacted') prompts = [];
+    else if (event?.type === 'event_msg' && event.payload?.type === 'token_count') {
+      const input: unknown = event.payload.info?.last_token_usage?.input_tokens;
+      if (typeof input !== 'number') continue;
+      if (read !== undefined && input < read) prompts = [];
+      read = input;
+    } else if (
+      event?.type === 'response_item' &&
+      event.payload?.type === 'message' &&
+      event.payload.role === 'user' &&
+      Array.isArray(event.payload.content)
+    )
+      prompts.push(
+        event.payload.content
+          .map((part: { text?: unknown }) => (typeof part?.text === 'string' ? part.text : ''))
+          .join(''),
+      );
+  }
+  return prompts;
+}
 
 /** Before a local Codex launch: its own `CODEX_HOME`, holding a link to the machine's login. */
 export function launchCodexHome(
@@ -186,6 +242,16 @@ function codexArgs(
   const shellEnvironment = { ...safeEnvironment };
   delete shellEnvironment.CODEX_HOME;
   delete shellEnvironment.CLAUDE_CONFIG_DIR;
+  // The assignment's home is read-only to its shell, which writes only the workspace and /tmp,
+  // emptied by the hosted reset after every step: temporary files, sockets (the workspace path
+  // is too long for one) and the caches tools keep in the home go there. uv's, which marks itself
+  // ignored by Git and holds packages unpacked, in more files than that reset may walk, stays in
+  // the workspace for the next step on this machine.
+  if (profile.isolatedLauncher)
+    Object.assign(shellEnvironment, {
+      XDG_CACHE_HOME: '/tmp/cache',
+      UV_CACHE_DIR: join(request.cwd, '.uv-cache'),
+    });
   // Codex applies include_only after set; retain the safe override names as well.
   // Default exclusions remove *TOKEN*, so bypass them only behind this exact name list.
   if (hfShell)
@@ -200,7 +266,9 @@ function codexArgs(
   // disabled, and a sealed review stays read-only and offline.
   config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
-  config('sandbox_workspace_write.exclude_slash_tmp', 'true');
+  // An isolated assignment's /tmp is its own machine's, emptied after every step; anywhere else it
+  // is shared with the person's own programs.
+  config('sandbox_workspace_write.exclude_slash_tmp', profile.isolatedLauncher ? 'false' : 'true');
   // Codex sees what Merv's server lists to this session, as Claude does through the whole
   // mcp__merv prefix: every read in the project and the writes this lease was granted. Sessions
   // enforce the manifest and its argument bindings on every call, and a fixed list here hid the

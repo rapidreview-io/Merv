@@ -17,6 +17,14 @@ at first sign-in (Scope's `members.onFirstSignIn`) and, at start, for everyone s
 per provider under `welcome:<provider>:<digest>`; a provider no operator connection serves is
 skipped and logged once.
 
+Each Capture node registers as its own collection: a succeeded one once it ends, while the
+rest of its workflow may still run, and any other once its workflow finishes, because cleanup
+may still recover its files. Its title starts `Compute capture <workflow id> / <node id>` and
+says when the node failed, was skipped or kept nothing; `metadata.outputObjects` names
+its held output objects, which a later workflow of the project stages directly. A
+deterministic refusal is final. A failure that may pass is retried every pass, and after
+ten minutes it is also listed as refused, marked `retrying`, until it registers.
+
 `@merv/sandboxes/console` mounts the authenticated console-session endpoint, proxies
 `/sbx/ui/*` and `/sbx/v1/*` (including Terminal WebSockets), and contributes hardware to
 Running. The host registers the permanent Sandboxes view and tools.

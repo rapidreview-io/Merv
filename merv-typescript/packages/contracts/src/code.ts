@@ -29,6 +29,9 @@ export type CodeMergeInput = z.infer<typeof codeMergeInputSchema>;
 export const codeCommandControlSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id })
   .strict();
+/** The request id a runner asks its nth periodic checkpoint under, by which Code Work tells one. */
+export const checkpointRequestId = (count: number) => `checkpoint-${count}`;
+export const isCheckpointRequestId = (requestId: string) => /^checkpoint-\d+$/.test(requestId);
 export const codeCommitCommandSchema = z
   .object({
     id,

@@ -18,6 +18,7 @@ import { TaskService } from '@merv/tasks';
 import { PaperService } from '@merv/paper';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import { resolutionBrief } from '@merv/tasks/resolution-brief';
+import { taskPaper } from '@merv/tasks/context';
 import type { Caller, Workflows } from '@merv/contracts';
 import type { ReviewHistory } from '@merv/reviews/rules';
 import { openState } from './fixtures/state.js';
@@ -291,6 +292,117 @@ test('a format-2 context freezes no more of a mature paper than its budget can e
       work.prompt,
     )!;
   assert.ok(Number(count) > 0 && Number(count) < 80);
+});
+
+test('a task context embeds its saved progress before a large shared paper section, which it lists', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  // Every experiment's reviewers write into one Methods and one Results section (2026-10-13).
+  for (const [kind, id, length] of [
+    ['methods', 'domain-specialization', 83_102],
+    ['results', 'specialization-status', 39_236],
+  ] as const)
+    await f.paper.patch(f.producer, {
+      kind,
+      expectedRevision: 0,
+      requestId: `paper-${kind}`,
+      changes: [{ id, title: id, content: 'm'.repeat(length) }],
+    });
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'paper-goal',
+    changes: [{ id: 'goals', content: 'Build a reliable arithmetic library.' }],
+  });
+  const task = await f.create();
+  const evidence = await Promise.all(
+    [13_369, 5072].map((size, index) =>
+      f.artifacts.create(f.producer, {
+        title: `Run ${index}`,
+        mediaType: 'application/json',
+        content: JSON.stringify({ log: 'r'.repeat(size) }),
+      }),
+    ),
+  );
+  await f.tasks.checkpoint(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'progress',
+    notes: 'Both runs retained.',
+    artifactIds: evidence.map((artifact) => artifact.id),
+  });
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-large-paper',
+  });
+  for (const artifact of evidence)
+    assert.ok(work.prompt.includes(`\n### checkpointEvidence:${artifact.id} — `), artifact.id);
+  assert.deepEqual(work.omitted, []);
+  assert.ok(work.prompt.includes('\n### paper:problem:current:1:2:goals — '));
+  // The large sections are named with their size and the read that returns them, not frozen.
+  assert.match(
+    work.prompt,
+    /\n- paper:methods:current:1:0:domain-specialization — methods current: domain-specialization \(text, 83102 characters\).* — retrieve: paper\.read \{"kind":"methods","revision":1,"section":"domain-specialization"\}\n/,
+  );
+  assert.ok(!work.prompt.includes('m'.repeat(8001)));
+  // The paper's own budget left Results out; its line still names the read.
+  assert.ok(
+    work.prompt.includes(
+      '\n- results current: specialization-status — revision 1 — paper.read {"kind":"results","revision":1,"section":"specialization-status"}\n',
+    ),
+  );
+});
+
+test('a conflict resolution lists the paper by section and a task embeds at most its budget of it', () => {
+  const section = (id: string, length: number, priority: number) => ({
+    id,
+    title: id,
+    body: { text: id[0]!.repeat(length) },
+    priority,
+  });
+  const paper = {
+    items: [
+      section('problem', 2000, 850),
+      section('methods', 7000, 600),
+      section('results', 8001, 600),
+      section('literature', 7500, 600),
+      { ...section('methods-published', 7000, 250), body: { text: 'm'.repeat(7000) } },
+      { ...section('results-published', 8001, 250), note: 'results/published revision 1' },
+    ],
+  };
+  const shown = (input: ReturnType<typeof taskPaper>) =>
+    input.items.filter((item) => item.embed !== 'never').map((item) => item.id);
+  const notes = (input: ReturnType<typeof taskPaper>) =>
+    Object.fromEntries(input.items.map((item) => [item.id, item.note]));
+  // Highest priority first: past 8,000 characters a section is listed, and past 16,000 in all
+  // the rest are; a published copy of an embedded section costs only its line.
+  assert.deepEqual(shown(taskPaper(paper, false)), ['problem', 'methods', 'methods-published']);
+  assert.deepEqual(shown(taskPaper(paper, true)), []);
+  // A listed copy says whose it is, since the builder names that only for embedded ones.
+  assert.deepEqual(notes(taskPaper(paper, false)), {
+    problem: undefined,
+    methods: undefined,
+    results: undefined,
+    literature: undefined,
+    'methods-published': undefined,
+    'results-published': 'same content as results; results/published revision 1',
+  });
+  assert.deepEqual(notes(taskPaper(paper, true)), {
+    problem: undefined,
+    methods: undefined,
+    results: undefined,
+    literature: undefined,
+    'methods-published': 'same content as methods',
+    'results-published': 'same content as results; results/published revision 1',
+  });
+  // Every paper item ranks below every item of the task's own, in the paper's order.
+  assert.deepEqual(
+    taskPaper(paper, false).items.map((item) => item.priority),
+    [-150, -400, -400, -400, -750, -750],
+  );
 });
 
 test('task reads, context and failure keep their original caller and inputs', async (t) => {

@@ -303,6 +303,8 @@ test('usage rolls up over a dependency closure and the children a policy names',
   );
   assert.equal(cycle.accounting.tokens, 'runner_reported');
   assert.match(cycle.accounting.method, /not verified/);
+  // Merv prices no session; a worker is pointed at the limit that does bound its model use.
+  assert.match(cycle.accounting.method, /daily Fleet token limit \(system\.status modelBudget/);
   assert.ok(cycle.accounting.since);
 
   const alone = await f.sessions.usage(f.owner, {
@@ -606,6 +608,52 @@ test('launches that keep failing on one revision stop being offered until dispat
   f.advance(1000);
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).retriesExhausted, 0);
+});
+
+test('an agent that stops without a handoff twice running at one revision is held at once, worded as a stop', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  f.advance(1);
+  const end = async (reason: string) => {
+    const leased = (await f.sessions.dispatch.lease(f.source, auto())).session!;
+    assert.equal(leased.instanceId, target.id);
+    await f.sessions.release(f.source, {
+      sessionId: leased.id,
+      runnerId: 'machine',
+      outcome: 'host_failed',
+      reason,
+    });
+    f.advance(30_001);
+    await f.sessions.dispatch.heartbeatRunner(f.source, presence);
+  };
+  // A crash then one stop is still retried: one stop may be an agent that quit early.
+  await end('local_process_signal_SIGKILL');
+  await end('local_process_exit_code_0_without_handoff');
+  assert.deepEqual(await f.workflows.blockers(f.owner, target.id), []);
+  // The second stop in a row holds it, well short of the cap of five.
+  await end('local_process_exit_code_0_without_handoff');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retries_exhausted');
+  const [held] = await f.workflows.blockers(f.owner, target.id);
+  assert.equal(held?.code, 'launch_held');
+  // Three failed launches, of which only the last two were stops.
+  assert.equal(
+    held!.message,
+    'Dispatch holds this work after 3 failed launches, the last its agent ending its visit without a handoff or a question',
+  );
+  assert.match(held!.next!, /^Read its thread for what it waits on/);
+  assert.equal((await f.events('session.dispatch_held')).length, 1);
+
+  // Released, the count starts again: one stop after the go-ahead is retried once more.
+  await f.sessions.dispatch.releaseHold(f.owner, {
+    instanceId: target.id,
+    expectedRevision: 0,
+    reason: 'Repaired what it waited on',
+    requestId: request(),
+  });
+  await end('local_process_exit_code_0_without_handoff');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).session?.instanceId, target.id);
 });
 
 test('the launch backoff reads only the closes inside its window, not a runner’s whole history', async (t) => {

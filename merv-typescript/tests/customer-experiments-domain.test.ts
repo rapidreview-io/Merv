@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createService, type Caller } from '@merv/contracts';
+import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
@@ -17,8 +17,12 @@ import {
   type CustomerExperiment,
   type ExperimentPlan,
 } from '../packages/customer-experiments/src/types.js';
-import { serviceExecution } from '../packages/customer-experiments/src/execution.js';
+import {
+  executionPolicy,
+  serviceExecution,
+} from '../packages/customer-experiments/src/execution.js';
 import { planSchema, validateAgreement } from '../packages/customer-experiments/src/schema.js';
+import { registerWorkerTools } from '../packages/customer-experiments/src/worker-tools.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
 import { currentWork } from './fixtures/current-work.js';
@@ -89,6 +93,19 @@ async function fixture(
   );
   // These cover the structured offer: requests start on service_experiment@2.
   service.startVersion = 2;
+  // The worker tools as a leased session calls them, answers included.
+  type Handler = (caller: Caller, input: never) => Promise<Record<string, unknown>>;
+  const tools = new Map<string, Handler>();
+  await registerWorkerTools(
+    {
+      register: (tool: { name: string; handler: Handler }) => {
+        tools.set(tool.name, tool.handler);
+        return () => {};
+      },
+    } as never,
+    service,
+  );
+  const submitted: Record<string, unknown>[] = [];
   const reports = legacyReports(state);
   service.bindReports(reports);
   const work = currentWork(managed, { directory: dir, source: caller });
@@ -167,8 +184,8 @@ async function fixture(
     if (workspace) await managed.sessions.workspaceResult(caller, { ...held.control, workspace });
     await managed.events.drain();
   };
-  const deliver = async (exp: CustomerExperiment) => {
-    const worker = await offer();
+  const deliver = async (exp: CustomerExperiment, held?: Awaited<ReturnType<typeof offer>>) => {
+    const worker = held ?? (await offer());
     const artifact = await work.run(
       worker,
       'artifact.create',
@@ -177,18 +194,20 @@ async function fixture(
     );
     reports.claim(artifact.id, { kind: 'customer_experiment', id: exp.id });
     await work.commit(worker, { 'experiment.ts': `console.log('attempt ${exp.attempts}');\n` });
-    await work.run(
-      worker,
-      'customer_experiment.submit_results',
-      {
-        id: exp.id,
-        expectedRevision: exp.workflow.revision,
-        artifactIds: [artifact.id],
-        reportArtifactId: artifact.id,
-        summary: 'Run finished.',
-        requestId: id(),
-      },
-      (c, input) => service.submitResults(c, input),
+    submitted.push(
+      await work.run(
+        worker,
+        'customer_experiment.submit_results',
+        {
+          id: exp.id,
+          expectedRevision: exp.workflow.revision,
+          artifactIds: [artifact.id],
+          reportArtifactId: artifact.id,
+          summary: 'Run finished.',
+          requestId: id(),
+        },
+        (c, input) => tools.get('customer_experiment.submit_results')!(c, input as never),
+      ),
     );
     await finish(worker);
     return service.reconcile(caller, exp.id);
@@ -227,6 +246,8 @@ async function fixture(
     state,
     scope,
     caller,
+    tools,
+    submitted,
     artifacts,
     workflows,
     reviews,
@@ -405,7 +426,7 @@ test('a scope change clears acceptance and payment and requires a fresh fixed co
   exp = await f.judge(reviewer, exp, 'planning');
   assert.equal(exp.workflow.state, 'planning');
   assert.equal(exp.acceptedContractId, null);
-  assert.equal(exp.paymentId, null);
+  assert.equal((await f.service.get(f.caller, exp.id)).paymentId, null);
   assert.equal(
     exp.workflow.data.computeEpoch,
     `${oldContract.id}:planning:${exp.workflow.revision}`,
@@ -540,6 +561,28 @@ test('results wait for the final code capture, then dispatch a separate Astra re
   assert.equal((submitted as typeof exp).workflow.state, 'complete');
 });
 
+test("leased workers and reviewers read the request without the buyer's email or payment id", async (t) => {
+  const f = await fixture(t);
+  const paid = await f.pay();
+  const buyer = (view: object) => ['email', 'paymentId'].filter((key) => key in view);
+  // The owner's read keeps the buyer.
+  const owned = await f.service.get(f.caller, paid.id);
+  assert.equal(owned.email, 'customer@example.test');
+  assert.match(owned.paymentId!, /^pi_/);
+  const producer = await f.offer();
+  const read = await f.tools.get('customer_experiment.get')!(producer.worker, {
+    id: paid.id,
+  } as never);
+  assert.equal(read.id, paid.id);
+  assert.equal(read.acceptedContractId, owned.acceptedContractId);
+  assert.deepEqual(buyer(read), []);
+  const exp = await f.deliver(owned, producer);
+  assert.deepEqual(buyer(f.submitted.at(-1)!), []);
+  const reviewer = await f.offer();
+  assert.deepEqual(buyer(await f.judge(reviewer, exp, 'running')), []);
+  assert.equal((await f.service.get(f.caller, exp.id)).email, 'customer@example.test');
+});
+
 test('customer agreements leave CPU and GPU selection to Merv', () => {
   assert.deepEqual(planSchema.parse(plan).limits, {
     wallMinutes: 10,
@@ -593,7 +636,13 @@ test('native compute captures are scoped to the accepted attempt and frozen into
       summary: 'Invalid inherited evidence',
       requestId: f.id(),
     }),
-    errorCode('invalid_evidence_author'),
+    // The refusal names the artifact at fault and only it, so the worker drops exactly that.
+    (error: MervError) =>
+      error.code === 'invalid_evidence_author' &&
+      error.message.includes(unrelated.id) &&
+      !error.message.includes(report.id) &&
+      /cite them by id/.test(error.message) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [unrelated.id] }),
   );
   await f.work.commit(producer, { 'experiment.ts': 'console.log("remote results");\n' });
   exp = await f.work.run(
@@ -644,6 +693,83 @@ test('native compute captures are scoped to the accepted attempt and frozen into
   );
 });
 
+test('a report rendered final in an earlier session is refused with the advice to render it again here', async (t) => {
+  const f = await fixture(t);
+  const exp = await f.pay();
+  const producer = await f.offer();
+  // The same worker, in an earlier session, rendered the report and wrote other evidence. The
+  // rows are written directly: that session is gone, so the artifact service would refuse it.
+  const earlier = async (id: string) => {
+    await f.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,session_id)
+         VALUES(?,?,?,?,'text/markdown',?,1,?,'ses_earlier')`,
+        id,
+        exp.projectId,
+        producer.worker.actorId,
+        id,
+        '0'.repeat(64),
+        new Date().toISOString(),
+      ),
+    );
+    return { id };
+  };
+  const report = await earlier('art_earlier_report');
+  f.reports.claim(report.id, { kind: 'customer_experiment', id: exp.id });
+  const notes = await earlier('art_earlier_notes');
+  const submit = (artifactIds: string[]) =>
+    f.service.submitResults(producer.worker, {
+      id: exp.id,
+      expectedRevision: exp.workflow.revision,
+      artifactIds,
+      reportArtifactId: report.id,
+      summary: 'Report from an earlier session',
+      requestId: f.id(),
+    });
+  // Only the report is at fault: render it again, with nothing said about other artifacts.
+  await assert.rejects(
+    submit([report.id]),
+    (error: MervError) =>
+      error.code === 'invalid_evidence_origin' &&
+      /render it with final: true again here/.test(error.message) &&
+      !/Leave the others/.test(error.message) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id] }),
+  );
+  // The report and another artifact: each gets its own advice.
+  await assert.rejects(
+    submit([report.id, notes.id]),
+    (error: MervError) =>
+      error.code === 'invalid_evidence_origin' &&
+      error.message.includes(`these are not: ${report.id}, ${notes.id}.`) &&
+      /render it with final: true again here\. Leave the others out of artifactIds/.test(
+        error.message,
+      ) &&
+      JSON.stringify(error.details) === JSON.stringify({ artifactIds: [report.id, notes.id] }),
+  );
+  // Through the session's own admission, the workflow names the earlier artifact it refuses.
+  await assert.rejects(
+    f.work.run(
+      producer,
+      'customer_experiment.submit_results',
+      {
+        id: exp.id,
+        expectedRevision: exp.workflow.revision,
+        artifactIds: [notes.id],
+        reportArtifactId: report.id,
+        summary: 'Notes from an earlier session',
+        requestId: f.id(),
+      },
+      (c, input) => f.service.submitResults(c, input),
+    ),
+    (error: MervError) =>
+      error.code === 'execution_arguments_forbidden' &&
+      error.message.includes(`${notes.id} is not among this assignment's artifacts`) &&
+      /cite its id in one this session creates/.test(error.message) &&
+      JSON.stringify(error.details) ===
+        JSON.stringify({ field: 'artifactIds', reference: 'artifacts', outside: [notes.id] }),
+  );
+});
+
 test('readiness rejects incomplete data and training/evaluation byte reuse', () => {
   const requirement = {
     id: 'train',
@@ -689,6 +815,75 @@ test('a full 24-hour, 500-million-token agreement fits both worker policies', ()
     const policy = serviceExecution(review);
     assert.equal(policy.maxDurationSeconds, accepted.limits.wallMinutes * 60);
     assert.equal(policy.maxModelTokens, accepted.limits.maxTokens);
+  }
+});
+
+test('service_experiment@4 grants the executor the progress its brief asks for', async () => {
+  const names = (review: boolean, version: number) =>
+    serviceExecution(review, version).tools.map((tool) => tool.name);
+  // Version 3's running policy is published: it stays exactly as production pinned it.
+  assert.deepEqual(names(false, 3), [
+    'workflow.status_and_next',
+    'workflow.assignment',
+    'customer_experiment.get',
+    'customer_experiment.files',
+    'customer_experiment.file_download',
+    'artifact.get',
+    'artifact.read',
+    'review.get',
+    'artifact.create',
+    'artifact.upload_begin',
+    'artifact.upload_resume',
+    'artifact.upload_complete',
+    'code.commit',
+    'code.operation',
+    'report.open',
+    'report.write',
+    'report.clear',
+    'report.check',
+    'report.review_visual',
+    'report.approve_visual',
+    'report.render',
+    'customer_experiment.submit_results',
+  ]);
+  assert.deepEqual(names(false, 4), [
+    ...names(false, 3).slice(0, -1),
+    'customer_experiment.progress',
+    'customer_experiment.submit_results',
+  ]);
+  assert.deepEqual(
+    serviceExecution(false, 4).tools.find((t) => t.name === 'customer_experiment.progress'),
+    {
+      name: 'customer_experiment.progress',
+      alternatives: [{ id: { kind: 'target', field: 'instanceId' } }],
+    },
+  );
+  assert.ok(!names(true, 4).includes('customer_experiment.progress'));
+  // Only the version that grants it tells the worker to post progress.
+  const brief = async (version: number) => {
+    const ctx = {
+      get: async () => ({ title: 'T', contract: {}, submission: null, review: null }),
+      contractArtifact: async () => 'art_contract',
+    };
+    const running = executionPolicy(ctx as never, version).assignments!.find(
+      (a) => a.state === 'running',
+    )!;
+    const built = await running.build!({
+      caller: {},
+      snapshot: { id: 'wf_1', version },
+      tx: {},
+    } as never);
+    return (built as { brief: string }).brief;
+  };
+  assert.match(await brief(4), /post progress with customer_experiment\.progress/);
+  assert.doesNotMatch(await brief(3), /customer_experiment\.progress/);
+  // Compute advice follows the live offers, not a fixed provider order: a Modal sandbox cannot
+  // outlive its offer's lifetime, and a machine still deleting holds one of the two slots.
+  for (const version of [3, 4]) {
+    const text = await brief(version);
+    assert.doesNotMatch(text, /Modal first/);
+    assert.match(text, /maximum lifetime against the job/);
+    assert.match(text, /two machines at once, and one still deleting counts/);
   }
 });
 

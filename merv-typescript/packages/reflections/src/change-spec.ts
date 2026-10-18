@@ -1,6 +1,10 @@
 import { z } from 'zod';
-import { check, folded, idSchema, ordered, parsed, visible } from '@merv/contracts';
-import { experimentName, MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
+import { check, folded, idSchema, ordered, parsed, quoted, visible } from '@merv/contracts';
+import {
+  EXPERIMENT_NAME_RULE,
+  experimentName,
+  MAX_ACTIVE_EXPERIMENTS,
+} from '@merv/experiments/rules';
 import type { ChangeSpec } from './types.js';
 
 /**
@@ -26,6 +30,17 @@ const text = (max: number) => z.string().min(1).max(max).refine(visible);
 const reason = text(1000);
 const key = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
 const workflowId = idSchema;
+/**
+ * Experiments' own name rule. The plan is read from an artifact, where no schema shows the rule,
+ * and zod's bare "Invalid" left authors guessing, so a name that breaks it is refused saying it.
+ */
+const name = z.string().superRefine((value, ctx) => {
+  if (!experimentName().safeParse(value).success)
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${quoted(value, 60)} (${value.length} characters) is not an experiment name: use ${EXPERIMENT_NAME_RULE} and with no spaces, such as schema-control-evaluation`,
+    });
+});
 const dependsOn = z.array(key).max(CHANGE_SPEC_LIMITS.items);
 
 const task = z
@@ -44,7 +59,7 @@ const experiment = z
   .object({
     key,
     kind: z.literal('experiment'),
-    name: experimentName(),
+    name,
     question: text(4000),
     details: z.string().max(4000),
     dependsOn,

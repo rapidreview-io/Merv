@@ -20,8 +20,6 @@ export interface SessionToolInvocation {
  * session reads whatever its project holds (founder, 2026-09-17: no read constraints).
  */
 export interface SessionToolPolicy {
-  /** What a session's MCP client is told about its connection (its MCP instructions). */
-  readonly instructions?: string;
   allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean>;
   prepare(
     caller: Caller,

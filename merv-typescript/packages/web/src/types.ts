@@ -10,7 +10,7 @@ export type WebProvider = 'tavily' | 'openai_web_search';
 
 /** Input as the model gives it: Nisa's web_search arguments, normalized rather than refused. */
 export interface WebSearchInput {
-  /** One query, or up to 4 phrasings combined with OR into one request. */
+  /** One query, or up to 4, each run as its own search. */
   query: string | string[];
   max_results?: number | null;
   search_depth?: string | null;
@@ -22,6 +22,8 @@ export interface WebExtractInput {
   extract_depth?: string | null;
   start_text?: string | null;
   end_text?: string | null;
+  /** Characters of the page, or of its section, to skip: a cut answer's next_offset. */
+  offset?: number | null;
 }
 
 /** One result, and only these fields, whatever the provider sent. */
@@ -32,9 +34,12 @@ export interface WebResult {
   /** Tavily's excerpt; empty for the fallback, whose text is the answer. */
   content: string;
   score: number;
+  /** The query that found it, when the call ran several. */
+  query?: string;
 }
 export interface WebSearch {
-  query: string;
+  /** The queries run, when there were several. */
+  query: string | string[];
   /** Absent when no provider was asked (status needs_query_terms). */
   provider?: WebProvider;
   results: WebResult[];
@@ -53,8 +58,10 @@ export interface WebSearch {
 export interface WebPage {
   url: string;
   content: string;
-  /** Whether only the text between start_text and end_text was kept. */
+  /** Whether the page was cut at start_text, end_text or both, each found. */
   section: boolean;
+  /** Where the text cut at the cap goes on: the offset that reads the rest. */
+  next_offset?: number;
   status: 'success' | 'error' | 'needs_valid_url';
   provider?: 'tavily';
   error?: string;

@@ -47,6 +47,10 @@ export interface ExperimentEvidence {
   resultFormat?: 'json' | 'qualitative';
   systemGenerated: boolean;
 }
+/** What an attach returns: the association, and the current evidence it displaced, where any. */
+export interface ExperimentAttached extends ExperimentEvidence {
+  replaced?: { path: string; artifactId: string }[];
+}
 export interface ExperimentSubmission {
   id: string;
   experimentId: string;
@@ -86,6 +90,8 @@ export interface RefusedCapture {
   nativeWorkflowId: string;
   captureNode: string;
   error: string;
+  /** Not refused for good: it has failed to register for ten minutes, and is still retried. */
+  retrying?: true;
 }
 export interface Experiment {
   id: string;
@@ -111,7 +117,8 @@ export interface Experiment {
   captureArtifactIds?: string[];
   /**
    * Captures of the current attempt's compute that Sandboxes refused as ones that can never
-   * register, so their outputs are not evidence: present only when there are any.
+   * register, so their outputs are not evidence, and those marked `retrying` that have not
+   * registered yet: present only when there are any.
    */
   refusedCaptures?: RefusedCapture[];
 }

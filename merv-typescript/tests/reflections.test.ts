@@ -868,6 +868,16 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   ].filter((name) => reads.has(name));
   for (const read of ['research.list', 'research.lineage', 'usage.read', 'project.records'])
     assert.ok(named.includes(read), read);
+  // A lens has no checkout: its brief says so and names the reads of the project's code, which
+  // its session is offered.
+  assert.match(execution.assignment.brief, /This visit has no checkout of the project’s code\./);
+  for (const read of ['code.files', 'code.log']) {
+    assert.ok(execution.assignment.brief.includes(read), read);
+    assert.ok(reads.has(read), read);
+  }
+  // The pinned recipe still says task.list repeats project.records; the brief says it is an index.
+  assert.match(execution.assignment.brief, /project\.records lists only an index/);
+  for (const read of ['task.get', 'experiment.get_state']) assert.ok(reads.has(read), read);
 });
 
 test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {
@@ -1507,7 +1517,11 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
     kind: 'results',
     expectedRevision: 0,
     requestId: 'main-edit',
-    changes: [{ id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' }],
+    // An edit to another section alone would be merged; this one writes the reviewer's too.
+    changes: [
+      { id: 'limits', title: 'Limits', content: 'Evidence is still being collected.' },
+      { id: 'synthesis', title: 'Synthesis', content: 'Pending review.' },
+    ],
   });
   await assert.rejects(f.app.ctx.tools.call('review.submit', reviewer, input), {
     code: 'paper_revision_conflict',

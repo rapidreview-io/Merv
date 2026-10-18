@@ -57,6 +57,8 @@ export interface ExperimentStanding {
   started?: string;
   /** Captures of its current attempt's compute that Sandboxes refused, so are not evidence. */
   refusedCaptures?: number;
+  /** Captures of its current attempt's compute that keep failing to register, still retried. */
+  retryingCaptures?: number;
 }
 
 const ENDED: Record<string, string> = {
@@ -138,9 +140,10 @@ function face(standing: ExperimentStanding): {
 }
 
 /**
- * Only what a person must do: a failed prerequisite, no reviewer left, or compute output the
- * attempt lost because Sandboxes refused its capture. Rounds used up are
- * Workflows' mark on the card, in the words every owner's work shares.
+ * Only what a person must do: a failed prerequisite, no reviewer left, compute output the
+ * attempt lost because Sandboxes refused its capture, or a capture that keeps failing to
+ * register. Rounds used up are Workflows' mark on the card, in the words every owner's work
+ * shares.
  */
 function attention(standing: ExperimentStanding): RunningAttention | undefined {
   if (ENDED[standing.state]) return undefined;
@@ -151,6 +154,7 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
       who: 'The owner ends the experiment, or its cycle replans it.',
     };
   const refused = standing.refusedCaptures ?? 0;
+  const retrying = standing.retryingCaptures ?? 0;
   return (
     reviewAttention(standing.review) ??
     (refused
@@ -160,7 +164,14 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
           ],
           who: 'The owner: run it again, or go on without them',
         }
-      : undefined)
+      : retrying
+        ? {
+            says: [
+              `${retrying} compute capture${retrying === 1 ? '' : 's'} not registered yet; Merv keeps retrying`,
+            ],
+            who: 'An operator checks Sandboxes; nothing needs to run again',
+          }
+        : undefined)
   );
 }
 

@@ -64,3 +64,26 @@ test('guidance follows the profile', () => {
   assert.match(computeGuidance('plan'), /Do not run full training/);
   assert.doesNotMatch(computeGuidance('plan'), /300 seconds/);
 });
+
+test('every profile says how captures register and how inputs reach a machine', () => {
+  for (const profile of ['execute', 'plan', 'check'] as const) {
+    const text = computeGuidance(profile);
+    // Sandboxes' capture registration titles each collection with these ids first.
+    assert.match(text, /titled "Compute capture <workflow id> \/ <node id>"/);
+    assert.match(
+      text,
+      /a successful one shortly after it ends and any other once its workflow finishes/,
+    );
+    assert.match(text, /never by recency/);
+    assert.match(text, /job logs included/);
+    // Customer workers are told never to ask about compute, and get this same text.
+    assert.match(text, /never re-upload its files by hand/);
+    assert.doesNotMatch(text, /ask the owner/);
+    assert.match(
+      text,
+      /stage node: upload workspace files with storage_upload and storage_complete/,
+    );
+    assert.match(text, /metadata\.outputObjects/);
+    assert.match(text, /Never paste file contents or signed URLs into job commands/);
+  }
+});

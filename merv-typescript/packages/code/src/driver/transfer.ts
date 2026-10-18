@@ -127,6 +127,27 @@ export abstract class DriverTransfer extends DriverCheckout {
     }
   }
 
+  /**
+   * Fill a commit's fresh index with the checkout's own entries, which are only read, so that
+   * what is staged is committed as `git commit` would: a path a merge start materialised, or
+   * one the agent force-added, stays though .gitignore names it. `add -A` then adds the rest.
+   * An index Git cannot read or copy starts from the expected head instead.
+   */
+  private async seedIndex(
+    row: WorkspaceRow,
+    expectedHead: string,
+    env: Record<string, string>,
+  ): Promise<void> {
+    const cwd = row.path;
+    // The index is fresh, so the copy creates it; a copy that fails leaves none behind.
+    const staged = await this.git.run(['ls-files', '--stage', '-z'], { cwd });
+    const copy = ['update-index', '-z', '--index-info'];
+    const copied =
+      staged.code === 0 &&
+      (!staged.stdout || (await this.git.run(copy, { cwd, env, stdin: staged.stdout })).code === 0);
+    if (!copied) await this.git.ok(['read-tree', expectedHead], { cwd, env });
+  }
+
   protected async commit(
     row: WorkspaceRow,
     command: CodeCommitCommand,
@@ -163,7 +184,7 @@ export abstract class DriverTransfer extends DriverCheckout {
           );
       const index = join(directory, `index-${randomUUID()}`);
       const env = { GIT_INDEX_FILE: index };
-      await this.git.ok(['read-tree', command.expectedHead], { cwd: row.path, env });
+      await this.seedIndex(row, command.expectedHead, env);
       await this.checkFiles(row, env);
       await this.git.ok(['add', '-A', '--', '.'], { cwd: row.path, env });
       const tree = oid(await this.git.ok(['write-tree'], { cwd: row.path, env }));

@@ -1,4 +1,4 @@
-import type { ReviewRequest } from '@merv/contracts';
+import { isAgentCaller, type Caller, type ReviewRequest } from '@merv/contracts';
 import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { z } from 'zod';
 import type { dataRequirementSchema, planSchema } from './schema.js';
@@ -120,6 +120,18 @@ export interface CustomerExperiment {
   review: ReviewRequest | null;
   createdAt: string;
 }
+/** A request as Merv's own agents read it: the work without its buyer. The customer's email and
+ *  payment id are for the customer, the owner and the platform administrator; no worker, reviewer
+ *  or interviewer needs them, and an agent's transcript keeps whatever it reads. */
+export function withoutBuyer<T extends { email?: unknown; paymentId?: unknown }>(
+  request: T,
+): Omit<T, 'email' | 'paymentId'> {
+  const { email: _email, paymentId: _paymentId, ...work } = request;
+  return work;
+}
+/** What `caller` reads of a request: an agent, leased or in a conversation, its work only. */
+export const seenBy = (caller: Caller, exp: CustomerExperiment) =>
+  isAgentCaller(caller) ? withoutBuyer(exp) : exp;
 
 /** One customer-visible progress line the executing worker reported. */
 export interface ProgressLine {

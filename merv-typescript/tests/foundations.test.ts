@@ -259,6 +259,7 @@ test('artifact metadata, bytes and links are authorised once per call', async (t
   for (const call of [
     () => store.get(caller, artifact.id),
     () => store.read(caller, artifact.id),
+    () => store.readStored(caller, artifact.id),
     () => store.download(caller, artifact.id),
   ]) {
     require.mock.resetCalls();

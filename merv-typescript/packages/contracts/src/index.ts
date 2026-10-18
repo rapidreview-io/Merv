@@ -12,7 +12,7 @@ import { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
-export { cleanText, clip, ellipsis, itemTitle, visible } from './text.js';
+export { cleanText, clip, ellipsis, firstOf, itemTitle, quoted, visible } from './text.js';
 export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
 export { byCodeUnit, ordered } from './order.js';
 export {
@@ -58,6 +58,8 @@ export {
   codeCommitInputSchema,
   codeMergeInputSchema,
   codeCommandControlSchema,
+  checkpointRequestId,
+  isCheckpointRequestId,
   codeCommitCommandSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,
@@ -703,14 +705,18 @@ export async function forRead<T>(
 }
 /** The most bytes Blobs moves by signed URL, and so the largest artifact. */
 export const MAX_OBJECT_BYTES = 512 * 1024 * 1024;
+/** How the collection a compute capture registers is titled: Sandboxes names it so, and Sessions'
+ *  compute guidance tells workers to find it by this title. */
+export const captureTitle = (workflowId: string, nodeId: string) =>
+  `Compute capture ${workflowId} / ${nodeId}`;
 export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;
   /**
    * Signed GET valid 1 h, served as identity-encoded application/octet-stream whatever the
-   * uploader sent, saved as `filename` (default: the hash): `blob_not_found` when nothing is
-   * stored, `blob_corrupt` when the stored size is not expectedSize. Never expands the inline
-   * content limit.
+   * uploader sent, saved as `filename` (default: the hash; past 100 characters, its start and
+   * extension): `blob_not_found` when nothing is stored, `blob_corrupt` when the stored size is
+   * not expectedSize. Never expands the inline content limit.
    */
   download?(
     namespace: string,
@@ -747,6 +753,8 @@ export const isDirectHuman = (
     caller.conversation,
     caller.service,
   ].every((authority) => !authority);
+/** Merv's own agent: a leased worker or a Pi conversation. Never an agent holding a person's key. */
+export const isAgentCaller = (caller: Caller) => !!(caller.session || caller.conversation);
 /** Refuses (403) anyone but the person themself, signed in: see isDirectHuman. */
 export function requireHuman(
   caller: Caller,
@@ -864,6 +872,8 @@ export interface ArtifactInput {
   content: string;
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
+  /** The caller's own key for this create, 1-128 characters: a retry with it is safe. */
+  requestId?: string;
 }
 export interface ArtifactCollectionInput {
   title: string;
@@ -944,8 +954,29 @@ export interface Artifacts {
     artifact: Artifact;
     download: { url: string; expiresAt: string };
   }>;
+  /** Fresh links to 1-100 distinct members of a collection, from one read of it: each member's
+   * name, size and hash beside its link, in the order named. */
+  downloadFiles(
+    caller: Caller,
+    artifactId: string,
+    fileNames: readonly string[],
+  ): Promise<{
+    artifact: Artifact;
+    downloads: (Omit<ArtifactFile, 'provider'> & { url: string; expiresAt: string })[];
+  }>;
+  /** `read`, and what lives outside the row, so never inside a transaction: a collection
+   * member by `fileName`, fetched from its provider, and a range (a length is required) of a
+   * file above the inline limit, up to 16 MiB, fetched from blobs. Either is refused unless its
+   * bytes match the retained size and SHA-256. */
+  readStored(
+    caller: Caller,
+    artifactId: string,
+    range?: { fileName?: string; offset?: number; length?: number },
+  ): Promise<ArtifactContent & { fileName?: string }>;
   /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
-   * a transaction of its own. No network I/O. Not idempotent. */
+   * a transaction of its own. No network I/O. Idempotent per actor and requestId: a retry gets
+   * the artifact the first call stored; other title, media type or bytes under that requestId are
+   * `artifact_request_conflict` (409). Without a requestId each call stores a new artifact. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
   /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: those this project holds. */
@@ -996,6 +1027,7 @@ export function effectiveWorkspace(policy: WorkflowExecutionPolicy): WorkflowWor
 export type * from './reviews.js';
 import type { Reviews } from './reviews.js';
 export type * from './context.js';
+export { contextBlock, CONTEXT_BLOCK } from './context.js';
 import type { ContextBuilder } from './context.js';
 declare module 'cordis' {
   interface Context {

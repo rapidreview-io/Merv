@@ -9,7 +9,8 @@ import {
 } from '@merv/contracts';
 import type { CodeGitHubService } from '@merv/code/github';
 import type { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeMainLanding, CodeMainLandingOutcome } from './models.js';
+import { baseKey } from './base-plan.js';
+import type { CodeBaseRecord, CodeMainLanding, CodeMainLandingOutcome } from './models.js';
 import type { CodeUnitService } from './units.js';
 
 /**
@@ -17,7 +18,9 @@ import type { CodeUnitService } from './units.js';
  * linked GitHub repository main means all accepted work: the server carries each accepted unit
  * with code into it, oldest acceptance first and one at a time. A head that already contains
  * main moves main forward; any other is merged through the same base record dependents share,
- * and a conflict is the one resolution task every base gets. Nothing waits on a landing:
+ * and a conflict is the one resolution task every base gets. Work a dependent's base already
+ * merges on top of main lands through that base, so main follows the merges its dependents
+ * make instead of repeating them, conflicts and all. Nothing waits on a landing:
  * dependents still start from their dependencies' accepted commits, and only work with no
  * dependencies starts from main.
  *
@@ -66,9 +69,37 @@ interface LandingRow {
   reason: string | null;
   settled_at: string | null;
 }
-type Candidate = { unitId: string; commit: string; acceptanceHash: string; acceptedAt: string };
 const ACTOR = 'system:code';
 const OPEN = 'SELECT * FROM code_main_landings WHERE project_id=? AND outcome IS NULL';
+/** States in which an unfinished base waits on an operator rather than on its own work. */
+const STOPPED = ['cancelled', 'suspended'];
+
+/**
+ * Whether a base's result will descend from `main`, and every unfinished step of its plan can
+ * still finish: an input stands for main, or is a step that does. Read from the project's
+ * records, which already list each step's inputs.
+ */
+function buildsOnMain(records: Map<string, CodeBaseRecord>, root: CodeBaseRecord, main: string) {
+  let onMain = false;
+  const seen = new Set<string>();
+  for (const queue = [root]; queue.length;) {
+    const record = queue.pop()!;
+    if (seen.has(record.key)) continue;
+    seen.add(record.key);
+    if (record.quarantined || (!record.result && STOPPED.includes(record.state))) return false;
+    if (record.result?.commit === main) {
+      onMain = true;
+      continue;
+    }
+    for (const key of [record.left, record.right]) {
+      const lone = record.members.find((member) => baseKey([member]) === key);
+      if (lone) onMain ||= lone === main;
+      else if (records.has(key)) queue.push(records.get(key)!);
+      else return false;
+    }
+  }
+  return onMain;
+}
 
 /**
  * The commits of `commits` that `main` does not contain. `rev-list --not main` walks only the
@@ -179,11 +210,12 @@ export class MainLanding {
   /**
    * The accepted units main is missing, oldest acceptance first: a dependent is accepted after
    * what it depends on, so this is also dependency order. Quarantined work, code-less work, a
-   * rejected publication and a landing already skipped are never offered.
+   * rejected publication and a landing already skipped are never offered, and their commits
+   * are held: no landing may carry them.
    */
-  async order(projectId: string, main: string): Promise<Candidate[]> {
-    const { candidates, skipped } = await this.state.read(async (sql) => ({
-      candidates: (await this.units.records.candidatesOf(sql, projectId)).candidates,
+  private async offered(projectId: string, main: string) {
+    const { candidates, rejected, skipped } = await this.state.read(async (sql) => ({
+      ...(await this.units.records.candidatesOf(sql, projectId)),
       skipped: (
         await sql.all<{ unit_id: string; acceptance_hash: string }>(
           "SELECT unit_id,acceptance_hash FROM code_main_landings WHERE project_id=? AND outcome='skipped'",
@@ -196,13 +228,49 @@ export class MainLanding {
     );
     const commits = eligible.map((item) => item.commit);
     const beyond = await beyondMain(this.repositories, projectId, main, commits);
-    return eligible
+    const order = eligible
       .filter((item) => beyond.has(item.commit))
       .sort((a, b) => a.acceptedAt.localeCompare(b.acceptedAt) || a.unitId.localeCompare(b.unitId));
+    const held = new Set([
+      ...rejected,
+      ...candidates.filter((item) => !eligible.includes(item)).map((item) => item.commit),
+    ]);
+    return { order, held };
+  }
+
+  /**
+   * The smallest base that merges `commit` on top of `main` and can still finish, if one does.
+   * Its result descends from main, so landing through it makes no merge, and asks for no
+   * resolution, that the work waiting on that base does not need anyway. A base that would
+   * carry work main never takes is not one.
+   */
+  private async integrating(
+    sql: Sql,
+    projectId: string,
+    main: string,
+    commit: string,
+    held: Set<string>,
+  ): Promise<CodeBaseRecord | null> {
+    const records = await this.units.bases.records(sql, projectId);
+    const byKey = new Map(records.map((record) => [record.key, record]));
+    return (
+      records
+        .filter(
+          (record) =>
+            record.members.includes(commit) &&
+            !record.members.some((member) => held.has(member)) &&
+            buildsOnMain(byKey, record, main),
+        )
+        .sort((a, b) => a.members.length - b.members.length || a.key.localeCompare(b.key))[0] ??
+      null
+    );
   }
 
   private async begin(projectId: string, main: string): Promise<boolean> {
-    const [next] = await this.order(projectId, main);
+    const {
+      order: [next],
+      held,
+    } = await this.offered(projectId, main);
     if (!next) return false;
     const env = { env: this.repositories.environment(projectId) };
     const ff = await this.repositories.git.run(
@@ -231,12 +299,16 @@ export class MainLanding {
       );
       const at = now();
       const members = [main, next.commit];
+      const joined =
+        ff.code === 0 ? null : await this.integrating(tx, projectId, main, next.commit, held);
       // A base this landing makes says, in its merge commit, which work it lands. One that
       // already existed was planned by others' waiters and keeps their message: a message read
       // by one execution and not another would make a retried merge a different commit.
-      const fresh = ff.code !== 0 && !(await this.units.bases.find(tx, projectId, members));
+      const fresh =
+        ff.code !== 0 && !joined && !(await this.units.bases.find(tx, projectId, members));
       const unit = fresh ? await this.workflows.relations(projectId, next.unitId, tx) : null;
-      const base = ff.code === 0 ? null : await this.units.bases.ensure(tx, projectId, members);
+      const base =
+        ff.code === 0 ? null : (joined ?? (await this.units.bases.ensure(tx, projectId, members)));
       await tx.run(
         'INSERT INTO code_main_landings(project_id,landing_key,seq,unit_id,acceptance_hash,main_oid,head_oid,base_key,message,result_oid,outcome,created_at,settled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
         projectId,
@@ -256,7 +328,8 @@ export class MainLanding {
         base ? null : at,
       );
       if (!base) return await this.moveMain(tx, projectId, main, next.commit, next.unitId, 'ff');
-      await this.units.bases.mergesMain(tx, projectId, base.key, main, at);
+      if (base.members.includes(main))
+        await this.units.bases.mergesMain(tx, projectId, base.key, main, at);
       this.units.bases.soon(projectId);
       return true;
     });
@@ -271,15 +344,25 @@ export class MainLanding {
       const standing = await this.standing(tx, projectId);
       if (standing.reason) return false;
       // Read with the move it decides, so a base quarantined meanwhile never reaches main.
-      const base = await this.units.bases.find(tx, projectId, [row.main_oid, row.head_oid]);
+      const path = row.base_key ? await this.units.bases.path(tx, projectId, row.base_key) : [];
+      const base = path.find((record) => record.key === row.base_key) ?? null;
+      const own = row.base_key === baseKey([row.main_oid, row.head_oid]);
+      const stopped = path.find(
+        (record) => record.quarantined || (!record.result && STOPPED.includes(record.state)),
+      );
       const unusable = !base
         ? 'base_missing'
         : base.quarantined
           ? 'base_quarantined'
           : base.state === 'cancelled'
             ? 'base_cancelled'
-            : null;
-      if (unusable) return await this.settle(tx, row, 'skipped', null, unusable);
+            : !own && stopped
+              ? `base_${stopped.quarantined ? 'quarantined' : stopped.state}`
+              : null;
+      // A base the landing joined belongs to the work that waits on it: when its plan can no
+      // longer finish, this unit is offered again, not given up.
+      if (unusable)
+        return await this.settle(tx, row, own ? 'skipped' : 'superseded', null, unusable);
       // A bind or a publication moved main; the next landing starts from the main it left.
       if (standing.main !== row.main_oid)
         return await this.settle(tx, row, 'superseded', null, 'main_moved');
@@ -347,21 +430,23 @@ export class MainLanding {
 
   /** The `landing` section of code.status. */
   async status(projectId: string): Promise<CodeMainLanding> {
-    const { standing, open, landed, base } = await this.state.read(async (sql) => {
+    const { standing, open, landed, path } = await this.state.read(async (sql) => {
       const open = await sql.get<LandingRow>(OPEN, projectId);
       return {
         standing: await this.standing(sql, projectId),
         open,
-        base: open?.base_key
-          ? await this.units.bases.find(sql, projectId, [open.main_oid, open.head_oid])
-          : null,
+        path: open?.base_key ? await this.units.bases.path(sql, projectId, open.base_key) : [],
         landed: await sql.all<LandingRow>(
           'SELECT * FROM code_main_landings WHERE project_id=? AND outcome IS NOT NULL ORDER BY seq DESC LIMIT 50',
           projectId,
         ),
       };
     });
-    const order = standing.main ? await this.order(projectId, standing.main).catch(() => []) : [];
+    const { order } = standing.main
+      ? await this.offered(projectId, standing.main).catch(() => ({ order: [] }))
+      : { order: [] };
+    // A joined base may wait on an earlier step of its plan rather than on its own merge.
+    const base = path.find((record) => record.state === 'awaiting_resolution') ?? path[0];
     return {
       enabled: !standing.reason,
       ...(standing.reason ? { reason: standing.reason } : {}),

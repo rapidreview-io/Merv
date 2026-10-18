@@ -411,6 +411,15 @@ export class CodeBaseService {
     );
   }
 
+  /** Whether a base merged `commit` as main, which brings no unit's acceptance with it. */
+  async isMain(sql: Sql, projectId: string, commit: string): Promise<boolean> {
+    return !!(await sql.get(
+      'SELECT 1 FROM code_edges WHERE project_id=? AND target_ref=?',
+      projectId,
+      `main:${commit}`,
+    ));
+  }
+
   /** Keep the intact acceptance as durable work; Git never runs in the caller's transaction. */
   async recordAcceptance(
     tx: Transaction,

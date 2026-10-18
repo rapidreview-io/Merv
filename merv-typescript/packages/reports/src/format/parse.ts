@@ -298,7 +298,11 @@ function checkResult(s: Section, err: (where: string, message: string) => void):
       `the answer is ${words((first as Tokens.Paragraph).text)} words; the limit is ${SECTIONS.Result.words}`,
     );
   const chartAt = s.tokens.findIndex((t) => t.type === 'code');
-  if (chartAt < 0) err(s.name, 'needs one chart showing every criterion against its bar');
+  if (chartAt < 0)
+    err(
+      s.name,
+      'needs one chart: every criterion against its bar, or the measured results when there are no criteria',
+    );
   const paras = s.tokens.filter((t) => t.type === 'paragraph');
   const after =
     chartAt < 0 ? [] : s.tokens.slice(chartAt + 1).filter((t) => t.type === 'paragraph');

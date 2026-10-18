@@ -41,9 +41,12 @@ export type SessionOutcome =
   /** The worker ended its visit asking its owner a question (`session.ask_owner`). */
   | 'asked_owner'
   /**
-   * The person the visit's model calls were charged to had no tokens left today, so it stopped:
-   * nothing about the work was wrong, and it waits for the reset or a raised limit.
+   * The model relay refused one of the visit's calls because the person they were charged to had
+   * no tokens left today (the worker token budget), so it stopped: nothing about the work was
+   * wrong, and it waits for the reset or a changed limit.
    */
+  | 'worker_token_budget_exhausted'
+  /** The same, as older closes recorded it; it counts against nothing either. */
   | 'budget_exhausted'
   /**
    * The model relay or its provider failed the visit's calls (an outage, or Main's release cut
@@ -117,6 +120,8 @@ export type DispatchDecision =
   | 'usage_unavailable'
   | 'retries_exhausted'
   /** The person a rented machine's work is charged to has no model tokens left today. */
+  | 'worker_token_budget_exhausted'
+  /** The same, as older runners' last decisions stored it. */
   | 'model_budget_exhausted'
   /** Everything left in the queue needs a workspace driver this runner does not advertise. */
   | 'runner_incompatible'
@@ -281,6 +286,11 @@ export interface ThreadView {
   asks?: true;
   /** Oldest first. */
   visits: VisitView[];
+}
+/** A leased worker's own work item's threads and their visits (system.status). */
+export interface WorkerLineage {
+  instanceId: string;
+  threads: Omit<ThreadView, 'takesMessage' | 'asks'>[];
 }
 /** One session of a thread: its lease, credential and launch. */
 export interface VisitView {
@@ -462,12 +472,41 @@ export interface ThreadQuestion {
    */
   open: boolean;
 }
+/** A leased worker's queue (`session.messages`): what waits for its acknowledgement. */
+export interface WorkerQueue {
+  /** The messages to its thread awaiting its acknowledgement, oldest first, and in a visit that
+   *  did not resume its thread's conversation those earlier visits acknowledged; with `all`,
+   *  every message to its thread, the acknowledged ones with their replies. */
+  messages: SessionMessage[];
+  /** How many messages to its thread were acknowledged, by this visit or an earlier one. */
+  acknowledged: number;
+  /** What to do with the messages that wait, while any does. */
+  next?: string;
+}
 /** What passed between a thread and the people over it, oldest first. */
 export interface ThreadMessages {
   threadId: string;
   /** Messages to the thread and to each of its visits. */
   messages: SessionMessage[];
   questions: ThreadQuestion[];
+}
+/**
+ * A question an agent on a work item asked its owner with session.ask_owner, and the message
+ * that answered it, as Sessions recorded both: frozen into every later assignment of that work.
+ */
+export interface OwnerAnswer {
+  questionId: string;
+  /** The asking thread, the stage its question was asked in, and the thread's role. */
+  threadId: string;
+  state: string;
+  role: string;
+  /** The work's revision when it was asked. */
+  revision: number;
+  askedAt: string;
+  question: string;
+  answeredAt: string;
+  messageId: string;
+  answer: string;
 }
 
 export interface UsageTotals {

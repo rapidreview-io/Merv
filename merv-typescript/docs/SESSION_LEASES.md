@@ -84,12 +84,16 @@ as `work_deferred`, with the cause. A `completed` outcome is still recorded only
 worker's own handoff, never by a release.
 
 A rented machine's person pays its model calls, and Fleet's relay refuses a call past their
-daily ceiling (`403 fleet_model_ceiling`), so Codex exits. A failed close of such a machine's
-visit while Fleet reports that person's day spent is recorded as `budget_exhausted` instead:
-it counts against nothing. While the day stays spent the machine is offered no work
-(`model_budget_exhausted`), and the work carries an operator's blocker, "Daily model tokens used
-up; resumes at 00:00 UTC or raise your limit", which the next offer once the budget allows
-withdraws. Sessions only reads the budget, through the managed validator's `modelBudget`.
+daily tokens, the worker token budget (`403 worker_token_budget_exhausted`), so Codex exits. A
+failed close of a visit one of whose own calls the relay refused is recorded as
+`worker_token_budget_exhausted` instead: it counts against nothing. Another visit's failure the
+same day keeps its own outcome and counts. While Fleet holds the day (until the UTC reset, or
+until the person changes their limit) the machine is offered no work
+(`worker_token_budget_exhausted`), and the work carries the payer's blocker of that code, "Your
+daily Fleet model tokens are used up; this work resumes at …", which the next offer once the
+budget allows withdraws. Sessions only reads the budget, through the managed validator's
+`modelBudget` and `modelBudgetRefused`. Older closes say `budget_exhausted`, and older runner
+decisions and blockers `model_budget_exhausted`; they read the same.
 
 Work whose workspace policy names a driver is offered only to a machine whose heartbeat lists
 that driver among its `capabilities`; the automatic lease answers `runner_incompatible` when
@@ -183,7 +187,8 @@ automatic offers.
 Pi sends a message to a worker's thread, a stage's worker across its visits, with
 `session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
 with `{body, requestId}`. Project writers may send messages; project readers may read their
-history. Workers may read and acknowledge only their own visit's messages. A message to a
+history. Workers read and acknowledge only the messages to their own thread, those sent to its
+earlier visits included. A message to a
 reviewer does not grant its sender authority to decide the review verdict. Use
 `session.find({instanceId})` to find a work item's current and latest session and its
 `threadId`. A thread that is retired, or whose work has ended, refuses a new message instead
@@ -191,8 +196,10 @@ of claiming delivery, unless it answers a question. Repeating an identical reque
 the retained message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
-them with `session.messages` and acknowledges them with `session.message.ack`,
-optionally including a reply. People, and Pi, read the thread's history with
+the ones awaiting its acknowledgement with `session.messages` (`{messages, acknowledged,
+next}`: a visit that does not resume its thread's conversation also gets those earlier visits
+acknowledged, and `all: true` lists every acknowledged one, with their replies) and acknowledges
+each with `session.message.ack`, optionally including a reply. People, and Pi, read the thread's history with
 `session.thread_messages` to see the acknowledgment and response. Acknowledgment means the worker received the message; it does not prove
 that the requested correction was incorporated or independently reviewed.
 
@@ -200,7 +207,12 @@ Pending messages fence worker writes, including submission. The write's authorit
 check and message enqueue use database transactions, so an older preflight cannot
 authorize a submission past a newly queued message. The next tool call directs the
 worker to read and acknowledge the message before continuing, including before
-further evidence lookups. The worker can acknowledge receipt with a reply such as
+further evidence lookups: its `session_message_pending` refusal says what it stopped (the
+whole call before its handler runs, or the write a running call was about to commit) and
+carries the oldest waiting message (`details.message`, once a batch of parallel
+calls), so the worker acknowledges it and sends the call again. Sessions' tool description of
+`session.message` asks a sender for one message with everything rather than several. The worker
+can acknowledge receipt with a reply such as
 “I will check the cited procedure,” then inspect the evidence; acknowledgment does
 not require agreeing with the correction. This does not inject text into a running
 shell process or interrupt a long compute command.
@@ -229,6 +241,13 @@ releases the work once the asking visit has declared its conversation (or ten mi
 question), and its next visit, which resumes the same conversation, reads the answer as a queued
 message before anything else. A visit that keeps no conversation (its workflow's continuity
 key is `null`) is not offered the tool, nor told of it; a reviewer keeps its round's.
+
+Every later offer of that work item, on any of its threads, carries what its owner answered in
+its frozen assignment as `ownerAnswers`: the ten newest answered questions, each with the stage
+it was asked in, the asking thread's role, the question, the answering message and when. They
+share the assignment's 512 KiB, the oldest left out first, so answers never refuse an offer. A
+reviewer, or a later stage that starts afresh, reads no other thread's messages, so this is how
+it learns the decisions that bind the work from Merv rather than from the asker's own copy.
 
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then
@@ -288,6 +307,14 @@ a closure it finds without recording it. Each subject is decided
 on a read snapshot and recorded in a transaction of its own, so a healthy pass takes no
 writer lock. One that fails holds back no other: it is logged once as
 `sessions.sweep_failed` with its code and retried by the next full pass.
+
+A rented machine's runner that has sent no presence for over 15 minutes while Fleet still holds
+its machine has died or hung: the full pass closes its activated work visit `runner_lost` with
+outcome `host_failed`, which counts. Fleet then waits for no workspace capture of it, only for a
+transcript its runner declared, so the machine stops after the release acknowledgement's grace
+and another is rented. The silence counts from Fleet's registration and from the recovery of a
+pass that could not read, not only from the runner's last presence, so a Main restart or a
+database outage loses no visit; an inquiry or an offer no agent took up ends by its own deadline.
 
 Run `npm run test:sessions` for deterministic coverage. The separate
 `npm run test:live:sessions -- /absolute/new/run-directory` launches two real

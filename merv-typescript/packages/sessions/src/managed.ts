@@ -34,6 +34,7 @@ import {
   ownEnd,
   runnerPlatformSchema as profile,
 } from './rules.js';
+import { lostAfterMs } from './runners.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
 const huggingFaceBinding = z
@@ -84,7 +85,8 @@ const enrollment = z
  *  declared before its release, capture and upload included: a runner that gives up on one
  *  cannot say so. A closed visit's workspace capture is waited for as long, from the close: a
  *  runner that died on a live machine sends none, and its host is then let go (Fleet stops it
- *  and rents another) instead of covering its work until its day is out. */
+ *  and rents another) instead of covering its work until its day is out. A visit closed because
+ *  its runner fell silent (`runner_lost`) waits for none. */
 const captureGraceMs = 30 * 60_000;
 
 /** A managed runner supervises its bound execution through its own routes: it uses no tool. */
@@ -94,6 +96,9 @@ export const managedRunnerRules: CallerRules = {
 
 export class ManagedRunnerBindings {
   private validator?: ManagedRunnerValidator;
+  /** Since when runners could be heard: Fleet's registration (managed presence is refused until
+   *  then), or upkeep's recovery from a failing pass (`heard`). */
+  private hearingSince = Number.POSITIVE_INFINITY;
   constructor(
     private state: State,
     private scope: Scope,
@@ -120,6 +125,7 @@ export class ManagedRunnerBindings {
       409,
     );
     this.validator = validator;
+    this.heard();
     return () => {
       if (this.validator === validator) this.validator = undefined;
     };
@@ -710,6 +716,28 @@ export class ManagedRunnerBindings {
     if (!row || !validator || (await validator.current(this.identity(row), tx))) return;
     return await validator.retired(this.identity(row), tx);
   }
+  /** Runners' silence until now may be Sessions' own (its database away): it counts from now. */
+  heard(): void {
+    this.hearingSince = this.clock();
+  }
+  /** Whether a live session's machine is still current but its runner has been silent for longer
+   *  than `lostAfterMs` since Sessions could last hear it: it died or hung, and will never release
+   *  the session, which would otherwise run to its hard deadline. */
+  async runnerLost(sessionId: string, tx: Transaction): Promise<boolean> {
+    const validator = this.validator;
+    const before = this.clock() - lostAfterMs;
+    if (!validator || this.hearingSince >= before) return false;
+    const row = await tx.get<ManagedBindingRow>(
+      // The presence the session was leased from, found by its unique key.
+      `SELECT m.* FROM worker_sessions s JOIN session_managed_assignments a ON a.session_id=s.id
+        JOIN session_managed_runners m ON m.allocation_id=a.allocation_id
+        JOIN session_runners r ON r.owner_hash=s.owner_hash AND r.runner_id=s.runner_id
+        WHERE s.id=? AND r.last_seen_at<?`,
+      sessionId,
+      new Date(before).toISOString(),
+    );
+    return !!row && (await validator.current(this.identity(row), tx));
+  }
   /** When the machine's person has no model tokens left today, the validator's wait; else null. */
   async modelWait(row: ManagedBindingRow, tx: Transaction): Promise<ManagedModelWait | null> {
     return (await this.validator?.modelBudget?.(this.identity(row), tx)) ?? null;
@@ -721,10 +749,21 @@ export class ManagedRunnerBindings {
   }
   /** Whether the relay failed the calls of a visit a machine of the validator's ran. */
   async relayFault(session: Session, tx: Transaction): Promise<boolean> {
+    return await this.saysOfVisit('relayFault', session, tx);
+  }
+  /** Whether the relay refused one of that visit's own calls at its person's daily tokens. */
+  async modelBudgetRefused(session: Session, tx: Transaction): Promise<boolean> {
+    return await this.saysOfVisit('modelBudgetRefused', session, tx);
+  }
+  private async saysOfVisit(
+    hook: 'relayFault' | 'modelBudgetRefused',
+    session: Session,
+    tx: Transaction,
+  ): Promise<boolean> {
     const row = await tx.get<ManagedBindingRow>(boundTo, session.id, session.id);
     return (
       !!row &&
-      !!(await this.validator?.relayFault?.(
+      !!(await this.validator?.[hook]?.(
         this.identity(row),
         { sessionId: session.id, since: session.createdAt },
         tx,
@@ -780,6 +819,8 @@ export class ManagedRunnerBindings {
       // Writable and retained checkouts still require their final capture.
       const disposableReview =
         session.execution.policy.readOnly && policy.mode === 'ephemeral' && !policy.retain;
+      // A runner lost to silence sends no capture, and Code refuses one begun after the close.
+      const lost = session.closeReason === 'runner_lost';
       return {
         ...runner,
         session: {
@@ -794,6 +835,7 @@ export class ManagedRunnerBindings {
             (!!workspace &&
               workspace.result_json === null &&
               !disposableReview &&
+              !lost &&
               !(this.clock() - Date.parse(session.closedAt ?? '') >= captureGraceMs)) ||
             (!!owed && this.clock() - Date.parse(owed.declared_at) < captureGraceMs),
         },

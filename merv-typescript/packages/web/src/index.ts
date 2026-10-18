@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import {
   check,
+  cleanText,
   jsonBytes,
   MAX_ANSWER_BYTES,
   MervError,
@@ -8,7 +9,9 @@ import {
   outboundFailure,
   record,
   sized,
+  sleep,
   Slots,
+  visible,
   type Caller,
 } from '@merv/contracts';
 import { webConfig, type WebSettings } from './input.js';
@@ -18,7 +21,8 @@ import {
   MAX_EXTRACT_CHARS,
   MAX_TOTAL_CHARS,
   pageError,
-  pageText,
+  pageSection,
+  pageWindow,
   planExtract,
   planSearch,
   tavilyResults,
@@ -60,6 +64,9 @@ export class WebService implements Web {
   private readonly slots: Slots;
   private readonly clock: () => number;
   private readonly log: (record: WebCall) => void;
+  /** The pause before a page Tavily could not read is asked for once more. With the queue and
+   * both reads, an extract still ends inside the 180 s a Codex worker waits on a tool. */
+  private readonly extractRetryMs: number;
   private readonly calls = new Map<string, number>();
   private total = 0;
   private fallbacks = 0;
@@ -69,7 +76,11 @@ export class WebService implements Web {
 
   constructor(
     config: WebConfig = {},
-    options: { clock?: () => number; log?: (record: WebCall) => void } = {},
+    options: {
+      clock?: () => number;
+      log?: (record: WebCall) => void;
+      extractRetryMs?: number;
+    } = {},
   ) {
     const parsed = webConfig.safeParse(config);
     check(parsed.success, 'invalid_web_config', 'The web search configuration is invalid');
@@ -80,6 +91,7 @@ export class WebService implements Web {
     );
     this.clock = options.clock ?? Date.now;
     this.log = options.log ?? stderr;
+    this.extractRetryMs = options.extractRetryMs ?? 1000;
   }
 
   private key(name: string | undefined): string | undefined {
@@ -102,97 +114,127 @@ export class WebService implements Web {
   async search(caller: Caller, input: WebSearchInput): Promise<WebSearch> {
     const plan = planSearch(input);
     if ('answer' in plan) return plan.answer;
-    const tavily = this.tavilyKey;
     check(
-      tavily || this.fallbackKey,
+      this.tavilyKey || this.fallbackKey,
       'web_unavailable',
       'Web search has no provider key in this deployment',
       503,
     );
-    const answer = await this.admit(caller, 'web.search', async (providers) => {
-      const notes = plan.notes;
-      const { query, max_results, search_depth, topic, time_range } = plan;
-      let refusal: MervError | undefined;
-      if (tavily) {
-        try {
-          providers.push('tavily');
-          const data = await post(
-            `${this.config.origin}/search`,
-            tavily,
-            { query, max_results, search_depth, topic, ...(time_range && { time_range }) },
-            this.bounds(this.config.timeoutMs),
-          );
-          const given = Array.isArray(data.results) ? data.results : [];
-          return trimmed(
-            sized(MAX_TOTAL_CHARS, (total): WebSearch => {
-              const { results, truncated } = tavilyResults(given, max_results, total);
-              return {
-                query,
-                provider: 'tavily',
-                results,
-                result_count: results.length,
-                ...(notes.length > 0 && { normalization_note: notes.join('; ') }),
-                ...(truncated && {
-                  content_truncated: true as const,
-                  content_budget_chars: total,
-                }),
-              };
-            }).value,
-          );
-        } catch (error) {
-          refusal = this.failure(error, 'Tavily');
-          if (!refused(error) || !this.fallbackKey) throw refusal;
-        }
-      }
-      this.spendFallback(refusal);
-      const fallback = this.config.fallback!;
-      let response: Record<string, unknown>;
-      try {
-        providers.push('openai_web_search');
-        // A grounded model call, as Nisa's: it answers with a synthesis and its sources. One
-        // hosted search (two for an advanced one) per call, so a call costs what it says. A
-        // failed one may still be billed, so it is never retried: one charge, one request.
-        response = await post(
-          `${fallback.origin}/v1/responses`,
-          this.fallbackKey!,
-          {
-            model: fallback.model,
-            input: fallbackPrompt(plan),
-            tools: [{ type: 'web_search' }],
-            include: ['web_search_call.action.sources'],
-            max_tool_calls: search_depth === 'advanced' ? 2 : 1,
-            reasoning: { effort: 'low' },
-            max_output_tokens: search_depth === 'advanced' ? 4096 : 2048,
-            store: false,
-          },
-          { ...this.bounds(fallback.timeoutMs), retries: 0 },
-        );
-      } catch (error) {
-        const failure = this.failure(error, 'OpenAI web search');
-        throw refusal
-          ? new MervError(
-              failure.code,
-              `Web search failed through both Tavily and OpenAI: ${refusal.message}; ${failure.message}`,
-              failure.status,
-            )
-          : failure;
-      }
-      notes.push(
-        tavily
-          ? 'Tavily unavailable; used OpenAI web search'
-          : 'Tavily is not configured; used OpenAI web search',
+    const { queries, max_results, notes } = plan;
+    // Each query is its own search and its own call against the day's budgets.
+    const answer = await this.admit(caller, 'web.search', queries.length, async (providers) => {
+      const settled = await Promise.allSettled(
+        queries.map((query) => this.find(plan, query, providers)),
       );
+      // One failed query costs only its own results: the call fails when every query did.
+      const ran = queries.filter((_, n) => settled[n]!.status === 'fulfilled');
+      const failures = settled.flatMap((one, n) =>
+        one.status === 'rejected' ? [{ query: queries[n]!, error: one.reason as unknown }] : [],
+      );
+      if (ran.length === 0) throw failures[0]!.error;
+      const found = settled.flatMap((one) => (one.status === 'fulfilled' ? [one.value] : []));
+      const fell = found.some((one) => 'response' in one);
+      if (fell)
+        notes.push(
+          this.tavilyKey
+            ? 'Tavily unavailable; used OpenAI web search'
+            : 'Tavily is not configured; used OpenAI web search',
+        );
+      for (const { query, error } of failures)
+        notes.push(
+          `query "${query}" failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      const many = queries.length > 1;
       return trimmed(
-        sized(MAX_TOTAL_CHARS, (total): WebSearch => ({
-          query,
-          provider: 'openai_web_search',
-          ...fallbackSearch(max_results, response, total),
-          normalization_note: notes.join('; '),
-        })).value,
+        sized(MAX_TOTAL_CHARS, (total): WebSearch => {
+          // The content budget is shared alike, so no query's results crowd out another's.
+          const share = Math.floor(total / ran.length);
+          const parts = found.map((one) =>
+            'response' in one
+              ? { ...fallbackSearch(max_results, one.response, share), truncated: false }
+              : tavilyResults(one.results, max_results, share),
+          );
+          const results = parts.flatMap((part, n) =>
+            part.results.map((result) => (many ? { ...result, query: ran[n]! } : result)),
+          );
+          const answers = parts.flatMap((part, n) =>
+            'answer' in part ? [many ? `${ran[n]}: ${part.answer}` : part.answer] : [],
+          );
+          const truncated = parts.some((part) => part.truncated);
+          return {
+            query: many ? queries : queries[0]!,
+            provider: fell ? 'openai_web_search' : 'tavily',
+            ...(answers.length > 0 && { answer: answers.join('\n\n') }),
+            results,
+            result_count: results.length,
+            ...(notes.length > 0 && { normalization_note: notes.join('; ') }),
+            ...(truncated && { content_truncated: true as const, content_budget_chars: total }),
+          };
+        }).value,
       );
     });
     if (caller.conversation) this.remember(caller.conversation.id, answer);
     return answer;
+  }
+
+  /** One query's raw answer: Tavily's results, or the fallback's response when Tavily refuses
+   * this deployment's key or has none. */
+  private async find(
+    plan: Exclude<ReturnType<typeof planSearch>, { answer: WebSearch }>,
+    query: string,
+    providers: WebProvider[],
+  ): Promise<{ results: unknown[] } | { response: Record<string, unknown> }> {
+    const { max_results, search_depth, topic, time_range } = plan;
+    const tavily = this.tavilyKey;
+    let refusal: MervError | undefined;
+    if (tavily) {
+      try {
+        providers.push('tavily');
+        const data = await post(
+          `${this.config.origin}/search`,
+          tavily,
+          { query, max_results, search_depth, topic, ...(time_range && { time_range }) },
+          this.bounds(this.config.timeoutMs),
+        );
+        return { results: Array.isArray(data.results) ? data.results : [] };
+      } catch (error) {
+        refusal = this.failure(error, 'Tavily');
+        if (!refused(error) || !this.fallbackKey) throw refusal;
+      }
+    }
+    this.spendFallback(refusal);
+    const fallback = this.config.fallback!;
+    try {
+      providers.push('openai_web_search');
+      // A grounded model call, as Nisa's: it answers with a synthesis and its sources. One
+      // hosted search (two for an advanced one) per call, so a call costs what it says. A
+      // failed one may still be billed, so it is never retried: one charge, one request.
+      const response = await post(
+        `${fallback.origin}/v1/responses`,
+        this.fallbackKey!,
+        {
+          model: fallback.model,
+          input: fallbackPrompt(plan, query),
+          tools: [{ type: 'web_search' }],
+          include: ['web_search_call.action.sources'],
+          max_tool_calls: search_depth === 'advanced' ? 2 : 1,
+          reasoning: { effort: 'low' },
+          max_output_tokens: search_depth === 'advanced' ? 4096 : 2048,
+          store: false,
+        },
+        { ...this.bounds(fallback.timeoutMs), retries: 0 },
+      );
+      return { response };
+    } catch (error) {
+      const failure = this.failure(error, 'OpenAI web search');
+      throw refusal
+        ? new MervError(
+            failure.code,
+            `Web search failed through both Tavily and OpenAI: ${refusal.message}; ${failure.message}`,
+            failure.status,
+          )
+        : failure;
+    }
   }
 
   async extract(caller: Caller, input: WebExtractInput): Promise<WebPage> {
@@ -217,41 +259,71 @@ export class WebService implements Web {
       'A conversation reads only a page one of its web searches returned: search for this page first, or ask the person to open it',
       422,
     );
-    return await this.admit(caller, 'web.extract', async (providers) => {
-      let data: Record<string, unknown>;
-      try {
-        providers.push('tavily');
-        data = await post(
-          `${this.config.origin}/extract`,
-          tavily,
-          { urls: [plan.url], extract_depth: plan.extract_depth },
-          this.bounds(this.config.timeoutMs),
-        );
-      } catch (error) {
-        throw this.failure(error, 'Tavily');
+    return await this.admit(caller, 'web.extract', 1, async (providers) => {
+      /** The page Tavily read at `depth`, or why it read none. */
+      const read = async (depth: 'basic' | 'advanced') => {
+        let data: Record<string, unknown>;
+        try {
+          providers.push('tavily');
+          data = await post(
+            `${this.config.origin}/extract`,
+            tavily,
+            { urls: [plan.url], extract_depth: depth },
+            this.bounds(this.config.timeoutMs),
+          );
+        } catch (error) {
+          throw this.failure(error, 'Tavily');
+        }
+        const page = record(Array.isArray(data.results) ? data.results[0] : undefined);
+        if (page && visible(cleanText(page.raw_content || page.content, Number.MAX_SAFE_INTEGER)))
+          return { page };
+        const failed = Array.isArray(data.failed_results) ? data.failed_results : [];
+        return { error: pageError(record(failed[0])?.error) };
+      };
+      let answer = await read(plan.extract_depth);
+      // Tavily fails pages it reads a minute later, and advanced extraction renders some basic
+      // cannot: one more try, advanced, before the agent settles for search excerpts.
+      if (!answer.page) {
+        try {
+          await sleep(this.extractRetryMs, this.stopping.signal);
+          const again = await read('advanced');
+          if (again.page) {
+            answer = again;
+            plan.notes.push('Tavily could not read the page at first; a second, advanced read did');
+          }
+        } catch (error) {
+          if (this.stopping.signal.aborted) throw this.failure(error, 'Tavily');
+        }
       }
       const note = plan.notes.length > 0 ? { normalization_note: plan.notes.join('; ') } : {};
-      const page = record(Array.isArray(data.results) ? data.results[0] : undefined);
-      if (!page) {
-        const failed = Array.isArray(data.failed_results) ? data.failed_results : [];
+      const { page } = answer;
+      if (!page)
         return {
           url: plan.url,
           content: '',
           section: false,
           status: 'error',
           provider: 'tavily',
-          error: pageError(record(failed[0])?.error),
+          error: answer.error!,
           fallback_hint:
-            'This page could not be read. Use web.search with its title or address to find indexed excerpts, or try the publisher’s HTML page.',
+            'This page could not be read, twice. Use web.search with its title or address to find indexed excerpts, or try the publisher’s HTML page.',
           ...note,
         };
-      }
+      const { text, section, notes } = pageSection(
+        page.raw_content || page.content,
+        plan.start,
+        plan.end,
+      );
+      if (plan.offset > 0 && plan.offset >= text.length)
+        notes.push(`offset=${plan.offset} is past the end of the text (${text.length} characters)`);
+      const all = [...plan.notes, ...notes];
       return sized(MAX_EXTRACT_CHARS, (limit): WebPage => ({
         url: plan.url,
-        ...pageText(page.raw_content || page.content, plan.start, plan.end, limit),
+        ...pageWindow(text, plan.offset, limit),
+        section,
         status: 'success',
         provider: 'tavily',
-        ...note,
+        ...(all.length > 0 && { normalization_note: all.join('; ') }),
       })).value;
     });
   }
@@ -277,6 +349,7 @@ export class WebService implements Web {
   private async admit<T>(
     caller: Caller,
     tool: WebCall['tool'],
+    cost: number,
     run: (providers: WebProvider[]) => Promise<T>,
   ): Promise<T> {
     check(!caller.platform, 'web_forbidden', 'A platform reader spends no web budget', 403);
@@ -284,24 +357,29 @@ export class WebService implements Web {
     const day = this.today();
     const { dailyCallsPerProject, dailyCalls } = this.config;
     const used = this.calls.get(caller.projectId) ?? 0;
+    /** Why the day's `limit`, of which `spent` is spent, cannot take this call. */
+    const over = (whose: string, limit: number, spent: number) =>
+      spent >= limit
+        ? `${whose} has made its ${limit} web calls for today; more are allowed after 00:00 UTC`
+        : `${whose} has ${limit - spent} of its ${limit} web calls left for today, and these ${cost} queries need one each: search fewer at once, or after 00:00 UTC`;
     check(
-      used < dailyCallsPerProject,
+      used + cost <= dailyCallsPerProject,
       'web_budget_exhausted',
-      `This project has made its ${dailyCallsPerProject} web calls for today; more are allowed after 00:00 UTC`,
+      over('This project', dailyCallsPerProject, used),
       429,
     );
     check(
-      this.total < dailyCalls,
+      this.total + cost <= dailyCalls,
       'web_budget_exhausted',
-      `This deployment has made its ${dailyCalls} web calls for today; more are allowed after 00:00 UTC`,
+      over('This deployment', dailyCalls, this.total),
       429,
     );
-    this.calls.set(caller.projectId, used + 1);
-    this.total++;
+    this.calls.set(caller.projectId, used + cost);
+    this.total += cost;
     const refund = () => {
       if (this.day !== day) return;
-      this.calls.set(caller.projectId, (this.calls.get(caller.projectId) ?? 1) - 1);
-      this.total--;
+      this.calls.set(caller.projectId, (this.calls.get(caller.projectId) ?? cost) - cost);
+      this.total -= cost;
     };
     let release: () => void;
     try {

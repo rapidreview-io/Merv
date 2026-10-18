@@ -48,9 +48,21 @@ const missingKey = (error: unknown) => (error as { name?: string }).name === 'No
 /** HEAD has no error body, so a missing key and a missing bucket are both a bare 404. */
 const missingHead = (error: unknown) => statusOf(error) === 404;
 
-/** Saved as `name`: an ASCII fallback, then the exact UTF-8 name (RFC 6266). */
-const attachment = (name: string) => {
+/** The most characters of a saved name; a longer one keeps its start and its extension. */
+const SAVED_NAME_CHARACTERS = 100;
+
+/** Saved as `name` (RFC 6266): a plain ASCII name as it is, any other with an ASCII fallback
+ * and then the exact UTF-8 name. It is signed into the link, so a short name keeps it short. */
+const attachment = (full: string) => {
+  const characters = [...full];
+  const dot = full.lastIndexOf('.');
+  const extension = dot > 0 && full.length - dot <= 12 ? full.slice(dot) : '';
+  const name =
+    characters.length <= SAVED_NAME_CHARACTERS
+      ? full
+      : characters.slice(0, SAVED_NAME_CHARACTERS - extension.length).join('') + extension;
   const ascii = name.replace(/[^\x20-\x7e]|["\\%]/g, '_');
+  if (ascii === name) return `attachment; filename="${name}"`;
   const exact = encodeURIComponent(name).replace(
     /['()*]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,

@@ -161,7 +161,8 @@ export const grantTokensMigration = {
   );`,
 };
 /** The relay's own faults, by session (or `*` for Main's restart), so a visit they cut is not
- *  counted as its work's failure. A new table: no prod count. */
+ *  counted as its work's failure; and, under `worker_token_budget_exhausted`, the session one
+ *  of whose calls the ceiling refused. A new table: no prod count. */
 export const relayFaultsMigration = {
   version: 6,
   sql: `CREATE TABLE fleet_relay_faults (

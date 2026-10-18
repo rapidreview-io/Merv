@@ -983,7 +983,12 @@ export class CodeUnitService {
     );
   }
 
-  /** Each side of a conflicted base: its accepted commits and the units accepted with them. */
+  /**
+   * Each side of a conflicted base: its accepted commits and the work in them. A resolution's
+   * commit stands for the work its base merged, so a brief names that work and never nests the
+   * resolution's own title; a commit no unit was accepted with is main, merged in to land or
+   * publish.
+   */
   private async resolutionWork(
     tx: Transaction,
     projectId: string,
@@ -992,29 +997,48 @@ export class CodeUnitService {
     left: string,
     right: string,
   ): Promise<ResolutionWork> {
-    const units = new Map<string, ResolutionInput['units']>();
+    const accepted = new Map<string, string[]>();
     for (const unit of await tx.all<UnitRow>(
       `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
       projectId,
     )) {
-      const accepted = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
-      if (!accepted.code || !base.members.includes(accepted.code.commit)) continue;
-      const name =
-        (await this.workflows.relations(projectId, unit.unit_id, tx))?.instance.name ?? null;
-      const entries = units.get(accepted.code.commit) ?? [];
-      units.set(accepted.code.commit, [...entries, { id: unit.unit_id, name }]);
+      const { code } = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
+      if (code) accepted.set(code.commit, [...(accepted.get(code.commit) ?? []), unit.unit_id]);
     }
-    const side = (key: string, commit: string) => ({
-      commit,
-      inputs: (
-        records.find((record) => record.key === key)?.members ??
-        base.members.filter((member) => baseKey([member]) === key)
-      ).map((member) => ({ commit: member, units: units.get(member) ?? [] })),
-    });
+    const work = async (commit: string, seen: Set<string>): Promise<ResolutionInput['units']> => {
+      const found: ResolutionInput['units'] = [];
+      for (const id of accepted.get(commit) ?? []) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const merged = records.find((record) => record.resolutionTaskId === id);
+        const inner = [];
+        for (const member of merged?.members ?? []) inner.push(...(await work(member, seen)));
+        if (inner.length) found.push(...inner);
+        else
+          found.push({
+            id,
+            name: (await this.workflows.relations(projectId, id, tx))?.instance.name ?? null,
+          });
+      }
+      return found;
+    };
+    const input = async (commit: string, seen: Set<string>): Promise<ResolutionInput> => {
+      const units = await work(commit, seen);
+      const main = !units.length && (await this.bases.isMain(tx, projectId, commit));
+      return { commit, units, ...(main ? { main } : {}) };
+    };
+    const side = async (key: string, commit: string) => {
+      const seen = new Set<string>();
+      const inputs = [];
+      for (const member of records.find((record) => record.key === key)?.members ??
+        base.members.filter((member) => baseKey([member]) === key))
+        inputs.push(await input(member, seen));
+      return { commit, inputs };
+    };
     return {
       kind: 'base',
-      left: side(base.left, left),
-      right: side(base.right, right),
+      left: await side(base.left, left),
+      right: await side(base.right, right),
       conflict: { paths: base.conflict?.paths ?? [], messages: base.conflict?.messages ?? '' },
       check: checkFailure(base),
     };

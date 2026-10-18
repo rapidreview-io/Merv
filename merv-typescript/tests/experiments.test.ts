@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -29,6 +29,7 @@ import { check, MervError, type Blobs, type Caller, type ReviewApplication } fro
 import type {
   Experiment,
   ExperimentAttach,
+  ExperimentAttached,
   ExperimentEvidence,
   ExperimentReview,
   ExperimentTransition,
@@ -158,7 +159,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     role: ExperimentAttach['role'],
     content: string,
     extra: Partial<ExperimentAttach> = {},
-  ): Promise<ExperimentEvidence> => {
+  ): Promise<ExperimentAttached> => {
     const author = active.get(experiment.id)?.worker ?? producer;
     const artifact = await artifacts.create(author, {
       title: role,
@@ -1192,6 +1193,44 @@ test('a capture Sandboxes refused is on the experiment, its card and its sidebar
   assert.ok(JSON.stringify(panel).includes(said[0]!));
 });
 
+test('a capture Sandboxes still retries is not shown as lost compute', async (t) => {
+  const f = await fixture(t);
+  const native = captureEvidenceFixture();
+  t.after(f.experiments.bindCaptureEvidence(native.service));
+  const experiment = await f.running();
+  const retrying = {
+    nativeWorkflowId: 'wf_train',
+    captureNode: 'outputs',
+    error: 'Not registered after 10 minutes of failures; Merv keeps retrying: unavailable',
+    retrying: true as const,
+  };
+  native.refused.set(experiment.id, [retrying]);
+  assert.deepEqual((await f.experiments.get(f.producer, experiment.id)).refusedCaptures, [
+    retrying,
+  ]);
+  const card = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(card?.attention?.says, [
+    '1 compute capture not registered yet; Merv keeps retrying',
+  ]);
+  assert.doesNotMatch(card?.attention?.who ?? '', /run it again/);
+  const panel = JSON.stringify(
+    await f.experiments.runningPanel(f.producer, `work:${experiment.id}`),
+  );
+  assert.ok(panel.includes('not registered yet'));
+  assert.ok(!panel.includes('could not be kept as evidence'));
+  // A final refusal beside it is what the owner must act on.
+  native.refused.set(experiment.id, [
+    retrying,
+    { nativeWorkflowId: 'wf_train', captureNode: 'logs', error: 'invalid' },
+  ]);
+  const both = (await f.experiments.running(f.producer)).find(
+    (node) => node.key === `work:${experiment.id}`,
+  );
+  assert.deepEqual(both?.attention?.says, ['1 compute capture could not be kept as evidence']);
+});
+
 test('experiments.list reads Sandboxes captures once for every experiment', async (t) => {
   const f = await fixture(t);
   const native = captureEvidenceFixture();
@@ -1268,6 +1307,97 @@ test('a plan may cite a retained image above the inline byte limit', async (t) =
   // A figure is listed and never read, so its size does not bound the plan citing it.
   const attached = await f.attach(await f.create(), 'plan', `${plan}\n\n![Loss](${figure.id})`);
   assert.deepEqual(attached.figureIds, [figure.id]);
+});
+
+test('a large or binary output is attached as a qualitative result by reference and reaches its review', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.running();
+  const worker = f.worker(experiment);
+  // An archive within the inline limit, and a checkpoint shard past it, as the signed upload keeps it.
+  const archive = await f.artifacts.create(worker, {
+    title: 'evidence_bundle.tgz',
+    content: Buffer.concat([Buffer.from('1f8b0800', 'hex'), randomBytes(300_000)]).toString(
+      'base64',
+    ),
+    encoding: 'base64',
+    mediaType: 'application/gzip',
+  });
+  const blobs: Blobs = f.blobs;
+  const at = (hash: string) => join(f.directory, 'blobs', worker.projectId, hash.slice(0, 2));
+  blobs.upload = async () => ({ url: 'https://storage.test/put', headers: {}, expiresAt: '' });
+  blobs.stored = async (_namespace, hash) => {
+    try {
+      return statSync(join(at(hash), hash)).size;
+    } catch {
+      return null;
+    }
+  };
+  const shardBytes = randomBytes(2_500_000);
+  const hash = createHash('sha256').update(shardBytes).digest('hex');
+  const begun = await f.artifacts.uploadBegin(worker, {
+    title: 'model.part-aa',
+    size: shardBytes.length,
+    sha256: hash,
+    mediaType: 'application/octet-stream',
+  });
+  mkdirSync(at(hash), { recursive: true });
+  writeFileSync(join(at(hash), hash), shardBytes);
+  const shard = await f.artifacts.uploadComplete(worker, begun.uploadId);
+  const attach = (artifactId: string, path: string, resultFormat: 'json' | 'qualitative') =>
+    f.experiments.attach(worker, {
+      experimentId: experiment.id,
+      attemptIndex: experiment.attempt.index,
+      expectedRevision: experiment.workflow.revision,
+      artifactId,
+      role: 'result',
+      path,
+      resultFormat,
+      requestId: f.id(),
+    });
+  // Read as text it is refused with what to do instead, before the inline limit is reached.
+  await assert.rejects(attach(shard.id, 'checkpoint/model.part-aa', 'json'), {
+    code: 'invalid_experiment_evidence',
+    message: /resultFormat qualitative, which is referenced without being read/,
+  });
+  const bytes = t.mock.method(f.artifacts, 'bytes');
+  await attach(archive.id, 'evidence_bundle.tgz', 'qualitative');
+  await attach(shard.id, 'checkpoint/model.part-aa', 'qualitative');
+  assert.equal(bytes.mock.callCount(), 0, 'a qualitative result is never read');
+  const exhibit = JSON.parse((await f.experiments.exhibit(f.producer, experiment.id)).content);
+  assert.deepEqual(
+    exhibit.resultFiles.map((file: { path: string; data: unknown }) => [file.path, file.data]),
+    [
+      ['checkpoint/model.part-aa', null],
+      ['evidence_bundle.tgz', null],
+    ],
+  );
+  await f.attach(experiment, 'report', report);
+  experiment = await f.transition(experiment, 'submit_results');
+  const review = await f.reviews.get(f.producer, experiment.reviewId!);
+  assert.ok(review.artifactIds.includes(archive.id) && review.artifactIds.includes(shard.id));
+});
+
+test('an attach names the current evidence it displaces from the selection', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const main = await f.attach(experiment, 'report', report, { path: 'admission-report.md' });
+  assert.equal(main.replaced, undefined);
+  // A second report is not an addendum: it replaces the first, and says so.
+  const closeout = await f.attach(experiment, 'report', report, { path: 'closeout.md' });
+  assert.deepEqual(closeout.replaced, [
+    { path: 'admission-report.md', artifactId: main.artifactId },
+  ]);
+  const first = await f.attach(experiment, 'result', '{"seed":1}', { path: 'seeds/1.json' });
+  assert.equal(
+    (await f.attach(experiment, 'result', '{"seed":2}', { path: 'seeds/2.json' })).replaced,
+    undefined,
+    'a result at another path displaces nothing',
+  );
+  assert.deepEqual(
+    (await f.attach(experiment, 'result', '{"seed":1,"rerun":true}', { path: 'seeds/1.json' }))
+      .replaced,
+    [{ path: 'seeds/1.json', artifactId: first.artifactId }],
+  );
 });
 
 test('an attempt refuses its 101st result file when it is attached', async (t) => {

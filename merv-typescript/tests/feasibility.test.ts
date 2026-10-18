@@ -82,6 +82,11 @@ test('a malformed feasibility statement is refused with the place it went wrong'
     ['another format version', { ...statement(), formatVersion: 2 }, /formatVersion/],
     ['a missing blockers list', { ...statement(), blockers: undefined }, /blockers/],
     ['too many blockers', { ...statement(), blockers: Array(21).fill('Blocked.') }, /blockers/],
+    [
+      'a blocker written as an object',
+      { ...statement(), blockers: [{ name: 'GPU spend', detail: 'awaiting approval' }] },
+      /blockers\.0: Expected string/,
+    ],
   ];
   for (const [name, value, message] of broken)
     assert.throws(
@@ -89,6 +94,14 @@ test('a malformed feasibility statement is refused with the place it went wrong'
       { code: 'invalid_experiment_evidence', message },
       name,
     );
+  // The refusal names the keys the statement takes and where an observation goes instead.
+  assert.throws(
+    () => parseFeasibility(JSON.stringify({ ...statement(), observations: 'cwd /workspace' })),
+    {
+      message:
+        /Unrecognized key\(s\) in object: 'observations'\. It has exactly formatVersion, resources .*blockers \(plain strings\); put other observations in a basis or the plan/,
+    },
+  );
 });
 
 test('each shortfall, absent dependency and known blocker is named', () => {
@@ -251,6 +264,16 @@ test('a design cannot be submitted without a feasibility statement that admits i
     await assert.rejects(f.submit(e), { code: 'experiment_infeasible', message });
     assert.equal((await experiments.get(f.owner, e.id)).workflow.state, 'planned');
   }
+  // A blocker only the owner can lift is asked of them, rather than ending the experiment. The
+  // two ending actions are listed together, so it is said once, on mark_failed.
+  const decision = await f.app.ctx.workflows.evaluate(f.owner, e.id);
+  const action = (name: string) => decision.actions.find((item) => item.action === name)!;
+  assert.match(action('submit_design').blockers[0]!.message, /ask with session\.ask_owner/);
+  assert.match(
+    action('mark_failed').instruction,
+    /session\.ask_owner instead of ending the experiment/,
+  );
+  assert.doesNotMatch(action('abandon').instruction, /session\.ask_owner/);
 
   // A statement at another path replaces the refused one, so exactly one is current.
   const admitted = await f.attach(
@@ -291,8 +314,20 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
   assert.equal(planning.context!.typeVersion, 13);
   assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
+  // Beside it, what the shape leaves unsaid: no other keys, and blockers are plain strings.
+  assert.match(
+    planning.context!.prompt,
+    /"feasibilityRules":"Use exactly these keys, and no others at any level.*blockers, a list of plain strings/,
+  );
   // And told that its Sandboxes tools, which the declared tools never list, are its to measure with.
   assert.match(planning.context!.prompt, /"computeAccess":"Your Sandboxes MCP connection/);
+  // A visit with no such connection learns from Merv whether the project has compute connected,
+  // and asks the owner to connect it only when it has none.
+  assert.match(
+    planning.context!.prompt,
+    /If this visit has no server named sandboxes, Merv issued it no connection; call sandboxes\.spend_status on the merv server to learn why before you ask\. A sandbox_not_connected refusal means the project has no compute connected: ask the owner to connect it with session\.ask_owner\. An answer that names the project’s namespace means compute is connected and only this visit lacks its connection: say exactly that in session\.ask_owner, and do not ask the owner to connect compute\./,
+  );
+  assert.doesNotMatch(planning.context!.prompt, /sandboxes, the project has no compute connected/);
   await f.attach(e, 'plan', plan);
   const marked = statement();
   marked.resources[0].basis = 'Row count of inventory FEASIBILITY_BASIS_7731.';
