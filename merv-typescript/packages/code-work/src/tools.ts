@@ -4,6 +4,7 @@ import {
   codeLocalBindInputSchema,
   codeMergeInputSchema,
   type Caller,
+  type CodeCommandRecord,
   type CodeCommitInput,
   type CodeLocalBindInput,
   type CodeMergeInput,
@@ -26,6 +27,17 @@ import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
 import { codePublicationIdSchema, codePublicationMergeSchema } from './publications.js';
 import type { CodePublicationMerge, CodeRepositoryConfigureInput } from './types.js';
 import type { CodeMirrorRetryInput, CodeUnitFenceInput } from './models.js';
+
+/**
+ * A command as a worker reads it. Its workspace is the checkout as it was attached, which is
+ * how its runner knows the command for its own; the head and stats there are that moment's,
+ * not the checkout's now, so they are left out. The receipt carries the commit's own.
+ */
+const attached = async (record: Promise<CodeCommandRecord>) => {
+  const { command, ...rest } = await record;
+  const { headOid: _head, stats: _stats, ...workspace } = command.workspace;
+  return { ...rest, command: { ...command, workspace } };
+};
 
 export const codeToolsPlugin = {
   name: 'merv-code-tools',
@@ -89,7 +101,7 @@ export const codeToolsPlugin = {
           'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused. The runner also commits this checkout by itself every five minutes ("Checkpoint: …"), which moves HEAD: an expectedHead that only those checkpoints have moved past is taken as the newest of them, so the commit lands on top of them. While one is running, code.commit is refused with code_command_pending; call it again in a few seconds. An operation that failed with workspace_head_conflict means HEAD moved after you read it: read it again and commit under a new requestId.',
         inputSchema: codeCommitInputSchema,
         handler: async (caller: Caller, input: CodeCommitInput) =>
-          await ctx.codeWork.commit(caller, input),
+          await attached(ctx.codeWork.commit(caller, input)),
       },
       {
         name: 'code.merge',
@@ -98,16 +110,16 @@ export const codeToolsPlugin = {
           'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt. The message has a fixed shape: a first line of at most 72 characters saying what changed, then a blank line and, only where there is more than one thing to say, up to ten bullet points (each a line beginning \"- \"), one per significant change, each short. No paragraphs, no restated task, no session or commit ids.',
         inputSchema: codeMergeInputSchema,
         handler: async (caller: Caller, input: CodeMergeInput) =>
-          await ctx.codeWork.merge(caller, input),
+          await attached(ctx.codeWork.merge(caller, input)),
       },
       {
         name: 'code.operation',
         description:
-          'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication. command.workspace is the checkout as it was attached at launch: its headOid is where the session began, not the current HEAD.',
+          'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed head, tree, parent and stats; command.workspace only names the checkout. It does not authorize central publication.',
         inputSchema: z.object({ commandId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { commandId: string }) =>
-          await ctx.codeWork.operation(caller, input.commandId),
+          await attached(ctx.codeWork.operation(caller, input.commandId)),
       },
       ...(
         [
