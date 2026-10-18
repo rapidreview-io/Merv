@@ -516,15 +516,19 @@ test('artifact.get gives an agent a collection’s members a page at a time, by 
     )) as Answer;
   const names = (answer: Answer) => answer.files!.map((file) => file.name);
 
-  // Unasked, an agent gets the first 100 members, how many there are, and where the next start.
-  const first = await get(agent);
-  assert.deepEqual(names(first), names({ files: files.slice(0, 100) } as Answer));
-  assert.equal(first.fileCount, 940);
-  assert.equal(first.nextOffset, 100);
-  assert.equal(first.matchCount, undefined);
-  assert.deepEqual(first.metadata, collection.metadata);
-  assert.equal((first as { downloadAvailable?: boolean }).downloadAvailable, true);
-  assert.ok(JSON.stringify(first).length < 25_000, String(JSON.stringify(first).length));
+  // Unasked, a session's or Pi conversation's agent gets the first 100 members, how many there
+  // are, and where the next start.
+  const conversation = { id: 'c', epoch: 1, commandId: 'k', runtimeId: 'r' };
+  for (const caller of [agent, { ...person, conversation }]) {
+    const first = await get(caller);
+    assert.deepEqual(names(first), names({ files: files.slice(0, 100) } as Answer));
+    assert.equal(first.fileCount, 940);
+    assert.equal(first.nextOffset, 100);
+    assert.equal(first.matchCount, undefined);
+    assert.deepEqual(first.metadata, collection.metadata);
+    assert.equal((first as { downloadAvailable?: boolean }).downloadAvailable, true);
+    assert.ok(JSON.stringify(first).length < 25_000, String(JSON.stringify(first).length));
+  }
   // The pages tile the collection in its own order.
   const pages: string[] = [];
   for (let offset: number | undefined = 0; offset !== undefined;) {
