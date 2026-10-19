@@ -192,13 +192,13 @@ export class ComputeWaits implements SessionComputeWaits {
     check(
       visit.continuity,
       'compute_wait_unkept',
-      'This visit keeps no conversation for a later visit to continue, so it cannot wait: wait inside this visit, or hand off with the ids of what still runs',
+      'This visit keeps no conversation for a later visit to continue, so it cannot wait: wait inside this visit, or keep the ids of what still runs in the project for the next visit',
       409,
     );
     check(
       await this.available(visit),
       'compute_wait_unavailable',
-      'This visit is not offered session.await_compute: wait inside it, or hand off with the ids of what still runs',
+      'This visit is not offered session.await_compute: wait inside it, or keep the ids of what still runs in the project for the next visit',
       409,
     );
     // Sandboxes is asked holding no transaction; whatever ends before the write, the sweep finds.
