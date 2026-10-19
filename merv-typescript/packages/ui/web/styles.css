@@ -5735,6 +5735,8 @@ html:has(.pi-page) body {
   fill: none;
   stroke: var(--line-strong);
   stroke-width: 1.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
   transition: opacity 120ms ease;
 }
 .wmap-wire--waiting {
@@ -5826,6 +5828,15 @@ html:has(.pi-page) body {
 .wmap-mark--folded .stage-glyph {
   width: 10px;
   height: 10px;
+}
+/* Between two cycles' work: one hairline across the map, and space. */
+.wmap-rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 .wmap-fold {
   position: absolute;

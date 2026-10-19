@@ -93,19 +93,26 @@ test('no mark stands on another, every mark stands inside the frame, and chains 
   }
 });
 
-test('a line is one curve from the right of a mark to the left of the mark that waits on it, with no head', () => {
+test('a line runs from the name’s end through the gutter to the mark that waits, with no head, and lines from one unit share their gutter run', () => {
   const layout = workMapLayout(WAVE, WAITS, 1080)!;
   assert.equal(layout.wires.length, WAITS.length);
+  const turns = new Map<string, Set<string>>();
   for (const wire of layout.wires) {
-    const [, x1, y1, x2, y2] = /^M(-?[\d.]+) (-?[\d.]+)C.* (-?[\d.]+) (-?[\d.]+)$/.exec(wire.d)!;
+    const [, x1, y1, xt, y2, x2] = /^M(-?[\d.]+) (-?[\d.]+)H(-?[\d.]+)V(-?[\d.]+)H(-?[\d.]+)$/.exec(
+      wire.d,
+    )!;
     const from = place(layout, wire.from);
     const to = place(layout, wire.to);
     assert.ok(+x1! > from.x && +x1! < to.x, 'leaves right of its prerequisite');
+    assert.ok(+xt! > +x1! && +xt! < to.x, 'turns in the gutter');
     assert.ok(+x2! < to.x && +x2! > from.x, 'arrives left of what waits');
     assert.equal(+y1!, from.y);
     assert.equal(+y2!, to.y);
     assert.ok(!('head' in wire));
+    turns.set(wire.from, new Set([...(turns.get(wire.from) ?? []), xt!]));
   }
+  // Three things wait on pin: their lines leave it as one run down the gutter.
+  assert.equal(turns.get('pin')!.size, 1);
   const waiting = workMapLayout(['a', 'b'], [{ from: 'a', to: 'b', waiting: true }], 1000)!;
   assert.equal(waiting.wires[0]!.waiting, true);
 });

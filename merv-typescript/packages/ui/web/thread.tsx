@@ -228,7 +228,8 @@ export function Thread({
               <div className="thread-body">
                 {entry.said && <p>{entry.said}</p>}
                 {entry.document && handed(entry.document)}
-                {entry.files?.map(handed)}
+                {/* Under a stage the one document stands for the post; the rest are Artifacts. */}
+                {!compact && entry.files?.map(handed)}
                 {entry.verdict && <VerdictLine verdict={entry.verdict} />}
               </div>
             </div>

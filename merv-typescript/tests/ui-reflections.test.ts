@@ -310,8 +310,11 @@ test('the Work page is its title line and the map: nothing is listed, and the sh
   await settle(20);
   const marks = () =>
     [...document.querySelectorAll('.wmap-mark')].map((mark) => mark.getAttribute('data-key'));
-  // As the page opens: the open work, drawn once and listed nowhere.
-  assert.deepEqual(marks().sort(), ['work:wf_sweep', 'work:wf_wave']);
+  // As the page opens: every unit of the project, the ended ones faded, listed nowhere.
+  assert.deepEqual(marks().sort(), ['work:wf_pin', 'work:wf_sweep', 'work:wf_wave']);
+  assert.ok(
+    document.querySelector('[data-key="work:wf_pin"]')!.classList.contains('wmap-mark--done'),
+  );
   assert.equal(document.querySelector('ul.rows'), null);
   // No row of tabs and chips stands over the map, and no word folds one away: the page's one
   // line is its counts and the shapes, each a filter in plain sight.
@@ -324,6 +327,8 @@ test('the Work page is its title line and the map: nothing is listed, and the sh
     document.querySelector<HTMLButtonElement>(`.wbar [aria-label="${label}"]`)!;
   for (const label of ['Show experiments', 'Show tasks', 'Show ended'])
     assert.equal(shape(label).getAttribute('aria-pressed'), 'true', label);
+  await act(async () => shape('Show ended').click());
+  assert.deepEqual(marks().sort(), ['work:wf_sweep', 'work:wf_wave']);
   await act(async () => shape('Show tasks').click());
   assert.deepEqual(marks(), ['work:wf_wave']);
   assert.equal(shape('Show tasks').getAttribute('aria-pressed'), 'false');
@@ -332,7 +337,8 @@ test('the Work page is its title line and the map: nothing is listed, and the sh
   assert.deepEqual(marks(), ['work:wf_sweep']);
   assert.equal(document.querySelector('ul.rows'), null);
   await act(async () => shape('Show experiments').click());
-  assert.deepEqual(marks().sort(), ['work:wf_sweep', 'work:wf_wave']);
+  await act(async () => shape('Show ended').click());
+  assert.deepEqual(marks().sort(), ['work:wf_pin', 'work:wf_sweep', 'work:wf_wave']);
 });
 
 test('with no room to draw, the Work page lists the same work as rows, a reflection among them', async (t) => {
