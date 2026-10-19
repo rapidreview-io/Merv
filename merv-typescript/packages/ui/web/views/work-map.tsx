@@ -363,6 +363,7 @@ function Mark({
       aria-pressed={selected}
       aria-controls="running-panel"
       aria-label={[said, ...relations.filter((relation) => !said.includes(relation))].join(', ')}
+      title={unit.name}
       style={{ left: place.x - 15, top: place.y - 15, maxWidth: place.w - GUTTER }}
       onClick={() => onSelect(unit.key)}
       onMouseEnter={() => onHover(unit.key)}

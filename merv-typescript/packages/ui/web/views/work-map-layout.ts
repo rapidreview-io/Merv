@@ -11,8 +11,12 @@
  * the first unit still open and the live edge always has the room. A unit that is live or
  * needs a person is never folded. Pressing the run unfolds it (`unfold`).
  *
- * A line is one quiet curve from the end of a unit's name to the mark of what waits on it,
- * with no head: the direction is the page's, and no line crosses a name. Work joined to
+ * A line runs from the end of a unit's name into the gutter after its column, down or up
+ * the gutter to the row of what waits on it, and in to that mark: three straight runs, with
+ * no head, the direction being the page's. Lines that leave one unit share the gutter run, so
+ * a unit many things wait on reads as one trunk with a stub to each, never a fan of curves;
+ * lines that arrive at one unit meet the same way. No line crosses a name. Within a column,
+ * what needs a person stands first, then what is live, then the rest, the ended last. Work joined to
  * nothing is set in a grid of its own after the chains, as many to a row as the width holds.
  * Groups (the cycles) stack down the page, each laid out alone, a gap between them. It is pure, so the drawing is the same
  * wherever it is asked, and it is tested without a browser. Below MAP_MIN there is no room
@@ -28,7 +32,7 @@ export const ROW_H = 30;
 export const MARK = 7;
 /** A column with a name beside its mark, at the least and at the most. */
 const COL_MIN = 170;
-const COL_MAX = 440;
+const COL_MAX = 600;
 /** A folded mark and the step to the next. */
 const FOLD_STEP = 16;
 /** Room after the last column for its names. */
@@ -187,16 +191,18 @@ export function workMapLayout(
       const shown = columns - fold - tail;
       const foldW = runW(fold);
       const tailW = runW(tail);
+      // Columns share the width; the last one's names have their room inside it.
       const colW = Math.min(
         COL_MAX,
-        Math.max(COL_MIN, (width - foldW - tailW - NAME_W) / Math.max(1, shown)),
+        Math.max(COL_MIN, (width - foldW - tailW) / Math.max(1, shown)),
       );
-      const tailX = foldW + shown * colW + NAME_W;
+      const tailX = foldW + shown * colW;
       // Rows within the chain: column by column, each unit level with the first thing it waits
       // on where that row is still free in its column, else the nearest free row below.
       const taken = new Map<number, Set<number>>();
       const rowOf = new Map<string, number>();
-      const ordered = [...chain].sort((a, b) => depth.get(a)! - depth.get(b)!);
+      const rank = (key: string) => (held.has(key) ? 0 : ended.has(key) ? 2 : 1);
+      const ordered = [...chain].sort((a, b) => depth.get(a)! - depth.get(b)! || rank(a) - rank(b));
       let deepest = 0;
       for (const key of ordered) {
         const column = depth.get(key)!;
@@ -251,8 +257,9 @@ export function workMapLayout(
       // From the end of the name's room, so the line runs through no name.
       const x1 = a.folded ? a.x + MARK + 2 : a.x - MARK + a.w - GUTTER + 6;
       const x2 = b.x - MARK - 2;
-      const mid = (x1 + x2) / 2;
-      return { ...edge, d: `M${x1} ${a.y}C${mid} ${a.y} ${mid} ${b.y} ${x2} ${b.y}` };
+      // The gutter run: where every line leaving this unit turns, so they lie as one.
+      const xt = a.folded ? a.x + MARK + 6 : a.x - MARK + a.w - GUTTER / 2;
+      return { ...edge, d: `M${x1} ${a.y}H${xt}V${b.y}H${x2}` };
     });
   const order = [...at].sort(([, a], [, b]) => a.y - b.y || a.x - b.x).map(([key]) => key);
   return { width, height, at, order, wires, folds, rules };

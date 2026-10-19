@@ -5735,6 +5735,8 @@ html:has(.pi-page) body {
   fill: none;
   stroke: var(--line-strong);
   stroke-width: 1.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
   transition: opacity 120ms ease;
 }
 .wmap-wire--waiting {
