@@ -64,17 +64,16 @@ test('the creator is the admin; setAdmin needs admin permission, a signed-in ope
       status: 409,
     });
   assert.equal(f.heard.length, 1);
-  // The members read says who has signed in, which is who the admin may be.
-  assert.deepEqual(
-    (await members()).memberships.map((m) => [m.subject, m.signedIn]),
-    [
-      ['alice', true],
-      ['bob', true],
-      ['carol', true],
-      ['reader', true],
-      ['absent', false],
-    ],
-  );
+  // The members read says whom its caller may bill: the admin, the other signed-in operators;
+  // another operator, themselves; a reader, nobody.
+  const { memberships } = await members();
+  const payers = async (who: typeof alice) =>
+    (await f.scope.members.memberships(who, project.id)).payers.map(
+      (id) => memberships.find((m) => m.id === id)!.subject,
+    );
+  assert.deepEqual(await payers(alice), ['bob', 'carol']);
+  assert.deepEqual(await payers(bob), ['bob']);
+  assert.deepEqual(await payers(reader), []);
   // Only the admin names another operator to bill; any operator takes billing on themselves.
   await assert.rejects(f.scope.members.setAdmin(bob, project.id, person('carol')), {
     code: 'admin_consent',
@@ -102,27 +101,28 @@ test('the creator is the admin; setAdmin needs admin permission, a signed-in ope
   assert.deepEqual(await f.owners(), [[project.id, 'bob']]);
 });
 
-test('an admin who stops being an operator hands it to the longest-standing live operator', async (t) => {
+test('an admin who stops being an operator hands it to the operator who ended it, else the longest-standing', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
   const project = await f.scope.members.createProject(alice, { name: 'Handover', requestId: 'r' });
-  for (const subject of ['bob', 'carol'])
+  for (const subject of ['bob', 'carol', 'dave'])
     await f.scope.members.addMember(alice, project.id, { subject, role: 'operator' });
-  const carol = await f.login('carol');
-  const bob = await f.login('bob');
-  await f.scope.members.setAdmin(alice, project.id, person('carol'));
-  // Demoted, carol gives way to alice, the longest-standing operator; removed, alice to bob.
-  await f.scope.members.changeMemberRole(carol, project.id, { subject: 'carol', role: 'reader' });
-  assert.deepEqual(await f.owners(), [[project.id, 'alice']]);
-  await f.scope.members.removeMember(alice, project.id, 'alice');
+  const [bob, carol, dave] = [await f.login('bob'), await f.login('carol'), await f.login('dave')];
+  // Whoever removes or demotes the admin takes billing on, never pushing it onto bob.
+  await f.scope.members.removeMember(carol, project.id, 'alice');
+  assert.deepEqual(await f.owners(), [[project.id, 'carol']]);
+  await f.scope.members.changeMemberRole(dave, project.id, { subject: 'carol', role: 'reader' });
+  assert.deepEqual(await f.owners(), [[project.id, 'dave']]);
+  // Demoting themselves, dave gives way to bob, the longest-standing operator.
+  await f.scope.members.changeMemberRole(dave, project.id, { subject: 'dave', role: 'reader' });
   assert.deepEqual(await f.owners(), [[project.id, 'bob']]);
   // Another member's removal keeps the admin.
   await f.scope.members.removeMember(bob, project.id, 'carol');
   assert.deepEqual(await f.owners(), [[project.id, 'bob']]);
   assert.deepEqual(
     f.heard.map(([, subject]) => subject),
-    ['alice', 'carol', 'alice', 'bob'],
+    ['alice', 'carol', 'dave', 'bob'],
   );
 });
 

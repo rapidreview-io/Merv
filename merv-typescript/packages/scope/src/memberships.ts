@@ -88,6 +88,9 @@ export const LIVE_OPERATOR = `project_memberships m
   JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
   WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`;
 
+const same = (a: ProjectAdmin | null | undefined, b: ProjectAdmin | null | undefined) =>
+  !!a && a.issuer === b?.issuer && a.subject === b.subject;
+
 export function identityValid(identity: VerifiedIdentity, time: string): boolean {
   return (
     !!identity &&
@@ -178,13 +181,17 @@ export class Memberships {
   }
 
   /** The admin stays a live operator: one who is no longer one, or none yet, gives way to the
-   *  longest-standing live operator. A project with none keeps what it had. */
-  private async keepAdmin(tx: Transaction, projectId: string): Promise<void> {
+   *  operator `by` whose change ended it (who may take billing on), else the longest-standing
+   *  live operator. A project with none keeps what it had. */
+  private async keepAdmin(tx: Transaction, projectId: string, by?: ProjectAdmin): Promise<void> {
     const next = await tx.get<ProjectAdmin & { kept: boolean }>(
       `SELECT m.issuer,m.subject,EXISTS(SELECT 1 FROM projects p WHERE p.id=m.project_id
          AND p.admin_issuer=m.issuer AND p.admin_subject=m.subject) AS kept
-       FROM ${LIVE_OPERATOR} AND m.project_id=? ORDER BY kept DESC,m.created_at,m.id LIMIT 1`,
+       FROM ${LIVE_OPERATOR} AND m.project_id=?
+       ORDER BY kept DESC,(m.issuer=? AND m.subject=?) DESC,m.created_at,m.id LIMIT 1`,
       projectId,
+      by?.issuer ?? null,
+      by?.subject ?? null,
     );
     if (next && !next.kept) await this.assignAdmin(tx, projectId, next);
   }
@@ -205,8 +212,6 @@ export class Memberships {
         409,
       );
       const before = await this.admin(tx, projectId);
-      const same = (a: ProjectAdmin | null | undefined, b: ProjectAdmin | null | undefined) =>
-        !!a && a.issuer === b?.issuer && a.subject === b.subject;
       if (same(before, admin)) return admin;
       // Billing is consented to: an operator takes it on, or the admin hands it to another.
       check(
@@ -440,16 +445,20 @@ export class Memberships {
 
   async memberships(principal: Principal, projectId: string): Promise<ProjectMembers> {
     return await forRead(this.state, async (tx) => {
-      await this.resolve(await this.human(principal, tx), projectId, tx);
-      const rows = await tx.all<MembershipRow & { signed_in: boolean }>(
-        `SELECT m.*,EXISTS(SELECT 1 FROM shared_users u WHERE u.issuer=m.issuer AND u.subject=m.subject)
-           AS signed_in FROM project_memberships m WHERE m.project_id=? ORDER BY m._merv_rowid`,
+      const { human } = await this.resolve(await this.human(principal, tx), projectId, tx);
+      const rows = await tx.all<MembershipRow>(
+        'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid',
         projectId,
       );
-      return {
-        memberships: rows.map((row) => ({ ...membership(row), signedIn: row.signed_in })),
-        admin: await this.admin(tx, projectId),
-      };
+      const admin = await this.admin(tx, projectId);
+      // Whom the caller may bill, as setAdmin rules: the admin hands it on, an operator takes it.
+      const live = await tx.all<MembershipRow>(
+        `SELECT m.* FROM ${LIVE_OPERATOR} AND m.project_id=? ORDER BY m._merv_rowid`,
+        projectId,
+      );
+      const me = live.find((m) => same(m, human));
+      const payers = !me ? [] : same(me, admin) ? live.filter((m) => m !== me) : [me];
+      return { memberships: rows.map(membership), admin, payers: payers.map((m) => m.id) };
     });
   }
 
@@ -472,6 +481,7 @@ export class Memberships {
     projectId: string,
     { issuer, subject }: { issuer: string; subject: string },
     role: Role,
+    by?: ProjectAdmin,
   ): Promise<ProjectMembership> {
     let mapping = await tx.get<{ actor_id: string }>(
       'SELECT actor_id FROM member_actors WHERE project_id=? AND issuer=? AND subject=?',
@@ -523,7 +533,7 @@ export class Memberships {
       role,
       value.createdAt,
     );
-    await this.keepAdmin(tx, projectId);
+    await this.keepAdmin(tx, projectId, by);
     return value;
   }
 
@@ -848,27 +858,27 @@ export class Memberships {
       check(previous, 'not_found', 'Active project member not found', 404);
       if (previous.role === role) return membership(previous);
       await this.keepOperator(tx, previous, role);
-      return await this.replace(tx, previous, role, caller.actorId);
+      return await this.replace(tx, previous, role, caller);
     });
   }
 
   /** Ends the active membership `previous` and starts its person's next one with `role`, which
-   *  `actorId` (by default that person) records as a change of permissions. */
+   *  `by` (by default that person) records as a change of permissions. */
   private async replace(
     tx: Transaction,
     previous: MembershipRow,
     role: Role,
-    actorId?: string,
+    by?: Caller,
   ): Promise<ProjectMembership> {
     await tx.run(
       'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
       this.time(),
       previous.id,
     );
-    const next = await this.activate(tx, previous.project_id, previous, role);
+    const next = await this.activate(tx, previous.project_id, previous, role, by?.human);
     await this.state.appendEvent(tx, {
       projectId: previous.project_id,
-      actorId: actorId ?? next.actorId,
+      actorId: by?.actorId ?? next.actorId,
       type: 'actor.permissions_changed',
       subjectId: next.actorId,
       data: {
@@ -898,7 +908,7 @@ export class Memberships {
         previous.actor_id,
         projectId,
       );
-      await this.keepAdmin(tx, projectId);
+      await this.keepAdmin(tx, projectId, caller.human);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,

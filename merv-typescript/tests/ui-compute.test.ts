@@ -177,9 +177,9 @@ test('a top-up the console asks for goes to its Checkout; a refused one shows it
   const sent: Record<string, unknown>[] = [];
   serve('/compute/checkout', (n, body) => {
     sent.push(body);
-    return n === 1
-      ? { body: { url: `${window.location.origin}/#checkout` } }
-      : { status: 409, body: { error: { code: 'provider_unavailable', message: 'No hosted' } } };
+    if (n === 1) return { body: { url: `${window.location.origin}/#checkout` } };
+    if (n === 2) return { status: 503, body: { error: { code: 'unavailable', message: 'Down' } } };
+    return { status: 409, body: { error: { code: 'provider_unavailable', message: 'No hosted' } } };
   });
   const ask = { type: 'sandboxes:top-up', provider: 'lambda', amountUsd: 50 };
   // Only the console's own window, from Merv's origin, may ask.
@@ -193,9 +193,15 @@ test('a top-up the console asks for goes to its Checkout; a refused one shows it
     { provider: 'lambda', amountUsd: 50, requestId: 'string' },
   );
   assert.equal(window.location.hash, '#checkout');
+  // An uncertain failure is not resent in place of the next ask.
   await message({ ...ask, amountUsd: 25 });
   await settle(0);
-  assert.equal(sent.length, 2);
-  assert.notEqual(sent[1]!.requestId, sent[0]!.requestId);
+  await message({ ...ask, amountUsd: 100 });
+  await settle(0);
+  assert.deepEqual(
+    sent.map((body) => body.amountUsd),
+    [50, 25, 100],
+  );
+  assert.equal(new Set(sent.map((body) => body.requestId)).size, 3);
   assert.equal(document.querySelector('[role="alert"]')?.textContent, 'No hosted');
 });

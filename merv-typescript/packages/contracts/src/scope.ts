@@ -76,8 +76,10 @@ export interface ProjectMembership {
 /** A project's membership history, whether each person has signed in, and its admin (null only
  * while it has no live operator). */
 export interface ProjectMembers {
-  memberships: (ProjectMembership & { signedIn: boolean })[];
+  memberships: ProjectMembership[];
   admin: ProjectAdmin | null;
+  /** The memberships the caller may bill: the others, for the admin; themselves, for an operator. */
+  payers: string[];
 }
 export type { ProjectInvitation } from './scope-models.js';
 /** Scope's people: verified identities, the projects they create and their memberships. */

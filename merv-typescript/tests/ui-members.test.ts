@@ -16,7 +16,7 @@ const { setProject } = await import('../packages/ui/web/api.js');
 
 const issuer = 'https://login.example';
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-10-01T00:00:00.000Z' };
-const member = (subject: string, role: string, signedIn = true) => ({
+const member = (subject: string, role: string) => ({
   id: `membership_${subject}`,
   projectId: project.id,
   issuer,
@@ -24,16 +24,15 @@ const member = (subject: string, role: string, signedIn = true) => ({
   actorId: `actor_${subject}`,
   role,
   active: true,
-  signedIn,
 });
 const memberships = (role: string) => [
   member('me', role),
   member('bea', 'operator'),
   member('cy', 'reader'),
-  member('dee', 'operator', false),
+  member('dee', 'operator'),
 ];
 
-async function open(role: string, admin = 'me') {
+async function open(role: string, admin = 'me', payers: string[] = []) {
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', {
@@ -55,7 +54,7 @@ async function open(role: string, admin = 'me') {
     },
   });
   serve(`/projects/${project.id}/members`, {
-    body: { memberships: memberships(role), admin: { issuer, subject: admin } },
+    body: { memberships: memberships(role), admin: { issuer, subject: admin }, payers },
   });
   for (const path of ['/account/invitations', `/projects/${project.id}/invitations`])
     serve(path, { body: { invitations: [] } });
@@ -72,7 +71,8 @@ async function open(role: string, admin = 'me') {
 
 test('the page says who is billed; the admin hands billing on from ⋯, another operator takes it', async (t) => {
   t.after(async () => await unmount());
-  await open('operator');
+  // Whom an operator may bill is Scope's to say; the page draws just those.
+  await open('operator', 'me', ['membership_bea']);
   assert.equal(document.querySelector('.billed > span')?.textContent, 'Billed to Me Myself');
   let sent: unknown;
   serve(`/projects/${project.id}/admin`, (_call, body) => {
@@ -83,10 +83,13 @@ test('the page says who is billed; the admin hands billing on from ⋯, another 
   const offered = [...document.querySelectorAll('.billed [role="menuitem"]')].map(
     (b) => b.textContent,
   );
-  // Operators who have signed in only, the one billed now left out.
   assert.deepEqual(offered, ['Bea Payer']);
   serve(`/projects/${project.id}/members`, {
-    body: { memberships: memberships('operator'), admin: { issuer, subject: 'bea' } },
+    body: {
+      memberships: memberships('operator'),
+      admin: { issuer, subject: 'bea' },
+      payers: ['membership_me'],
+    },
   });
   await click('Bea Payer');
   await settle(20);

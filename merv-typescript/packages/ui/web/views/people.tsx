@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { personName } from '@merv/contracts/text';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useActor, useSession, type Actor } from '../session';
@@ -39,12 +39,12 @@ interface Membership {
   actorId: string;
   role: Role;
   active: boolean;
-  signedIn: boolean;
 }
 type Admin = { issuer: string; subject: string } | null;
 interface Members {
   memberships: Membership[];
   admin: Admin;
+  payers: string[];
 }
 const roles: Role[] = ['reader', 'producer', 'reviewer', 'operator'];
 const failure = (error: unknown): ApiError =>
@@ -82,9 +82,11 @@ export function PeopleView() {
   const { subject, issuer } = human ? account.user : { subject: '', issuer: '' };
   const [members, setMembers] = useState<Membership[]>();
   const [admin, setAdmin] = useState<Admin>(null);
+  const [payers, setPayers] = useState<string[]>([]);
   const shown = (result: Members) => {
     setMembers(result.memberships.filter((member) => member.active));
     setAdmin(result.admin);
+    setPayers(result.payers);
   };
   const billing = useMoreMenu();
   const [loadError, setLoadError] = useState<ApiError>();
@@ -119,14 +121,8 @@ export function PeopleView() {
   const root = `/projects/${encodeURIComponent(project.id)}`;
   const path = `${root}/members`;
   const billed = members?.find((member) => is(member, admin));
-  // Scope bills a signed-in operator who consents: the admin hands billing on, another takes it.
-  const others = members?.filter((m) => m.role === 'operator' && m.signedIn && m !== me) ?? [];
-  const payers: [string, Membership][] =
-    !canManage || !me?.signedIn
-      ? []
-      : me === billed
-        ? others.map((m) => [label(m), m])
-        : [['Bill me', me]];
+  // Whom this person may bill is Scope's to say.
+  const billable = members?.filter((m) => payers.includes(m.id)) ?? [];
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
     labels: (member) => [nameOf(member.actorId), member.subject],
@@ -328,17 +324,19 @@ export function PeopleView() {
               <span>
                 Billed to <strong>{label(billed)}</strong>
               </span>
-              {!!payers.length &&
+              {!!billable.length &&
                 billing.menu(
-                  payers.map(([said, payer]) => (
-                    <Fragment key={payer.id}>
-                      {billing.item(said, () => {
+                  billable.map((payer) =>
+                    billing.item(
+                      payer === me ? 'Bill me' : label(payer),
+                      () => {
                         billing.close();
                         const { issuer, subject } = payer;
                         void mutate('PATCH', `${root}/admin`, { issuer, subject });
-                      })}
-                    </Fragment>
-                  )),
+                      },
+                      payer.id,
+                    ),
+                  ),
                 )}
             </div>
           )}
