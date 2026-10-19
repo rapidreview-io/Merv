@@ -33,7 +33,11 @@ async function fixture(t: TestContext) {
     cloudAccount: 'cloud',
   });
   const { sbxAuth: auth, sbxAccounts: accounts, sbxBilling: billing, sbxProviders } = ctx;
-  const people = new SandboxesPeople({ auth, accounts, billing, providers: sbxProviders }, {});
+  const { sbxDb: db, sbxClock: clock } = ctx;
+  const people = new SandboxesPeople(
+    { auth, accounts, billing, providers: sbxProviders, db, clock },
+    {},
+  );
   ctx.provide('sandboxesPeople', people);
   const modes = new Map<string, Mode>();
   Object.assign(ctx.sbxProviders, {

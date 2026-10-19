@@ -17,19 +17,6 @@ export const TOP_UPS = [25, 50, 100, 250] as const;
 const back = '/ui/settings/compute';
 const refusals = mervRefusals(MervError);
 
-type Mode = 'hosted' | 'own';
-/** TODO(merv-sandboxes): delete this cast once @sandboxes/providers declares
- *  `SbxProviders.modes` (each account's hosted or own-key mode per provider plugin). */
-const modesOf = (providers: SbxProviders) =>
-  (
-    providers as SbxProviders & {
-      modes: {
-        of(accountId: string): Promise<{ plugin: string; mode: Mode; stored: boolean }[]>;
-        set(accountId: string, plugin: string, mode: Mode): Promise<void>;
-      };
-    }
-  ).modes;
-
 interface Sbx {
   people: SandboxesPeople;
   providers: SbxProviders;
@@ -58,7 +45,7 @@ async function compute(sbx: Sbx, person: Person) {
   const own = await sbx.people.accountOf(person);
   if (!own) return { topUps: [], providers: [] };
   const [modes, report, hosted, keys] = await Promise.all([
-    modesOf(sbx.providers).of(own.accountId),
+    sbx.providers.modes.of(own.accountId),
     sbx.billing.credits.report(own.accountId),
     connected(sbx),
     sbx.vault.list(own.namespace),
@@ -147,7 +134,7 @@ export function computeRoutes(sbx: Sbx): MountHandler {
       return refusals.call(async () => {
         const own = await sbx.people.accountOf(person);
         check(own, 'not_found', 'No Sandboxes account yet', 404);
-        await modesOf(sbx.providers).set(own.accountId, provider, input.mode);
+        await sbx.providers.modes.set(own.accountId, provider, input.mode);
         return { plugin: provider, mode: input.mode };
       });
     }
