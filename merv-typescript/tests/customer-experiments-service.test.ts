@@ -206,7 +206,7 @@ async function fixture(
     async checkout(input) {
       checkoutCalls.push(input);
       return {
-        sessionId: 'cs_' + input.reference + '_' + input.idempotencyKey.split('-').at(-1),
+        id: 'cs_' + input.reference + '_' + input.idempotencyKey.split('-').at(-1),
         url: 'https://checkout.stripe.com/fixture',
         expiresAt: Date.now() / 1000 + 1800,
       };
@@ -233,7 +233,7 @@ async function fixture(
     artifacts,
     runtime,
     storage,
-    payments,
+    () => payments,
     mailer,
     { publicOrigin: 'https://merv.example', sponsor, intakeKey, publicIntake, maxRequestsPerDay },
     compute,
@@ -439,7 +439,6 @@ test('a ready contract needs customer acceptance and a matching verified payment
     eventId: 'evt_paid',
     reference: a.id,
     metadata: { contractHash: exp.contract!.hash },
-    sessionId: checkout.body.id,
     paymentId: 'pi_paid',
     amountUsd: 10,
     createdAt: new Date().toISOString(),
@@ -836,7 +835,6 @@ test('unavailable internal compute prevents checkout and payment release, while 
     eventId: 'evt_compute_retry',
     reference: request.id,
     metadata: { contractHash: exp.contract!.hash },
-    sessionId: checkout.body.id,
     paymentId: 'pi_compute_retry',
     amountUsd: 10,
     createdAt: new Date().toISOString(),
@@ -1362,7 +1360,6 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
     eventId: 'evt_v3',
     reference: f.a.id,
     metadata: { contractHash: exp.contract!.hash },
-    sessionId: opened.body.id,
     paymentId: 'pi_v3',
     amountUsd: 10,
     createdAt: new Date().toISOString(),

@@ -27,7 +27,6 @@ export interface Paid {
   paymentId: string;
   amountUsd: number;
   eventId: string;
-  sessionId: string;
   /** When the Checkout Session was created: the same for every event of one payment. */
   createdAt: string;
   /** The address the buyer gave Checkout. */
@@ -36,9 +35,8 @@ export interface Paid {
 /** Stripe, for every plugin that sells: checkout, and the one webhook that fulfils. */
 export interface Payments {
   readonly live: boolean;
-  checkout(input: CheckoutInput): Promise<{ url: string; sessionId: string; expiresAt: number }>;
-  /** Null for anything but a paid completed checkout of a Merv product; throws on a bad signature. */
-  verify(raw: Buffer, signature: string): Promise<Paid | null>;
+  /** The Checkout Session: its `id` is what `previousId` takes back. */
+  checkout(input: CheckoutInput): Promise<{ id: string; url: string; expiresAt: number }>;
   /** The handler of `product`'s paid checkouts, which must be idempotent on `paymentId`. */
   fulfil(product: string, handler: (paid: Paid) => Promise<void>): () => void;
   /** The webhook: verified, once per event, to its product's fulfiller. */

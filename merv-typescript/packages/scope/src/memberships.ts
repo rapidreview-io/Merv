@@ -205,7 +205,16 @@ export class Memberships {
         409,
       );
       const before = await this.admin(tx, projectId);
-      if (before?.issuer === admin.issuer && before.subject === admin.subject) return before;
+      const same = (a: ProjectAdmin | null | undefined, b: ProjectAdmin | null | undefined) =>
+        !!a && a.issuer === b?.issuer && a.subject === b.subject;
+      if (same(before, admin)) return admin;
+      // Billing is consented to: an operator takes it on, or the admin hands it to another.
+      check(
+        same(caller.human, admin) || same(caller.human, before),
+        'admin_consent',
+        'Only the admin can name another operator to bill; any operator can take billing on',
+        403,
+      );
       await this.assignAdmin(tx, projectId, admin);
       await this.state.appendEvent(tx, {
         projectId,

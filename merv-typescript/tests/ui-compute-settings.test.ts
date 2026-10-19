@@ -17,7 +17,7 @@ const providers = [
     plugin: 'lambda',
     label: 'Lambda',
     mode: 'hosted',
-    hosted: { granted: '100', used: '25', left: '75' },
+    hosted: { granted: '100', left: '75' },
     ownKey: false,
   },
   { plugin: 'aws', label: 'AWS', mode: 'own', hosted: null, ownKey: false },
@@ -25,15 +25,26 @@ const providers = [
     plugin: 'runpod',
     label: 'RunPod',
     mode: 'own',
-    hosted: { granted: '0', used: '0', left: '0' },
+    hosted: { granted: '0', left: '0' },
     ownKey: true,
   },
 ];
-const open = async (topUps = [25, 50, 100, 250]) => {
-  serve('/compute', { body: { topUps, providers } });
+const open = async (
+  topUps = [25, 50, 100, 250],
+  reply: object = { body: { topUps, providers } },
+) => {
+  serve('/compute', reply);
   await mount(createElement(MemoryRouter, null, createElement(ComputeSettings)));
   await settle(0);
 };
+
+// First, before any read of /compute is cached.
+test('a failed read says so, never that there are no providers', async (t) => {
+  t.after(unmount);
+  await open([], { status: 503, body: { error: { code: 'unavailable', message: 'Busy' } } });
+  assert.doesNotMatch(text(), /No providers/);
+  assert.match(text(), /Busy|unavailable/i);
+});
 
 test('each provider reads its mode, its hosted credit or its key, and nothing else', async (t) => {
   t.after(unmount);
@@ -42,7 +53,8 @@ test('each provider reads its mode, its hosted credit or its key, and nothing el
   assert.deepEqual(rows, [
     'LambdaHostedYour key$75 of $100Add credits',
     'AWSConnect a key',
-    'RunPodHostedYour keyYour key',
+    // Own mode says so once, in its control.
+    'RunPodHostedYour key',
   ]);
   assert.equal(
     document.querySelector('a[href="/sandboxes/providers"]')?.textContent,

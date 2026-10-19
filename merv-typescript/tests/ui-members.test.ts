@@ -1,6 +1,6 @@
 /**
  * Settings → Members, rendered: who the project is billed to is a fact on the page, and an
- * operator alone gets the quiet ⋯ that bills another operator instead.
+ * operator alone gets the quiet ⋯: the admin's names the others to bill, another's bills them.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -70,7 +70,7 @@ async function open(role: string, admin = 'me') {
   await settle(20);
 }
 
-test('the page says who is billed; an operator bills another operator from ⋯', async (t) => {
+test('the page says who is billed; the admin hands billing on from ⋯, another operator takes it', async (t) => {
   t.after(async () => await unmount());
   await open('operator');
   assert.equal(document.querySelector('.billed > span')?.textContent, 'Billed to Me Myself');
@@ -93,6 +93,14 @@ test('the page says who is billed; an operator bills another operator from ⋯',
   assert.ok(requests.includes(`PATCH /projects/${project.id}/admin`));
   assert.deepEqual(sent, { issuer, subject: 'bea' });
   assert.equal(document.querySelector('.billed > span')?.textContent, 'Billed to Bea Payer');
+  // No longer the admin, an operator can only take billing back on.
+  await click('⋯');
+  assert.deepEqual(
+    [...document.querySelectorAll('.billed [role="menuitem"]')].map((b) => b.textContent),
+    ['Bill me'],
+  );
+  await click('Bill me');
+  assert.deepEqual(sent, { issuer, subject: 'me' });
 });
 
 test('a member who is not an operator reads the fact with no control', async (t) => {

@@ -15,7 +15,7 @@ export const paymentMigrations = {
   );`,
 };
 
-type Gateway = Pick<Payments, 'live' | 'checkout' | 'verify'>;
+type Gateway = Pick<StripeGateway, 'live' | 'checkout' | 'verify'>;
 /** Each product's fulfiller, and the events already fulfilled. */
 export class PaymentsService implements Payments {
   #fulfillers = new Map<string, (paid: Paid) => Promise<void>>();
@@ -30,7 +30,6 @@ export class PaymentsService implements Payments {
     await this.state.migrate('payments', paymentMigrations);
   }
   checkout: Payments['checkout'] = (input) => this.gateway.checkout(input);
-  verify: Payments['verify'] = (raw, signature) => this.gateway.verify(raw, signature);
   fulfil(product: string, handler: (paid: Paid) => Promise<void>) {
     check(!this.#fulfillers.has(product), 'payments_conflict', `${product} is fulfilled`, 409);
     this.#fulfillers.set(product, handler);
@@ -40,7 +39,7 @@ export class PaymentsService implements Payments {
   }
   async receive(raw: Buffer, signature: unknown) {
     check(typeof signature === 'string', 'invalid_webhook', 'Stripe signature is required', 400);
-    const paid = await this.verify(raw, signature);
+    const paid = await this.gateway.verify(raw, signature);
     if (!paid) return { received: true as const };
     const fulfil = this.#fulfillers.get(paid.product);
     // Unanswered, Stripe sends it again until its seller is loaded.

@@ -90,7 +90,8 @@ export interface ScopeMembers {
   /** Hears each project's new admin once the change commits: at creation, at `setAdmin`, and
    * when an admin stops being a live operator and the longest-standing one takes over. */
   onAdminChanged(listener: (projectId: string, admin: ProjectAdmin) => void): () => void;
-  /** Refused unless the caller may administer the project and `admin` is a live operator of it. */
+  /** Refused unless the caller may administer the project, `admin` is a live operator of it, and
+   *  the caller is `admin` (taking billing on) or the current admin (handing it on). */
   setAdmin(principal: Principal, projectId: string, admin: ProjectAdmin): Promise<ProjectAdmin>;
   createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
   memberships(principal: Principal, projectId: string): Promise<ProjectMembers>;

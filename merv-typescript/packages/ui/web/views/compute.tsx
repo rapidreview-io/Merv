@@ -1,18 +1,18 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { accountRequest, useTool } from '../api';
-import { usd } from '../admin/parts';
 import { EmptyState, Failure, LoadState, Ruled, col } from '../components';
 import { Segments } from '../list-filters';
 import { useCommand } from '../mutations';
+import { usd } from './remote-fields';
 
 type Mode = 'hosted' | 'own';
 interface Provider {
   plugin: string;
   label: string;
   mode: Mode;
-  /** Credit on an operator connection; null where none can run this provider. */
-  hosted: { granted: string; used: string; left: string } | null;
+  /** Credit to rent the funded instance with; null where the account has none to rent. */
+  hosted: { granted: string; left: string } | null;
   ownKey: boolean;
 }
 interface Compute {
@@ -49,7 +49,9 @@ function TopUp({ provider, amounts }: { provider: string; amounts: number[] }) {
 
 function Credit({ provider, amounts }: { provider: Provider; amounts: number[] }) {
   const [adding, setAdding] = useState(false);
-  if (provider.mode === 'own' || !provider.hosted)
+  // In own mode the mode control already says it is their key.
+  if (provider.mode === 'own' && provider.hosted) return null;
+  if (!provider.hosted)
     return provider.ownKey ? (
       <span>Your key</span>
     ) : (
@@ -89,8 +91,8 @@ export function ComputeSettings() {
     validate: (result) => typeof result?.mode === 'string',
     onSuccess: () => compute.reload(),
   });
-  if (!compute.data && !compute.error) return <LoadState {...compute} />;
-  const { providers, topUps } = compute.data ?? { providers: [], topUps: [] };
+  if (!compute.data) return <LoadState {...compute} />;
+  const { providers, topUps } = compute.data;
   if (!providers.length)
     return (
       <div className="page-stage">

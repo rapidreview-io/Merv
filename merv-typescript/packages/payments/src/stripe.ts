@@ -4,7 +4,7 @@ import type { CheckoutInput, Paid, Payments } from '@merv/contracts/payments';
 
 /** Stripe Checkout in one mode. No browser callback can fulfil an order; only a signed paid
  *  Checkout event can. */
-export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'verify'> {
+export class StripeGateway implements Pick<Payments, 'live' | 'checkout'> {
   private stripe: Stripe;
   readonly live: boolean;
   constructor(
@@ -41,7 +41,7 @@ export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'veri
         409,
       );
       if (previous.status === 'open' && previous.url)
-        return { sessionId: previous.id, url: previous.url, expiresAt: previous.expires_at };
+        return { id: previous.id, url: previous.url, expiresAt: previous.expires_at };
       check(
         previous.status === 'expired',
         'payment_processing',
@@ -57,7 +57,8 @@ export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'veri
         allowed_payment_method_types: ['card'],
         ...(input.email ? { customer_email: input.email } : {}),
         client_reference_id: input.reference,
-        metadata: { ...input.metadata, product: input.product },
+        // The deployment that opened it, so two sharing one Stripe account never take each other's.
+        metadata: { ...input.metadata, product: input.product, origin: this.config.publicOrigin },
         line_items: [
           {
             quantity: 1,
@@ -79,8 +80,9 @@ export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'veri
       'Checkout is not available',
       503,
     );
-    return { sessionId: session.id, url: session.url, expiresAt: session.expires_at };
+    return { id: session.id, url: session.url, expiresAt: session.expires_at };
   }
+  /** Null for anything but a paid Checkout of a Merv product this deployment opened. */
   async verify(raw: Buffer, signature: string): Promise<Paid | null> {
     let event: Stripe.Event;
     try {
@@ -101,9 +103,11 @@ export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'veri
     )
       return null;
     const session = event.data.object as Stripe.Checkout.Session;
-    // The account may sell other things; only Merv's products are this webhook's.
-    const { product, ...metadata } = session.metadata ?? {};
-    if (!product?.startsWith('merv-') || session.payment_status !== 'paid') return null;
+    // The account may sell other things, and other deployments Merv's; one opened before the
+    // marker carries none.
+    const { product, origin = this.config.publicOrigin, ...metadata } = session.metadata ?? {};
+    if (!product?.startsWith('merv-') || origin !== this.config.publicOrigin) return null;
+    if (session.payment_status !== 'paid') return null;
     const reference = session.client_reference_id;
     check(
       session.mode === 'payment' &&
@@ -122,7 +126,6 @@ export class StripeGateway implements Pick<Payments, 'live' | 'checkout' | 'veri
       paymentId: session.payment_intent,
       amountUsd: session.amount_total / 100,
       eventId: event.id,
-      sessionId: session.id,
       createdAt: new Date(session.created * 1000).toISOString(),
       ...(session.customer_details?.email ? { email: session.customer_details.email } : {}),
     };

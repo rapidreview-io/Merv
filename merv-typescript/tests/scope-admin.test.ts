@@ -31,7 +31,7 @@ async function fixture() {
   return { state, scope, heard, login, owners };
 }
 
-test('the creator is the admin; setAdmin needs admin permission and a signed-in operator', async (t) => {
+test('the creator is the admin; setAdmin needs admin permission, a signed-in operator and consent', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
@@ -46,11 +46,13 @@ test('the creator is the admin; setAdmin needs admin permission and a signed-in 
   assert.equal(f.heard.length, 1);
   for (const [subject, role] of [
     ['bob', 'operator'],
+    ['carol', 'operator'],
     ['reader', 'reader'],
     ['absent', 'operator'],
   ] as const)
     await f.scope.members.addMember(alice, project.id, { subject, role });
   const bob = await f.login('bob');
+  await f.login('carol');
   const reader = await f.login('reader');
   await assert.rejects(f.scope.members.setAdmin(reader, project.id, person('bob')), {
     code: 'forbidden',
@@ -68,12 +70,21 @@ test('the creator is the admin; setAdmin needs admin permission and a signed-in 
     [
       ['alice', true],
       ['bob', true],
+      ['carol', true],
       ['reader', true],
       ['absent', false],
     ],
   );
+  // Only the admin names another operator to bill; any operator takes billing on themselves.
+  await assert.rejects(f.scope.members.setAdmin(bob, project.id, person('carol')), {
+    code: 'admin_consent',
+    status: 403,
+  });
   assert.deepEqual(await f.scope.members.setAdmin(bob, project.id, person('bob')), person('bob'));
   assert.deepEqual((await members()).admin, person('bob'));
+  await assert.rejects(f.scope.members.setAdmin(alice, project.id, person('carol')), {
+    code: 'admin_consent',
+  });
   // Setting the admin it has is no change.
   await f.scope.members.setAdmin(alice, project.id, person('bob'));
   assert.deepEqual(f.heard, [

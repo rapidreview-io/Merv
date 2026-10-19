@@ -66,3 +66,6 @@ export function formatMoney(
     .filter(Boolean)
     .join(' · ');
 }
+/** Dollars as every page states them (`formatMoney`), whole ones without their cents. */
+export const usd = (value: string | number) =>
+  formatMoney(Number(value), undefined).replace(/\.00$/, '');

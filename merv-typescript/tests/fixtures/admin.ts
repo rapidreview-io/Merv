@@ -1,6 +1,6 @@
 /**
- * The in-process Sandboxes host on a fresh schema, and the admin plugin's `/admin` mount called
- * directly, as the admin and Sandboxes tests stand them up.
+ * The in-process Sandboxes host on a fresh schema, and a plugin's mount (the admin's `/admin`)
+ * called directly, as the admin and Sandboxes tests stand them up.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -59,16 +59,14 @@ export const person = (user: AdminIdentity): Principal => ({
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 });
 
-/** The admin plugin on `ctx` and a call to its `/admin` mount, made as the first admin by default. */
-export async function adminRoutes(ctx: Context, admins: AdminIdentity[]) {
+/** An `api` on `ctx` and a call to the one route mounted on it, made as the API would, as `first`
+ *  by default. */
+export function mountCaller(ctx: Context, first: Principal) {
   let route: MountHandler | undefined;
   ctx.provide('api', {
     mount: (_prefix: string, handler: MountHandler) => ((route = handler), () => {}),
     stop: async () => {}, // the app stops whatever api it finds
   });
-  ctx.provide('tools', { registerCallerRules: () => () => {} });
-  await ctx.plugin(adminPlugin, { admins });
-  const first = person(admins[0]!);
   return async <T = unknown>(method: string, path: string, body?: unknown, who = first) =>
     (await route!(
       { method } as IncomingMessage,
@@ -83,6 +81,14 @@ export async function adminRoutes(ctx: Context, admins: AdminIdentity[]) {
         },
       } as ApiRequest,
     )) as T;
+}
+
+/** The admin plugin on `ctx` and a call to its `/admin` mount, made as the first admin by default. */
+export async function adminRoutes(ctx: Context, admins: AdminIdentity[]) {
+  const call = mountCaller(ctx, person(admins[0]!));
+  ctx.provide('tools', { registerCallerRules: () => () => {} });
+  await ctx.plugin(adminPlugin, { admins });
+  return call;
 }
 
 /** Matches a MervError of this code and status, for `assert.rejects`. */

@@ -951,6 +951,8 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
+        // Identity for its v3 customers and Payments for its checkout, where loaded.
+        assert.deepEqual(sorted([...optional]), ['identity', 'payments']);
         // Its snapshot and work reads for the platform admin, which takes them where loaded.
         assert.deepEqual(actualProvided, ['customerExperiments']);
         return;
@@ -983,7 +985,6 @@ test('Cordis service requirements match the architecture and every accessed capa
           'sandboxesPeople',
           'sbxBilling',
           'sbxProviders',
-          'sbxVault',
         ]);
         assert.deepEqual(sorted([...optional]), ['payments']);
         assert.deepEqual(actualProvided, []);

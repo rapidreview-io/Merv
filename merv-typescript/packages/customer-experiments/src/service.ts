@@ -176,8 +176,8 @@ export class CustomerService {
     private artifacts: Artifacts,
     private pi: PiRuntime,
     readonly storage: DatasetStorage | undefined,
-    /** Index.ts gives it Payments while that is loaded. */
-    public payments: Payments | undefined,
+    /** Payments while it is loaded. */
+    readonly payments: () => Payments | undefined,
     private mailer: ResultMailer | undefined,
     readonly options: CustomerServiceOptions,
     private compute?: CustomerCompute,
@@ -442,7 +442,7 @@ export class CustomerService {
       intakeStatus,
       result,
       submissionEmailSent: !!record.notifiedSubmission && !record.submissionEmailPending,
-      checkoutAvailable: !!this.payments,
+      checkoutAvailable: !!this.payments(),
       uploadAvailable: !!this.storage,
       version: exp.workflow.version,
       ...(document
@@ -1195,10 +1195,17 @@ export class CustomerService {
     });
   }
   async checkout(record: RequestRecord, input: { contractVersion: number; email: string | null }) {
+    const payments = this.payments();
     check(
-      this.payments,
+      payments,
       'checkout_unavailable',
       'Payments are not configured yet. Your plan is saved and execution remains locked.',
+      503,
+    );
+    check(
+      !payments.live || this.mailer,
+      'customer_configuration',
+      'Live customer checkout requires a results email sender',
       503,
     );
     const caller = await this.caller(record);
@@ -1232,7 +1239,7 @@ export class CustomerService {
     // execution still requires this exact contract's confirmed payment.
     await this.compute.prepareExecution(caller);
     const back = `${this.options.publicOrigin}/customer-experiments/r/${encodeURIComponent(record.id)}`;
-    const { sessionId: id, ...opened } = await this.payments.checkout({
+    const checkout = await payments.checkout({
       product: CUSTOMER_PRODUCT,
       reference: record.id,
       amountUsd: contract.price.amountCents / 100,
@@ -1244,7 +1251,6 @@ export class CustomerService {
       email: input.email,
       previousId,
     });
-    const checkout = { id, ...opened };
     await this.store.mutate(record.id, (r) => {
       check(
         r.checkout?.contractHash === contract.hash && r.checkout.generation === generation,

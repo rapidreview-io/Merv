@@ -104,8 +104,9 @@ export function customerHttp(
     }
     // Payments' webhook, where the Stripe dashboard first pointed.
     if (path === '/customer-experiments/stripe-webhook' && method === 'POST') {
-      check(service.payments, 'checkout_unavailable', 'Payments are not configured', 503);
-      return service.payments.receive(
+      const payments = service.payments();
+      check(payments, 'checkout_unavailable', 'Payments are not configured', 503);
+      return payments.receive(
         await r.bytes(256 * 1024, 'application/json'),
         req.headers['stripe-signature'],
       );

@@ -105,7 +105,8 @@ export function PeopleView() {
   const mine = (member: Membership) => is(member, { issuer, subject });
   // A member is named from the directory, never by the account ID they signed in with.
   const label = (member: Membership) => nameOf(member.actorId) ?? (mine(member) ? 'You' : 'Member');
-  const isOperator = (human ? members?.find(mine)?.role : actor.role) === 'operator';
+  const me = members?.find(mine);
+  const isOperator = (human ? me?.role : actor.role) === 'operator';
   const options = roles.map((role) => (
     <option key={role} value={role}>
       {term(role)}
@@ -118,10 +119,14 @@ export function PeopleView() {
   const root = `/projects/${encodeURIComponent(project.id)}`;
   const path = `${root}/members`;
   const billed = members?.find((member) => is(member, admin));
-  // Scope bills only an operator who has signed in.
-  const payers = members?.filter(
-    (member) => member.role === 'operator' && member.signedIn && member !== billed,
-  );
+  // Scope bills a signed-in operator who consents: the admin hands billing on, another takes it.
+  const others = members?.filter((m) => m.role === 'operator' && m.signedIn && m !== me) ?? [];
+  const payers: [string, Membership][] =
+    !canManage || !me?.signedIn
+      ? []
+      : me === billed
+        ? others.map((m) => [label(m), m])
+        : [['Bill me', me]];
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
     labels: (member) => [nameOf(member.actorId), member.subject],
@@ -323,12 +328,11 @@ export function PeopleView() {
               <span>
                 Billed to <strong>{label(billed)}</strong>
               </span>
-              {canManage &&
-                !!payers?.length &&
+              {!!payers.length &&
                 billing.menu(
-                  payers.map((payer) => (
+                  payers.map(([said, payer]) => (
                     <Fragment key={payer.id}>
-                      {billing.item(label(payer), () => {
+                      {billing.item(said, () => {
                         billing.close();
                         const { issuer, subject } = payer;
                         void mutate('PATCH', `${root}/admin`, { issuer, subject });

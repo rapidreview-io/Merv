@@ -147,7 +147,7 @@ export const customerExperimentsPlugin = {
         ctx.artifacts,
         ctx.pi,
         storage,
-        undefined,
+        () => ctx.get('payments'),
         mailer,
         { ...config, intakeKey: secret(config.intakeKeyEnv) },
         hostedCustomerCompute(ctx, config),
@@ -171,26 +171,13 @@ export const customerExperimentsPlugin = {
       const start = {
         publicOrigin: config.publicOrigin,
         publicIntake: config.publicIntake,
-        livePayments: false,
+        get livePayments() {
+          return !!ctx.get('payments')?.live;
+        },
       };
       // Optional: without Payments, checkout is refused with a 503 and the plan stays saved.
       ctx.inject(['payments'], (ctx) => {
-        ctx.effect(() => {
-          check(
-            !ctx.payments.live || mailer,
-            'customer_configuration',
-            'Live customer checkout requires a results email sender',
-            503,
-          );
-          const fulfilment = ctx.payments.fulfil(CUSTOMER_PRODUCT, (paid) => service.paid(paid));
-          service.payments = ctx.payments;
-          start.livePayments = ctx.payments.live;
-          return () => {
-            fulfilment();
-            service.payments = undefined;
-            start.livePayments = false;
-          };
-        });
+        ctx.effect(() => ctx.payments.fulfil(CUSTOMER_PRODUCT, (paid) => service.paid(paid)));
       });
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain, files);

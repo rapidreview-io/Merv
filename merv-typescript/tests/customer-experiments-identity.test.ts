@@ -185,7 +185,7 @@ async function fixture(t: TestContext, options: { version?: number; identity?: b
     undefined as never,
     pi,
     undefined,
-    undefined,
+    () => undefined,
     undefined,
     {
       publicOrigin: 'https://merv.example',

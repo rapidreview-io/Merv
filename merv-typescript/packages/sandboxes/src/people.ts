@@ -1,7 +1,7 @@
 import type { Context } from 'cordis';
 import { digest, MervError, type Scope } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
-import { linkProject, projectNamespace, type SbxAuth } from '@sandboxes/auth';
+import { linkProject, type SbxAuth } from '@sandboxes/auth';
 import type { CreditGrantInput, CreditScheduleInput, SbxBilling } from '@sandboxes/billing';
 import { Decimal, type Clock, type Database } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
@@ -47,6 +47,7 @@ export class SandboxesPeople implements People {
       if (!offered.length) return { accountId };
       const { credits } = this.sbx.billing;
       const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
+      // Connections, not `modes.of`'s funded: CreditService admits credit only on a registered one.
       const connected = new Set((await this.sbx.providers.connections.list()).map((c) => c.plugin));
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
@@ -104,29 +105,21 @@ export class SandboxesPeople implements People {
     );
   }
 
-  /** The project's namespace in its admin's own account, which pays for its compute. Left alone
-   *  where it is there already; moved there from another account, which revokes the tokens
-   *  minted for it there (its agents reconnect on their next lease). */
-  link(projectId: string, admin: Person): Promise<void> {
+  /** The project in its admin's own account, which pays for its compute: left alone where it
+   *  is there already (or, `onlyUnlinked`, anywhere); moved there from another account with its
+   *  namespace, which revokes the tokens minted for it there (its agents reconnect on their next
+   *  lease). */
+  link(projectId: string, admin: Person, onlyUnlinked = false): Promise<void> {
     return refusals.call(async () => {
-      const { accountId } = await this.ensure(admin);
       const { accounts, auth, db, clock } = this.sbx;
       const before = await accounts.linked(projectId);
+      if (before && onlyUnlinked) return;
+      const { accountId } = await this.ensure(admin);
       if (before?.account_id === accountId) return;
-      const person = (await auth.persons.byIdentity(admin.issuer, admin.subject))!;
-      // The project's own namespace, unless another account holds that name: then one of this
-      // account's own, named for both.
-      let namespace: string | undefined = projectNamespace(projectId);
-      const held = await accounts.namespace(namespace).catch(() => null);
-      if (!held || held.account_id === accountId) namespace = undefined;
-      else {
-        namespace = `${namespace}-${digest(accountId).slice(0, 12)}`;
-        const payer = (await accounts.memberOf(accountId, person.id))!.id;
-        await accounts.addNamespace(accountId, namespace, payer, { internal: true });
-      }
-      await linkProject({ db, accounts, clock }, person.id, projectId, {
+      const person = await auth.persons.byIdentity(admin.issuer, admin.subject);
+      await linkProject({ db, accounts, clock }, person!.id, projectId, {
         account_id: accountId,
-        namespace,
+        only_unlinked: onlyUnlinked,
       });
       if (before)
         log({
@@ -168,7 +161,8 @@ export class SandboxesPeople implements People {
   adminChanged(projectId: string, admin: Person): void {
     if (!this.#closed) this.#link(async () => await this.#linked(projectId, admin));
   }
-  /** Everyone already signed in, one at a time, once; then every project with an admin. */
+  /** Everyone already signed in, one at a time, once; then every project with an admin and no
+   *  link yet. One linked already stays where someone put it. */
   backfill(scope: Scope): void {
     this.#track(
       (async () => {
@@ -180,7 +174,7 @@ export class SandboxesPeople implements People {
     );
     this.#link(async () => {
       for (const { projectId, source } of await scope.projectOwners())
-        if (source.kind === 'human' && !this.#closed) await this.#linked(projectId, source);
+        if (source.kind === 'human' && !this.#closed) await this.#linked(projectId, source, true);
     });
   }
   async settled(): Promise<void> {
@@ -201,8 +195,8 @@ export class SandboxesPeople implements People {
           cause: cause(error),
         }),
     );
-  #linked = (projectId: string, admin: Person) =>
-    this.link(projectId, admin).catch((error) =>
+  #linked = (projectId: string, admin: Person, onlyUnlinked = false) =>
+    this.link(projectId, admin, onlyUnlinked).catch((error) =>
       log({ event: 'sandboxes.projects.link_failed', projectId, cause: cause(error) }),
     );
   #link(work: () => Promise<void>): void {

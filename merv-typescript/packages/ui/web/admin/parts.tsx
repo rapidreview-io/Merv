@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { accountRequest } from '../api';
 import { PageHeader, Word, col, cx, toneOf } from '../components';
 import { useCommand } from '../mutations';
-import { formatMoney } from '../views/remote-fields';
 
 /** A POST to an /admin route (`path`, the rest its body), sent whole again on a retry: each
  *  body names its own id or is the whole change, so a retry is the same write. */
@@ -17,9 +16,6 @@ export const usePost = <T = { id?: unknown },>(
     validate,
     onSuccess: done,
   });
-/** Dollars as every page states them (`formatMoney`), whole ones without their cents. */
-export const usd = (value: string | number) =>
-  formatMoney(Number(value), undefined).replace(/\.00$/, '');
 /** A count a person reads at a glance: 940, 12.5K, 3.1M. */
 export const count = (n: number) =>
   n.toLocaleString('en', { notation: 'compact', maximumFractionDigits: 1 });

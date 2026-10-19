@@ -6,14 +6,14 @@ import type { MountHandler } from '@merv/api/types';
 import type { SbxBilling } from '@sandboxes/billing';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
-import type { SbxProviders, SbxVault } from '@sandboxes/providers';
+import type { SbxProviders } from '@sandboxes/providers';
 import { PLUGIN_COPY } from '@sandboxes/providers/console-labels';
 import type { SandboxesPeople } from './types.js';
 
 /** What a top-up's Checkout sells: credit on one provider of the buyer's own account. */
 export const CREDITS_PRODUCT = 'merv-sandbox-credits-v1';
 /** The founder's fixed top-ups, in USD. */
-export const TOP_UPS = [25, 50, 100, 250] as const;
+const TOP_UPS = [25, 50, 100, 250] as const;
 const back = '/ui/settings/compute';
 const refusals = mervRefusals(MervError);
 
@@ -21,7 +21,6 @@ interface Sbx {
   people: SandboxesPeople;
   providers: SbxProviders;
   billing: SbxBilling;
-  vault: SbxVault;
   /** Payments while it is loaded: without it nothing is sold. */
   payments(): Payments | undefined;
 }
@@ -36,32 +35,25 @@ const checkoutInput = z
   .strict();
 const modeInput = z.object({ mode: z.enum(['hosted', 'own']) }).strict();
 
-const connected = async (sbx: Sbx) =>
-  new Set((await sbx.providers.connections.list()).map((c) => c.plugin));
-
-/** Per provider plugin the person's own account can use: its mode, the hosted credit where an
- *  operator connection can spend one, and whether the person saved a key of their own. */
+/** Per provider plugin the person's own account can use: its mode, the hosted credit where a
+ *  funded instance is the account's to rent, and whether the account saved a key of its own. */
 async function compute(sbx: Sbx, person: Person) {
   const own = await sbx.people.accountOf(person);
   if (!own) return { topUps: [], providers: [] };
-  const [modes, report, hosted, keys] = await Promise.all([
+  const [modes, report] = await Promise.all([
     sbx.providers.modes.of(own.accountId),
     sbx.billing.credits.report(own.accountId),
-    connected(sbx),
-    sbx.vault.list(own.namespace),
   ]);
   return {
     topUps: sbx.payments() ? TOP_UPS : [],
-    providers: modes.map(({ plugin, mode }) => {
+    providers: modes.map(({ plugin, mode, funded, keyed }) => {
       const pool = report.pools.find((p) => p.provider === plugin);
       return {
         plugin,
         label: PLUGIN_COPY[plugin]?.title ?? plugin,
         mode,
-        hosted: hosted.has(plugin)
-          ? { granted: pool?.granted ?? '0', used: pool?.used ?? '0', left: pool?.available ?? '0' }
-          : null,
-        ownKey: keys.some((key) => key.plugin === plugin),
+        hosted: funded ? { granted: pool?.granted ?? '0', left: pool?.available ?? '0' } : null,
+        ownKey: keyed,
       };
     }),
   };
@@ -70,9 +62,11 @@ async function compute(sbx: Sbx, person: Person) {
 async function checkout(sbx: Sbx, person: Person, input: z.infer<typeof checkoutInput>) {
   const payments = sbx.payments();
   check(payments, 'checkout_unavailable', 'Payments are not configured', 503);
-  // Money is never taken for credit no operator connection could spend.
+  // Money is never taken for credit the account has no funded instance to spend on.
+  const own = await sbx.people.accountOf(person);
+  const modes = own ? await sbx.providers.modes.of(own.accountId) : [];
   check(
-    (await connected(sbx)).has(input.provider),
+    modes.some((row) => row.plugin === input.provider && row.funded),
     'provider_unavailable',
     'This provider has no hosted machines',
     409,
@@ -83,7 +77,7 @@ async function checkout(sbx: Sbx, person: Person, input: z.infer<typeof checkout
     reference: input.requestId,
     amountUsd: input.amountUsd,
     description: `${PLUGIN_COPY[input.provider]?.title ?? input.provider} credits`,
-    metadata: { issuer, subject, provider: input.provider, amountUsd: String(input.amountUsd) },
+    metadata: { issuer, subject, provider: input.provider },
     successUrl: `${back}?checkout=paid`,
     cancelUrl: back,
     idempotencyKey: `merv-credits-v1-${digest([issuer, subject, input.provider, input.amountUsd, input.requestId])}`,
@@ -109,7 +103,7 @@ async function topUp(people: SandboxesPeople, paid: Paid) {
 }
 
 /** `/compute`: the signed-in person's own account, per provider. */
-export function computeRoutes(sbx: Sbx): MountHandler {
+function computeRoutes(sbx: Sbx): MountHandler {
   return async (req, res, r) => {
     res.setHeader('Cache-Control', 'no-store');
     const principal = r.principal;
@@ -146,26 +140,17 @@ export function computeRoutes(sbx: Sbx): MountHandler {
  *  Loaded by the integration beside its people. */
 export const sandboxesCreditsPlugin = {
   name: 'merv-sandboxes-credits',
-  inject: ['api', 'sandboxesPeople', 'sbxProviders', 'sbxBilling', 'sbxVault'],
+  inject: ['api', 'sandboxesPeople', 'sbxProviders', 'sbxBilling'],
   apply(ctx: Context) {
-    let payments: Payments | undefined;
+    const people = ctx.sandboxesPeople;
     ctx.inject(['payments'], (ctx) => {
-      ctx.effect(() => {
-        const people = ctx.sandboxesPeople;
-        const fulfilment = ctx.payments.fulfil(CREDITS_PRODUCT, (paid) => topUp(people, paid));
-        payments = ctx.payments;
-        return () => {
-          fulfilment();
-          payments = undefined;
-        };
-      });
+      ctx.effect(() => ctx.payments.fulfil(CREDITS_PRODUCT, (paid) => topUp(people, paid)));
     });
     const sbx: Sbx = {
-      people: ctx.sandboxesPeople,
+      people,
       providers: ctx.sbxProviders,
       billing: ctx.sbxBilling,
-      vault: ctx.sbxVault,
-      payments: () => payments,
+      payments: () => ctx.get('payments'),
     };
     ctx.effect(() => ctx.api.mount('/compute', computeRoutes(sbx)));
   },
