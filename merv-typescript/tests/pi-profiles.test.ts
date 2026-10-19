@@ -126,7 +126,7 @@ test('customer tools do not overflow a full ordinary producer tool catalog or di
   const dispose = registerWorkerTools(f.tools, {} as CustomerExperiments);
   t.after(dispose);
   const normal = await f.begun(f.operator);
-  assert.equal(normal.work.tools.length, 129);
+  assert.equal(normal.work.tools.length, 128);
   assert.ok(normal.work.tools.some((t) => t.name === 'nisa.search'));
   assert.ok(normal.work.tools.some((t) => t.name === 'nisa.research'));
   assert.ok(normal.work.tools.every((t) => !t.name.startsWith('customer_experiment')));
