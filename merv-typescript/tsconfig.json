@@ -55,6 +55,7 @@
     "tests/ui-huggingface.test.ts",
     "tests/ui-customer.test.ts",
     "tests/ui-admin.test.ts",
-    "tests/ui-admin-drill.test.ts"
+    "tests/ui-admin-drill.test.ts",
+    "tests/ui-compute-settings.test.ts"
   ]
 }

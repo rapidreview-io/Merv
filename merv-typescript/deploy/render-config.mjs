@@ -406,6 +406,21 @@ if (nisaKey) {
     },
   );
 }
+// Stripe for every plugin that sells, under the names production first gave customer checkout.
+const livePayments = optIn('MERV_CUSTOMER_STRIPE_LIVE');
+if (process.env.MERV_CUSTOMER_STRIPE_SECRET_KEY !== undefined) {
+  required('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET');
+  config.plugins.push({
+    id: 'payments',
+    name: '@merv/payments',
+    config: {
+      secretKeyEnv: 'MERV_CUSTOMER_STRIPE_SECRET_KEY',
+      webhookSecretEnv: 'MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET',
+      live: livePayments,
+      publicOrigin: origin('MERV_TS_PUBLIC_ORIGIN'),
+    },
+  });
+}
 if (customerExperimentsEnabled) {
   if (!sandboxesEnabled)
     throw new Error('Customer experiments require native Sandboxes with managed ML funding');
@@ -445,14 +460,10 @@ if (customerExperimentsEnabled) {
       secretAccessKeyEnv: 'MERV_CUSTOMER_DATA_SECRET_ACCESS_KEY',
     };
   }
-  if (process.env.MERV_CUSTOMER_STRIPE_SECRET_KEY !== undefined) {
-    required('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET');
-    customer.stripe = { live: optIn('MERV_CUSTOMER_STRIPE_LIVE') };
-  }
   if (process.env.MERV_CUSTOMER_RESEND_KEY !== undefined) {
     customer.email = { from: required('MERV_CUSTOMER_EMAIL_FROM') };
   }
-  if (customer.stripe?.live && !customer.email)
+  if (process.env.MERV_CUSTOMER_STRIPE_SECRET_KEY !== undefined && livePayments && !customer.email)
     throw new Error('Live customer checkout requires a results email sender');
   config.plugins.push({
     id: 'customer-experiments',

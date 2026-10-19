@@ -114,7 +114,12 @@ test('credit comes with access to spend it; a disabled schedule and an access an
   const alice = { issuer, subject: 'alice' };
   assert.equal(await people.accountOf(alice), null);
   const { accountId } = await people.ensure(alice);
-  assert.deepEqual(await people.accountOf(alice), { accountId, name: null });
+  const { home_namespace } = (await f.ctx.sbxAuth.persons.byIdentity(issuer, 'alice'))!;
+  assert.deepEqual(await people.accountOf(alice), {
+    accountId,
+    namespace: home_namespace,
+    name: null,
+  });
   assert.deepEqual(await access(accountId), []);
   await people.grant(alice, { ...terms, id: 'g1', validFrom: now, expiresAt: null });
   assert.deepEqual(await access(accountId), [['cloud', true]]);

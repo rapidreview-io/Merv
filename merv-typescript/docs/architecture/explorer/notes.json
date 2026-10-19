@@ -269,7 +269,15 @@
         "id": "integrations",
         "label": "External service adapters",
         "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
-        "members": ["mounts", "nisa", "web", "sbxMerv", "sandboxEvidence", "sandboxesPeople"]
+        "members": [
+          "mounts",
+          "nisa",
+          "web",
+          "sbxMerv",
+          "sandboxEvidence",
+          "sandboxesPeople",
+          "payments"
+        ]
       },
       {
         "id": "runtime",
@@ -281,7 +289,7 @@
         "id": "transport",
         "label": "HTTP / MCP boundary",
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
-        "members": ["api", "merv-admin", "merv-sandboxes-console"],
+        "members": ["api", "merv-admin", "merv-sandboxes-console", "merv-sandboxes-credits"],
         "kinds": ["api"]
       },
       {

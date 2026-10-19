@@ -82,7 +82,11 @@ export class SandboxesPeople implements People {
       const person = await this.sbx.auth.persons.byIdentity(issuer, subject);
       if (!person?.home_namespace) return null;
       const { account_id } = await this.sbx.accounts.namespace(person.home_namespace);
-      return { accountId: account_id, name: person.display_name || person.email || null };
+      return {
+        accountId: account_id,
+        namespace: person.home_namespace,
+        name: person.display_name || person.email || null,
+      };
     });
   }
 

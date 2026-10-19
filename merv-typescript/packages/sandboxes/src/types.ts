@@ -9,8 +9,11 @@ export interface SandboxesPeople {
    * names a person Sandboxes does not know yet. Refusals are Merv errors.
    */
   ensure(person: Person): Promise<{ accountId: string }>;
-  /** Their own account and the name Sandboxes knows them by, if it knows them yet. Reads only. */
-  accountOf(person: Person): Promise<{ accountId: string; name: string | null } | null>;
+  /** Their own account, its home namespace and the name Sandboxes knows them by, if it knows
+   *  them yet. Reads only. */
+  accountOf(
+    person: Person,
+  ): Promise<{ accountId: string; namespace: string; name: string | null } | null>;
   /** Credit on the person's own account (`ensure`d) that they may spend: the grant or schedule,
    *  then the account's access to each operator connection of its provider where no operator
    *  has decided it yet, so an access revoked stays revoked. A disabled schedule grants none. */

@@ -13,6 +13,7 @@ import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { piMigrations } from '../packages/pi/src/schema.js';
 import { auditMigrations } from '../packages/admin/src/audit.js';
 import { credentialMigrations } from '../packages/admin/src/credentials.js';
+import { paymentMigrations } from '../packages/payments/src/index.js';
 
 interface Row {
   component: string;
@@ -87,6 +88,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
     () => recorder.migrate('pi', piMigrations),
     // The admin's own tables, which it migrates only where admins are configured.
     () => recorder.migrate('admin', { ...auditMigrations, ...credentialMigrations }),
+    // Payments' event ledger, which it migrates only where Stripe is configured.
+    () => recorder.migrate('payments', paymentMigrations),
     () => initializeLegacyHistory(recorder),
   ]) {
     try {

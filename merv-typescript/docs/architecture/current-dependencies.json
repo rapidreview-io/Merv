@@ -1,19 +1,19 @@
 {
   "snapshot": "2026-10-19",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 79,
-  "serviceProviders": 36,
+  "pluginCount": 81,
+  "serviceProviders": 37,
   "toolAdapters": 19,
   "uiAdapters": 16,
   "apiAdapters": 5,
   "defaultEntries": 57,
   "apiEntries": 44,
-  "serverPlugins": 78,
+  "serverPlugins": 80,
   "machinePlugins": 1,
-  "directDependencyCount": 256,
-  "optionalDependencyCount": 17,
+  "directDependencyCount": 265,
+  "optionalDependencyCount": 19,
   "directConsumers": {
-    "api": 10,
+    "api": 12,
     "artifacts": 14,
     "blobs": 3,
     "board": 2,
@@ -31,6 +31,7 @@
     "mounts": 1,
     "nisa": 1,
     "paper": 6,
+    "payments": 2,
     "pi": 4,
     "reflections": 3,
     "reports": 3,
@@ -38,11 +39,11 @@
     "reviews": 8,
     "runner": 0,
     "sandboxEvidence": 3,
-    "sandboxesPeople": 0,
+    "sandboxesPeople": 1,
     "scope": 32,
     "secrets": 2,
     "sessions": 10,
-    "state": 26,
+    "state": 27,
     "tasks": 4,
     "tools": 27,
     "ui": 17,
@@ -53,9 +54,9 @@
     "sbxObjects": 2,
     "sbxAccounts": 3,
     "sbxAuth": 1,
-    "sbxBilling": 2,
-    "sbxProviders": 2,
-    "sbxVault": 1,
+    "sbxBilling": 3,
+    "sbxProviders": 3,
+    "sbxVault": 2,
     "sbxResourceLimits": 1,
     "sbxRegistry": 3,
     "sbxJobs": 2,
@@ -319,7 +320,8 @@
         "api"
       ],
       "optional": [
-        "identity"
+        "identity",
+        "payments"
       ],
       "kind": "service",
       "runtime": "server",
@@ -664,6 +666,21 @@
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-payments",
+      "source": "packages/payments/src/index.ts",
+      "provides": [
+        "payments"
+      ],
+      "requires": [
+        "state",
+        "api"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-pi",
       "source": "packages/pi/src/index.ts",
       "provides": [
@@ -944,6 +961,24 @@
         "sbxSettings"
       ],
       "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-sandboxes-credits",
+      "source": "packages/sandboxes/src/credits.ts",
+      "provides": [],
+      "requires": [
+        "api",
+        "sandboxesPeople",
+        "sbxProviders",
+        "sbxBilling",
+        "sbxVault"
+      ],
+      "optional": [
+        "payments"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false

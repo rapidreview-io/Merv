@@ -11,8 +11,9 @@ import { check } from '@merv/contracts';
 import { CustomerExperiments } from './domain.js';
 import { RequestStore } from './store.js';
 import { RequestBuckets } from './data.js';
-import { ResendResultMailer, StripePayments } from './payment.js';
-import { CustomerService } from './service.js';
+import type {} from '@merv/contracts/payments';
+import { ResendResultMailer } from './mail.js';
+import { CUSTOMER_PRODUCT, CustomerService } from './service.js';
 import { customerHttp, startHttp } from './http.js';
 import { registerWorkerTools } from './worker-tools.js';
 import { FilesService } from './files.js';
@@ -50,18 +51,6 @@ export const customerConfig = z
         bucketPrefix: z.string().regex(/^[a-z][a-z0-9-]{2,20}$/),
         accessKeyIdEnv: env.describe('Standalone experiment data buckets · S3 access key id'),
         secretAccessKeyEnv: env.describe('Standalone experiment data buckets · S3 secret key'),
-      })
-      .strict()
-      .optional(),
-    stripe: z
-      .object({
-        secretKeyEnv: env
-          .describe('Standalone experiment checkout · Stripe secret key')
-          .default('MERV_CUSTOMER_STRIPE_SECRET_KEY'),
-        webhookSecretEnv: env
-          .describe('Standalone experiment checkout · Stripe webhook signing secret')
-          .default('MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET'),
-        live: z.boolean().default(false),
       })
       .strict()
       .optional(),
@@ -138,23 +127,9 @@ export const customerExperimentsPlugin = {
           })
         : undefined;
       if (storage) yield () => storage.close();
-      const payments = config.stripe
-        ? new StripePayments({
-            secretKey: secret(config.stripe.secretKeyEnv),
-            webhookSecret: secret(config.stripe.webhookSecretEnv),
-            publicOrigin: config.publicOrigin,
-            live: config.stripe.live,
-          })
-        : undefined;
       const mailer = config.email
         ? new ResendResultMailer(secret(config.email.apiKeyEnv), config.email.from)
         : undefined;
-      check(
-        !config.stripe?.live || mailer,
-        'customer_configuration',
-        'Live customer checkout requires a results email sender',
-        503,
-      );
       // The request bucket's files; the plan freezes their manifest into a v3 contract.
       const files: FilesService = new FilesService(ctx.state, store, storage, async (record) => {
         check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
@@ -172,7 +147,7 @@ export const customerExperimentsPlugin = {
         ctx.artifacts,
         ctx.pi,
         storage,
-        payments,
+        undefined,
         mailer,
         { ...config, intakeKey: secret(config.intakeKeyEnv) },
         hostedCustomerCompute(ctx, config),
@@ -193,6 +168,30 @@ export const customerExperimentsPlugin = {
           };
         });
       });
+      const start = {
+        publicOrigin: config.publicOrigin,
+        publicIntake: config.publicIntake,
+        livePayments: false,
+      };
+      // Optional: without Payments, checkout is refused with a 503 and the plan stays saved.
+      ctx.inject(['payments'], (ctx) => {
+        ctx.effect(() => {
+          check(
+            !ctx.payments.live || mailer,
+            'customer_configuration',
+            'Live customer checkout requires a results email sender',
+            503,
+          );
+          const fulfilment = ctx.payments.fulfil(CUSTOMER_PRODUCT, (paid) => service.paid(paid));
+          service.payments = ctx.payments;
+          start.livePayments = ctx.payments.live;
+          return () => {
+            fulfilment();
+            service.payments = undefined;
+            start.livePayments = false;
+          };
+        });
+      });
       for (const dispose of await service.registerIntake(ctx.tools)) yield dispose;
       yield registerWorkerTools(ctx.tools, domain, files);
       // v3 requests open the customer app the UI bundle builds, where the UI is loaded.
@@ -200,19 +199,7 @@ export const customerExperimentsPlugin = {
       yield ctx.api.mount('/customer-experiments', customerHttp(service, { files, app }), {
         public: true,
       });
-      yield ctx.api.mount(
-        '/start',
-        startHttp(
-          {
-            publicOrigin: config.publicOrigin,
-            publicIntake: config.publicIntake,
-            livePayments: config.stripe?.live ?? false,
-          },
-          service,
-          app,
-        ),
-        { public: true },
-      );
+      yield ctx.api.mount('/start', startHttp(start, service, app), { public: true });
       let pending: Promise<void> | undefined;
       const tick = () => {
         if (!pending)

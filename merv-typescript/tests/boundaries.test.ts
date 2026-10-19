@@ -182,6 +182,8 @@ const capabilities: Record<string, readonly string[]> = {
     'sbxDb',
     'sbxClock',
   ],
+  // Stripe for every plugin that sells: its webhook's events, dispatched to their sellers.
+  payments: ['state', 'api'],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
   // Literature retrieval and account-backed research require fresh caller scope checks.
@@ -973,6 +975,22 @@ test('Cordis service requirements match the architecture and every accessed capa
         orchestrationAdapters.add(name.text);
         return;
       }
+      if (name.text === 'merv-sandboxes-credits') {
+        assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'credits.ts'));
+        // A person's compute routes over their own account; it sells through Payments when loaded.
+        assert.deepEqual(sorted(declared), [
+          'api',
+          'sandboxesPeople',
+          'sbxBilling',
+          'sbxProviders',
+          'sbxVault',
+        ]);
+        assert.deepEqual(sorted([...optional]), ['payments']);
+        assert.deepEqual(actualProvided, []);
+        assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate compute orchestration');
+        orchestrationAdapters.add(name.text);
+        return;
+      }
       if (name.text === 'merv-sandboxes-console') {
         assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'console.ts'));
         assert.deepEqual(sorted(declared), [
@@ -1020,6 +1038,7 @@ test('Cordis service requirements match the architecture and every accessed capa
   assert.deepEqual(sorted([...orchestrationAdapters]), [
     'merv-fleet-workflow',
     'merv-sandboxes-console',
+    'merv-sandboxes-credits',
   ]);
 });
 
