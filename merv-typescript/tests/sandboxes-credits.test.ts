@@ -127,15 +127,21 @@ test('a top-up sells only credit a funded instance can spend, and its payment cr
     ['stripe:pi_1', 'fake', '25', 'Top-up'],
     ['stripe:pi_2', 'fake', '50', 'Top-up'],
   ]);
-  assert.deepEqual((await f.compute()).providers, [
-    {
-      plugin: 'fake',
-      label: 'Fake',
-      mode: 'hosted',
-      hosted: { granted: '75', left: '75' },
-      ownKey: false,
-    },
-  ]);
+  const [fake, ...rest] = (await f.compute()).providers;
+  assert.deepEqual(fake, {
+    plugin: 'fake',
+    label: 'Fake',
+    funded: true,
+    mode: 'hosted',
+    hosted: { granted: '75', left: '75' },
+    ownKey: false,
+  });
+  // Every other plugin Sandboxes offers follows, unfunded and unusable until a key is saved;
+  // the local plugin only where the deployment funds it.
+  assert.ok(rest.length > 10);
+  assert.ok(rest.every((p) => !p.funded && p.hosted === null && p.mode === null && !p.ownKey));
+  assert.ok(rest.some((p) => p.plugin === 'modal'));
+  assert.ok(!rest.some((p) => p.plugin === 'local' || p.plugin === 'fake'));
 });
 
 test('compute shows each provider’s mode, hosted credit and own key, and sets the mode', async (t) => {
@@ -143,25 +149,27 @@ test('compute shows each provider’s mode, hosted credit and own key, and sets 
   assert.deepEqual(await f.compute(), { topUps: [], providers: [] });
   await f.people.ensure(alice);
   await f.key('cloudflare');
-  assert.deepEqual(await f.compute(), {
-    topUps: [25, 50, 100, 250],
-    providers: [
-      {
-        plugin: 'cloudflare',
-        label: 'Cloudflare Containers',
-        mode: 'own',
-        hosted: null,
-        ownKey: true,
-      },
-      {
-        plugin: 'fake',
-        label: 'Fake',
-        mode: 'hosted',
-        hosted: { granted: '0', left: '0' },
-        ownKey: false,
-      },
-    ],
+  const { topUps, providers } = await f.compute();
+  assert.deepEqual(topUps, [25, 50, 100, 250]);
+  const of = (plugin: string) => providers.find((p) => p.plugin === plugin);
+  // The funded provider leads, with no credit granted yet.
+  assert.deepEqual(providers[0], {
+    plugin: 'fake',
+    label: 'Fake',
+    funded: true,
+    mode: 'hosted',
+    hosted: { granted: '0', left: '0' },
+    ownKey: false,
   });
+  assert.deepEqual(of('cloudflare'), {
+    plugin: 'cloudflare',
+    label: 'Cloudflare Containers',
+    funded: false,
+    mode: 'own',
+    hosted: null,
+    ownKey: true,
+  });
+  assert.equal(of('modal')!.mode, null);
   // Sandboxes keeps the rule: no key of its own, no own mode.
   await assert.rejects(
     f.call('PUT', '/compute/fake/mode', { mode: 'own' }),
@@ -172,7 +180,7 @@ test('compute shows each provider’s mode, hosted credit and own key, and sets 
     plugin: 'fake',
     mode: 'own',
   });
-  assert.equal((await f.compute()).providers[1]!.mode, 'own');
+  assert.equal((await f.compute()).providers[0]!.mode, 'own');
   await assert.rejects(
     f.call('PUT', '/compute/fake/mode', { mode: 'free' }),
     refused('invalid_input', 400),

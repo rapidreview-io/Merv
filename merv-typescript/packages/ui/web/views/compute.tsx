@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { accountRequest, useTool } from '../api';
-import { EmptyState, Failure, LoadState, Ruled, col } from '../components';
+import { EmptyState, Failure, LoadState } from '../components';
 import { Segments } from '../list-filters';
 import { useCommand } from '../mutations';
 import { usd } from './remote-fields';
@@ -10,8 +10,9 @@ type Mode = 'hosted' | 'own';
 interface Provider {
   plugin: string;
   label: string;
-  mode: Mode;
-  /** Credit to rent the funded instance with; null where the account has none to rent. */
+  /** Null where the account cannot use the plugin yet: no credit for it, no key of its own. */
+  mode: Mode | null;
+  /** Merv's credit on the funded instance; null where Merv funds none. */
   hosted: { granted: string; left: string } | null;
   ownKey: boolean;
 }
@@ -20,6 +21,7 @@ interface Compute {
   topUps: number[];
   providers: Provider[];
 }
+type SetMode = (provider: Provider, mode: Mode) => void;
 
 /** The four top-ups, each straight to its Stripe Checkout. */
 function TopUp({ provider, amounts }: { provider: string; amounts: number[] }) {
@@ -47,35 +49,49 @@ function TopUp({ provider, amounts }: { provider: string; amounts: number[] }) {
   );
 }
 
-function Credit({ provider, amounts }: { provider: Provider; amounts: number[] }) {
+/** One provider: its balance where Merv funds it, else greyed until the person brings a key. */
+function Card({ p, amounts, setMode }: { p: Provider; amounts: number[]; setMode: SetMode }) {
   const [adding, setAdding] = useState(false);
-  // In own mode the mode control already says it is their key.
-  if (provider.mode === 'own' && provider.hosted) return null;
-  if (!provider.hosted)
-    return provider.ownKey ? (
-      <span>Your key</span>
-    ) : (
-      <Link to="/sandboxes/providers">Connect a key</Link>
-    );
-  const { left, granted } = provider.hosted;
   return (
-    <span className="cluster">
-      <span className="tabular">
-        {usd(left)} of {usd(granted)}
-      </span>
-      {amounts.length > 0 &&
-        (adding ? (
-          <TopUp provider={provider.plugin} amounts={amounts} />
+    <li className="compute-card" data-off={p.mode ? undefined : ''}>
+      <strong>{p.label}</strong>
+      {p.hosted && (
+        <span className="compute-balance">
+          <span className="tabular">{usd(p.hosted.left)}</span>
+          {Number(p.hosted.granted) > 0 && <small>of {usd(p.hosted.granted)}</small>}
+        </span>
+      )}
+      <span className="compute-foot">
+        {p.hosted &&
+          amounts.length > 0 &&
+          (adding ? (
+            <TopUp provider={p.plugin} amounts={amounts} />
+          ) : (
+            <button type="button" className="btn-text" onClick={() => setAdding(true)}>
+              Add credits
+            </button>
+          ))}
+        {p.hosted && p.ownKey ? (
+          <Segments<Mode>
+            label={`${p.label} mode`}
+            options={[
+              { value: 'hosted', label: 'Hosted' },
+              { value: 'own', label: 'Your key' },
+            ]}
+            value={p.mode ?? 'hosted'}
+            onChange={(next) => next !== p.mode && setMode(p, next)}
+          />
         ) : (
-          <button type="button" className="btn-text" onClick={() => setAdding(true)}>
-            Add credits
-          </button>
-        ))}
-    </span>
+          <Link className="btn-text" to="/sandboxes/providers">
+            Your key
+          </Link>
+        )}
+      </span>
+    </li>
   );
 }
 
-/** Per provider: hosted on Merv's credit, or the person's own key. */
+/** Every provider as a card: Merv's credit on the ones it funds, the person's own key on all. */
 export function ComputeSettings() {
   // Back from Checkout, the webhook may land a moment after the person does.
   const paid = useLocation().search.includes('checkout=paid');
@@ -99,33 +115,14 @@ export function ComputeSettings() {
         <EmptyState kind="settings" icon="spend" title="No providers" />
       </div>
     );
+  const setMode: SetMode = (p, next) => void mode.submit({ plugin: p.plugin, mode: next });
   return (
     <div className="page-stage stack">
-      <Ruled<Provider>
-        label="Compute"
-        template="minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr)"
-        rows={providers}
-        keyOf={(p) => p.plugin}
-        columns={[
-          col('label', 'Provider', (p) => <strong>{p.label}</strong>),
-          col('mode', 'Mode', (p) =>
-            p.hosted ? (
-              <Segments<Mode>
-                label={`${p.label} mode`}
-                options={[
-                  { value: 'hosted', label: 'Hosted' },
-                  { value: 'own', label: 'Your key' },
-                ]}
-                value={p.mode}
-                onChange={(next) =>
-                  next !== p.mode && void mode.submit({ plugin: p.plugin, mode: next })
-                }
-              />
-            ) : null,
-          ),
-          col('credit', 'Credit', (p) => <Credit provider={p} amounts={topUps} />),
-        ]}
-      />
+      <ul className="compute-gallery" aria-label="Compute">
+        {providers.map((p) => (
+          <Card key={p.plugin} p={p} amounts={topUps} setMode={setMode} />
+        ))}
+      </ul>
       <Failure message={mode.error} />
     </div>
   );

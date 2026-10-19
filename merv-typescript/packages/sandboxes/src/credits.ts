@@ -35,27 +35,37 @@ const checkoutInput = z
   .strict();
 const modeInput = z.object({ mode: z.enum(['hosted', 'own']) }).strict();
 
-/** Per provider plugin the person's own account can use: its mode, the hosted credit where a
- *  funded instance is the account's to rent, and whether the account saved a key of its own. */
+/** Every provider plugin Sandboxes offers the person's own account, funded ones first: the hosted
+ *  credit where a funded instance is the account's to rent, its mode where it can use the plugin
+ *  now (null where it cannot yet), and whether it saved a key of its own. Test doubles and the
+ *  local plugin only where the deployment funds them. */
 async function compute(sbx: Sbx, person: Person) {
   const own = await sbx.people.accountOf(person);
   if (!own) return { topUps: [], providers: [] };
-  const [modes, report] = await Promise.all([
+  const [catalog, modes, report] = await Promise.all([
+    sbx.providers.pluginCatalog(own.namespace),
     sbx.providers.modes.of(own.accountId),
     sbx.billing.credits.report(own.accountId),
   ]);
+  // The catalog hides a test double the account rents on its own key; its mode row still names it.
+  const plugins = new Set([...catalog.map((p) => p.name), ...modes.map((m) => m.plugin)]);
+  const providers = [...plugins].sort().flatMap((plugin) => {
+    const row = modes.find((m) => m.plugin === plugin);
+    const funded = row?.funded ?? false;
+    if (!funded && (plugin === 'fake' || plugin === 'local')) return [];
+    const pool = report.pools.find((p) => p.provider === plugin);
+    return {
+      plugin,
+      label: PLUGIN_COPY[plugin]?.title ?? plugin,
+      funded,
+      mode: row?.mode ?? null,
+      hosted: funded ? { granted: pool?.granted ?? '0', left: pool?.available ?? '0' } : null,
+      ownKey: row?.keyed ?? false,
+    };
+  });
   return {
     topUps: sbx.payments() ? TOP_UPS : [],
-    providers: modes.map(({ plugin, mode, funded, keyed }) => {
-      const pool = report.pools.find((p) => p.provider === plugin);
-      return {
-        plugin,
-        label: PLUGIN_COPY[plugin]?.title ?? plugin,
-        mode,
-        hosted: funded ? { granted: pool?.granted ?? '0', left: pool?.available ?? '0' } : null,
-        ownKey: keyed,
-      };
-    }),
+    providers: providers.sort((a, b) => Number(b.funded) - Number(a.funded)),
   };
 }
 
