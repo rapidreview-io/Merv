@@ -40,6 +40,7 @@ import {
   modelTokensIn,
   relayFaulted,
   setDailyTokens,
+  setTokenCap,
 } from './codex-relay.js';
 import { modelMigrations } from './schema.js';
 
@@ -327,7 +328,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     return modelTokensIn(sql, person, this.config.dailyTokensPerPerson, from, to);
   }
   setModelTokens(person: string, tokens: number | null) {
-    return setDailyTokens(this.state, person, tokens);
+    return setTokenCap(this.state, person, tokens);
   }
   /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
    *  machine was rented for; an inquiry visit's, to the person who asked, within its budget. */
@@ -975,14 +976,16 @@ export const fleetWorkflowPlugin = {
         name: 'fleet.daily_tokens',
         conversation: 'never' as const,
         description:
-          'Your own daily limit of model tokens for Fleet workers, and what they used today (UTC). Only you, signed in, can change it.',
+          'Your own daily limit of model tokens for Fleet workers, at most the cap the platform sets you (`cap`), and what they used today (UTC). Only you, signed in, can lower it.',
         inputSchema: z
           .object({ tokens: z.number().int().min(1).max(1_000_000_000).optional() })
           .strict(),
         handler: async (caller: Caller, input: { tokens?: number }) => {
           const who = person(caller);
-          if (input.tokens !== undefined) await setDailyTokens(ctx.state, who, input.tokens);
-          return await modelBudgetStatus(ctx.state, who, adapter.config.dailyTokensPerPerson);
+          const fallback = adapter.config.dailyTokensPerPerson;
+          if (input.tokens !== undefined)
+            await setDailyTokens(ctx.state, who, input.tokens, fallback);
+          return await modelBudgetStatus(ctx.state, who, fallback);
         },
       },
       {

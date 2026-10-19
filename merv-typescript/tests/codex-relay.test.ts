@@ -15,6 +15,7 @@ import {
   modelBudgetStatus,
   relayFaulted,
   setDailyTokens,
+  setTokenCap,
 } from '../packages/fleet/src/codex-relay.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { hostedAstraPlatform, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
@@ -695,7 +696,7 @@ test('only the reset or a raised limit lifts a refused wait: a smaller call that
     largest,
   );
   // A limit raised far enough lifts it.
-  await setDailyTokens(f.state, grant.person, 10 * most);
+  await setTokenCap(f.state, grant.person, 10 * most);
   assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).blocked, false);
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   await f.state.transaction((tx) =>
@@ -746,7 +747,7 @@ test('a refused wait outlasts the refunds of calls that were in flight when it w
   assert.ok(settled.remaining >= most, 'the refused call would fit again');
   assert.deepEqual([settled.blocked, settled.blockReason], [true, 'worker_token_budget_exhausted']);
   // The person changing their limit lets the next call judge the day again.
-  await setDailyTokens(f.state, grant.person, limit);
+  await setTokenCap(f.state, grant.person, limit);
   assert.equal((await modelBudgetStatus(f.state, grant.person, limit)).blocked, false);
   await relay.reserve!(grant, body);
 });
@@ -798,7 +799,7 @@ test('one name for a spent worker token budget, and the refusal is said of the r
     },
     grant,
   );
-  await setDailyTokens(f.state, grant.person, 10 * most);
+  await setTokenCap(f.state, grant.person, 10 * most);
   assert.equal(await refused(grant.id), true);
   assert.equal(await f.state.read((sql) => relayFaulted(sql, grant.id, since)), false);
   // Another visit's relay fault is still a fault, and no refusal.
@@ -837,7 +838,7 @@ test('a person’s own daily limit governs their calls, above or below the deplo
   const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
   const f = await fixture(t, most - 1);
   assert.equal((await f.call()).status, 403, 'the deployment’s limit is below one call');
-  await setDailyTokens(f.state, grant.person, most + 50);
+  await setTokenCap(f.state, grant.person, most + 50);
   assert.equal((await f.call()).status, 200);
   const deadline = Date.now() + 5000;
   while ((await f.spent()) !== 110 && Date.now() < deadline)
@@ -848,7 +849,7 @@ test('a person’s own daily limit governs their calls, above or below the deplo
     ),
     { tokens: most + 50, usedToday: 110 },
   );
-  await setDailyTokens(f.state, grant.person, 100);
+  await setTokenCap(f.state, grant.person, 100);
   assert.equal((await f.call()).status, 403);
 });
 
@@ -914,4 +915,33 @@ test('Fleet grants hosted Codex the model while its session is live or a minute 
   });
   // A machine Fleet rented for nobody grants nothing.
   assert.throws(() => hostedGrant(bound, undefined, at), { code: 'unauthorized' });
+});
+
+test('a person may lower their own daily tokens, never past the cap the platform sets them', async () => {
+  const state = await openState();
+  await createService(new ProjectScope(state));
+  await state.migrate('fleet_workflow', modelMigrations);
+  const person = 'person-cap';
+  const held = async () => {
+    const { tokens, cap } = await modelBudgetStatus(state, person, 20_000_000);
+    return [tokens, cap];
+  };
+  // Above the deployment's default, with no cap of theirs, is refused.
+  await assert.rejects(
+    setDailyTokens(state, person, 30_000_000, 20_000_000),
+    (error) => error instanceof MervError && error.code === 'fleet_limit_capped',
+  );
+  await setDailyTokens(state, person, 5_000_000, 20_000_000);
+  assert.deepEqual(await held(), [5_000_000, 20_000_000]);
+  // The admin's cap holds over their own; raised, their own lower limit still stands.
+  await setTokenCap(state, person, 3_000_000);
+  assert.deepEqual(await held(), [3_000_000, 3_000_000]);
+  await setTokenCap(state, person, 50_000_000);
+  assert.deepEqual(await held(), [5_000_000, 50_000_000]);
+  await setDailyTokens(state, person, 40_000_000, 20_000_000);
+  assert.deepEqual(await held(), [40_000_000, 50_000_000]);
+  // Cleared, the deployment's default caps a limit they set higher before.
+  await setTokenCap(state, person, null);
+  assert.deepEqual(await held(), [20_000_000, 20_000_000]);
+  await state.close();
 });
