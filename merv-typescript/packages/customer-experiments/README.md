@@ -38,9 +38,10 @@ It does not publish a paper, update the main research project, or start reflecti
 The initial price is $10 USD. Intake can discuss broad ideas, but a submitted offer is
 bounded by at most 24 worker wall hours, 500,000,000 model tokens and two execution attempts.
 These are aggregate contract limits; 20% is reserved for results review. Admission refuses
-another visit (`budget_exhausted`) once either the wall time or the tokens the contract's visits
-used reach that reserve. The hours are agent working time: an executor that ends its visit to
-wait for its compute (`session.await_compute`) uses none of them while it waits. Sessions enforce
+another execution visit (`budget_exhausted`) once what is left of either the wall time or the
+tokens is no more than that reserve, and a results-review visit once nothing is left of either.
+The hours are agent working time: an executor that ends its visit to wait for its compute
+(`session.await_compute`) uses none of them while it waits. Sessions enforce
 per-visit deadlines and Fleet's model relay enforces token budgets. Missing usage accounting
 holds further work. Interrupted work can resume within the remaining allowance.
 
