@@ -15,6 +15,7 @@ import { createApp as create } from '../../src/app.js';
 import {
   defaultConfigFile,
   loadConfiguration,
+  type ApplicationConfig,
   type ConfigurationOptions,
   type ConfiguredPlugin,
 } from '../../src/config.js';
@@ -36,6 +37,25 @@ const local = (directory: string, feed?: boolean) => (entry: ConfiguredPlugin) =
       : entry.name === '@merv/reports'
         ? { ...entry, name: legacyReports }
         : entry;
+
+/**
+ * The committed composition with its API and no browser layer, as `api: true` selects it, with
+ * Sessions' background pass held off: its upkeep checks every live lease, which a test counting
+ * the lease checks of one call would count as that call's.
+ */
+export function quietApiConfig(): ApplicationConfig {
+  const config = JSON.parse(
+    readFileSync(new URL('../../config/default.json', import.meta.url), 'utf8'),
+  ) as ApplicationConfig;
+  config.plugins = config.plugins.flatMap((plugin) =>
+    plugin.id === 'ui' || plugin.id.endsWith('-ui')
+      ? []
+      : plugin.id === 'sessions'
+        ? [{ ...plugin, config: { sweepIntervalMs: 60_000 } }]
+        : [plugin],
+  );
+  return config;
+}
 
 export async function createApp({ feed, ...options }: ConfigurationOptions & { feed?: boolean }) {
   const adapt = local(options.directory, feed);

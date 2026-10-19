@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -9,8 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Caller, Data, State, Transaction } from '@merv/contracts';
 import type { TaskCheckpointInput } from '@merv/tasks/types';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
-import type { ApplicationConfig } from '../src/config.js';
-import { createApp } from './fixtures/app.js';
+import { createApp, quietApiConfig } from './fixtures/app.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 
 // The owner's decision (2026-10-07): a leased worker's lease is validated once per worker call,
@@ -57,19 +56,7 @@ function recorder(state: State) {
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-call-validation-'));
-  // The default composition with its API (no browser layer), Sessions' background pass held off:
-  // its upkeep checks each live lease too, which no call made.
-  const config = JSON.parse(
-    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
-  ) as ApplicationConfig;
-  config.plugins = config.plugins.flatMap((plugin) =>
-    plugin.id === 'ui' || plugin.id.endsWith('-ui')
-      ? []
-      : plugin.id === 'sessions'
-        ? [{ ...plugin, config: { sweepIntervalMs: 60_000 } }]
-        : [plugin],
-  );
-  const app = await createApp({ directory, config, port: 0 });
+  const app = await createApp({ directory, config: quietApiConfig(), port: 0 });
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Calls',
     actorName: 'Operator',

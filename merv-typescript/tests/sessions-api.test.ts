@@ -16,7 +16,7 @@ import { piToolsPlugin } from '../packages/pi/src/tools.js';
 import { CredentialStore } from '@merv/identity/credentials';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
-import { createApp } from './fixtures/app.js';
+import { createApp, quietApiConfig } from './fixtures/app.js';
 import { RunnerClient } from '../packages/runner/src/client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 
@@ -27,7 +27,7 @@ async function fixture(
   role: 'producer' | 'reviewer' = 'producer',
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-api-'));
-  const app = await createApp({ directory, api: true, port: 0 });
+  const app = await createApp({ directory, config: quietApiConfig(), port: 0 });
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Session transport',
     actorName: 'Source',
