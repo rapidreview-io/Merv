@@ -193,8 +193,12 @@ test('math: inline by pandoc’s rule, display blocks and fences, and prices sta
   );
 
   await mount(page('Inline $x^2$ here.\n\n$$\\frac{1}{2}$$'));
-  // The TeX stands as written until KaTeX arrives, then is typeset.
-  assert.equal(one('code.math')?.textContent, 'x^2');
+  // The TeX stands as written until KaTeX arrives, then is typeset, its MathML keeping the TeX:
+  // KaTeX may already have arrived by now.
+  assert.equal(
+    (one('code.math') ?? one('span.math annotation[encoding="application/x-tex"]'))?.textContent,
+    'x^2',
+  );
   assert.ok(await until(() => all('.katex').length === 2), 'KaTeX typesets both');
   assert.ok(one('.math--display .katex-display'));
 });
