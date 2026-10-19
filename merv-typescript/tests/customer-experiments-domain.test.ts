@@ -941,6 +941,13 @@ test('service_experiment@4 grants the executor the progress its brief asks for',
     assert.match(text, /maximum lifetime against the job/);
     assert.match(text, /two machines at once, and one still deleting counts/);
   }
+  // From version 2, a long run is waited for by ending the visit; version 1's text is its own.
+  for (const version of [2, 3, 4])
+    assert.match(
+      await brief(version),
+      /for a long run, end your visit with session\.await_compute/,
+    );
+  assert.doesNotMatch(await brief(1), /session\.await_compute/);
 });
 
 test('only the running worker reports progress, and the customer reads it in order', async (t) => {

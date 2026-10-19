@@ -29,7 +29,8 @@ export function customerReportSubject(domain: CustomerExperiments): ReportSubjec
   };
 }
 
-const hours = (minutes: number) => `${Math.round((minutes / 60) * 10) / 10} worker hours`;
+const hours = (minutes: number) =>
+  `${Math.round((minutes / 60) * 10) / 10} hours of agent working time`;
 const tokens = (n: number) => (n >= 1e6 ? `${Math.round(n / 1e6)}M` : `${n}`) + ' model tokens';
 
 const allowance = (limits: PlanLimits) =>

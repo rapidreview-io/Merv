@@ -1400,7 +1400,7 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
   assert.match(draft.source, /Score both rules\./);
   assert.match(draft.source, /- Accuracy improves by at least 0\.05\./);
   // Merv's own limits are not the customer's constraints.
-  assert.doesNotMatch(draft.source, /worker hours/);
+  assert.doesNotMatch(draft.source, /agent working time/);
   assert.match(draft.source, /\| data\/train\.csv \| Request file \| 2 KB \|/);
 });
 
