@@ -73,7 +73,7 @@ export const piToolsPlugin = {
       {
         name: 'screen.look',
         description:
-          "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. The legacy at.record board route remains supported.",
+          "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. For JPEG, PNG or WebP reference artifacts, set at.record to the artifact ID to see actual pixels; do not read base64 text or request a download. Use view region to inspect detail in source pixels. The legacy at.record board route remains supported.",
         inputSchema: lookInput,
         readOnly: true,
         worker: 'never' as const,

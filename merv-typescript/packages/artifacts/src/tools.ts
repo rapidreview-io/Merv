@@ -65,11 +65,6 @@ export const artifactToolsPlugin = {
     const pictures = new ArtifactPicture();
     ctx.effect(() => () => pictures.close());
     ctx.effect(() =>
-      ctx.tools.contributeInstructions(
-        'For a JPEG, PNG or WebP reference artifact, use screen.look with at.record set to its artifact ID to see its actual pixels; do not read base64 text or request a download. Optional view {action: "region", x, y, width, height} inspects detail in source pixels.',
-      ),
-    );
-    ctx.effect(() =>
       ctx.tools.contributePicture('art_', async (caller, id, _focus, view) => {
         const artifact = await ctx.artifacts.get(caller, id);
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(artifact.mediaType))
