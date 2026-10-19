@@ -4,6 +4,7 @@ import type {} from '@merv/fleet/types';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/secrets/types';
 import { mervRefusals } from '@sandboxes/merv-host';
+import { PLUGIN_COPY } from '@sandboxes/providers/console-labels';
 import type {} from '@sandboxes/providers';
 import type { AdminCredentials, PlatformSecret, ProviderKey } from './models.js';
 import type { AdminEnv, AdminRoutes } from './index.js';
@@ -106,6 +107,7 @@ async function credentials(env: AdminEnv): Promise<AdminCredentials> {
       .flatMap((p) =>
         p.fields.map((field): ProviderKey => ({
           provider: p.name,
+          label: PLUGIN_COPY[p.plugin]?.title ?? p.name,
           field: field.name,
           description: field.description,
           present: field.present,
@@ -137,7 +139,7 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
   const composition = () => {
     const composed = env.ctx.get('composition');
     check(
-      composed && env.ctx.get('secrets')?.platformAvailable,
+      composed && env.ctx.get('secrets'),
       'credentials_unavailable',
       'Stored secrets are unavailable',
       503,

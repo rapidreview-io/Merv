@@ -71,6 +71,8 @@ export interface PlatformSecret extends EnvName {
 /** One credential field of one of the platform's sandbox provider instances. Never its value. */
 export interface ProviderKey {
   provider: string;
+  /** The provider as people name it (Lambda, RunPod). */
+  label: string;
   field: string;
   /** The provider plugin's own description of the field. */
   description: string;
