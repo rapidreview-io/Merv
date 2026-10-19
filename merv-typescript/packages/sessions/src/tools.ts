@@ -212,7 +212,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.await_compute',
         description:
-          'Assigned worker only: end this visit to wait for Sandboxes jobs or workflows of this work that run for more than about 15 minutes, instead of sleeping or polling. Your session closes at once, uncounted, and they keep running. The work comes back to you in this conversation once all have ended or one fails (a workflow once its captures register), when someone messages your thread, or by the result’s until: after minutes, or sooner, 15 minutes before a machine they run on reaches its lease end. Commit first, and release machines that run none of them. Stop after calling it.',
+          'Assigned worker only: end this visit to wait for Sandboxes jobs or workflows of this work that run for more than about 15 minutes, instead of sleeping or polling. Your session closes at once, uncounted, and they keep running. The work comes back to you in this conversation once all have ended or one fails (a workflow once its captures register), when someone messages your thread, or by the result’s until: after minutes, or 15 minutes before a machine they run on reaches its lease end, so you can renew it or move on. Commit first, and release machines that run none of them. Stop after calling it.',
         conversation: 'never',
         inputSchema: z
           .object({
