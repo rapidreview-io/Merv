@@ -925,7 +925,7 @@ export class PiWorkerProtocol {
       userId: (await this.core.read((tx) => this.core.conversation(tx, id))).userId,
     };
     const reserved = await this.core.tokens.reserve(person, body);
-    const { title, usage } = await piTitle(key, body);
+    const { title, usage } = await piTitle(key, body, this.core.config);
     if (usage) await this.core.tokens.settle(usage, person, reserved);
     if (!title) return;
     const named = await this.core.state.transaction(async (tx) => {

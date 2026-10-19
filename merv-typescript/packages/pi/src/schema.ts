@@ -142,8 +142,26 @@ export const piConfig = z
         { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
       ]),
     secretEnv: envVar.describe('Agent machine tokens · signing secret').default('MERV_PI_SECRET'),
+    modelResponsesUrl: z
+      .string()
+      .url()
+      .refine((url) => {
+        const parsed = new URL(url);
+        return (
+          parsed.protocol === 'https:' &&
+          !parsed.username &&
+          !parsed.password &&
+          !parsed.search &&
+          !parsed.hash
+        );
+      })
+      .default('https://api.openai.com/v1/responses'),
+    modelIdPrefix: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]*\/?$/)
+      .default(''),
     modelApiKeyEnv: envVar
-      .describe('Agent model calls · OpenAI API key')
+      .describe('Agent model calls · provider API key')
       .default('MERV_PI_MODEL_API_KEY'),
     /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
     dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),

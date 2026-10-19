@@ -107,7 +107,11 @@ export const screenRequest = (model: string, question: string, picture: Buffer, 
 });
 
 /** That request, answered: the model's answer in words, '' when it gave none. */
-export async function describeScreen(key: string, body: ReturnType<typeof screenRequest>) {
-  const { texts, usage } = await responses(key, body, 60_000);
+export async function describeScreen(
+  key: string,
+  body: ReturnType<typeof screenRequest>,
+  provider: { modelResponsesUrl?: string; modelIdPrefix?: string } = {},
+) {
+  const { texts, usage } = await responses(key, body, 60_000, provider);
   return { text: texts.join('\n').trim(), usage };
 }

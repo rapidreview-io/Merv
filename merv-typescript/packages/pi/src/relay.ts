@@ -19,6 +19,7 @@ export type PiRelayConfig = Omit<
   Partial<Pick<PiRelay, 'maxRequestBytes' | 'totalTimeoutMs'>> & {
     /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
     models: readonly { id: string; effort: 'none' | 'low' | 'medium' }[];
+    modelIdPrefix?: string;
   };
 
 /** People's own daily limits, set by the platform admin, each replace the ceiling. */
@@ -59,7 +60,12 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
 
 /** Pi's relay: one model call at a time per conversation, as a person's conversations share one
  *  machine, in the Pi-shaped request its worker sends. */
-export function piModelRelay({ models, authority, ...config }: PiRelayConfig): PiRelay {
+export function piModelRelay({
+  models,
+  authority,
+  modelIdPrefix = '',
+  ...config
+}: PiRelayConfig): PiRelay {
   const efforts = new Map(models?.map(({ id, effort }) => [id, effort]));
   if (!efforts.size) throw new Error('Pi relay requires a model');
   return {
@@ -91,6 +97,7 @@ export function piModelRelay({ models, authority, ...config }: PiRelayConfig): P
       const { reasoning: _reasoning, include: _include, ...rest } = parsed.data;
       return {
         ...rest,
+        model: modelIdPrefix + grant.model,
         reasoning: { effort },
         ...(effort !== 'none' && { include: ['reasoning.encrypted_content'] }),
       };
@@ -110,15 +117,19 @@ export async function responses(
   key: string,
   body: object,
   timeoutMs: number,
+  provider: { modelResponsesUrl?: string; modelIdPrefix?: string } = {},
 ): Promise<{ texts: string[]; usage: Usage | null }> {
   let response: Response;
   try {
-    response = await fetch(RESPONSES_URL, {
+    response = await fetch(provider.modelResponsesUrl ?? RESPONSES_URL, {
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        ...body,
+        ...('model' in body && { model: (provider.modelIdPrefix ?? '') + body.model }),
+      }),
     });
   } catch {
     return { texts: [], usage: null };
@@ -159,8 +170,12 @@ export const titleRequest = (model: string, user: string, reply: string) => ({
 export async function piTitle(
   key: string,
   body: ReturnType<typeof titleRequest>,
+  provider: { modelResponsesUrl?: string; modelIdPrefix?: string } = {},
 ): Promise<{ title: string; usage: Usage | null }> {
-  const { texts, usage } = await responses(key, body, 10_000);
+  // Third-party Responses providers may queue these background title requests.
+  const timeoutMs =
+    provider.modelResponsesUrl && provider.modelResponsesUrl !== RESPONSES_URL ? 30_000 : 10_000;
+  const { texts, usage } = await responses(key, body, timeoutMs, provider);
   const said = texts
     .join('')
     .replace(/[*_`"“”«»]/g, '')

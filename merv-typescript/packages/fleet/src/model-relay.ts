@@ -342,7 +342,7 @@ export class ModelRelay<
       await validate();
       phase = 'upstream';
       const upstream = await interruptible(
-        (this.fetchImpl ?? fetch)(RESPONSES_URL, {
+        (this.fetchImpl ?? fetch)(this.config.responsesUrl ?? RESPONSES_URL, {
           method: 'POST',
           redirect: 'error',
           signal,
