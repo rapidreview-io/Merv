@@ -456,7 +456,7 @@ test('the only operator is offered no control that would leave the project witho
     serve('/account', { body: { kind: 'user', user, projects: [project] } });
     serve('/tools/actor.list', { body: { result: names } });
     serve(`/projects/${project.id}/members`, {
-      body: { memberships: [member(1, 'operator'), member(2, second)] },
+      body: { memberships: [member(1, 'operator'), member(2, second)], admin: null, payers: [] },
     });
     await open('/settings/members');
     assert.equal(document.querySelector('h1')!.textContent, 'Settings');
@@ -498,7 +498,9 @@ test('a poll asked before a member is removed never draws them back', async (t) 
   serve('/tools/actor.list', {
     body: { result: ['Operator', 'Reviewer'].map((name, at) => ({ id: `actor_${at + 1}`, name })) },
   });
-  serve(`/projects/${project.id}/members`, () => ({ body: { memberships: list } }));
+  serve(`/projects/${project.id}/members`, () => ({
+    body: { memberships: list, admin: null, payers: [] },
+  }));
   serve(`/projects/${project.id}/members/subject-2`, () => {
     list = [member(1, 'operator')];
     return { body: { removed: true } };
