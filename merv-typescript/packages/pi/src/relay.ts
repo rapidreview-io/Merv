@@ -1,5 +1,5 @@
 import { check, clip, type State } from '@merv/contracts';
-import { dailyTokens, ownLimits, RESPONSES_URL } from '@merv/fleet/model-ledger';
+import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig, ModelTokens } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
@@ -21,9 +21,8 @@ export type PiRelayConfig = Omit<
     models: readonly { id: string; effort: 'none' | 'low' | 'medium' }[];
   };
 
-const piLedger = dailyTokens('pi_model_usage');
-/** People's own daily limits, set by the platform admin: each replaces the ceiling. */
-const piLimits = ownLimits('pi_model_limits', 'tokens');
+/** People's own daily limits, set by the platform admin, each replace the ceiling. */
+const piLedger = dailyTokens('pi_model_usage', 'pi_model_limits');
 /**
  * A person's Agent tokens today: a call is charged at its most (its request and its output)
  * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
@@ -34,10 +33,9 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
     const most =
       Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
     const day = now().slice(0, 10);
-    const charged = await state.transaction(async (tx) => {
-      const limit = (await piLimits.of(tx, [grant.userId])).get(grant.userId) ?? ceiling;
-      return await piLedger.charge(tx, grant.userId, day, most, limit);
-    });
+    const charged = await state.transaction((tx) =>
+      piLedger.charge(tx, grant.userId, day, most, ceiling),
+    );
     check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
     return { day, tokens: most };
   },
@@ -52,18 +50,10 @@ export const piTokens = (state: State, now: () => string, ceiling: number) => ({
   },
   /** Each of `persons`' tokens over the UTC days [from, to), and the daily limit that holds. */
   used: (persons: readonly string[], from: string, to: string): Promise<ModelTokens[]> =>
-    state.read(async (sql) => {
-      const used = await piLedger.used(sql, persons, from, to);
-      const own = await piLimits.of(sql, persons);
-      return persons.map((person, i) => ({
-        used: used[i]!,
-        limit: own.get(person) ?? ceiling,
-        own: own.has(person),
-      }));
-    }),
+    state.read((sql) => piLedger.used(sql, persons, from, to, ceiling)),
   /** Sets `person`'s own daily limit, or clears it (null) so the ceiling holds again. */
   async setLimit(person: string, tokens: number | null): Promise<void> {
-    await state.transaction((tx) => piLimits.set(tx, person, tokens));
+    await state.transaction((tx) => piLedger.setLimit(tx, person, tokens));
   },
 });
 

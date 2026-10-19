@@ -2,6 +2,7 @@
  *  and the per-person limits Fleet and Pi keep. Pure rules: no service, so any unit may run them.
  *  Each ledger and limit stays its owner's own table. */
 import { digest, type Sql, type SqlValue } from '@merv/contracts';
+import type { PersonUse } from './types.js';
 
 /** Whose day a model call counts toward: a person's sign-in identity, else the acting actor.
  *  Every feature keys a person alike, so one day counts all their calls. */
@@ -35,16 +36,30 @@ export const tokenLedger = (table: string, keys: readonly string[]) => ({
     ),
 });
 const among = (persons: readonly string[]) => persons.map(() => '?').join(',') || 'NULL';
-/** A daily token ledger, `table(person,day,tokens)`: a tokenLedger keyed by person and day. */
-export const dailyTokens = (table: string) => {
+/** A daily token ledger, `table(person,day,tokens)`: a tokenLedger keyed by person and day, under
+ *  people's own daily limits, `limitsTable(person,tokens)`, each replacing the deployment's
+ *  (`fallback`). */
+export const dailyTokens = (table: string, limitsTable: string) => {
   const ledger = tokenLedger(table, ['person', 'day']);
+  const limits = ownLimits(limitsTable, 'tokens');
+  /** `person`'s daily limit: their own, else `fallback`. */
+  const limit = async (sql: Sql, person: string, fallback: number) =>
+    (await limits.of(sql, [person])).get(person) ?? fallback;
   return {
-    charge: (sql: Sql, person: string, day: string, tokens: number, ceiling: number) =>
-      ledger.charge(sql, [person, day], tokens, ceiling),
+    limit,
+    setLimit: limits.set,
+    charge: async (sql: Sql, person: string, day: string, tokens: number, fallback: number) =>
+      ledger.charge(sql, [person, day], tokens, await limit(sql, person, fallback)),
     settle: (sql: Sql, person: string, day: string, delta: number) =>
       ledger.settle(sql, [person, day], delta),
-    /** Each of `persons`' tokens over the UTC days [from, to), in order. */
-    used: async (sql: Sql, persons: readonly string[], from: string, to: string) => {
+    /** Each of `persons`' tokens over the UTC days [from, to), and the daily limit that holds. */
+    used: async (
+      sql: Sql,
+      persons: readonly string[],
+      from: string,
+      to: string,
+      fallback: number,
+    ): Promise<PersonUse[]> => {
       const rows = await sql.all<{ person: string; tokens: number | string }>(
         `SELECT person,SUM(tokens) AS tokens FROM ${table} WHERE day>=? AND day<? AND person IN (${among(persons)}) GROUP BY person`,
         from,
@@ -52,7 +67,12 @@ export const dailyTokens = (table: string) => {
         ...persons,
       );
       const used = new Map(rows.map((row) => [row.person, Number(row.tokens)]));
-      return persons.map((person) => used.get(person) ?? 0);
+      const own = await limits.of(sql, persons);
+      return persons.map((person) => ({
+        used: used.get(person) ?? 0,
+        limit: own.get(person) ?? fallback,
+        own: own.has(person),
+      }));
     },
   };
 };
