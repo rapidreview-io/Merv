@@ -600,6 +600,12 @@
       "published": false
     },
     {
+      "component": "scope",
+      "version": 12,
+      "hash": "c57eac50710588ca9b85bef434c0415ef86a31e61754956f43734c1fa0dd942e",
+      "published": false
+    },
+    {
       "component": "session_dispatch",
       "version": 1,
       "hash": "9a8881c18c9c4f190f946896c39332353d9d9bcf2911941687363d945ee33644",

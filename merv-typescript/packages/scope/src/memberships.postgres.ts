@@ -84,4 +84,14 @@ $merv$;
 CREATE TRIGGER project_memberships_immutable BEFORE UPDATE ON project_memberships
 FOR EACH ROW EXECUTE FUNCTION project_memberships_immutable_guard();
 `,
+  // Each project's admin, billed for it: until now its longest-standing live operator.
+  12: `ALTER TABLE projects ADD COLUMN admin_issuer TEXT, ADD COLUMN admin_subject TEXT,
+  ADD CHECK((admin_issuer IS NULL) = (admin_subject IS NULL)),
+  ADD FOREIGN KEY(admin_issuer,admin_subject) REFERENCES shared_users(issuer,subject);
+UPDATE projects p SET admin_issuer=o.issuer,admin_subject=o.subject FROM (
+  SELECT DISTINCT ON (m.project_id) m.project_id,m.issuer,m.subject FROM project_memberships m
+  JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id
+  JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
+  WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'
+  ORDER BY m.project_id,m.created_at,m.id) o WHERE p.id=o.project_id;`,
 };

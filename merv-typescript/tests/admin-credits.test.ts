@@ -31,9 +31,10 @@ async function fixture(t: TestContext, sandboxes = true) {
       cloudAccount: 'cloud',
     });
     const { sbxAuth: auth, sbxAccounts: accounts, sbxBilling: billing, sbxProviders } = ctx;
+    const { sbxDb: db, sbxClock: clock } = ctx;
     ctx.provide(
       'sandboxesPeople',
-      new SandboxesPeople({ auth, accounts, billing, providers: sbxProviders }, {}),
+      new SandboxesPeople({ auth, accounts, billing, providers: sbxProviders, db, clock }, {}),
     );
   }
   const call = await adminRoutes(ctx, [admin]);

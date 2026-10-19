@@ -10,7 +10,7 @@
   "apiEntries": 44,
   "serverPlugins": 78,
   "machinePlugins": 1,
-  "directDependencyCount": 254,
+  "directDependencyCount": 256,
   "optionalDependencyCount": 17,
   "directConsumers": {
     "api": 10,
@@ -60,8 +60,8 @@
     "sbxRegistry": 3,
     "sbxJobs": 2,
     "sbxSnapshots": 1,
-    "sbxDb": 2,
-    "sbxClock": 1,
+    "sbxDb": 3,
+    "sbxClock": 2,
     "sbxSettings": 2
   },
   "plugins": [
@@ -959,7 +959,9 @@
         "sbxAuth",
         "sbxAccounts",
         "sbxBilling",
-        "sbxProviders"
+        "sbxProviders",
+        "sbxDb",
+        "sbxClock"
       ],
       "optional": [],
       "kind": "service",

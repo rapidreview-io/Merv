@@ -757,7 +757,7 @@ test('The Introduction is written from the current Problem, at its revision, and
   );
   // Scope keeps no Introduction of its own, and offers no tool to write one.
   const project = await f.scope.project(f.operator);
-  assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
+  assert.deepEqual(Object.keys(project).sort(), ['admin', 'createdAt', 'id', 'name']);
   assert.equal('updateProjectContext' in f.scope, false);
 });
 

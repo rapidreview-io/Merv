@@ -2513,7 +2513,9 @@
         "sbxAuth",
         "sbxAccounts",
         "sbxBilling",
-        "sbxProviders"
+        "sbxProviders",
+        "sbxDb",
+        "sbxClock"
       ],
       "optional": [],
       "kind": "service",
@@ -4461,6 +4463,16 @@
       "optional": false
     },
     {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
+      "from": "sandboxesPeople",
+      "to": "sbxMerv",
+      "optional": false
+    },
+    {
       "from": "scope",
       "to": "state",
       "optional": false
@@ -4695,7 +4707,7 @@
     "plugins": 79,
     "providers": 36,
     "adapters": 43,
-    "dependencies": 254
+    "dependencies": 256
   },
   "network": [
     {

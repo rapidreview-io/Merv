@@ -13,6 +13,7 @@ import type {
   IssuedUserKey,
   Permission,
   Project,
+  ProjectAdmin,
   ProjectInvitation,
   Role,
   UserKey,
@@ -80,6 +81,11 @@ export interface ScopeMembers {
   /** Hears each verified person once, after their first acceptance commits. The listener runs
    * after that sign-in and cannot fail it; the disposer withdraws it. */
   onFirstSignIn(listener: (person: SharedUser) => void): () => void;
+  /** Hears each project's new admin once the change commits: at creation, at `setAdmin`, and
+   * when an admin stops being a live operator and the longest-standing one takes over. */
+  onAdminChanged(listener: (projectId: string, admin: ProjectAdmin) => void): () => void;
+  /** Refused unless the caller may administer the project and `admin` is a live operator of it. */
+  setAdmin(principal: Principal, projectId: string, admin: ProjectAdmin): Promise<Project>;
   createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
   memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
   inviteMember(
@@ -170,8 +176,8 @@ export interface Scope {
   readonly members: ScopeMembers;
   readonly userKeys: ScopeUserKeys;
   readonly credentials: ScopeActorCredentials;
-  /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
-   * and pays for its work on Fleet's machines. A project with none is left out. */
+  /** Each project's owner: its admin (`Project.admin`), as a person, who directs and pays for
+   * its work on Fleet's machines. A project with none is left out. */
   projectOwners(): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** Platform read for the admin and server owners, never exposed through a tool or a key: every
    * project, newest first, and every signed-in person with the project actors they are. */

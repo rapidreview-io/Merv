@@ -579,7 +579,7 @@ test('a project owner is its longest-standing signed-in operator, never an invit
   // The platform admin's people: verified sign-ins only, with the project actors they are.
   const { issuer } = alice.user;
   const directory = await f.scope.directory();
-  assert.deepEqual(directory.projects, [project]);
+  assert.deepEqual(directory.projects, [{ ...project, admin: { issuer, subject: 'second' } }]);
   assert.deepEqual(
     directory.people.map(({ subject, actors }) => [subject, actors.length]),
     [

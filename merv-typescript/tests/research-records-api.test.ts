@@ -92,7 +92,7 @@ test('Scope holds no Introduction: project.get carries none and no tool writes o
   const f = await fixture(t),
     client = await f.connect(f.producer.token);
   const project = (await f.http('project.get', {}, f.reader.token)).body.result;
-  assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
+  assert.deepEqual(Object.keys(project).sort(), ['admin', 'createdAt', 'id', 'name']);
   const input = { summary: 'A second writer.', expectedSummary: '', requestId: 'intro' };
   const written = await f.http('project.context.update', input);
   assert.equal(written.status, 404);

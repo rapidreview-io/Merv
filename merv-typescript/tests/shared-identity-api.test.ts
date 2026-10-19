@@ -207,6 +207,20 @@ test('verified users discover two projects, administer memberships, and retain p
     add.body.membership.id,
     'role changes replace the authority epoch',
   );
+  // The admin is billed for the project; only an operator names another, who must be one too.
+  const setAdmin = (body: object, token?: string) =>
+    f.request<{ project: Project }>(`/projects/${a.id}/admin`, { method: 'PATCH', body, token });
+  assert.equal((await setAdmin({ issuer, subject: alice }, f.bobToken)).status, 403);
+  assert.equal((await setAdmin({ issuer, subject: bob })).status, 409);
+  assert.equal((await setAdmin({ issuer, subject: alice, role: 'operator' })).status, 400);
+  assert.deepEqual((await setAdmin({ issuer, subject: alice })).body.project.admin, {
+    issuer,
+    subject: alice,
+  });
+  assert.deepEqual((await f.request(`/projects/${a.id}/members`)).body.admin, {
+    issuer,
+    subject: alice,
+  });
   assert.equal(
     (await f.request('/tools/write', { token: f.bobToken, projectId: a.id, body: {} })).status,
     200,

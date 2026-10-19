@@ -173,7 +173,15 @@ const capabilities: Record<string, readonly string[]> = {
     'sbxRegistry',
   ],
   // Each verified person's own Sandboxes account, which Sandboxes keeps with its credits.
-  sandboxesPeople: ['scope', 'sbxAuth', 'sbxAccounts', 'sbxBilling', 'sbxProviders'],
+  sandboxesPeople: [
+    'scope',
+    'sbxAuth',
+    'sbxAccounts',
+    'sbxBilling',
+    'sbxProviders',
+    'sbxDb',
+    'sbxClock',
+  ],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
   // Literature retrieval and account-backed research require fresh caller scope checks.

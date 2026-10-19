@@ -15,7 +15,10 @@ person gets their own Sandboxes person, account and admin membership through San
 at first sign-in (Scope's `members.onFirstSignIn`) and, at start, for everyone signed in before.
 `newPersonCredits` (`MERV_NEW_PERSON_CREDITS`, e.g. `{"lambda":"10"}`) grants each account USD once
 per provider under `welcome:<provider>:<digest>`; a provider no operator connection serves is
-skipped and logged once.
+skipped and logged once. Each project's Sandboxes namespace lives in its Scope admin's own account, which
+pays for its compute: linked at creation and at start, moved when the admin changes
+(`members.onAdminChanged`; the move revokes the tokens minted there, logged
+`sandboxes.projects.relinked`), and a project that fails to link is logged and stops none.
 
 Each Capture node registers as its own collection: a succeeded one once it ends, while the
 rest of its workflow may still run, and any other once its workflow finishes, because cleanup

@@ -180,9 +180,9 @@ export class ProjectScope implements Scope {
         'SELECT m.issuer,m.subject,m.actor_id AS "actorId",a.name FROM member_actors m JOIN actors a ON a.id=m.actor_id ORDER BY a.id',
       ))
         people.get(issuer + '|' + subject)?.actors.push(actor);
-      const projects = await sql.all<Project>(
-        'SELECT id,name,created_at AS "createdAt" FROM projects ORDER BY created_at DESC,id',
-      );
+      const projects = (
+        await sql.all<ProjectRow>('SELECT * FROM projects ORDER BY created_at DESC,id')
+      ).map(project);
       return { projects, people: [...people.values()] };
     });
   }
@@ -195,8 +195,10 @@ export class ProjectScope implements Scope {
         issuer: string;
         subject: string;
       }>(
-        `SELECT * FROM (SELECT DISTINCT ON (m.project_id) m.id,m.project_id,m.actor_id,m.issuer,m.subject,m.created_at
-         FROM ${LIVE_OPERATOR} ORDER BY m.project_id,m.created_at,m.id) o ORDER BY o.created_at,o.id`,
+        `SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM ${LIVE_OPERATOR}
+         AND EXISTS(SELECT 1 FROM projects p WHERE p.id=m.project_id
+           AND p.admin_issuer=m.issuer AND p.admin_subject=m.subject)
+         ORDER BY m.created_at,m.id`,
       );
     return (await this.state.read(read)).map((row) => ({
       projectId: row.project_id,

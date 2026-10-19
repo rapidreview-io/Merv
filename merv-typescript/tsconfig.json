@@ -37,6 +37,7 @@
     "tests/ui-trail.test.ts",
     "tests/ui-voice.test.ts",
     "tests/ui-keys.test.ts",
+    "tests/ui-members.test.ts",
     "tests/ui-markdown.test.ts",
     "tests/ui-needs-you.test.ts",
     "tests/ui-render-files.test.ts",

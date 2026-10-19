@@ -29,6 +29,7 @@ const inviteInput = z
   })
   .strict();
 const changeMemberInput = z.object({ role }).strict();
+const adminInput = z.object({ issuer: nonblank, subject: nonblank }).strict();
 const keyExpiry = z.string().datetime({ precision: 3 }).nullable().optional();
 const keyProject = z
   .string()
@@ -193,13 +194,23 @@ export function scopeRoutes(
       return {
         project: await scope.members.createProject(principal, await r.json(createProjectInput)),
       };
+    const adminRoute = /^\/projects\/([^/]+)\/admin$/.exec(path);
+    if (adminRoute && req.method === 'PATCH') {
+      const projectId = pathSegment(adminRoute[1]!);
+      projectSelection(req.headers['x-merv-project-id'], projectId);
+      return {
+        project: await scope.members.setAdmin(principal, projectId, await r.json(adminInput)),
+      };
+    }
     const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
     if (memberRoute) {
       const projectId = pathSegment(memberRoute[1]!);
       const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
       projectSelection(req.headers['x-merv-project-id'], projectId);
-      if (subject === undefined && req.method === 'GET')
-        return { memberships: await scope.members.memberships(principal, projectId) };
+      if (subject === undefined && req.method === 'GET') {
+        const memberships = await scope.members.memberships(principal, projectId);
+        return { memberships, admin: (await scope.project(await r.caller(projectId))).admin };
+      }
       if (subject === undefined && req.method === 'POST') {
         await r.json(addMemberInput);
         // Do not leave an account-ID bypass around the recipient's consent.
