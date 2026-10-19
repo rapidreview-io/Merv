@@ -7848,6 +7848,10 @@ html.modal-open {
 .admin-part > [role='cell']:first-child {
   padding-left: 24px;
 }
+/* A part's project and person are its unit's, which stands right above it. */
+.admin-part > [role='cell']:is(:nth-child(2), :nth-child(3)) {
+  visibility: hidden;
+}
 .admin-ended {
   color: var(--faint);
 }
@@ -7873,11 +7877,23 @@ html.modal-open {
     text-overflow: ellipsis;
   }
 }
+@media (max-width: 720px) {
+  .admin-part > [role='cell']:is(:nth-child(2), :nth-child(3)) {
+    display: none;
+  }
+}
+/* A unit's state is the row's fact, in its tone at the row's own size: no label's small caps. */
+.admin-line .status {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
 /* Facts beside each other in one cell wrap between them, never inside one. */
 .admin-parts {
   white-space: normal;
 }
-.admin-parts > :not(.ghost) {
+.admin-parts > * {
   white-space: nowrap;
 }
 /* The purposes share one grid, which the first names. */

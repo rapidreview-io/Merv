@@ -82,6 +82,15 @@ const work = {
       // A closed visit that reported nothing measured nothing.
       cost: { sessions: 1, reportedSessions: 0, wallMs: 0, inputTokens: 0, outputTokens: 0 },
     }),
+    unit('wf_paid', {
+      kind: 'service_experiment',
+      title: 'Paid study',
+      project: { id: 'project_d', name: 'Paid study' },
+      state: 'awaiting_payment',
+      attention: [{ reason: 'customer', code: 'payment' }],
+      lastActivity: ago(90),
+      requestId: 'ce_paid',
+    }),
     unit('wf_done', { state: 'done', terminal: true, title: 'Finished task' }),
   ],
   at: new Date().toISOString(),
@@ -100,7 +109,7 @@ const open = async (path: string) => {
 };
 const rows = () => [...document.querySelectorAll('[aria-label="Work"] .ruled-row')];
 
-test('work: a lens stands under its reflection, which sorts by its latest part', async (t) => {
+test('work: a lens stands under its reflection, which sorts by its latest part and counts it', async (t) => {
   t.after(async () => await unmount());
   boot();
   serve('/admin/work', {
@@ -114,6 +123,7 @@ test('work: a lens stands under its reflection, which sorts by its latest part',
           title: 'theory',
           parent: 'wf_wave',
           lastActivity: ago(1),
+          agent: { role: 'producer', status: 'active' },
         }),
       ],
     },
@@ -122,21 +132,24 @@ test('work: a lens stands under its reflection, which sorts by its latest part',
   const names = rows().map((row) => row.querySelector('[role="cell"]')!.textContent);
   assert.deepEqual(names, ['ReflectionMid-point', 'theory', 'TaskUnit recent']);
   assert.ok(rows()[1]!.classList.contains('admin-part'));
+  // Units are counted, not their parts; a lens at work is its reflection at work.
+  assert.match(text(), /2 open\s*1 working/);
 });
 
 test('work: attention first, links into the drill-in, no ids, nothing ended until asked', async (t) => {
   t.after(async () => await unmount());
   boot();
   await open('/admin');
-  assert.match(text(), /3 running/);
-  assert.match(text(), /2 need attention/);
+  // Units open, those an agent works on, those that need someone.
+  assert.match(text(), /4 open\s*1 working\s*3 need attention/);
   assert.match(rows()[0]!.textContent!, /Decay sweep/, 'the unit that needs someone leads');
   assert.match(rows()[0]!.textContent!, /agent question/i);
   assert.match(rows()[0]!.textContent!, /Its agent asked its owner/, 'the phrase, read as words');
   assert.match(rows()[0]!.textContent!, /1\.3M/, 'tokens counted');
   // A running machine by its profile, its price in its title.
   assert.match(rows()[0]!.textContent!, /producer active · gpu-l4/);
-  assert.ok(rows()[0]!.querySelector('[title="modal · $0.80/h"]'));
+  const machine = rows()[0]!.querySelector('[title="modal · $0.80/h"]')!;
+  assert.equal(machine.textContent, '· gpu-l4', 'the separator wraps with the machine');
   // Under the app's /ui base: a drill-in is loaded whole, as an app of its own.
   const link = rows()[0]!.querySelector('a')!;
   assert.equal(link.getAttribute('href'), '/admin/p/project_a/experiments/wf_held');
@@ -150,6 +163,11 @@ test('work: attention first, links into the drill-in, no ids, nothing ended unti
   assert.match(alone.textContent!, /waits on approval/);
   assert.equal(alone.querySelector('.status')!.className, 'status status--warn');
   assert.equal(alone.textContent!.match(/Customer study/g)!.length, 1);
+  // A need its state already names is said once, by the state in the need's tone.
+  const paid = rows().find((row) => /Paid study/.test(row.textContent!))!;
+  assert.equal(paid.querySelector('.admin-attn'), null);
+  assert.equal(paid.querySelector('.status')!.textContent, 'awaiting payment');
+  assert.equal(paid.querySelector('.status')!.className, 'status status--warn');
   // A machine not yet running says its phase; its price is in its title, never cut.
   assert.match(quiet.textContent!, /standard provisioning/);
   assert.ok(quiet.querySelector('[title="cf · $0.074/h"]'));
@@ -285,6 +303,7 @@ const failure = (minutes: number, code: string, status: number) => ({
 });
 const providerKey = (field: string, description: string, over: Record<string, unknown> = {}) => ({
   provider: 'modal-main',
+  label: 'Modal',
   field,
   description,
   present: true,
@@ -311,6 +330,7 @@ const credentials = {
       secrets: [
         secret('FLEET_OPENAI_KEY', 'Fleet agent model calls · OpenAI', {
           plugin: 'fleet',
+          field: 'agent.keyEnv',
           dead: true,
           lastFailure: failure(30, 'invalid_api_key', 401),
         }),
@@ -321,6 +341,7 @@ const credentials = {
       secrets: [
         secret('CLOUDFLARE_API_TOKEN', 'Fleet machines · Cloudflare', {
           plugin: 'fleet',
+          field: 'cloudflare.tokenEnv',
           lastOk: { at: ago(10), relay: 'cloudflare', model: 'vm' },
           lastFailure: failure(2, 'expired', 403),
         }),
@@ -329,14 +350,25 @@ const credentials = {
     {
       purpose: 'Platform services',
       secrets: [
-        secret('MERV_DB_URL', 'Database', { plugin: 'state', editable: false }),
-        secret('RESEND_API_KEY', 'Invitation email · Resend', { plugin: 'mail', set: false }),
+        secret('MERV_DB_URL', 'Database', { plugin: 'state', field: 'urlEnv', editable: false }),
+        secret('RESEND_API_KEY', 'Invitation email · Resend', {
+          plugin: 'mail',
+          field: 'resend.keyEnv',
+          set: false,
+        }),
       ],
     },
   ],
   providers: [
-    providerKey('token_id', 'Modal token id', {}),
+    // Unset, which says so whatever its provider's health.
+    providerKey('token_id', 'Modal token id', { present: false }),
     providerKey('token_secret', 'Modal token secret'),
+    providerKey('api_key', 'Lambda API key', {
+      provider: 'lambda-main',
+      label: 'Lambda',
+      health: 'ok',
+      healthReason: null,
+    }),
   ],
   minted: [
     {
@@ -346,6 +378,14 @@ const credentials = {
       soonestExpiry: new Date(Date.now() + 3.5 * 3_600_000).toISOString(),
       revokedLastDay: '0',
       newestIssued: ago(1),
+    },
+    {
+      owner: 'billing',
+      kind: 'invoice-signer',
+      live: '1',
+      soonestExpiry: null,
+      revokedLastDay: '0',
+      newestIssued: ago(60),
     },
   ],
 };
@@ -376,32 +416,47 @@ test('credentials: purposes lead, names faint, no fingerprint, provider keys the
   const head = [...document.querySelectorAll('[aria-label="Agent"] .ruled-head > *')].map(
     (th) => th.textContent,
   );
-  assert.deepEqual(head, ['Purpose', 'State', 'Changed', 'Last ok', 'Last failure', '']);
-  assert.doesNotMatch(text(), /fingerprint|a1b2c3d4|model\.keyEnv/i, 'no hash, no config path');
-  // A failure since answered is no failing key: red is dead, or a failure newer than the last ok.
-  assert.match(agent.textContent!, /set/);
+  assert.deepEqual(head, ['Purpose', 'State', 'Changed', 'Last call', '']);
+  assert.doesNotMatch(text(), /fingerprint|a1b2c3d4|keyEnv/i, 'no hash, no config path');
+  // The last call is the newer outcome: a failure since answered is no failing key, and red is
+  // a dead key or a failure newer than the last ok.
+  assert.match(agent.textContent!, /set3d agook 1m ago/);
+  assert.doesNotMatch(agent.textContent!, /failed/);
   const red = [...document.querySelectorAll('.ruled .status--bad')].map((el) => el.textContent);
-  assert.deepEqual(red, ['dead', 'failing']);
+  assert.deepEqual(red, ['dead', 'failed 30m ago', 'failing', 'failed 2m ago']);
   assert.match(rowOf('Platform services', /RESEND/).textContent!, /unset/);
-  assert.match(text(), /4 set\s*1 unset\s*1 dead\s*1 failing/);
+  // A row without a change or a call draws nothing there, not a dash.
+  assert.doesNotMatch(rowOf('Platform services', /MERV_DB_URL/).textContent!, /—/);
+  // The head counts what the rows say, a provider key's health included.
+  assert.match(text(), /3 set\s*2 unset\s*1 dead\s*1 failing\s*1 degraded/);
   // Only an editable key has its words; an unset one cannot be revealed.
   assert.doesNotMatch(rowOf('Platform services', /MERV_DB_URL/).textContent!, /Reveal|Change/);
   assert.doesNotMatch(rowOf('Platform services', /RESEND/).textContent!, /Reveal/);
   assert.match(rowOf('Platform services', /RESEND/).textContent!, /Change/);
-  // The provider keys: provider and its health, what the key is, present.
+  // The provider keys: the provider by its name, what the key is, its state: unset, else its
+  // provider's health while that is not ok, else set.
   const keys = [...document.querySelectorAll('[aria-label="Sandbox providers"] .ruled-head > *')];
   assert.deepEqual(
     keys.map((th) => th.textContent),
-    ['Provider', 'Key', 'Present', ''],
+    ['Provider', 'Key', 'State', ''],
   );
   const modal = rowOf('Sandbox providers', /token_secret/);
-  assert.match(modal.textContent!, /^modal-main degraded/);
-  assert.match(modal.textContent!, /Modal token secrettoken_secret/);
+  assert.match(modal.textContent!, /^ModalModal token secrettoken_secretdegraded/);
   assert.ok(modal.querySelector('[title="slow to answer"]'), 'the health reason is its title');
+  assert.match(rowOf('Sandbox providers', /token_id/).textContent!, /token_idunset/);
+  assert.match(
+    rowOf('Sandbox providers', /api_key/).textContent!,
+    /^LambdaLambda API keyapi_keyset/,
+  );
+  assert.doesNotMatch(text(), /modal-main|lambda-main/, 'a provider by its name, not its id');
   assert.equal(document.querySelectorAll('[aria-label="Agent"] .ruled-row').length, 1);
-  // Machine credentials stand at the foot.
-  assert.match(text(), /Machine credentials/);
-  assert.match(text(), /in 3h/, 'an expiry still to come');
+  // Machine credentials stand at the foot, each by what it is for, its owner and kind faint.
+  const minted = [...document.querySelectorAll('[aria-label="Machine credentials"] .ruled-row')];
+  assert.deepEqual(
+    minted.map((row) => row.querySelector('[role="cell"]')!.textContent),
+    ['Agent session runssessions · session-execution', 'invoice-signerbilling · invoice-signer'],
+  );
+  assert.match(minted[0]!.textContent!, /in 3h/, 'an expiry still to come');
 });
 
 test('credentials: Reveal shows the value for 30 s with Copy, then takes it off the page', async (t) => {
@@ -483,10 +538,57 @@ test('credentials: Change sends the new value, states a refusal verbatim, then w
   assert.ok(requests.filter((r) => r === 'GET /admin/credentials').length >= 2, 'read again');
   // A provider key changes through its provider's fields.
   await press(rowOf('Sandbox providers', /token_id/), 'Change');
-  const key = document.querySelector<HTMLFormElement>('form[aria-label^="Change modal-main"]')!;
+  const key = document.querySelector<HTMLFormElement>(
+    'form[aria-label="Change Modal · Modal token id"]',
+  )!;
   await fill(key, 'token_id', 'ak-1');
   await send(key);
   assert.deepEqual(changes[2], { provider: 'modal-main', fields: { token_id: 'ak-1' } });
+});
+
+test('credentials: two rows naming one variable open apart, and only the one changed says so', async (t) => {
+  t.after(async () => await unmount());
+  signedIn();
+  serve('/admin/credentials', {
+    body: {
+      groups: [
+        {
+          purpose: 'Agent',
+          secrets: [
+            secret('OPENAI_API_KEY', 'Agent model calls · OpenAI', { field: 'modelApiKeyEnv' }),
+          ],
+        },
+        {
+          purpose: 'Platform services',
+          secrets: [
+            secret('OPENAI_API_KEY', 'Web search fallback · OpenAI', {
+              plugin: 'web',
+              field: 'fallback.keyEnv',
+            }),
+          ],
+        },
+      ],
+      providers: [],
+      minted: [],
+    },
+  });
+  serve('/admin/credentials/change', { body: { ok: true, reloaded: ['pi', 'web'] } });
+  await open('/admin/credentials');
+  const agent = () => rowOf('Agent', /OPENAI_API_KEY/);
+  const platform = () => rowOf('Platform services', /OPENAI_API_KEY/);
+  await press(agent(), 'Change');
+  assert.equal(document.querySelectorAll('form').length, 1, 'one form, under the row pressed');
+  assert.ok(agent().classList.contains('admin-unfolded'));
+  assert.ok(!platform().classList.contains('admin-unfolded'));
+  const form = document.querySelector<HTMLFormElement>('[aria-label="Agent"] form')!;
+  await fill(form, 'OPENAI_API_KEY', 'sk-new');
+  await send(form);
+  assert.equal(text().match(/Reloaded pi · web/g)!.length, 1);
+  assert.equal(
+    document.querySelector('[aria-label="Agent"] [role="status"]')!.textContent,
+    'Reloaded pi · web',
+  );
+  assert.equal(document.querySelector('[aria-label="Platform services"] [role="status"]'), null);
 });
 
 // ── Credits (v2): one row per person, a drawer per person with its windows and controls ──
@@ -611,7 +713,7 @@ const openMira = async () => {
   await openRowOf(0);
 };
 
-test('credits: one row per person, today per kind, and no drawer until a row is opened', async (t) => {
+test('credits: one row per person, what is left of each kind, no drawer until a row is opened', async (t) => {
   t.after(async () => await unmount());
   bootCredits();
   await open('/admin/credits');
@@ -629,18 +731,16 @@ test('credits: one row per person, today per kind, and no drawer until a row is 
   ]);
   const rows = [...document.querySelectorAll('[aria-label="Credits"] .ruled-row')];
   assert.equal(rows.length, 2);
-  // Today's use of each daily limit; a provider's left of what was granted.
+  // What is left of each limit: today's for the platform's own kinds, a provider's grants.
   assert.equal(
     [...rows[0]!.querySelectorAll('[role="cell"]')].map((c) => c.textContent).join(' | '),
-    'Mira Chen | 40K of 1M | 120K of 2M | $3.20 of $25 | — | $95.05 of $100',
+    'Mira Chen | 960K of 1M | 1.9M of 2M | $21.80 of $25 | — | $95.05 of $100',
   );
-  // Money is in cents: one under a cent says so, never a third decimal.
-  assert.match(rows[1]!.textContent!, /<\$0\.01 of \$25/);
   const red = [...document.querySelectorAll('[aria-label="Credits"] .status--bad')];
   assert.deepEqual(
     red.map((el) => el.textContent),
-    ['2M of 2M'],
-    'red is a limit reached',
+    ['0 of 2M'],
+    'red is nothing left',
   );
   assert.doesNotMatch(text(), /Design partner pilot/);
   assert.match(text(), /2 people/);
