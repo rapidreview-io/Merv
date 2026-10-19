@@ -101,3 +101,29 @@ test('native paths retain positive offsets rather than snapping their first poin
   assert.equal(e.x, 120);
   assert.equal(e.y, 230);
 });
+
+test('dense reference labels can fit native source-scale boxes and keep size when edited', () => {
+  const d = new Drawing([], true);
+  const input = drawSchema.parse({
+    ops: [
+      { op: 'box', key: 'rtk', text: 'RTK', width: 50, height: 24, fontSize: 8, at: [0, 0] },
+      { op: 'text', key: 'caption', text: 'Linear/Angular Twist', fontSize: 9, at: [60, 0] },
+    ],
+  });
+  for (const op of input.ops) d.apply(op);
+  const box = d.find('rtk');
+  assert.equal(box.width, 50);
+  assert.equal(box.height, 24);
+  let label = live(d).find((e) => e.containerId === box.id)!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'RTK');
+  d.apply({ op: 'edit', id: box.id, text: 'SBAS' });
+  label = live(d).find((e) => e.containerId === box.id)!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'SBAS');
+  assert.equal(d.find('caption').fontSize, 9);
+  assert.equal(
+    drawSchema.safeParse({ ops: [{ op: 'text', text: 'x', fontSize: 0 }] }).success,
+    false,
+  );
+});

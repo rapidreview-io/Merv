@@ -288,15 +288,22 @@ export class Drawing {
       Math.round(width * (kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1)) - 10,
     );
   }
-  private fit(content: string, width: number, minHeight: number, kind = 'rectangle') {
+  private fit(
+    content: string,
+    width: number,
+    minHeight: number,
+    kind = 'rectangle',
+    fontSize = FONT,
+    padding = 40,
+  ) {
     const lines = wrap(
       content,
-      Math.floor(this.innerWidth(kind, width) / (FONT * this.labelCharWidth(content))),
+      Math.floor(this.innerWidth(kind, width) / (fontSize * this.labelCharWidth(content))),
     );
     const factor = kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1;
     return {
       width,
-      height: Math.max(minHeight, Math.ceil((measure(lines, FONT).height + 40) / factor)),
+      height: Math.max(minHeight, Math.ceil((measure(lines, fontSize).height + padding) / factor)),
     };
   }
 
@@ -434,6 +441,7 @@ export class Drawing {
     size: { width: number; height: number },
     where: Where,
     fields: Record<string, unknown> = {},
+    fontSize = FONT,
   ) {
     const at = this.place(size, where);
     const el = this.add(kind, at, {
@@ -446,7 +454,7 @@ export class Drawing {
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
-    if (content) this.label(el, content);
+    if (content) this.label(el, content, fontSize);
     return el;
   }
   /**
@@ -659,18 +667,30 @@ export class Drawing {
         const size = op.text
           ? this.fit(
               op.text,
-              Math.max(op.width ?? defaultWidth, Math.ceil(60 / factor)),
+              Math.max(
+                op.width ?? defaultWidth,
+                Math.ceil((op.fontSize ? op.fontSize * 3 + 10 : 60) / factor),
+              ),
               op.height ?? defaultHeight,
               kind,
+              op.fontSize ?? FONT,
+              op.fontSize ? 10 : 40,
             )
           : { width: op.width ?? defaultWidth, height: op.height ?? defaultHeight };
-        const el = this.shape(kind, op.text, size, op, {
-          ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
-        });
+        const el = this.shape(
+          kind,
+          op.text,
+          size,
+          op,
+          {
+            ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
+          },
+          op.fontSize ?? FONT,
+        );
         return this.keyed(op.key, el);
       }
       case 'text': {
-        const size = { s: 16, m: 20, l: 32 }[op.size ?? 'm'];
+        const size = op.fontSize ?? { s: 16, m: 20, l: 32 }[op.size ?? 'm'];
         const content = wrap(op.text, 60);
         const at = this.place(measure(content, size), op);
         return this.keyed(
@@ -726,7 +746,13 @@ export class Drawing {
             const content =
               el.type === 'text' || el.type === 'arrow'
                 ? op.text
-                : wrap(op.text, Math.floor((el.width - 30) / (FONT * CHAR)));
+                : wrap(
+                    op.text,
+                    Math.floor(
+                      this.innerWidth(el.type, el.width) /
+                        ((textOf.fontSize ?? FONT) * this.labelCharWidth(op.text)),
+                    ),
+                  );
             Object.assign(textOf, {
               text: content,
               originalText: op.text,

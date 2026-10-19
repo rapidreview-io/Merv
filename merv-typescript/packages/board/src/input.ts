@@ -96,6 +96,7 @@ export const opSchema = z.discriminatedUnion('op', [
         .refine((value) => value === '' || visible(value)),
       width: z.number().finite().min(1).max(10_000).optional(),
       height: z.number().finite().min(1).max(10_000).optional(),
+      fontSize: z.number().finite().min(8).max(96).optional(),
       shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
       color: color.optional(),
       ...place,
@@ -108,6 +109,7 @@ export const opSchema = z.discriminatedUnion('op', [
       color: ink.optional(),
       text,
       size: z.enum(['s', 'm', 'l']).optional(),
+      fontSize: z.number().finite().min(8).max(96).optional(),
       ...place,
     })
     .strict(),
