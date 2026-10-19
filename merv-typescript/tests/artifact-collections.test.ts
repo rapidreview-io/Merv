@@ -457,7 +457,11 @@ function toolsOver(artifacts: object) {
   >();
   artifactToolsPlugin.apply({
     artifacts,
-    tools: { register: (tool: { name: string }) => void tools.set(tool.name, tool as never) },
+    tools: {
+      register: (tool: { name: string }) => void tools.set(tool.name, tool as never),
+      contributeInstructions: () => () => {},
+      contributePicture: () => () => {},
+    },
     effect: (fn: () => unknown) => fn(),
   } as never);
   return tools;
