@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { linkArtifactId, linkExpansionMode } from './board-link-layout';
 import type { NonDeletedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
@@ -90,6 +90,29 @@ export function BoardLinkDetails({
   } catch {
     /* Merv record links have no hostname. */
   }
+  const header = (title: string, actions?: ReactNode) => (
+    <header>
+      <span className="board-reference-title" title={title}>
+        {title}
+      </span>
+      <div className="board-reference-actions">
+        {actions}
+        {mode !== 'none' && (
+          <button
+            ref={expandControl}
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            aria-label={expanded ? 'Collapse details' : 'Expand details'}
+          >
+            {expanded ? 'Collapse' : mode === 'fullscreen' ? 'Open full screen' : 'Expand'}
+          </button>
+        )}
+        <button type="button" onClick={close} aria-label="Close reference details">
+          ×
+        </button>
+      </div>
+    </header>
+  );
   const content = (
     <section
       ref={expanded ? dialog : anchor}
@@ -119,41 +142,46 @@ export function BoardLinkDetails({
         }
       }}
     >
-      <header>
-        <span>{artifactId ? 'Artifact' : 'Reference'}</span>
-        <div>
-          {mode !== 'none' && (
-            <button
-              ref={expandControl}
-              type="button"
-              onClick={() => setExpanded(!expanded)}
-              aria-label={expanded ? 'Collapse details' : 'Expand details'}
-            >
-              {expanded ? 'Collapse' : mode === 'fullscreen' ? 'Open full screen' : 'Expand'}
-            </button>
-          )}
-          <button type="button" onClick={close} aria-label="Close reference details">
-            ×
-          </button>
-        </div>
-      </header>
-      <div className="board-link-details-body">
-        {!web && !artifactId && details.title && <h3>{details.title}</h3>}
-        {details.text && <p className="board-reference-notes">{details.text}</p>}
-        {artifactId && <ArtifactBody artifactId={artifactId} />}
-        {web && (
-          <a className="board-url-preview" href={link} target="_blank" rel="noopener noreferrer">
-            <span className="board-url-host">{host} ↗</span>
-            <strong>{details.preview?.title ?? host}</strong>
-            {details.preview?.description ? (
-              <p>{details.preview.description}</p>
-            ) : (
-              <p>Open the original source. No preview metadata is available for this link.</p>
+      {artifactId ? (
+        <ArtifactBody
+          artifactId={artifactId}
+          embedded={{
+            header,
+            hideMatchingHeading: true,
+            before: details.text ? (
+              <p className="board-reference-notes">{details.text}</p>
+            ) : undefined,
+          }}
+        />
+      ) : (
+        <>
+          {header('Reference')}
+
+          <div className="board-link-details-body">
+            {!web && !artifactId && details.title && <h3>{details.title}</h3>}
+            {details.text && <p className="board-reference-notes">{details.text}</p>}
+            {web && (
+              <a
+                className="board-url-preview"
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span className="board-url-host">{host} ↗</span>
+                <strong>{details.preview?.title ?? host}</strong>
+                {details.preview?.description ? (
+                  <p>{details.preview.description}</p>
+                ) : (
+                  <p>Open the original source. No preview metadata is available for this link.</p>
+                )}
+              </a>
             )}
-          </a>
-        )}
-        {!web && !artifactId && !details.text && <p>Open this Merv record using the link below.</p>}
-      </div>
+            {!web && !artifactId && !details.text && (
+              <p>Open this Merv record using the link below.</p>
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
   if (!expanded) return content;

@@ -79,3 +79,25 @@ test('real artifact IDs route to the viewer from explicit details and native lin
   assert.equal(linkArtifactId(undefined, 'merv:task_other'), undefined);
   assert.equal(linkArtifactId(undefined, `https://example.org/${actual}`), undefined);
 });
+
+test('embedded Markdown omits only a matching leading filename heading', async () => {
+  const { withoutMatchingHeading } = await import('../packages/ui/web/views/artifact-heading.js');
+  const source = '# Intervention checklist\n\nKeep this content.\n## Distinct section\nDetails.';
+  assert.equal(
+    withoutMatchingHeading(source, 'intervention-checklist.md'),
+    '\nKeep this content.\n## Distinct section\nDetails.',
+  );
+  assert.equal(source.startsWith('# Intervention checklist'), true);
+  assert.equal(withoutMatchingHeading(source, 'Different file.md'), source);
+  assert.equal(
+    withoutMatchingHeading(
+      'Introduction\n\n# Intervention checklist\nBody',
+      'intervention-checklist.md',
+    ),
+    'Introduction\n\n# Intervention checklist\nBody',
+  );
+  assert.equal(
+    withoutMatchingHeading('Intervention checklist\n===\nBody', 'intervention-checklist.md'),
+    'Body',
+  );
+});
