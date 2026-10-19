@@ -69,3 +69,35 @@ test('reference details survive exact geometry/color additions', () => {
   assert.ok(live(d).some((e) => e.strokeColor === '#aa2222'));
   assert.ok(summarize(live(d)).shapes.some((e) => e.details?.text === 'Details'));
 });
+
+// Production robot leader lines use negative coordinates relative to their at anchor.
+test('native path origin keeps separate leader groups aligned with labels', () => {
+  const d = new Drawing([], true);
+  d.apply({
+    op: 'sketch',
+    key: 'leaders',
+    size: 'native',
+    at: [160, 185],
+    strokes: [{ path: 'M 0 0 L 170 0 L 205 45' }, { path: 'M 430 -55 L 250 70' }],
+  });
+  const lines = live(d).filter((e) => e.type === 'line');
+  const points = lines.map((e) => (e.points as number[][]).map(([x, y]) => [e.x + x!, e.y + y!]));
+  assert.deepEqual(points, [
+    [
+      [160, 185],
+      [330, 185],
+      [365, 230],
+    ],
+    [
+      [590, 130],
+      [410, 255],
+    ],
+  ]);
+});
+test('native paths retain positive offsets rather than snapping their first point to at', () => {
+  const d = new Drawing([], true);
+  d.apply({ op: 'sketch', size: 'native', at: [100, 200], strokes: [{ path: 'M 20 30 L 50 60' }] });
+  const e = live(d)[0]!;
+  assert.equal(e.x, 120);
+  assert.equal(e.y, 230);
+});

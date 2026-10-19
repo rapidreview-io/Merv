@@ -837,7 +837,13 @@ export class Drawing {
           op.size === 'native'
             ? 1
             : { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
-        const at = this.place({ width: width * scale, height: height * scale }, op);
+        // Native paths share the caller's coordinate system, including negative coordinates.
+        // Explicit at is the path origin; automatic placement still uses the bounding box.
+        const placement =
+          op.size === 'native' && op.at
+            ? { ...op, at: [op.at[0] + minX, op.at[1] + minY] as [number, number] }
+            : op;
+        const at = this.place({ width: width * scale, height: height * scale }, placement);
         const group = elementId();
         let first: El | undefined;
         for (const { stroke, lines } of read)
