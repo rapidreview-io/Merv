@@ -215,7 +215,8 @@
   flex: 1;
 }
 
-/* Opening a reference is a reading action; restore shape controls when it closes. */
+/* Keep styling controls hidden while a reference remains selected. */
+.board-reading-reference .selected-shape-actions,
 .excalidraw:has(.merv-rich-hyperlink .board-link-details) .selected-shape-actions {
   display: none;
 }

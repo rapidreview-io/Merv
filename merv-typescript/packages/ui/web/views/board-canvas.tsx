@@ -40,6 +40,8 @@ function BoardCanvasScene({ id }: { id: string }) {
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  const [readingReference, setReadingReference] = useState(false);
+  const previousZoom = useRef<number>();
   const [first, setFirst] = useState<BoardScene | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /** The version of each shape Board holds, as far as this page knows. */
@@ -203,7 +205,7 @@ function BoardCanvasScene({ id }: { id: string }) {
   if (problem && !first) return <p className="pi-error board-loading">{problem}</p>;
   if (!first) return <p className="muted board-loading">Opening the board…</p>;
   return (
-    <div className="board-canvas">
+    <div className={`board-canvas${readingReference ? ' board-reading-reference' : ''}`}>
       {problem && (
         <p className="pi-error board-problem" role="alert">
           {problem}
@@ -229,7 +231,26 @@ function BoardCanvasScene({ id }: { id: string }) {
             repairBindings: true,
           }),
         }}
-        onChange={(elements: readonly OrderedExcalidrawElement[]) => {
+        onChange={(elements: readonly OrderedExcalidrawElement[], appState) => {
+          const zoomChanged =
+            previousZoom.current !== undefined && previousZoom.current !== appState.zoom.value;
+          previousZoom.current = appState.zoom.value;
+          // Reading a linked card should not open the shape styling controls.
+          const selected = elements.filter((element) => appState.selectedElementIds[element.id]);
+          setReadingReference(
+            selected.length > 0 &&
+              selected.every(
+                (element) =>
+                  Boolean(element.link) ||
+                  (element.type === 'text' &&
+                    Boolean(
+                      elements.find((container) => container.id === element.containerId)?.link,
+                    )),
+              ),
+          );
+          if (zoomChanged && appState.showHyperlinkPopup) {
+            api?.updateScene({ appState: { showHyperlinkPopup: false } });
+          }
           scene.current = elements;
           if (!elements.some((el) => known.current.get(el.id) !== el.version)) return;
           clearTimeout(timer.current);
