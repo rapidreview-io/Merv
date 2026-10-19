@@ -1234,6 +1234,38 @@ test('a work host waits for capture and acknowledgement, idles a bounded time, a
   assert.equal(await f.owner().observe(allocation), 'finished');
 });
 
+test('a work host whose agent ended its visit to wait for its compute idles its bounded time and stops, with nothing rented while the work waits', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  // The visit closed by its worker's own hand; its runner captured and acknowledged the release.
+  f.inspections.set(allocation.id, {
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: {
+      id: 'session_a',
+      instanceId: 'task_a',
+      expectedRevision: 0,
+      status: 'released',
+      closedAt: new Date(f.now()).toISOString(),
+      outcome: 'awaited_compute',
+      releaseAcknowledged: true,
+      capturePending: false,
+    },
+  });
+  // Sessions withholds the waiting revision, so it is no demand.
+  f.demand([]);
+  await f.adapter.reconcile();
+  assert.equal(await f.owner().observe(allocation), 'running');
+  f.advance(300_000 - 1);
+  assert.equal(await f.owner().observe(allocation), 'running');
+  f.advance(1);
+  assert.equal(await f.owner().observe(allocation), 'finished');
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), [], 'the idle host stops, and nothing replaces it');
+});
+
 test('a settled work host without a whole step left stops at once, so the next step gets a fresh one', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
