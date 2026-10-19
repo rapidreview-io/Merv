@@ -2,7 +2,6 @@
  *  and the per-person limits Fleet and Pi keep. Pure rules: no service, so any unit may run them.
  *  Each ledger and limit stays its owner's own table. */
 import { digest, type Sql, type SqlValue } from '@merv/contracts';
-import type { PersonUse } from './types.js';
 
 /** Whose day a model call counts toward: a person's sign-in identity, else the acting actor.
  *  Every feature keys a person alike, so one day counts all their calls. */
@@ -59,7 +58,7 @@ export const dailyTokens = (table: string, limitsTable: string) => {
       from: string,
       to: string,
       fallback: number,
-    ): Promise<PersonUse[]> => {
+    ) => {
       const rows = await sql.all<{ person: string; tokens: number | string }>(
         `SELECT person,SUM(tokens) AS tokens FROM ${table} WHERE day>=? AND day<? AND person IN (${among(persons)}) GROUP BY person`,
         from,
