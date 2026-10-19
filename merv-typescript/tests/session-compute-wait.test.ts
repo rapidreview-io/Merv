@@ -35,9 +35,9 @@ async function fixture(t: TestContext) {
   const asked: ComputeTarget[][] = [];
   let bounds: Omit<ComputeStates, 'targets'> = { idle: [] };
   let failure: Error | undefined;
-  let linked = true;
+  let linked: boolean | 'hung' = true;
   const waiter = {
-    offers: async () => linked,
+    offers: async () => (linked === 'hung' ? await new Promise<boolean>(() => {}) : linked),
     states: async ({ targets }: { targets: readonly ComputeTarget[] }): Promise<ComputeStates> => {
       assert.equal(
         app.ctx.state.ambient,
@@ -119,7 +119,7 @@ async function fixture(t: TestContext) {
     fail: (error?: Error) => {
       failure = error;
     },
-    link: (value: boolean) => {
+    link: (value: boolean | 'hung') => {
       linked = value;
     },
     unregister: () => unregister(),
@@ -622,6 +622,11 @@ test('only a work visit that keeps a conversation and executes on a project Sand
   // Nor is a project Sandboxes does not serve, or a deployment without a waiter.
   f.link(false);
   assert.deepEqual((await offered((await f.start()).id, 'runner-d')).offered, [false, false]);
+  // Nor one whose Sandboxes does not answer: its attach and listing wait two seconds at most.
+  f.link('hung');
+  const asked = Date.now();
+  assert.deepEqual((await offered((await f.start()).id, 'runner-g')).offered, [false, false]);
+  assert.ok(Date.now() - asked < 8_000, 'the attach and the listing waited 2 s each at most');
   f.link(true);
   f.unregister();
   assert.deepEqual((await offered((await f.start()).id, 'runner-e')).offered, [false, false]);

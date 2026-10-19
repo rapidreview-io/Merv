@@ -27,6 +27,8 @@ const MAX_MINUTES = 10_080;
 const MAX_TARGETS = 20;
 /** How long the waiter may take to answer, at a call or in the sweep. */
 const WAITER_MS = 10_000;
+/** How long whether a project is served may take: an attach and a tool listing wait for it. */
+const OFFERS_MS = 2_000;
 /** A wait ends this long before a machine its compute runs on is deleted, so the visit it wakes
  *  can renew that machine, and this long after its compute must have ended, so a hung run holds
  *  the work no longer. */
@@ -91,6 +93,20 @@ const over = (targets: readonly ComputeTargetState[]) =>
 /** One target as a refusal and a woken worker read it. */
 export const phrase = ({ kind, id, status, state, exitCode }: ComputeTargetState) =>
   `${kind} ${id} ${status === 'unknown' ? 'no longer found' : (state ?? status).replaceAll('_', ' ')}${exitCode === undefined ? '' : ` (exit ${exitCode})`}`;
+/** What `promise` gives, or a rejection once `ms` have passed. */
+const within = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('The compute waiter timed out')), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 const listed = (ids: unknown): unknown[] =>
   ids === undefined ? [] : Array.isArray(ids) ? ids : [undefined];
 const wake = (row: WaitRow): ComputeWake => ({
@@ -128,7 +144,10 @@ export class ComputeWaits implements SessionComputeWaits {
   async available(session: Readonly<Session>): Promise<boolean> {
     const waiter = this.waiter;
     return (
-      !!waiter && waitable(session) && (await waiter.offers(session.projectId).catch(() => false))
+      !!waiter &&
+      waitable(session) &&
+      // A Sandboxes that does not answer holds up no attach or listing: the tool is not offered.
+      (await within(waiter.offers(session.projectId), OFFERS_MS).catch(() => false))
     );
   }
   async await(caller: Caller, input: ComputeWaitInput): Promise<ComputeWaitView> {
@@ -304,20 +323,17 @@ export class ComputeWaits implements SessionComputeWaits {
     targets: readonly ComputeTarget[],
   ): Promise<ComputeStates> {
     const waiter = this.waiter;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!waiter) throw new Error('No compute waiter');
-      const read = await Promise.race([
+      const read = await within(
         waiter.states({
           projectId: visit.projectId,
           instanceId: visit.instanceId,
           sessionId: visit.id,
           targets,
         }),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('The compute waiter timed out')), WAITER_MS);
-        }),
-      ]);
+        WAITER_MS,
+      );
       return {
         ...read,
         // Only what a wait keeps of each, as it was asked; one left out is not this work's.
@@ -340,8 +356,6 @@ export class ComputeWaits implements SessionComputeWaits {
         'Sandboxes did not say where these stand, so nothing changed and your visit goes on: call again in a minute',
         503,
       );
-    } finally {
-      clearTimeout(timer);
     }
   }
   /** The sweep, every full pass of Sessions: open waits read on a snapshot, the waiter asked
