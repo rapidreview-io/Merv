@@ -304,15 +304,7 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
     report.schedules.map((s) => [s.id, s.cadence, s.enabled]),
     [['s1', 'monthly', false]],
   );
-  const audit = await f.state.read((sql) =>
-    sql.all<{
-      issuer: string;
-      subject: string;
-      action: string;
-      target: string;
-      detail_json: string;
-    }>('SELECT issuer,subject,action,target,detail_json FROM admin_audit ORDER BY at,id'),
-  );
+  const audit = await f.audit();
   assert.deepEqual(
     audit.map((row) => [row.subject, row.action, row.target]),
     [

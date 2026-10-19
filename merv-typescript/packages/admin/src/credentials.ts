@@ -66,9 +66,13 @@ async function credentials(env: AdminEnv): Promise<AdminCredentials> {
       purpose: ref.purpose,
       set: !!value,
       // Values are compared here, in the process that holds them, and never kept or sent.
-      sharedWith: named
-        .filter((other) => other !== ref && value && process.env[other.env] === value)
-        .map(({ plugin, field, env }) => ({ plugin, field, env })),
+      sharedWith: [
+        ...new Set(
+          named
+            .filter((other) => other.env !== ref.env && value && process.env[other.env] === value)
+            .map((other) => other.env),
+        ),
+      ],
       lastChanged,
       lastOk: ok ? { at: ok.lastOkAt!, relay: ok.relay, model: ok.model } : null,
       lastFailure: failed
@@ -84,7 +88,7 @@ async function credentials(env: AdminEnv): Promise<AdminCredentials> {
         !!failed?.rejected &&
         !(ok && ok.lastOkAt! > failed.lastFailureAt!) &&
         !(lastChanged && lastChanged > failed.lastFailureAt!),
-      editable: ref.overridable && !!secrets,
+      editable: ref.overridable && !!secrets?.platformAvailable,
     };
   };
   return {
@@ -107,7 +111,7 @@ async function credentials(env: AdminEnv): Promise<AdminCredentials> {
           present: field.present,
           health: p.health?.status ?? null,
           healthReason: p.health_reason,
-          editable: !!p.credential_env && !!secrets,
+          editable: !!p.credential_env && !!secrets?.platformAvailable,
         })),
       ),
     minted,
@@ -133,7 +137,7 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
   const composition = () => {
     const composed = env.ctx.get('composition');
     check(
-      composed && env.ctx.get('secrets'),
+      composed && env.ctx.get('secrets')?.platformAvailable,
       'credentials_unavailable',
       'Stored secrets are unavailable',
       503,
@@ -169,9 +173,11 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
     );
     const key = found.credential_env;
     check(key, 'credential_fixed', 'This provider key is not read from the environment', 409);
-    const current = await refusals.call(async () =>
-      hub.plugin(found.plugin).auth.resolve(`env:${key}`, { instanceName: found.name }),
-    );
+    // Read when used: a change reads it inside the serialized override, as it stands then.
+    const current = () =>
+      refusals.call(async () =>
+        hub.plugin(found.plugin).auth.resolve(`env:${key}`, { instanceName: found.name }),
+      );
     return { hub, key, current };
   };
   return {
@@ -181,7 +187,7 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
       const value =
         'env' in input
           ? process.env[platform(input.env)]
-          : (await provider(input.provider, [input.field])).current[input.field];
+          : (await (await provider(input.provider, [input.field])).current())[input.field];
       check(value, 'not_found', 'This secret is not set', 404);
       // The target alone: its env name, or its provider and field.
       const { env: name, provider: instance, ...detail } = input as Record<string, string>;
@@ -201,7 +207,7 @@ export function credentialRoutes(env: AdminEnv): AdminRoutes {
       // Sandboxes rebinds the instances that read it.
       const reloaded = await composition().override(
         key,
-        JSON.stringify({ ...current, ...input.fields }),
+        async () => JSON.stringify({ ...(await current()), ...input.fields }),
         who,
         () => refusals.call(() => hub.rebindHost(key)),
       );

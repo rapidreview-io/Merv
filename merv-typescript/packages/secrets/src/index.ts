@@ -89,6 +89,8 @@ export const huggingFaceToken = z
 export class AccountSecrets implements Secrets {
   readonly #key: Uint8Array | undefined;
   readonly #grantKey: Uint8Array | undefined;
+  /** Whether platform secrets can be stored and opened: the deployment gave a valid key. */
+  readonly platformAvailable: boolean;
   #authorize?: (grant: HuggingFaceGrant) => Promise<AccountIdentity | null>;
   constructor(
     private readonly state: State,
@@ -97,6 +99,7 @@ export class AccountSecrets implements Secrets {
     readonly huggingFaceEndpoint: string | null = null,
   ) {
     this.#key = encryptionKey(key);
+    this.platformAvailable = !!this.#key;
     if (this.#key)
       this.#grantKey = new Uint8Array(
         hkdfSync('sha256', this.#key, Buffer.alloc(0), 'merv/hf-grant/v1', 32),

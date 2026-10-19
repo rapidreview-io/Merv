@@ -344,7 +344,6 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
     )) as AdminCredentials;
 
   const first = await read();
-  const name = ({ plugin, field, env }: ConfiguredEnv) => ({ plugin, field, env });
   assert.deepEqual(
     first.groups.map((group) => [group.purpose, group.secrets.map((s) => s.plugin)]),
     [
@@ -363,8 +362,8 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
       env: 'ADMIN_TEST_SHARED',
       purpose: 'Fleet agent model calls',
       set: true,
-      // The same key under another name, and the same name in another plugin.
-      sharedWith: [name(named[0]!), name(named[3]!)],
+      // The same key under another name.
+      sharedWith: ['ADMIN_TEST_PI_KEY'],
       lastChanged: null,
       lastOk: 'codex',
       lastFailure: {
@@ -381,14 +380,7 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
   );
   assert.deepEqual(
     pi!.secrets.map((s) => [s.env, s.purpose, s.sharedWith, s.dead]),
-    [
-      [
-        'ADMIN_TEST_PI_KEY',
-        'Agent model calls · OpenAI API key',
-        [name(named[1]!), name(named[3]!)],
-        false,
-      ],
-    ],
+    [['ADMIN_TEST_PI_KEY', 'Agent model calls · OpenAI API key', ['ADMIN_TEST_SHARED'], false]],
   );
   assert.deepEqual(
     machines!.secrets.map((s) => [s.env, s.set, s.sharedWith]),
@@ -448,7 +440,7 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
   const second = await read();
   const [again] = second.groups[1]!.secrets;
   assert.deepEqual([again!.lastChanged, again!.sharedWith, again!.dead], [updatedAt, [], false]);
-  assert.deepEqual(second.groups[0]!.secrets[0]!.sharedWith, [name(named[3]!)]);
+  assert.deepEqual(second.groups[0]!.secrets[0]!.sharedWith, []);
   // Host health is reused within the minute: Cloudflare was asked once per token path.
   assert.equal(asked.filter((url) => url.endsWith('/tokens/verify')).length, 2);
   undisclosed(

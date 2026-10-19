@@ -35,6 +35,8 @@ export interface Secrets {
   huggingFaceStatus(principal: HumanPrincipal): Promise<HuggingFaceStatus>;
   saveHuggingFace(principal: HumanPrincipal, token: string): Promise<HuggingFaceStatus>;
   removeHuggingFace(principal: HumanPrincipal): Promise<HuggingFaceStatus>;
+  /** Whether platform secrets can be stored and opened: the deployment gave a valid key. */
+  readonly platformAvailable: boolean;
   platformSecrets(): Promise<PlatformSecretRecord[]>;
   platformSecret(env: string): Promise<string | null>;
   setPlatformSecret(env: string, value: string, by: AccountIdentity): Promise<void>;

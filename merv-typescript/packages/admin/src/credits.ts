@@ -11,13 +11,7 @@ import { personKey } from '@merv/fleet/model-ledger';
 import type { PersonUse } from '@merv/fleet/types';
 import type {} from '@merv/pi/types';
 import type {} from '@merv/sandboxes/types';
-import type {
-  AdminCredits,
-  CreditKind,
-  CreditLimitInput,
-  CreditUse,
-  PersonCredits,
-} from './models.js';
+import type { AdminCredits, CreditKind, CreditUse, PersonCredits } from './models.js';
 import { personLabel, type AdminEnv, type AdminRoute, type AdminRoutes } from './index.js';
 
 const refusals = mervRefusals(MervError);
@@ -46,7 +40,7 @@ const scheduleInput = z
   })
   .strict();
 /** A daily limit within what its owner's own setting takes; null clears the person's own. */
-const limitInput: ZodType<CreditLimitInput, ZodTypeDef, unknown> = z.union([
+const limitInput = z.union([
   z
     .object({
       kind: z.enum(['agent-tokens', 'fleet-tokens']),

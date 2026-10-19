@@ -59,8 +59,8 @@ export interface PlatformSecret extends EnvName {
   /** The owner's own description of the field (its config schema's `.describe()`). */
   purpose: string;
   set: boolean;
-  /** Every other name and field that holds the same value. */
-  sharedWith: EnvName[];
+  /** Every other variable a loaded entry names that holds the same value. */
+  sharedWith: string[];
   lastChanged: string | null;
   lastOk: Outcome | null;
   lastFailure: (Outcome & { status: number | null; code: string | null }) | null;
@@ -128,9 +128,4 @@ export interface PersonCredits {
 /** `GET /admin/credits`: one row per person, with what they used today (UTC) of each credit type. */
 export interface AdminCredits {
   people: (PersonCredits['person'] & { kinds: (Omit<CreditUse, 'used'> & { used: number })[] })[];
-}
-/** `POST /admin/credits/people/:person/limits`: null clears the person's own limit. */
-export interface CreditLimitInput {
-  kind: 'agent-tokens' | 'fleet-tokens' | 'fleet-usd';
-  limit: number | null;
 }

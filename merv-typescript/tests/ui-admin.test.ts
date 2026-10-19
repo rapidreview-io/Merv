@@ -86,9 +86,12 @@ const work = {
   ],
   at: new Date().toISOString(),
 };
-function boot() {
+const signedIn = () => {
   serve('/auth/config', { body: { enabled: false } });
   serve('/account', { body: { kind: 'user', user, projects: [] } });
+};
+function boot() {
+  signedIn();
   serve('/admin/work', { body: work });
 }
 const open = async (path: string) => {
@@ -257,11 +260,6 @@ const escape = async () => {
   });
   await settle(0);
 };
-const signedIn = () => {
-  serve('/auth/config', { body: { enabled: false } });
-  serve('/account', { body: { kind: 'user', user, projects: [] } });
-};
-
 // ── Credentials (v2): by purpose, a separate table of provider keys, reveal and change ──
 
 const secret = (env: string, purpose: string, over: Record<string, unknown> = {}) => ({
