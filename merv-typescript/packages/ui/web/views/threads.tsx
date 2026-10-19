@@ -797,18 +797,20 @@ export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: str
 
 /**
  * The stage card with each stage's threads as chips, one a role; a chip opens its group's
- * current thread through `onOpen`.
+ * current thread through `onOpen`. `below` is what the page sets under each stage's chips.
  */
 export function StageThreads({
   graph,
   threads,
   loadedAt,
   onOpen: setOpened,
+  below,
 }: {
   graph: ProcessGraph;
   threads: readonly ThreadView[];
   loadedAt?: string;
   onOpen(threadId: string): void;
+  below?: (state: string) => ReactNode;
 }) {
   const now = clock(undefined, loadedAt, Date.now(), 20_000);
   const aside = (state: string) => {
@@ -841,5 +843,5 @@ export function StageThreads({
       );
     });
   };
-  return <StageList graph={graph} aside={aside} />;
+  return <StageList graph={graph} aside={aside} below={below} />;
 }

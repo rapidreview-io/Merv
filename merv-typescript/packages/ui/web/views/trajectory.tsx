@@ -46,8 +46,11 @@ const AXIS_H = 22;
 const PAD_R = 12;
 const MANY = 200;
 
-/** The width the element has, kept current as the page is resized. */
-function useWidth<T extends HTMLElement>() {
+/**
+ * The width the element has, kept current as the page is resized; measured again when `drawn`
+ * turns true, since the element is not there while the trajectory has nothing to draw.
+ */
+function useWidth<T extends HTMLElement>(drawn: boolean) {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -62,7 +65,7 @@ function useWidth<T extends HTMLElement>() {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [drawn]);
   return [ref, width] as const;
 }
 
@@ -185,7 +188,7 @@ export function Trajectory({
   );
   const spans = useMemo(() => stageSpans(lanes), [lanes]);
   const order = useMemo(() => spans.flatMap((span) => span.lanes), [spans]);
-  const [frame, width] = useWidth<HTMLDivElement>();
+  const [frame, width] = useWidth<HTMLDivElement>(threads.length > 0);
   const axisWidth = Math.max(0, width - LABEL_W - PAD_R);
   const axis = useMemo(() => axisOf(lanes, axisWidth), [lanes, axisWidth]);
   const X = (t: number) => LABEL_W + axis.x(t);
@@ -263,223 +266,229 @@ export function Trajectory({
               <LiveBlocks key={visit.sessionId} sessionId={visit.sessionId} onBlocks={onBlocks} />
             )),
         )}
-      {width > 0 && (
-        <svg
-          className={cx('traj-svg', dragging.current && 'traj-svg--brushing')}
-          width={width}
-          height={height}
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={onUp}
-        >
-          {spans.map((span, index) => {
-            const x0 = X(span.start);
-            const x1 = Math.max(X(span.end), x0 + 6);
-            const w = x1 - x0;
-            const on = selection && 'stage' in selection && selection.stage === index;
-            const tone = stageTone(
-              span.state,
-              span.lanes.some((lane) => lane.live),
-            );
-            const label =
-              w >= 140
-                ? `${capital(words(span.state))} · ${duration(span.end - span.start)}`
-                : w >= 56
-                  ? capital(words(span.state))
-                  : '';
-            return (
-              <g
-                key={index}
-                className={cx('traj-stage', `traj-stage--${tone}`, on && 'traj-stage--on')}
-                data-pick=""
-                onClick={() => choose(on ? undefined : { stage: index })}
-              >
-                <title>{`${capital(words(span.state))} · ${duration(span.end - span.start)} · ${span.lanes.length} session${span.lanes.length === 1 ? '' : 's'}`}</title>
-                <rect x={x0} y={0} width={w} height={HEAD_H} />
-                <line x1={x0 + 1} x2={x1 - 1} y1={HEAD_H - 6} y2={HEAD_H - 6} />
-                <text x={x0 + 1} y={15}>
-                  {label}
-                </text>
-              </g>
-            );
-          })}
-          {axis.breaks.map((item, index) => (
-            <g key={index} className="traj-fold">
-              <line
-                x1={LABEL_W + item.x}
-                x2={LABEL_W + item.x}
-                y1={HEAD_H - 2}
-                y2={HEAD_H + order.length * ROW_H + 2}
-              />
-              <text x={LABEL_W + item.x} y={height - 6} textAnchor="middle">
-                {elapsed(item.ms)}
-              </text>
-            </g>
-          ))}
-          {order.map((lane, row) => {
-            const y = HEAD_H + row * ROW_H;
-            const mid = y + ROW_H / 2;
-            const on = selection && 'session' in selection && selection.session === lane.sessionId;
-            return (
-              <g key={lane.sessionId} className={cx('traj-lane', on && 'traj-lane--on')}>
+      {/* The lanes and the chips stay in view while the moments under them scroll. */}
+      <div className="traj-pin">
+        {width > 0 && (
+          <svg
+            className={cx('traj-svg', dragging.current && 'traj-svg--brushing')}
+            width={width}
+            height={height}
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerCancel={onUp}
+          >
+            {spans.map((span, index) => {
+              const x0 = X(span.start);
+              const x1 = Math.max(X(span.end), x0 + 6);
+              const w = x1 - x0;
+              const on = selection && 'stage' in selection && selection.stage === index;
+              const tone = stageTone(
+                span.state,
+                span.lanes.some((lane) => lane.live),
+              );
+              const label =
+                w >= 140
+                  ? `${capital(words(span.state))} · ${duration(span.end - span.start)}`
+                  : w >= 56
+                    ? capital(words(span.state))
+                    : '';
+              return (
                 <g
-                  className={cx('traj-who', `traj-who--${lane.role}`)}
+                  key={index}
+                  className={cx('traj-stage', `traj-stage--${tone}`, on && 'traj-stage--on')}
                   data-pick=""
-                  onClick={() => choose(on ? undefined : { session: lane.sessionId })}
+                  onClick={() => choose(on ? undefined : { stage: index })}
                 >
-                  <title>{`${capital(words(lane.role))} · ${words(lane.stage)} · ${lane.harness ?? ''} · ${duration(lane.end - lane.start)}`}</title>
-                  <rect x={0} y={y} width={LABEL_W - 8} height={ROW_H} />
-                  <circle cx={10} cy={mid} r={7} />
-                  <text x={10} y={mid + 3.5} textAnchor="middle" className="traj-letter">
-                    {lane.role.charAt(0).toUpperCase()}
-                  </text>
-                  <text x={24} y={mid + 3.5} className="traj-when">
-                    {lane.failed
-                      ? `${capital(words(lane.stage))} · launch failed`
-                      : `${capital(words(lane.stage))} · ${duration(lane.end - lane.start)}`}
+                  <title>{`${capital(words(span.state))} · ${duration(span.end - span.start)} · ${span.lanes.length} session${span.lanes.length === 1 ? '' : 's'}`}</title>
+                  <rect x={x0} y={0} width={w} height={HEAD_H} />
+                  <line x1={x0 + 1} x2={x1 - 1} y1={HEAD_H - 6} y2={HEAD_H - 6} />
+                  <text x={x0 + 1} y={15}>
+                    {label}
                   </text>
                 </g>
+              );
+            })}
+            {axis.breaks.map((item, index) => (
+              <g key={index} className="traj-fold">
                 <line
-                  className={cx(
-                    'traj-run',
-                    lane.live && 'traj-run--live',
-                    lane.failed && 'traj-run--failed',
-                  )}
-                  x1={X(lane.start)}
-                  x2={Math.max(X(lane.end), X(lane.start) + 2)}
-                  y1={mid}
-                  y2={mid}
+                  x1={LABEL_W + item.x}
+                  x2={LABEL_W + item.x}
+                  y1={HEAD_H - 2}
+                  y2={HEAD_H + order.length * ROW_H + 2}
                 />
-                {lane.moments.map((moment) => {
-                  const x = X(moment.at);
-                  const w = Math.max(moment.kind === 'say' ? 1.5 : 2, X(moment.until) - x);
-                  const inset = moment.kind === 'say' ? 4 : moment.kind === 'think' ? 9 : 7;
-                  return (
-                    <g
-                      key={moment.key}
-                      className={cx(
-                        'traj-tick',
-                        `traj-tick--${moment.kind}`,
-                        !lit(moment) && 'traj-tick--dim',
-                        picked === moment.key && 'traj-tick--picked',
-                      )}
-                      data-pick=""
-                      onPointerEnter={() => setHover({ moment, x, y })}
-                      onPointerLeave={() => setHover(undefined)}
-                      onClick={() => {
-                        setPicked(picked === moment.key ? undefined : moment.key);
-                      }}
-                    >
-                      <rect x={x} y={y + inset} width={w} height={ROW_H - 2 * inset} rx={1} />
-                      {moment.failed !== undefined && (
-                        <rect
-                          className="traj-fail"
-                          x={x}
-                          y={y + 4}
-                          width={Math.max(w, 3)}
-                          height={2}
-                        />
-                      )}
-                      <rect
-                        className="traj-hit"
-                        x={x - 2}
-                        y={y + 2}
-                        width={w + 4}
-                        height={ROW_H - 4}
-                      />
-                    </g>
-                  );
-                })}
+                <text x={LABEL_W + item.x} y={height - 6} textAnchor="middle">
+                  {elapsed(item.ms)}
+                </text>
               </g>
-            );
-          })}
-          {axis.ticks.map((item) => (
-            <g key={item.x} className="traj-axis">
-              <line
-                x1={LABEL_W + item.x}
-                x2={LABEL_W + item.x}
-                y1={height - AXIS_H + 2}
-                y2={height - AXIS_H + 6}
+            ))}
+            {order.map((lane, row) => {
+              const y = HEAD_H + row * ROW_H;
+              const mid = y + ROW_H / 2;
+              const on =
+                selection && 'session' in selection && selection.session === lane.sessionId;
+              return (
+                <g key={lane.sessionId} className={cx('traj-lane', on && 'traj-lane--on')}>
+                  <g
+                    className={cx('traj-who', `traj-who--${lane.role}`)}
+                    data-pick=""
+                    onClick={() => choose(on ? undefined : { session: lane.sessionId })}
+                  >
+                    <title>{`${capital(words(lane.role))} · ${words(lane.stage)} · ${lane.harness ?? ''} · ${duration(lane.end - lane.start)}`}</title>
+                    <rect x={0} y={y} width={LABEL_W - 8} height={ROW_H} />
+                    <circle cx={10} cy={mid} r={7} />
+                    <text x={10} y={mid + 3.5} textAnchor="middle" className="traj-letter">
+                      {lane.role.charAt(0).toUpperCase()}
+                    </text>
+                    <text x={24} y={mid + 3.5} className="traj-when">
+                      {lane.failed
+                        ? `${capital(words(lane.stage))} · launch failed`
+                        : `${capital(words(lane.stage))} · ${duration(lane.end - lane.start)}`}
+                    </text>
+                  </g>
+                  <line
+                    className={cx(
+                      'traj-run',
+                      lane.live && 'traj-run--live',
+                      lane.failed && 'traj-run--failed',
+                    )}
+                    x1={X(lane.start)}
+                    x2={Math.max(X(lane.end), X(lane.start) + 2)}
+                    y1={mid}
+                    y2={mid}
+                  />
+                  {lane.moments.map((moment) => {
+                    const x = X(moment.at);
+                    const w = Math.max(moment.kind === 'say' ? 1.5 : 2, X(moment.until) - x);
+                    const inset = moment.kind === 'say' ? 4 : moment.kind === 'think' ? 9 : 7;
+                    return (
+                      <g
+                        key={moment.key}
+                        className={cx(
+                          'traj-tick',
+                          `traj-tick--${moment.kind}`,
+                          !lit(moment) && 'traj-tick--dim',
+                          picked === moment.key && 'traj-tick--picked',
+                        )}
+                        data-pick=""
+                        onPointerEnter={() => setHover({ moment, x, y })}
+                        onPointerLeave={() => setHover(undefined)}
+                        onClick={() => {
+                          setPicked(picked === moment.key ? undefined : moment.key);
+                        }}
+                      >
+                        <rect x={x} y={y + inset} width={w} height={ROW_H - 2 * inset} rx={1} />
+                        {moment.failed !== undefined && (
+                          <rect
+                            className="traj-fail"
+                            x={x}
+                            y={y + 4}
+                            width={Math.max(w, 3)}
+                            height={2}
+                          />
+                        )}
+                        <rect
+                          className="traj-hit"
+                          x={x - 2}
+                          y={y + 2}
+                          width={w + 4}
+                          height={ROW_H - 4}
+                        />
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+            {axis.ticks.map((item) => (
+              <g key={item.x} className="traj-axis">
+                <line
+                  x1={LABEL_W + item.x}
+                  x2={LABEL_W + item.x}
+                  y1={height - AXIS_H + 2}
+                  y2={height - AXIS_H + 6}
+                />
+                <text x={LABEL_W + item.x} y={height - 6} textAnchor="middle">
+                  {item.label}
+                </text>
+              </g>
+            ))}
+            {brush && (
+              <rect
+                className="traj-brush"
+                x={LABEL_W + brush.x0}
+                y={HEAD_H - 2}
+                width={brush.x1 - brush.x0}
+                height={order.length * ROW_H + 4}
               />
-              <text x={LABEL_W + item.x} y={height - 6} textAnchor="middle">
-                {item.label}
-              </text>
-            </g>
-          ))}
-          {brush && (
-            <rect
-              className="traj-brush"
-              x={LABEL_W + brush.x0}
-              y={HEAD_H - 2}
-              width={brush.x1 - brush.x0}
-              height={order.length * ROW_H + 4}
-            />
-          )}
-          {selection && 'range' in selection && !brush && (
-            <rect
-              className="traj-brush traj-brush--held"
-              x={X(selection.range[0])}
-              y={HEAD_H - 2}
-              width={Math.max(2, X(selection.range[1]) - X(selection.range[0]))}
-              height={order.length * ROW_H + 4}
-            />
-          )}
-        </svg>
-      )}
-      {hover && (
-        <div
-          className="traj-tip"
-          role="tooltip"
-          style={{ left: Math.min(hover.x, Math.max(0, width - 320)), top: hover.y + ROW_H + 4 }}
-        >
-          <span className={`traj-dot traj-dot--${hover.moment.kind}`} />
-          <span className="traj-tip-label">{hover.moment.label}</span>
-          {hover.moment.summary && <span className="traj-tip-summary">{hover.moment.summary}</span>}
-          <span className="traj-tip-when">
-            {hover.moment.ordered ? 'placed by order' : clockOf(hover.moment.at)}
-            {hover.moment.until - hover.moment.at >= 1000 &&
-              ` · ${duration(hover.moment.until - hover.moment.at)}`}
+            )}
+            {selection && 'range' in selection && !brush && (
+              <rect
+                className="traj-brush traj-brush--held"
+                x={X(selection.range[0])}
+                y={HEAD_H - 2}
+                width={Math.max(2, X(selection.range[1]) - X(selection.range[0]))}
+                height={order.length * ROW_H + 4}
+              />
+            )}
+          </svg>
+        )}
+        {hover && (
+          <div
+            className="traj-tip"
+            role="tooltip"
+            style={{ left: Math.min(hover.x, Math.max(0, width - 320)), top: hover.y + ROW_H + 4 }}
+          >
+            <span className={`traj-dot traj-dot--${hover.moment.kind}`} />
+            <span className="traj-tip-label">{hover.moment.label}</span>
+            {hover.moment.summary && (
+              <span className="traj-tip-summary">{hover.moment.summary}</span>
+            )}
+            <span className="traj-tip-when">
+              {hover.moment.ordered ? 'placed by order' : clockOf(hover.moment.at)}
+              {hover.moment.until - hover.moment.at >= 1000 &&
+                ` · ${duration(hover.moment.until - hover.moment.at)}`}
+            </span>
+            {hover.moment.failed !== undefined && (
+              <span className="traj-tip-failed">{hover.moment.failed || 'failed'}</span>
+            )}
+          </div>
+        )}
+        <div className="traj-chips" onMouseLeave={() => setFocus(undefined)}>
+          <span className="traj-in-hand">
+            {inHandText}
+            {(selection || listKind) && (
+              <button
+                type="button"
+                className="btn-text traj-clear"
+                onClick={() => {
+                  choose(undefined);
+                  setListKind(undefined);
+                }}
+                aria-label="Show everything"
+              >
+                ×
+              </button>
+            )}
           </span>
-          {hover.moment.failed !== undefined && (
-            <span className="traj-tip-failed">{hover.moment.failed || 'failed'}</span>
-          )}
-        </div>
-      )}
-      <div className="traj-chips" onMouseLeave={() => setFocus(undefined)}>
-        <span className="traj-in-hand">
-          {inHandText}
-          {(selection || listKind) && (
+          {tallies.map((item) => (
             <button
               type="button"
-              className="btn-text traj-clear"
+              key={item.kind}
+              className={cx('traj-chip', listKind === item.kind && 'traj-chip--on')}
+              onMouseEnter={() => setFocus(item.kind)}
+              onFocus={() => setFocus(item.kind)}
               onClick={() => {
-                choose(undefined);
-                setListKind(undefined);
+                setListKind(listKind === item.kind ? undefined : item.kind);
+                setPicked(undefined);
               }}
-              aria-label="Show everything"
+              aria-pressed={listKind === item.kind}
             >
-              ×
+              <span className={`traj-dot traj-dot--${item.kind}`} />
+              {chipText(item)}
             </button>
-          )}
-        </span>
-        {tallies.map((item) => (
-          <button
-            type="button"
-            key={item.kind}
-            className={cx('traj-chip', listKind === item.kind && 'traj-chip--on')}
-            onMouseEnter={() => setFocus(item.kind)}
-            onFocus={() => setFocus(item.kind)}
-            onClick={() => {
-              setListKind(listKind === item.kind ? undefined : item.kind);
-              setPicked(undefined);
-            }}
-            aria-pressed={listKind === item.kind}
-          >
-            <span className={`traj-dot traj-dot--${item.kind}`} />
-            {chipText(item)}
-          </button>
-        ))}
+          ))}
+        </div>
       </div>
       {pickedMoment && (
         <Picked

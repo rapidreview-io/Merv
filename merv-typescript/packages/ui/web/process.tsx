@@ -265,37 +265,48 @@ export function StageMark({
 
 /**
  * Time in status: one card, a row for each stage top to bottom — the mark, the word, what
- * the page sets beside the word (`aside`: who worked the stage), and how long the record
- * stood there where that is known. The one it stands in is in ink; what it has been through
- * is quieter; what it never reached is a grey ring.
+ * the page sets beside the word (`aside`: who worked the stage), what it sets under it
+ * (`below`: what happened there), and how long the record stood there where that is known.
+ * The one it stands in is in ink; what it has been through is quieter; what it never
+ * reached is a grey ring.
  */
 export function TimeInStatus({
   steps,
   spent,
   aside,
+  below,
 }: {
   steps: Step[];
   spent?: Map<string, number>;
   aside?: (state: string) => ReactNode;
+  below?: (state: string) => ReactNode;
 }) {
   return (
     <section className="stage-card" aria-label="Time in status">
       <p className="stage-card-title">Time in status</p>
       <ol className="stages">
-        {steps.map((step, at) => (
-          <li
-            key={step.state}
-            className={cx('stage', step.current && 'stage--here', !step.entered && 'stage--ahead')}
-            aria-current={step.current ? 'step' : undefined}
-          >
-            <StageGlyph steps={steps} at={at} size={18} ahead={!step.entered} />
-            <span className="stage-word">{words(step.state)}</span>
-            {aside && <span className="stage-aside">{aside(step.state)}</span>}
-            {spent?.has(step.state) && (
-              <span className="stage-time tabular">{elapsed(spent.get(step.state)!)}</span>
-            )}
-          </li>
-        ))}
+        {steps.map((step, at) => {
+          const under = below?.(step.state);
+          return (
+            <li
+              key={step.state}
+              className={cx(
+                'stage',
+                step.current && 'stage--here',
+                !step.entered && 'stage--ahead',
+              )}
+              aria-current={step.current ? 'step' : undefined}
+            >
+              <StageGlyph steps={steps} at={at} size={18} ahead={!step.entered} />
+              <span className="stage-word">{words(step.state)}</span>
+              {aside && <span className="stage-aside">{aside(step.state)}</span>}
+              {under && <div className="stage-thread">{under}</div>}
+              {spent?.has(step.state) && (
+                <span className="stage-time tabular">{elapsed(spent.get(step.state)!)}</span>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -305,15 +316,18 @@ export function TimeInStatus({
 export function StageList({
   graph,
   aside,
+  below,
 }: {
   graph: ProcessGraph;
   aside?: (state: string) => ReactNode;
+  below?: (state: string) => ReactNode;
 }) {
   return (
     <TimeInStatus
       steps={stagesOfGraph(graph)}
       spent={stageTimes(graph, useNow(graph.terminal ? 0 : 30_000))}
       aside={aside}
+      below={below}
     />
   );
 }

@@ -6855,38 +6855,186 @@ button.role-mark--disc {
 .feed-line > .role-mark--disc {
   align-self: start;
 }
-/* On the left a narrow history, on the right the reading, as wide as the page allows. Narrow,
-   the reading comes first and the history under it. */
-.unit-columns {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
+/* What happened at a stage stands under its chips as one short thread, each entry one line:
+   the role's disc, who and what, the document or the verdict, the time at the right edge. */
+.stage-thread {
+  order: 2;
+  flex-basis: 100%;
   min-width: 0;
+  padding: 0 0 var(--space-2) 28px;
 }
-.unit-columns > .unit-reading {
-  order: -1;
+.stage-thread:empty {
+  display: none;
 }
-.unit-columns--wide {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  column-gap: calc(2 * var(--space-5));
+.thread--stage > li {
+  --mid: 10px;
+}
+.thread--stage > li::before {
+  left: 9.5px;
+}
+.thread--stage .feed-entry {
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  padding: 2px 0;
   align-items: start;
 }
-.unit-columns--wide > .unit-reading {
-  order: 0;
+.thread--stage .feed-line {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  font-size: var(--text-sm);
 }
-/* With no history yet, the reading has the whole width. */
-.unit-columns--wide > .unit-reading:only-child {
-  grid-column: 1 / -1;
+.thread--stage .feed-mark {
+  height: 20px;
 }
-.unit-history .thread {
+.thread--stage .role-mark--disc {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
+.thread--stage .feed-text,
+.thread--stage .feed-by,
+.thread--stage .thread-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+  min-height: 20px;
+  line-height: 20px;
+  font-size: var(--text-sm);
+}
+.thread--stage .feed-by,
+.thread--stage .thread-body {
+  display: contents;
+}
+.thread--stage .feed-author {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.thread--stage .thread-role {
+  margin-right: 0;
+}
+.thread--stage .feed-when {
+  order: 9;
+  margin-left: auto;
+}
+.thread--stage .thread-body > p {
+  color: var(--muted);
+}
+.thread--stage .thread-doc,
+.thread--stage .verdict-line {
+  min-height: 22px;
+}
+/* The stages have the sidebar's width, not a card's measure. */
+.running-sidebar--unit .stage-card {
   max-width: none;
 }
-.unit-history .feed-entry {
-  padding: var(--space-2) 0;
+/* Maximized, the stages run sideways: a column each, its time on the word's line, its chips
+   and its thread under them, and the rule over it says where the record stands. */
+.running-plane[data-full] .running-sidebar--unit .stage-card {
+  padding: 0;
+  border: 0;
+  background: none;
 }
-.unit-history .feed-author {
+.running-plane[data-full] .running-sidebar--unit .stage-card-title {
+  display: none;
+}
+.running-plane[data-full] .running-sidebar--unit .stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+.running-plane[data-full] .running-sidebar--unit .stage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'glyph word time' 'aside aside aside' 'thread thread thread';
+  align-items: center;
+  align-content: start;
+  gap: var(--space-1) 10px;
+  min-height: 0;
+  padding-top: var(--space-2);
+  border-top: 2px solid var(--faint);
+}
+.running-plane[data-full] .running-sidebar--unit .stage--here {
+  border-top-color: var(--text);
+}
+.running-plane[data-full] .running-sidebar--unit .stage--ahead {
+  border-top-color: var(--line);
+}
+.running-plane[data-full] .running-sidebar--unit :is(.stage-time, .stage-aside, .stage-thread) {
+  margin: 0;
+  padding: 0;
+}
+.running-plane[data-full] .running-sidebar--unit .stage > .stage-glyph {
+  grid-area: glyph;
+}
+.running-plane[data-full] .running-sidebar--unit .stage-word {
+  grid-area: word;
+}
+.running-plane[data-full] .running-sidebar--unit .stage-time {
+  grid-area: time;
+}
+.running-plane[data-full] .running-sidebar--unit .stage-aside {
+  grid-area: aside;
+}
+.running-plane[data-full] .running-sidebar--unit .stage-thread {
+  grid-area: thread;
+}
+/* The tabs stay at the top of the view once the stages have scrolled away, and the unit's
+   name and its stages as dots then stand at their end, where the strip has room. */
+.unit-top {
+  height: 0;
+}
+.unit-pin {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg);
+}
+.unit-tabs {
+  flex-wrap: nowrap;
+}
+.unit-folded {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-left: auto;
+  padding-left: var(--space-3);
   font-size: var(--text-sm);
+  font-weight: 500;
+  visibility: hidden;
+}
+.unit-pin--folded .unit-folded {
+  visibility: visible;
+}
+.unit-folded-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unit-folded-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+/* Beside the page the strip has no room for the name: the dots alone say where it stands. */
+@container running-panel (max-width: 600px) {
+  .unit-folded-name {
+    display: none;
+  }
+}
+.unit-folded-dots > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.unit-folded-dots > .unit-dot--here {
+  background: var(--text);
+}
+.unit-folded-dots > .unit-dot--ahead {
+  background: var(--line-strong);
 }
 .unit-key-head {
   display: flex;
@@ -7029,10 +7177,10 @@ ul.unit-rows {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 10rem) 64px 72px;
 }
 /* Narrow, a row keeps its name and its quiet facts; the group head already says the stage. */
-.unit-columns:not(.unit-columns--wide) .unit-row--file {
+.running-plane:not([data-full]) .unit-row--file {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
-.unit-columns:not(.unit-columns--wide) .unit-row-by {
+.running-plane:not([data-full]) .unit-row-by {
   display: none;
 }
 .unit-row:hover .unit-row-name {
@@ -7864,6 +8012,18 @@ html.modal-open {
   --traj-run: var(--kind-amber);
   --traj-job: var(--stage-review);
   --traj-merv: var(--kind-slate);
+}
+/* The lanes and the chips stay in view under the pinned tabs while the moments scroll. */
+.traj-pin {
+  position: sticky;
+  top: var(--unit-pin, 0px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 72vh;
+  overflow-y: auto;
+  background: var(--bg);
 }
 .traj-svg {
   display: block;

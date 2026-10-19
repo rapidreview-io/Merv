@@ -1,4 +1,13 @@
-import { useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type {
   RunningAttention,
@@ -14,7 +23,8 @@ import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
 import { clock } from '../liveness';
 import { Markdown } from '../markdown';
-import { Thread, historyEntries, type Handed, type Mark } from '../thread';
+import { Thread, historyEntries, type Entry, type Handed, type Mark } from '../thread';
+import { stagesOfGraph } from '../process';
 import { ArtifactBody, bytes, fileType } from './artifacts';
 import { Act } from './running-panel';
 import { Reading, Target } from './running-phrase';
@@ -32,14 +42,15 @@ import {
 } from './threads';
 
 /**
- * A unit of work on the Work page: its stages with the agents on them, then two columns — on
- * the left what happened, as a narrow history; on the right three tabs. Document is the one
- * thing to read, the unit's key artifact, whole; Agents, every thread of the unit by stage,
- * one read in place; Artifacts, every file of the unit's, one previewed in place. Its owner
- * says which artifact is key, what each entry of the history was and which files are its own
- * (RunningUnit); this page knows no workflow and names none of its states. A document an entry
- * handed in opens in the Document tab in the key artifact's place, until the way back. Each
- * entry's role disc opens the thread that did it.
+ * A unit of work on the Work page: its stages, each with the agents on it and what happened
+ * there as one short thread, then three tabs that have the rest of the page. Document is the
+ * one thing to read, the unit's key artifact, whole; Agents, every thread of the unit by
+ * stage, one read in place; Artifacts, every file of the unit's, one previewed in place. Its
+ * owner says which artifact is key, what each entry of the history was and which files are
+ * its own (RunningUnit); this page knows no workflow and names none of its states. A document
+ * an entry handed in opens in the Document tab in the key artifact's place, until the way
+ * back. Each entry's role disc opens the thread that did it. The tabs stay at the top of the
+ * view once the stages have scrolled away, and the unit's name then stands at their end.
  */
 
 type Reference = Pick<RunningUnitEntry, 'role' | 'stage' | 'instance' | 'at'>;
@@ -316,6 +327,71 @@ const remembered = (kind: string): Tab =>
   }) ?? 'document';
 const remember = (kind: string, tab: Tab) => safely(() => localStorage.setItem(tabKey(kind), tab));
 
+/**
+ * The history under its stages: an entry under the stage its owner named, a quiet line under
+ * the state the crossing it records reached, and anything else under the stage before it.
+ */
+function byStage(entries: Entry[], graph: ProcessGraph): Map<string, Entry[]> {
+  const reached = new Map(
+    graph.edges.flatMap((edge) => edge.traversals.map((step) => [step.at, edge.to] as const)),
+  );
+  const staged = new Map<string, Entry[]>();
+  let last = graph.nodes.find((node) => node.initial)?.state ?? graph.state;
+  for (const entry of entries) {
+    last = entry.stage ?? (entry.at && reached.get(entry.at)) ?? last;
+    staged.set(last, [...(staged.get(last) ?? []), entry]);
+  }
+  return staged;
+}
+
+/** True once the element has scrolled out of view above, in whichever scroller holds it. */
+function useFolded(ref: RefObject<HTMLElement | null>) {
+  const [folded, setFolded] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setFolded(!entry!.isIntersecting));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+  return folded;
+}
+
+/** The element's height in px, kept current, for what stands pinned under it. */
+function useHeight(ref: RefObject<HTMLElement | null>) {
+  const [height, setHeight] = useState(0);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const read = () => setHeight(element.getBoundingClientRect().height);
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+  return height;
+}
+
+/** The unit's name and where it stands, at the end of the pinned tabs once its head is gone. */
+function Folded({ title, graph }: { title: string; graph?: ProcessGraph }) {
+  return (
+    <span className="unit-folded">
+      <span className="unit-folded-name">{title}</span>
+      {graph && (
+        <span className="unit-folded-dots" role="img" aria-label={words(graph.state)}>
+          {stagesOfGraph(graph).map((step) => (
+            <i
+              key={step.state}
+              className={cx(step.current && 'unit-dot--here', !step.entered && 'unit-dot--ahead')}
+            />
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function UnitView({
   unit,
   graph,
@@ -334,7 +410,7 @@ export function UnitView({
   title: string;
   /** What needs a person, where the owner said so: one line at the head of the reading. */
   attention?: RunningAttention;
-  /** Whether the page gives the unit its whole width, the history beside the reading. */
+  /** Whether the page gives the unit its whole width. */
   wide: boolean;
   /** Narrow, the reading is cut short and this gives it the page. */
   onRead?(): void;
@@ -395,29 +471,47 @@ export function UnitView({
     agents: agents.length,
     artifacts: files?.length,
   };
+  const onDocument = (handed: Handed) => {
+    choose('document');
+    setDocument(handed.id === (showing ?? key?.artifact)?.id ? undefined : handed);
+  };
+  const shownDocument = tab === 'document' ? (showing ?? key?.artifact)?.id : undefined;
+  const staged = graph ? byStage(entries, graph) : undefined;
+  // The stages scroll away like the rest of the head; the tabs then stay at the top of the
+  // view, and what the Agents tab pins stands under them.
+  const top = useRef<HTMLDivElement>(null);
+  const pin = useRef<HTMLDivElement>(null);
+  const folded = useFolded(top);
+  const pinned = useHeight(pin);
   return (
     <>
+      <div ref={top} className="unit-top" aria-hidden="true" />
       {graph && (
-        <StageThreads graph={graph} threads={threads} loadedAt={loadedAt} onOpen={setOpened} />
+        <StageThreads
+          graph={graph}
+          threads={threads}
+          loadedAt={loadedAt}
+          onOpen={setOpened}
+          below={(state) => {
+            const here = staged!.get(state);
+            return here?.length ? (
+              <Thread entries={here} onDocument={onDocument} shown={shownDocument} compact />
+            ) : null;
+          }}
+        />
       )}
-      <div className={cx('unit-columns', wide && 'unit-columns--wide')}>
-        {entries.length > 0 && (
-          <section className="unit-history" aria-label="History">
-            <h3 className="running-section-head">
-              <span className="running-section-title">History</span>
-            </h3>
-            <Thread
-              entries={entries}
-              onDocument={(handed) => {
-                choose('document');
-                setDocument(handed.id === (showing ?? key?.artifact)?.id ? undefined : handed);
-              }}
-              shown={tab === 'document' ? (showing ?? key?.artifact)?.id : undefined}
-            />
-          </section>
-        )}
-        <section className="unit-reading" aria-label={capital(tab)}>
-          {offered.length > 1 && (
+      {!graph && entries.length > 0 && (
+        <section className="unit-history" aria-label="History">
+          <Thread entries={entries} onDocument={onDocument} shown={shownDocument} />
+        </section>
+      )}
+      <section
+        className="unit-reading"
+        aria-label={capital(tab)}
+        style={{ '--unit-pin': `${pinned}px` } as CSSProperties}
+      >
+        {offered.length > 1 && (
+          <div ref={pin} className={cx('unit-pin', folded && 'unit-pin--folded')}>
             <div className="tabs tabs--strip unit-tabs" role="group" aria-label="Unit">
               {offered.map((each) => (
                 <button
@@ -430,65 +524,59 @@ export function UnitView({
                   {counts[each] !== undefined && <span className="state-n">{counts[each]}</span>}
                 </button>
               ))}
+              <Folded title={title} graph={graph} />
             </div>
-          )}
-          {tab === 'agents' ? (
-            <Agents
-              graph={graph!}
-              threads={agents}
-              loadedAt={loadedAt}
-              opened={agent}
-              onOpen={setAgent}
-            />
-          ) : tab === 'artifacts' && files ? (
-            <Files files={files} opened={file} onOpen={setFile} />
-          ) : (
-            <>
-              {ask && <Ask attention={ask} />}
-              {showing ? (
+          </div>
+        )}
+        {tab === 'agents' ? (
+          <Agents
+            graph={graph!}
+            threads={agents}
+            loadedAt={loadedAt}
+            opened={agent}
+            onOpen={setAgent}
+          />
+        ) : tab === 'artifacts' && files ? (
+          <Files files={files} opened={file} onOpen={setFile} />
+        ) : (
+          <>
+            {ask && <Ask attention={ask} />}
+            {showing ? (
+              <>
+                <header className="unit-key-head">
+                  <button type="button" className="btn-text" onClick={() => setDocument(undefined)}>
+                    ← Current
+                  </button>
+                  <span className="unit-key-label">{showing.title}</span>
+                </header>
+                <div className={cx('unit-body', !wide && 'unit-body--cut')}>
+                  <ArtifactBody artifactId={showing.id} />
+                </div>
+              </>
+            ) : (
+              key && (
                 <>
                   <header className="unit-key-head">
-                    <button
-                      type="button"
-                      className="btn-text"
-                      onClick={() => setDocument(undefined)}
-                    >
-                      ← Current
-                    </button>
-                    <span className="unit-key-label">{showing.title}</span>
+                    <span className="unit-key-label">{key.label}</span>
+                    <StatusPill value={key.state} />
                   </header>
-                  <div className={cx('unit-body', !wide && 'unit-body--cut')}>
-                    <ArtifactBody artifactId={showing.id} />
+                  <div
+                    className={cx('unit-body', !wide && key.text === undefined && 'unit-body--cut')}
+                  >
+                    <Body of={key} />
                   </div>
                 </>
-              ) : (
-                key && (
-                  <>
-                    <header className="unit-key-head">
-                      <span className="unit-key-label">{key.label}</span>
-                      <StatusPill value={key.state} />
-                    </header>
-                    <div
-                      className={cx(
-                        'unit-body',
-                        !wide && key.text === undefined && 'unit-body--cut',
-                      )}
-                    >
-                      <Body of={key} />
-                    </div>
-                  </>
-                )
-              )}
-              {!wide && onRead && (showing || key?.artifact || key?.parts || key?.items) && (
-                <button type="button" className="btn-text unit-read" onClick={onRead}>
-                  Read in full
-                </button>
-              )}
-              {!showing && unit.checks && unit.checks.length > 0 && <Checks checks={unit.checks} />}
-            </>
-          )}
-        </section>
-      </div>
+              )
+            )}
+            {!wide && onRead && (showing || key?.artifact || key?.parts || key?.items) && (
+              <button type="button" className="btn-text unit-read" onClick={onRead}>
+                Read in full
+              </button>
+            )}
+            {!showing && unit.checks && unit.checks.length > 0 && <Checks checks={unit.checks} />}
+          </>
+        )}
+      </section>
       {details}
       {thread && (
         <ThreadDialog

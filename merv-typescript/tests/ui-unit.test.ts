@@ -1,6 +1,6 @@
 /**
  * A unit of work on the Work page: its card counts while it is worked, and its sidebar draws
- * its stages, then its history beside the one thing to read. Each owner says which artifact
+ * its stages, each with what happened there, over the one thing to read. Each owner says which artifact
  * that is in which state; the page only draws what it is told, and names no state of any
  * workflow. Each test states one thing a person reading the page relies on.
  */
@@ -296,14 +296,19 @@ test('the reading is the key artifact its owner names, under its label and its s
   assert.equal(label(), 'Current plan');
   assert.match(reading().querySelector('.unit-key-head')!.textContent!, /draft/i);
   assert.match(reading().textContent!, /Ten seeds per arm/);
-  // The stages and their agents stand above the two columns, the history on the left.
+  // The stages and their agents stand above the reading, and what happened at each stage
+  // is a thread under it: the submission under Planned, the verdict and the return under
+  // Design review, where they were made.
   assert.ok($('.stage-card .agent-chip'));
-  assert.ok($('.unit-columns--wide > .unit-history'));
-  // Who did each thing, by name, and what the producer handed in.
-  const told = $('.unit-history')!.textContent!;
-  assert.match(told, /Codex producer/);
-  assert.match(told, /Submitted the design/);
-  assert.match(told, /Returned to planned/);
+  assert.equal($('.unit-history'), null);
+  const under = (stage: string) =>
+    all('.stage')
+      .find((row) => row.querySelector('.stage-word')?.textContent?.toLowerCase() === stage)
+      ?.querySelector('.stage-thread')?.textContent ?? '';
+  assert.match(under('planned'), /Codex producer/);
+  assert.match(under('planned'), /Submitted the design/);
+  assert.match(under('design review'), /Returned to planned/);
+  assert.doesNotMatch(under('planned'), /Returned to planned/);
 });
 
 test('a review in the history is its verdict and its squares, and its words open on a press', async (t) => {
@@ -344,7 +349,7 @@ test('a document in the history takes the reading’s place, and ← Current bri
 test('an entry’s role mark opens the thread of its stage', async (t) => {
   t.after(unmount);
   await sidebar(panel({ key: { label: 'Current plan', text: 'Draft to come.' }, history }));
-  const marks = all('.unit-history .role-mark').map((mark) => mark.textContent);
+  const marks = all('.stage-thread .role-mark').map((mark) => mark.textContent);
   assert.deepEqual(marks, ['P', 'R']);
   await press(button('Producer thread'));
   assert.equal($('dialog h2')!.textContent, 'Producer · Planned · dormant');
@@ -370,8 +375,8 @@ test('everything but the stages and the reading folds under one closed Details',
   for (const title of ['Waits on', 'Code', 'Owner', 'merv/work/wf_1'])
     assert.ok(details.textContent!.includes(title), `${title} is under Details`);
   assert.equal(details.querySelector('.stage-card'), null);
-  // With no history yet, nothing stands in for it.
-  assert.equal($('.unit-history'), null);
+  // With no history yet, no stage carries a thread.
+  assert.equal(all('.stage-thread').length, 0);
   assert.ok($('a[href="/experiments/wf_1"]'), 'Open record stays');
 });
 
@@ -431,7 +436,10 @@ test('the reading opens on its document, and its tabs count its agents and its f
   assert.equal(label(), 'Current plan');
   assert.match(reading().textContent!, /Ten seeds per arm/);
   // Nothing in the default view is an id.
-  assert.doesNotMatch($('.unit-columns')!.textContent!, /art_|thr_|ses_|wf_1/);
+  assert.doesNotMatch(
+    $('.stage-card')!.textContent! + $('.unit-reading')!.textContent!,
+    /art_|thr_|ses_|wf_1/,
+  );
 });
 
 test('the tab chosen is kept for the kind, and a kind without one reads its document', async (t) => {

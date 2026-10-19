@@ -34,6 +34,8 @@ export type Entry =
   | {
       kind: 'post';
       key: string;
+      /** The stage the entry belongs under, where its owner said one. */
+      stage?: string;
       role: 'Producer' | 'Reviewer';
       mark?: Mark;
       document?: Handed;
@@ -49,6 +51,7 @@ export type Entry =
   | {
       kind: 'line';
       key: string;
+      stage?: string;
       said: string;
       who?: string;
       at?: string;
@@ -77,6 +80,7 @@ export function historyEntries(
       return {
         kind: 'post',
         key,
+        stage: item.stage,
         role: item.role === 'producer' ? 'Producer' : 'Reviewer',
         who,
         at: item.at,
@@ -89,6 +93,7 @@ export function historyEntries(
     return {
       kind: 'line',
       key,
+      stage: item.stage,
       said: item.said ?? '',
       who,
       at: item.at,
@@ -170,15 +175,18 @@ function VerdictLine({ verdict }: { verdict: Judged }) {
  * first entry to the last, so a loop reads as one line of conversation. Where a post's
  * thread is known its role's disc stands for the initials and opens it; a document it
  * handed in is the way to read it (`onDocument`), pressed while it is the one `shown`.
+ * `compact` is the thread under one stage of the stage card: each entry one line.
  */
 export function Thread({
   entries,
   onDocument,
   shown,
+  compact,
 }: {
   entries: Entry[];
   onDocument?(document: Handed): void;
   shown?: string;
+  compact?: boolean;
 }) {
   const artifacts = useArtifacts();
   const handed = (file: Handed) =>
@@ -197,7 +205,7 @@ export function Thread({
       <Evidence key={file.id} artifactId={file.id} artifact={artifacts.get(file.id)} meta />
     );
   return (
-    <ol className="thread">
+    <ol className={cx('thread', compact && 'thread--stage')}>
       {entries.map((entry) =>
         entry.kind === 'post' ? (
           <li className="feed-entry" key={entry.key}>
@@ -211,7 +219,10 @@ export function Thread({
             <div className="feed-text">
               <p className="feed-by">
                 {entry.who && <span className="feed-author">{entry.who}</span>}
-                {(!entry.mark || !entry.who) && <span className="thread-role">{entry.role}</span>}
+                {/* Under a stage the disc's letter is the role; the word is kept where a name is not. */}
+                {(!entry.mark || (!entry.who && !compact)) && (
+                  <span className="thread-role">{entry.role}</span>
+                )}
                 <Ago at={entry.at} className="feed-when" />
               </p>
               <div className="thread-body">
