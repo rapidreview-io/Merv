@@ -775,3 +775,4 @@ and required no active Pi turns or worker sessions. To revert only this provider
 use the newer full release's image/Compose and set `MERV_PI_MODEL_API_KEY_ENV` back to
 `MERV_FLEET_MODEL_API_KEY`; preserve current hosted pins and other environment settings.
 | 2026-10-19T22:26Z | `20261019T221704Z-96ace04c-fa4c9d9f94a7` | `ec850b192d7a` | ? | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/main-77h2O0cC.js 200; /ui/assets/styles-bTieqY2J.js 200; /ui/assets/styles-CKJ03Sp6.css 200 | previous image `sha256:5b7caa0633f0b0e3d46839b3f7555d3096af42dd0a604e83d6de9a7e4091969f` |
+| 2026-10-19T23:02Z | `20261019T225411Z-adb8cb83-52ab981960bd` | `56e65bfd68cf` | ? | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/main-77h2O0cC.js 200; /ui/assets/styles-bTieqY2J.js 200; /ui/assets/styles-CKJ03Sp6.css 200 | previous image `merv-typescript:20261019T221704Z-96ace04c-fa4c9d9f94a7` |
