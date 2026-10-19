@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { withoutMatchingHeading } from './artifact-heading';
 import { Hash } from 'fast-sha256';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { call, readOnly, refreshTools, useScopeVersion, useTool } from '../api';
@@ -763,6 +764,7 @@ export function FileView({
   text,
   blob,
   source = false,
+  hideMatchingHeading = false,
   onUnread,
 }: {
   type: FileType;
@@ -774,6 +776,8 @@ export function FileView({
   blob?: Blob;
   /** Shown as the text its author typed rather than as what it reads as. */
   source?: boolean;
+  /** Embedded reader whose header already names the file. */
+  hideMatchingHeading?: boolean;
   /** Told once a file that should parse turns out not to: what is shown is already its source. */
   onUnread?: () => void;
 }) {
@@ -822,7 +826,7 @@ export function FileView({
   if (reads === 'markdown')
     return (
       <div className="doc-read">
-        <Markdown source={text} />
+        <Markdown source={hideMatchingHeading ? withoutMatchingHeading(text, title) : text} />
       </div>
     );
   if (reads === 'mermaid') return <Mermaid source={text} />;
@@ -846,12 +850,14 @@ function InlineArtifact({
   type,
   title,
   source,
+  hideMatchingHeading,
   onUnread,
 }: {
   artifactId: string;
   type: FileType;
   title: string;
   source: boolean;
+  hideMatchingHeading?: boolean;
   onUnread: () => void;
 }) {
   const read = useTool<ArtifactContent>('artifact.read', { artifactId });
@@ -868,6 +874,7 @@ function InlineArtifact({
       text={read.data.encoding === 'utf8' ? read.data.content : undefined}
       blob={blob}
       source={source}
+      hideMatchingHeading={hideMatchingHeading}
       onUnread={onUnread}
     />
   );
@@ -959,9 +966,15 @@ interface FileProps {
   metadata?: Artifact;
   /** Who has already said the title: the file's own `page`, or the disclosure that `cited` it. */
   named?: 'page' | 'cited';
+  /** Opt-in reader chrome; other artifact views retain their existing headers. */
+  embedded?: {
+    header: (title: string, actions: ReactNode) => ReactNode;
+    hideMatchingHeading?: boolean;
+    before?: ReactNode;
+  };
 }
 
-function FileBody({ artifactId, metadata, named }: FileProps) {
+function FileBody({ artifactId, metadata, named, embedded }: FileProps) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
   const [finding, setFinding] = useState(false);
@@ -969,7 +982,17 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
   const meta = useTool<Artifact>(metadata ? null : 'artifact.get', { artifactId });
   const markUnread = useCallback(() => setUnread(true), []);
   const artifact = metadata ?? meta.data;
-  if (!artifact) return <LoadState loading={meta.loading} error={meta.error} />;
+  if (!artifact) {
+    const pending = <LoadState loading={meta.loading} error={meta.error} />;
+    return embedded ? (
+      <div className="doc-frame file-embedded">
+        {embedded.header(meta.loading ? 'Loading file…' : 'File unavailable', null)}
+        {pending}
+      </div>
+    ) : (
+      pending
+    );
+  }
   const type = fileType(artifact);
   const inline = artifact.size <= 2_000_000;
   const sourced =
@@ -988,12 +1011,38 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
       raw={inline && sourced ? { on: source, flip: () => setSource(!source) } : undefined}
     />
   );
+  const body = (
+    <>
+      {embedded?.before}
+      {inline && (
+        // A file that fails to draw is still the file: its head, its source and its copy stand.
+        <ErrorBoundary key={scope} reset={source}>
+          <InlineArtifact
+            artifactId={artifactId}
+            type={type}
+            title={artifact.title}
+            source={source}
+            hideMatchingHeading={embedded?.hideMatchingHeading}
+            onUnread={markUnread}
+          />
+        </ErrorBoundary>
+      )}
+      {/* A single file is downloaded from ⋯; a collection lists its files under it. */}
+      {artifact.files && <Take artifact={artifact} />}
+    </>
+  );
   return (
-    <div className={named === 'page' ? 'file-page' : 'doc-frame'}>
+    <div
+      className={
+        embedded ? 'doc-frame file-embedded' : named === 'page' ? 'file-page' : 'doc-frame'
+      }
+    >
       {/* Wherever a file is shown it has the same head: its name, then ⋯ for everything
           else. On its own page the name is the heading and Files is the way back; where a
           disclosure above already named it, the head is ⋯ alone. */}
-      {named === 'page' ? (
+      {embedded ? (
+        embedded.header(artifact.title, menu)
+      ) : named === 'page' ? (
         <header className="file-page-head">
           <BackLink home="/artifacts" label="Files" />
           <h1 className="file-page-title" title={artifact.title}>
@@ -1013,20 +1062,7 @@ function FileBody({ artifactId, metadata, named }: FileProps) {
           {menu}
         </div>
       )}
-      {inline && (
-        // A file that fails to draw is still the file: its head, its source and its copy stand.
-        <ErrorBoundary key={scope} reset={source}>
-          <InlineArtifact
-            artifactId={artifactId}
-            type={type}
-            title={artifact.title}
-            source={source}
-            onUnread={markUnread}
-          />
-        </ErrorBoundary>
-      )}
-      {/* A single file is downloaded from ⋯; a collection lists its files under it. */}
-      {artifact.files && <Take artifact={artifact} />}
+      {embedded ? <div className="file-embedded-body">{body}</div> : body}
     </div>
   );
 }

@@ -841,6 +841,160 @@ test('a complete experiment shows its answer, the report pages and its files', a
   assert.equal(status.querySelector('.cx-deliverables button')!.textContent, 'Download PDF');
 });
 
+test('a paid experiment mounts the app’s own Agents and Artifacts tabs, signed in as the view the service issues', async (t) => {
+  t.after(async () => {
+    sessionStorage.removeItem('merv:token');
+    await unmount();
+  });
+  boot({ plan: plan(), files: listing(), commands: [] });
+  const minute = (n: number) => new Date(Date.now() - (60 - n) * 60_000).toISOString();
+  const node = (state: string, current = false) => ({
+    state,
+    initial: state === 'planning',
+    terminal: state === 'complete' || state === 'failed',
+    current,
+    entries: 0,
+    firstEnteredAt: null,
+    blockers: [],
+  });
+  serve(`${BASE}/view`, {
+    body: {
+      token: 'view-token',
+      projectId: 'project_ce',
+      experimentId: 'exp_ce',
+      actorId: 'actor_view',
+      graph: {
+        instanceId: 'exp_ce',
+        workflow: 'service_experiment',
+        version: 3,
+        revision: 4,
+        state: 'running',
+        currentGate: 'running',
+        terminal: false,
+        dependencies: [],
+        nodes: [node('planning'), node('running', true), node('complete')],
+        edges: [
+          {
+            from: 'planning',
+            to: 'running',
+            action: 'confirm_payment',
+            traversals: [],
+            status: null,
+            tool: null,
+            blockers: [],
+          },
+          {
+            from: 'running',
+            to: 'complete',
+            action: 'accept_results',
+            traversals: [],
+            status: null,
+            tool: null,
+            blockers: [],
+          },
+        ],
+      },
+    },
+  });
+  serve('/sessions/threads?instanceId=exp_ce', {
+    body: {
+      threads: [
+        {
+          id: 'thr_run',
+          instanceId: 'exp_ce',
+          state: 'running',
+          role: 'producer',
+          status: 'dormant',
+          visits: [
+            {
+              sessionId: 'ses_run',
+              status: 'released',
+              offeredAt: minute(1),
+              startedAt: minute(1),
+              endedAt: minute(30),
+              outcome: 'submitted',
+              launched: true,
+              resumed: false,
+              harness: 'claude',
+              runnerId: 'fleet-1',
+              hasConversation: true,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  serve('/sessions/threads/thr_run/conversation', { body: { visits: [], before: null } });
+  serve('/tools/artifact.list', {
+    body: {
+      result: [
+        {
+          id: 'art_curve',
+          projectId: 'project_ce',
+          title: 'grokking-curve.png',
+          mediaType: 'image/png',
+          size: 2048,
+          sha256: 'a'.repeat(64),
+          createdAt: minute(20),
+          createdBy: 'actor_view',
+        },
+        {
+          id: 'art_log',
+          projectId: 'project_ce',
+          title: 'train.log',
+          mediaType: 'text/plain',
+          size: 512,
+          sha256: 'b'.repeat(64),
+          createdAt: minute(10),
+          createdBy: 'actor_view',
+        },
+      ],
+    },
+  });
+  serve(BASE, {
+    body: {
+      state: 'running',
+      submissionEmailSent: true,
+      progress: {
+        stage: 'running',
+        attempt: 1,
+        maxAttempts: 2,
+        startedAt: minute(0),
+        maxWallMs: 24 * 3600_000,
+        compute: null,
+        now: 'Training',
+        step: null,
+        results: [],
+        activity: [],
+        entered: { planning: minute(0), running: minute(1) },
+      },
+    },
+  });
+  await open();
+  await settle(80);
+  const status = document.querySelector('.cx-run')!;
+  // The view signs the page into the app's own client, over the request's own project.
+  assert.equal(sessionStorage.getItem('merv:token'), 'view-token');
+  const tabs = () => [...status.querySelectorAll('.unit-tabs button')].map((b) => b.textContent);
+  assert.deepEqual(tabs(), ['Agents', 'Artifacts'], 'no report yet, so no Document');
+  // Agents is the record page's trajectory: the thread is a lane under its stage.
+  await act(async () => (status.querySelector('.unit-tabs button') as HTMLButtonElement).click());
+  await settle(60);
+  assert.deepEqual(
+    [...status.querySelectorAll('.traj-when')].map((lane) => lane.textContent),
+    ['Running · 29m 0s'],
+  );
+  // Artifacts is the record page's file list, newest first, over the project's files.
+  await act(async () =>
+    ([...status.querySelectorAll('.unit-tabs button')][1] as HTMLButtonElement).click(),
+  );
+  await settle(40);
+  assert.deepEqual(
+    [...status.querySelectorAll('.unit-row-name')].map((row) => row.textContent),
+    ['grokking-curve.png', 'train.log'],
+  );
+});
+
 test('experiment URL remains copyable with its private capability after sign-in', async (t) => {
   t.after(async () => {
     await unmount();

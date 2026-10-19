@@ -299,16 +299,25 @@ test('the reading is the key artifact its owner names, under its label and its s
   // The stages and their agents stand above the reading, and what happened at each stage
   // is a thread under it: the submission under Planned, the verdict and the return under
   // Design review, where they were made.
-  assert.ok($('.stage-card .agent-chip'));
+  // Every stage worked has entries that name the role, so no chip says it again.
+  assert.equal($('.stage-card .agent-chip'), null);
   assert.equal($('.unit-history'), null);
   const under = (stage: string) =>
     all('.stage')
       .find((row) => row.querySelector('.stage-word')?.textContent?.toLowerCase() === stage)
       ?.querySelector('.stage-thread')?.textContent ?? '';
-  assert.match(under('planned'), /Codex producer/);
-  assert.match(under('planned'), /Submitted the design/);
+  // One grid row an entry: the role, then the document handed in, never the sentence too.
+  assert.match(under('planned'), /Producer/);
+  assert.match(under('planned'), /plan-v1\.md/);
+  assert.doesNotMatch(under('planned'), /Submitted the design/);
+  assert.match(under('design review'), /Reviewer/);
+  assert.match(under('design review'), /needs changes/);
   assert.match(under('design review'), /Returned to planned/);
   assert.doesNotMatch(under('planned'), /Returned to planned/);
+  assert.deepEqual(
+    all('.stage-row').map((row) => row.querySelector('.stage-who')?.textContent),
+    ['Producer', 'Reviewer', ''],
+  );
 });
 
 test('a review in the history is its verdict and its squares, and its words open on a press', async (t) => {

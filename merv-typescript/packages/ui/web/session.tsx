@@ -45,7 +45,7 @@ interface Session {
   chooseProject(): void;
   signOut(): void;
 }
-const SessionContext = createContext<Session | null>(null);
+export const SessionContext = createContext<Session | null>(null);
 /** What an account-wide page (the platform admin) knows of its sign-in: who, and the way out. */
 const AccountContext = createContext<Pick<Session, 'account' | 'signOut'> | null>(null);
 export const useAccount = () => useContext(AccountContext);

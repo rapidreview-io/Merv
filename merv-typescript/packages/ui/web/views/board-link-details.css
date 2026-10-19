@@ -27,7 +27,7 @@
   font-size: 12px;
   color: var(--text-secondary-color, #707078);
 }
-.board-link-details header div {
+.board-link-details header > .board-reference-actions {
   display: flex;
   gap: 8px;
 }
@@ -170,4 +170,43 @@
   --bg-soft: #313139;
   --text: #f0f0f2;
   color-scheme: dark;
+}
+/* Embedded artifacts share one filename/actions row with the reader controls. */
+.board-link-details .file-embedded {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: inherit;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.board-link-details .file-embedded > header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--color-gray-20, #e8e8ed);
+  margin-bottom: 12px;
+}
+.board-reference-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.board-reference-actions {
+  flex-shrink: 0;
+}
+.board-link-details .file-embedded-body {
+  min-height: 0;
+  overflow: auto;
+  max-height: 380px;
+  padding: 0 10px 14px;
+}
+.board-link-details.is-expanded .file-embedded {
+  flex: 1;
+}
+.board-link-details.is-expanded .file-embedded-body {
+  max-height: none;
+  flex: 1;
 }

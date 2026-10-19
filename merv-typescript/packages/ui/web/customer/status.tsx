@@ -1,7 +1,76 @@
 import { useEffect, useState } from 'react';
-import { cx, useNow } from '../components';
+import type { ProcessGraph } from '@merv/workflows/models';
+import { setProject, setToken, type Actor, type Project } from '../api';
+import { cx, useArtifacts, useNow } from '../components';
 import { TimeInStatus, type Step } from '../process';
+import { SessionContext } from '../session';
+import { Agents, Files } from '../views/unit';
+import { useThreadList } from '../views/threads';
 import { customerRequest } from './api';
+
+/** What the page reads the experiment's agents and files with (`GET …/view`). */
+interface View {
+  token: string;
+  projectId: string;
+  experimentId: string;
+  actorId: string;
+  graph: ProcessGraph;
+}
+/**
+ * The view, read once the experiment is paid for and signed into the app's own API client,
+ * so the record page's Agents and Artifacts tabs mount here unchanged. Null while it is not
+ * there yet, or where the page cannot get one: the Document alone is then the page.
+ */
+function useView(wanted: boolean): View | null {
+  const [view, setView] = useState<View | null>(null);
+  useEffect(() => {
+    if (!wanted || view) return;
+    let live = true;
+    customerRequest<View>('/view')
+      .then((got) => {
+        if (!live) return;
+        setToken(got.token);
+        setProject(got.projectId);
+        setView(got);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [wanted, view]);
+  return view;
+}
+
+/** The record page's Agents tab, over the experiment's own threads. */
+function AgentsTab({ view }: { view: View }) {
+  const { threads, loadedAt } = useThreadList(view.experimentId);
+  const [opened, setOpened] = useState<string>();
+  return (
+    <Agents
+      graph={view.graph}
+      threads={threads}
+      loadedAt={loadedAt}
+      opened={opened}
+      onOpen={setOpened}
+    />
+  );
+}
+
+/** The record page's Artifacts tab, over every file of the experiment's project. */
+function ArtifactsTab() {
+  const artifacts = useArtifacts();
+  const [opened, setOpened] = useState<string>();
+  const files = [...artifacts.values()]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      mediaType: item.mediaType,
+      size: item.size,
+      at: item.createdAt,
+    }));
+  return <Files files={files} opened={opened} onOpen={setOpened} />;
+}
 
 /** The `progress` the request snapshot carries once the experiment is paid for. */
 export interface Progress {
@@ -171,7 +240,26 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
     ) : null;
   };
   const delivered = progress.stage === 'complete' && result;
-  const [tab, setTab] = useState<'document' | 'artifacts'>('document');
+  const view = useView(true);
+  const [tab, setTab] = useState<'document' | 'agents' | 'artifacts'>('document');
+  const tabs: ('document' | 'agents' | 'artifacts')[] = [
+    ...(delivered ? ['document' as const] : []),
+    ...(view ? ['agents' as const, 'artifacts' as const] : []),
+  ];
+  const shown = tabs.includes(tab) ? tab : tabs[0];
+  // The app's hooks read who the page is as: the view's actor over its project.
+  const session = view && {
+    actor: {
+      id: view.actorId,
+      projectId: view.projectId,
+      name: 'Customer',
+      role: 'operator',
+    } as Actor,
+    project: { id: view.projectId, name: '' } as Project,
+    account: null as never,
+    chooseProject: () => undefined,
+    signOut: () => undefined,
+  };
   return (
     <section className={cx('cx-run', live && 'cx-run--live')} aria-label="Status">
       <TimeInStatus
@@ -244,40 +332,26 @@ export function Status({ progress, result }: { progress: Progress; result?: Deli
         </table>
       )}
 
-      {delivered && (
-        <>
+      {tabs.length > 0 && (
+        <SessionContext.Provider value={session}>
           <div className="unit-pin">
-            <div className="tabs tabs--strip unit-tabs" role="group" aria-label="Results">
-              <button
-                type="button"
-                aria-pressed={tab === 'document'}
-                onClick={() => setTab('document')}
-              >
-                Document
-              </button>
-              <button
-                type="button"
-                aria-pressed={tab === 'artifacts'}
-                onClick={() => setTab('artifacts')}
-              >
-                Artifacts<span className="state-n">{result.artifacts.length}</span>
-              </button>
+            <div className="tabs tabs--strip unit-tabs" role="group" aria-label="Experiment">
+              {tabs.map((each) => (
+                <button
+                  type="button"
+                  key={each}
+                  aria-pressed={shown === each}
+                  onClick={() => setTab(each)}
+                >
+                  {each === 'document' ? 'Document' : each === 'agents' ? 'Agents' : 'Artifacts'}
+                </button>
+              ))}
             </div>
           </div>
-          {tab === 'document' ? (
-            <Results result={result} />
-          ) : (
-            <ul className="unit-rows">
-              {result.artifacts.map((artifact) => (
-                <li key={artifact.id}>
-                  <button type="button" className="unit-row" onClick={() => void open(artifact.id)}>
-                    <span className="unit-row-name">{artifact.title}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+          {shown === 'document' && delivered && <Results result={result} />}
+          {shown === 'agents' && view && <AgentsTab view={view} />}
+          {shown === 'artifacts' && view && <ArtifactsTab />}
+        </SessionContext.Provider>
       )}
     </section>
   );

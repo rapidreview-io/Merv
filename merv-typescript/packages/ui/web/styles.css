@@ -6916,63 +6916,51 @@ button.role-mark--disc {
 .stage-thread:empty {
   display: none;
 }
+/* Under a stage, one grid for every entry: the disc, the role, what it handed in or decided,
+   the time at the right edge. The hairline joins the discs as in any thread. */
 .thread--stage > li {
-  --mid: 10px;
+  --mid: 12px;
 }
 .thread--stage > li::before {
   left: 9.5px;
 }
-.thread--stage .feed-entry {
-  grid-template-columns: 20px minmax(0, 1fr);
+.stage-row {
+  display: grid;
+  grid-template-columns: 20px 76px minmax(0, 1fr) auto;
   column-gap: var(--space-2);
-  padding: 2px 0;
-  align-items: start;
-}
-.thread--stage .feed-line {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
+  min-height: 24px;
+  padding: 1px 0;
   font-size: var(--text-sm);
 }
-.thread--stage .feed-mark {
-  height: 20px;
-}
-.thread--stage .role-mark--disc {
+.stage-row > .role-mark--disc {
   width: 20px;
   height: 20px;
   font-size: 10px;
 }
-.thread--stage .feed-text,
-.thread--stage .feed-by,
-.thread--stage .thread-body {
+.stage-row > .feed-mark {
+  height: 20px;
+}
+.stage-who {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stage-what {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 2px var(--space-2);
-  min-height: 20px;
-  line-height: 20px;
-  font-size: var(--text-sm);
-}
-.thread--stage .feed-by,
-.thread--stage .thread-body {
-  display: contents;
-}
-.thread--stage .feed-author {
-  font-size: var(--text-sm);
-  font-weight: 500;
-}
-.thread--stage .thread-role {
-  margin-right: 0;
-}
-.thread--stage .feed-when {
-  order: 9;
-  margin-left: auto;
-}
-.thread--stage .thread-body > p {
+  gap: var(--space-2);
+  min-width: 0;
   color: var(--muted);
 }
-.thread--stage .thread-doc,
-.thread--stage .verdict-line {
+.stage-what > .thread-doc,
+.stage-what > .verdict-line {
   min-height: 22px;
+  max-width: 100%;
+}
+.stage-row--line .stage-what {
+  color: var(--muted);
 }
 /* The stages have the sidebar's width, not a card's measure. */
 .running-sidebar--unit .stage-card {
