@@ -5,8 +5,8 @@ import type {} from '@merv/api/types';
 import { MervError } from '@merv/contracts';
 import { summarize } from './elements.js';
 import { BoardRenderer } from './renderer.js';
-import { viewSchema, type View } from '@merv/contracts/board-view';
-import type { Region } from '@merv/contracts/board-view';
+import { boardViewSchema as viewSchema } from '@merv/contracts';
+import type { Region, View } from '@merv/contracts/board-view';
 import { drawSchema, id, saveSchema, setSchema, type DrawInput } from './input.js';
 import type {} from './types.js';
 
