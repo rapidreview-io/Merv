@@ -258,6 +258,8 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
     ],
   );
   assert.deepEqual(JSON.parse(audit[0]!.detail_json), grant);
+  // A revoke names the account the grant was on.
+  assert.deepEqual(JSON.parse(audit[4]!.detail_json), { account: accountId });
 });
 
 test('a grant may name a person: it lands on their own account, which the bridge makes sure of', async (t) => {

@@ -256,7 +256,7 @@ export function WorkView() {
         )
       }
       emptyTitle="Nothing open"
-      columns={6}
+      columns={COLUMNS.length}
     />
   );
 }

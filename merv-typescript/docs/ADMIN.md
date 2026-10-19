@@ -22,8 +22,9 @@ roles, user keys, machine keys and agent credentials never inherit it.
 | Stored platform secrets                                  | `@merv/secrets` (`platform_secrets`, secrets@2)                                                                               | sealed to their names; only the composition root writes and opens them (`override`, and at boot)                                                                                                                                                                                                                                                                                                   |
 
 `@merv/admin` composes these reads and calls these writes. It owns no copy of another plugin's
-rules: terminal states come from workflow definitions, spend from Fleet, credit arithmetic from
-Sandboxes. It groups secrets by the plugin entry that names them (Agent: `pi`; Fleet agents:
+rules: terminal states come from workflow definitions, spend and limits from Fleet and Pi,
+provider credit balances from Sandboxes; the only arithmetic here is what is left of a daily
+limit (`max(0, limit − used)`). It groups secrets by the plugin entry that names them (Agent: `pi`; Fleet agents:
 `fleet-workflow`; Fleet machines: `fleet`, `sessions`; everything else Platform services). An
 owner not loaded here leaves its facts out.
 

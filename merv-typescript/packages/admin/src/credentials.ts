@@ -85,10 +85,13 @@ async function credentials(env: AdminEnv): Promise<AdminCredentials> {
             code: failed.lastFailureCode,
           }
         : null,
-      dead:
-        !!failed?.rejected &&
-        !(ok && ok.lastOkAt! > failed.lastFailureAt!) &&
-        !(lastChanged && lastChanged > failed.lastFailureAt!),
+      state: !value
+        ? 'unset'
+        : !failed || (ok && ok.lastOkAt! > failed.lastFailureAt!)
+          ? 'set'
+          : failed.rejected && !(lastChanged && lastChanged > failed.lastFailureAt!)
+            ? 'dead'
+            : 'failing',
       editable: ref.overridable && !!secrets?.platformAvailable,
     };
   };

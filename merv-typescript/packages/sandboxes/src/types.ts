@@ -16,6 +16,8 @@ export interface SandboxesPeople {
    *  has decided it yet, so an access revoked stays revoked. A disabled schedule grants none. */
   grant(person: Person, input: Omit<CreditGrantInput, 'accountId'>): Promise<void>;
   schedule(person: Person, input: Omit<CreditScheduleInput, 'accountId'>): Promise<void>;
+  /** The provider plugins with an operator connection, sorted: the only ones credit may name. */
+  fundable(): Promise<string[]>;
 }
 type Person = { issuer: string; subject: string; label?: string };
 

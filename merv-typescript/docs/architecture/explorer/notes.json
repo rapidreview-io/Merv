@@ -79,6 +79,10 @@
       "label": "API",
       "purpose": "Accepts authenticated HTTP and MCP requests and routes them through the tool registry."
     },
+    "merv-admin": {
+      "label": "Platform admin",
+      "purpose": "Serves /admin to the configured platform admins: work, credits and credentials across every project, composed from each owner's own reads and writes, every write audited."
+    },
     "tools": {
       "label": "Tools",
       "purpose": "Registers native and mounted tools, applies grants and worker constraints, and drains admitted calls during unload."

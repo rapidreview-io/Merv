@@ -335,7 +335,7 @@ export class CredentialStore {
     const live = '(revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?))';
     return await this.state.read((sql) =>
       sql.all<CredentialSummary>(
-        `SELECT owner,kind,COUNT(*) FILTER (WHERE ${live}) AS live,MIN(expires_at) FILTER (WHERE ${live}) AS "soonestExpiry",COUNT(*) FILTER (WHERE revoked_at>=?) AS "revokedLastDay",MAX(created_at) AS "newestIssued" FROM identity_credentials GROUP BY owner,kind ORDER BY owner,kind`,
+        `SELECT owner,kind,COUNT(*) FILTER (WHERE ${live})::int AS live,MIN(expires_at) FILTER (WHERE ${live}) AS "soonestExpiry",COUNT(*) FILTER (WHERE revoked_at>=?)::int AS "revokedLastDay",MAX(created_at) AS "newestIssued" FROM identity_credentials GROUP BY owner,kind ORDER BY owner,kind`,
         now,
         now,
         new Date(this.clock() - 86_400_000).toISOString(),

@@ -164,7 +164,7 @@ test('the work table reads every project’s open and recent work through its ow
       : app.ctx.get(name as 'state');
 
   const admins = [{ issuer, subject: 'ada', label: 'Ada L.' }];
-  const view = await adminWork({ ctx: { get }, admins } as never);
+  const view = await adminWork({ ctx: { get, scope }, admins } as never);
   const row = (id: string) => view.rows.find((item) => item.id === id)!;
   assert.equal(row(old.id), undefined, 'ended more than a day ago');
   assert.equal(row(shipped.id).terminal, true);
@@ -194,7 +194,7 @@ test('the work table reads every project’s open and recent work through its ow
   assert.equal(leased.machine, null);
   assert.equal(leased.cost, null);
   await sessions.release(owner, { sessionId: visit.id, runnerId: 'machine' });
-  const after = (await adminWork({ ctx: { get }, admins: [] } as never)).rows.find(
+  const after = (await adminWork({ ctx: { get, scope }, admins: [] } as never)).rows.find(
     (item) => item.id === task.id,
   )!;
   assert.equal(after.agent, null);
@@ -233,8 +233,8 @@ test('an Agent conversation is one row at its newest turn, on the Fleet machine 
   const conversation = await f.create();
   await f.finish(await f.claimed(await f.send(conversation)));
   const command = await f.send(conversation);
-  const get = (name: string) => ({ pi: f.pi, fleet: f.fleet, scope: f.scope })[name as 'pi'];
-  const view = await adminWork({ ctx: { get }, admins: [] } as never);
+  const get = (name: string) => ({ pi: f.pi, fleet: f.fleet })[name as 'pi'];
+  const view = await adminWork({ ctx: { get, scope: f.scope }, admins: [] } as never);
   const [turn] = view.rows;
   assert.equal(view.rows.length, 1);
   // A row is a conversation, at its newest turn.

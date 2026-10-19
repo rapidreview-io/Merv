@@ -1,4 +1,4 @@
-import { canonical, createService, plain, record } from '@merv/contracts';
+import { canonical, createService, plain, pooled, record } from '@merv/contracts';
 import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { postgresMigrations } from './index.postgres.js';
 import {
@@ -63,23 +63,6 @@ type Member = { file: ArtifactFile; ref: FileRef };
 /** The most members one call links; each link is a few calls to the member's provider. */
 const MAX_MEMBER_LINKS = 100;
 const LINKS_IN_FLIGHT = 8;
-/** `fn` over `values`, at most `width` at a time, in input order; a failure stops the rest. */
-async function pooled<T, U>(values: readonly T[], width: number, fn: (value: T) => Promise<U>) {
-  const results: U[] = [];
-  let next = 0;
-  let failed = false;
-  const lane = async () => {
-    while (!failed && next < values.length) {
-      const index = next++;
-      results[index] = await fn(values[index]!).catch((error: unknown) => {
-        failed = true;
-        throw error;
-      });
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(width, values.length) }, lane));
-  return results;
-}
 /** Not found, with the members the caller most likely meant: those that share the last part of
  * the name asked for. Names are never resolved for it: a member's name is its exact identity. */
 function missingMember(files: readonly ArtifactFile[], name: string) {

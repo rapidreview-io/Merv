@@ -30,8 +30,7 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
   const types = await ctx.get('tasks')?.platformTypes(ids);
   const lenses = await ctx.get('reflections')?.platformLenses(ids);
   const standalone = await ctx.get('customerExperiments')?.customers(work);
-  const scope = ctx.get('scope');
-  const { people, projects } = (await scope?.directory()) ?? { people: [], projects: [] };
+  const { people, projects } = await ctx.scope.directory();
   const names = new Map(projects.map(({ id, name }) => [id, name]));
 
   const labels = new Map<string, string>();
@@ -45,10 +44,7 @@ export async function adminWork({ ctx, admins }: AdminEnv): Promise<AdminWork> {
   const identity = (source: DelegationSource) =>
     source.kind === 'human' ? `${source.issuer}|${source.subject}` : undefined;
   const owners = new Map(
-    ((await scope?.projectOwners()) ?? []).map(({ projectId, source }) => [
-      projectId,
-      identity(source),
-    ]),
+    (await ctx.scope.projectOwners()).map(({ projectId, source }) => [projectId, identity(source)]),
   );
   const member = (key: string | undefined, projectId: string) =>
     labels.get(key || owners.get(projectId) || '') ?? 'Unassigned';
