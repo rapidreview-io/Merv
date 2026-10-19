@@ -83,5 +83,10 @@ test('restrained defaults retain semantic kinds and explicit sketch colors', () 
   d.apply({ op: 'edit', id: outline.id, color: 'blue' });
   assert.equal(outline.strokeColor, 'transparent');
   assert.equal(d.find('note').strokeColor, 'transparent');
-  assert.equal(d.find('stroke').strokeColor, '#e03131');
+  assert.equal(
+    [...d.elements.values()].find((e) =>
+      (e.groupIds as string[] | undefined)?.includes(d.created.stroke!),
+    )?.strokeColor,
+    '#e03131',
+  );
 });

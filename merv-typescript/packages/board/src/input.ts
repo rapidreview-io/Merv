@@ -19,7 +19,8 @@ export const COLORS = {
   gray: '#e9ecef',
   white: '#ffffff',
 } as const;
-const color = z.enum(Object.keys(COLORS) as [keyof typeof COLORS]);
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const color = z.union([z.enum(Object.keys(COLORS) as [keyof typeof COLORS]), hex]);
 /** A pen's colours, and the stronger ones a sketch fills with: the palette Excalidraw offers. */
 export const INKS = {
   black: '#1e1e1e',
@@ -45,7 +46,8 @@ export const PAINTS = {
   gray: '#ced4da',
   white: '#ffffff',
 } as const;
-const ink = z.enum(Object.keys(INKS) as [keyof typeof INKS]);
+const ink = z.union([z.enum(Object.keys(INKS) as [keyof typeof INKS]), hex]);
+export const paint = (palette: Record<string, string>, value: string) => palette[value] ?? value;
 /** One pen stroke of a sketch: an SVG path in the sketch's own coordinates. */
 const stroke = z
   .object({
@@ -87,7 +89,13 @@ export const opSchema = z.discriminatedUnion('op', [
     .object({
       op: z.literal('box'),
       key,
-      text,
+      text: z
+        .string()
+        .trim()
+        .max(2_000)
+        .refine((value) => value === '' || visible(value)),
+      width: z.number().finite().min(1).max(10_000).optional(),
+      height: z.number().finite().min(1).max(10_000).optional(),
       shape: z.enum(['rectangle', 'ellipse', 'diamond']).optional(),
       color: color.optional(),
       ...place,
@@ -97,6 +105,7 @@ export const opSchema = z.discriminatedUnion('op', [
     .object({
       op: z.literal('text'),
       key,
+      color: ink.optional(),
       text,
       size: z.enum(['s', 'm', 'l']).optional(),
       ...place,
@@ -155,7 +164,13 @@ export const opSchema = z.discriminatedUnion('op', [
     })
     .strict(),
   z
-    .object({ op: z.literal('edit'), id: shape, text: text.optional(), color: color.optional() })
+    .object({
+      op: z.literal('edit'),
+      id: shape,
+      text: text.optional(),
+      color: color.optional(),
+      ink: ink.optional(),
+    })
     .strict(),
   z.object({ op: z.literal('move'), id: shape, ...place }).strict(),
   z.object({ op: z.literal('delete'), ids: z.array(shape).min(1).max(200) }).strict(),
@@ -164,7 +179,7 @@ export const opSchema = z.discriminatedUnion('op', [
       op: z.literal('sketch'),
       key,
       strokes: z.array(stroke).min(1).max(80),
-      size: z.enum(['s', 'm', 'l']).optional(),
+      size: z.enum(['s', 'm', 'l', 'native']).optional(),
       ...place,
     })
     .strict(),

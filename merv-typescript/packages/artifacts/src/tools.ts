@@ -10,6 +10,7 @@ import {
 } from '@merv/contracts';
 import type { ArtifactFile } from '@merv/contracts/artifact-models';
 import { z } from 'zod';
+import { ArtifactPicture } from './picture.js';
 import { MAX_STORED_READ_BYTES } from './content.js';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
@@ -61,6 +62,30 @@ export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
   apply(ctx: Context) {
+    const pictures = new ArtifactPicture();
+    ctx.effect(() => () => pictures.close());
+    ctx.effect(() =>
+      ctx.tools.contributePicture('art_', async (caller, id, _focus, view) => {
+        const artifact = await ctx.artifacts.get(caller, id);
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(artifact.mediaType))
+          return undefined;
+        check(
+          artifact.size <= MAX_STORED_READ_BYTES,
+          'artifact_picture_size',
+          'Reference images must be at most 16 MiB',
+        );
+        const content = await ctx.artifacts.readStored(caller, id, {
+          length: Math.ceil(artifact.size / 3) * 4,
+        });
+        check(
+          content.encoding === 'base64',
+          'artifact_picture_type',
+          'Expected binary image content',
+        );
+        const image = await pictures.render(content.content, artifact.mediaType, view);
+        return { ...image, html: '', path: `/ui/artifacts/${id}` };
+      }),
+    );
     const register = <S extends z.ZodTypeAny>(
       name: string,
       description: string,

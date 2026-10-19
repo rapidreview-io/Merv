@@ -6,7 +6,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { clip, MervError } from '@merv/contracts';
-import { COLORS, INKS, PAINTS, type DrawOp } from './input.js';
+import { COLORS, INKS, PAINTS, paint, type DrawOp } from './input.js';
 import { strokesOf } from './path.js';
 import type { BoardElement } from './types.js';
 
@@ -169,7 +169,31 @@ export class Drawing {
     return (this.top = (this.top ? after(this.top) : 'a0') ?? `${this.top}V`);
   }
   /** A shape this call keyed, or one already on the board; anything else is refused by name. */
+  private group(ref: string, includeDeleted = false): El[] {
+    const id = this.created[ref] ?? ref;
+    if (this.elements.has(id)) return []; // Explicit element IDs always address one element.
+    const members = [...this.elements.values()].filter(
+      (e) => (includeDeleted || !e.isDeleted) && e.groupIds?.includes(id),
+    );
+    const owners = new Set(members.map((e) => e.id));
+    const labels = [...this.elements.values()].filter(
+      (e) => (includeDeleted || !e.isDeleted) && e.type === 'text' && owners.has(e.containerId),
+    );
+    return [...new Set([...members, ...labels])];
+  }
+  private members(ref: string): El[] {
+    const group = this.group(ref);
+    if (group.length) return group;
+    const el = this.find(ref);
+    return [el, ...this.carried(el)];
+  }
   find(ref: string): El {
+    if (this.group(ref).length)
+      throw new MervError(
+        'board_group_operation',
+        'This is a group handle. Use move, delete, frame holds, near, or board.look focus; edit and arrow require an individual element ID.',
+        400,
+      );
     const element = this.elements.get(this.created[ref] ?? ref);
     if (!element || element.isDeleted)
       throw new MervError('board_shape_not_found', `No shape "${ref}" on this board`, 400);
@@ -348,8 +372,9 @@ export class Drawing {
         this.touch(frame);
       }
     } else if (near) {
-      const target = this.find(near);
-      const t = rectOf(target);
+      const group = this.group(near);
+      const target = group[0] ?? this.find(near);
+      const t = group.length ? bounds(group.map(rectOf))! : rectOf(target);
       const mid = {
         x: t.x + t.width / 2 - size.width / 2,
         y: t.y + t.height / 2 - size.height / 2,
@@ -421,7 +446,7 @@ export class Drawing {
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
-    this.label(el, content);
+    if (content) this.label(el, content);
     return el;
   }
   /**
@@ -522,7 +547,7 @@ export class Drawing {
             strokeColor: node.color ? 'transparent' : '#868e96',
             customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'box' },
             roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
-            ...(node.color && { backgroundColor: COLORS[node.color] }),
+            ...(node.color && { backgroundColor: paint(COLORS, node.color) }),
           },
         );
         this.label(el, node.text);
@@ -617,7 +642,7 @@ export class Drawing {
     switch (op.op) {
       case 'note': {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
-          backgroundColor: COLORS[op.color ?? 'yellow'],
+          backgroundColor: paint(COLORS, op.color ?? 'yellow'),
           strokeColor: 'transparent',
           customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'note' },
         });
@@ -626,14 +651,21 @@ export class Drawing {
       case 'box': {
         const width = Math.min(320, Math.max(180, measure(op.text, FONT).width + 50));
         const kind = op.shape ?? 'rectangle';
-        const size = this.fit(
-          op.text,
-          kind === 'rectangle' ? width : width + 80,
-          kind === 'rectangle' ? 80 : 130,
-          kind,
-        );
+        const defaultWidth = kind === 'rectangle' ? width : width + 80;
+        const defaultHeight = kind === 'rectangle' ? 80 : 130;
+        const factor = kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1;
+        // Requested dimensions are minima for a bound label; blank shapes need no
+        // text padding and preserve exact dimensions, just like an empty native shape.
+        const size = op.text
+          ? this.fit(
+              op.text,
+              Math.max(op.width ?? defaultWidth, Math.ceil(60 / factor)),
+              op.height ?? defaultHeight,
+              kind,
+            )
+          : { width: op.width ?? defaultWidth, height: op.height ?? defaultHeight };
         const el = this.shape(kind, op.text, size, op, {
-          ...(op.color && { backgroundColor: COLORS[op.color] }),
+          ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
         });
         return this.keyed(op.key, el);
       }
@@ -643,7 +675,11 @@ export class Drawing {
         const at = this.place(measure(content, size), op);
         return this.keyed(
           op.key,
-          this.text(at, content, size, { originalText: op.text, frameId: at.frameId }),
+          this.text(at, content, size, {
+            originalText: op.text,
+            frameId: at.frameId,
+            ...(op.color && { strokeColor: paint(INKS, op.color) }),
+          }),
         );
       }
       case 'link': {
@@ -663,18 +699,17 @@ export class Drawing {
       case 'arrow':
         return this.keyed(op.key, this.arrow(op.from, op.to, op.label));
       case 'frame': {
-        const held = (op.holds ?? []).map((ref) => this.find(ref));
-        const box = bounds(held.flatMap((el) => [el, ...this.carried(el)]).map(rect));
+        const held = [...new Set((op.holds ?? []).flatMap((ref) => this.members(ref)))];
+        const box = bounds(held.map(rectOf));
         const at = box
           ? // The frame's title stands above its edge, so the edge keeps close to what it holds.
             { x: box.x - 30, y: box.y - 30, width: box.width + 60, height: box.height + 60 }
           : this.place({ width: 640, height: 420 }, op);
         const frame = this.add('frame', at, { name: op.title, strokeColor: '#bbb' });
-        for (const el of held)
-          for (const part of [el, ...this.carried(el)]) {
-            part.frameId = frame.id;
-            this.touch(part);
-          }
+        for (const part of held) {
+          part.frameId = frame.id;
+          this.touch(part);
+        }
         this.frames.push(at);
         if (!box) this.occupied.pop();
         return this.keyed(op.key, frame);
@@ -705,6 +740,10 @@ export class Drawing {
             this.touch(el);
           }
         }
+        if (op.ink) {
+          el.strokeColor = paint(INKS, op.ink);
+          this.touch(el);
+        }
         if (op.color) {
           if (
             el.customData?.semanticKind === 'box' &&
@@ -712,12 +751,37 @@ export class Drawing {
             el.strokeColor === '#868e96'
           )
             el.strokeColor = 'transparent';
-          el.backgroundColor = COLORS[op.color];
+          el.backgroundColor = paint(COLORS, op.color);
           this.touch(el);
         }
         return;
       }
       case 'move': {
+        const group = this.group(op.id);
+        if (group.length) {
+          if (!op.near && !op.in && !op.at) return;
+          this.survey(new Set(group));
+          const box = bounds(group.map(rectOf))!;
+          const at = this.place(box, op),
+            dx = at.x - box.x,
+            dy = at.y - box.y;
+          for (const part of group) {
+            part.x += dx;
+            part.y += dy;
+            if (op.in) part.frameId = at.frameId;
+            this.touch(part);
+          }
+          const ids = new Set(group.map((e) => e.id));
+          for (const arrow of this.live())
+            if (
+              arrow.type === 'arrow' &&
+              [arrow.startBinding?.elementId, arrow.endBinding?.elementId].some((id) => ids.has(id))
+            ) {
+              this.route(arrow);
+              this.touch(arrow);
+            }
+          return;
+        }
         const el = this.find(op.id);
         if (!op.near && !op.in && !op.at) return;
         this.survey(new Set([el, ...this.carried(el)]));
@@ -746,6 +810,11 @@ export class Drawing {
       case 'delete':
         // What an earlier deletion already took (a box's arrows) is gone, not missing.
         for (const ref of op.ids) {
+          const group = this.group(ref, true);
+          if (group.length) {
+            for (const part of group) this.remove(part);
+            continue;
+          }
           const gone = this.elements.get(this.created[ref] ?? ref);
           if (!gone?.isDeleted) this.remove(this.find(ref));
         }
@@ -758,7 +827,16 @@ export class Drawing {
         const { x: minX, y: minY, ...extent } = around(points);
         const width = extent.width || 1;
         const height = extent.height || 1;
-        const scale = { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
+        if (op.size === 'native' && Math.max(width, height) > 10_000)
+          throw new MervError(
+            'board_sketch_too_large',
+            'A native-size sketch is at most 10000 board units on either side',
+            400,
+          );
+        const scale =
+          op.size === 'native'
+            ? 1
+            : { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
         const at = this.place({ width: width * scale, height: height * scale }, op);
         const group = elementId();
         let first: El | undefined;
@@ -777,8 +855,8 @@ export class Drawing {
               roughness: 0,
               roundness: null,
               points: drawn.map(([x, y]) => [x! - box.x, y! - box.y]),
-              strokeColor: INKS[stroke.color ?? stroke.fill ?? 'black'],
-              backgroundColor: filled ? PAINTS[stroke.fill!] : 'transparent',
+              strokeColor: paint(INKS, stroke.color ?? stroke.fill ?? 'black'),
+              backgroundColor: filled ? paint(PAINTS, stroke.fill!) : 'transparent',
               strokeWidth: { thin: 1, medium: 2, bold: 4 }[stroke.width ?? 'medium'],
               groupIds: [group],
               frameId: at.frameId,
@@ -801,7 +879,7 @@ export class Drawing {
             });
             first ??= el;
           }
-        if (first) this.keyed(op.key, first);
+        if (first && op.key) this.created[op.key] = group;
         return;
       }
     }
@@ -926,16 +1004,20 @@ export function summarize(elements: BoardElement[]) {
     }));
   // Strokes drawn as one sketch, or grouped by hand, read as one drawing.
   const drawings = new Map<string, El[]>();
-  for (const el of marks) {
-    const group = el.groupIds?.[0] ?? el.id;
+  for (const el of live.filter((e) => e.groupIds?.length || marks.includes(e))) {
+    const group = el.groupIds?.at(-1) ?? el.id;
     drawings.set(group, [...(drawings.get(group) ?? []), el]);
   }
-  for (const parts of drawings.values()) {
-    const box = bounds(parts.map(rect))!;
+  for (const [groupId, parts] of drawings) {
+    const owners = new Set(parts.map((e) => e.id));
+    for (const label of live)
+      if (label.type === 'text' && owners.has(label.containerId) && !parts.includes(label))
+        parts.push(label);
+    const box = bounds(parts.map(rectOf))!;
     const first = parts[0]!;
     shapes.push({
-      id: first.id,
-      kind: first.customData?.sketch ? 'sketch' : 'drawing',
+      id: groupId,
+      kind: parts.every((e) => e.customData?.sketch === groupId) ? 'sketch' : 'drawing',
       ...(parts.length > 1 && { strokes: parts.length }),
       ...(first.frameId && { frame: first.frameId }),
       ...(first.customData?.by === 'agent' && { by: 'agent' }),

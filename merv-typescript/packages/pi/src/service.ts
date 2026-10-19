@@ -581,9 +581,9 @@ export class PiService implements Pi {
     this.core.ready();
     const { question, at, view } = parse(lookInput, input);
     check(
-      !view || at?.record?.startsWith('board_'),
+      !view || at?.record?.startsWith('board_') || at?.record?.startsWith('art_'),
       'invalid_input',
-      'Camera controls require at.record naming a board',
+      'Camera controls require at.record naming a board or image artifact',
       400,
     );
     check(
@@ -609,7 +609,9 @@ export class PiService implements Pi {
     if (drawn?.image)
       return {
         page: drawn.path,
-        seen: 'Actual Excalidraw board image. Coordinates in viewport are board units.',
+        seen: at?.record?.startsWith('art_')
+          ? 'Actual reference image. Viewport coordinates are source pixels; use region for readable details.'
+          : 'Actual Excalidraw board image. Coordinates in viewport are board units.',
         image: drawn.image,
         viewport: drawn.viewport,
       };
