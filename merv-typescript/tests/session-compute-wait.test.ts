@@ -653,11 +653,16 @@ test('only a work visit that keeps a conversation and executes on a project Sand
   // Nor is a project Sandboxes does not serve, or a deployment without a waiter.
   f.link(false);
   assert.deepEqual((await offered((await f.start()).id, 'runner-d')).offered, [false, false]);
-  // Nor one whose Sandboxes does not answer: its attach and listing wait two seconds at most.
+  // Nor one whose Sandboxes does not answer: its attach and listing wait two seconds at most,
+  // and a call made meanwhile is told to call again, not to wait inside its visit.
   f.link('hung');
   const asked = Date.now();
-  assert.deepEqual((await offered((await f.start()).id, 'runner-g')).offered, [false, false]);
+  const hung = await offered((await f.start()).id, 'runner-g');
+  assert.deepEqual(hung.offered, [false, false]);
   assert.ok(Date.now() - asked < 8_000, 'the attach and the listing waited 2 s each at most');
+  await assert.rejects(f.awaitCompute(hung.visit.worker, { jobIds: ['job_a'], reason }), {
+    code: 'compute_unreachable',
+  });
   f.link(true);
   f.unregister();
   assert.deepEqual((await offered((await f.start()).id, 'runner-e')).offered, [false, false]);

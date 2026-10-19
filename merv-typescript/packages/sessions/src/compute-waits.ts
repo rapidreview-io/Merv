@@ -107,6 +107,13 @@ const within = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
     clearTimeout(timer);
   }
 };
+/** Sandboxes did not answer in time: the call changed nothing and may be made again. */
+const unreachable = () =>
+  new MervError(
+    'compute_unreachable',
+    'Sandboxes did not say where these stand, so nothing changed and your visit goes on: call again in a minute',
+    503,
+  );
 const listed = (ids: unknown): unknown[] =>
   ids === undefined ? [] : Array.isArray(ids) ? ids : [undefined];
 const wake = (row: WaitRow): ComputeWake => ({
@@ -148,13 +155,14 @@ export class ComputeWaits implements SessionComputeWaits {
     };
   }
   async available(session: Readonly<Session>): Promise<boolean> {
+    // A Sandboxes that does not answer holds up no attach or listing: the tool is not offered.
+    return (await this.offers(session)) ?? false;
+  }
+  /** Whether the visit is offered the tool, or undefined where Sandboxes did not say in time. */
+  private async offers(session: Readonly<Session>): Promise<boolean | undefined> {
     const waiter = this.waiter;
-    return (
-      !!waiter &&
-      waitable(session) &&
-      // A Sandboxes that does not answer holds up no attach or listing: the tool is not offered.
-      (await within(waiter.offers(session.projectId), OFFERS_MS).catch(() => false))
-    );
+    if (!waiter || !waitable(session)) return false;
+    return await within(waiter.offers(session.projectId), OFFERS_MS).catch(() => undefined);
   }
   async await(caller: Caller, input: ComputeWaitInput): Promise<ComputeWaitView> {
     ordinary(caller);
@@ -195,8 +203,11 @@ export class ComputeWaits implements SessionComputeWaits {
       'This visit keeps no conversation for a later visit to continue, so it cannot wait: wait inside this visit, or keep the ids of what still runs in the project for the next visit',
       409,
     );
+    const offered = await this.offers(visit);
+    // A Sandboxes slow to say whether it serves the project refuses nothing for good.
+    if (offered === undefined) throw unreachable();
     check(
-      await this.available(visit),
+      offered,
       'compute_wait_unavailable',
       'This visit is not offered session.await_compute: wait inside it, or keep the ids of what still runs in the project for the next visit',
       409,
@@ -357,11 +368,7 @@ export class ComputeWaits implements SessionComputeWaits {
         }),
       };
     } catch {
-      throw new MervError(
-        'compute_unreachable',
-        'Sandboxes did not say where these stand, so nothing changed and your visit goes on: call again in a minute',
-        503,
-      );
+      throw unreachable();
     }
   }
   /** The sweep, every full pass of Sessions: open waits read on a snapshot, the waiter asked
