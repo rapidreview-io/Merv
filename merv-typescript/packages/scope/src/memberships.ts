@@ -11,7 +11,9 @@ import {
   type Permission,
   type Principal,
   type Project,
+  type ProjectAdmin,
   type ProjectMembership,
+  type ProjectMembers,
   type ProjectInvitation,
   type Role,
   type SharedUser,
@@ -86,6 +88,9 @@ export const LIVE_OPERATOR = `project_memberships m
   JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
   WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`;
 
+const same = (a: ProjectAdmin | null | undefined, b: ProjectAdmin | null | undefined) =>
+  !!a && a.issuer === b?.issuer && a.subject === b.subject;
+
 export function identityValid(identity: VerifiedIdentity, time: string): boolean {
   return (
     !!identity &&
@@ -136,10 +141,104 @@ export class Memberships {
     ) => Promise<Actor>,
   ) {}
   private readonly firstSignIns = new Set<(person: SharedUser) => void>();
+  private readonly adminChanges = new Set<(projectId: string, admin: ProjectAdmin) => void>();
+  /** Each open write's admin changes, heard once it commits. */
+  private readonly admins = new WeakMap<Transaction, Map<string, ProjectAdmin>>();
 
   onFirstSignIn(listener: (person: SharedUser) => void): () => void {
     this.firstSignIns.add(listener);
     return () => void this.firstSignIns.delete(listener);
+  }
+  onAdminChanged(listener: (projectId: string, admin: ProjectAdmin) => void): () => void {
+    this.adminChanges.add(listener);
+    return () => void this.adminChanges.delete(listener);
+  }
+
+  /** A membership write; a listener hears its admin changes after it commits, and its own
+   *  failure is its own. */
+  private async write<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
+    let changed = new Map<string, ProjectAdmin>();
+    const value = await this.state.transaction(async (tx) => {
+      this.admins.set(tx, (changed = new Map()));
+      return await work(tx);
+    });
+    for (const [projectId, admin] of changed)
+      for (const hear of this.adminChanges)
+        try {
+          hear(projectId, admin);
+        } catch {}
+    return value;
+  }
+
+  private async assignAdmin(tx: Transaction, projectId: string, admin: ProjectAdmin) {
+    await tx.run(
+      'UPDATE projects SET admin_issuer=?,admin_subject=? WHERE id=?',
+      admin.issuer,
+      admin.subject,
+      projectId,
+    );
+    this.admins.get(tx)!.set(projectId, { issuer: admin.issuer, subject: admin.subject });
+  }
+
+  /** The admin stays a live operator: one who is no longer one, or none yet, gives way to the
+   *  operator `by` whose change ended it (who may take billing on), else the longest-standing
+   *  live operator. A project with none keeps what it had. */
+  private async keepAdmin(tx: Transaction, projectId: string, by?: ProjectAdmin): Promise<void> {
+    const next = await tx.get<ProjectAdmin & { kept: boolean }>(
+      `SELECT m.issuer,m.subject,EXISTS(SELECT 1 FROM projects p WHERE p.id=m.project_id
+         AND p.admin_issuer=m.issuer AND p.admin_subject=m.subject) AS kept
+       FROM ${LIVE_OPERATOR} AND m.project_id=?
+       ORDER BY kept DESC,(m.issuer=? AND m.subject=?) DESC,m.created_at,m.id LIMIT 1`,
+      projectId,
+      by?.issuer ?? null,
+      by?.subject ?? null,
+    );
+    if (next && !next.kept) await this.assignAdmin(tx, projectId, next);
+  }
+
+  async setAdmin(principal: Principal, projectId: string, { ...admin }: ProjectAdmin) {
+    this.input(admin.subject);
+    return await this.write(async (tx) => {
+      const caller = await this.operator(principal, projectId, tx);
+      check(
+        await tx.get(
+          `SELECT 1 FROM ${LIVE_OPERATOR} AND m.project_id=? AND m.issuer=? AND m.subject=?`,
+          projectId,
+          admin.issuer,
+          admin.subject,
+        ),
+        'admin_not_operator',
+        'The admin must be a signed-in operator of the project',
+        409,
+      );
+      const before = await this.admin(tx, projectId);
+      if (same(before, admin)) return admin;
+      // Billing is consented to: an operator takes it on, or the admin hands it to another.
+      check(
+        same(caller.human, admin) || same(caller.human, before),
+        'admin_consent',
+        'Only the admin can name another operator to bill; any operator can take billing on',
+        403,
+      );
+      await this.assignAdmin(tx, projectId, admin);
+      await this.state.appendEvent(tx, {
+        projectId,
+        actorId: caller.actorId,
+        type: 'project.admin_changed',
+        subjectId: projectId,
+        data: { ...admin, before },
+      });
+      return admin;
+    });
+  }
+
+  private async admin(sql: Sql, projectId: string): Promise<ProjectAdmin | null> {
+    return (
+      (await sql.get<ProjectAdmin>(
+        'SELECT admin_issuer AS issuer,admin_subject AS subject FROM projects WHERE id=? AND admin_issuer IS NOT NULL',
+        projectId,
+      )) ?? null
+    );
   }
 
   async acceptVerifiedIdentity({ ...identity }: VerifiedIdentity): Promise<HumanPrincipal> {
@@ -305,7 +404,7 @@ export class Memberships {
     );
     const name = input.name.trim();
     const fingerprint = digest({ name });
-    return await this.state.transaction(async (tx) => {
+    return await this.write(async (tx) => {
       const human = await this.human(principal, tx);
       const old = await tx.get<{ fingerprint: string; project_id: string }>(
         'SELECT * FROM user_project_requests WHERE issuer=? AND subject=? AND request_id=?',
@@ -323,36 +422,43 @@ export class Memberships {
         await this.resolve(human, old.project_id, tx);
         return await this.project(tx, old.project_id);
       }
-      const value = await insertProject(tx, name, this.time());
-      const initial = await this.activate(tx, value.id, human.user, 'operator');
+      const { id } = await insertProject(tx, name, this.time());
+      const initial = await this.activate(tx, id, human.user, 'operator');
       await tx.run(
         'INSERT INTO user_project_requests(issuer,subject,request_id,fingerprint,project_id) VALUES(?,?,?,?,?)',
         human.user.issuer,
         human.user.subject,
         input.requestId,
         fingerprint,
-        value.id,
+        id,
       );
       await this.state.appendEvent(tx, {
-        projectId: value.id,
+        projectId: id,
         actorId: initial.actorId,
         type: 'project.created',
-        subjectId: value.id,
+        subjectId: id,
         data: { name },
       });
-      return value;
+      return await this.project(tx, id);
     });
   }
 
-  async memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]> {
+  async memberships(principal: Principal, projectId: string): Promise<ProjectMembers> {
     return await forRead(this.state, async (tx) => {
-      await this.resolve(await this.human(principal, tx), projectId, tx);
-      return (
-        await tx.all<MembershipRow>(
-          'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid',
-          projectId,
-        )
-      ).map(membership);
+      const { human } = await this.resolve(await this.human(principal, tx), projectId, tx);
+      const rows = await tx.all<MembershipRow>(
+        'SELECT * FROM project_memberships WHERE project_id=? ORDER BY _merv_rowid',
+        projectId,
+      );
+      const admin = await this.admin(tx, projectId);
+      // Whom the caller may bill, as setAdmin rules: the admin hands it on, an operator takes it.
+      const live = await tx.all<MembershipRow>(
+        `SELECT m.* FROM ${LIVE_OPERATOR} AND m.project_id=? ORDER BY m._merv_rowid`,
+        projectId,
+      );
+      const me = live.find((m) => same(m, human));
+      const payers = !me ? [] : same(me, admin) ? live.filter((m) => m !== me) : [me];
+      return { memberships: rows.map(membership), admin, payers: payers.map((m) => m.id) };
     });
   }
 
@@ -375,6 +481,7 @@ export class Memberships {
     projectId: string,
     { issuer, subject }: { issuer: string; subject: string },
     role: Role,
+    by?: ProjectAdmin,
   ): Promise<ProjectMembership> {
     let mapping = await tx.get<{ actor_id: string }>(
       'SELECT actor_id FROM member_actors WHERE project_id=? AND issuer=? AND subject=?',
@@ -426,6 +533,7 @@ export class Memberships {
       role,
       value.createdAt,
     );
+    await this.keepAdmin(tx, projectId, by);
     return value;
   }
 
@@ -575,7 +683,7 @@ export class Memberships {
       'invalid_response',
       'Choose accept or decline',
     );
-    return await this.state.transaction(async (tx) => {
+    return await this.write(async (tx) => {
       const human = await this.human(principal, tx);
       const row = await tx.get<InvitationRow>(
         'SELECT * FROM project_invitations WHERE id=? AND issuer=? AND subject=?',
@@ -687,7 +795,7 @@ export class Memberships {
   ): Promise<ProjectMembership> {
     this.input(subject);
     check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
-    return await this.state.transaction(async (tx) => {
+    return await this.write(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const issuer = caller.human!.issuer;
       const old = await this.current(tx, projectId, issuer, subject);
@@ -744,33 +852,33 @@ export class Memberships {
   ): Promise<ProjectMembership> {
     this.input(subject);
     check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
-    return await this.state.transaction(async (tx) => {
+    return await this.write(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const previous = await this.current(tx, projectId, caller.human!.issuer, subject);
       check(previous, 'not_found', 'Active project member not found', 404);
       if (previous.role === role) return membership(previous);
       await this.keepOperator(tx, previous, role);
-      return await this.replace(tx, previous, role, caller.actorId);
+      return await this.replace(tx, previous, role, caller);
     });
   }
 
   /** Ends the active membership `previous` and starts its person's next one with `role`, which
-   *  `actorId` (by default that person) records as a change of permissions. */
+   *  `by` (by default that person) records as a change of permissions. */
   private async replace(
     tx: Transaction,
     previous: MembershipRow,
     role: Role,
-    actorId?: string,
+    by?: Caller,
   ): Promise<ProjectMembership> {
     await tx.run(
       'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',
       this.time(),
       previous.id,
     );
-    const next = await this.activate(tx, previous.project_id, previous, role);
+    const next = await this.activate(tx, previous.project_id, previous, role, by?.human);
     await this.state.appendEvent(tx, {
       projectId: previous.project_id,
-      actorId: actorId ?? next.actorId,
+      actorId: by?.actorId ?? next.actorId,
       type: 'actor.permissions_changed',
       subjectId: next.actorId,
       data: {
@@ -785,7 +893,7 @@ export class Memberships {
 
   async removeMember(principal: Principal, projectId: string, subject: string): Promise<void> {
     this.input(subject);
-    await this.state.transaction(async (tx) => {
+    await this.write(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const previous = await this.current(tx, projectId, caller.human!.issuer, subject);
       if (!previous) return;
@@ -800,6 +908,7 @@ export class Memberships {
         previous.actor_id,
         projectId,
       );
+      await this.keepAdmin(tx, projectId, caller.human);
       await this.state.appendEvent(tx, {
         projectId,
         actorId: caller.actorId,
@@ -822,7 +931,7 @@ export class Memberships {
         'invalid_repair_reason',
         'Local ownership repair requires a reason of 1–2000 characters',
       );
-    return await this.state.transaction(async (tx) => {
+    return await this.write(async (tx) => {
       const human = await this.human(principal, tx);
       await this.project(tx, projectId);
       if (reason !== undefined) {

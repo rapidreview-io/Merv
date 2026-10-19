@@ -691,6 +691,35 @@ test('customer experiments opt in to Astra without exposing secrets or altering 
     assert.notEqual(run({ ...customer, ...broken }).status, 0);
 });
 
+test('payments compose from the customer Stripe names, which name secrets and hold none', (t) => {
+  const { run, plugin, output } = renderer(t);
+  assert.equal(run({}).status, 0);
+  assert.equal(plugin('payments'), undefined);
+  assert.equal(plugin('sandboxes-host').config.settings, undefined);
+  const stripe = {
+    MERV_CUSTOMER_STRIPE_SECRET_KEY: 'sk_test_private_fixture',
+    MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET: 'whsec_private_fixture',
+  };
+  assert.notEqual(run({ MERV_CUSTOMER_STRIPE_SECRET_KEY: 'sk_test_private_fixture' }).status, 0);
+  assert.equal(run(stripe).status, 0);
+  assert.deepEqual(plugin('payments'), {
+    id: 'payments',
+    name: '@merv/payments',
+    config: {
+      secretKeyEnv: 'MERV_CUSTOMER_STRIPE_SECRET_KEY',
+      webhookSecretEnv: 'MERV_CUSTOMER_STRIPE_WEBHOOK_SECRET',
+      live: false,
+      publicOrigin: 'https://merv.example',
+    },
+  });
+  assert.deepEqual(plugin('sandboxes-host').config.settings, {
+    console: { top_ups: [25, 50, 100, 250] },
+  });
+  assert.equal(run({ ...stripe, MERV_CUSTOMER_STRIPE_LIVE: 'true' }).status, 0);
+  assert.equal(plugin('payments').config.live, true);
+  assert.ok(!readFileSync(output, 'utf8').includes('private_fixture'));
+});
+
 test('invitation delivery is opt-in and renders credential names, never secret values', (t) => {
   const { run, plugin, output } = renderer(t);
   assert.equal(run().status, 0);

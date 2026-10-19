@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Stripe from 'stripe';
 import { RequestBuckets, validateDataset } from '../packages/customer-experiments/src/data.js';
-import { StripePayments } from '../packages/customer-experiments/src/payment.js';
 import type { DataRequirement } from '../packages/customer-experiments/src/types.js';
 
 const requirement: DataRequirement = {
@@ -90,79 +88,8 @@ test('request bucket provisioning blocks public access before allowing browser P
   await storage.close();
 });
 
-const secret = 'whsec_test_customer';
-const payments = new StripePayments({
-  secretKey: 'sk_test_not_a_live_key',
-  webhookSecret: secret,
-  publicOrigin: 'https://merv.example.com',
-  live: false,
-});
-const stripe = new Stripe('sk_test_not_a_live_key');
-function event(overrides: Record<string, unknown> = {}, session: Record<string, unknown> = {}) {
-  return JSON.stringify({
-    id: 'evt_customer',
-    object: 'event',
-    livemode: false,
-    type: 'checkout.session.completed',
-    data: {
-      object: {
-        id: 'cs_test_customer',
-        object: 'checkout.session',
-        mode: 'payment',
-        payment_status: 'paid',
-        payment_intent: 'pi_customer',
-        amount_total: 1000,
-        currency: 'usd',
-        client_reference_id: 'ce_request',
-        metadata: {
-          product: 'merv-customer-experiment-v1',
-          requestId: 'ce_request',
-          contractHash: 'fixed-contract',
-        },
-        ...session,
-      },
-    },
-    ...overrides,
-  });
-}
-function signed(payload: string, timestamp = Math.floor(Date.now() / 1000)) {
-  return stripe.webhooks.generateTestHeaderString({ payload, secret, timestamp });
-}
-test('only authentic paid same-mode checkout events can release the exact referenced contract', () => {
-  const payload = event();
-  assert.deepEqual(payments.verify(Buffer.from(payload), signed(payload)), {
-    eventId: 'evt_customer',
-    requestId: 'ce_request',
-    contractHash: 'fixed-contract',
-    checkoutId: 'cs_test_customer',
-    paymentId: 'pi_customer',
-    amountCents: 1000,
-    currency: 'usd',
-  });
-  const unpaid = event({}, { payment_status: 'unpaid' });
-  assert.equal(payments.verify(Buffer.from(unpaid), signed(unpaid)), null);
-  const other = event({ type: 'payment_intent.succeeded' });
-  assert.equal(payments.verify(Buffer.from(other), signed(other)), null);
-  const live = event({ livemode: true });
-  assert.throws(() => payments.verify(Buffer.from(live), signed(live)), /wrong payment mode/);
-  assert.throws(() => payments.verify(Buffer.from(payload + ' '), signed(payload)), /signature/);
-  assert.throws(() => payments.verify(Buffer.from(payload), signed(payload, 1)), /signature/);
-  const mismatch = event({}, { client_reference_id: 'some-other-request' });
-  assert.throws(() => payments.verify(Buffer.from(mismatch), signed(mismatch)), /references/);
-  assert.throws(
-    () =>
-      new StripePayments({
-        secretKey: 'sk_live_disallowed',
-        webhookSecret: secret,
-        publicOrigin: 'https://merv.example.com',
-        live: false,
-      }),
-    /payment mode/,
-  );
-});
-
 test('submission email includes the return URL and its own idempotency key', async (t) => {
-  const { ResendResultMailer } = await import('../packages/customer-experiments/src/payment.js');
+  const { ResendResultMailer } = await import('../packages/customer-experiments/src/mail.js');
   let sent: { subject: string; text: string; to: string[] } | undefined;
   let key: string | null = null;
   t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {

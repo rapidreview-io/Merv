@@ -72,7 +72,7 @@ function harness(
     { registerFileProvider: () => () => {} } as never,
     pi as never,
     undefined,
-    undefined,
+    () => undefined,
     undefined,
     { publicOrigin: 'https://merv.example', sponsor: { issuer: 'i', subject: 's' } } as never,
   );

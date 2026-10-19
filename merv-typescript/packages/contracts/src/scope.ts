@@ -13,6 +13,7 @@ import type {
   IssuedUserKey,
   Permission,
   Project,
+  ProjectAdmin,
   ProjectInvitation,
   Role,
   UserKey,
@@ -72,6 +73,14 @@ export interface ProjectMembership {
   createdAt: string;
   revokedAt: string | null;
 }
+/** A project's membership history, whether each person has signed in, and its admin (null only
+ * while it has no live operator). */
+export interface ProjectMembers {
+  memberships: ProjectMembership[];
+  admin: ProjectAdmin | null;
+  /** The memberships the caller may bill: the others, for the admin; themselves, for an operator. */
+  payers: string[];
+}
 export type { ProjectInvitation } from './scope-models.js';
 /** Scope's people: verified identities, the projects they create and their memberships. */
 export interface ScopeMembers {
@@ -80,8 +89,14 @@ export interface ScopeMembers {
   /** Hears each verified person once, after their first acceptance commits. The listener runs
    * after that sign-in and cannot fail it; the disposer withdraws it. */
   onFirstSignIn(listener: (person: SharedUser) => void): () => void;
+  /** Hears each project's new admin once the change commits: at creation, at `setAdmin`, and
+   * when an admin stops being a live operator and the longest-standing one takes over. */
+  onAdminChanged(listener: (projectId: string, admin: ProjectAdmin) => void): () => void;
+  /** Refused unless the caller may administer the project, `admin` is a live operator of it, and
+   *  the caller is `admin` (taking billing on) or the current admin (handing it on). */
+  setAdmin(principal: Principal, projectId: string, admin: ProjectAdmin): Promise<ProjectAdmin>;
   createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
-  memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
+  memberships(principal: Principal, projectId: string): Promise<ProjectMembers>;
   inviteMember(
     principal: Principal,
     projectId: string,
@@ -170,8 +185,8 @@ export interface Scope {
   readonly members: ScopeMembers;
   readonly userKeys: ScopeUserKeys;
   readonly credentials: ScopeActorCredentials;
-  /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
-   * and pays for its work on Fleet's machines. A project with none is left out. */
+  /** Each project's owner: its admin (`members.setAdmin`), as a person, who directs and pays for
+   * its work on Fleet's machines. A project with none is left out. */
   projectOwners(): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** Platform read for the admin and server owners, never exposed through a tool or a key: every
    * project, newest first, and every signed-in person with the project actors they are. */

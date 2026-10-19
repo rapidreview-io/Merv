@@ -44,6 +44,12 @@ async function fixture() {
         : migrations,
     );
   const scope = await createService(new ProjectScope(state));
+  // Today's Scope keeps each project's admin, in the columns scope@12 adds.
+  await state.transaction(async (tx) => {
+    await tx.run(
+      'ALTER TABLE projects ADD COLUMN admin_issuer TEXT, ADD COLUMN admin_subject TEXT',
+    );
+  });
   const paper = await createService(new PaperService(state, scope, {} as never));
   const login = async (subject: string) =>
     await scope.members.acceptVerifiedIdentity({

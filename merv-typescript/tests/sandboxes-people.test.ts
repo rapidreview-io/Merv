@@ -5,6 +5,7 @@ import { createService, digest, MervError } from '@merv/contracts';
 import { sandboxIntegrationPlugin } from '@merv/sandboxes/integration';
 import { sandboxesPeoplePlugin, type SandboxesPeople } from '@merv/sandboxes/people';
 import { ProjectScope } from '@merv/scope';
+import { linkProject, projectNamespace } from '@sandboxes/auth';
 import { Decimal, Instant } from '@sandboxes/kernel';
 import { startHost } from './fixtures/admin.js';
 import { openState } from './fixtures/state.js';
@@ -224,6 +225,66 @@ test('the welcome grant id never grants twice across restarts, even with new amo
     2,
   );
   assert.deepEqual(f.logs('sandboxes.people.ensure_failed'), []);
+});
+
+test('a project lives in its admin’s own account: linked at creation, moved with its namespace when the admin changes', async (t) => {
+  const f = await fixture(t);
+  const people = await f.start({});
+  const alice = await f.signIn('alice');
+  const project = await f.scope.members.createProject(alice, { name: 'Billed', requestId: 'r' });
+  await people.settled();
+  const own = async (subject: string) => (await people.accountOf({ issuer, subject }))!.accountId;
+  const holder = async () => {
+    const linked = (await f.ctx.sbxAccounts.linked(project.id))!;
+    assert.equal(linked.name, projectNamespace(project.id));
+    return linked.account_id;
+  };
+  assert.equal(await holder(), await own('alice'));
+  // Linked there already, it is left alone.
+  people.adminChanged(project.id, { issuer, subject: 'alice' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  const bob = await f.signIn('bob');
+  // Bob takes billing on; then hands it back, and Alice hands it to him again.
+  await f.scope.members.setAdmin(bob, project.id, { issuer, subject: 'bob' });
+  await people.settled();
+  assert.equal(await holder(), await own('bob'));
+  await f.scope.members.setAdmin(bob, project.id, { issuer, subject: 'alice' });
+  await people.settled();
+  assert.equal(await holder(), await own('alice'));
+  await f.scope.members.setAdmin(alice, project.id, { issuer, subject: 'bob' });
+  await people.settled();
+  assert.equal(await holder(), await own('bob'));
+  assert.equal(f.logs('sandboxes.projects.relinked').length, 3);
+  assert.deepEqual(f.logs('sandboxes.projects.link_failed'), []);
+});
+
+test('start links every project to its admin; a project failing stops no other', async (t) => {
+  const f = await fixture(t);
+  const unfit = 'u'.repeat(300);
+  const projects = [];
+  for (const subject of ['erin', unfit, 'frank'])
+    projects.push(
+      await f.scope.members.createProject(await f.signIn(subject), { name: 'P', requestId: 'r' }),
+    );
+  await f.scope.credentials.bootstrap({ projectName: 'Unowned', actorName: 'Op' });
+  const people = await f.start({});
+  const linked = async (projectId: string) =>
+    (await f.ctx.sbxAccounts.linked(projectId))?.account_id ?? null;
+  assert.deepEqual(await Promise.all(projects.map((project) => linked(project.id))), [
+    (await people.accountOf({ issuer, subject: 'erin' }))!.accountId,
+    null,
+    (await people.accountOf({ issuer, subject: 'frank' }))!.accountId,
+  ]);
+  assert.equal(f.logs('sandboxes.projects.link_failed').length, 1);
+  assert.deepEqual(f.logs('sandboxes.projects.relinked'), []);
+  // Linked by someone else since, the project stays where they put it across restarts.
+  const erin = (await people.accountOf({ issuer, subject: 'erin' }))!.accountId;
+  const { sbxDb: db, sbxAccounts: accounts, sbxClock: clock } = f.ctx;
+  const linker = (await f.ctx.sbxAuth.persons.byIdentity(issuer, 'erin'))!.id;
+  await linkProject({ db, accounts, clock }, linker, projects[1]!.id, { account_id: erin });
+  await f.start({});
+  assert.equal(await linked(projects[1]!.id), erin);
+  assert.equal(f.logs('sandboxes.projects.link_failed').length, 1);
 });
 
 test('the integration takes positive USD per provider, none by default', () => {

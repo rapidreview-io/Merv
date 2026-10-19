@@ -1,9 +1,9 @@
 import type { Context } from 'cordis';
 import { digest, MervError, type Scope } from '@merv/contracts';
 import type { SbxAccounts } from '@sandboxes/accounts';
-import type { SbxAuth } from '@sandboxes/auth';
+import { linkProject, type SbxAuth } from '@sandboxes/auth';
 import type { CreditGrantInput, CreditScheduleInput, SbxBilling } from '@sandboxes/billing';
-import { Decimal } from '@sandboxes/kernel';
+import { Decimal, type Clock, type Database } from '@sandboxes/kernel';
 import { mervRefusals } from '@sandboxes/merv-host/errors';
 import type { SbxProviders } from '@sandboxes/providers';
 import type { SandboxesPeople as People } from './types.js';
@@ -19,6 +19,8 @@ const cause = (error: unknown) => (error instanceof Error ? error.message : Stri
 /** Merv's people in Sandboxes, which keeps the person, their account and its credits. */
 export class SandboxesPeople implements People {
   #pending = new Set<Promise<void>>();
+  /** Links run one at a time, in the order their admins changed. */
+  #links = Promise.resolve();
   #unconnected = new Set<string>();
   #closed = false;
   constructor(
@@ -27,11 +29,13 @@ export class SandboxesPeople implements People {
       accounts: SbxAccounts;
       billing: SbxBilling;
       providers: SbxProviders;
+      db: Database;
+      clock: Clock;
     },
     private readonly credits: NewPersonCredits,
   ) {}
 
-  ensure({ issuer, subject, label }: Person): Promise<{ accountId: string }> {
+  ensure({ issuer, subject, label }: Person): Promise<{ accountId: string; personId: string }> {
     return refusals.call(async () => {
       const { persons } = this.sbx.auth;
       // A new person comes with their own account, them its admin, in their home namespace.
@@ -39,10 +43,12 @@ export class SandboxesPeople implements People {
         (await persons.byIdentity(issuer, subject)) ??
         (await persons.ensureIdentity({ issuer, subject, displayName: label }));
       const { account_id: accountId } = await this.sbx.accounts.namespace(person.home_namespace!);
+      const own = { accountId, personId: person.id };
       const offered = Object.entries(this.credits);
-      if (!offered.length) return { accountId };
+      if (!offered.length) return own;
       const { credits } = this.sbx.billing;
       const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
+      // Connections, not `modes.of`'s funded: CreditService admits credit only on a registered one.
       const connected = new Set((await this.sbx.providers.connections.list()).map((c) => c.plugin));
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
@@ -69,7 +75,7 @@ export class SandboxesPeople implements People {
           });
         });
       }
-      return { accountId };
+      return own;
     });
   }
 
@@ -122,7 +128,12 @@ export class SandboxesPeople implements People {
   signedIn(person: Person): void {
     if (!this.#closed) this.#track(this.#ensure(person));
   }
-  /** Everyone already signed in, one at a time, once. */
+  /** In the background, after the links asked before it: a failure is logged and stops none. */
+  adminChanged(projectId: string, admin: Person): void {
+    if (!this.#closed) this.#link(() => this.#linked(projectId, admin));
+  }
+  /** Everyone already signed in, one at a time, once; then every project with an admin and no
+   *  link yet. One linked already stays where someone put it. */
   backfill(scope: Scope): void {
     this.#track(
       (async () => {
@@ -132,6 +143,10 @@ export class SandboxesPeople implements People {
         }
       })(),
     );
+    this.#link(async () => {
+      for (const { projectId, source } of await scope.projectOwners())
+        if (source.kind === 'human' && !this.#closed) await this.#linked(projectId, source, true);
+    });
   }
   async settled(): Promise<void> {
     await Promise.all(this.#pending);
@@ -151,6 +166,41 @@ export class SandboxesPeople implements People {
           cause: cause(error),
         }),
     );
+  /** The project in its admin's own account, which pays for its compute: left alone where it
+   *  is there already (or, `onlyUnlinked`, anywhere); moved there from another account with its
+   *  namespace, which revokes the tokens minted for it there (its agents reconnect on their next
+   *  lease). A failure is logged. */
+  #linked = async (projectId: string, admin: Person, onlyUnlinked = false) => {
+    try {
+      const { accounts, db, clock } = this.sbx;
+      const before = await accounts.linked(projectId);
+      if (before && onlyUnlinked) return;
+      const { accountId, personId } = await this.ensure(admin);
+      if (before?.account_id === accountId) return;
+      // Scope decided the admin: the host moves the project without an admin of its old account.
+      await linkProject(
+        { db, accounts, clock },
+        personId,
+        projectId,
+        { account_id: accountId, only_unlinked: onlyUnlinked },
+        { internal: true },
+      );
+      if (before)
+        log({
+          event: 'sandboxes.projects.relinked',
+          projectId,
+          from: before.account_id,
+          accountId,
+        });
+    } catch (error) {
+      log({ event: 'sandboxes.projects.link_failed', projectId, cause: cause(error) });
+    }
+  };
+  #link(work: () => Promise<void>): void {
+    const next = this.#links.then(work);
+    this.#links = next.catch(() => {});
+    this.#track(next);
+  }
   #track(work: Promise<void>): void {
     const running = work
       .catch((error) => log({ event: 'sandboxes.people.backfill_failed', cause: cause(error) }))
@@ -163,7 +213,7 @@ export class SandboxesPeople implements People {
  *  everyone signed in before. Loaded by the integration, which passes its `newPersonCredits`. */
 export const sandboxesPeoplePlugin = {
   name: 'merv-sandboxes-people',
-  inject: ['scope', 'sbxAuth', 'sbxAccounts', 'sbxBilling', 'sbxProviders'],
+  inject: ['scope', 'sbxAuth', 'sbxAccounts', 'sbxBilling', 'sbxProviders', 'sbxDb', 'sbxClock'],
   apply(ctx: Context, config: { newPersonCredits: NewPersonCredits }) {
     ctx.effect(function* () {
       const people = new SandboxesPeople(
@@ -172,12 +222,15 @@ export const sandboxesPeoplePlugin = {
           accounts: ctx.sbxAccounts,
           billing: ctx.sbxBilling,
           providers: ctx.sbxProviders,
+          db: ctx.sbxDb,
+          clock: ctx.sbxClock,
         },
         config.newPersonCredits,
       );
       yield ctx.provide('sandboxesPeople', people);
       yield () => people.close();
       yield ctx.scope.members.onFirstSignIn((person) => people.signedIn(person));
+      yield ctx.scope.members.onAdminChanged((id, admin) => people.adminChanged(id, admin));
       people.backfill(ctx.scope);
     });
   },

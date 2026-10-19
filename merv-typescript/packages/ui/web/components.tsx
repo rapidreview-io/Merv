@@ -778,8 +778,8 @@ export function useMoreMenu(claims = false) {
   const box = useRef<HTMLDivElement>(null);
   const close = () => setOpen(false);
   useDismiss(open, box, close, claims);
-  const item = (label: string, act: () => void) => (
-    <button type="button" role="menuitem" className="file-menu-item" onClick={act}>
+  const item = (label: string, act: () => void, key?: string) => (
+    <button key={key} type="button" role="menuitem" className="file-menu-item" onClick={act}>
       {label}
     </button>
   );

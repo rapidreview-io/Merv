@@ -20,7 +20,8 @@ import {
 import { ListPage, Segments, openRow, typing, useListFilter } from '../list-filters';
 import { day } from '../session';
 import { useRoomy } from '../theme';
-import { Head, None, count, fig, usd, usePost } from './parts';
+import { Head, None, count, fig, usePost } from './parts';
+import { usd } from '../views/remote-fields';
 
 /** A row: the person, under the id a list filter keys it by (their `issuer|subject`). */
 type Person = AdminCredits['people'][number] & { id: string };

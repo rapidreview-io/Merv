@@ -169,3 +169,39 @@ test('project changes remount the frame and Reload renews without another sign-i
   assert.equal(requests.filter((r) => !r.endsWith('/sandboxes/console-session')).length, 0);
   assert.ok(!snapshotPage(window).html.includes('code_3'), 'a look carries the one-time code');
 });
+
+test('a top-up the console asks for goes to its Checkout; a refused one shows its failure', async (t) => {
+  t.after(unmount);
+  t.after(() => history.replaceState(null, '', '/'));
+  await open('/sandboxes/providers');
+  const sent: Record<string, unknown>[] = [];
+  serve('/compute/checkout', (n, body) => {
+    sent.push(body);
+    if (n === 1) return { body: { url: `${window.location.origin}/#checkout` } };
+    if (n === 2) return { status: 503, body: { error: { code: 'unavailable', message: 'Down' } } };
+    return { status: 409, body: { error: { code: 'provider_unavailable', message: 'No hosted' } } };
+  });
+  const ask = { type: 'sandboxes:top-up', provider: 'lambda', amountUsd: 50 };
+  // Only the console's own window, from Merv's origin, may ask.
+  await message(ask, 'https://elsewhere.example');
+  await message(ask, window.location.origin, window);
+  assert.equal(sent.length, 0);
+  await message(ask);
+  await settle(0);
+  assert.deepEqual(
+    { ...sent[0], requestId: typeof sent[0]!.requestId },
+    { provider: 'lambda', amountUsd: 50, requestId: 'string' },
+  );
+  assert.equal(window.location.hash, '#checkout');
+  // An uncertain failure is not resent in place of the next ask.
+  await message({ ...ask, amountUsd: 25 });
+  await settle(0);
+  await message({ ...ask, amountUsd: 100 });
+  await settle(0);
+  assert.deepEqual(
+    sent.map((body) => body.amountUsd),
+    [50, 25, 100],
+  );
+  assert.equal(new Set(sent.map((body) => body.requestId)).size, 3);
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'No hosted');
+});

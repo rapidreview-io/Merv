@@ -173,7 +173,17 @@ const capabilities: Record<string, readonly string[]> = {
     'sbxRegistry',
   ],
   // Each verified person's own Sandboxes account, which Sandboxes keeps with its credits.
-  sandboxesPeople: ['scope', 'sbxAuth', 'sbxAccounts', 'sbxBilling', 'sbxProviders'],
+  sandboxesPeople: [
+    'scope',
+    'sbxAuth',
+    'sbxAccounts',
+    'sbxBilling',
+    'sbxProviders',
+    'sbxDb',
+    'sbxClock',
+  ],
+  // Stripe for every plugin that sells: its webhook's events, dispatched to their sellers.
+  payments: ['api'],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
   // Literature retrieval and account-backed research require fresh caller scope checks.
@@ -941,6 +951,8 @@ test('Cordis service requirements match the architecture and every accessed capa
             'api',
           ]),
         );
+        // Identity for its v3 customers and Payments for its checkout, where loaded.
+        assert.deepEqual(sorted([...optional]), ['identity', 'payments']);
         // Its snapshot and work reads for the platform admin, which takes them where loaded.
         assert.deepEqual(actualProvided, ['customerExperiments']);
         return;
@@ -962,6 +974,21 @@ test('Cordis service requirements match the architecture and every accessed capa
         // An adapter, not a service: it registers tools and routes and nothing injects it.
         assert.deepEqual(actualProvided, []);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate workflow orchestration');
+        orchestrationAdapters.add(name.text);
+        return;
+      }
+      if (name.text === 'merv-sandboxes-credits') {
+        assert.equal(relative(packagesRoot, path), join('sandboxes', 'src', 'credits.ts'));
+        // A person's top-ups of their own account, sold through Payments when loaded.
+        assert.deepEqual(sorted(declared), [
+          'api',
+          'sandboxesPeople',
+          'sbxProviders',
+          'sbxSettings',
+        ]);
+        assert.deepEqual(sorted([...optional]), ['payments']);
+        assert.deepEqual(actualProvided, []);
+        assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate compute orchestration');
         orchestrationAdapters.add(name.text);
         return;
       }
@@ -1012,6 +1039,7 @@ test('Cordis service requirements match the architecture and every accessed capa
   assert.deepEqual(sorted([...orchestrationAdapters]), [
     'merv-fleet-workflow',
     'merv-sandboxes-console',
+    'merv-sandboxes-credits',
   ]);
 });
 

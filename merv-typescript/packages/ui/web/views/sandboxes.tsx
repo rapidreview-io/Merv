@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { accountRequest, useScopeVersion } from '../api';
+import { accountRequest, readOnly, useScopeVersion } from '../api';
 import type { ViewProps } from './index';
 
 export function SandboxesView({ row }: ViewProps) {
@@ -18,6 +18,7 @@ function Console({ path }: { path: string }) {
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
   const [height, setHeight] = useState(700);
+  const buying = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +73,29 @@ function Console({ path }: { path: string }) {
         data.height <= 10000
       )
         setHeight(data.height);
+      // A top-up the Providers page asks for goes to a new Stripe Checkout, never an earlier ask.
+      if (
+        data?.type === 'sandboxes:top-up' &&
+        typeof data.provider === 'string' &&
+        Number.isFinite(data.amountUsd) &&
+        !buying.current &&
+        !readOnly()
+      ) {
+        buying.current = true;
+        setError(undefined);
+        const body = {
+          provider: data.provider,
+          amountUsd: data.amountUsd,
+          requestId: crypto.randomUUID(),
+        };
+        accountRequest<{ url: string }>('/compute/checkout', { method: 'POST', body })
+          .then(
+            ({ url }) => window.location.assign(url),
+            (failure: unknown) =>
+              setError(failure instanceof Error ? failure.message : 'Top-up failed'),
+          )
+          .finally(() => (buying.current = false));
+      }
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);

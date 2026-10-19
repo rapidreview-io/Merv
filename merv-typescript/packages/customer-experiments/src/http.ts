@@ -102,16 +102,14 @@ export function customerHttp(
       res.end(await customerDocument(service, page[1]!, app));
       return;
     }
+    // Payments' webhook, where the Stripe dashboard first pointed.
     if (path === '/customer-experiments/stripe-webhook' && method === 'POST') {
-      check(service.payments, 'checkout_unavailable', 'Payments are not configured', 503);
-      const signature = req.headers['stripe-signature'];
-      check(typeof signature === 'string', 'invalid_webhook', 'Stripe signature is required', 400);
-      const event = service.payments.verify(
+      const payments = service.payments();
+      check(payments, 'checkout_unavailable', 'Payments are not configured', 503);
+      return payments.receive(
         await r.bytes(256 * 1024, 'application/json'),
-        signature,
+        req.headers['stripe-signature'],
       );
-      if (event) await service.paid(event);
-      return { received: true };
     }
     if (isFilesPath(path)) return filesHttp(service.access, files, req, r);
     if (path === '/customer-experiments/requests' && method === 'POST')

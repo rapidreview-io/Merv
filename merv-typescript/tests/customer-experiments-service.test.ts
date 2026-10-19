@@ -16,7 +16,7 @@ import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { AnyToolDefinition } from '@merv/api/types';
 import type { PiRuntime, PiProfile } from '@merv/pi/types';
 import { CustomerExperiments } from '../packages/customer-experiments/src/domain.js';
-import { CustomerService } from '../packages/customer-experiments/src/service.js';
+import { CUSTOMER_PRODUCT, CustomerService } from '../packages/customer-experiments/src/service.js';
 import { RequestStore } from '../packages/customer-experiments/src/store.js';
 import { customerHttp, startHttp } from '../packages/customer-experiments/src/http.js';
 import type {
@@ -26,11 +26,9 @@ import type {
   StructuredContract,
 } from '../packages/customer-experiments/src/types.js';
 import type { DatasetStorage } from '../packages/customer-experiments/src/data.js';
-import type {
-  PaidCheckout,
-  Payments,
-  ResultMailer,
-} from '../packages/customer-experiments/src/payment.js';
+import type { ResultMailer } from '../packages/customer-experiments/src/mail.js';
+import type { CheckoutInput, Paid } from '@merv/contracts/payments';
+import { PaymentsService } from '../packages/payments/src/index.js';
 import { openState } from './fixtures/state.js';
 import { managedServices } from './fixtures/managed-services.js';
 
@@ -180,7 +178,7 @@ async function fixture(
     },
     async close() {},
   };
-  const checkoutCalls: Parameters<Payments['checkout']>[0][] = [];
+  const checkoutCalls: CheckoutInput[] = [];
   const computePreparations: string[] = [];
   const computeReads: string[] = [];
   const compute = {
@@ -202,21 +200,23 @@ async function fixture(
       computePreparations.push(caller.projectId);
     },
   };
-  const payments: Payments = {
+  // Payments over a fake Stripe: the real webhook's dispatch, a fake signature.
+  const payments = new PaymentsService({
+    live: false,
     async checkout(input) {
       checkoutCalls.push(input);
       return {
-        id: 'cs_' + input.requestId + '_' + input.generation,
+        id: 'cs_' + input.reference + '_' + input.idempotencyKey.split('-').at(-1),
         url: 'https://checkout.stripe.com/fixture',
         expiresAt: Date.now() / 1000 + 1800,
       };
     },
-    verify(bytes, signature) {
+    async verify(bytes, signature) {
       if (signature !== 'fixture-valid-signature')
         throw new MervError('invalid_webhook', 'Invalid signature', 400);
-      return JSON.parse(bytes.toString()) as PaidCheckout;
+      return JSON.parse(bytes.toString()) as Paid;
     },
-  };
+  });
   const emails: Parameters<ResultMailer['send']>[0][] = [];
   const delivery = { fail: false };
   const mailer: ResultMailer = {
@@ -232,12 +232,13 @@ async function fixture(
     artifacts,
     runtime,
     storage,
-    payments,
+    () => payments,
     mailer,
     { publicOrigin: 'https://merv.example', sponsor, intakeKey, publicIntake, maxRequestsPerDay },
     compute,
     files,
   );
+  payments.fulfil(CUSTOMER_PRODUCT, (paid) => service.paid(paid));
   const tools = new ToolRegistry(scope);
   const registered = new Map<string, AnyToolDefinition>();
   const register = tools.register.bind(tools);
@@ -432,22 +433,25 @@ test('a ready contract needs customer acceptance and a matching verified payment
   );
   const checkout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
   assert.equal(checkout.status, 200);
-  const paid: PaidCheckout = {
+  const paid: Paid = {
+    product: CUSTOMER_PRODUCT,
     eventId: 'evt_paid',
-    requestId: a.id,
-    contractHash: exp.contract!.hash,
-    checkoutId: checkout.body.id,
+    reference: a.id,
+    metadata: { contractHash: exp.contract!.hash },
     paymentId: 'pi_paid',
-    amountCents: 1000,
-    currency: 'usd',
+    amountUsd: 10,
+    createdAt: new Date().toISOString(),
   };
-  const webhook = (event: PaidCheckout, signature = 'fixture-valid-signature') =>
+  const webhook = (event: Paid, signature = 'fixture-valid-signature') =>
     f.send('/customer-experiments/stripe-webhook', undefined, event, {
       'Stripe-Signature': signature,
     });
   assert.equal((await webhook(paid, 'untrusted')).status, 400);
-  assert.equal((await webhook({ ...paid, contractHash: 'not-the-accepted-contract' })).status, 409);
-  assert.equal((await webhook({ ...paid, amountCents: 1 })).status, 409);
+  assert.equal(
+    (await webhook({ ...paid, metadata: { contractHash: 'not-the-accepted-contract' } })).status,
+    409,
+  );
+  assert.equal((await webhook({ ...paid, amountUsd: 0.01 })).status, 409);
   assert.equal((await f.experiment(a.id)).workflow.state, 'awaiting_payment');
   await f.store.mutate(a.id, (record) => {
     record.checkout!.expiresAt = Date.now() / 1000 - 1;
@@ -825,14 +829,14 @@ test('unavailable internal compute prevents checkout and payment release, while 
   );
   assert.equal(checkout.status, 200);
   assert.equal((await f.experiment(request.id)).workflow.state, 'awaiting_payment');
-  const payment: PaidCheckout = {
+  const payment: Paid = {
+    product: CUSTOMER_PRODUCT,
     eventId: 'evt_compute_retry',
-    requestId: request.id,
-    checkoutId: checkout.body.id,
-    contractHash: exp.contract!.hash,
+    reference: request.id,
+    metadata: { contractHash: exp.contract!.hash },
     paymentId: 'pi_compute_retry',
-    amountCents: 1000,
-    currency: 'usd',
+    amountUsd: 10,
+    createdAt: new Date().toISOString(),
   };
   f.compute.prepareExecution = async () => {
     throw new MervError('customer_compute_unavailable', 'Compute allowance unavailable', 503);
@@ -1339,8 +1343,7 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
   assert.equal(opened.status, 200, JSON.stringify(opened.body));
   assert.equal(opened.body.url, 'https://checkout.stripe.com/fixture');
   assert.equal(f.checkoutCalls.length, 1);
-  assert.equal(f.checkoutCalls[0].contract.price.amountCents, 1000);
-  assert.equal(f.checkoutCalls[0].contract.price.currency, 'usd');
+  assert.equal(f.checkoutCalls[0].amountUsd, 10);
   assert.equal(f.checkoutCalls[0].email, 'customer@example.com');
   let exp = await f.experiment(f.a.id);
   assert.equal(exp.workflow.state, 'awaiting_payment');
@@ -1351,14 +1354,14 @@ test('v3 uses the explicitly submitted email, retries link delivery, and ignores
     (await f.state.read((sql) => sql.all('SELECT * FROM customer_experiment_acceptances'))).length,
     1,
   );
-  const paid: PaidCheckout = {
+  const paid: Paid = {
+    product: CUSTOMER_PRODUCT,
     eventId: 'evt_v3',
-    requestId: f.a.id,
-    contractHash: exp.contract!.hash,
-    checkoutId: opened.body.id,
+    reference: f.a.id,
+    metadata: { contractHash: exp.contract!.hash },
     paymentId: 'pi_v3',
-    amountCents: 1000,
-    currency: 'usd',
+    amountUsd: 10,
+    createdAt: new Date().toISOString(),
     email: 'stripe-billing@example.com',
   };
   f.delivery.fail = true;
@@ -1430,7 +1433,7 @@ test('v2 requests keep the structured offer: no plan document, and their checkou
   );
   const checkout = await f.send(base + '/' + a.id + '/checkout', a.customerToken, approval);
   assert.equal(checkout.status, 200, JSON.stringify(checkout.body));
-  assert.equal(f.checkoutCalls[0].contract.price.amountCents, 1000);
+  assert.equal(f.checkoutCalls[0].amountUsd, 10);
   await assert.rejects(
     f.service.checkoutPlan(await f.store.get(a.id), { contractVersion: 1 }),
     conflict('plan_document_unavailable'),

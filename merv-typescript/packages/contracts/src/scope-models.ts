@@ -22,6 +22,8 @@ export interface Project {
   name: string;
   createdAt: string;
 }
+/** The person billed for a project, a live operator of it. */
+export type ProjectAdmin = { issuer: string; subject: string };
 /** A machine bearer owned by a verified user; projectId is its immutable issuance project. */
 export interface UserKey {
   id: string;

@@ -1,6 +1,7 @@
 import { newId, type Project, type Sql } from '@merv/contracts';
 
-/** A project row: its identity only. Paper serves the project Introduction from the Problem. */
+/** A project row: its identity only. Paper serves the project Introduction from the Problem;
+ * its admin is read with its members. */
 export interface ProjectRow {
   id: string;
   name: string;
@@ -13,7 +14,7 @@ export const projectValue = (row: ProjectRow): Project => ({
   createdAt: row.created_at,
 });
 
-/** A new project named `name`, inserted in `tx`. */
+/** A new project named `name`, inserted in `tx`. Its first live operator becomes its admin. */
 export async function insertProject(tx: Sql, name: string, createdAt: string): Promise<Project> {
   const value = { id: newId('project'), name, createdAt };
   await tx.run('INSERT INTO projects(id,name,created_at) VALUES(?,?,?)', value.id, name, createdAt);

@@ -79,7 +79,7 @@ export type {
 import type { Data, Json } from './data.js';
 import type { Artifact, ArtifactContent, ArtifactFile } from './artifact-models.js';
 export type { Artifact, ArtifactContent } from './artifact-models.js';
-export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
+export type { Actor, IssuedUserKey, Project, ProjectAdmin, UserKey } from './scope-models.js';
 import { visible } from './text.js';
 import type { Caller, DelegationSource, Permission, Role } from './scope-models.js';
 export type { Caller, DelegationSource, Permission, Role } from './scope-models.js';

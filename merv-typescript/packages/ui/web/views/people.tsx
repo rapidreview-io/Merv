@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { personName } from '@merv/contracts/text';
 import { ApiError, accountRequest, scopeVersion, useTool } from '../api';
 import { useActor, useSession, type Actor } from '../session';
-import { EmptyState, term } from '../components';
+import { EmptyState, term, useMoreMenu } from '../components';
 import { ListPage, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 import { Invitations } from '../invitations';
@@ -40,6 +40,12 @@ interface Membership {
   role: Role;
   active: boolean;
 }
+type Admin = { issuer: string; subject: string } | null;
+interface Members {
+  memberships: Membership[];
+  admin: Admin;
+  payers: string[];
+}
 const roles: Role[] = ['reader', 'producer', 'reviewer', 'operator'];
 const failure = (error: unknown): ApiError =>
   error instanceof ApiError
@@ -75,6 +81,14 @@ export function PeopleView() {
   const human = account.kind === 'user';
   const { subject, issuer } = human ? account.user : { subject: '', issuer: '' };
   const [members, setMembers] = useState<Membership[]>();
+  const [admin, setAdmin] = useState<Admin>(null);
+  const [payers, setPayers] = useState<string[]>([]);
+  const shown = (result: Members) => {
+    setMembers(result.memberships.filter((member) => member.active));
+    setAdmin(result.admin);
+    setPayers(result.payers);
+  };
+  const billing = useMoreMenu();
   const [loadError, setLoadError] = useState<ApiError>();
   const [mutationError, setMutationError] = useState<string>();
   const [loading, setLoading] = useState(human);
@@ -88,10 +102,13 @@ export function PeopleView() {
   const newest = useRef(0);
   const heading = useId();
   const nameOf = useActorNames();
-  const mine = (member: Membership) => member.subject === subject && member.issuer === issuer;
+  const is = (member: Membership, who: Admin) =>
+    member.subject === who?.subject && member.issuer === who.issuer;
+  const mine = (member: Membership) => is(member, { issuer, subject });
   // A member is named from the directory, never by the account ID they signed in with.
   const label = (member: Membership) => nameOf(member.actorId) ?? (mine(member) ? 'You' : 'Member');
-  const isOperator = (human ? members?.find(mine)?.role : actor.role) === 'operator';
+  const me = members?.find(mine);
+  const isOperator = (human ? me?.role : actor.role) === 'operator';
   const options = roles.map((role) => (
     <option key={role} value={role}>
       {term(role)}
@@ -101,7 +118,11 @@ export function PeopleView() {
   // The project always keeps an operator, so the only one can be neither demoted nor removed.
   const operators = members?.filter((member) => member.role === 'operator').length;
   const lastOperator = (member: Membership) => member.role === 'operator' && operators === 1;
-  const path = `/projects/${encodeURIComponent(project.id)}/members`;
+  const root = `/projects/${encodeURIComponent(project.id)}`;
+  const path = `${root}/members`;
+  const billed = members?.find((member) => is(member, admin));
+  // Whom this person may bill is Scope's to say.
+  const billable = members?.filter((m) => payers.includes(m.id)) ?? [];
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
     labels: (member) => [nameOf(member.actorId), member.subject],
@@ -126,8 +147,8 @@ export function PeopleView() {
       if (polling) return;
       polling = true;
       const asked = ++newest.current;
-      const show = await accountRequest<{ memberships: Membership[] }>(path, { scoped: true }).then(
-        (result) => () => setMembers(result.memberships.filter((member) => member.active)),
+      const show = await accountRequest<Members>(path, { scoped: true }).then(
+        (result) => () => shown(result),
         (error) => () => setLoadError(failure(error)),
       );
       polling = false;
@@ -146,7 +167,7 @@ export function PeopleView() {
 
   const mutate = async (
     method: 'POST' | 'PATCH' | 'DELETE',
-    target?: string,
+    target: string,
     body?: unknown,
     done?: () => void,
   ) => {
@@ -157,26 +178,16 @@ export function PeopleView() {
     setBusy(true);
     setMutationError(undefined);
     try {
-      await accountRequest(
-        method === 'POST'
-          ? `/projects/${encodeURIComponent(project.id)}/invitations`
-          : `${path}/${encodeURIComponent(target!)}`,
-        {
-          method,
-          body,
-          scoped: true,
-        },
-      );
+      await accountRequest(target, { method, body, scoped: true });
       if (!current()) return;
       if (method === 'POST') {
         setNewSubject('');
         done?.();
       }
       const asked = ++newest.current;
-      const result = await accountRequest<{ memberships: Membership[] }>(path, { scoped: true });
+      const result = await accountRequest<Members>(path, { scoped: true });
       if (!current()) return;
-      if (asked === newest.current)
-        setMembers(result.memberships.filter((member) => member.active));
+      if (asked === newest.current) shown(result);
       setDraftRoles({});
       setLoadError(undefined);
     } catch (error) {
@@ -188,11 +199,12 @@ export function PeopleView() {
       }
     }
   };
+  const memberPath = (subject: string) => `${path}/${encodeURIComponent(subject)}`;
   // Trimming a pasted address does not change the recipient's account identity.
   const add = (event: FormEvent, close: () => void) => {
     event.preventDefault();
     const pasted = newSubject.trim();
-    if (pasted) void mutate('POST', undefined, { email: pasted, role: newRole }, close);
+    if (pasted) void mutate('POST', `${root}/invitations`, { email: pasted, role: newRole }, close);
   };
 
   // An account with no sign-in of its own has no memberships to manage; the
@@ -285,7 +297,7 @@ export function PeopleView() {
                 className="btn"
                 disabled={busy || !draftRoles[member.id] || draftRoles[member.id] === member.role}
                 onClick={() =>
-                  void mutate('PATCH', member.subject, { role: draftRoles[member.id] })
+                  void mutate('PATCH', memberPath(member.subject), { role: draftRoles[member.id] })
                 }
               >
                 Edit role
@@ -293,7 +305,7 @@ export function PeopleView() {
               <button
                 className="btn"
                 disabled={busy || lastOperator(member)}
-                onClick={() => void mutate('DELETE', member.subject)}
+                onClick={() => void mutate('DELETE', memberPath(member.subject))}
               >
                 Remove
               </button>
@@ -307,6 +319,27 @@ export function PeopleView() {
       })}
       after={
         <>
+          {billed && (
+            <div className="billed">
+              <span>
+                Billed to <strong>{label(billed)}</strong>
+              </span>
+              {!!billable.length &&
+                billing.menu(
+                  billable.map((payer) =>
+                    billing.item(
+                      payer === me ? 'Bill me' : label(payer),
+                      () => {
+                        billing.close();
+                        const { issuer, subject } = payer;
+                        void mutate('PATCH', `${root}/admin`, { issuer, subject });
+                      },
+                      payer.id,
+                    ),
+                  ),
+                )}
+            </div>
+          )}
           {mutationError && (
             <div className="error-message" role="alert">
               {mutationError}

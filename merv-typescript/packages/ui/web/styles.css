@@ -1771,6 +1771,17 @@ select.input,
   float: right;
   color: var(--faint);
 }
+/* Members: who the project is billed to; an operator's ⋯ beside it bills another. */
+.billed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.billed .file-menu {
+  margin-left: 0;
+}
 /* Upload file: one press opens the chooser; what is happening is said to its left. */
 .upload {
   display: inline-flex;

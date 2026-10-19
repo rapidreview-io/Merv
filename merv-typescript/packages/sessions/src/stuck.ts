@@ -428,7 +428,7 @@ async function attention(
           : 'Dispatch is on and work is queued, but no runner has ever registered in this project.',
         next:
           dispatch.fleet && !dispatch.ownMachines
-            ? 'Fleet serves a project as its owner, its longest-standing signed-in operator, while they may write and Fleet lists them; otherwise start a runner on a machine that holds a write key of this project.'
+            ? 'Fleet serves a project as its owner, its admin, while they may write and Fleet lists them; otherwise start a runner on a machine that holds a write key of this project.'
             : 'Start a runner on a machine that holds a write key of this project.',
       });
     else {
