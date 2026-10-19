@@ -1,4 +1,4 @@
-/** Only native screen.look images bypass text budgets; other tools keep ordinary JSON. */
+/** Only native screen.look and board.look images bypass text budgets; other tools keep ordinary JSON. */
 export function screenImage(
   result: unknown,
 ): { image: { data: string; mimeType: 'image/jpeg' }; metadata: Record<string, unknown> } | null {
@@ -30,7 +30,7 @@ export function recentImages<T extends { role: string }>(messages: T[]): T[] {
           part.type === 'image' && ++kept > 2
             ? {
                 type: 'text',
-                text: '[Earlier board image omitted; use screen.look to inspect it again.]',
+                text: '[Earlier board image omitted; use board.look to inspect it again.]',
               }
             : part,
         ),

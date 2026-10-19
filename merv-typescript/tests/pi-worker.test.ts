@@ -76,6 +76,7 @@ async function fixture(
   options: {
     toolCall?: boolean;
     screenImage?: boolean;
+    boardImage?: boolean;
     calls?: number;
     cancel?: boolean;
     checkpoint?: PiWork['checkpoint'];
@@ -106,8 +107,22 @@ async function fixture(
     shell?: boolean;
   } = {},
 ) {
-  const tool = { ...globalTool, ...(options.screenImage ? { name: 'screen.look' } : {}) };
-  const call = { ...globalCall, ...(options.screenImage ? { name: 'screen_look' } : {}) };
+  const tool = {
+    ...globalTool,
+    ...(options.boardImage
+      ? { name: 'board.look' }
+      : options.screenImage
+        ? { name: 'screen.look' }
+        : {}),
+  };
+  const call = {
+    ...globalCall,
+    ...(options.boardImage
+      ? { name: 'board_look' }
+      : options.screenImage
+        ? { name: 'screen_look' }
+        : {}),
+  };
   const controller = new AbortController();
   const completions: PiCompletion[] = [];
   const modelRequests: Record<string, unknown>[] = [];
@@ -158,7 +173,13 @@ async function fixture(
         // A role without a terminal never sends one; with one, exactly the library's five.
         const offered = options.shell
           ? ['bash', 'grep', 'ls', 'project_get', 'read', 'write']
-          : [options.screenImage ? 'screen_look' : 'project_get'];
+          : [
+              options.boardImage
+                ? 'board_look'
+                : options.screenImage
+                  ? 'screen_look'
+                  : 'project_get',
+            ];
         assert.ok(validPiPayload(parsed.data, offered));
         assert.deepEqual(
           (body.tools as { name: string }[]).map((tool) => tool.name).sort(),
@@ -2053,11 +2074,32 @@ test('board image travels through the real Pi worker as image content, with meta
   });
   assert.deepEqual(app.completions[0].outcomes[0].output, { seen: 'Board' });
 });
+test('board.look image travels through the real Pi worker as image content, with metadata-only outcomes', async () => {
+  const data = Buffer.alloc(100000, 1).toString('base64');
+  const app = await fixture({
+    toolCall: true,
+    boardImage: true,
+    toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
+  });
+  await app.run();
+  assert.equal(app.failures.length, 0);
+  const request = piResponsesSchema.parse(app.modelRequests[1]);
+  const output = request.input.find(
+    (item) => 'type' in item && item.type === 'function_call_output',
+  );
+  assert.ok(output && 'output' in output && Array.isArray(output.output));
+  assert.deepEqual(output.output[1], {
+    type: 'input_image',
+    detail: 'auto',
+    image_url: `data:image/jpeg;base64,${data}`,
+  });
+  assert.deepEqual(app.completions[0].outcomes[0].output, { seen: 'Board' });
+});
 
-test('repeated large board images stay bounded in relay history and saved checkpoint', async () => {
+test('repeated large board.look images stay bounded in relay history and saved checkpoint', async () => {
   const data = Buffer.alloc(450000, 1).toString('base64');
   const app = await fixture({
-    screenImage: true,
+    boardImage: true,
     sections: Array(6).fill('Looking'),
     toolResult: { seen: 'Board', image: { data, mimeType: 'image/jpeg' } },
   });

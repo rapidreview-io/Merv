@@ -116,7 +116,7 @@ export function BoardLinkDetails({
   const content = (
     <section
       ref={expanded ? dialog : anchor}
-      className={`board-link-details${expanded ? ` is-expanded is-${mode}` : ''}`}
+      className={`board-link-details board-reference-${theme}${expanded ? ` is-expanded is-${mode}` : ''}`}
       style={expanded && mode === 'reading' ? position : undefined}
       role={expanded ? 'dialog' : 'region'}
       aria-modal={expanded || undefined}

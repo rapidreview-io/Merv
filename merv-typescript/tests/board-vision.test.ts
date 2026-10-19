@@ -28,6 +28,8 @@ test('image transport bypasses text clipping only for a bounded screen result', 
     image: { mimeType: 'image/jpeg', data: Buffer.alloc(100000).toString('base64') },
   };
   assert.equal(fit('screen.look', result), result);
+  assert.equal(fit('board.look', result), result);
+  assert.notEqual(fit('board.read', result), result);
   assert.equal(
     screenImage({ ...result, image: { ...result.image, data: 'A'.repeat(700001) } }),
     null,

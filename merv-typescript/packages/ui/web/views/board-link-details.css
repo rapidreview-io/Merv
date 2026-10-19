@@ -150,22 +150,26 @@
   }
 }
 
-/* A portal does not inherit Excalidraw's theme variables: carry its selected theme. */
-.board-reference-overlay {
+/* Use the same explicit palette inside the canvas and in expanded portals. */
+.board-reference-overlay,
+.board-link-details {
   --color-surface-lowest: #fff;
   --text-primary-color: #25252b;
   --text-secondary-color: #707078;
   --color-gray-10: #f6f6f8;
+  --color-gray-20: #e8e8ed;
   --bg-elev: #fff;
   --bg-soft: #f6f6f8;
   --text: #25252b;
   color-scheme: light;
 }
-.board-reference-overlay.board-reference-dark {
+.board-reference-overlay.board-reference-dark,
+.board-link-details.board-reference-dark {
   --color-surface-lowest: #232329;
   --text-primary-color: #f0f0f2;
   --text-secondary-color: #b9b9c2;
   --color-gray-10: #313139;
+  --color-gray-20: #45454f;
   --bg-elev: #232329;
   --bg-soft: #313139;
   --text: #f0f0f2;
@@ -209,4 +213,12 @@
 .board-link-details.is-expanded .file-embedded-body {
   max-height: none;
   flex: 1;
+}
+
+/* Opening a reference is a reading action; restore shape controls when it closes. */
+.excalidraw:has(.merv-rich-hyperlink .board-link-details) .selected-shape-actions {
+  display: none;
+}
+.excalidraw:has(.merv-rich-hyperlink .board-reference-dark) .merv-rich-hyperlink {
+  border-color: #45454f;
 }
