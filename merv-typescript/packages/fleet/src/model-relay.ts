@@ -477,6 +477,9 @@ export class ModelRelay<
           }
           if (expired(grant)) reject(403, 'grant_forbidden');
           if (Date.now() - validatedAt > authorityStaleMs) reject(504, 'relay_timeout');
+          // GMI adds routing metadata before any answer. Do not expose this non-output
+          // frame to workers: it would end their pre-answer transient-error retry window.
+          if (json(data)?.type === 'response.metadata') continue;
           startStream();
           await writeChunk(res, frame, signal);
           resetIdle();
