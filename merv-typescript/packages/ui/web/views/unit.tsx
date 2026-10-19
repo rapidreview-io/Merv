@@ -493,6 +493,8 @@ export function UnitView({
           loadedAt={loadedAt}
           onOpen={setOpened}
           strip={wide}
+          // A stage's entries name who worked it; the chips stand in only where there are none.
+          worked={(state) => !staged!.get(state)?.length}
           below={(state) => {
             const here = staged!.get(state);
             return here?.length ? (

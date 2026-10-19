@@ -204,8 +204,50 @@ export function Thread({
     ) : (
       <Evidence key={file.id} artifactId={file.id} artifact={artifacts.get(file.id)} meta />
     );
+  // Under a stage every entry is one row of one grid: the disc, the role, what it handed in
+  // or decided — or what it did, where it handed in nothing — and when.
+  if (compact)
+    return (
+      <ol className="thread thread--stage">
+        {entries.map((entry) => (
+          <li
+            className={cx('stage-row', entry.kind === 'line' && 'stage-row--line')}
+            key={entry.key}
+          >
+            {entry.mark ? (
+              <RoleDisc mark={entry.mark} />
+            ) : (
+              <span className="feed-mark">
+                <span className="thread-dot" />
+              </span>
+            )}
+            <span className="stage-who" title={entry.who}>
+              {entry.kind === 'post' ? entry.role : entry.who}
+            </span>
+            <span
+              className={cx(
+                'stage-what',
+                entry.kind === 'line' && entry.attention && 'running-attn',
+              )}
+            >
+              {entry.kind === 'post' ? (
+                <>
+                  {entry.verdict && <VerdictLine verdict={entry.verdict} />}
+                  {entry.document && handed(entry.document)}
+                  {!entry.verdict && !entry.document && entry.said}
+                </>
+              ) : (
+                entry.said
+              )}
+            </span>
+            {entry.at && <Ago at={entry.at} className="feed-when" />}
+            {entry.kind === 'line' && entry.review && <OpenReview id={entry.review} />}
+          </li>
+        ))}
+      </ol>
+    );
   return (
-    <ol className={cx('thread', compact && 'thread--stage')}>
+    <ol className="thread">
       {entries.map((entry) =>
         entry.kind === 'post' ? (
           <li className="feed-entry" key={entry.key}>
@@ -228,8 +270,7 @@ export function Thread({
               <div className="thread-body">
                 {entry.said && <p>{entry.said}</p>}
                 {entry.document && handed(entry.document)}
-                {/* Under a stage the one document stands for the post; the rest are Artifacts. */}
-                {!compact && entry.files?.map(handed)}
+                {entry.files?.map(handed)}
                 {entry.verdict && <VerdictLine verdict={entry.verdict} />}
               </div>
             </div>

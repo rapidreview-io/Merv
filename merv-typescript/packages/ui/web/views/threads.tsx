@@ -806,6 +806,7 @@ export function StageThreads({
   onOpen: setOpened,
   below,
   strip,
+  worked = () => true,
 }: {
   graph: ProcessGraph;
   threads: readonly ThreadView[];
@@ -813,9 +814,12 @@ export function StageThreads({
   onOpen(threadId: string): void;
   below?: (state: string) => ReactNode;
   strip?: boolean;
+  /** Whether a stage's chips are drawn at all: not where its thread already says who. */
+  worked?: (state: string) => boolean;
 }) {
   const now = clock(undefined, loadedAt, Date.now(), 20_000);
   const aside = (state: string) => {
+    if (!worked(state)) return null;
     const here = threads.flatMap((thread) => {
       const visits = thread.visits.filter((visit) => (visit.state ?? thread.state) === state);
       return visits.length
