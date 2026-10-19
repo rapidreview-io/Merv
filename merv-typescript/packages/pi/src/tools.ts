@@ -73,7 +73,7 @@ export const piToolsPlugin = {
       {
         name: 'screen.look',
         description:
-          "See the screen the person is looking at in Merv right now, and get its image for a board, or a text description for other pages. Ask a question about it, or leave it empty for a description. Use it when they refer to what they see ('this', 'here', 'on my screen'), and whenever you need to see something exactly as drawn (a sketch on a board, a chart, a layout): with at (a record id, or a page by its sidebar name) their page draws that out of their sight and looks at it, without moving them; at.focus (a board's shape or frame id) zooms to that part so it reads at full size. A record that draws itself, such as a board, is drawn directly with at, without the person's screen or tab, so prefer at for a board even when it is open. For boards, optional view controls the camera: fit, region (x,y,width,height), pan (dx,dy), or zoom (factor, optional center). Omitted view preserves this conversation’s last view of that board; fit again after expanding it. Images come from actual Excalidraw. For a record's contents, its own tool reads it exactly.",
+          "See the page the person is looking at in Merv right now. Ask a question or leave it empty for a description. Use when they refer to what they see ('this', 'here', 'on my screen'). With at, inspect a record or page without navigating them. For boards, prefer board.look: it returns the actual Excalidraw image and supports focus and camera controls without needing the person's screen. The legacy at.record board route remains supported.",
         inputSchema: lookInput,
         readOnly: true,
         worker: 'never' as const,

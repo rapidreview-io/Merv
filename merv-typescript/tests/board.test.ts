@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectScope } from '@merv/scope';
 import { BoardService, boardPlugin, type BoardElement } from '@merv/board';
+import { BoardRenderer } from '../packages/board/src/renderer.js';
 import { boardToolsPlugin } from '@merv/board/tools';
 import { boardUiPlugin } from '@merv/board/ui';
 import { Drawing, summarize } from '@merv/board/elements';
@@ -764,5 +765,57 @@ test('native font measurements survive save/read and unrelated drawing without e
   assert.deepEqual(
     (await f.board.scene(f.producer, made.board.id)).elements.find((e) => e.id === label.id),
     measured,
+  );
+});
+
+test('board.look works without a personal conversation, presents images, and checks project access before rendering', async (t) => {
+  const f = await fixture(t);
+  const made = await f.board.create(f.operator, 'Look');
+  const tools = new Map<string, ToolDefinition>();
+  let legacy: any;
+  const renders: unknown[][] = [];
+  t.mock.method(BoardRenderer.prototype, 'render', async (...args: unknown[]) => {
+    renders.push(args);
+    return {
+      image: { data: '/9j/', mimeType: 'image/jpeg' },
+      viewport: { x: 0, y: 0, width: 100, height: 100 },
+      width: 100,
+      height: 100,
+    };
+  });
+  boardToolsPlugin.apply({
+    board: f.board,
+    effect: (fn: () => unknown) => fn(),
+    tools: {
+      register: (tool: ToolDefinition) => tools.set(tool.name, tool),
+      contributeInstructions() {},
+      contributePicture(_prefix: string, handler: unknown) {
+        legacy = handler;
+      },
+    },
+  } as unknown as Context);
+  const look = tools.get('board.look')!;
+  assert.equal(look.readOnly, true);
+  assert.notEqual(look.worker, 'never');
+  const view = { action: 'region', x: 10, y: 20, width: 300, height: 200 };
+  const input = look.inputSchema.parse({ board: made.id, view });
+  const result = await look.handler(f.reader, input);
+  assert.deepEqual(renders[0]?.[2], view);
+  const content = (look.present!(result) as any).content;
+  assert.equal(content[1].type, 'image');
+  assert.equal(content[1].mimeType, 'image/jpeg');
+  assert.ok(!content[0].text.includes('/9j/'));
+  const compatibility = await legacy(f.reader, made.id);
+  assert.deepEqual(
+    compatibility.image,
+    content[1] && { data: content[1].data, mimeType: content[1].mimeType },
+  );
+  await assert.rejects(async () =>
+    look.handler({ ...f.reader, projectId: 'project_other' }, input),
+  );
+  assert.equal(renders.length, 2, 'unauthorized calls do not render');
+  assert.equal(
+    look.inputSchema.safeParse({ board: made.id, view: { action: 'zoom', factor: 0 } }).success,
+    false,
   );
 });
