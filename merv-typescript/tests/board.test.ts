@@ -655,7 +655,12 @@ test('a shape drawn in a frame, or beside a framed one inside it, stands in it; 
   drawing.apply({ op: 'frame', key: 'g', title: 'Tight', holds: ['h'] });
   drawing.apply({ op: 'sketch', key: 's', strokes: [{ path: 'M0 0 L9 9' }], near: 'h' });
   assert.deepEqual(
-    [drawing.find('h').frameId, drawing.find('s').frameId],
+    [
+      drawing.find('h').frameId,
+      drawing
+        .result()
+        .find((el) => (el.groupIds as string[] | undefined)?.includes(drawing.created.s!))?.frameId,
+    ],
     [drawing.created.g, null],
   );
 });
@@ -704,7 +709,12 @@ test('a move takes a shape to an exact spot, and a sketch of many points is draw
   // 40 strokes of about 4,000 points each: too many to spread into Math.min.
   const path = `M0 0 ${'c1 1 2 2 3 3 '.repeat(249)}`;
   drawing.apply({ op: 'sketch', key: 's', strokes: Array.from({ length: 40 }, () => ({ path })) });
-  assert.ok(drawing.find('s'));
+  assert.equal(
+    drawing
+      .result()
+      .filter((el) => (el.groupIds as string[] | undefined)?.includes(drawing.created.s!)).length,
+    40,
+  );
 });
 
 test('a save naming a shape twice keeps its newest version, and an undeleted shape counts', async (t) => {

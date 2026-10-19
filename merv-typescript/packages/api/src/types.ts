@@ -195,7 +195,7 @@ export type PictureDrawer = (
   id: string,
   focus?: string,
   view?: View,
-) => Promise<Picture>;
+) => Promise<Picture | undefined>;
 declare module 'cordis' {
   interface Context {
     tools: Tools;
