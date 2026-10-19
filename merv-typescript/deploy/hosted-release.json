@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:8aa02fdc2363a46e4f7c42a1d76a100a97c921beb493a84d501b08e120441a42",
-    "releaseId": "rt1_b309bcd7c9eea403c8f7ef4d7dad30340de1c5286ed0513c4c4de6c15ff1d6c7",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:d9176e599084874c209dba6ea51e2ecd04c9489dd886c244ad79516b704c1f17",
+    "releaseId": "rt1_b040a5424f6fb3a52f9bf5d5569014d4473c7fdca776210a70cf9ac143bf8903",
     "releases": {
-      "cloudflare-fleet": "rt1_b309bcd7c9eea403c8f7ef4d7dad30340de1c5286ed0513c4c4de6c15ff1d6c7",
-      "cloudflare-fleet-large": "rt1_90d725a103a05f19674e645f364324b1c293de975a0918f65997da1eb1bdf131"
+      "cloudflare-fleet": "rt1_b040a5424f6fb3a52f9bf5d5569014d4473c7fdca776210a70cf9ac143bf8903",
+      "cloudflare-fleet-large": "rt1_74a63e70a3054e438a0a7ffc1205346547e3f2264355539a0ff22df2692fcc9d"
     },
-    "localId": "sha256:d08b4111520b19be7c83b5c63e267b0ccb400593dca4f06e92f6226a8f3d4b0b",
-    "sourceCommit": "673287001175c26e542fb9963b5707fc04587f9e",
+    "localId": "sha256:932d1360361e17ced32d27a14c41b51bef3640c8204daaeb8a63f0873024d279",
+    "sourceCommit": "4485643f3db478479984579428be8f23975f33d5",
     "sandboxesCommit": "bbb3917573989b6ee082aacfbd36cbf51d132f72"
   },
   "inputs": [
@@ -24,6 +24,7 @@
     "packages/code/src/merge-settings.ts",
     "packages/code/src/store/protocol.ts",
     "packages/contracts/src/async.ts",
+    "packages/contracts/src/board-view.ts",
     "packages/contracts/src/code-github.ts",
     "packages/contracts/src/code.ts",
     "packages/contracts/src/context.ts",
@@ -45,6 +46,7 @@
     "packages/pi/src/checkpoint.ts",
     "packages/pi/src/limits.ts",
     "packages/pi/src/model-retry.ts",
+    "packages/pi/src/tool-image.ts",
     "packages/pi/src/tool-names.ts",
     "packages/pi/src/worker-main.ts",
     "packages/pi/src/worker.ts",
