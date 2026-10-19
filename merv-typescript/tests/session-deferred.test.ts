@@ -22,10 +22,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   const operator = gitSource(t);
   const main = operator.commit({ 'README.md': 'The project.\n' }, 'Initial');
   const app = await createApp({ directory: join(root, 'server'), api: true, port: 0 });
-  t.after(async () => {
-    await app.stop();
-    rmSync(root, { recursive: true, force: true });
-  });
+  t.after(async () => await app.stop());
   const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Deferred',
     actorName: 'Owner',
@@ -87,7 +84,11 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
       },
     },
   );
-  t.after(async () => await runner.stop());
+  // Hooks run in the order they are added: the directory goes once its runner stopped writing.
+  t.after(async () => {
+    await runner.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
   await runner.start();
   await sessions.dispatch.setDispatch(owner, { enabled: true });
 
