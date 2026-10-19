@@ -11,7 +11,7 @@
       "cloudflare-fleet-large": "rt1_10af70cce2b66a8ce5ac9d9b992271cf29ad95c5106e14967c37c7ac9aa52eea"
     },
     "localId": "sha256:66e1fc26b26d81a548db6a866a00a2e04b2c6d40e6039304e15626235636e8c3",
-    "sourceCommit": "786b2a78e9da60f1b8c697af691b7f0f7edfd140",
+    "sourceCommit": "bc50800b905a4e6ae40aac6c3bad5e5c5e3318c3",
     "sandboxesCommit": "2ae15d7a05a31ad3fd287c0491462ac41bb5b515"
   },
   "inputs": [
