@@ -121,12 +121,12 @@ export function customerHttp(
     const planned = await planHttp(service, req, res, r);
     if (planned !== unhandled) return planned;
     const match =
-      /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
+      /^\/customer-experiments\/requests\/(ce_[a-f0-9]{32})(?:\/(messages|accept|checkout|uploads|artifacts|view)(?:\/([a-zA-Z0-9_-]+)(?:\/(complete))?)?)?$/.exec(
         path,
       );
     if (!match) throw new MervError('not_found', 'Route not found', 404);
     const [, id, action, child, end] = match;
-    const customerOnly = action === 'accept' || action === 'checkout';
+    const customerOnly = action === 'accept' || action === 'checkout' || action === 'view';
     const { record } = await service.access.authorize(
       id!,
       r.bearer(),
@@ -134,6 +134,7 @@ export function customerHttp(
       customerOnly ? ['customer'] : ['agent', 'customer'],
     );
     if (!action && method === 'GET') return service.snapshot(record);
+    if (action === 'view' && !child && method === 'GET') return service.view(record);
     if (action === 'messages' && !child && method === 'POST')
       return service.message(
         record,

@@ -336,6 +336,42 @@ export class CustomerService {
         .map((line) => ({ at: line.at, text: line.text })),
     };
   }
+  /**
+   * What the customer's page reads the experiment's agents and files with: the experiment's
+   * own process graph, and a credential for a project actor made for the page, so it can mount
+   * the app's own trajectory and files unchanged. The request's project holds nothing but this
+   * experiment, so the actor sees nothing else; the credential lasts a day and is made again.
+   */
+  async view(record: RequestRecord) {
+    check(record.experimentId, 'request_initializing', 'Request is initializing', 409);
+    const caller = await this.caller(record);
+    const expiresAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+    const issued = record.viewActorId
+      ? await this.scope.credentials.issueActorCredential(caller, {
+          actorId: record.viewActorId,
+          expiresAt,
+        })
+      : await this.scope.credentials.issueActor(caller, {
+          name: 'Customer view',
+          role: 'operator',
+          expiresAt,
+        });
+    if (!record.viewActorId)
+      await this.store.mutate(record.id, (r) => {
+        r.viewActorId = issued.actor.id;
+      });
+    const graph = await this.domain.workflows.process(caller, record.experimentId, {
+      checks: false,
+    });
+    return {
+      token: issued.token,
+      expiresAt,
+      projectId: record.projectId!,
+      experimentId: record.experimentId,
+      actorId: issued.actor.id,
+      graph,
+    };
+  }
   /** The request as its interviewer and healer read it: no conversation, and no buyer. */
   async agentSnapshot(record: RequestRecord) {
     return withoutBuyer(await this.snapshot(record, false));

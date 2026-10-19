@@ -23,6 +23,8 @@ export interface RequestRecord {
   projectId?: string;
   experimentId?: string;
   conversationId?: string;
+  /** The project actor the customer's page reads the experiment's agents and files as. */
+  viewActorId?: string;
   /** The request files the intake agent was last told of (keys and ETags), for its next turn. */
   toldFiles?: string[];
   bucketReady?: boolean;

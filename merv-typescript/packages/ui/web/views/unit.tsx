@@ -230,7 +230,7 @@ function Ask({ attention }: { attention: RunningAttention }) {
  * The unit's trajectory: every session on every stage, as one line of time, a thread's
  * conversation opened in place on a press.
  */
-function Agents({
+export function Agents({
   graph,
   threads,
   loadedAt,
@@ -266,7 +266,7 @@ function Agents({
 }
 
 /** The unit's files, newest first, one previewed in place on a press. */
-function Files({
+export function Files({
   files,
   opened,
   onOpen,
