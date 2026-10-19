@@ -44,11 +44,14 @@ export class SandboxesPeople implements People {
         (await persons.ensureIdentity({ issuer, subject, displayName: label }));
       const { account_id: accountId } = await this.sbx.accounts.namespace(person.home_namespace!);
       const own = { accountId, personId: person.id };
+      // The hub registers a host's operator connection the first time a namespace lists its
+      // providers, and CreditService admits credit (welcome or granted) only on a registered one.
+      await this.sbx.providers.instances(person.home_namespace!);
       const offered = Object.entries(this.credits);
       if (!offered.length) return own;
       const { credits } = this.sbx.billing;
       const granted = new Set((await credits.report(accountId)).grants.map((grant) => grant.id));
-      // Connections, not `modes.of`'s funded: CreditService admits credit only on a registered one.
+      // Connections, not `modes.of`'s funded.
       const connected = new Set((await this.sbx.providers.connections.list()).map((c) => c.plugin));
       const key = digest([issuer, subject]).slice(0, 40);
       for (const [provider, usd] of offered) {
