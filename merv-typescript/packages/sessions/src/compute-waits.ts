@@ -436,13 +436,15 @@ export class ComputeWaits implements SessionComputeWaits {
   }
   /**
    * An offer of the work at `revision`: a wait there still open ends with it (only a hand offer
-   * meets one whose until is ahead), and the visit after the one that waited is told how it ended.
+   * meets one whose until is ahead), and the visit after the one that waited is told how it ended,
+   * as is one that continues its conversation (`resumed`, the visit whose conversation it takes up).
    */
   async offered(
     tx: Transaction,
     projectId: string,
     instanceId: string,
     revision: number,
+    resumed: string | null,
   ): Promise<ComputeWake | undefined> {
     for (const row of await tx.all<WaitRow>(
       'SELECT * FROM session_compute_waits WHERE project_id=? AND instance_id=? AND revision=? AND settled_at IS NULL',
@@ -451,12 +453,18 @@ export class ComputeWaits implements SessionComputeWaits {
       revision,
     ))
       await this.settle(tx, row, this.early(row));
-    // The work's newest visit that ran waited: a lost offer or an inquiry visit leaves it newest.
+    // The work's newest visit that ran waited (a lost offer or an inquiry visit leaves it newest),
+    // or the conversation taken up ends with the wait: the visit after it lost its own.
     const row = await tx.get<WaitRow>(
-      `SELECT w.* FROM session_compute_waits w WHERE w.revision=? AND w.outcome<>'moved' AND w.session_id=(
-        SELECT s.id FROM worker_sessions s WHERE s.project_id=? AND s.instance_id=? AND s.kind='work'
-          AND s.activated_at IS NOT NULL ORDER BY s._merv_rowid DESC LIMIT 1)`,
+      `SELECT w.* FROM session_compute_waits w WHERE w.project_id=? AND w.instance_id=? AND w.revision=?
+        AND w.outcome<>'moved' AND w.session_id IN (?, (
+          SELECT s.id FROM worker_sessions s WHERE s.project_id=? AND s.instance_id=? AND s.kind='work'
+            AND s.activated_at IS NOT NULL ORDER BY s._merv_rowid DESC LIMIT 1))
+        ORDER BY w._merv_rowid DESC LIMIT 1`,
+      projectId,
+      instanceId,
       revision,
+      resumed,
       projectId,
       instanceId,
     );

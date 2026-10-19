@@ -1210,6 +1210,7 @@ export class LeasedSessions implements Sessions {
       caller.projectId,
       input.instanceId,
       input.expectedRevision,
+      thread.continuity?.resume?.sessionId ?? null,
     );
     const time = this.clock();
     const hard = Math.min(

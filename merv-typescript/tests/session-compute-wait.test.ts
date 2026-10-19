@@ -293,11 +293,36 @@ test('a worker awaits its compute: its visit ends uncounted, the work is withhel
       (tool) => tool.name === 'session.await_compute',
     ),
   );
+  await f.keep(second.session, second.control);
   await f.release(second.session);
-  // A later visit at the same revision is told nothing of a wait it did not follow.
+  // A later visit at the same revision, continuing the woken one, is told nothing of a wait it
+  // did not follow.
   const third = await f.attach(unit.id, 'runner-c');
+  assert.equal(third.session.continuity?.resume?.sessionId, second.session.id);
   assert.equal(third.session.awaited, undefined);
   assert.doesNotMatch(third.prompt.split('\n')[0]!, /session\.await_compute/);
+});
+
+test('a visit that continues the conversation that waited, the woken visit’s own lost, is told how the wait went', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.attach(unit.id, 'runner-a');
+  await f.awaitCompute(first.worker, { jobIds: ['job_a'], reason });
+  await f.keep(first.session, first.control);
+  f.answers.set('job_a', succeeded);
+  await f.leased.computeWaits.sweep();
+  const second = await f.attach(unit.id, 'runner-b');
+  assert.equal(second.session.awaited?.outcome, 'ended');
+  // Its host is lost before the conversation it went on with reaches Merv.
+  await f.release(second.session);
+  const third = await f.attach(unit.id, 'runner-c');
+  assert.equal(third.session.continuity?.resume?.sessionId, first.session.id);
+  assert.equal(third.session.continuity?.resume?.missed?.visits, 1);
+  assert.equal(third.session.awaited?.outcome, 'ended');
+  assert.match(
+    third.prompt.split('\n')[0]!,
+    /^Before anything else, read the results of the compute your last visit ended to wait for /,
+  );
 });
 
 test('a wait withholds only its own revision: work moved on by any hand is offered, and the wait settles as moved', async (t) => {
