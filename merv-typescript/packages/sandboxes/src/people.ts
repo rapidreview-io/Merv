@@ -117,10 +117,14 @@ export class SandboxesPeople implements People {
       const { accountId } = await this.ensure(admin);
       if (before?.account_id === accountId) return;
       const person = await auth.persons.byIdentity(admin.issuer, admin.subject);
-      await linkProject({ db, accounts, clock }, person!.id, projectId, {
-        account_id: accountId,
-        only_unlinked: onlyUnlinked,
-      });
+      // Scope decided the admin: the host moves the project without an admin of its old account.
+      await linkProject(
+        { db, accounts, clock },
+        person!.id,
+        projectId,
+        { account_id: accountId, only_unlinked: onlyUnlinked },
+        { internal: true },
+      );
       if (before)
         log({
           event: 'sandboxes.projects.relinked',
