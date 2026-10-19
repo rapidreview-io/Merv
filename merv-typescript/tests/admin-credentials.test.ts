@@ -1,38 +1,29 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import type { ZodType } from 'zod';
-import {
-  createService,
-  MervError,
-  type ConfiguredEnv,
-  type Principal,
-  type State,
-} from '@merv/contracts';
-import { adminPlugin } from '@merv/admin';
+import { createService, type ConfiguredEnv, type State } from '@merv/contracts';
 import type { AdminCredentials } from '@merv/admin/models';
-import type { ApiRequest, MountHandler } from '@merv/api/types';
+import type { ApiRequest } from '@merv/api/types';
 import type { ManagedModelGrant } from '@merv/fleet/types';
 import { CredentialStore } from '@merv/identity/credentials';
 import { ProjectScope } from '@merv/scope';
 import { AccountSecrets } from '@merv/secrets';
-import host from '@merv/sandboxes/host';
-import { migrate, openDatabase } from '@sandboxes/db';
 import { auditMigrations, AdminAudit } from '../packages/admin/src/audit.js';
 import { credentialMigrations, credentialRoutes } from '../packages/admin/src/credentials.js';
 import type { AdminEnv } from '../packages/admin/src/index.js';
 import { codexModelRelay } from '../packages/fleet/src/codex-relay.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/schema.js';
+import { adminAudit, adminRoutes, hostConfig, refused, startHost } from './fixtures/admin.js';
 import { createApp } from './fixtures/app.js';
 import { reads } from './fixtures/env-reader.js';
-import { openState, postgresUrl, schemaFor, stateConfig } from './fixtures/state.js';
+import { openState, stateConfig } from './fixtures/state.js';
 
 /** Sets each variable for the test, and puts back what was there. */
 function environment(t: TestContext, values: Record<string, string>) {
@@ -113,7 +104,20 @@ test('the composition root names each *Env field of its enabled entries by its o
   ]);
 });
 
-const ACCOUNT = 'a'.repeat(32);
+/** The Sandboxes host's one Cloudflare instance, its keys read from `credential`. */
+const cloudflare = (credential: string) => ({
+  settings: {
+    providers: [
+      {
+        name: 'cf',
+        plugin: 'cloudflare',
+        access: 'tunnel',
+        credential,
+        settings: { account_id: 'a'.repeat(32) },
+      },
+    ],
+  },
+});
 const bearer = `ms_${'c'.repeat(43)}`;
 const grant: ManagedModelGrant = {
   id: 'session_admin',
@@ -257,39 +261,8 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
   await ledger.revoke(minted[1]!.credential.tokenHash, 'pi');
 
   // Sandboxes in process, with a host Cloudflare instance and one user's own saved key.
-  const schema = schemaFor();
-  const db = await openDatabase({ url: postgresUrl, schema });
-  await migrate(db, { schemaExplicit: true });
-  const dataDir = mkdtempSync(join(tmpdir(), 'merv-admin-sandboxes-'));
   const sandboxes = new Context();
-  const fiber = sandboxes.plugin(
-    host,
-    host.Config.parse({
-      databaseUrlEnv: 'MERV_TEST_POSTGRES_URL',
-      schema,
-      vaultKeyEnv: 'ADMIN_TEST_VAULT_KEY',
-      publicOrigin: 'https://sandboxes.example',
-      dataDir,
-      relayEvents: false,
-      settings: {
-        providers: [
-          {
-            name: 'cf',
-            plugin: 'cloudflare',
-            access: 'tunnel',
-            credential: 'env://ADMIN_TEST_CF',
-            settings: { account_id: ACCOUNT },
-          },
-        ],
-      },
-    }),
-  );
-  t.after(async () => {
-    await fiber.dispose();
-    await db.close();
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-  await fiber.await();
+  await startHost(t, sandboxes, 'ADMIN_TEST_VAULT_KEY', cloudflare('env://ADMIN_TEST_CF'));
   await sandboxes.sbxVault.save({
     namespace: 'team-a',
     name: 'mine',
@@ -455,7 +428,7 @@ test('GET /admin/credentials names each secret by purpose, sandbox keys apart, n
  * The real composition root over State, Secrets, Scope, two consumers and the in-process Sandboxes host
  * with one host Cloudflare instance, and the admin's `/admin` mount beside it.
  */
-async function operable(t: TestContext, directory: string, schema: string, dataDir: string) {
+async function operable(t: TestContext, directory: string, sandboxes: Record<string, unknown>) {
   const app = await createApp({
     directory,
     config: {
@@ -469,89 +442,30 @@ async function operable(t: TestContext, directory: string, schema: string, dataD
           config: { keyEnv: 'ADMIN_TEST_READER' },
         },
         { id: 'nisa', name: '@merv/nisa', config: { keyEnv: 'ADMIN_TEST_NISA' } },
-        {
-          id: 'sandboxes-host',
-          name: '@merv/sandboxes/host',
-          config: {
-            databaseUrlEnv: 'MERV_TEST_POSTGRES_URL',
-            schema,
-            vaultKeyEnv: 'ADMIN_TEST_VAULT_KEY',
-            publicOrigin: 'https://sandboxes.example',
-            dataDir,
-            relayEvents: false,
-            settings: {
-              providers: [
-                {
-                  name: 'cf',
-                  plugin: 'cloudflare',
-                  access: 'tunnel',
-                  credential: 'env:ADMIN_TEST_CF',
-                  settings: { account_id: ACCOUNT },
-                },
-              ],
-            },
-          },
-        },
+        { id: 'sandboxes-host', name: '@merv/sandboxes/host', config: sandboxes },
       ],
     },
   });
-  let route: MountHandler | undefined;
+  const call = await adminRoutes(app.ctx, [admin]);
   const state: State = app.ctx.state;
-  app.ctx.provide('tools', { registerCallerRules: () => () => {} });
-  app.ctx.provide('api', {
-    mount: (_prefix: string, handler: MountHandler) => ((route = handler), () => {}),
-    stop: async () => {},
-  });
-  await app.ctx.plugin(adminPlugin, { admins: [admin] });
-  const principal: Principal = {
-    kind: 'user',
-    user: { ...admin, createdAt: new Date(0).toISOString() },
-    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-  };
-  const call = async <T = unknown>(method: string, path: string, body?: unknown) =>
-    (await route!(
-      { method } as IncomingMessage,
-      { setHeader() {} } as unknown as ServerResponse,
-      {
-        url: new URL(path, 'https://merv.example'),
-        principal,
-        json: async (schema: ZodType) => {
-          const parsed = schema.safeParse(body);
-          if (!parsed.success) throw new MervError('invalid_input', 'Invalid input', 400);
-          return parsed.data;
-        },
-      } as ApiRequest,
-    )) as T;
-  const audit = () =>
-    state.read((sql) =>
-      sql.all<Record<'action' | 'target' | 'detail_json', string>>(
-        'SELECT action,target,detail_json FROM admin_audit ORDER BY at, id',
-      ),
-    );
   const stored = () =>
     state.read((sql) =>
       sql.all<Record<'env' | 'ciphertext' | 'updated_subject', string>>(
         'SELECT env,ciphertext,updated_subject FROM platform_secrets ORDER BY env',
       ),
     );
-  return { app, call, audit, stored };
+  return { app, call, audit: () => adminAudit(state), stored };
 }
-const refused = (code: string, status: number) => (error: unknown) =>
-  error instanceof MervError && error.code === code && error.status === status;
 
-/** A data directory, a migrated Sandboxes schema and its data directory, all removed after. */
+/** A data directory, and the Sandboxes host's config on a fresh schema and data directory. */
 async function places(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-admin-operable-'));
-  const dataDir = mkdtempSync(join(tmpdir(), 'merv-admin-operable-sbx-'));
-  const schema = schemaFor();
-  const db = await openDatabase({ url: postgresUrl, schema });
-  await migrate(db, { schemaExplicit: true });
-  await db.close();
+  const host = await hostConfig('ADMIN_TEST_VAULT_KEY', cloudflare('env:ADMIN_TEST_CF'));
   t.after(() => {
     rmSync(directory, { recursive: true, force: true });
-    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(host.dataDir, { recursive: true, force: true });
   });
-  return [directory, schema, dataDir] as const;
+  return [directory, host.config] as const;
 }
 /** The bridges' health: each answers the one bearer it accepts, and says which it was sent. */
 function bridges(t: TestContext, accepted: Record<string, string>) {
@@ -582,9 +496,9 @@ test('a platform secret is revealed and changed here: sealed, applied, its one c
     ADMIN_TEST_CF: JSON.stringify({ bridge_url: 'https://bridge.example.test', bridge_token: 'h' }),
   });
   bridges(t, { 'https://bridge.example.test': 'h' });
-  const [directory, schema, dataDir] = await places(t);
+  const [directory, sandboxes] = await places(t);
   const before = reads.length;
-  let f = await operable(t, directory, schema, dataDir);
+  let f = await operable(t, directory, sandboxes);
   let stopped = false;
   t.after(async () => {
     if (!stopped) await f.app.stop();
@@ -687,7 +601,7 @@ test('a platform secret is revealed and changed here: sealed, applied, its one c
   process.env.ADMIN_TEST_READER = first;
   await f.app.stop();
   stopped = true;
-  f = await operable(t, directory, schema, dataDir);
+  f = await operable(t, directory, sandboxes);
   stopped = false;
   assert.deepEqual(reads.slice(before), [first, second, 'refused', second, second]);
   assert.equal(process.env.ADMIN_TEST_READER, second);
@@ -706,8 +620,8 @@ test('a platform sandbox provider key is revealed and changed here, rebound; a k
   });
   const accepted = { 'https://bridge.example.test': host1 };
   const sent = bridges(t, accepted);
-  const [directory, schema, dataDir] = await places(t);
-  const f = await operable(t, directory, schema, dataDir);
+  const [directory, sandboxes] = await places(t);
+  const f = await operable(t, directory, sandboxes);
   t.after(async () => await f.app.stop());
   await f.app.ctx.sbxVault.save({
     namespace: 'team-a',

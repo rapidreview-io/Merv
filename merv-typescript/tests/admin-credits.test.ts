@@ -1,67 +1,30 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import type { ZodType } from 'zod';
-import { createService, MervError, type Principal } from '@merv/contracts';
-import { adminPlugin } from '@merv/admin';
+import { createService, type Principal } from '@merv/contracts';
 import type { AdminCredits, CreditUse, PersonCredits } from '@merv/admin/models';
-import type { ApiRequest, MountHandler } from '@merv/api/types';
 import { personKey } from '@merv/fleet/model-ledger';
 import { ProjectScope } from '@merv/scope';
-import host from '@merv/sandboxes/host';
 import { SandboxesPeople } from '@merv/sandboxes/people';
-import { migrate, openDatabase } from '@sandboxes/db';
-import { advisoryXactLock, Decimal } from '@sandboxes/kernel';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { advisoryXactLock } from '@sandboxes/kernel';
+import { adminAudit, adminRoutes, person, refused, startHost } from './fixtures/admin.js';
+import { openState } from './fixtures/state.js';
 
 const validFrom = '2026-01-01T00:00:00Z';
 const issuer = 'https://identity.example';
 const admin = { issuer, subject: 'founder' };
-const human = (subject: string): Principal => ({
-  kind: 'user',
-  user: { issuer, subject, createdAt: new Date(0).toISOString() },
-  expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-});
+const human = (subject: string) => person({ issuer, subject });
 
 /** Merv's state and Scope, the in-process Sandboxes host, and the admin plugin's `/admin` mount. */
 async function fixture(t: TestContext, sandboxes = true) {
   const state = await openState();
   const ctx = new Context();
-  let route: MountHandler | undefined;
   ctx.provide('state', state);
   ctx.provide('scope', await createService(new ProjectScope(state)));
-  ctx.provide('api', {
-    mount: (_prefix: string, handler: MountHandler) => ((route = handler), () => {}),
-  });
-  ctx.provide('tools', { registerCallerRules: () => () => {} });
   t.after(async () => await state.close());
   if (sandboxes) {
-    const schema = schemaFor();
-    const dataDir = mkdtempSync(join(tmpdir(), 'merv-admin-credits-'));
-    const db = await openDatabase({ url: postgresUrl, schema });
-    await migrate(db, { schemaExplicit: true });
-    await db.close();
     process.env.MERV_TEST_SANDBOXES_VAULT_KEY = Buffer.alloc(32, 7).toString('base64url');
-    const fiber = ctx.plugin(
-      host,
-      host.Config.parse({
-        databaseUrlEnv: 'MERV_TEST_POSTGRES_URL',
-        schema,
-        vaultKeyEnv: 'MERV_TEST_SANDBOXES_VAULT_KEY',
-        publicOrigin: 'https://sandboxes.example',
-        dataDir,
-        relayEvents: false,
-      }),
-    );
-    await fiber.await();
-    t.after(async () => {
-      await fiber.dispose();
-      rmSync(dataDir, { recursive: true, force: true });
-    });
+    await startHost(t, ctx, 'MERV_TEST_SANDBOXES_VAULT_KEY');
     await ctx.sbxProviders.connections.registerIn(ctx.sbxDb, {
       id: 'cloud',
       plugin: 'fake',
@@ -73,23 +36,7 @@ async function fixture(t: TestContext, sandboxes = true) {
       new SandboxesPeople({ auth, accounts, billing, providers: sbxProviders }, {}),
     );
   }
-  await ctx.plugin(adminPlugin, { admins: [admin] });
-  const call = async (method: string, path: string, body?: unknown, who = human('founder')) =>
-    await route!(
-      { method } as IncomingMessage,
-      { setHeader() {} } as unknown as ServerResponse,
-      {
-        url: new URL(path, 'https://merv.example'),
-        principal: who,
-        json: async (schema: ZodType) => {
-          const parsed = schema.safeParse(body);
-          if (!parsed.success) throw new MervError('invalid_input', 'Invalid input', 400);
-          return parsed.data;
-        },
-      } as ApiRequest,
-    );
-  const refused = (code: string, status: number) => (error: unknown) =>
-    error instanceof MervError && error.code === code && error.status === status;
+  const call = await adminRoutes(ctx, [admin]);
   /** A verified sign-in: a person of the directory. */
   const signIn = (subject: string) =>
     ctx.scope.members.acceptVerifiedIdentity({
@@ -97,13 +44,7 @@ async function fixture(t: TestContext, sandboxes = true) {
       subject,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     });
-  const audit = () =>
-    state.read((sql) =>
-      sql.all<{ subject: string; action: string; target: string; detail_json: string }>(
-        'SELECT subject,action,target,detail_json FROM admin_audit ORDER BY at,id',
-      ),
-    );
-  return { ctx, state, call, refused, signIn, audit };
+  return { ctx, state, call, signIn, audit: () => adminAudit(state) };
 }
 const keyOf = (subject: string) => personKey({ issuer, subject }, { projectId: '', actorId: '' });
 const drawer = (subject: string) =>
@@ -280,7 +221,7 @@ test('credit writes land in Sandboxes through CreditService and in the admin aud
   await f.call('POST', '/admin/credits/grants', grant);
   await assert.rejects(
     f.call('POST', '/admin/credits/grants', { ...grant, amount: '3' }),
-    f.refused('sandbox_validation', 400),
+    refused('sandbox_validation', 400),
   );
   const schedule = {
     id: 's1',
@@ -356,11 +297,11 @@ test('a grant may name a person: it lands on their own account, which the bridge
   for (const body of [{ ...unnamed, accountId }, unnamed])
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', body),
-      f.refused('invalid_input', 400),
+      refused('invalid_input', 400),
     );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants', { ...grant, person: `${issuer}|nobody` }),
-    f.refused('not_found', 404),
+    refused('not_found', 404),
   );
   assert.equal((await f.audit()).length, 1);
 });
@@ -371,7 +312,7 @@ test('a person’s own limits are set and cleared in their owners, each recorded
   const path = `${drawer('dana')}/limits`;
   await assert.rejects(
     f.call('POST', path, { kind: 'agent-tokens', limit: 5 }),
-    f.refused('credits_unavailable', 503),
+    refused('credits_unavailable', 503),
   );
   const set: unknown[] = [];
   f.ctx.provide('pi', { setTokenLimit: async (...limit: unknown[]) => void set.push(limit) });
@@ -398,10 +339,10 @@ test('a person’s own limits are set and cleared in their owners, each recorded
     { kind: 'provider:fake', limit: 5 },
     { kind: 'fleet-usd' },
   ])
-    await assert.rejects(f.call('POST', path, body), f.refused('invalid_input', 400));
+    await assert.rejects(f.call('POST', path, body), refused('invalid_input', 400));
   await assert.rejects(
     f.call('POST', `${drawer('nobody')}/limits`, bodies[0]),
-    f.refused('not_found', 404),
+    refused('not_found', 404),
   );
   assert.equal(set.length, 4);
   // Four writes may share a millisecond, which orders the log no further.
@@ -423,39 +364,39 @@ test('only an admin may read or assign credits, and only real providers, account
   ]) {
     await assert.rejects(
       f.call('GET', '/admin/credits', undefined, who),
-      f.refused('forbidden', 403),
+      refused('forbidden', 403),
     );
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', grant, who),
-      f.refused('forbidden', 403),
+      refused('forbidden', 403),
     );
     await assert.rejects(
       f.call('GET', drawer('founder'), undefined, who),
-      f.refused('forbidden', 403),
+      refused('forbidden', 403),
     );
     await assert.rejects(
       f.call('POST', `${drawer('founder')}/limits`, { kind: 'fleet-usd', limit: 9 }, who),
-      f.refused('forbidden', 403),
+      refused('forbidden', 403),
     );
   }
   // Sandboxes refuses the values; the admin, only a body it cannot read.
   for (const body of [{ provider: 'modal' }, { amount: '0' }, { amount: '1.1234567' }])
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', { ...grant, ...body }),
-      f.refused('sandbox_validation', 400),
+      refused('sandbox_validation', 400),
     );
   for (const body of [{ amount: '-1' }, { amount: '1e3' }, { validFrom: undefined }])
     await assert.rejects(
       f.call('POST', '/admin/credits/grants', { ...grant, ...body }),
-      f.refused('invalid_input', 400),
+      refused('invalid_input', 400),
     );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants', { ...grant, person: `${issuer}|nobody` }),
-    f.refused('not_found', 404),
+    refused('not_found', 404),
   );
   await assert.rejects(
     f.call('POST', '/admin/credits/grants/missing/revoke'),
-    f.refused('sandbox_not_found', 404),
+    refused('sandbox_not_found', 404),
   );
   const own = await f.ctx.sandboxesPeople.accountOf({ issuer, subject: 'erin' });
   assert.deepEqual((await f.ctx.sbxBilling.credits.report(own!.accountId)).grants, []);
@@ -471,5 +412,5 @@ test('without Sandboxes the credit routes answer 503 credits_unavailable', async
     ['POST', '/admin/credits/schedules'],
     ['POST', '/admin/credits/grants/g1/revoke'],
   ])
-    await assert.rejects(f.call(method!, path!, {}), f.refused('credits_unavailable', 503));
+    await assert.rejects(f.call(method!, path!, {}), refused('credits_unavailable', 503));
 });

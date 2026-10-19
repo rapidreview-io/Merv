@@ -1,17 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Context, type Fiber } from 'cordis';
 import { createService, digest, MervError } from '@merv/contracts';
 import { sandboxIntegrationPlugin } from '@merv/sandboxes/integration';
-import host from '@merv/sandboxes/host';
 import { sandboxesPeoplePlugin, type SandboxesPeople } from '@merv/sandboxes/people';
 import { ProjectScope } from '@merv/scope';
-import { migrate, openDatabase } from '@sandboxes/db';
 import { Decimal, Instant } from '@sandboxes/kernel';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { startHost } from './fixtures/admin.js';
+import { openState } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const welcome = (provider: string, subject: string) =>
@@ -23,35 +19,16 @@ async function fixture(t: TestContext) {
   const scope = await createService(new ProjectScope(state));
   const ctx = new Context();
   ctx.provide('scope', scope);
-  const schema = schemaFor();
-  const dataDir = mkdtempSync(join(tmpdir(), 'merv-sandboxes-people-'));
-  const db = await openDatabase({ url: postgresUrl, schema });
-  await migrate(db, { schemaExplicit: true });
-  await db.close();
+  // After the test, the people go before the host they use, and Merv's state after both.
+  let people: Fiber | undefined;
+  t.after(async () => await people?.dispose());
   process.env.MERV_TEST_SANDBOXES_VAULT_KEY = Buffer.alloc(32, 7).toString('base64url');
-  const sandboxes = ctx.plugin(
-    host,
-    host.Config.parse({
-      databaseUrlEnv: 'MERV_TEST_POSTGRES_URL',
-      schema,
-      vaultKeyEnv: 'MERV_TEST_SANDBOXES_VAULT_KEY',
-      publicOrigin: 'https://sandboxes.example',
-      dataDir,
-      relayEvents: false,
-    }),
-  );
-  await sandboxes.await();
+  await startHost(t, ctx, 'MERV_TEST_SANDBOXES_VAULT_KEY');
+  t.after(async () => await state.close());
   await ctx.sbxProviders.connections.registerIn(ctx.sbxDb, {
     id: 'cloud',
     plugin: 'fake',
     cloudAccount: 'cloud',
-  });
-  let people: Fiber | undefined;
-  t.after(async () => {
-    await people?.dispose();
-    await sandboxes.dispose();
-    await state.close();
-    rmSync(dataDir, { recursive: true, force: true });
   });
   const logged: string[] = [];
   t.mock.method(process.stderr, 'write', (line: string) => logged.push(line) > 0);
