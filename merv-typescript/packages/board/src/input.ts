@@ -116,6 +116,19 @@ export const opSchema = z.discriminatedUnion('op', [
           .refine((v) => /^https?:\/\//.test(v)),
       ]),
       text,
+      /** Optional readable content kept with the reference. Preview metadata is caller supplied. */
+      details: z
+        .object({
+          title: z.string().max(300).optional(),
+          text: z.string().max(20000).optional(),
+          preview: z
+            .object({ title: z.string().max(300), description: z.string().max(2000).optional() })
+            .strict()
+            .optional(),
+          artifactId: id.optional(),
+        })
+        .strict()
+        .optional(),
       ...place,
     })
     .strict(),

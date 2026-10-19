@@ -26,6 +26,7 @@ import { ensureBoardFonts } from './board-fonts';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
+import { BoardLinkDetails } from './board-link-details';
 
 (window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/ui/assets/excalidraw/';
 
@@ -234,6 +235,9 @@ function BoardCanvasScene({ id }: { id: string }) {
           clearTimeout(timer.current);
           timer.current = setTimeout(() => void save(), SAVE_MS);
         }}
+        renderHyperlinkDetails={(element, close) => (
+          <BoardLinkDetails key={element.id} element={element} close={close} theme={theme} />
+        )}
         onLinkOpen={(element, event) => {
           const link = element.link ?? '';
           if (!link.startsWith('merv:')) return;
