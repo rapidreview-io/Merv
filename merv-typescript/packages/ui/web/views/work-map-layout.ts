@@ -1,325 +1,225 @@
 /**
- * Where the map of work draws everything, from one measured width. Work joined by
- * prerequisites is one chain, and a chain reads down the page as the landing page draws it:
- * each unit stands one row below the last thing it waits on, as near under it as its row
- * allows. What waits on nothing stands just above the first thing that waits on it, or,
- * where that row is full, in the nearest row above with room. Chains and single units are
- * then set side by side on one grid of columns, each in the first free place it fits. A
- * chain keeps, in every row, the columns its cards and its lines reach, so the map is as
- * short as its work allows and no chain's lines cross another's.
+ * Where the map of work draws everything, from one measured width. A unit is a mark and a
+ * name; a prerequisite stands in the column left of what waits on it, so every line runs left
+ * to right and position says the order before any line does. Work joined by prerequisites is
+ * one chain; each chain has its own rows, and chains stack down the page in the order their
+ * work was given. Within a chain a unit stands level with what it waits on where that row is
+ * free, else in the nearest free row under it, so lines are short and never cross a mark.
  *
- * A line leaves the foot of the prerequisite, turns in the gap under its row, and arrives
- * from above with an arrowhead at the head of what waits on it. Lines are straight runs
- * joined at right angles. Prerequisites of the same things turn at one height, so their
- * lines meet and run on as one; the others in the row each turn at a height of their own,
- * so two lines that are not the same never lie on top of each other. Lines that have to
- * pass a row run down a gutter between two columns, which the grid keeps free: those that
- * left one turn for one row share a lane of it, and every other bundle has its own.
+ * A chain longer than the width holds folds its finished head: the leading columns whose
+ * every unit has ended are drawn as small marks alone, in one short run, so names begin at
+ * the first unit still open and the live edge always has the room. A unit that is live or
+ * needs a person is never folded. Pressing the run unfolds it (`unfold`).
  *
- * It is pure, so the drawing is the same wherever it is asked, and it is tested without a
- * browser. Below MAP_MIN there is no room for two columns of cards and their lines, and the
- * page draws no map: the list under it says the same relations in words.
+ * A line is one quiet curve from the right of a mark to the left of the mark that waits on
+ * it, with no head: the direction is the page's. It is pure, so the drawing is the same
+ * wherever it is asked, and it is tested without a browser. Below MAP_MIN there is no room
+ * for two columns with names, and the page draws no map: the list under it says the same
+ * relations in words.
  */
 
-/** Narrower than this no map is drawn. */
-export const MAP_MIN = 560;
-export const CARD_H = 116;
-const CARD_MIN = 208;
-const CARD_MAX = 288;
-/** Between two columns: room for the lanes of lines running down past a row. */
-const GAP_X = 24;
-/** Between two rows: the turns of the row above, then where a gutter's lines come in. */
-const GAP_Y = 48;
-const ARRIVE = 12;
-/** The left column a timed map keeps for its time labels. */
-export const AXIS_W = 96;
-/** Units this close in time share a row of a timed map. */
-const SAME_ROW_MS = 30 * 60_000;
+/** Narrower than this no map is drawn: two columns with their names, or one and a fold. */
+export const MAP_MIN = 520;
+/** A row: one mark and its name. */
+export const ROW_H = 30;
+/** Half a mark: where a line leaves and arrives. */
+export const MARK = 7;
+/** A column with a name beside its mark, at the least and at the most. */
+const COL_MIN = 170;
+const COL_MAX = 440;
+/** A folded mark and the step to the next. */
+const FOLD_STEP = 16;
+/** Room after the last column for its names. */
+const NAME_W = 150;
 
-export interface MapBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-/** A prerequisite and what waits on it. `waiting` while the prerequisite is unsettled. */
 export interface MapEdge {
   from: string;
   to: string;
+  /** The prerequisite is unsettled: the line is dashed. */
   waiting?: boolean;
 }
 export interface MapWire extends MapEdge {
   d: string;
-  /** The arrowhead at the head of what waits. */
-  head: string;
 }
-/** A row of a timed map and the time of its earliest unit. */
-export interface MapTick {
+/** Where a unit's mark is centred, and whether it stands folded without its name. */
+export interface MapPlace {
+  x: number;
   y: number;
-  at: string;
+  folded: boolean;
+  /** The room its name has: its column's width. */
+  w: number;
 }
 export interface WorkMapLayout {
   width: number;
   height: number;
-  at: Map<string, MapBox>;
-  /** Reading order: rows top to bottom, left to right. The keyboard follows it. */
+  at: Map<string, MapPlace>;
+  /** Reading order: row by row, left to right. */
   order: string[];
   wires: MapWire[];
-  /** On a timed map, each row's time, top to bottom. */
-  ticks: MapTick[];
-}
-interface Cell {
-  col: number;
-  row: number;
+  /** How many units each chain folded, where it folded any, with the row the run stands in. */
+  folds: { x: number; y: number; count: number }[];
 }
 
-/** The free column nearest the one wanted, looking right before left. */
-function nearest(want: number, cols: number, taken: Set<number>): number {
-  for (let off = 0; off < cols; off++)
-    for (const col of [want + off, want - off])
-      if (col >= 0 && col < cols && !taken.has(col)) return col;
-  return 0;
-}
-const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
-const listed = <K, V>(map: Map<K, V[]>, key: K, ...values: V[]) =>
-  map.set(key, [...(map.get(key) ?? []), ...values]);
-
-/** Null where there is no room to draw, or nothing to. */
-export function workMapLayout(
-  keys: readonly string[],
-  edges: readonly MapEdge[],
-  width: number,
-  /** Each unit's time: the map then reads down in time, its rows labelled in a left axis. */
-  times?: ReadonlyMap<string, string>,
-): WorkMapLayout | null {
-  if (!(width >= MAP_MIN) || !keys.length) return null;
-  const axis = times ? AXIS_W : 0;
-  const index = new Map(keys.map((key, n) => [key, n]));
-  const drawn = [
-    ...new Map(
-      edges
-        .filter((edge) => edge.from !== edge.to && index.has(edge.from) && index.has(edge.to))
-        .map((edge) => [`${edge.from}>${edge.to}`, edge]),
-    ).values(),
-  ];
-  const before = new Map<string, string[]>();
-  const after = new Map<string, string[]>();
-  for (const edge of drawn) {
-    listed(before, edge.to, edge.from);
-    listed(after, edge.from, edge.to);
+/** Everything each unit waits on, and everything that waits on it. */
+function neighbours(keys: string[], edges: MapEdge[]) {
+  const up = new Map<string, string[]>(keys.map((key) => [key, []]));
+  const down = new Map<string, string[]>(keys.map((key) => [key, []]));
+  for (const edge of edges) {
+    if (!up.has(edge.to) || !down.has(edge.from)) continue;
+    up.get(edge.to)!.push(edge.from);
+    down.get(edge.from)!.push(edge.to);
   }
-  // The longest way back to something that waits on nothing; a cycle stops where it closes.
+  return { up, down };
+}
+
+/**
+ * Each unit's column: one past the deepest thing it waits on, from zero. A ring, which no
+ * owner should send, is cut where it closes, so every unit still has a column.
+ */
+export function depths(keys: string[], edges: MapEdge[]): Map<string, number> {
+  const { up } = neighbours(keys, edges);
   const depth = new Map<string, number>();
-  const visiting = new Set<string>();
-  const depthOf = (key: string): number => {
+  const walking = new Set<string>();
+  const of = (key: string): number => {
     const known = depth.get(key);
     if (known !== undefined) return known;
-    if (visiting.has(key)) return -1;
-    visiting.add(key);
-    const d = Math.max(-1, ...(before.get(key) ?? []).map(depthOf)) + 1;
-    visiting.delete(key);
+    if (walking.has(key)) return 0;
+    walking.add(key);
+    const d = Math.max(-1, ...up.get(key)!.map(of)) + 1;
+    walking.delete(key);
     depth.set(key, d);
     return d;
   };
-  keys.forEach(depthOf);
-  if (times) {
-    // A timed map's rows follow time: units close in time share a row, a later stretch of
-    // time starts a new one, and nothing stands level with or above what it waits on.
-    const ms = (key: string) => Date.parse(times.get(key) ?? '') || 0;
-    let [level, start, deepest] = [0, -Infinity, -1];
-    for (const key of [...keys].sort((a, b) => ms(a) - ms(b) || index.get(a)! - index.get(b)!)) {
-      if (ms(key) - start > SAME_ROW_MS) [level, start] = [deepest + 1, ms(key)];
-      const d = Math.max(level, ...(before.get(key) ?? []).map((on) => (depth.get(on) ?? -1) + 1));
-      depth.set(key, d);
-      deepest = Math.max(deepest, d);
-    }
-  }
-
-  const room = width - axis;
-  const cols = Math.floor((room + GAP_X) / (CARD_MIN + GAP_X));
-  const w = Math.min(CARD_MAX, Math.floor((room - (cols - 1) * GAP_X) / cols));
-
-  /** One chain on a grid of its own: its rows, and each unit as near its relations as it fits. */
-  const block = (members: string[]) => {
-    const least = Math.min(...members.map((key) => depth.get(key)!));
-    const first = (key: string) => !times && !before.has(key) && after.has(key);
-    const levels: string[][] = [];
-    for (const key of members) if (!first(key)) (levels[depth.get(key)! - least] ??= []).push(key);
-    // The topmost first, so one that finds its row full can stand beside them.
-    const above = (key: string) =>
-      Math.min(...after.get(key)!.map((next) => depth.get(next)!)) - 1 - least;
-    for (const key of members.filter(first).sort((a, b) => above(a) - above(b))) {
-      let level = above(key);
-      while (level >= 0 && !((levels[level]?.length ?? 0) % cols)) level--;
-      (levels[level < 0 ? above(key) : level] ??= []).push(key);
-    }
-    const cell = new Map<string, Cell>();
-    const rows: Set<number>[] = [];
-    const over = (key: string, related: Map<string, string[]>) => {
-      const placed = (related.get(key) ?? []).flatMap((other) => cell.get(other)?.col ?? []);
-      return placed.length ? mean(placed) : undefined;
-    };
-    for (const level of levels.filter(Boolean)) {
-      const sorted = [...level].sort(
-        (a, b) =>
-          (over(a, before) ?? Infinity) - (over(b, before) ?? Infinity) ||
-          index.get(a)! - index.get(b)!,
-      );
-      let taken = new Set<number>();
-      rows.push(taken);
-      for (const key of sorted) {
-        // A level wider than the page carries on in a row of its own.
-        if (taken.size === cols) rows.push((taken = new Set()));
-        const col = nearest(Math.round(over(key, before) ?? 0), cols, taken);
-        taken.add(col);
-        cell.set(key, { col, row: rows.length - 1 });
-      }
-    }
-    // From the foot up, each unit moves over the middle of what waits on it where that
-    // place is free, so one prerequisite of several stands over them and not at their edge.
-    for (const key of [...cell.keys()].reverse()) {
-      const { col, row } = cell.get(key)!;
-      const want = over(key, after);
-      if (want === undefined || Math.round(want) === col || rows[row]!.has(Math.round(want)))
-        continue;
-      rows[row]!.delete(col);
-      rows[row]!.add(Math.round(want));
-      cell.set(key, { col: Math.round(want), row });
-    }
-    const left = Math.min(...[...cell.values()].map(({ col }) => col));
-    for (const [key, { col, row }] of cell) cell.set(key, { col: col - left, row });
-    // The columns each row keeps: its cards, and every line from a card down to what waits.
-    const spans = rows.map((): [number, number] => [Infinity, -Infinity]);
-    const reach = (row: number, col: number) =>
-      (spans[row] = [Math.min(spans[row]![0], col), Math.max(spans[row]![1], col)]);
-    for (const [key, { col, row }] of cell) {
-      reach(row, col);
-      for (const next of after.get(key) ?? [])
-        for (let r = row; r <= cell.get(next)!.row; r++) {
-          reach(r, col);
-          reach(r, cell.get(next)!.col);
-        }
-    }
-    return { cell, spans };
-  };
-
-  // Chains in the order of their first unit, each in the first free place it fits.
-  const place = new Map<string, Cell>();
-  const used: boolean[][] = [];
-  const seen = new Set<string>();
-  for (const head of keys) {
-    if (seen.has(head)) continue;
-    // A timed map is one block, so its rows line up with the axis across the page.
-    const members = times ? [...keys] : [head];
-    for (const key of members) seen.add(key);
-    for (const key of members)
-      for (const other of [...(before.get(key) ?? []), ...(after.get(key) ?? [])])
-        if (!seen.has(other)) {
-          seen.add(other);
-          members.push(other);
-        }
-    members.sort((a, b) => index.get(a)! - index.get(b)!);
-    const { cell, spans } = block(members);
-    const wide = Math.max(...spans.map(([, hi]) => hi)) + 1;
-    const kept = (row: number, col: number) =>
-      spans.flatMap(([lo, hi], r) =>
-        Array.from({ length: hi - lo + 1 }, (_, c): Cell => ({ row: row + r, col: col + lo + c })),
-      );
-    let [row, col] = [0, 0];
-    while (kept(row, col).some((at) => used[at.row]?.[at.col]))
-      if (++col > cols - wide) [row, col] = [row + 1, 0];
-    for (const at of kept(row, col)) (used[at.row] ??= [])[at.col] = true;
-    for (const [key, local] of cell) place.set(key, { col: col + local.col, row: row + local.row });
-  }
-  // The drawing stands in the middle of its frame: a lone chain is not pushed to the left
-  // edge of a wide page, and a full page of cards starts where it always did.
-  const across = Math.max(...[...place.values()].map(({ col }) => col)) + 1;
-  const inset = axis + Math.round((room - (across * (w + GAP_X) - GAP_X)) / 2);
-  const at = new Map<string, MapBox>();
-  for (const [key, { col, row }] of place)
-    at.set(key, { x: inset + col * (w + GAP_X), y: row * (CARD_H + GAP_Y), w, h: CARD_H });
-
-  const rowOf = (key: string) => place.get(key)!.row;
-  const colOf = (key: string) => place.get(key)!.col;
-  // Prerequisites of the same things share a turn; the others of a row each have their own.
-  const waited = (key: string) => [...after.get(key)!].sort().join('\n');
-  const turns = new Map<number, string[]>();
-  for (const key of [...after.keys()].sort((a, b) => colOf(a) - colOf(b)))
-    if (!turns.get(rowOf(key))?.includes(waited(key))) listed(turns, rowOf(key), waited(key));
-  // Lines past a row: those of one turn bound for one row are a bundle, which runs down the
-  // gutter nearest the middle of what it joins, in a lane beside the gutter's other bundles.
-  const bundle = (edge: MapEdge) => `${rowOf(edge.from)} ${rowOf(edge.to)} ${waited(edge.from)}`;
-  const joins = new Map<string, number[]>();
-  for (const edge of drawn)
-    if (rowOf(edge.to) !== rowOf(edge.from) + 1)
-      listed(joins, bundle(edge), colOf(edge.from), colOf(edge.to));
-  const gutterOf = (id: string) => Math.min(cols - 1, Math.floor(mean(joins.get(id)!)) + 1);
-  const lanes = new Map<number, string[]>();
-  for (const id of [...joins.keys()].sort((a, b) => mean(joins.get(a)!) - mean(joins.get(b)!)))
-    listed(lanes, gutterOf(id), id);
-  const laneOf = (id: string) => {
-    const beside = lanes.get(gutterOf(id))!;
-    return Math.round(
-      inset +
-        gutterOf(id) * (w + GAP_X) -
-        GAP_X / 2 +
-        (beside.indexOf(id) - (beside.length - 1) / 2) * Math.min(6, 16 / beside.length),
-    );
-  };
-  // Where a prerequisite's lines leave its foot: the middle, or beside it where the card
-  // straight under it waits on others and not on it, whose lines come in at that middle.
-  const standing = new Map([...place].map(([key, { col, row }]) => [`${row} ${col}`, key]));
-  const leave = (key: string) => {
-    const box = at.get(key)!;
-    const under = standing.get(`${rowOf(key) + 1} ${colOf(key)}`);
-    if (!under || !before.has(under) || before.get(under)!.includes(key)) return box.x + box.w / 2;
-    const left = mean(after.get(key)!.map((next) => at.get(next)!.x)) < box.x;
-    return box.x + box.w / 2 + (left ? -16 : 16);
-  };
-  const wires = drawn.map((edge): MapWire => {
-    const [a, b] = [at.get(edge.from)!, at.get(edge.to)!];
-    const [x1, x2] = [leave(edge.from), b.x + b.w / 2];
-    const beside = turns.get(rowOf(edge.from))!;
-    const turn = Math.round(
-      a.y +
-        a.h +
-        ((GAP_Y - ARRIVE - 4) * (beside.indexOf(waited(edge.from)) + 1)) / (beside.length + 1),
-    );
-    const id = bundle(edge);
-    return {
-      ...edge,
-      d: joins.has(id)
-        ? `M${x1} ${a.y + a.h}V${turn}H${laneOf(id)}V${b.y - ARRIVE}H${x2}V${b.y}`
-        : `M${x1} ${a.y + a.h}V${turn}H${x2}V${b.y}`,
-      head: `M${x2 - 4} ${b.y - 6}L${x2} ${b.y}L${x2 + 4} ${b.y - 6}`,
-    };
-  });
-  const order = [...place.keys()].sort((a, b) => rowOf(a) - rowOf(b) || colOf(a) - colOf(b));
-  // One label for each stretch of time, at its first row: a stretch wider than the page wraps.
-  const stretches = new Map<number, MapTick>();
-  for (const key of order) {
-    const time = times?.get(key);
-    const tick = stretches.get(depth.get(key)!);
-    if (time)
-      stretches.set(depth.get(key)!, {
-        y: Math.min(tick?.y ?? Infinity, at.get(key)!.y),
-        at: tick && tick.at <= time ? tick.at : time,
-      });
-  }
-  const ticks = [...stretches.values()].sort((a, b) => a.y - b.y);
-  return { width, height: used.length * (CARD_H + GAP_Y) - GAP_Y, at, order, wires, ticks };
+  for (const key of keys) of(key);
+  return depth;
 }
 
-/** The card straight below (or above) this one: the nearest row that way, nearest across. */
+/** The chains: every unit joined to another by any line, in the order their work was given. */
+function chains(keys: string[], edges: MapEdge[]): string[][] {
+  const { up, down } = neighbours(keys, edges);
+  const seen = new Set<string>();
+  const out: string[][] = [];
+  for (const key of keys) {
+    if (seen.has(key)) continue;
+    const chain: string[] = [];
+    const queue = [key];
+    seen.add(key);
+    while (queue.length) {
+      const here = queue.shift()!;
+      chain.push(here);
+      for (const next of [...up.get(here)!, ...down.get(here)!])
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+    }
+    out.push(chain);
+  }
+  return out;
+}
+
+export function workMapLayout(
+  keys: string[],
+  edges: MapEdge[],
+  width: number,
+  {
+    ended = new Set(),
+    held = new Set(),
+    unfold = false,
+  }: {
+    /** Units that have ended, which a long chain may fold. */
+    ended?: Set<string>;
+    /** Units never folded: live, or needing a person. */
+    held?: Set<string>;
+    /** The reader pressed a fold open. */
+    unfold?: boolean;
+  } = {},
+): WorkMapLayout | null {
+  if (width < MAP_MIN || !keys.length) return null;
+  const kept = edges.filter((edge) => edge.from !== edge.to);
+  const depth = depths(keys, kept);
+  const { up } = neighbours(keys, kept);
+  const at = new Map<string, MapPlace>();
+  const folds: WorkMapLayout['folds'] = [];
+  let row = 0;
+  for (const chain of chains(keys, kept)) {
+    const columns = Math.max(...chain.map((key) => depth.get(key)!)) + 1;
+    // A chain the width cannot hold with names folds its finished head, then its tail, until
+    // it fits or only what must be shown is left.
+    let fold = 0;
+    let tail = 0;
+    const runW = (count: number) => (count ? count * FOLD_STEP + FOLD_STEP : 0);
+    const wide = () => (columns - fold - tail) * COL_MIN + NAME_W + runW(fold) + runW(tail) > width;
+    if (!unfold) {
+      const byColumn = (column: number) => chain.filter((key) => depth.get(key) === column);
+      const more = () => wide() && columns - fold - tail > 1;
+      while (more() && byColumn(fold).every((key) => ended.has(key) && !held.has(key))) fold++;
+      while (more() && byColumn(columns - 1 - tail).every((key) => !held.has(key))) tail++;
+    }
+    const shown = columns - fold - tail;
+    const foldW = runW(fold);
+    const tailW = runW(tail);
+    const colW = Math.min(
+      COL_MAX,
+      Math.max(COL_MIN, (width - foldW - tailW - NAME_W) / Math.max(1, shown)),
+    );
+    const tailX = foldW + shown * colW + NAME_W;
+    // Rows within the chain: column by column, each unit level with the first thing it waits
+    // on where that row is still free in its column, else the nearest free row below.
+    const taken = new Map<number, Set<number>>();
+    const rowOf = new Map<string, number>();
+    const ordered = [...chain].sort((a, b) => depth.get(a)! - depth.get(b)!);
+    let deepest = 0;
+    for (const key of ordered) {
+      const column = depth.get(key)!;
+      const used = taken.get(column) ?? new Set<number>();
+      taken.set(column, used);
+      const parents = up.get(key)!.map((parent) => rowOf.get(parent) ?? 0);
+      let r = parents.length ? Math.min(...parents) : 0;
+      while (used.has(r)) r++;
+      used.add(r);
+      rowOf.set(key, r);
+      deepest = Math.max(deepest, r);
+      const folded = column < fold || column >= columns - tail;
+      const x =
+        column < fold
+          ? FOLD_STEP + column * FOLD_STEP + MARK
+          : column >= columns - tail
+            ? tailX + (column - (columns - tail)) * FOLD_STEP + MARK
+            : foldW + (column - fold) * colW + MARK;
+      at.set(key, { x, y: (row + r) * ROW_H + ROW_H / 2, folded, w: folded ? FOLD_STEP : colW });
+    }
+    const y = row * ROW_H + ROW_H / 2;
+    const counted = (test: (column: number) => boolean) =>
+      chain.filter((key) => test(depth.get(key)!)).length;
+    if (fold) folds.push({ x: FOLD_STEP, y, count: counted((column) => column < fold) });
+    if (tail) folds.push({ x: tailX, y, count: counted((column) => column >= columns - tail) });
+    row += deepest + 1;
+  }
+  const height = row * ROW_H;
+  const wires = kept
+    .filter((edge) => at.has(edge.from) && at.has(edge.to))
+    .map((edge) => {
+      const a = at.get(edge.from)!;
+      const b = at.get(edge.to)!;
+      const x1 = a.x + MARK + 2;
+      const x2 = b.x - MARK - 2;
+      const mid = (x1 + x2) / 2;
+      return { ...edge, d: `M${x1} ${a.y}C${mid} ${a.y} ${mid} ${b.y} ${x2} ${b.y}` };
+    });
+  const order = [...at].sort(([, a], [, b]) => a.y - b.y || a.x - b.x).map(([key]) => key);
+  return { width, height, at, order, wires, folds };
+}
+
+/** The unit nearest straight under (or over) the one in hand, for the keyboard. */
 export function beneath(layout: WorkMapLayout, key: string, down: boolean): string | undefined {
-  const from = layout.at.get(key);
-  if (!from) return undefined;
-  const rows = layout.order
-    .map((other) => ({ key: other, box: layout.at.get(other)! }))
-    .filter(({ box }) => (down ? box.y > from.y : box.y < from.y));
-  if (!rows.length) return undefined;
-  const y = (down ? Math.min : Math.max)(...rows.map(({ box }) => box.y));
+  const here = layout.at.get(key);
+  if (!here) return undefined;
+  const rows = [...layout.at]
+    .filter(([, place]) => (down ? place.y > here.y : place.y < here.y))
+    .sort(([, a], [, b]) => Math.abs(a.y - here.y) - Math.abs(b.y - here.y));
+  const nearest = rows[0]?.[1].y;
   return rows
-    .filter(({ box }) => box.y === y)
-    .sort((a, b) => Math.abs(a.box.x - from.x) - Math.abs(b.box.x - from.x))[0]?.key;
+    .filter(([, place]) => place.y === nearest)
+    .sort(([, a], [, b]) => Math.abs(a.x - here.x) - Math.abs(b.x - here.x))[0]?.[0];
 }

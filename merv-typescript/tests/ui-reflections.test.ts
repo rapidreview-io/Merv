@@ -239,7 +239,7 @@ test('a read that fails after the wave was read keeps the wave on the page', asy
   assert.deepEqual(pressed(), ['Report']);
 });
 
-test('the Work page is its title line and the map: nothing is listed, and Filter narrows what is drawn', async (t) => {
+test('the Work page is its title line and the map: nothing is listed, and the shapes narrow what is drawn', async (t) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const global = globalThis as any;
   global.ResizeObserver = class {
@@ -308,42 +308,31 @@ test('the Work page is its title line and the map: nothing is listed, and Filter
     ),
   );
   await settle(20);
-  const cards = () =>
-    [...document.querySelectorAll('.wmap-node')].map((card) => card.getAttribute('data-key'));
+  const marks = () =>
+    [...document.querySelectorAll('.wmap-mark')].map((mark) => mark.getAttribute('data-key'));
   // As the page opens: the open work, drawn once and listed nowhere.
-  assert.deepEqual(cards().sort(), ['work:wf_sweep', 'work:wf_wave']);
+  assert.deepEqual(marks().sort(), ['work:wf_sweep', 'work:wf_wave']);
   assert.equal(document.querySelector('ul.rows'), null);
-  // No row of tabs and chips stands over the map: one word in the title line opens them.
-  assert.equal(document.querySelector('.action-row, .tabs--strip'), null);
-  const word = (name: string) =>
-    [...document.querySelectorAll<HTMLButtonElement>('.page-actions button')].find(
-      (button) => button.textContent === name,
-    );
-  assert.equal(document.querySelector('.narrowing-panel'), null);
-  assert.equal(word('Reset'), undefined, 'nothing is narrowed yet');
-  await act(async () => word('Filter')!.click());
-  assert.ok(
-    document.querySelector('.narrowing-panel [aria-label="Search work"], .narrowing-panel input'),
+  // No row of tabs and chips stands over the map, and no word folds one away: the page's one
+  // line is its counts and the shapes, each a filter in plain sight.
+  assert.equal(document.querySelector('.action-row, .tabs--strip, .narrowing-panel'), null);
+  assert.equal(
+    [...document.querySelectorAll('.page-actions button')].find((b) => b.textContent === 'Filter'),
+    undefined,
   );
-  const press = async (label: string, name: string) => {
-    const button = [...document.querySelectorAll(`[aria-label="${label}"] button`)].find((item) =>
-      item.textContent?.startsWith(name),
-    ) as HTMLButtonElement;
-    await act(async () => button.click());
-  };
-  assert.ok(!text().includes('New reflection'));
-  await press('Kind of work', 'Reflections');
-  assert.deepEqual(cards(), ['work:wf_wave']);
-  assert.ok(text().includes('New reflection'), 'the tab’s own thing to start');
-  await press('Kind of work', 'All');
-  await press('State of work', 'done');
-  assert.deepEqual(cards(), ['work:wf_pin']);
+  const shape = (label: string) =>
+    document.querySelector<HTMLButtonElement>(`.wbar [aria-label="${label}"]`)!;
+  for (const label of ['Show experiments', 'Show tasks', 'Show ended'])
+    assert.equal(shape(label).getAttribute('aria-pressed'), 'true', label);
+  await act(async () => shape('Show tasks').click());
+  assert.deepEqual(marks(), ['work:wf_wave']);
+  assert.equal(shape('Show tasks').getAttribute('aria-pressed'), 'false');
+  await act(async () => shape('Show tasks').click());
+  await act(async () => shape('Show experiments').click());
+  assert.deepEqual(marks(), ['work:wf_sweep']);
   assert.equal(document.querySelector('ul.rows'), null);
-  // Narrowed, the word is lit and Reset is the way back to how the page opens.
-  assert.ok(word('Filter')!.classList.contains('btn--on'));
-  await act(async () => word('Reset')!.click());
-  assert.deepEqual(cards().sort(), ['work:wf_sweep', 'work:wf_wave']);
-  assert.equal(word('Reset'), undefined);
+  await act(async () => shape('Show experiments').click());
+  assert.deepEqual(marks().sort(), ['work:wf_sweep', 'work:wf_wave']);
 });
 
 test('with no room to draw, the Work page lists the same work as rows, a reflection among them', async (t) => {

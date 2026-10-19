@@ -62,11 +62,17 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' merv-typescr
 cat ${UI_DIR}/release.json 2>/dev/null || echo '{}'`);
 if (state.status !== 0) fail('Could not read the running release from the VM.');
 const [image, mounted, served] = state.stdout.trim().split('\n');
-const server = /^merv-typescript:(\d{8}T\d{6}Z-([0-9a-f]{8})-[0-9a-f]{12})$/.exec(image);
+const RELEASE = /^(\d{8}T\d{6}Z-([0-9a-f]{8})-[0-9a-f]{12})$/;
+// The container names its release by its image tag, or, started by digest, by what the UI
+// directory's release.json says the server is: a release.mjs or ui-release.mjs wrote it.
+const record = JSON.parse(served || '{}');
+const server =
+  /^merv-typescript:(\d{8}T\d{6}Z-([0-9a-f]{8})-[0-9a-f]{12})$/.exec(image) ??
+  RELEASE.exec(String(record.server ?? record.release ?? ''));
 if (!server) fail(`The running image is not a release: ${image}`);
 if (mounted !== '1')
   fail('The running server serves the UI from its image; run deploy/release.mjs once first.');
-const previous = JSON.parse(served || '{}').release ?? '—';
+const previous = record.release ?? '—';
 
 const changed = sh('git', ['diff', '--name-only', server[2], head], repo).trim().split('\n');
 const serverSide = changed.filter((file) => file && !UI_ONLY.some((ui) => ui.test(file)));

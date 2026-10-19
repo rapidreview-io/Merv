@@ -725,3 +725,44 @@ test('a save naming a shape twice keeps its newest version, and an undeleted sha
     refused('board_full'),
   );
 });
+
+test('native font measurements survive save/read and unrelated drawing without estimated rewrites', async (t) => {
+  const f = await fixture(t);
+  const made = await f.board.draw(f.producer, {
+    title: 'Measured labels',
+    ops: [
+      {
+        op: 'box',
+        key: 'decision',
+        text: 'Café owner and recovery plan',
+        shape: 'diamond',
+        color: 'yellow',
+      },
+    ],
+  });
+  const scene = await f.board.scene(f.producer, made.board.id);
+  const label = scene.elements.find((e) => e.type === 'text')!;
+  const measured = {
+    ...label,
+    width: 173.125,
+    height: 75,
+    x: 33.4375,
+    text: 'Café owner and\nrecovery plan',
+    originalText: 'Café owner and recovery plan',
+    version: label.version + 1,
+    versionNonce: 12345,
+  };
+  await f.board.save(f.producer, made.board.id, [measured]);
+  assert.deepEqual(
+    (await f.board.scene(f.producer, made.board.id)).elements.find((e) => e.id === label.id),
+    measured,
+  );
+  await f.board.draw(f.producer, {
+    board: made.board.id,
+    ops: [{ op: 'note', text: 'Unrelated', at: [-800, -800] }],
+  });
+  assert.deepEqual(
+    (await f.board.scene(f.producer, made.board.id)).elements.find((e) => e.id === label.id),
+    measured,
+  );
+});
