@@ -220,12 +220,16 @@ export const sessionsToolsPlugin = {
               .array(z.string().min(1).max(200))
               .max(20)
               .optional()
-              .describe('Sandboxes job ids of this work'),
+              .describe(
+                'Sandboxes job ids of this work; with workflowIds, 1–20 distinct ids in all',
+              ),
             workflowIds: z
               .array(z.string().min(1).max(200))
               .max(20)
               .optional()
-              .describe('Sandboxes workflow ids of this work'),
+              .describe(
+                'Sandboxes workflow ids of this work; with jobIds, 1–20 distinct ids in all',
+              ),
             reason: z
               .string()
               .min(1)
@@ -239,7 +243,7 @@ export const sessionsToolsPlugin = {
               .min(1)
               .max(10_080)
               .optional()
-              .describe('The longest the wait may last; 1440 (a day) when left out'),
+              .describe('The longest the wait may last, at least 5; 1440 (a day) when left out'),
           })
           .strict(),
         handler: async (caller: Caller, input: ComputeWaitInput) => ({
