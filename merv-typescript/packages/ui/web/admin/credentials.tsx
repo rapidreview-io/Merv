@@ -19,26 +19,33 @@ import {
   col,
   cx,
   stamp,
-  toneOf,
   useNow,
   words,
 } from '../components';
 import { elapsed } from '../liveness';
-import { Head, fig, usePost } from './parts';
+import { Head, fig, figure, usePost } from './parts';
 
 /** A revealed value stands this long, then leaves the page. */
 const SHOWN_MS = 30_000;
 
+/** Its last call failed: a failure newer than its last success. */
+const failedLast = ({ lastFailure: failed, lastOk: ok }: PlatformSecret) =>
+  !!failed && (!ok || failed.at > ok.at);
 /** Set, unset, dead, or failing since its last success: red is a key that does not work. */
 const stateOf = (s: PlatformSecret) =>
-  !s.set
-    ? 'unset'
-    : s.dead
-      ? 'dead'
-      : s.lastFailure && (!s.lastOk || s.lastFailure.at > s.lastOk.at)
-        ? 'failing'
-        : 'set';
-const TONE: Record<string, string> = { set: 'ok', unset: 'dim', dead: 'bad', failing: 'bad' };
+  !s.set ? 'unset' : s.dead ? 'dead' : failedLast(s) ? 'failing' : 'set';
+/** A provider key: unset, else its provider's health while that is not ok, else set. */
+const keyState = ({ present: on, health }: ProviderKey) =>
+  on === false ? 'unset' : health && health !== 'ok' ? health : on ? 'set' : '';
+/** Each state's tone, in the order the head counts them. */
+const TONE: Record<string, string> = {
+  set: 'ok',
+  unset: 'dim',
+  dead: 'bad',
+  failing: 'bad',
+  degraded: 'warn',
+  unavailable: 'bad',
+};
 /** What it is for, in the text colour, and the name it is kept under beneath it. */
 const Named = (props: { what: string; name: string; title?: string }) => (
   <span>
@@ -65,7 +72,7 @@ type Open = {
 };
 /** What the row is for, and the name it is kept under: what a form that changes it names. */
 const namesOf = (row: PlatformSecret | ProviderKey) =>
-  'env' in row ? [row.purpose, row.env] : [`${row.provider} · ${row.description}`, row.field];
+  'env' in row ? [row.purpose, row.env] : [`${row.label} · ${row.description}`, row.field];
 
 /** A revealed value: the mono to read or copy, and the seconds it has left on the page. */
 function Shown({ value, until, hide }: { value: string; until: number; hide(): void }) {
@@ -234,9 +241,20 @@ function useActs(reload: () => void) {
 }
 
 type Minted = AdminCredentials['minted'][number];
+/** What each kind of credential Merv mints is for. */
+const MINTED_FOR: Record<string, string> = {
+  'pi-model': 'Agent model calls',
+  'pi-worker': 'Agent machines',
+  actor: 'Agent and worker sign-ins',
+  'user-key': "People's API keys",
+  'managed-control': 'Fleet machine control',
+  'managed-enrollment': 'Fleet machine enrollment',
+  'session-execution': 'Agent session runs',
+};
 const MINTED = [
-  col<Minted>('owner', 'Minted by', (m) => m.owner),
-  col<Minted>('kind', 'Kind', (m) => words(m.kind)),
+  col<Minted>('purpose', 'Purpose', (m) => (
+    <Named what={MINTED_FOR[m.kind] ?? words(m.kind)} name={`${m.owner} · ${m.kind}`} />
+  )),
   fig<Minted>('live', 'Live', (m) => m.live),
   fig<Minted>('expiry', 'Next expiry', ({ soonestExpiry: at }) =>
     at ? (
@@ -254,10 +272,7 @@ export function CredentialsView() {
   const acts = useActs(read.reload);
   const groups = read.data?.groups ?? [];
   const providers = read.data?.providers ?? [];
-  const states = [
-    ...groups.flatMap((g) => g.secrets.map(stateOf)),
-    ...providers.map((p) => (p.present === null ? '' : p.present ? 'set' : 'unset')),
-  ];
+  const states = [...groups.flatMap((g) => g.secrets.map(stateOf)), ...providers.map(keyState)];
   const counted = (state: string) => states.filter((s) => s === state).length;
   const secrets = [
     col<PlatformSecret>('purpose', 'Purpose', (s) => (
@@ -270,45 +285,35 @@ export function CredentialsView() {
     col<PlatformSecret>('state', 'State', (s) => (
       <Word tone={TONE[stateOf(s)]!} value={stateOf(s)} />
     )),
-    fig<PlatformSecret>('changed', 'Changed', (s) => s.lastChanged && <Ago at={s.lastChanged} />),
-    fig<PlatformSecret>('ok', 'Last ok', ({ lastOk: ok }) =>
-      ok ? (
-        <span title={`${ok.relay} · ${ok.model}`}>
-          <Ago at={ok.at} />
-        </span>
-      ) : null,
-    ),
-    fig<PlatformSecret>('failure', 'Last failure', ({ lastFailure: failed, lastOk: ok }) =>
-      failed ? (
-        <span
-          className={cx(ok && ok.at > failed.at && 'faint')}
-          title={[failed.status, failed.code, failed.relay, failed.model]
-            .filter(Boolean)
-            .join(' · ')}
-        >
-          <Ago at={failed.at} />
-        </span>
-      ) : null,
-    ),
+    figure<PlatformSecret>('changed', 'Changed', ({ lastChanged: at }) => at && <Ago at={at} />),
+    // The newer of its last success and its last failure, red when it failed.
+    figure<PlatformSecret>('call', 'Last call', (s) => {
+      const failed = failedLast(s) && s.lastFailure;
+      const last = failed || s.lastOk;
+      return (
+        last && (
+          <span
+            className={cx(failed && 'status--bad')}
+            title={[failed && failed.status, failed && failed.code, last.relay, last.model]
+              .filter(Boolean)
+              .join(' · ')}
+          >
+            {failed ? 'failed' : 'ok'} <Ago at={last.at} />
+          </span>
+        )
+      );
+    }),
     col<PlatformSecret>('acts', '', (s) => acts.controls(s, s.set)),
   ];
   const keys = [
-    col<ProviderKey>('provider', 'Provider', (p) => (
-      <>
-        {p.provider}{' '}
-        {p.health && (
-          <Word
-            tone={p.health === 'ok' ? 'ok' : toneOf(p.health)}
-            value={p.health}
-            title={p.healthReason ?? undefined}
-          />
-        )}
-      </>
-    )),
+    col<ProviderKey>('provider', 'Provider', (p) => p.label),
     col<ProviderKey>('key', 'Key', (p) => <Named what={p.description} name={p.field} />),
-    col<ProviderKey>('present', 'Present', ({ present: on }) =>
-      on === null ? null : <Word tone={on ? 'ok' : 'dim'} value={on ? 'set' : 'unset'} />,
-    ),
+    col<ProviderKey>('state', 'State', (p) => {
+      const state = keyState(p);
+      return (
+        state && <Word tone={TONE[state]!} value={state} title={p.healthReason ?? undefined} />
+      );
+    }),
     col<ProviderKey>('acts', '', (p) => acts.controls(p, !!p.present)),
   ];
   return (
@@ -316,12 +321,10 @@ export function CredentialsView() {
       <Head
         title="Credentials"
         facts={
-          read.data && [
-            [counted('set'), 'set'],
-            counted('unset') > 0 && [counted('unset'), 'unset'],
-            counted('dead') > 0 && [counted('dead'), 'dead', true],
-            counted('failing') > 0 && [counted('failing'), 'failing', true],
-          ]
+          read.data &&
+          Object.keys(TONE).map(
+            (state) => counted(state) > 0 && [counted(state), state, TONE[state] === 'bad'],
+          )
         }
       />
       <LoadState {...read} columns={6} />
@@ -330,7 +333,7 @@ export function CredentialsView() {
           <h2 className="section-title admin-group">{purpose}</h2>
           <Ruled
             label={purpose}
-            template="minmax(0, 2.4fr) 84px repeat(3, 100px) minmax(116px, 0.8fr)"
+            template="minmax(0, 2.4fr) 84px 100px 140px minmax(116px, 0.8fr)"
             columns={secrets}
             rows={rows}
             keyOf={keyOf}
@@ -358,7 +361,7 @@ export function CredentialsView() {
           <h2 className="section-title">Machine credentials</h2>
           <Ruled
             label="Machine credentials"
-            template="minmax(0, 1fr) minmax(0, 1.4fr) 64px 104px 104px 104px"
+            template="minmax(0, 2.4fr) 64px 104px 104px 104px"
             rows={read.data.minted}
             keyOf={(m) => `${m.owner}:${m.kind}`}
             columns={MINTED}

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { accountRequest } from '../api';
-import { PageHeader, Word, col, cx, toneOf, type Column } from '../components';
+import { PageHeader, Word, col, cx, toneOf } from '../components';
 import { useCommand } from '../mutations';
 import { formatMoney } from '../views/remote-fields';
 
@@ -26,11 +26,14 @@ export const count = (n: number) =>
 /** A column whose row may not have its fact: the dash stands where it has none. */
 export const fact = <T,>(key: string, label: string, render: (row: T) => ReactNode) =>
   col(key, label, (row: T) => render(row) ?? <None />);
-/** The same, for a column of figures. */
-export const fig = <T,>(key: string, label: string, render: (row: T) => ReactNode): Column<T> => ({
-  ...fact(key, label, render),
+/** A column of figures, where a row without its figure draws nothing. */
+export const figure = <T,>(key: string, label: string, render: (row: T) => ReactNode) => ({
+  ...col(key, label, render),
   num: true,
 });
+/** A column of figures, the dash standing where a row has none. */
+export const fig = <T,>(key: string, label: string, render: (row: T) => ReactNode) =>
+  figure(key, label, (row: T) => render(row) ?? <None />);
 /** A page's title, and what it counted under it: `3 running`, the count in ink, a bad one in red. */
 export const Head = (props: { title: string; facts?: Fact[]; ends?: ReactNode }) => (
   <PageHeader
@@ -53,18 +56,6 @@ export const Head = (props: { title: string; facts?: Fact[]; ends?: ReactNode })
   />
 );
 type Fact = false | [count: number, noun: string, bad?: boolean];
-/** `used of limit`, the limit faint. */
-export const Of = (props: { used: ReactNode; of?: ReactNode; className?: string }) => (
-  <span className={cx('admin-of', props.className)}>
-    <span>{props.used}</span>
-    {props.of != null && (
-      <>
-        {' '}
-        <span className="faint">of {props.of}</span>
-      </>
-    )}
-  </span>
-);
 /** A fact the row does not have. */
 export const None = () => <span className="ghost">—</span>;
 /** A unit's state: in its need's tone while it waits on someone, else in its word's own, and a

@@ -56,8 +56,10 @@ const COLUMNS = [
     const to = opens(row);
     const [first] = row.terminal ? [] : row.attention;
     const says = first ? said(first) : '';
-    // The owner's code, unless its own words already say it, then those words.
-    const code = first && !says.toLowerCase().startsWith(named(first).toLowerCase());
+    const lower = (text: string) => text.toLowerCase();
+    // The owner's code, unless its state or its own words already say it; then those words.
+    const stated = !!first && lower(words(row.state)).includes(lower(words(first.code)));
+    const code = !!first && !stated && !lower(says).startsWith(lower(named(first)));
     return (
       <>
         {/* A part stands under the unit it is part of, by its own name alone. */}
@@ -75,7 +77,7 @@ const COLUMNS = [
           row.title
         )}
         {/* What it needs, under its name. */}
-        {first && (
+        {first && (code || says) && (
           <div className="admin-attn" title={row.attention.map(said).join('\n') || undefined}>
             <span className={`admin-attn-code status--${toneOfNeed(row)}`}>
               {code ? `${named(first)} ` : says}
@@ -95,7 +97,7 @@ const COLUMNS = [
     <State value={row.state} ended={row.terminal} need={toneOfNeed(row)} />
   )),
   // A machine by its profile, and its phase until it runs; what it costs an hour in its title.
-  fact<AdminWorkRow>('agent', 'Agent · Machine', ({ agent, machine: m }) =>
+  fact<AdminWorkRow>('agent', 'Agent ·\u00a0Machine', ({ agent, machine: m }) =>
     agent || m ? (
       <span className="admin-parts">
         {agent && (
@@ -103,13 +105,15 @@ const COLUMNS = [
             {words(agent.role)} {status(agent.status)}
           </span>
         )}
-        {agent && m && <span className="ghost"> · </span>}
+        {agent && m && ' '}
         {m && (
           <span
             title={[m.provider, m.usdPerHour !== null && formatMoney(undefined, m.usdPerHour)]
               .filter(Boolean)
               .join(' · ')}
           >
+            {/* The separator goes with the machine, so a narrow cell wraps both together. */}
+            {agent && <span className="ghost">· </span>}
             {m.profile ?? m.provider}
             {(m.phase !== 'running' || !(m.profile ?? m.provider)) && <> {status(m.phase)}</>}
           </span>
@@ -169,10 +173,16 @@ export function WorkView() {
     .sort((a, b) => rankOf(a) - rankOf(b) || latest(b) - latest(a))
     .flatMap(family);
   const live = all.filter((row) => !row.terminal);
+  // Units, not their parts: those open, and those an agent works on, or on a part of (a live
+  // Agent conversation is its agent at work).
+  const open = live.filter((row) => !row.parent).length;
+  const active = live.filter((row) => row.kind === 'pi' || row.agent?.status === 'active');
+  const working = new Set(active.map((row) => row.parent ?? row.id)).size;
   const needs = live.filter((row) => row.attention.length).length;
   const kinds = [...new Set(all.map((row) => row.kind))].sort();
   const narrowed = filter.filtering || kind || ended;
-  // The state column as wide as its longest word, which it never cuts.
+  // The state column as wide as its longest word, which it never cuts: set a size under the
+  // row's, about 0.8ch a letter, after its dot.
   const widest = Math.max(5, ...rows.map((row) => row.state.length));
   const clear = () => {
     filter.clear();
@@ -190,7 +200,13 @@ export function WorkView() {
         <Head
           title="Work"
           ends={ends}
-          facts={work.data && [[live.length, 'running'], needs > 0 && [needs, 'need attention']]}
+          facts={
+            work.data && [
+              [open, 'open'],
+              working > 0 && [working, 'working'],
+              needs > 0 && [needs, 'need attention'],
+            ]
+          }
         />
       )}
       reset={narrowed ? clear : undefined}
@@ -223,7 +239,7 @@ export function WorkView() {
         rows.length > 0 && (
           <Ruled
             label="Work"
-            template={`minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) calc(${widest}ch + 12px) minmax(0, 1fr) 72px 40px 56px`}
+            template={`minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 0.5fr) calc(${widest} * 0.8ch + 16px) minmax(0, 1.25fr) 72px 40px 56px`}
             columns={COLUMNS}
             rows={rows}
             keyOf={(row) => row.id}
@@ -239,7 +255,7 @@ export function WorkView() {
           />
         )
       }
-      emptyTitle="Nothing running"
+      emptyTitle="Nothing open"
       columns={6}
     />
   );

@@ -20,7 +20,7 @@ import {
 import { ListPage, Segments, openRow, typing, useListFilter } from '../list-filters';
 import { day } from '../session';
 import { useRoomy } from '../theme';
-import { Head, None, Of, count, fig, usd, usePost } from './parts';
+import { Head, None, count, fig, usd, usePost } from './parts';
 
 /** A row: the person, under the id a list filter keys it by (their `issuer|subject`). */
 type Person = AdminCredits['people'][number] & { id: string };
@@ -36,23 +36,14 @@ type Span = (typeof WINDOWS)[number]['value'];
 /** A figure in its type's unit: dollars, or a count of tokens. */
 const amount = (unit: CreditUse['unit'], n: number | null) =>
   n === null ? <None /> : unit === 'usd' ? usd(n) : count(n);
-/** A type today: used of its daily limit (red at it), or what is left of a provider's grants. */
+/** What is left of a type's limit, today's or a provider's grants, of it faint; red at none. */
 function today(use?: Today) {
-  if (!use) return null;
-  const { unit, limit } = use;
-  if (use.kind.startsWith('provider:'))
-    return limit ? (
-      <Of
-        used={<span className="admin-left">{amount(unit, use.left)}</span>}
-        of={amount(unit, limit)}
-      />
-    ) : null;
+  if (!use || !use.limit || use.left === null) return null;
   return (
-    <Of
-      className={cx(limit !== null && use.used >= limit && 'status--bad')}
-      used={amount(unit, use.used)}
-      of={limit === null ? null : amount(unit, limit)}
-    />
+    <span className={cx('admin-of', use.left <= 0 && 'status--bad')}>
+      <span className="admin-left">{amount(use.unit, use.left)}</span>{' '}
+      <span className="faint">of {amount(use.unit, use.limit)}</span>
+    </span>
   );
 }
 /** A day, with its minute in the hover title. */
