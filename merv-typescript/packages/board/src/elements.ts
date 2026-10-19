@@ -652,7 +652,11 @@ export class Drawing {
           strokeColor: 'transparent',
           backgroundColor: '#e7f5ff',
           link: web ? op.target : `merv:${op.target}`,
-          customData: { ...(this.agent && { by: 'agent' }), target: op.target },
+          customData: {
+            ...(this.agent && { by: 'agent' }),
+            target: op.target,
+            ...(op.details && { details: op.details }),
+          },
         });
         return this.keyed(op.key, el);
       }
@@ -915,6 +919,7 @@ export function summarize(elements: BoardElement[]) {
             : el.type,
       ...(said(el) && { text: said(el) }),
       ...(el.customData?.target && { target: el.customData.target }),
+      ...(el.customData?.details && { details: el.customData.details }),
       ...(el.frameId && { frame: el.frameId }),
       ...(el.customData?.by === 'agent' && { by: 'agent' }),
       ...where(el),

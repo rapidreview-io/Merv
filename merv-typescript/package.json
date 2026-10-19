@@ -37,7 +37,7 @@
     "test:ui": "node --import tsx --test tests/ui*.test.ts",
     "demo:ui": "node --import tsx scripts/ui-demo.ts",
     "docs:architecture": "node --import tsx scripts/dependency-map.ts",
-    "postinstall": "patch-package --patch-dir vendor/merv-sandboxes/typescript/patches",
+    "postinstall": "patch-package --patch-dir vendor/merv-sandboxes/typescript/patches && node scripts/patch-excalidraw-hyperlink.mjs",
     "build:board-renderer": "node scripts/build-board-renderer.mjs"
   },
   "dependencies": {
