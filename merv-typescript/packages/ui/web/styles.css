@@ -6949,10 +6949,15 @@ button.role-mark--disc {
 }
 .stage-what {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: 2px var(--space-2);
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
+}
+.stage-what > * {
+  min-width: 0;
 }
 .stage-what > .thread-doc,
 .stage-what > .verdict-line {
@@ -7017,6 +7022,23 @@ button.role-mark--disc {
 }
 .stage-card--strip .stage-thread {
   grid-area: thread;
+}
+/* Sideways, a stage's column is narrow: a row is its disc, the role and what it made; the
+   time it keeps is the stage's own, on the word's line, so the row's is not drawn. */
+.stage-card--strip .stage-row {
+  grid-template-columns: 20px 68px minmax(0, 1fr);
+  align-items: start;
+}
+.stage-card--strip .stage-row > .feed-when,
+.stage-card--strip .stage-row > .hit {
+  display: none;
+}
+.stage-card--strip .stage-who {
+  line-height: 24px;
+}
+.stage-card--strip .verdict-line {
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 /* The tabs stay at the top of the view once the stages have scrolled away, and the unit's
    name and its stages as dots then stand at their end, where the strip has room. */
