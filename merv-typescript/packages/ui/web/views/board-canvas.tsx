@@ -22,6 +22,7 @@ import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/ty
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
 import { stacked, type BoardScene } from '@merv/board/models';
 import { call } from '../api';
+import { ensureBoardFonts } from './board-fonts';
 import { useRows } from '../navigation';
 import { onWorn, worn } from '../theme';
 import { placeOf } from './pi-screen';
@@ -33,7 +34,7 @@ const KEPT = new Set('rectangle ellipse diamond text arrow line freedraw frame'.
 const SAVE_MS = 600;
 const ASK_MS = 1500;
 
-export default function BoardCanvas({ id }: { id: string }) {
+function BoardCanvasScene({ id }: { id: string }) {
   const navigate = useNavigate();
   const rows = useRows();
   const theme = useSyncExternalStore(onWorn, worn);
@@ -50,15 +51,15 @@ export default function BoardCanvas({ id }: { id: string }) {
 
   useEffect(() => {
     let live = true;
-    void call<BoardScene>('board.scene', { id }).then(
-      (scene) => {
+    void call<BoardScene>('board.scene', { id })
+      .then(async (scene) => {
+        await ensureBoardFonts(scene.elements);
         if (!live) return;
         for (const el of scene.elements) known.current.set(el.id, el.version);
         revision.current = scene.board.revision;
         setFirst(scene);
-      },
-      (error: Error) => live && setProblem(error.message),
-    );
+      })
+      .catch((error: Error) => live && setProblem(error.message));
     return () => {
       live = false;
     };
@@ -114,15 +115,23 @@ export default function BoardCanvas({ id }: { id: string }) {
   // another and would be cut short, so it is measured again once the font is in.
   useEffect(() => {
     if (!api) return;
-    const measure = () =>
+    let disposed = false;
+    const measure = () => {
+      if (disposed) return;
       api.updateScene({
         elements: restoreElements(api.getSceneElementsIncludingDeleted(), null, {
           refreshDimensions: true,
+          repairBindings: true,
         }),
         captureUpdate: CaptureUpdateAction.NEVER,
       });
+    };
     document.fonts.addEventListener('loadingdone', measure);
-    return () => document.fonts.removeEventListener('loadingdone', measure);
+    void document.fonts.ready.then(measure);
+    return () => {
+      disposed = true;
+      document.fonts.removeEventListener('loadingdone', measure);
+    };
   }, [api]);
 
   // What others drew since the revision in hand, merged in without disturbing what is held.
@@ -136,6 +145,15 @@ export default function BoardCanvas({ id }: { id: string }) {
       const scene = await call<BoardScene>('board.scene', { id, since: revision.current }).catch(
         () => null,
       );
+      if (scene) {
+        try {
+          await ensureBoardFonts(scene.elements);
+        } catch (error) {
+          asking = false;
+          if (live) setProblem(`Unable to load board fonts: ${String(error)}`);
+          return;
+        }
+      }
       asking = false;
       if (!live || !scene || !(scene.elements.length || scene.whole)) return;
       revision.current = scene.board.revision;
@@ -155,7 +173,11 @@ export default function BoardCanvas({ id }: { id: string }) {
           (el) => !scene.whole || named.has(el.id) || known.current.get(el.id) !== el.version,
         );
       api.updateScene({
-        elements: reconcileElements(held, remote, api.getAppState()),
+        // Repair and measure only after merging: a delta alone may omit a bound label.
+        elements: restoreElements(reconcileElements(held, remote, api.getAppState()), null, {
+          refreshDimensions: true,
+          repairBindings: true,
+        }),
         captureUpdate: CaptureUpdateAction.NEVER,
       });
     };
@@ -239,4 +261,9 @@ export default function BoardCanvas({ id }: { id: string }) {
       </Excalidraw>
     </div>
   );
+}
+
+/** A different board gets separate refs, pending saves, and first-scene state. */
+export default function BoardCanvas({ id }: { id: string }) {
+  return <BoardCanvasScene key={id} id={id} />;
 }

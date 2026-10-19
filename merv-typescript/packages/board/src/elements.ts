@@ -80,14 +80,18 @@ const overlaps = (a: Rect, b: Rect, margin = 20) =>
   b.y < a.y + a.height + margin;
 const center = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
 /** Where the line from a shape's centre toward `to` leaves its box. */
-function edge(r: Rect, to: { x: number; y: number }) {
+export function shapeEdge(r: Rect & { type?: string }, to: { x: number; y: number }) {
   const c = center(r);
   const dx = to.x - c.x;
   const dy = to.y - c.y;
-  const t = Math.min(
-    dx ? r.width / 2 / Math.abs(dx) : Infinity,
-    dy ? r.height / 2 / Math.abs(dy) : Infinity,
-  );
+  const nx = Math.abs(dx) / Math.max(0.5, r.width / 2),
+    ny = Math.abs(dy) / Math.max(0.5, r.height / 2);
+  const t =
+    r.type === 'diamond'
+      ? 1 / (nx + ny)
+      : r.type === 'ellipse'
+        ? 1 / Math.hypot(nx, ny)
+        : 1 / Math.max(nx, ny);
   return Number.isFinite(t) ? { x: c.x + dx * t, y: c.y + dy * t } : c;
 }
 
@@ -232,7 +236,13 @@ export class Drawing {
     const wrapped =
       container.type === 'arrow'
         ? content
-        : wrap(content, Math.floor((container.width - 30) / (size * CHAR)));
+        : wrap(
+            content,
+            Math.floor(
+              this.innerWidth(container.type, container.width) /
+                (size * this.labelCharWidth(content)),
+            ),
+          );
     const text = this.text({ x: 0, y: 0, ...measure(wrapped, size) }, wrapped, size, {
       originalText: content,
       textAlign: 'center',
@@ -244,10 +254,26 @@ export class Drawing {
     this.bind(container, 'text', text.id);
     return text;
   }
-  /** The size a shape needs for its text, as `measure` estimates it. */
-  private fit(content: string, width: number, minHeight: number) {
-    const lines = wrap(content, Math.floor((width - 30) / (FONT * CHAR)));
-    return { width, height: Math.max(minHeight, measure(lines, FONT).height + 40) };
+  /** Text bounds follow Excalidraw's shape-specific safe interior, with conservative padding. */
+  private labelCharWidth(content: string) {
+    return /[MW@#%]/u.test(content) ? 1 : CHAR;
+  }
+  private innerWidth(kind: string, width: number) {
+    return Math.max(
+      40,
+      Math.round(width * (kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1)) - 10,
+    );
+  }
+  private fit(content: string, width: number, minHeight: number, kind = 'rectangle') {
+    const lines = wrap(
+      content,
+      Math.floor(this.innerWidth(kind, width) / (FONT * this.labelCharWidth(content))),
+    );
+    const factor = kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1;
+    return {
+      width,
+      height: Math.max(minHeight, Math.ceil((measure(lines, FONT).height + 40) / factor)),
+    };
   }
 
   /**
@@ -387,6 +413,11 @@ export class Drawing {
     const at = this.place(size, where);
     const el = this.add(kind, at, {
       frameId: at.frameId,
+      customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'box' },
+      strokeColor:
+        fields.backgroundColor && fields.backgroundColor !== 'transparent'
+          ? 'transparent'
+          : '#868e96',
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
@@ -406,8 +437,12 @@ export class Drawing {
       end: { x: arrow.x + (points.at(-1)?.[0] ?? 0), y: arrow.y + (points.at(-1)?.[1] ?? 0) },
     };
     if (!from && !to) return;
-    const start = from ? edge(rectOf(from), to ? center(rectOf(to)) : free.end) : free.start;
-    const end = to ? edge(rectOf(to), from ? center(rectOf(from)) : free.start) : free.end;
+    const start = from
+      ? shapeEdge({ ...rectOf(from), type: from.type }, to ? center(rectOf(to)) : free.end)
+      : free.start;
+    const end = to
+      ? shapeEdge({ ...rectOf(to), type: to.type }, from ? center(rectOf(from)) : free.start)
+      : free.end;
     Object.assign(arrow, {
       x: start.x,
       y: start.y,
@@ -423,13 +458,88 @@ export class Drawing {
       if (text) centre(text, arrow);
     }
   }
+  /** Variable-size layers; center each branch band and reserve space for edge labels. */
+  private flowFitted(op: Extract<DrawOp, { op: 'flow' }>) {
+    const down = op.direction === 'down';
+    const depth = layers(
+      op.nodes.map((n) => n.key),
+      op.edges,
+    );
+    const groups = new Map<number, typeof op.nodes>();
+    for (const node of op.nodes) {
+      const d = depth.get(node.key)!;
+      groups.set(d, [...(groups.get(d) ?? []), node]);
+    }
+    const dims = new Map(
+      op.nodes.map((n) => [
+        n.key,
+        this.fit(
+          n.text,
+          n.shape && n.shape !== 'rectangle' ? 260 : 220,
+          n.shape && n.shape !== 'rectangle' ? 120 : 80,
+          n.shape ?? 'rectangle',
+        ),
+      ]),
+    );
+    const labelGap = Math.max(
+      80,
+      ...op.edges.map((e) =>
+        e.label ? measure(e.label, FONT)[down ? 'height' : 'width'] + 60 : 80,
+      ),
+    );
+    const crossGap = 70;
+    const axes = [...groups.keys()].sort((a, b) => a - b);
+    const crossSize = (nodes: typeof op.nodes) =>
+      nodes.reduce((n, node) => n + dims.get(node.key)![down ? 'width' : 'height'], 0) +
+      Math.max(0, nodes.length - 1) * crossGap;
+    const widest = Math.max(...[...groups.values()].map(crossSize));
+    const mainSize = (nodes: typeof op.nodes) =>
+      Math.max(...nodes.map((n) => dims.get(n.key)![down ? 'height' : 'width']));
+    const length =
+      axes.reduce((sum, d) => sum + mainSize(groups.get(d)!), 0) +
+      Math.max(0, axes.length - 1) * labelGap;
+    const area = this.place(
+      down ? { width: widest, height: length } : { width: length, height: widest },
+      op,
+    );
+    let main = 0;
+    for (const d of axes) {
+      const nodes = groups.get(d)!;
+      const extent = mainSize(nodes);
+      let cross = (widest - crossSize(nodes)) / 2;
+      for (const node of nodes) {
+        const size = dims.get(node.key)!;
+        const mainOffset = main + (extent - size[down ? 'height' : 'width']) / 2;
+        const at = down
+          ? { x: area.x + cross, y: area.y + mainOffset }
+          : { x: area.x + mainOffset, y: area.y + cross };
+        const kind = node.shape ?? 'rectangle';
+        const el = this.add(
+          kind,
+          { ...at, ...size },
+          {
+            frameId: area.frameId,
+            strokeColor: node.color ? 'transparent' : '#868e96',
+            customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'box' },
+            roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
+            ...(node.color && { backgroundColor: COLORS[node.color] }),
+          },
+        );
+        this.label(el, node.text);
+        this.keyed(node.key, el);
+        cross += size[down ? 'width' : 'height'] + crossGap;
+      }
+      main += extent + labelGap;
+    }
+    for (const edge of op.edges) this.arrow(edge.from, edge.to, edge.label);
+  }
   private arrow(fromRef: string, toRef: string, label?: string) {
     const from = this.find(fromRef);
     const to = this.find(toRef);
     // Excalidraw binds an arrow to a box, an ellipse, a diamond, text or a frame, never to a pen
     // stroke or a line: such an end starts at its edge and stays put.
     const binding = (el: El) =>
-      BINDABLE.has(el.type) ? { elementId: el.id, focus: 0, gap: 8 } : null;
+      BINDABLE.has(el.type) ? { elementId: el.id, focus: 0, gap: 0 } : null;
     const el = this.add(
       'arrow',
       { x: 0, y: 0, width: 0, height: 0 },
@@ -509,6 +619,7 @@ export class Drawing {
         const el = this.shape('rectangle', op.text, this.fit(op.text, 240, 110), op, {
           backgroundColor: COLORS[op.color ?? 'yellow'],
           strokeColor: 'transparent',
+          customData: { ...(this.agent && { by: 'agent' }), semanticKind: 'note' },
         });
         return this.keyed(op.key, el);
       }
@@ -519,6 +630,7 @@ export class Drawing {
           op.text,
           kind === 'rectangle' ? width : width + 80,
           kind === 'rectangle' ? 80 : 130,
+          kind,
         );
         const el = this.shape(kind, op.text, size, op, {
           ...(op.color && { backgroundColor: COLORS[op.color] }),
@@ -537,7 +649,7 @@ export class Drawing {
       case 'link': {
         const web = /^https?:\/\//.test(op.target);
         const el = this.shape('rectangle', `↗ ${op.text}`, this.fit(`↗ ${op.text}`, 280, 70), op, {
-          strokeColor: '#1971c2',
+          strokeColor: 'transparent',
           backgroundColor: '#e7f5ff',
           link: web ? op.target : `merv:${op.target}`,
           customData: { ...(this.agent && { by: 'agent' }), target: op.target },
@@ -564,52 +676,7 @@ export class Drawing {
         return this.keyed(op.key, frame);
       }
       case 'flow': {
-        const down = op.direction === 'down';
-        const depth = layers(
-          op.nodes.map((n) => n.key),
-          op.edges,
-        );
-        const columns = new Map<number, string[]>();
-        for (const { key } of op.nodes)
-          columns.set(depth.get(key)!, [...(columns.get(depth.get(key)!) ?? []), key]);
-        const span = { width: 220, height: 100 };
-        const deepest = Math.max(...columns.keys());
-        const widest = Math.max(...[...columns.values()].map((c) => c.length));
-        const across = (deepest + 1) * (span.width + 80);
-        const along = widest * (span.height + 50);
-        const area = this.place(
-          down ? { width: along * 2, height: across / 1.5 } : { width: across, height: along },
-          op,
-        );
-        for (const node of op.nodes) {
-          const layer = depth.get(node.key)!;
-          const row = columns.get(layer)!.indexOf(node.key);
-          const step = { x: layer * (span.width + 80), y: row * (span.height + 50) };
-          const at = down
-            ? { x: area.x + step.y * 1.6, y: area.y + step.x / 1.5 }
-            : { x: area.x + step.x, y: area.y + step.y };
-          const kind = node.shape ?? 'rectangle';
-          const el = this.add(
-            kind,
-            // A diamond or an ellipse holds its text in its middle, so it is drawn larger.
-            {
-              ...at,
-              ...(kind === 'rectangle'
-                ? this.fit(node.text, span.width, 80)
-                : this.fit(node.text, span.width + 40, 120)),
-            },
-            {
-              frameId: area.frameId,
-              roundness:
-                kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
-              ...(node.color && { backgroundColor: COLORS[node.color] }),
-            },
-          );
-          this.label(el, node.text);
-          this.keyed(node.key, el);
-        }
-        for (const e of op.edges) this.arrow(e.from, e.to, e.label);
-        return;
+        return this.flowFitted(op);
       }
       case 'edit': {
         const el = this.find(op.id);
@@ -635,6 +702,12 @@ export class Drawing {
           }
         }
         if (op.color) {
+          if (
+            el.customData?.semanticKind === 'box' &&
+            el.backgroundColor === 'transparent' &&
+            el.strokeColor === '#868e96'
+          )
+            el.strokeColor = 'transparent';
           el.backgroundColor = COLORS[op.color];
           this.touch(el);
         }
@@ -833,7 +906,9 @@ export function summarize(elements: BoardElement[]) {
       id: el.id,
       kind: el.customData?.target
         ? 'link'
-        : el.type === 'rectangle' && el.strokeColor === 'transparent'
+        : el.type === 'rectangle' &&
+            el.strokeColor === 'transparent' &&
+            el.customData?.semanticKind !== 'box'
           ? 'note'
           : el.type === 'rectangle'
             ? 'box'
