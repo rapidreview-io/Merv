@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Drawing } from '../packages/board/src/elements.js';
+import { pictureOf } from '../packages/board/src/picture.js';
 import { BoardRenderer } from '../packages/board/src/renderer.js';
 import { camera, viewSchema } from '../packages/contracts/src/board-view.js';
 import { screenImage } from '../packages/pi/src/tool-image.js';
@@ -83,6 +84,13 @@ test('actual Excalidraw exports native sketches and ordinary board shapes withou
   assert.ok(result.width <= 1600 && result.height <= 1600);
   const moved = await renderer.render(elements, result.viewport, { action: 'pan', dx: 100, dy: 0 });
   assert.equal(moved.viewport.x, result.viewport.x + 100);
+  const group = d.created.s!;
+  const stroke = elements.find((e) => e.groupIds?.includes(group))!;
+  const focused = await renderer.render(elements, undefined, undefined, group);
+  const byStroke = await renderer.render(elements, undefined, undefined, stroke.id);
+  assert.deepEqual(focused.viewport, byStroke.viewport);
+  assert.ok(focused.viewport.height < result.viewport.height);
+  assert.equal(typeof pictureOf(elements, group), 'object');
   await assert.rejects(renderer.render(elements, undefined, undefined, 'missing'), /No shape/);
   assert.equal(JSON.stringify(elements), before);
   await (await (renderer as any).browser).close();

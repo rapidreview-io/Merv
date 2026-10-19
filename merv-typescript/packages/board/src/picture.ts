@@ -88,13 +88,14 @@ export function pictureOf(elements: BoardElement[], focus?: string) {
   let target = live;
   if (focus) {
     const named = live.find((el) => el.id === focus);
-    if (!named) return `No shape "${focus}" on this board.`;
-    const group = named.groupIds?.[0];
+    const group =
+      named?.groupIds?.[0] ?? (live.some((el) => el.groupIds?.includes(focus)) ? focus : undefined);
+    if (!named && !group) return `No shape "${focus}" on this board.`;
     target = live.filter(
       (el) =>
-        el.id === named.id ||
-        el.containerId === named.id ||
-        (named.type === 'frame' && el.frameId === named.id) ||
+        el.id === focus ||
+        el.containerId === focus ||
+        (named?.type === 'frame' && el.frameId === focus) ||
         (group && el.groupIds?.includes(group)),
     );
   }

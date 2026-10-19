@@ -8,13 +8,14 @@ window.sceneBounds = (scene, focus) => {
   let selected = live;
   if (focus) {
     const named = live.find((e) => e.id === focus);
-    if (!named) return null;
-    const group = named.groupIds?.[0];
+    const group =
+      named?.groupIds?.[0] ?? (live.some((e) => e.groupIds?.includes(focus)) ? focus : undefined);
+    if (!named && !group) return null;
     selected = live.filter(
       (e) =>
         e.id === focus ||
         e.containerId === focus ||
-        (named.type === 'frame' && e.frameId === focus) ||
+        (named?.type === 'frame' && e.frameId === focus) ||
         (group && e.groupIds?.includes(group)),
     );
   }

@@ -25,8 +25,10 @@ services:
       - sandboxes
     read_only: true
     tmpfs:
+      # Chromium uses /tmp for shared image buffers (--disable-dev-shm-usage).
+      # Large reference images stall with 64 MiB; 60 MP scans need a 1 GiB cap.
       # Git children of the server read and write under the data volume, never here.
-      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+      - /tmp:rw,nosuid,nodev,size=1g,mode=1777
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     stop_grace_period: 60s
