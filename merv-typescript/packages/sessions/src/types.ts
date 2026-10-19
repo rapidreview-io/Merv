@@ -408,7 +408,8 @@ export interface ComputeWake {
   outcome: 'ended' | 'deadline' | 'woken';
   until: string;
   settledAt: string;
-  /** Where its targets stood at the last check. */
+  /** Where its targets stood at the last check; one still running, but for an `ended` wait, by
+   *  its status alone. */
   targets: ComputeTargetState[];
 }
 /** A wait as its worker's call answers it: until when, and the bound that set that time. */

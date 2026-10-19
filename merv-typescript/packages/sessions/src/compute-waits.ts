@@ -115,7 +115,13 @@ const wake = (row: WaitRow): ComputeWake => ({
   outcome: row.outcome as ComputeWake['outcome'],
   until: row.wait_until,
   settledAt: row.settled_at!,
-  targets: JSON.parse(row.targets_json),
+  // An open wait's targets are written only where a status moves: one still running is said by
+  // its status, not by a state that may be old, unless the read that ended the wait wrote them.
+  targets: (JSON.parse(row.targets_json) as ComputeTargetState[]).map((target) =>
+    row.outcome === 'ended' || target.status !== 'running'
+      ? target
+      : { kind: target.kind, id: target.id, status: target.status },
+  ),
 });
 
 /**

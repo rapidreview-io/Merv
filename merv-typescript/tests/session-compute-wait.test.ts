@@ -347,6 +347,7 @@ test('its until brings the work back with its runs still running, and the visit 
   const unit = await f.start();
   const { revision } = await f.app.ctx.workflows.get(f.owner, unit.id);
   const first = await f.attach(unit.id, 'runner-a');
+  f.answers.set('job_a', { status: 'running', state: 'queued' });
   const { wait } = await f.awaitCompute(first.worker, {
     jobIds: ['job_a'],
     reason: 'Training.',
@@ -355,6 +356,9 @@ test('its until brings the work back with its runs still running, and the visit 
   assert.equal(wait.why, 'the 120 minutes asked for');
   await f.keep(first.session, first.control);
   assert.deepEqual(await f.queued(unit.id), []);
+  // It starts: its status has not moved, so nothing is written, and it is not said to be queued.
+  f.answers.set('job_a', { status: 'running', state: 'running' });
+  await f.leased.computeWaits.sweep();
   // Its until is judged in dispatch's own read: the hold lifts at once, before any sweep.
   await f.age('wait_until', first.session.id, 1000);
   assert.deepEqual(await f.queued(unit.id), [revision]);
