@@ -204,7 +204,7 @@ const client = String.raw`
     if(['ready','awaiting_payment'].includes(state)) { const line = el('p',money(price.amountCents ?? price.amount ?? data.priceCents,price.currency),'price'); line.append(el('small',' / experiment')); aside.append(line); }
     aside.append(el('p',data.statusMessage || copy[state] || 'Merv is updating this experiment.','status-copy'));
     const limits = plan.limits || data.limits || {};
-    rows(aside,[['Plan version',version === null ? 'Draft' : String(version)],['Expected turnaround',plan.turnaround || plan.expectedTurnaround || limits.turnaround],['Agent working time',limits.wallMinutes ? limits.wallMinutes + ' minutes' : limits.maxWallTimeMinutes ? limits.maxWallTimeMinutes + ' minutes' : limits.maxDurationMinutes ? limits.maxDurationMinutes + ' minutes' : limits.time],['Compute','Selected by Merv'],['Attempts',limits.maxAttempts ? String(limits.maxAttempts) : ''],['Deliverables',deliverables.length ? String(deliverables.length) : '']]);
+    rows(aside,[['Plan version',version === null ? 'Draft' : String(version)],['Expected turnaround',plan.turnaround || plan.expectedTurnaround || limits.turnaround],['Agent working time limit',limits.wallMinutes ? limits.wallMinutes + ' minutes' : limits.maxWallTimeMinutes ? limits.maxWallTimeMinutes + ' minutes' : limits.maxDurationMinutes ? limits.maxDurationMinutes + ' minutes' : limits.time],['Compute','Selected by Merv'],['Attempts',limits.maxAttempts ? String(limits.maxAttempts) : ''],['Deliverables',deliverables.length ? String(deliverables.length) : '']]);
     if(['ready','awaiting_payment'].includes(state)) {
       const form = el('form',null,'checkout');
       const emailLabel = el('label','Email for your results'); emailLabel.htmlFor = 'email';
