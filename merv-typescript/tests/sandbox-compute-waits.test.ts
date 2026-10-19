@@ -178,12 +178,48 @@ test('a running job is running, bounded by its machine’s lease and its deadlin
   const read = await f.ask([job('job_a'), job('job_d')]);
   assert.equal(read.deadline, undefined);
   assert.deepEqual(read.lease, { machine: 'sbx_a', endsAt: f.at(7_200_000) });
-  // A workflow's job runs within that workflow's deadline, on its machines: they bound nothing.
+  // A workflow's job on a machine that workflow provisioned runs within its deadline: the
+  // machine, deleted then, bounds nothing.
+  f.machine('sbx_own', { lease_expires_at: Instant.fromMillis(Date.parse(f.at(600_000))) });
+  f.workflow('pipe_x', {
+    request: {
+      nodes: [
+        { id: 'own', kind: 'provision' },
+        { id: 'output', kind: 'capture' },
+      ],
+    } as unknown as WorkflowRecord['request'],
+    nodes: {
+      own: { state: 'succeeded', result: { sandbox_id: 'sbx_own' } },
+      output: { state: 'pending', result: {} },
+    } as unknown as WorkflowRecord['nodes'],
+  });
   f.job('job_e', {
-    sandbox_id: 'sbx_a',
+    sandbox_id: 'sbx_own',
     request: { timeout_seconds: 600, workflow_id: 'pipe_x' } as JobRecord['request'],
   });
   assert.equal((await f.ask([job('job_e')])).lease, undefined);
+  // One on a machine its workflow adopted, as job_run with outputs runs on the worker's own,
+  // keeps that machine's lease as a bound.
+  f.workflow('pipe_y', {
+    request: {
+      nodes: [
+        { id: 'sandbox', kind: 'use_vm' },
+        { id: 'output', kind: 'capture' },
+      ],
+    } as unknown as WorkflowRecord['request'],
+    nodes: {
+      sandbox: { state: 'succeeded', result: { sandbox_id: 'sbx_a' } },
+      output: { state: 'pending', result: {} },
+    } as unknown as WorkflowRecord['nodes'],
+  });
+  f.job('job_f', {
+    sandbox_id: 'sbx_a',
+    request: { timeout_seconds: 600, workflow_id: 'pipe_y' } as JobRecord['request'],
+  });
+  assert.deepEqual((await f.ask([job('job_f')])).lease, {
+    machine: 'sbx_a',
+    endsAt: f.at(7_200_000),
+  });
 });
 
 test('another work’s or attempt’s job or workflow, a missing one, and a visit with no run of its own are unknown', async (t) => {

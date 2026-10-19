@@ -90,8 +90,10 @@ export class SandboxComputeWaits implements ComputeWaiter {
         else {
           targets.push({ ...target, status: 'running', state: job.state });
           used.add(job.sandbox_id);
-          // A workflow's job runs within that workflow's deadline, on that workflow's machines.
-          if (!job.request.workflow_id) leased.add(job.sandbox_id);
+          // A machine its workflow provisioned lives to that workflow's deadline, which bounds the
+          // job's; one it adopted (job_run with outputs runs on the worker's) keeps its renter's lease.
+          if (!(await this.provisioned(run.namespace, job.request.workflow_id, job.sandbox_id)))
+            leased.add(job.sandbox_id);
           const timeout = job.request.timeout_seconds;
           deadlines.push({
             target,
@@ -172,5 +174,22 @@ export class SandboxComputeWaits implements ComputeWaiter {
         .filter((machine) => machine.attempt_ref === run.attempt_ref && !used.has(machine.id))
         .map((machine) => machine.id),
     };
+  }
+
+  /** Whether workflow `workflowId` provisioned `machine` itself; never for a job of none. */
+  private async provisioned(
+    namespace: string,
+    workflowId: string | null | undefined,
+    machine: string,
+  ): Promise<boolean> {
+    if (!workflowId) return false;
+    const workflow = await this.pipelines.get(namespace, workflowId).catch((error) => {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    });
+    return !!workflow?.request.nodes.some(
+      (node) =>
+        node.kind === 'provision' && workflow.nodes[node.id]?.result?.sandbox_id === machine,
+    );
   }
 }
