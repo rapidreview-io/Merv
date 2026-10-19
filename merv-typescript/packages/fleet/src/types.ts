@@ -207,6 +207,8 @@ export interface ModelRelayConfig<
   route: string;
   token: RegExp;
   providerKey: () => string | Promise<string>;
+  /** Operator-selected Responses endpoint; defaults to OpenAI. */
+  responsesUrl?: string;
   authority: {
     authorize(token: string): Promise<unknown>;
     validate(grant: G): Promise<void>;

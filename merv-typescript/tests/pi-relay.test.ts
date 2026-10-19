@@ -1551,3 +1551,41 @@ test('API shutdown ends an open relay stream after its drain window, as a discon
     ['disconnected'],
   );
 });
+
+test('Pi uses its own provider endpoint and model prefix without changing grant models', async (t) => {
+  const f = await fixture({
+    responsesUrl: 'https://api.gmi-serving.com/v1/responses',
+    modelIdPrefix: 'openai/',
+  });
+  t.after(() => f.close());
+  const response = await send(f, request);
+  assert.equal(response.status, 200);
+  await response.text();
+  assert.equal(f.upstreamCalls[0]!.url, 'https://api.gmi-serving.com/v1/responses');
+  assert.equal(JSON.parse(String(f.upstreamCalls[0]!.init.body)).model, 'openai/test-model');
+  assert.equal((await send(f, { ...request, model: 'openai/test-model' })).status, 400);
+  assert.equal(f.upstreamCalls.length, 1);
+});
+
+test('provider routing metadata does not suppress the worker retry of a pre-answer failure', async (t) => {
+  const { retryTransient } = await import('../packages/pi/src/model-retry.js');
+  let calls = 0;
+  const f = await fixture({
+    fetchImpl: async () => {
+      calls++;
+      return eventStream(
+        'data: {"type":"response.created"}\n\n' +
+          'data: {"type":"response.metadata","routing":"provider"}\n\n' +
+          (calls === 1
+            ? 'data: {"type":"response.failed","response":{"error":{"code":"server_error"}}}\n\n'
+            : 'data: {"type":"response.completed"}\n\n'),
+      );
+    },
+  });
+  t.after(() => f.close());
+  const response = await retryTransient(() => send(f), null, { sleep: async () => {} });
+  const text = await response.text();
+  assert.equal(calls, 2);
+  assert.match(text, /response.completed/);
+  assert.doesNotMatch(text, /response.metadata/);
+});

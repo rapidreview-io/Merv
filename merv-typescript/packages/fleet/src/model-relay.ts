@@ -342,7 +342,7 @@ export class ModelRelay<
       await validate();
       phase = 'upstream';
       const upstream = await interruptible(
-        (this.fetchImpl ?? fetch)(RESPONSES_URL, {
+        (this.fetchImpl ?? fetch)(this.config.responsesUrl ?? RESPONSES_URL, {
           method: 'POST',
           redirect: 'error',
           signal,
@@ -477,6 +477,9 @@ export class ModelRelay<
           }
           if (expired(grant)) reject(403, 'grant_forbidden');
           if (Date.now() - validatedAt > authorityStaleMs) reject(504, 'relay_timeout');
+          // GMI adds routing metadata before any answer. Do not expose this non-output
+          // frame to workers: it would end their pre-answer transient-error retry window.
+          if (json(data)?.type === 'response.metadata') continue;
           startStream();
           await writeChunk(res, frame, signal);
           resetIdle();

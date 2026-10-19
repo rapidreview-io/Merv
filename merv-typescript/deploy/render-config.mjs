@@ -335,6 +335,12 @@ if (piEnabled) {
       config: {
         secretEnv,
         modelApiKeyEnv,
+        ...(process.env.MERV_PI_MODEL_RESPONSES_URL && {
+          modelResponsesUrl: process.env.MERV_PI_MODEL_RESPONSES_URL,
+        }),
+        ...(process.env.MERV_PI_MODEL_ID_PREFIX && {
+          modelIdPrefix: process.env.MERV_PI_MODEL_ID_PREFIX,
+        }),
         // Checked as Main checks it, so a dry run catches what would stop Main; the older
         // MERV_PI_MODEL is ignored.
         ...(process.env.MERV_PI_MODELS !== undefined && {

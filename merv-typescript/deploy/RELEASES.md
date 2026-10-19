@@ -709,3 +709,68 @@ Planner deployment records and database/configuration backups are under `/opt/me
 | 2026-10-19T16:47Z | `20261019T164006Z-672c4665-0f997327bccc` | `deb646cfb8e8` | ? | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/main-BHm3e18C.js 200; /ui/assets/styles-TnLTzoHF.js 200; /ui/assets/styles-rWrXjr1i.css 200 | previous image `merv-typescript:20261019T130250Z-231d715c-60eee6a17e55` |
 | 2026-10-19T19:27Z | `20261019T191815Z-fea5e483-caa59a4b26f5` | `3f4c7bf6e270` | ? | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/main-BV8-s4X7.js 200; /ui/assets/styles-TnLTzoHF.js 200; /ui/assets/styles-rWrXjr1i.css 200 | previous image `merv-typescript:20261019-pi-gmi` |
 | 2026-10-19T20:17Z | `20261019T201716Z-f30a296e-ui` | ui only | server `20261019T191815Z-fea5e483-caa59a4b26f5` | pass | public ui, assets /ui/assets/main-77h2O0cC.js 200; /ui/assets/styles-bTieqY2J.js 200; /ui/assets/styles-CKJ03Sp6.css 200 | previous ui `20261019T191815Z-fea5e483-caa59a4b26f5` |
+
+## Pi GMI Responses provider, 2026-10-19
+
+Production runs `merv-typescript:20261019-pi-gmi`, image
+`sha256:b82246d90e7736047821b33a8449e63e3124a11b746baec22db02e3f14fcfd13`.
+Pi calls `https://api.gmi-serving.com/v1/responses` with its own `MERV_PI_GMI_API_KEY`.
+The existing catalog, efforts, stored selections and default remain unchanged:
+`gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-6-astra`. Only upstream requests add
+GMI's `openai/` prefix. Pi titles and screen descriptions use the same provider;
+alternate-provider background titles have a 30-second timeout. Fleet retains its
+existing OpenAI credential and endpoint.
+
+This immutable overlay changes six compiled modules and the config renderer atop
+`20261019T164006Z-672c4665-0f997327bccc`; each original source file matched that release.
+The source patch, added provider test, build recipe and test evidence are retained in
+`/opt/merv-typescript/releases/20261019-pi-gmi/`. These source changes are also in the
+working tree and must be included in the next normal source release.
+
+Validation: 55 focused provider/relay/worker tests and 14 config-renderer tests passed;
+the two provider tests passed again after the title timeout adjustment. All four models
+completed live streaming requests. The final candidate container passed real GMI tool
+calling, tool-result replay, title generation and usage accounting. The locked switch
+required zero active Pi commands and worker sessions. Production container health,
+public health, rendered provider settings and Pi/Fleet plugin readiness passed.
+Full repository typecheck remains blocked by unrelated Admin/Sandboxes interface
+errors; the DB-dependent screen suite requires `MERV_TEST_POSTGRES_URL` and was not run.
+
+Rollback: protected previous env is `/var/backups/merv/pi-gmi-20261019/before.env`;
+previous image is `merv-typescript:20261019T164006Z-672c4665-0f997327bccc`.
+Restore both together under `/run/lock/merv-maintenance.lock` while idle, using the
+previous release's Compose file. No database schema or hosted worker image changed.
+
+## Restore durable Pi GMI routing and pre-answer retries, 2026-10-19
+
+Production now runs `merv-typescript:20261019-pi-gmi-final`, image
+`sha256:5b7caa0633f0b0e3d46839b3f7555d3096af42dd0a604e83d6de9a7e4091969f`.
+The later full release `20261019T191815Z-fea5e483-caa59a4b26f5` had replaced the
+initial GMI overlay with source lacking provider support while preserving the GMI key
+setting. Its Pi requests therefore hit OpenAI and failed with HTTP 401. The original
+overlay's `/app/packages` symlink correctly resolved to `/app/dist/packages`; runtime
+path selection was not the cause. Provider support is now committed and pushed on main
+as `65f011cfd`, preventing a normal future release from omitting it.
+
+The restored image overlays only the provider modules and renderer on that newer full
+release, preserving its changes and the separately deployed UI. `64dd6745f` additionally
+filters GMI's non-output `response.metadata` frames at the relay: these frames previously
+closed the worker's pre-answer retry window, suppressing retries of a subsequent
+`server_error`. A regression test failed before this fix and passed afterward; all 58
+relay/retry/worker tests pass. The provider/config suites also passed. Repository-wide
+typechecking still reports the pre-existing Admin/Sandboxes interface mismatches.
+
+Full production API → hosted Pi worker → model relay → GMI turns completed on all four:
+6.1 Sol (`pic_591173302b864760aed408d1d26ac9a3`, 15s), Luna
+(`pic_8f5685a2fc5144a69ffe7de2c1491454`, 6s), Sol
+(`pic_154e32e180d34afbbbc436f3250015c9`, 6s), Astra
+(`pic_df222a92b0204fa3918367e6c7382545`, 18s). An earlier Astra attempt ended
+with a truncated upstream stream; the fresh attempt passed. These checks do not claim
+that GMI never experiences transient failures. The canary machine was released and its
+preferred model restored. Container/public health and live provider configuration pass.
+
+Build recipe, test evidence, scripts, and `live-canary*.json` are retained under
+`/opt/merv-typescript/releases/20261019-pi-gmi-fix/`. The switch was maintenance-locked
+and required no active Pi turns or worker sessions. To revert only this provider change,
+use the newer full release's image/Compose and set `MERV_PI_MODEL_API_KEY_ENV` back to
+`MERV_FLEET_MODEL_API_KEY`; preserve current hosted pins and other environment settings.
