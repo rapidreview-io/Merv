@@ -24,13 +24,22 @@ async function fixture(t: TestContext) {
   let people: Fiber | undefined;
   t.after(async () => await people?.dispose());
   process.env.MERV_TEST_SANDBOXES_VAULT_KEY = Buffer.alloc(32, 7).toString('base64url');
-  await startHost(t, ctx, 'MERV_TEST_SANDBOXES_VAULT_KEY');
-  t.after(async () => await state.close());
-  await ctx.sbxProviders.connections.registerIn(ctx.sbxDb, {
-    id: 'cloud',
-    plugin: 'fake',
-    cloudAccount: 'cloud',
+  process.env.MERV_TEST_FAKE_PROVIDER_KEY = 'fake-provider-key';
+  // A funded host provider; its connection registers only once a namespace lists its providers.
+  await startHost(t, ctx, 'MERV_TEST_SANDBOXES_VAULT_KEY', {
+    settings: {
+      providers: [
+        {
+          name: 'fake',
+          plugin: 'fake',
+          credential: 'env:MERV_TEST_FAKE_PROVIDER_KEY',
+          connection_id: 'cloud',
+          cloud_account: 'cloud',
+        },
+      ],
+    },
   });
+  t.after(async () => await state.close());
   const logged: string[] = [];
   t.mock.method(process.stderr, 'write', (line: string) => logged.push(line) > 0);
   return {
