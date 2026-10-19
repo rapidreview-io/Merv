@@ -8,12 +8,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { geometry } from './fixtures/board-geometry.js';
 import { Drawing } from '../packages/board/src/elements.js';
+import { boardFontManifest } from '../scripts/board-font-manifest.mjs';
 
 // Runs the actual BoardCanvas against an in-memory API; browser font loads are deliberately slow.
 test('BoardCanvas waits for fonts and preserves text metrics across cold reload and warm remount', async (t) => {
-  const { boardFontManifest } = await import(
-    new URL('../scripts/board-font-manifest.mjs', import.meta.url).href
-  );
   const fonts = boardFontManifest();
   const directory = mkdtempSync(join(tmpdir(), 'board-reload-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
