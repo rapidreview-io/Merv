@@ -425,6 +425,17 @@ export class ComputeWaits implements SessionComputeWaits {
         ),
       );
   }
+  // So that no other plugin reads session_compute_waits itself (customer experiments' status).
+  async waiting(projectId: string, instanceId: string): Promise<boolean> {
+    const open = await this.state.read((sql) =>
+      sql.get(
+        'SELECT 1 FROM session_compute_waits WHERE project_id=? AND instance_id=? AND settled_at IS NULL LIMIT 1',
+        projectId,
+        instanceId,
+      ),
+    );
+    return !!open;
+  }
   /** A person's message to the thread ends the waits its agent started: the work comes back. */
   async woken(tx: Transaction, projectId: string, threadId: string): Promise<void> {
     for (const row of await tx.all<WaitRow>(

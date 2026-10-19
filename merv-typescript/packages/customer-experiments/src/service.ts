@@ -363,7 +363,12 @@ export class CustomerService {
         if (usage.budgets.some((b) => b.unreportedSessions || b.unavailable.length))
           statusMessage =
             'Waiting for the previous session’s usage accounting before continuing within your accepted limits.';
-        else if (state === 'running') state = 'queued';
+        // An executor that ended its visit to wait for its compute is running: its machines are.
+        else if (
+          state === 'running' &&
+          !(await this.domain.sessions.computeWaits.waiting(caller.projectId, exp.id))
+        )
+          state = 'queued';
       }
     }
     if (includeConversation && record.conversationId) {

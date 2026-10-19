@@ -434,6 +434,8 @@ export interface SessionComputeWaits {
   available(session: Readonly<Session>): Promise<boolean>;
   /** The worker ends its visit to wait for its compute; the work waits with it. */
   await(caller: Caller, input: ComputeWaitInput): Promise<ComputeWaitView>;
+  /** Server-only: whether an agent of the work item waits for its compute now. */
+  waiting(projectId: string, instanceId: string): Promise<boolean>;
 }
 
 export interface Sessions {

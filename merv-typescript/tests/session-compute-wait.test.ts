@@ -224,6 +224,7 @@ test('a worker awaits its compute: its visit ends uncounted, the work is withhel
   // The work waits: withheld from dispatch, its gate and session.stuck say so (uncounted), the
   // Running board marks it, and it is nobody's move.
   assert.deepEqual(await f.queued(unit.id), []);
+  assert.equal(await f.sessions.computeWaits.waiting(f.owner.projectId, unit.id), true);
   assert.deepEqual(await f.blockers(unit.id), [
     ['session-compute', threadId, 'compute_wait', 'nobody'],
   ]);
@@ -269,6 +270,7 @@ test('a worker awaits its compute: its visit ends uncounted, the work is withhel
   const [row] = await f.waits(unit.id);
   assert.equal(row!.outcome, 'ended');
   assert.equal((await f.settled()).length, 1);
+  assert.equal(await f.sessions.computeWaits.waiting(f.owner.projectId, unit.id), false);
   assert.deepEqual(await f.blockers(unit.id), []);
   assert.deepEqual(await f.queued(unit.id), [revision]);
   // The work comes back to the same thread and conversation, told first how its runs ended.

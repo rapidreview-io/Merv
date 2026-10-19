@@ -462,6 +462,14 @@ test('a ready contract needs customer acceptance and a matching verified payment
   assert.equal(f.emails[0].url, a.customerUrl);
   exp = await f.experiment(a.id);
   assert.equal(exp.workflow.state, 'running');
+  // Paid, with no visit live, it is queued to the customer, unless an executor ended its visit
+  // to wait for its compute: that run is running.
+  const shown = async () => (await f.service.snapshot(await f.store.get(a.id))).state;
+  assert.equal(await shown(), 'queued');
+  const waiting = t.mock.method(f.domain.sessions.computeWaits, 'waiting', async () => true);
+  assert.equal(await shown(), 'running');
+  assert.deepEqual(waiting.mock.calls[0]!.arguments, [exp.projectId, exp.id]);
+  waiting.mock.restore();
   const revision = exp.workflow.revision;
   assert.equal((await webhook(paid)).status, 200);
   assert.equal((await webhook({ ...paid, eventId: 'evt_retry' })).status, 200);
