@@ -5827,6 +5827,15 @@ html:has(.pi-page) body {
   width: 10px;
   height: 10px;
 }
+/* Between two cycles' work: one hairline across the map, and space. */
+.wmap-rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
 .wmap-fold {
   position: absolute;
   padding: 0 4px;

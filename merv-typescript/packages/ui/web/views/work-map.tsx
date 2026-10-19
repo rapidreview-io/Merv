@@ -27,7 +27,7 @@ import type { WorkflowShape } from '../shell-types';
 import type { Flow } from './map-data';
 import { Act, RunningSidebar } from './running-panel';
 import { Phrase, Reading, Target, steadyText, type RunningReading } from './running-phrase';
-import { beneath, workMapLayout, type MapEdge, type MapPlace } from './work-map-layout';
+import { GUTTER, beneath, workMapLayout, type MapEdge, type MapPlace } from './work-map-layout';
 
 /**
  * The map of work and what is live on it. Every unit of work is a mark and a name, a quiet
@@ -97,6 +97,8 @@ interface MapUnit {
   flow?: Flow;
   /** The board's card for it, while it is in flight or a person is needed on it. */
   node?: RunningNode;
+  /** The cycle it belongs to, where the wave groups its work. */
+  group?: string;
 }
 /** The wave's own records, as the page that lists them read them. */
 export interface Wave {
@@ -108,7 +110,11 @@ export interface Wave {
     at: string;
     /** Still open, or named by the cycle the page is on. */
     held: boolean;
+    /** The cycle that names it. */
+    group?: string;
   }[];
+  /** The cycles, top to bottom: the one in hand first. */
+  groups?: string[];
   /** Every prerequisite and what waits on it, by record. */
   edges: MapEdge[];
   /** The page narrowed the wave: what it holds is drawn, and nothing beside it. */
@@ -153,6 +159,7 @@ export function mapOf(
         name: item?.name ?? node!.title,
         flow: item?.flow,
         node,
+        group: item?.group,
       };
     }),
     // One line for each relation, however many owners say it.
@@ -356,7 +363,7 @@ function Mark({
       aria-pressed={selected}
       aria-controls="running-panel"
       aria-label={[said, ...relations.filter((relation) => !said.includes(relation))].join(', ')}
-      style={{ left: place.x - 15, top: place.y - 15, maxWidth: place.w }}
+      style={{ left: place.x - 15, top: place.y - 15, maxWidth: place.w - GUTTER }}
       onClick={() => onSelect(unit.key)}
       onMouseEnter={() => onHover(unit.key)}
       onMouseLeave={() => onHover(null)}
@@ -448,9 +455,14 @@ export function WorkMap({
               .map((unit) => unit.key),
           ),
           unfold,
+          groups: wave.groups?.length
+            ? wave.groups.map((group) =>
+                units.filter((unit) => unit.group === group).map((unit) => unit.key),
+              )
+            : undefined,
         },
       ),
-    [units, edges, width, shapes, unfold],
+    [units, edges, width, shapes, unfold, wave.groups],
   );
   const drawn = !!layout;
   // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
@@ -531,6 +543,9 @@ export function WorkMap({
           })}
         </svg>
       )}
+      {layout?.rules.map((y) => (
+        <hr key={y} className="wmap-rule" style={{ top: y }} />
+      ))}
       {layout?.folds.map((fold) => (
         <button
           type="button"

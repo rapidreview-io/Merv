@@ -841,7 +841,7 @@ test('the map’s keys leave a modified key to the browser, and a control under 
   const graph = $('.wmap')!;
   await key(graph, 'ArrowRight');
   const first = document.activeElement as HTMLElement;
-  assert.equal(first.dataset.key, 'work:wf_table');
+  assert.equal(first.dataset.key, 'work:wf_index');
   const pressed = async (on: Element, name: string, more: KeyboardEventInit = {}) => {
     let kept = true;
     await act(async () => {
@@ -869,9 +869,9 @@ test('the map’s keys leave a modified key to the browser, and a control under 
   pause.focus();
   assert.equal(await pressed(pause, 'ArrowDown'), true);
   assert.equal(document.activeElement, pause);
-  // Unmodified, from a card, the keys still walk.
+  // Unmodified, from a mark, the keys still walk.
   await key(first, 'j');
-  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
+  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_review');
 });
 
 test('a lane is stale by the age of its source when the board was read, not by the page’s clock since', () => {
@@ -1481,19 +1481,23 @@ test('the keyboard walks the marks in reading order, and down to the chain under
   const graph = $('.wmap')!;
   assert.equal(graph.getAttribute('role'), 'group');
   assert.equal(graph.tabIndex, 0);
+  // The chains come first, then what stands alone in its grid.
   await key(graph, 'ArrowRight');
   const first = document.activeElement as HTMLElement;
-  assert.equal(first.dataset.key, 'work:wf_table');
-  await key(first, 'j');
-  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
+  assert.equal(first.dataset.key, 'work:wf_index');
   // Reading order runs along a chain; down goes to the chain under it, and up comes back.
-  await key(document.activeElement!, 'j');
+  await key(first, 'j');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_review');
   await key(document.activeElement!, 'k');
   await key(document.activeElement!, 'ArrowDown');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_ablate');
   await key(document.activeElement!, 'ArrowUp');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
+  await key(document.activeElement!, 'j');
+  await key(document.activeElement!, 'j');
+  await key(document.activeElement!, 'j');
+  await key(document.activeElement!, 'j');
+  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_table');
 });
 
 test('on a phone the sidebar takes the page’s place, and closing it brings the page back on its line', async (t) => {

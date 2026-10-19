@@ -313,6 +313,13 @@ function WaveList({ shell }: { shell: ShellData }) {
   const cycle = currentCycle(cycles ?? undefined, shell.workflows);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
   const inCycle = new Set(cycle?.researchDependencies);
+  // Every cycle's work stands on the page, the one in hand first and the earlier ones under
+  // it, newest first; a unit no cycle names stands with the one in hand.
+  const order = [cycle, ...all.filter((item) => item !== cycle)].flatMap((item) =>
+    item ? [item] : [],
+  );
+  const groupOf = (id: string) =>
+    order.find((item) => item.researchDependencies?.includes(id))?.id ?? cycle?.id;
   /** What every unit of the wave says alike, from its record and the row whose page it opens. */
   const unit = (
     kind: Item['kind'],
@@ -411,6 +418,7 @@ function WaveList({ shell }: { shell: ShellData }) {
   const kept = new Set(filter.rows);
   const read: Wave = {
     only,
+    groups: order.map((item) => item.id),
     items: items
       .filter((item) => !hidden.has(item.id))
       .map((item) => ({
@@ -419,9 +427,8 @@ function WaveList({ shell }: { shell: ShellData }) {
         name: item.name,
         flow: item.flow,
         at: item.at,
-        held:
-          passes(item) &&
-          (only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named),
+        group: groupOf(item.id),
+        held: passes(item) && (!only || kept.has(item)),
       })),
     edges: bridged(
       (tasks ?? []).flatMap((task) => [
