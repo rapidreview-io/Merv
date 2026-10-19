@@ -12,6 +12,7 @@
     "zod": "^3.25.0",
     "@merv/contracts": "0.1.0",
     "@merv/api": "0.1.0",
-    "@merv/ui": "0.1.0"
+    "@merv/ui": "0.1.0",
+    "playwright-core": "1.57.0"
   }
 }

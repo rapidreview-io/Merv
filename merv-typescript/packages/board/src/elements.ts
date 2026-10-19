@@ -696,7 +696,9 @@ export class Drawing {
             if (filled && (drawn[0]![0] !== drawn.at(-1)![0] || drawn[0]![1] !== drawn.at(-1)![1]))
               drawn.push([...drawn[0]!]);
             const box = around(drawn);
-            const el = this.add(filled ? 'line' : 'freedraw', box, {
+            const el = this.add('line', box, {
+              roughness: 0,
+              roundness: null,
               points: drawn.map(([x, y]) => [x! - box.x, y! - box.y]),
               strokeColor: INKS[stroke.color ?? stroke.fill ?? 'black'],
               backgroundColor: filled ? PAINTS[stroke.fill!] : 'transparent',
@@ -713,7 +715,12 @@ export class Drawing {
                     endArrowhead: null,
                     polygon: true,
                   }
-                : { pressures: [], simulatePressure: true }),
+                : {
+                    startBinding: null,
+                    endBinding: null,
+                    startArrowhead: null,
+                    endArrowhead: null,
+                  }),
             });
             first ??= el;
           }

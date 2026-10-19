@@ -4,7 +4,8 @@ import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import { MervError } from '@merv/contracts';
 import { summarize } from './elements.js';
-import { pictureOf } from './picture.js';
+import { BoardRenderer } from './renderer.js';
+import type { Region } from '@merv/contracts/board-view';
 import { drawSchema, id, saveSchema, setSchema, type DrawInput } from './input.js';
 import type {} from './types.js';
 
@@ -19,13 +20,29 @@ export const boardToolsPlugin = {
   inject: ['board', 'tools'],
   apply(ctx: Context) {
     const board = ctx.board;
+    const renderer = new BoardRenderer();
+    ctx.effect(() => () => renderer.close());
+    // Per-conversation cameras, bounded and expiring; every look rechecks scene permissions.
+    const views = new Map<string, { region: Region; at: number }>();
     ctx.effect(() => ctx.tools.contributeInstructions(guide));
     // A board is drawn here for its agent to look at, so looking needs nobody's screen.
     ctx.effect(() =>
-      ctx.tools.contributePicture('board_', async (caller, id, focus) => {
-        const drawn = pictureOf((await board.scene(caller, id)).elements, focus);
-        if (typeof drawn === 'string') throw new MervError('board_shape_not_found', drawn, 404);
-        return { ...drawn, path: `/ui/boards/${id}` };
+      ctx.tools.contributePicture('board_', async (caller, id, focus, view) => {
+        const scene = await board.scene(caller, id);
+        const key = caller.conversation ? `${caller.conversation.id}:${id}` : undefined;
+        const prior = key ? views.get(key) : undefined;
+        const drawn = await renderer.render(
+          scene.elements,
+          prior && Date.now() - prior.at < 3600000 ? prior.region : undefined,
+          view,
+          focus,
+        );
+        if (key) {
+          views.delete(key);
+          views.set(key, { region: drawn.viewport, at: Date.now() });
+          if (views.size > 1000) views.delete(views.keys().next().value!);
+        }
+        return { ...drawn, html: '', path: `/ui/boards/${id}` };
       }),
     );
     ctx.effect(() =>
@@ -46,7 +63,7 @@ export const boardToolsPlugin = {
       ctx.tools.register({
         name: 'board.draw',
         description:
-          'Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (a freehand drawing, as with a pen: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.',
+          'Draw on a whiteboard: one call takes a list of operations, applied in order. note (a sticky note; color), box (shape: rectangle, ellipse or diamond), text (a heading or label; size s, m or l), link (a card that opens target: a Merv record id or a web address; text is what it says), arrow (from and to shapes, an optional label), frame (a titled area around the shapes holds lists, or else near a shape or in the next free place), flow (nodes and edges laid out as a diagram, direction right or down), edit (new text or color of a shape), move (to near, in or at), delete (ids), sketch (precise native Excalidraw lines with fixed widths and zero roughness: strokes are SVG path data, d strings with M L H V C S Q T A Z, in coordinates of its own at any scale; each stroke may set color, width thin, medium or bold, and fill, which paints it as a closed shape; Board scales the whole sketch to size s, m or l and keeps its strokes together; use it for pictures, icons, curves and anything that is not a box). New shapes go near a shape (as close as there is room, on side right, left, above or below if given), in a frame, at an exact top-left corner [x, y] in the coordinates board.read reports, or with none of these in the next free place. Deleting what is already gone (a box takes its arrows) is fine. A key on an operation names what it makes, so later operations of the same call can point at it; the answer gives each key its shape id. With title and no board it starts a new board; with board and title it renames it.',
         inputSchema: drawSchema,
         handler: async (caller: Caller, input: DrawInput) => await board.draw(caller, input),
       }),

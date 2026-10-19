@@ -1,3 +1,4 @@
+import type { View } from '@merv/contracts/board-view';
 import { ellipsis, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -349,9 +350,14 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  async picture(caller: Caller, id: string, focus?: string): Promise<Picture | undefined> {
+  async picture(
+    caller: Caller,
+    id: string,
+    focus?: string,
+    view?: View,
+  ): Promise<Picture | undefined> {
     const draw = [...this.drawers].find(([prefix]) => id.startsWith(prefix))?.[1];
-    return draw ? await draw(structuredClone(caller), id, focus) : undefined;
+    return draw ? await draw(structuredClone(caller), id, focus, view) : undefined;
   }
 
   contributeContext(read: (caller: Caller) => Promise<string | undefined>): () => void {

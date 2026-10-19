@@ -1,3 +1,4 @@
+import type { ScreenLook } from './types.js';
 import {
   check,
   clip,
@@ -576,9 +577,15 @@ export class PiService implements Pi {
 
   /** screen.look {question}: the person's open page answers with its snapshot, Cloudflare draws
    *  it, and the conversation's model says what it shows. */
-  async look(caller: Caller, input: unknown): Promise<{ page?: string; seen: string }> {
+  async look(caller: Caller, input: unknown): Promise<ScreenLook> {
     this.core.ready();
-    const { question, at } = parse(lookInput, input);
+    const { question, at, view } = parse(lookInput, input);
+    check(
+      !view || at?.record?.startsWith('board_'),
+      'invalid_input',
+      'Camera controls require at.record naming a board',
+      400,
+    );
     check(
       caller.conversation,
       'pi_forbidden',
@@ -593,12 +600,19 @@ export class PiService implements Pi {
     );
     // A record that draws itself (a board) is looked at as drawn, without anyone's screen.
     const drawn = at?.record
-      ? await this.core.tools.picture(caller, at.record, at.focus).catch((error: unknown) => {
+      ? await this.core.tools.picture(caller, at.record, at.focus, view).catch((error: unknown) => {
           if (error instanceof MervError && error.status < 500) return error.message;
           throw error;
         })
       : undefined;
     if (typeof drawn === 'string') return { seen: drawn };
+    if (drawn?.image)
+      return {
+        page: drawn.path,
+        seen: 'Actual Excalidraw board image. Coordinates in viewport are board units.',
+        image: drawn.image,
+        viewport: drawn.viewport,
+      };
     const answer = drawn ? undefined : await this.ask(caller, at ? { at } : {});
     if (answer?.missing) return { seen: answer.missing };
     const shot = drawn ?? answer?.shot;

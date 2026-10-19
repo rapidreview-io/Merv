@@ -146,6 +146,13 @@ jobs:
           echo 'PostgreSQL did not accept connections' >&2
           exit 1
 
+      - name: Prepare offline board renderer when this shard exercises vision
+        run: |
+          if node scripts/test-shard.mjs ${{ matrix.shard }} 4 | grep -qx 'tests/board-vision.test.ts'; then
+            npm run build:board-renderer
+            npx playwright-core install --with-deps chromium-headless-shell
+          fi
+
       # Runs this shard's files exactly as npm test runs them all (scripts/test-shard.mjs).
       - name: Run test shard ${{ matrix.shard }} of 4
         run: |

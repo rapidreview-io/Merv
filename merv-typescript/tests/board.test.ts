@@ -402,9 +402,19 @@ test('an agent sketches with a pen: grouped strokes, painted petals, scaled and 
   const marks = drawing.result().filter((el) => ['line', 'freedraw'].includes(el.type));
   assert.deepEqual(
     marks.map((el) => el.type),
-    ['line', 'freedraw'],
-    'a filled stroke paints, a bare one is ink',
+    ['line', 'line'],
+    'filled and bare strokes use native lines with predictable width',
   );
+  for (const mark of marks) {
+    assert.equal(mark.roughness, 0);
+    assert.equal(mark.roundness, null);
+    assert.equal(mark.simulatePressure, undefined);
+    assert.equal(mark.startArrowhead, null);
+    assert.equal(mark.endArrowhead, null);
+  }
+  assert.equal(marks[1].strokeWidth, 4, 'bold ink keeps its requested width');
+  assert.equal(marks[1].backgroundColor, 'transparent');
+  assert.notEqual(marks[0].backgroundColor, 'transparent', 'closed petals retain their paint');
   assert.equal(
     new Set(marks.map((el) => (el.groupIds as string[])[0])).size,
     1,
