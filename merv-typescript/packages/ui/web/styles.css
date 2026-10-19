@@ -7956,7 +7956,7 @@ html.modal-open {
 @media (hover: hover) {
   :is(.ruled-row, .admin-ledger > li):not(:hover)
     .admin-more:not([aria-expanded='true'], :focus-visible),
-  .ruled-row:not(:hover, :focus-within, .admin-unfolded) .admin-acts {
+  :is(.ruled-row, .admin-credit):not(:hover, :focus-within, .admin-unfolded) .admin-acts {
     opacity: 0;
   }
 }

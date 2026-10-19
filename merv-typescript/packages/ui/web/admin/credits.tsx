@@ -37,9 +37,16 @@ type Span = (typeof WINDOWS)[number]['value'];
 /** A figure in its type's unit: dollars, or a count of tokens. */
 const amount = (unit: CreditUse['unit'], n: number | null) =>
   n === null ? <None /> : unit === 'usd' ? usd(n) : count(n);
-/** What is left of a type's limit, today's or a provider's grants, of it faint; red at none. */
+/** What is left of a type's limit, today's or a provider's grants, of it faint; red at none.
+ *  Without a limit, what was used today, so an unlimited person is still seen. */
 function today(use?: Today) {
-  if (!use || !use.limit || use.left === null) return null;
+  if (!use) return null;
+  if (!use.limit || use.left === null)
+    return use.used ? (
+      <span className="admin-of">
+        {amount(use.unit, use.used)} <span className="faint">used</span>
+      </span>
+    ) : null;
   return (
     <span className={cx('admin-of', use.left <= 0 && 'status--bad')}>
       <span className="admin-left">{amount(use.unit, use.left)}</span>{' '}
@@ -235,8 +242,9 @@ function Use(props: { use: CreditUse; span: Span; of: PersonCredits; done(): voi
   const grants = provider ? of.grants.filter((g) => g.provider === provider) : [];
   const schedules = provider ? of.schedules.filter((s) => s.provider === provider) : [];
   return (
-    <section className="admin-credit" aria-label={use.label}>
-      {/* The limit stands beside the word that changes it; what is left, beside its meter. */}
+    <section className={cx('admin-credit', open && 'admin-unfolded')} aria-label={use.label}>
+      {/* The limit stands beside the word that changes it, drawn as the pointer reaches the type;
+          what is left, beside its meter. */}
       <div className="cluster--between">
         <span className="cluster">
           <span className="admin-credit-name">{use.label}</span>
@@ -249,7 +257,7 @@ function Use(props: { use: CreditUse; span: Span; of: PersonCredits; done(): voi
         </span>
         <button
           type="button"
-          className="btn-text"
+          className="btn-text admin-acts"
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
