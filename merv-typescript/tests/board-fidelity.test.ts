@@ -69,3 +69,76 @@ test('reference details survive exact geometry/color additions', () => {
   assert.ok(live(d).some((e) => e.strokeColor === '#aa2222'));
   assert.ok(summarize(live(d)).shapes.some((e) => e.details?.text === 'Details'));
 });
+
+// Production robot leader lines use negative coordinates relative to their at anchor.
+test('native path origin keeps separate leader groups aligned with labels', () => {
+  const d = new Drawing([], true);
+  d.apply({
+    op: 'sketch',
+    key: 'leaders',
+    size: 'native',
+    at: [160, 185],
+    strokes: [{ path: 'M 0 0 L 170 0 L 205 45' }, { path: 'M 430 -55 L 250 70' }],
+  });
+  const lines = live(d).filter((e) => e.type === 'line');
+  const points = lines.map((e) => (e.points as number[][]).map(([x, y]) => [e.x + x!, e.y + y!]));
+  assert.deepEqual(points, [
+    [
+      [160, 185],
+      [330, 185],
+      [365, 230],
+    ],
+    [
+      [590, 130],
+      [410, 255],
+    ],
+  ]);
+});
+test('native paths retain positive offsets rather than snapping their first point to at', () => {
+  const d = new Drawing([], true);
+  d.apply({ op: 'sketch', size: 'native', at: [100, 200], strokes: [{ path: 'M 20 30 L 50 60' }] });
+  const e = live(d)[0]!;
+  assert.equal(e.x, 120);
+  assert.equal(e.y, 230);
+});
+
+test('dense reference labels can fit native source-scale boxes and keep size when edited', () => {
+  const d = new Drawing([], true);
+  const input = drawSchema.parse({
+    ops: [
+      { op: 'box', key: 'rtk', text: 'RTK', width: 50, height: 24, fontSize: 8, at: [0, 0] },
+      { op: 'text', key: 'caption', text: 'Linear/Angular Twist', fontSize: 9, at: [60, 0] },
+    ],
+  });
+  for (const op of input.ops) d.apply(op);
+  const box = d.find('rtk');
+  assert.equal(box.width, 50);
+  assert.equal(box.height, 24);
+  let label = live(d).find((e) => e.containerId === box.id)!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'RTK');
+  d.apply({ op: 'edit', id: box.id, text: 'SBAS' });
+  label = live(d).find((e) => e.containerId === box.id)!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'SBAS');
+  assert.equal(d.find('caption').fontSize, 9);
+  assert.equal(
+    drawSchema.safeParse({ ops: [{ op: 'text', text: 'x', fontSize: 0 }] }).success,
+    false,
+  );
+});
+
+test('dense reference arrow labels use the requested text size', () => {
+  const d = new Drawing([], true);
+  const input = drawSchema.parse({
+    ops: [
+      { op: 'box', key: 'a', text: '', width: 50, height: 24, at: [0, 0] },
+      { op: 'box', key: 'b', text: '', width: 50, height: 24, at: [200, 0] },
+      { op: 'arrow', from: 'a', to: 'b', label: 'Linear/Angular Twist', fontSize: 8 },
+    ],
+  });
+  for (const op of input.ops) d.apply(op);
+  const label = live(d).find((e) => e.type === 'text')!;
+  assert.equal(label.fontSize, 8);
+  assert.equal(label.text, 'Linear/Angular Twist');
+});

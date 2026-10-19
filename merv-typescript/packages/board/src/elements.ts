@@ -288,15 +288,22 @@ export class Drawing {
       Math.round(width * (kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1)) - 10,
     );
   }
-  private fit(content: string, width: number, minHeight: number, kind = 'rectangle') {
+  private fit(
+    content: string,
+    width: number,
+    minHeight: number,
+    kind = 'rectangle',
+    fontSize = FONT,
+    padding = 40,
+  ) {
     const lines = wrap(
       content,
-      Math.floor(this.innerWidth(kind, width) / (FONT * this.labelCharWidth(content))),
+      Math.floor(this.innerWidth(kind, width) / (fontSize * this.labelCharWidth(content))),
     );
     const factor = kind === 'diamond' ? 0.5 : kind === 'ellipse' ? Math.SQRT1_2 : 1;
     return {
       width,
-      height: Math.max(minHeight, Math.ceil((measure(lines, FONT).height + 40) / factor)),
+      height: Math.max(minHeight, Math.ceil((measure(lines, fontSize).height + padding) / factor)),
     };
   }
 
@@ -434,6 +441,7 @@ export class Drawing {
     size: { width: number; height: number },
     where: Where,
     fields: Record<string, unknown> = {},
+    fontSize = FONT,
   ) {
     const at = this.place(size, where);
     const el = this.add(kind, at, {
@@ -446,7 +454,7 @@ export class Drawing {
       roundness: kind === 'rectangle' ? { type: 3 } : kind === 'diamond' ? { type: 2 } : null,
       ...fields,
     });
-    if (content) this.label(el, content);
+    if (content) this.label(el, content, fontSize);
     return el;
   }
   /**
@@ -558,7 +566,7 @@ export class Drawing {
     }
     for (const edge of op.edges) this.arrow(edge.from, edge.to, edge.label);
   }
-  private arrow(fromRef: string, toRef: string, label?: string) {
+  private arrow(fromRef: string, toRef: string, label?: string, fontSize = 16) {
     const from = this.find(fromRef);
     const to = this.find(toRef);
     // Excalidraw binds an arrow to a box, an ellipse, a diamond, text or a frame, never to a pen
@@ -585,7 +593,7 @@ export class Drawing {
     this.route(el, { from, to });
     if (BINDABLE.has(from.type)) this.bind(from, 'arrow', el.id);
     if (BINDABLE.has(to.type)) this.bind(to, 'arrow', el.id);
-    if (label) this.label(el, label, 16);
+    if (label) this.label(el, label, fontSize);
     return el;
   }
   /** What moves with a shape: its own text, and a frame's shapes. */
@@ -659,18 +667,30 @@ export class Drawing {
         const size = op.text
           ? this.fit(
               op.text,
-              Math.max(op.width ?? defaultWidth, Math.ceil(60 / factor)),
+              Math.max(
+                op.width ?? defaultWidth,
+                Math.ceil((op.fontSize ? op.fontSize * 3 + 10 : 60) / factor),
+              ),
               op.height ?? defaultHeight,
               kind,
+              op.fontSize ?? FONT,
+              op.fontSize ? 10 : 40,
             )
           : { width: op.width ?? defaultWidth, height: op.height ?? defaultHeight };
-        const el = this.shape(kind, op.text, size, op, {
-          ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
-        });
+        const el = this.shape(
+          kind,
+          op.text,
+          size,
+          op,
+          {
+            ...(op.color && { backgroundColor: paint(COLORS, op.color) }),
+          },
+          op.fontSize ?? FONT,
+        );
         return this.keyed(op.key, el);
       }
       case 'text': {
-        const size = { s: 16, m: 20, l: 32 }[op.size ?? 'm'];
+        const size = op.fontSize ?? { s: 16, m: 20, l: 32 }[op.size ?? 'm'];
         const content = wrap(op.text, 60);
         const at = this.place(measure(content, size), op);
         return this.keyed(
@@ -697,7 +717,7 @@ export class Drawing {
         return this.keyed(op.key, el);
       }
       case 'arrow':
-        return this.keyed(op.key, this.arrow(op.from, op.to, op.label));
+        return this.keyed(op.key, this.arrow(op.from, op.to, op.label, op.fontSize));
       case 'frame': {
         const held = [...new Set((op.holds ?? []).flatMap((ref) => this.members(ref)))];
         const box = bounds(held.map(rectOf));
@@ -726,7 +746,13 @@ export class Drawing {
             const content =
               el.type === 'text' || el.type === 'arrow'
                 ? op.text
-                : wrap(op.text, Math.floor((el.width - 30) / (FONT * CHAR)));
+                : wrap(
+                    op.text,
+                    Math.floor(
+                      this.innerWidth(el.type, el.width) /
+                        ((textOf.fontSize ?? FONT) * this.labelCharWidth(op.text)),
+                    ),
+                  );
             Object.assign(textOf, {
               text: content,
               originalText: op.text,
@@ -837,7 +863,13 @@ export class Drawing {
           op.size === 'native'
             ? 1
             : { s: 160, m: 280, l: 440 }[op.size ?? 'm'] / Math.max(width, height);
-        const at = this.place({ width: width * scale, height: height * scale }, op);
+        // Native paths share the caller's coordinate system, including negative coordinates.
+        // Explicit at is the path origin; automatic placement still uses the bounding box.
+        const placement =
+          op.size === 'native' && op.at
+            ? { ...op, at: [op.at[0] + minX, op.at[1] + minY] as [number, number] }
+            : op;
+        const at = this.place({ width: width * scale, height: height * scale }, placement);
         const group = elementId();
         let first: El | undefined;
         for (const { stroke, lines } of read)
