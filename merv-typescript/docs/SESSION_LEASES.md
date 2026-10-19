@@ -249,6 +249,42 @@ share the assignment's 512 KiB, the oldest left out first, so answers never refu
 reviewer, or a later stage that starts afresh, reads no other thread's messages, so this is how
 it learns the decisions that bind the work from Merv rather than from the asker's own copy.
 
+### A worker awaits its compute
+
+A worker whose Sandboxes jobs or workflows will run for more than about 15 minutes calls
+`session.await_compute({jobIds?, workflowIds?, reason, minutes?})` instead of sleeping or
+polling. Only a work visit that keeps a conversation and executes compute (its compute profile is
+`execute`), on a project the registered compute waiter serves, is offered it; a workflow keeps
+its waits inside its visits with the execution reference `computeWait: 'inside'`. Its session
+closes at once as released with outcome `awaited_compute`, its worker's own end like a handoff,
+so the model relay, the runner and Code keep their grace, and it is never counted as a failed
+launch. The jobs, workflows and machines keep running: only the visit's own Sandboxes connection
+is revoked.
+
+The call names 1–20 distinct ids of the work's current attempt. Sessions asks the one waiter,
+which Sandboxes registers (`computeWaits.register`), where they stand, outside every transaction,
+and refuses, the visit going on, when one is not the attempt's (`compute_target_unknown`), when
+everything named has ended or one already failed (`compute_ended`), when another live machine of
+the attempt would bill idle (`compute_machines_idle`), or when the wait would end within five
+minutes (`compute_wait_short`, `compute_lease_ending`, `compute_overdue`). Its until is the
+earliest of `minutes` (1440 by default, at most 10080), 15 minutes before the lease end of a
+live machine an unfinished target needs, and 10 minutes after the latest deadline of what runs,
+where each has one; the answer says which bound set it (`why`). A retry after the wait was
+recorded is refused with `awaited_compute`, and one after a question with `asked_owner`: the
+visit has ended.
+
+The wait (`session_compute_waits`) withholds its revision from dispatch while it is open and its
+until is ahead, judged in dispatch's own read, then until the visit's conversation has arrived or
+ten minutes after the call, as an answered question does. It settles once: `ended` when Sessions'
+full sweep finds everything ended or one failed (a workflow once its captures have settled),
+`deadline` at its until, `woken` when a person messages the thread or offers the work by hand,
+and `moved` when the work ended or moved on by any hand. Until then the work carries a
+`session-compute` blocker that is nobody's move: its gate and the Running board say it waits for
+its compute, and `session.stuck` lists it as `work_waiting`, not counted in `total`. The next
+visit resumes the same conversation, and its prompt begins with how the wait went and how each
+target stood. A wait uses no session wall time and no tokens, so it counts against no budget,
+nor against a customer run's allowance, whose admission gate counts both.
+
 Messaging does not amend an immutable brief or approved plan. When work should be
 stopped, use the existing session halt and task/experiment terminal actions, then
 create replacement work with better instructions. Retain earlier evidence and

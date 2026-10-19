@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-10-18",
+  "snapshot": "2026-10-19",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
   "pluginCount": 79,
   "serviceProviders": 36,
@@ -10,7 +10,7 @@
   "apiEntries": 44,
   "serverPlugins": 78,
   "machinePlugins": 1,
-  "directDependencyCount": 253,
+  "directDependencyCount": 254,
   "optionalDependencyCount": 17,
   "directConsumers": {
     "api": 10,
@@ -57,7 +57,7 @@
     "sbxProviders": 2,
     "sbxVault": 1,
     "sbxResourceLimits": 1,
-    "sbxRegistry": 2,
+    "sbxRegistry": 3,
     "sbxJobs": 2,
     "sbxSnapshots": 1,
     "sbxDb": 2,
@@ -921,7 +921,8 @@
         "sbxPipelines",
         "sbxObjects",
         "sbxAccounts",
-        "sbxJobs"
+        "sbxJobs",
+        "sbxRegistry"
       ],
       "optional": [],
       "kind": "service",

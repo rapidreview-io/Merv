@@ -75,7 +75,7 @@
             "name": "Sandboxes",
             "dir": "in",
             "says": "adds compute to a session",
-            "detail": "Sandboxes gives a session's agent access to computers, and takes it back when the session closes."
+            "detail": "Sandboxes gives a session's agent access to computers, takes it back when the session closes, and says where the jobs an agent waits for stand."
           },
           {
             "id": "blobs",
@@ -136,6 +136,10 @@
           {
             "term": "Continuity",
             "meaning": "When work comes back to a step, the same agent picks it up again with its old conversation."
+          },
+          {
+            "term": "Waiting for compute",
+            "meaning": "An agent whose long jobs on rented computers run ends its session to wait for them. The work comes back to it, in the same conversation, once they end."
           },
           {
             "term": "Transcript",
